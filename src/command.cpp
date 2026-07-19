@@ -29,9 +29,6 @@ Command parse_command(std::string_view input) {
     if (name == ".info") {
         return {CommandKind::info, argument};
     }
-    if (name == ".model") {
-        return {CommandKind::model, argument};
-    }
     if (name == ".stop") {
         return {CommandKind::stop, argument};
     }

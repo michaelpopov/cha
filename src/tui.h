@@ -21,7 +21,6 @@ public:
 
     [[nodiscard]] int read_key(wint_t& key);
     void render(const Conversation& conversation, const InputEditor& editor, bool generating, std::string_view notice = {});
-    void set_model(std::string model);
     void scroll_up();
     void scroll_down();
     void resize();

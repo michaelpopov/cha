@@ -28,10 +28,6 @@ void Pipe::conversation_updated() {
     push(PipeEvent{PipeEventKind::conversation_updated, {}});
 }
 
-void Pipe::model_changed(std::string_view model) {
-    push(PipeEvent{PipeEventKind::model_changed, std::string(model)});
-}
-
 void Pipe::push(PipeEvent event) {
     {
         std::lock_guard lock(mutex_);

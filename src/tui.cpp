@@ -187,10 +187,6 @@ void Tui::render(const Conversation& conversation, const InputEditor& editor, bo
     doupdate();
 }
 
-void Tui::set_model(std::string model) {
-    model_ = std::move(model);
-}
-
 void Tui::scroll_up() {
     follow_output_ = false;
     view_top_ = std::max(0, view_top_ - std::max(1, last_output_height_ / 2));

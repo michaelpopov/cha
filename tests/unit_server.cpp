@@ -218,6 +218,24 @@ TEST(Server, ConstructionDoesNotRequireANetworkConnection) {
     EXPECT_NO_THROW({ Server server(config, cancellation, conversation); });
 }
 
+TEST(Server, StoppingDoesNotCloseTheSharedOutputPipe) {
+    Config config;
+    Pipe pipe_in;
+    Pipe pipe_out;
+    std::atomic_bool cancellation{false};
+    Conversation conversation;
+    Server server(config, cancellation, conversation);
+
+    server.run(pipe_in, pipe_out);
+    pipe_in.close();
+    server.close();
+
+    PipeEvent event{PipeEventKind::eom, {}};
+    EXPECT_FALSE(pipe_out.try_get(event));
+    pipe_out.conversation_updated();
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+}
+
 TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     const std::string first_stream =
         "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"
@@ -307,18 +325,13 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     Server server(config, cancellation, conversation);
     server.run(pipe_in, pipe_out);
 
-    send(conversation, pipe_in, ".model replacement-model");
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::model_changed, "replacement-model"}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-
     send(conversation, pipe_in, ".info");
     const PipeEvent info = pipe_out.get();
     ASSERT_EQ(info.kind, PipeEventKind::conversation_updated);
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
     const auto messages_after_info = conversation.messages();
     ASSERT_FALSE(messages_after_info.empty());
-    EXPECT_NE(messages_after_info.back().text.find("Model: replacement-model"), std::string::npos);
+    EXPECT_NE(messages_after_info.back().text.find("Model: initial-model"), std::string::npos);
     EXPECT_NE(messages_after_info.back().text.find("Streaming: no"), std::string::npos);
 
     send(conversation, pipe_in, "Question");
@@ -339,7 +352,7 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
 
     ASSERT_EQ(mock.requests().size(), 1U);
     const Json request = Json::parse(request_body(mock.requests()[0]));
-    EXPECT_EQ(request["model"], "replacement-model");
+    EXPECT_EQ(request["model"], "initial-model");
     EXPECT_FALSE(request["stream"]);
     ASSERT_EQ(request["messages"].size(), 1U);
     EXPECT_EQ(request["messages"][0]["content"], "Question");

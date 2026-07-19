@@ -9,7 +9,6 @@ enum class CommandKind {
     text,
     clear,
     info,
-    model,
     stop,
     exit,
     unknown,

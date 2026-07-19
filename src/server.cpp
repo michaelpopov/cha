@@ -172,8 +172,7 @@ Server::Server(
     : _config(config),
       _cancellation(cancellation),
       _conversation(conversation),
-      name_(std::move(name)),
-      model_(config.model) {
+      name_(std::move(name)) {
 
     if (!_config.system_prompt.empty()) {
         std::ifstream prompt_file(_config.system_prompt, std::ios::binary);
@@ -269,7 +268,6 @@ void Server::dialog(Pipe& pipe_in, Pipe& pipe_out) {
         pipe_out.eom();
     }
 
-    pipe_out.close();
 }
 
 std::vector<Server::Message> Server::context() const {
@@ -296,8 +294,7 @@ std::vector<Server::Message> Server::context() const {
 
         if (message.author == user_author) {
             const Command command = parse_command(message.text);
-            if ((command.kind == CommandKind::clear && command.argument.empty())
-                || (command.kind == CommandKind::model && !command.argument.empty())) {
+            if (command.kind == CommandKind::clear && command.argument.empty()) {
                 result.resize(system_messages);
             }
             if (command.kind != CommandKind::text) {
@@ -331,14 +328,11 @@ std::vector<Server::Message> Server::context() const {
 bool Server::handle_command(const std::string& input, Pipe& pipe_out) {
     const Command command = parse_command(input);
 
-    const auto reply = [&](std::string text, std::string_view changed_model = {}) {
+    const auto reply = [&](std::string text) {
         _conversation.begin_message(name_);
         _conversation.append_to_message(text);
         _conversation.finish_message();
         pipe_out.conversation_updated();
-        if (!changed_model.empty()) {
-            pipe_out.model_changed(changed_model);
-        }
         pipe_out.eom();
     };
 
@@ -349,7 +343,7 @@ bool Server::handle_command(const std::string& input, Pipe& pipe_out) {
 
     if (command.kind == CommandKind::info && command.argument.empty()) {
         std::ostringstream info;
-        info << "Model: " << model_ << '\n'
+        info << "Model: " << _config.model << '\n'
              << "API: " << endpoint() << '\n'
              << "Streaming: " << (_config.stream ? "yes" : "no") << '\n'
              << "Messages in memory: " << context().size();
@@ -357,18 +351,8 @@ bool Server::handle_command(const std::string& input, Pipe& pipe_out) {
         return true;
     }
 
-    if (command.kind == CommandKind::model) {
-        if (command.argument.empty()) {
-            reply("Usage: .model MODEL");
-        } else {
-            model_ = command.argument;
-            reply("Model: " + model_, model_);
-        }
-        return true;
-    }
-
     if (command.kind != CommandKind::text) {
-        reply("Unknown command. Server commands: .clear, .info, .model MODEL. Local commands: .stop, .exit");
+        reply("Unknown command. Server commands: .clear, .info. Local commands: .stop, .exit");
         return true;
     }
 
@@ -381,7 +365,7 @@ void Server::complete(Pipe& pipe_out) {
     }
 
     Json body;
-    body["model"] = model_;
+    body["model"] = _config.model;
     body["stream"] = _config.stream;
     body["messages"] = Json::array();
     for (const Message& message : context()) {

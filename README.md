@@ -41,8 +41,7 @@ The system prompt file is loaded during server initialization. A missing or unre
 ## Commands
 
 - `.clear` clears conversation history while retaining the system prompt.
-- `.info` displays the endpoint, current model, streaming mode, and history size.
-- `.model MODEL` switches the model and clears conversation history.
+- `.info` displays the endpoint, configured model, streaming mode, and history size.
 - `.stop` cancels the active model response.
 - `.exit` exits the application.
 

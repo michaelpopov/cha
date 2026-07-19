@@ -47,9 +47,6 @@ void UserSession::receive_responses(Pipe& pipe_in) {
     while (pipe_in.try_get(response)) {
         if (response.kind == PipeEventKind::conversation_updated) {
             request_render();
-        } else if (response.kind == PipeEventKind::model_changed) {
-            _tui.set_model(response.data);
-            request_render();
         } else if (response.kind == PipeEventKind::closed) {
             _running = false;
             break;

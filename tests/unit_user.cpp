@@ -7,12 +7,10 @@ namespace cha {
 namespace {
 
 TEST(Command, ParsesCommands) {
-    const Command model = parse_command(".model\t replacement-model ");
-    EXPECT_EQ(model.kind, CommandKind::model);
-    EXPECT_EQ(model.argument, "replacement-model");
     EXPECT_EQ(parse_command(".stop").kind, CommandKind::stop);
     EXPECT_EQ(parse_command("Hello").kind, CommandKind::text);
     EXPECT_EQ(parse_command(".unknown").kind, CommandKind::unknown);
+    EXPECT_EQ(parse_command(".model other-model").kind, CommandKind::unknown);
 }
 
 TEST(InputEditor, EditsAndEncodesUnicodeInput) {

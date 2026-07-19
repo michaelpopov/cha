@@ -10,7 +10,6 @@ namespace cha {
 enum class PipeEventKind {
     data,
     conversation_updated,
-    model_changed,
     eom,
     closed,
 };
@@ -32,7 +31,6 @@ public:
 
     void put(std::string_view str);
     void conversation_updated();
-    void model_changed(std::string_view model);
     [[nodiscard]] PipeEvent get();
     [[nodiscard]] bool try_get(PipeEvent& event);
     void eom();

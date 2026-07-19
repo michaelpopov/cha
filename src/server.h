@@ -48,7 +48,6 @@ private:
     Conversation& _conversation;
     CURL* curl_{};
     std::string name_;
-    std::string model_;
     std::string system_prompt_;
     std::thread thread_;
 };
