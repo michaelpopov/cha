@@ -1,21 +1,17 @@
 #pragma once
 
-#include "config.h"
-
 #include <atomic>
+#include <string>
 
 namespace cha {
 
 class Pipe;
 
-class User {
-public:
-    User(const Config& config, std::atomic_bool& cancellation);
-    void run(Pipe& pipe_in, Pipe& pipe_out);
-
-private:
-    const Config& _config;
-    std::atomic_bool& _cancellation;
-};
+// A free function keeps the top-level user workflow stateless and easy to compose in main.
+void run_user(
+    const std::string& model,
+    std::atomic_bool& cancellation,
+    Pipe& pipe_in,
+    Pipe& pipe_out);
 
 } // namespace cha

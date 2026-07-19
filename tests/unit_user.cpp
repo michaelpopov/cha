@@ -1,22 +1,12 @@
 #include "command.h"
-#include "config.h"
 #include "input_editor.h"
 #include "text_layout.h"
 #include "transcript.h"
-#include "user.h"
 
 #include <gtest/gtest.h>
 
 namespace cha {
 namespace {
-
-TEST(User, ConstructsWithConfig) {
-    Config config{"localhost", 1234};
-    std::atomic_bool cancellation{false};
-    User user(config, cancellation);
-
-    SUCCEED();
-}
 
 TEST(Command, ParsesCommandsAndUsesServerModelConfirmation) {
     const Command model = parse_command(".model\t replacement-model ");

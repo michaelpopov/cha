@@ -56,6 +56,8 @@ add_library(cha_core
     src/transcript.cpp
     src/tui.cpp
     src/user.cpp
+    src/user_events.cpp
+    src/user_session.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)

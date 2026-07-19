@@ -23,10 +23,9 @@ int main() {
 
     try {
         cha::Server server(config, cancellation);
-        cha::User user(config, cancellation);
 
         server.run(pipe_user2server, pipe_server2user);
-        user.run(pipe_server2user, pipe_user2server);
+        cha::run_user(config.model, cancellation, pipe_server2user, pipe_user2server);
         server.join();
     } catch (const std::exception& error) {
         std::cerr << "Failed to start cha: " << error.what() << '\n';
