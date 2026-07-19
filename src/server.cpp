@@ -3,6 +3,7 @@
 #include "command.h"
 #include "conversation.h"
 #include "pipe.h"
+#include "server_context.h"
 
 #include <nlohmann/json.hpp>
 
@@ -91,13 +92,17 @@ void process_stream_event(std::string_view event, ResponseContext& context) {
             if (data == "[DONE]") {
                 context.done = true;
             } else if (!data.empty()) {
-                const Json value = Json::parse(data);
-                const Json::json_pointer content_pointer("/choices/0/delta/content");
+                try {
+                    const Json value = Json::parse(data);
+                    const Json::json_pointer content_pointer("/choices/0/delta/content");
 
-                if (value.contains(content_pointer) && value.at(content_pointer).is_string()) {
-                    const std::string content = value.at(content_pointer).get<std::string>();
-                    context.conversation->append_to_message(content);
-                    context.pipe->conversation_updated();
+                    if (value.contains(content_pointer) && value.at(content_pointer).is_string()) {
+                        const std::string content = value.at(content_pointer).get<std::string>();
+                        context.conversation->append_to_message(content);
+                        context.pipe->conversation_updated();
+                    }
+                } catch (const Json::parse_error&) {
+                    // A malformed event should not discard valid chunks elsewhere in the stream.
                 }
             }
         }
@@ -195,7 +200,7 @@ Server::Server(
 }
 
 Server::~Server() {
-    close();
+    stop();
 }
 
 void Server::run(Pipe& pipe_in, Pipe& pipe_out) {
@@ -203,13 +208,18 @@ void Server::run(Pipe& pipe_in, Pipe& pipe_out) {
         throw std::logic_error("Server is already running");
     }
 
+    input_ = &pipe_in;
     thread_ = std::thread(&Server::dialog, this, std::ref(pipe_in), std::ref(pipe_out));
 }
 
-void Server::close() {
+void Server::stop() {
     if (thread_.joinable()) {
+        const bool was_cancelled = _cancellation.exchange(true, std::memory_order_acq_rel);
+        input_->close();
         thread_.join();
+        _cancellation.store(was_cancelled, std::memory_order_release);
     }
+    input_ = nullptr;
 
     if (!curl_) {
         return;
@@ -220,8 +230,8 @@ void Server::close() {
 }
 
 void Server::dialog(Pipe& pipe_in, Pipe& pipe_out) {
-    try {
-        while (true) {
+    while (true) {
+        try {
             const PipeEvent input = pipe_in.get();
 
             if (input.kind == PipeEventKind::closed) {
@@ -260,69 +270,13 @@ void Server::dialog(Pipe& pipe_in, Pipe& pipe_out) {
                 pipe_out.conversation_updated();
             }
             pipe_out.eom();
-        }
-    } catch (const std::exception& error) {
-        _conversation.discard_message();
-        _conversation.add_message(std::string(system_author), "Error: " + std::string(error.what()));
-        pipe_out.conversation_updated();
-        pipe_out.eom();
-    }
-
-}
-
-std::vector<Server::Message> Server::context() const {
-    std::vector<Message> result;
-    if (!system_prompt_.empty()) {
-        result.push_back(Message{"system", system_prompt_});
-    }
-
-    const std::size_t system_messages = result.size();
-    bool skip_agent_reply = false;
-    ConversationSnapshot snapshot = _conversation.snapshot();
-    if (snapshot.message_open && !snapshot.messages.empty()) {
-        snapshot.messages.pop_back();
-    }
-
-    for (const ConversationMessage& message : snapshot.messages) {
-        if (message.author == system_author) {
-            if (result.size() > system_messages && result.back().role == "user") {
-                result.pop_back();
-            }
-            skip_agent_reply = false;
-            continue;
-        }
-
-        if (message.author == user_author) {
-            const Command command = parse_command(message.text);
-            if (command.kind == CommandKind::clear && command.argument.empty()) {
-                result.resize(system_messages);
-            }
-            if (command.kind != CommandKind::text) {
-                skip_agent_reply = true;
-                continue;
-            }
-
-            result.push_back(Message{"user", message.text});
-            skip_agent_reply = false;
-            continue;
-        }
-
-        if (skip_agent_reply) {
-            skip_agent_reply = false;
-            continue;
-        }
-        if (message.text.empty()) {
-            continue;
-        }
-
-        if (message.author == name_) {
-            result.push_back(Message{"assistant", message.text});
-        } else {
-            result.push_back(Message{"user", message.author + ": " + message.text});
+        } catch (const std::exception& error) {
+            _conversation.discard_message();
+            _conversation.add_message(std::string(system_author), "Error: " + std::string(error.what()));
+            pipe_out.conversation_updated();
+            pipe_out.eom();
         }
     }
-
-    return result;
 }
 
 bool Server::handle_command(const std::string& input, Pipe& pipe_out) {
@@ -346,7 +300,8 @@ bool Server::handle_command(const std::string& input, Pipe& pipe_out) {
         info << "Model: " << _config.model << '\n'
              << "API: " << endpoint() << '\n'
              << "Streaming: " << (_config.stream ? "yes" : "no") << '\n'
-             << "Messages in memory: " << context().size();
+             << "Messages in memory: "
+             << build_server_context(_conversation.snapshot(), system_prompt_, name_).size();
         reply(info.str());
         return true;
     }
@@ -368,7 +323,7 @@ void Server::complete(Pipe& pipe_out) {
     body["model"] = _config.model;
     body["stream"] = _config.stream;
     body["messages"] = Json::array();
-    for (const Message& message : context()) {
+    for (const ServerMessage& message : build_server_context(_conversation.snapshot(), system_prompt_, name_)) {
         body["messages"].push_back({
             {"role", message.role},
             {"content", message.content},
@@ -424,11 +379,11 @@ void Server::complete(Pipe& pipe_out) {
     require_curl(curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, headers.get()), "Failed to configure HTTP headers");
 
     const CURLcode perform_result = curl_easy_perform(curl_);
-    if (_cancellation.load(std::memory_order_acquire)) {
-        return;
-    }
     if (response.error) {
         std::rethrow_exception(response.error);
+    }
+    if (_cancellation.load(std::memory_order_acquire)) {
+        return;
     }
     if (perform_result != CURLE_OK) {
         throw std::runtime_error("HTTP request failed: " + std::string(curl_easy_strerror(perform_result)));

@@ -36,8 +36,13 @@ void Pipe::push(PipeEvent event) {
             return;
         }
 
-        messages_.push(std::move(event));
-        notify();
+        messages_.push_back(std::move(event));
+        try {
+            notify();
+        } catch (...) {
+            messages_.pop_back();
+            throw;
+        }
     }
 }
 
@@ -45,7 +50,7 @@ PipeEvent Pipe::get() {
     wait_for_notification();
     std::lock_guard lock(mutex_);
     PipeEvent event = std::move(messages_.front());
-    messages_.pop();
+    messages_.pop_front();
     return event;
 }
 
@@ -56,21 +61,12 @@ bool Pipe::try_get(PipeEvent& event) {
 
     std::lock_guard lock(mutex_);
     event = std::move(messages_.front());
-    messages_.pop();
+    messages_.pop_front();
     return true;
 }
 
 void Pipe::eom() {
-    {
-        std::lock_guard lock(mutex_);
-
-        if (closed_) {
-            return;
-        }
-
-        messages_.push(PipeEvent{PipeEventKind::eom, {}});
-        notify();
-    }
+    push(PipeEvent{PipeEventKind::eom, {}});
 }
 
 void Pipe::close() {
@@ -81,9 +77,14 @@ void Pipe::close() {
             return;
         }
 
+        messages_.push_back(PipeEvent{PipeEventKind::closed, {}});
+        try {
+            notify();
+        } catch (...) {
+            messages_.pop_back();
+            throw;
+        }
         closed_ = true;
-        messages_.push(PipeEvent{PipeEventKind::closed, {}});
-        notify();
     }
 }
 
@@ -93,7 +94,11 @@ int Pipe::notification_fd() const {
 
 void Pipe::notify() const {
     eventfd_t value = 1;
-    while (::eventfd_write(notification_fd_, value) == -1 && errno == EINTR) {
+    while (::eventfd_write(notification_fd_, value) == -1) {
+        if (errno == EINTR) {
+            continue;
+        }
+        throw std::system_error(errno, std::generic_category(), "Failed to signal pipe notification");
     }
 }
 

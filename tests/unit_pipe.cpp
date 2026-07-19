@@ -3,9 +3,12 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <limits>
 #include <future>
 #include <poll.h>
 #include <string>
+#include <system_error>
+#include <sys/eventfd.h>
 #include <thread>
 
 namespace cha {
@@ -70,6 +73,14 @@ TEST(Pipe, TryGetUsesPollableNotifications) {
 
     descriptor.revents = 0;
     EXPECT_EQ(::poll(&descriptor, 1, 0), 0);
+}
+
+TEST(Pipe, ReportsNotificationFailures) {
+    Pipe pipe;
+    const eventfd_t saturated = std::numeric_limits<eventfd_t>::max() - 1;
+    ASSERT_EQ(::eventfd_write(pipe.notification_fd(), saturated), 0);
+
+    EXPECT_THROW(pipe.put("cannot notify"), std::system_error);
 }
 
 } // namespace

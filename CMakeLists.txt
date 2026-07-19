@@ -55,6 +55,7 @@ add_library(cha_core
     src/input_editor.cpp
     src/pipe.cpp
     src/server.cpp
+    src/server_context.cpp
     src/tui.cpp
     src/user.cpp
     src/user_events.cpp
@@ -91,6 +92,7 @@ if(BUILD_TESTING)
         tests/unit_conversation.cpp
         tests/unit_pipe.cpp
         tests/unit_server.cpp
+        tests/unit_server_context.cpp
         tests/unit_user.cpp
     )
     target_link_libraries(cha_tests PRIVATE cha_core GTest::gtest_main)

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace cha {
 namespace {
@@ -20,13 +21,13 @@ constexpr int conversation_file_version = 1;
 
 } // namespace
 
-Conversation load_conversation_file(const std::filesystem::path& path) {
+std::vector<ConversationMessage> load_conversation_file(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         throw std::runtime_error("Failed to open conversation file '" + path.string() + "'");
     }
 
-    Conversation conversation;
+    std::vector<ConversationMessage> messages;
     std::string line;
     std::size_t line_number = 0;
     while (std::getline(file, line)) {
@@ -55,14 +56,18 @@ Conversation load_conversation_file(const std::filesystem::path& path) {
             || !record.contains("text") || !record.at("text").is_string()) {
             invalid_file(path, line_number, "invalid message record");
         }
-        conversation.add_message(record.at("author").get<std::string>(), record.at("text").get<std::string>());
+        std::string author = record.at("author").get<std::string>();
+        if (author.empty()) {
+            invalid_file(path, line_number, "message author cannot be empty");
+        }
+        messages.push_back({std::move(author), record.at("text").get<std::string>()});
     }
 
     if (line_number == 0) {
         invalid_file(path, 1, "missing header");
     }
 
-    return conversation;
+    return messages;
 }
 
 void save_conversation_file(const std::filesystem::path& path, const Conversation& conversation) {

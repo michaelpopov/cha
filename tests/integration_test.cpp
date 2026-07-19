@@ -57,8 +57,7 @@ ChatResult run_chat(bool stream) {
         result.response = messages.back().text;
     }
 
-    pipe_user2server.close();
-    server.close();
+    server.stop();
     return result;
 }
 
@@ -94,8 +93,7 @@ ChatResult run_cancelled_chat() {
         result.response = messages.back().text;
     }
 
-    pipe_user2server.close();
-    server.close();
+    server.stop();
     return result;
 }
 

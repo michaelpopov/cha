@@ -1,7 +1,7 @@
 #pragma once
 
+#include <deque>
 #include <mutex>
-#include <queue>
 #include <string>
 #include <string_view>
 
@@ -45,7 +45,7 @@ private:
 
     bool closed_{};
     mutable std::mutex mutex_;
-    std::queue<PipeEvent> messages_;
+    std::deque<PipeEvent> messages_;
     int notification_fd_{-1};
 };
 

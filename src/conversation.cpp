@@ -2,28 +2,8 @@
 
 #include <mutex>
 #include <stdexcept>
-#include <utility>
 
 namespace cha {
-
-Conversation::Conversation(Conversation&& other) noexcept {
-    std::lock_guard lock(other.mutex_);
-    messages_ = std::move(other.messages_);
-    revision_ = other.revision_;
-    message_open_ = other.message_open_;
-}
-
-Conversation& Conversation::operator=(Conversation&& other) noexcept {
-    if (this == &other) {
-        return *this;
-    }
-
-    std::scoped_lock lock(mutex_, other.mutex_);
-    messages_ = std::move(other.messages_);
-    revision_ = other.revision_;
-    message_open_ = other.message_open_;
-    return *this;
-}
 
 void Conversation::add_message(std::string author, std::string text) {
     std::lock_guard lock(mutex_);

@@ -30,8 +30,8 @@ public:
     Conversation() = default;
     Conversation(const Conversation&) = delete;
     Conversation& operator=(const Conversation&) = delete;
-    Conversation(Conversation&& other) noexcept;
-    Conversation& operator=(Conversation&& other) noexcept;
+    Conversation(Conversation&&) = delete;
+    Conversation& operator=(Conversation&&) = delete;
 
     void add_message(std::string author, std::string text);
     void begin_message(std::string author);

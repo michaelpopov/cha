@@ -198,8 +198,7 @@ TEST(Server, EchoesEachInputLineTwiceThenEndsTheMessage) {
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    pipe_in.close();
-    server.close();
+    server.stop();
 
     EXPECT_EQ(
         conversation.messages(),
@@ -227,13 +226,43 @@ TEST(Server, StoppingDoesNotCloseTheSharedOutputPipe) {
     Server server(config, cancellation, conversation);
 
     server.run(pipe_in, pipe_out);
-    pipe_in.close();
-    server.close();
+    server.stop();
 
     PipeEvent event{PipeEventKind::eom, {}};
     EXPECT_FALSE(pipe_out.try_get(event));
     pipe_out.conversation_updated();
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+}
+
+TEST(Server, ContinuesAfterAConversationStateError) {
+    Config config;
+    Pipe pipe_in;
+    Pipe pipe_out;
+    std::atomic_bool cancellation{false};
+    Conversation conversation;
+    Server server(config, cancellation, conversation);
+
+    server.run(pipe_in, pipe_out);
+    conversation.begin_message("Interrupted writer");
+    pipe_in.put("rejected");
+    pipe_in.eom();
+
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
+
+    send(conversation, pipe_in, "accepted");
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    server.stop();
+
+    EXPECT_EQ(
+        conversation.messages(),
+        (std::vector<ConversationMessage>{
+            {"System", "Error: A conversation message is already open"},
+            {"You", "accepted"},
+            {"Assistant", "acceptedaccepted"},
+        }));
 }
 
 TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
@@ -282,8 +311,7 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    pipe_in.close();
-    server.close();
+    server.stop();
     mock.join();
     std::filesystem::remove(prompt_path);
 
@@ -304,6 +332,41 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     EXPECT_EQ(second_request["messages"][2]["role"], "assistant");
     EXPECT_EQ(second_request["messages"][2]["content"], "Hello world");
     EXPECT_EQ(second_request["messages"][3]["content"], "Second question");
+}
+
+TEST(Server, SkipsMalformedStreamingEvents) {
+    const std::string stream =
+        "data: not-json\n\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Valid response\"}}]}\n\n"
+        "data: [DONE]\n\n";
+    MockHttpServer mock({http_response("text/event-stream", stream)});
+    mock.start();
+
+    Config config;
+    config.host = "127.0.0.1";
+    config.port = mock.port();
+    config.mode = Mode::net;
+    config.stream = true;
+
+    Pipe pipe_in;
+    Pipe pipe_out;
+    std::atomic_bool cancellation{false};
+    Conversation conversation;
+    Server server(config, cancellation, conversation);
+    server.run(pipe_in, pipe_out);
+
+    send(conversation, pipe_in, "Question");
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    server.stop();
+    mock.join();
+
+    EXPECT_EQ(
+        conversation.messages(),
+        (std::vector<ConversationMessage>{
+            {"You", "Question"},
+            {"Assistant", "Valid response"},
+        }));
 }
 
 TEST(Server, HandlesCommandsAndNonStreamingResponse) {
@@ -346,8 +409,7 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    pipe_in.close();
-    server.close();
+    server.stop();
     mock.join();
 
     ASSERT_EQ(mock.requests().size(), 1U);
@@ -383,8 +445,7 @@ TEST(Server, NamedInstancesUseOneSharedConversation) {
     send(conversation, first_input, "Draft an answer");
     EXPECT_EQ(first_output.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(first_output.get(), (PipeEvent{PipeEventKind::eom, {}}));
-    first_input.close();
-    writer.close();
+    writer.stop();
     first_mock.join();
 
     Config second_config = first_config;
@@ -398,8 +459,7 @@ TEST(Server, NamedInstancesUseOneSharedConversation) {
     send(conversation, second_input, "Review the draft");
     EXPECT_EQ(second_output.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(second_output.get(), (PipeEvent{PipeEventKind::eom, {}}));
-    second_input.close();
-    reviewer.close();
+    reviewer.stop();
     second_mock.join();
 
     ASSERT_EQ(second_mock.requests().size(), 1U);

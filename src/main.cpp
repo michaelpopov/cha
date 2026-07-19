@@ -28,7 +28,7 @@ int main() {
 
         server.run(pipe_user2server, pipe_server2user);
         cha::run_user(config.model, cancellation, conversation, pipe_server2user, pipe_user2server);
-        server.close();
+        server.stop();
         pipe_server2user.close();
     } catch (const std::exception& error) {
         std::cerr << "Failed to start cha: " << error.what() << '\n';

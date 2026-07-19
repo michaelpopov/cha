@@ -49,8 +49,7 @@ TEST(ConversationFile, RoundTripsASelfContainedGeneration) {
     conversation.add_message("Reviewer", "Hello back");
     save_conversation_file(path, conversation);
 
-    const Conversation loaded = load_conversation_file(path);
-    EXPECT_EQ(loaded.messages(), conversation.messages());
+    EXPECT_EQ(load_conversation_file(path), conversation.messages());
 
     std::filesystem::remove(path);
 }
