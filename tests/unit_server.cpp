@@ -193,7 +193,7 @@ TEST(Server, EchoesEachInputLineTwiceThenEndsTheMessage) {
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
     pipe_in.close();
-    server.join();
+    server.close();
 }
 
 TEST(Server, ConstructionDoesNotRequireANetworkConnection) {
@@ -250,7 +250,6 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
     pipe_in.close();
-    server.join();
     server.close();
     mock.join();
     std::filesystem::remove(prompt_path);
@@ -327,7 +326,6 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
     pipe_in.close();
-    server.join();
     server.close();
     mock.join();
 

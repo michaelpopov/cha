@@ -165,6 +165,7 @@ void require_curl(CURLcode result, std::string_view operation) {
 
 Server::Server(const Config& config, std::atomic_bool& cancellation)
     : _config(config), _cancellation(cancellation), model_(config.model) {
+
     if (!_config.system_prompt.empty()) {
         std::ifstream prompt_file(_config.system_prompt, std::ios::binary);
         if (!prompt_file) {
@@ -188,7 +189,6 @@ Server::Server(const Config& config, std::atomic_bool& cancellation)
 }
 
 Server::~Server() {
-    join();
     close();
 }
 
@@ -201,18 +201,16 @@ void Server::run(Pipe& pipe_in, Pipe& pipe_out) {
 }
 
 void Server::close() {
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+
     if (!curl_) {
         return;
     }
 
     curl_easy_cleanup(curl_);
     curl_ = nullptr;
-}
-
-void Server::join() {
-    if (thread_.joinable()) {
-        thread_.join();
-    }
 }
 
 void Server::dialog(Pipe& pipe_in, Pipe& pipe_out) {

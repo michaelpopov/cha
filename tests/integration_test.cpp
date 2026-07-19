@@ -48,7 +48,6 @@ ChatResult run_chat(bool stream) {
     }
 
     pipe_user2server.close();
-    server.join();
     server.close();
     return result;
 }
@@ -82,7 +81,6 @@ ChatResult run_cancelled_chat() {
     }
 
     pipe_user2server.close();
-    server.join();
     server.close();
     return result;
 }

@@ -22,8 +22,8 @@ public:
     Server& operator=(const Server&) = delete;
 
     void run(Pipe& pipe_in, Pipe& pipe_out);
+    // Waits for the worker, so callers must close its input pipe before closing the server.
     void close();
-    void join();
 
 private:
     struct Message {
