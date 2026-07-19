@@ -9,6 +9,8 @@ namespace cha {
 
 enum class PipeEventKind {
     data,
+    conversation_updated,
+    model_changed,
     eom,
     closed,
 };
@@ -29,6 +31,8 @@ public:
     Pipe& operator=(const Pipe&) = delete;
 
     void put(std::string_view str);
+    void conversation_updated();
+    void model_changed(std::string_view model);
     [[nodiscard]] PipeEvent get();
     [[nodiscard]] bool try_get(PipeEvent& event);
     void eom();
@@ -36,6 +40,7 @@ public:
     [[nodiscard]] int notification_fd() const;
 
 private:
+    void push(PipeEvent event);
     void notify() const;
     void wait_for_notification() const;
     [[nodiscard]] bool try_consume_notification() const;

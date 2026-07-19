@@ -50,10 +50,11 @@ FetchContent_MakeAvailable(tomlplusplus)
 add_library(cha_core
     src/command.cpp
     src/config.cpp
+    src/conversation.cpp
+    src/conversation_file.cpp
     src/input_editor.cpp
     src/pipe.cpp
     src/server.cpp
-    src/transcript.cpp
     src/tui.cpp
     src/user.cpp
     src/user_events.cpp
@@ -87,6 +88,7 @@ if(BUILD_TESTING)
 
     add_executable(cha_tests
         tests/unit_config.cpp
+        tests/unit_conversation.cpp
         tests/unit_pipe.cpp
         tests/unit_server.cpp
         tests/unit_user.cpp

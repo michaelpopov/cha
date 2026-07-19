@@ -1,4 +1,5 @@
 #include "config.h"
+#include "conversation.h"
 #include "pipe.h"
 #include "server.h"
 
@@ -30,21 +31,30 @@ ChatResult run_chat(bool stream) {
     Pipe pipe_user2server;
     Pipe pipe_server2user;
     std::atomic_bool cancellation{false};
-    Server server(config, cancellation);
+    Conversation conversation;
+    Server server(config, cancellation, conversation);
 
     server.run(pipe_user2server, pipe_server2user);
 
-    pipe_user2server.put("Reply with one short sentence confirming that the connection works.");
+    const std::string input = "Reply with one short sentence confirming that the connection works.";
+    conversation.add_message(std::string(user_author), input);
+    pipe_user2server.put(input);
     pipe_user2server.eom();
 
     ChatResult result;
     while (true) {
         const PipeEvent event = pipe_server2user.get();
-        if (event.kind != PipeEventKind::data) {
+        if (event.kind == PipeEventKind::eom) {
             break;
         }
-        result.response += event.data;
-        ++result.chunks;
+        if (event.kind == PipeEventKind::conversation_updated) {
+            ++result.chunks;
+        }
+    }
+
+    const auto messages = conversation.messages();
+    if (!messages.empty()) {
+        result.response = messages.back().text;
     }
 
     pipe_user2server.close();
@@ -57,27 +67,31 @@ ChatResult run_cancelled_chat() {
     Pipe pipe_user2server;
     Pipe pipe_server2user;
     std::atomic_bool cancellation{false};
-    Server server(config, cancellation);
+    Conversation conversation;
+    Server server(config, cancellation, conversation);
 
     server.run(pipe_user2server, pipe_server2user);
 
-    pipe_user2server.put("Write a detailed essay of at least two thousand words about distributed systems.");
+    const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
+    conversation.add_message(std::string(user_author), input);
+    pipe_user2server.put(input);
     pipe_user2server.eom();
 
     ChatResult result;
-    const PipeEvent first_chunk = pipe_server2user.get();
-    if (first_chunk.kind == PipeEventKind::data) {
-        result.response += first_chunk.data;
-        ++result.chunks;
-        cancellation.store(true, std::memory_order_release);
-        while (true) {
-            const PipeEvent event = pipe_server2user.get();
-            if (event.kind != PipeEventKind::data) {
-                break;
-            }
-            result.response += event.data;
-            ++result.chunks;
+    while (true) {
+        const PipeEvent event = pipe_server2user.get();
+        if (event.kind == PipeEventKind::eom) {
+            break;
         }
+        if (event.kind == PipeEventKind::conversation_updated) {
+            ++result.chunks;
+            cancellation.store(true, std::memory_order_release);
+        }
+    }
+
+    const auto messages = conversation.messages();
+    if (!messages.empty()) {
+        result.response = messages.back().text;
     }
 
     pipe_user2server.close();

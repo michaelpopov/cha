@@ -31,6 +31,15 @@ TEST(Pipe, EmitsEndOfMessageMarker) {
     EXPECT_EQ(pipe.get(), (PipeEvent{PipeEventKind::eom, {}}));
 }
 
+TEST(Pipe, DeliversConversationAndModelEventsWithoutMessageContent) {
+    Pipe pipe;
+    pipe.conversation_updated();
+    pipe.model_changed("new-model");
+
+    EXPECT_EQ(pipe.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe.get(), (PipeEvent{PipeEventKind::model_changed, "new-model"}));
+}
+
 TEST(Pipe, CloseUnblocksAWaitingReader) {
     Pipe pipe;
     std::promise<PipeEvent> result_promise;

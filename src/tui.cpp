@@ -71,16 +71,8 @@ int layout_rows(std::wstring_view text, int columns, int initial_cells = 0) {
     return result;
 }
 
-std::string speaker_label(Speaker speaker) {
-    switch (speaker) {
-    case Speaker::user:
-        return "You: ";
-    case Speaker::assistant:
-        return "Assistant: ";
-    case Speaker::system:
-        return "System: ";
-    }
-    return {};
+std::string message_label(const ConversationMessage& message) {
+    return message.author + ": ";
 }
 
 void write_status(std::string_view text, int row, int columns) {
@@ -148,7 +140,7 @@ int Tui::read_key(wint_t& key) {
     return wget_wch(stdscr, &key);
 }
 
-void Tui::render(const Transcript& transcript, const InputEditor& editor, bool generating, std::string_view notice) {
+void Tui::render(const Conversation& conversation, const InputEditor& editor, bool generating, std::string_view notice) {
     int rows = 0;
     int columns = 0;
     getmaxyx(stdscr, rows, columns);
@@ -190,7 +182,7 @@ void Tui::render(const Transcript& transcript, const InputEditor& editor, bool g
     mvaddch(input_y + input_height - 1, columns - 1, ACS_LRCORNER);
 
     wnoutrefresh(stdscr);
-    render_transcript(transcript, output_height, columns);
+    render_transcript(conversation.snapshot(), output_height, columns);
     render_input(editor, input_y, input_height, columns);
     doupdate();
 }
@@ -238,50 +230,50 @@ void Tui::ensure_transcript_capacity(int required_rows) {
     transcript_capacity_ = capacity;
 }
 
-void Tui::write_transcript_entry(const TranscriptEntry& entry) {
+void Tui::write_transcript_entry(const ConversationMessage& message) {
     wattron(transcript_pad_, A_BOLD);
-    const std::string label = speaker_label(entry.speaker);
+    const std::string label = message_label(message);
     waddstr(transcript_pad_, label.c_str());
     wattroff(transcript_pad_, A_BOLD);
-    waddstr(transcript_pad_, entry.text.c_str());
+    waddstr(transcript_pad_, message.text.c_str());
     getyx(transcript_pad_, rendered_last_content_y_, rendered_last_content_x_);
     waddstr(transcript_pad_, "\n\n");
 }
 
-void Tui::rebuild_transcript(const Transcript& transcript, int output_height, int columns) {
+void Tui::rebuild_transcript(const ConversationSnapshot& snapshot, int output_height, int columns) {
     int estimated_rows = output_height + 4;
-    for (const TranscriptEntry& entry : transcript.entries()) {
-        const std::string rendered_entry = speaker_label(entry.speaker) + entry.text + "\n\n";
+    for (const ConversationMessage& message : snapshot.messages) {
+        const std::string rendered_entry = message_label(message) + message.text + "\n\n";
         estimated_rows += layout_rows(rendered_entry, columns);
     }
     replace_pad(transcript_pad_, estimated_rows, columns);
     transcript_capacity_ = estimated_rows;
     transcript_columns_ = columns;
 
-    for (const TranscriptEntry& entry : transcript.entries()) {
-        write_transcript_entry(entry);
+    for (const ConversationMessage& message : snapshot.messages) {
+        write_transcript_entry(message);
     }
 
-    rendered_revision_ = transcript.revision();
-    rendered_entry_count_ = transcript.entries().size();
-    rendered_last_text_size_ = transcript.entries().empty() ? 0 : transcript.entries().back().text.size();
+    rendered_revision_ = snapshot.revision;
+    rendered_entry_count_ = snapshot.messages.size();
+    rendered_last_text_size_ = snapshot.messages.empty() ? 0 : snapshot.messages.back().text.size();
 }
 
-void Tui::render_transcript(const Transcript& transcript, int output_height, int columns) {
+void Tui::render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns) {
     // Preserve the existing pad when streamed output can be appended safely, avoiding full redraws.
-    const auto& entries = transcript.entries();
+    const auto& entries = snapshot.messages;
     if (!transcript_pad_ || transcript_columns_ != columns || entries.size() < rendered_entry_count_) {
-        rebuild_transcript(transcript, output_height, columns);
-    } else if (rendered_revision_ != transcript.revision()) {
+        rebuild_transcript(snapshot, output_height, columns);
+    } else if (rendered_revision_ != snapshot.revision) {
         int tail_y = 0;
         int tail_x = 0;
         std::size_t first_new_entry = 0;
         std::string previous_entry_suffix;
 
         if (rendered_entry_count_ > 0) {
-            const TranscriptEntry& previous_last = entries[rendered_entry_count_ - 1];
+            const ConversationMessage& previous_last = entries[rendered_entry_count_ - 1];
             if (previous_last.text.size() < rendered_last_text_size_) {
-                rebuild_transcript(transcript, output_height, columns);
+                rebuild_transcript(snapshot, output_height, columns);
             } else {
                 tail_y = rendered_last_content_y_;
                 tail_x = rendered_last_content_x_;
@@ -290,13 +282,13 @@ void Tui::render_transcript(const Transcript& transcript, int output_height, int
             }
         }
 
-        if (rendered_revision_ != transcript.revision()) {
+        if (rendered_revision_ != snapshot.revision) {
             std::string rendered_tail = previous_entry_suffix;
             if (rendered_entry_count_ > 0) {
                 rendered_tail += "\n\n";
             }
             for (std::size_t index = first_new_entry; index < entries.size(); ++index) {
-                rendered_tail += speaker_label(entries[index].speaker);
+                rendered_tail += message_label(entries[index]);
                 rendered_tail += entries[index].text;
                 rendered_tail += "\n\n";
             }
@@ -315,7 +307,7 @@ void Tui::render_transcript(const Transcript& transcript, int output_height, int
                 write_transcript_entry(entries[index]);
             }
 
-            rendered_revision_ = transcript.revision();
+            rendered_revision_ = snapshot.revision;
             rendered_entry_count_ = entries.size();
             rendered_last_text_size_ = entries.empty() ? 0 : entries.back().text.size();
         }

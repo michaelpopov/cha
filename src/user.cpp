@@ -9,10 +9,11 @@ namespace cha {
 void run_user(
     const std::string& model,
     std::atomic_bool& cancellation,
+    Conversation& conversation,
     Pipe& pipe_in,
     Pipe& pipe_out) {
 
-    UserSession session(model, cancellation);
+    UserSession session(model, cancellation, conversation);
     session.render();
 
     while (session.running()) {

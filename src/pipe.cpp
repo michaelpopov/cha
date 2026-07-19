@@ -21,6 +21,18 @@ Pipe::~Pipe() {
 }
 
 void Pipe::put(std::string_view str) {
+    push(PipeEvent{PipeEventKind::data, std::string(str)});
+}
+
+void Pipe::conversation_updated() {
+    push(PipeEvent{PipeEventKind::conversation_updated, {}});
+}
+
+void Pipe::model_changed(std::string_view model) {
+    push(PipeEvent{PipeEventKind::model_changed, std::string(model)});
+}
+
+void Pipe::push(PipeEvent event) {
     {
         std::lock_guard lock(mutex_);
 
@@ -28,7 +40,7 @@ void Pipe::put(std::string_view str) {
             return;
         }
 
-        messages_.push(PipeEvent{PipeEventKind::data, std::string(str)});
+        messages_.push(std::move(event));
         notify();
     }
 }

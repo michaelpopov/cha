@@ -1,7 +1,7 @@
 #pragma once
 
+#include "conversation.h"
 #include "input_editor.h"
-#include "transcript.h"
 
 #include <curses.h>
 
@@ -20,7 +20,7 @@ public:
     Tui& operator=(const Tui&) = delete;
 
     [[nodiscard]] int read_key(wint_t& key);
-    void render(const Transcript& transcript, const InputEditor& editor, bool generating, std::string_view notice = {});
+    void render(const Conversation& conversation, const InputEditor& editor, bool generating, std::string_view notice = {});
     void set_model(std::string model);
     void scroll_up();
     void scroll_down();
@@ -29,9 +29,9 @@ public:
 private:
     void replace_pad(WINDOW*& pad, int rows, int columns);
     void ensure_transcript_capacity(int required_rows);
-    void rebuild_transcript(const Transcript& transcript, int output_height, int columns);
-    void write_transcript_entry(const TranscriptEntry& entry);
-    void render_transcript(const Transcript& transcript, int output_height, int columns);
+    void rebuild_transcript(const ConversationSnapshot& snapshot, int output_height, int columns);
+    void write_transcript_entry(const ConversationMessage& message);
+    void render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns);
     void render_input(const InputEditor& editor, int input_y, int input_height, int columns);
 
     std::string model_;

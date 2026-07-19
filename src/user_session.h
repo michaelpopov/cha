@@ -1,7 +1,7 @@
 #pragma once
 
+#include "conversation.h"
 #include "input_editor.h"
-#include "transcript.h"
 #include "tui.h"
 
 #include <atomic>
@@ -15,7 +15,7 @@ class Pipe;
 // Own all mutable state for one interactive run so callers use cohesive session operations.
 class UserSession {
 public:
-    UserSession(const std::string& model, std::atomic_bool& cancellation);
+    UserSession(const std::string& model, std::atomic_bool& cancellation, Conversation& conversation);
 
     [[nodiscard]] bool running() const;
     void render();
@@ -35,14 +35,12 @@ private:
     void request_stop();
 
     Tui _tui;
-    Transcript _transcript;
     InputEditor _editor;
     std::atomic_bool& _cancellation;
+    Conversation& _conversation;
     bool _generating{false};
     bool _running{true};
-    bool _awaiting_model_confirmation{false};
     bool _render_needed{false};
-    std::string _command_reply;
     std::string _notice;
 };
 

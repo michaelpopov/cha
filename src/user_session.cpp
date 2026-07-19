@@ -9,8 +9,8 @@
 namespace cha {
 
 // Coalesce session mutations behind this class so rendering happens consistently and only when needed.
-UserSession::UserSession(const std::string& model, std::atomic_bool& cancellation)
-  : _tui(model), _cancellation(cancellation) {
+UserSession::UserSession(const std::string& model, std::atomic_bool& cancellation, Conversation& conversation)
+  : _tui(model), _cancellation(cancellation), _conversation(conversation) {
 }
 
 bool UserSession::running() const {
@@ -18,7 +18,7 @@ bool UserSession::running() const {
 }
 
 void UserSession::render() {
-    _tui.render(_transcript, _editor, _generating, _notice);
+    _tui.render(_conversation, _editor, _generating, _notice);
     _render_needed = false;
 }
 
@@ -38,28 +38,25 @@ void UserSession::close_terminal() {
 }
 
 void UserSession::report_terminal_failure() {
-    _transcript.add_system("Terminal input failed.");
+    _notice = "Terminal input failed.";
     request_render();
 }
 
 void UserSession::receive_responses(Pipe& pipe_in) {
     PipeEvent response{PipeEventKind::eom, {}};
     while (pipe_in.try_get(response)) {
-        request_render();
-        if (response.kind == PipeEventKind::data) {
-            _transcript.append_assistant(response.data);
-            if (_awaiting_model_confirmation) {
-                _command_reply += response.data;
-            }
-            continue;
-        }
-
-        if (response.kind == PipeEventKind::closed) {
+        if (response.kind == PipeEventKind::conversation_updated) {
+            request_render();
+        } else if (response.kind == PipeEventKind::model_changed) {
+            _tui.set_model(response.data);
+            request_render();
+        } else if (response.kind == PipeEventKind::closed) {
             _running = false;
             break;
+        } else if (response.kind == PipeEventKind::eom) {
+            finish_generation();
+            request_render();
         }
-
-        finish_generation();
     }
 }
 
@@ -159,10 +156,7 @@ void UserSession::submit_input(Pipe& pipe_out) {
     }
 
     _cancellation.store(false, std::memory_order_release);
-    _awaiting_model_confirmation = command.kind == CommandKind::model && !command.argument.empty();
-    _command_reply.clear();
-    _transcript.add_user(input);
-    _transcript.begin_assistant();
+    _conversation.add_message(std::string(user_author), input);
     pipe_out.put(input);
     pipe_out.eom();
     _generating = true;
@@ -170,15 +164,6 @@ void UserSession::submit_input(Pipe& pipe_out) {
 }
 
 void UserSession::finish_generation() {
-    _transcript.finish_assistant();
-    if (_awaiting_model_confirmation) {
-        if (const auto model = confirmed_model(_command_reply)) {
-            _tui.set_model(*model);
-        }
-        _awaiting_model_confirmation = false;
-        _command_reply.clear();
-    }
-
     _generating = false;
     _notice = _cancellation.load(std::memory_order_acquire) ? "Generation stopped" : "";
     _cancellation.store(false, std::memory_order_release);

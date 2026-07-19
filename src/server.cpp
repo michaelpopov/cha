@@ -1,6 +1,7 @@
 #include "server.h"
 
 #include "command.h"
+#include "conversation.h"
 #include "pipe.h"
 
 #include <nlohmann/json.hpp>
@@ -46,11 +47,11 @@ constexpr std::size_t max_streaming_error_body_size = 64 * 1024;
 
 struct ResponseContext {
     Pipe* pipe{};
+    Conversation* conversation{};
     bool streaming{};
     bool done{};
     std::string body;
     std::string pending;
-    std::string output;
     std::exception_ptr error;
 };
 
@@ -95,8 +96,8 @@ void process_stream_event(std::string_view event, ResponseContext& context) {
 
                 if (value.contains(content_pointer) && value.at(content_pointer).is_string()) {
                     const std::string content = value.at(content_pointer).get<std::string>();
-                    context.pipe->put(content);
-                    context.output += content;
+                    context.conversation->append_to_message(content);
+                    context.pipe->conversation_updated();
                 }
             }
         }
@@ -163,8 +164,16 @@ void require_curl(CURLcode result, std::string_view operation) {
 
 } // namespace
 
-Server::Server(const Config& config, std::atomic_bool& cancellation)
-    : _config(config), _cancellation(cancellation), model_(config.model) {
+Server::Server(
+    const Config& config,
+    std::atomic_bool& cancellation,
+    Conversation& conversation,
+    std::string name)
+    : _config(config),
+      _cancellation(cancellation),
+      _conversation(conversation),
+      name_(std::move(name)),
+      model_(config.model) {
 
     if (!_config.system_prompt.empty()) {
         std::ifstream prompt_file(_config.system_prompt, std::ios::binary);
@@ -176,8 +185,6 @@ Server::Server(const Config& config, std::atomic_bool& cancellation)
         contents << prompt_file.rdbuf();
         system_prompt_ = contents.str();
     }
-
-    reset_history();
 
     if (_config.mode == Mode::net) {
         (void)curl_global();
@@ -224,10 +231,17 @@ void Server::dialog(Pipe& pipe_in, Pipe& pipe_out) {
             if (input.kind == PipeEventKind::eom) {
                 continue;
             }
+            if (input.kind != PipeEventKind::data) {
+                continue;
+            }
 
             if (_config.mode == Mode::test) {
-                pipe_out.put(input.data);
-                pipe_out.put(input.data);
+                _conversation.begin_message(name_);
+                _conversation.append_to_message(input.data);
+                pipe_out.conversation_updated();
+                _conversation.append_to_message(input.data);
+                pipe_out.conversation_updated();
+                _conversation.finish_message();
                 pipe_out.eom();
                 continue;
             }
@@ -236,40 +250,100 @@ void Server::dialog(Pipe& pipe_in, Pipe& pipe_out) {
                 continue;
             }
 
-            messages_.push_back(Message{"user", input.data});
+            _conversation.begin_message(name_);
             try {
-                const std::string output = complete(pipe_out);
-                if (!output.empty()) {
-                    messages_.push_back(Message{"assistant", output});
-                }
+                complete(pipe_out);
+                _conversation.finish_message();
             } catch (const std::exception& error) {
-                messages_.pop_back();
-                pipe_out.put("Error: " + std::string(error.what()));
+                _conversation.discard_message();
+                const std::string message = "Error: " + std::string(error.what());
+                _conversation.add_message(std::string(system_author), message);
+                pipe_out.conversation_updated();
             }
             pipe_out.eom();
         }
     } catch (const std::exception& error) {
-        pipe_out.put("Error: " + std::string(error.what()));
+        _conversation.discard_message();
+        _conversation.add_message(std::string(system_author), "Error: " + std::string(error.what()));
+        pipe_out.conversation_updated();
         pipe_out.eom();
     }
 
     pipe_out.close();
 }
 
-void Server::reset_history() {
-    messages_.clear();
+std::vector<Server::Message> Server::context() const {
+    std::vector<Message> result;
     if (!system_prompt_.empty()) {
-        messages_.push_back(Message{"system", system_prompt_});
+        result.push_back(Message{"system", system_prompt_});
     }
+
+    const std::size_t system_messages = result.size();
+    bool skip_agent_reply = false;
+    ConversationSnapshot snapshot = _conversation.snapshot();
+    if (snapshot.message_open && !snapshot.messages.empty()) {
+        snapshot.messages.pop_back();
+    }
+
+    for (const ConversationMessage& message : snapshot.messages) {
+        if (message.author == system_author) {
+            if (result.size() > system_messages && result.back().role == "user") {
+                result.pop_back();
+            }
+            skip_agent_reply = false;
+            continue;
+        }
+
+        if (message.author == user_author) {
+            const Command command = parse_command(message.text);
+            if ((command.kind == CommandKind::clear && command.argument.empty())
+                || (command.kind == CommandKind::model && !command.argument.empty())) {
+                result.resize(system_messages);
+            }
+            if (command.kind != CommandKind::text) {
+                skip_agent_reply = true;
+                continue;
+            }
+
+            result.push_back(Message{"user", message.text});
+            skip_agent_reply = false;
+            continue;
+        }
+
+        if (skip_agent_reply) {
+            skip_agent_reply = false;
+            continue;
+        }
+        if (message.text.empty()) {
+            continue;
+        }
+
+        if (message.author == name_) {
+            result.push_back(Message{"assistant", message.text});
+        } else {
+            result.push_back(Message{"user", message.author + ": " + message.text});
+        }
+    }
+
+    return result;
 }
 
 bool Server::handle_command(const std::string& input, Pipe& pipe_out) {
     const Command command = parse_command(input);
 
-    if (command.kind == CommandKind::clear && command.argument.empty()) {
-        reset_history();
-        pipe_out.put("Conversation cleared.");
+    const auto reply = [&](std::string text, std::string_view changed_model = {}) {
+        _conversation.begin_message(name_);
+        _conversation.append_to_message(text);
+        _conversation.finish_message();
+        pipe_out.conversation_updated();
+        if (!changed_model.empty()) {
+            pipe_out.model_changed(changed_model);
+        }
         pipe_out.eom();
+    };
+
+    if (command.kind == CommandKind::clear && command.argument.empty()) {
+        reply("Conversation cleared.");
         return true;
     }
 
@@ -278,34 +352,30 @@ bool Server::handle_command(const std::string& input, Pipe& pipe_out) {
         info << "Model: " << model_ << '\n'
              << "API: " << endpoint() << '\n'
              << "Streaming: " << (_config.stream ? "yes" : "no") << '\n'
-             << "Messages in memory: " << messages_.size();
-        pipe_out.put(info.str());
-        pipe_out.eom();
+             << "Messages in memory: " << context().size();
+        reply(info.str());
         return true;
     }
 
     if (command.kind == CommandKind::model) {
         if (command.argument.empty()) {
-            pipe_out.put("Usage: .model MODEL");
+            reply("Usage: .model MODEL");
         } else {
             model_ = command.argument;
-            reset_history();
-            pipe_out.put("Model: " + model_);
+            reply("Model: " + model_, model_);
         }
-        pipe_out.eom();
         return true;
     }
 
     if (command.kind != CommandKind::text) {
-        pipe_out.put("Unknown command. Server commands: .clear, .info, .model MODEL. Local commands: .stop, .exit");
-        pipe_out.eom();
+        reply("Unknown command. Server commands: .clear, .info, .model MODEL. Local commands: .stop, .exit");
         return true;
     }
 
     return false;
 }
 
-std::string Server::complete(Pipe& pipe_out) {
+void Server::complete(Pipe& pipe_out) {
     if (!curl_) {
         throw std::runtime_error("Server HTTP client is closed");
     }
@@ -314,7 +384,7 @@ std::string Server::complete(Pipe& pipe_out) {
     body["model"] = model_;
     body["stream"] = _config.stream;
     body["messages"] = Json::array();
-    for (const Message& message : messages_) {
+    for (const Message& message : context()) {
         body["messages"].push_back({
             {"role", message.role},
             {"content", message.content},
@@ -327,6 +397,7 @@ std::string Server::complete(Pipe& pipe_out) {
     const std::string request_body = body.dump();
     ResponseContext response{
         .pipe = &pipe_out,
+        .conversation = &_conversation,
         .streaming = _config.stream,
     };
 
@@ -370,7 +441,7 @@ std::string Server::complete(Pipe& pipe_out) {
 
     const CURLcode perform_result = curl_easy_perform(curl_);
     if (_cancellation.load(std::memory_order_acquire)) {
-        return response.output;
+        return;
     }
     if (response.error) {
         std::rethrow_exception(response.error);
@@ -390,7 +461,7 @@ std::string Server::complete(Pipe& pipe_out) {
             process_stream_event(response.pending, response);
             response.pending.clear();
         }
-        return response.output;
+        return;
     }
 
     const Json value = Json::parse(response.body);
@@ -400,8 +471,8 @@ std::string Server::complete(Pipe& pipe_out) {
     }
 
     const std::string output = value.at(content_pointer).get<std::string>();
-    pipe_out.put(output);
-    return output;
+    _conversation.append_to_message(output);
+    pipe_out.conversation_updated();
 }
 
 std::string Server::base_url() const {

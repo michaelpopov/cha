@@ -11,11 +11,16 @@
 
 namespace cha {
 
+class Conversation;
 class Pipe;
 
 class Server {
 public:
-    Server(const Config& config, std::atomic_bool& cancellation);
+    Server(
+        const Config& config,
+        std::atomic_bool& cancellation,
+        Conversation& conversation,
+        std::string name = "Assistant");
     ~Server();
 
     Server(const Server&) = delete;
@@ -32,18 +37,19 @@ private:
     };
 
     void dialog(Pipe& pipe_in, Pipe& pipe_out);
-    void reset_history();
+    [[nodiscard]] std::vector<Message> context() const;
     [[nodiscard]] bool handle_command(const std::string& input, Pipe& pipe_out);
-    [[nodiscard]] std::string complete(Pipe& pipe_out);
+    void complete(Pipe& pipe_out);
     [[nodiscard]] std::string base_url() const;
     [[nodiscard]] std::string endpoint() const;
 
     const Config& _config;
     std::atomic_bool& _cancellation;
+    Conversation& _conversation;
     CURL* curl_{};
+    std::string name_;
     std::string model_;
     std::string system_prompt_;
-    std::vector<Message> messages_;
     std::thread thread_;
 };
 

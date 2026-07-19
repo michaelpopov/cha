@@ -1,4 +1,5 @@
 #include "config.h"
+#include "conversation.h"
 #include "pipe.h"
 #include "server.h"
 
@@ -170,36 +171,51 @@ std::string request_body(const std::string& request) {
     return request.substr(body_start + 4);
 }
 
+void send(Conversation& conversation, Pipe& pipe, std::string_view input) {
+    conversation.add_message(std::string(user_author), std::string(input));
+    pipe.put(input);
+    pipe.eom();
+}
+
 TEST(Server, EchoesEachInputLineTwiceThenEndsTheMessage) {
     Config config;
     Pipe pipe_in;
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
-    Server server(config, cancellation);
+    Conversation conversation;
+    Server server(config, cancellation, conversation);
 
     server.run(pipe_in, pipe_out);
-    pipe_in.put("hello");
-    pipe_in.eom();
+    send(conversation, pipe_in, "hello");
 
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, "hello"}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, "hello"}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    pipe_in.put("again");
-    pipe_in.eom();
+    send(conversation, pipe_in, "again");
 
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, "again"}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, "again"}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
     pipe_in.close();
     server.close();
+
+    EXPECT_EQ(
+        conversation.messages(),
+        (std::vector<ConversationMessage>{
+            {"You", "hello"},
+            {"Assistant", "hellohello"},
+            {"You", "again"},
+            {"Assistant", "againagain"},
+        }));
 }
 
 TEST(Server, ConstructionDoesNotRequireANetworkConnection) {
     Config config{"127.0.0.1", 1, Mode::net};
     std::atomic_bool cancellation{false};
-    EXPECT_NO_THROW({ Server server(config, cancellation); });
+    Conversation conversation;
+    EXPECT_NO_THROW({ Server server(config, cancellation, conversation); });
 }
 
 TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
@@ -235,18 +251,17 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     Pipe pipe_in;
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
-    Server server(config, cancellation);
+    Conversation conversation;
+    Server server(config, cancellation, conversation);
     server.run(pipe_in, pipe_out);
 
-    pipe_in.put("First question");
-    pipe_in.eom();
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, "Hello"}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, " world"}));
+    send(conversation, pipe_in, "First question");
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    pipe_in.put("Second question");
-    pipe_in.eom();
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, "Again"}));
+    send(conversation, pipe_in, "Second question");
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
     pipe_in.close();
@@ -288,41 +303,34 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     Pipe pipe_in;
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
-    Server server(config, cancellation);
+    Conversation conversation;
+    Server server(config, cancellation, conversation);
     server.run(pipe_in, pipe_out);
 
-    pipe_in.put(".model replacement-model");
-    pipe_in.eom();
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, "Model: replacement-model"}));
+    send(conversation, pipe_in, ".model replacement-model");
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::model_changed, "replacement-model"}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    pipe_in.put(".info");
-    pipe_in.eom();
+    send(conversation, pipe_in, ".info");
     const PipeEvent info = pipe_out.get();
-    ASSERT_EQ(info.kind, PipeEventKind::data);
-    EXPECT_NE(info.data.find("Model: replacement-model"), std::string::npos);
-    EXPECT_NE(info.data.find("Streaming: no"), std::string::npos);
+    ASSERT_EQ(info.kind, PipeEventKind::conversation_updated);
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    const auto messages_after_info = conversation.messages();
+    ASSERT_FALSE(messages_after_info.empty());
+    EXPECT_NE(messages_after_info.back().text.find("Model: replacement-model"), std::string::npos);
+    EXPECT_NE(messages_after_info.back().text.find("Streaming: no"), std::string::npos);
+
+    send(conversation, pipe_in, "Question");
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    pipe_in.put("Question");
-    pipe_in.eom();
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, "Complete answer"}));
+    send(conversation, pipe_in, ".clear");
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    pipe_in.put(".clear");
-    pipe_in.eom();
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::data, "Conversation cleared."}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-
-    pipe_in.put(".unknown");
-    pipe_in.eom();
-    EXPECT_EQ(
-        pipe_out.get(),
-        (PipeEvent{
-            PipeEventKind::data,
-            "Unknown command. Server commands: .clear, .info, .model MODEL. Local commands: .stop, .exit"
-        })
-    );
+    send(conversation, pipe_in, ".unknown");
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
     pipe_in.close();
@@ -335,6 +343,67 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     EXPECT_FALSE(request["stream"]);
     ASSERT_EQ(request["messages"].size(), 1U);
     EXPECT_EQ(request["messages"][0]["content"], "Question");
+}
+
+TEST(Server, NamedInstancesUseOneSharedConversation) {
+    const std::string first_body = R"({"choices":[{"message":{"content":"Initial answer"}}]})";
+    const std::string second_body = R"({"choices":[{"message":{"content":"Reviewed answer"}}]})";
+    MockHttpServer first_mock({http_response("application/json", first_body)});
+    MockHttpServer second_mock({http_response("application/json", second_body)});
+    first_mock.start();
+    second_mock.start();
+
+    Conversation conversation;
+    std::atomic_bool cancellation{false};
+
+    Config first_config;
+    first_config.host = "127.0.0.1";
+    first_config.port = first_mock.port();
+    first_config.mode = Mode::net;
+    first_config.model = "writer-model";
+    first_config.stream = false;
+
+    Pipe first_input;
+    Pipe first_output;
+    Server writer(first_config, cancellation, conversation, "Writer");
+    writer.run(first_input, first_output);
+    send(conversation, first_input, "Draft an answer");
+    EXPECT_EQ(first_output.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(first_output.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    first_input.close();
+    writer.close();
+    first_mock.join();
+
+    Config second_config = first_config;
+    second_config.port = second_mock.port();
+    second_config.model = "reviewer-model";
+
+    Pipe second_input;
+    Pipe second_output;
+    Server reviewer(second_config, cancellation, conversation, "Reviewer");
+    reviewer.run(second_input, second_output);
+    send(conversation, second_input, "Review the draft");
+    EXPECT_EQ(second_output.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(second_output.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    second_input.close();
+    reviewer.close();
+    second_mock.join();
+
+    ASSERT_EQ(second_mock.requests().size(), 1U);
+    const Json request = Json::parse(request_body(second_mock.requests()[0]));
+    ASSERT_EQ(request["messages"].size(), 3U);
+    EXPECT_EQ(request["messages"][0]["content"], "Draft an answer");
+    EXPECT_EQ(request["messages"][1]["content"], "Writer: Initial answer");
+    EXPECT_EQ(request["messages"][2]["content"], "Review the draft");
+
+    EXPECT_EQ(
+        conversation.messages(),
+        (std::vector<ConversationMessage>{
+            {"You", "Draft an answer"},
+            {"Writer", "Initial answer"},
+            {"You", "Review the draft"},
+            {"Reviewer", "Reviewed answer"},
+        }));
 }
 
 } // namespace

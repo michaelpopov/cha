@@ -41,12 +41,4 @@ Command parse_command(std::string_view input) {
     return {CommandKind::unknown, argument};
 }
 
-std::optional<std::string> confirmed_model(std::string_view reply) {
-    constexpr std::string_view prefix = "Model: ";
-    if (!reply.starts_with(prefix) || reply.size() == prefix.size()) {
-        return std::nullopt;
-    }
-    return std::string(reply.substr(prefix.size()));
-}
-
 } // namespace cha
