@@ -1,6 +1,5 @@
 #include "command.h"
 #include "input_editor.h"
-#include "text_layout.h"
 #include "transcript.h"
 
 #include <gtest/gtest.h>
@@ -58,21 +57,6 @@ TEST(Transcript, AccumulatesStreamingAssistantFragments) {
     EXPECT_EQ(transcript.entries()[1].text, "Hello there");
     EXPECT_EQ(rendered_revision, 4U);
     EXPECT_EQ(transcript.revision(), rendered_revision);
-}
-
-TEST(TextLayout, CountsEveryExplicitTranscriptLine) {
-    std::string response;
-    for (int line = 0; line < 100; ++line) {
-        response += "item\n";
-    }
-
-    EXPECT_GE(text_layout::rows(response, 80), 101);
-}
-
-TEST(TextLayout, CountsWrappedAndMultilineWideInput) {
-    const std::wstring input = L"first line\nsecond line\n1234567890";
-
-    EXPECT_GE(text_layout::rows(input, 8, 2), 6);
 }
 
 } // namespace

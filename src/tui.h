@@ -10,6 +10,7 @@
 
 namespace cha {
 
+// Own curses resources and rendering policy so the session remains independent of terminal mechanics.
 class Tui {
 public:
     explicit Tui(std::string model);

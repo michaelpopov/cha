@@ -1,7 +1,5 @@
 #include "tui.h"
 
-#include "text_layout.h"
-
 #include <algorithm>
 #include <clocale>
 #include <cwchar>
@@ -15,6 +13,63 @@ namespace {
 
 constexpr int input_height = 5;
 constexpr int status_height = 1;
+
+// Estimate conservatively so curses pads have enough space before their content is rendered.
+void add_cells(int cells, int columns, int& rows, int& column) {
+    for (int cell = 0; cell < cells; ++cell) {
+        ++column;
+        if (column >= columns) {
+            ++rows;
+            column = 0;
+        }
+    }
+}
+
+int layout_rows(std::string_view text, int columns, int initial_cells = 0) {
+    columns = std::max(1, columns);
+    int result = 1;
+    int column = 0;
+    add_cells(initial_cells, columns, result, column);
+
+    for (const unsigned char character : text) {
+        if (character == '\n') {
+            ++result;
+            column = 0;
+        } else if (character == '\r') {
+            column = 0;
+        } else if (character == '\t') {
+            add_cells(8 - (column % 8), columns, result, column);
+        } else {
+            // Counting UTF-8 bytes is conservative, ensuring the pad is never too short.
+            add_cells(1, columns, result, column);
+        }
+    }
+
+    return result;
+}
+
+int layout_rows(std::wstring_view text, int columns, int initial_cells = 0) {
+    columns = std::max(1, columns);
+    int result = 1;
+    int column = 0;
+    add_cells(initial_cells, columns, result, column);
+
+    for (const wchar_t character : text) {
+        if (character == L'\n') {
+            ++result;
+            column = 0;
+        } else if (character == L'\r') {
+            column = 0;
+        } else if (character == L'\t') {
+            add_cells(8 - (column % 8), columns, result, column);
+        } else {
+            const int width = ::wcwidth(character);
+            add_cells(std::max(0, width), columns, result, column);
+        }
+    }
+
+    return result;
+}
 
 std::string speaker_label(Speaker speaker) {
     switch (speaker) {
@@ -197,7 +252,7 @@ void Tui::rebuild_transcript(const Transcript& transcript, int output_height, in
     int estimated_rows = output_height + 4;
     for (const TranscriptEntry& entry : transcript.entries()) {
         const std::string rendered_entry = speaker_label(entry.speaker) + entry.text + "\n\n";
-        estimated_rows += text_layout::rows(rendered_entry, columns);
+        estimated_rows += layout_rows(rendered_entry, columns);
     }
     replace_pad(transcript_pad_, estimated_rows, columns);
     transcript_capacity_ = estimated_rows;
@@ -213,6 +268,7 @@ void Tui::rebuild_transcript(const Transcript& transcript, int output_height, in
 }
 
 void Tui::render_transcript(const Transcript& transcript, int output_height, int columns) {
+    // Preserve the existing pad when streamed output can be appended safely, avoiding full redraws.
     const auto& entries = transcript.entries();
     if (!transcript_pad_ || transcript_columns_ != columns || entries.size() < rendered_entry_count_) {
         rebuild_transcript(transcript, output_height, columns);
@@ -245,7 +301,7 @@ void Tui::render_transcript(const Transcript& transcript, int output_height, int
                 rendered_tail += "\n\n";
             }
 
-            const int tail_rows = text_layout::rows(rendered_tail, columns, tail_x);
+            const int tail_rows = layout_rows(rendered_tail, columns, tail_x);
             ensure_transcript_capacity(std::max(output_height + 4, tail_y + tail_rows + 4));
             wmove(transcript_pad_, tail_y, tail_x);
             wclrtobot(transcript_pad_);
@@ -283,7 +339,7 @@ void Tui::render_transcript(const Transcript& transcript, int output_height, int
 void Tui::render_input(const InputEditor& editor, int input_y, int height, int columns) {
     const int inner_height = height - 2;
     const int inner_width = columns - 2;
-    const int estimated_rows = text_layout::rows(editor.text(), inner_width, 2) + inner_height + 4;
+    const int estimated_rows = layout_rows(editor.text(), inner_width, 2) + inner_height + 4;
     replace_pad(input_pad_, estimated_rows, inner_width);
 
     waddwstr(input_pad_, L"> ");
