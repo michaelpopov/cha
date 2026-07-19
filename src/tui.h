@@ -1,0 +1,52 @@
+#pragma once
+
+#include "input_editor.h"
+#include "transcript.h"
+
+#include <curses.h>
+
+#include <cstddef>
+#include <string>
+
+namespace cha {
+
+class Tui {
+public:
+    explicit Tui(std::string model);
+    ~Tui();
+
+    Tui(const Tui&) = delete;
+    Tui& operator=(const Tui&) = delete;
+
+    [[nodiscard]] int read_key(wint_t& key);
+    void render(const Transcript& transcript, const InputEditor& editor, bool generating, std::string_view notice = {});
+    void set_model(std::string model);
+    void scroll_up();
+    void scroll_down();
+    void resize();
+
+private:
+    void replace_pad(WINDOW*& pad, int rows, int columns);
+    void ensure_transcript_capacity(int required_rows);
+    void rebuild_transcript(const Transcript& transcript, int output_height, int columns);
+    void write_transcript_entry(const TranscriptEntry& entry);
+    void render_transcript(const Transcript& transcript, int output_height, int columns);
+    void render_input(const InputEditor& editor, int input_y, int input_height, int columns);
+
+    std::string model_;
+    WINDOW* transcript_pad_{};
+    WINDOW* input_pad_{};
+    std::size_t rendered_revision_{};
+    std::size_t rendered_entry_count_{};
+    std::size_t rendered_last_text_size_{};
+    int rendered_last_content_y_{};
+    int rendered_last_content_x_{};
+    int transcript_capacity_{};
+    int transcript_columns_{};
+    int transcript_lines_{};
+    int view_top_{};
+    int last_output_height_{};
+    bool follow_output_{true};
+};
+
+} // namespace cha

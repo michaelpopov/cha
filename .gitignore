@@ -1,0 +1,19 @@
+# Build output
+/build/
+
+# In-source CMake artifacts
+/CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+CPack*.cmake
+
+# Editor / swap files
+*.swp
+*~
+
+# Local backups
+*.bac
+
+# Claude Code machine-local settings
+/.claude/settings.local.json
