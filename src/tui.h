@@ -2,6 +2,7 @@
 
 #include "conversation.h"
 #include "input_editor.h"
+#include "session_view.h"
 #include "transcript_renderer.h"
 
 #include <curses.h>
@@ -14,19 +15,24 @@ namespace cha {
 class Terminal;
 
 // Owns curses resources and renders the chat transcript, status line, and input editor.
-class Tui {
+class Tui : public SessionView {
 public:
     explicit Tui(Terminal& terminal);
-    ~Tui();
+    ~Tui() override;
 
     Tui(const Tui&) = delete;
     Tui& operator=(const Tui&) = delete;
 
-    [[nodiscard]] int read_key(wint_t& key);
-    void render(const Conversation& conversation, const InputEditor& editor, bool generating, std::string_view notice = {});
-    void scroll_up();
-    void scroll_down();
-    void resize();
+    [[nodiscard]] std::optional<SessionInput> read_input() override;
+    void render(
+        const Conversation& conversation,
+        const InputEditor& editor,
+        bool generating,
+        std::string_view notice = {}) override;
+    void scroll_up() override;
+    void scroll_down() override;
+    void resize() override;
+    [[nodiscard]] bool input_closed() const override;
 
 private:
     void replace_pad(WINDOW*& pad, int rows, int columns);

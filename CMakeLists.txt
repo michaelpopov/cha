@@ -112,6 +112,7 @@ if(BUILD_TESTING)
         tests/unit_agent.cpp
         tests/unit_agent_context.cpp
         tests/unit_user.cpp
+        tests/unit_user_session.cpp
         tests/unit_workspace.cpp
     )
     target_link_libraries(cha_tests PRIVATE cha_core GTest::gtest_main)

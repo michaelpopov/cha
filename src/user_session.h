@@ -2,21 +2,19 @@
 
 #include "agent_protocol.h"
 #include "input_editor.h"
-#include "tui.h"
+#include "session_view.h"
 
-#include <cwchar>
 #include <string>
 
 namespace cha {
 
 class ChatCoordinator;
-class Terminal;
 
-// Coordinates interactive chat state, key handling, rendering, and agent notifications for one run.
+// Coordinates testable session state, typed input, rendering, and agent notifications for one run.
 class UserSession {
 public:
     UserSession(
-        Terminal& terminal,
+        SessionView& view,
         ChatCoordinator& coordinator);
 
     [[nodiscard]] bool running() const;
@@ -26,21 +24,21 @@ public:
     void close_terminal();
     void report_terminal_failure();
     void receive_responses(AgentEventChannel& events);
-    void receive_keys(CompletionRequestChannel& requests);
+    void receive_terminal_input(CompletionRequestChannel& requests);
     void shutdown(CompletionRequestChannel& requests);
 
 private:
     void request_render();
-    void handle_key(CompletionRequestChannel& requests, std::wint_t key, int key_result);
+    void handle_input(CompletionRequestChannel& requests, const SessionInput& input);
     void submit_input(CompletionRequestChannel& requests);
     void request_stop();
 
-    Tui _tui;
-    InputEditor _editor;
-    ChatCoordinator& _coordinator;
-    bool _running{true};
-    bool _render_needed{false};
-    std::string _notice;
+    SessionView& view_;
+    InputEditor editor_;
+    ChatCoordinator& coordinator_;
+    bool running_{true};
+    bool render_needed_{false};
+    std::string notice_;
 };
 
 } // namespace cha

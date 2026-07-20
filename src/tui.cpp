@@ -4,9 +4,12 @@
 
 #include <algorithm>
 #include <cwchar>
+#include <cwctype>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <utility>
 
 namespace cha {
@@ -68,8 +71,61 @@ Tui::~Tui() {
     }
 }
 
-int Tui::read_key(wint_t& key) {
-    return wget_wch(stdscr, &key);
+std::optional<SessionInput> Tui::read_input() {
+    wint_t key = 0;
+    const int result = wget_wch(stdscr, &key);
+    if (result == ERR) {
+        return std::nullopt;
+    }
+    if (key == KEY_RESIZE) {
+        return SessionInput{SessionInputKind::resize};
+    }
+    if (key == KEY_PPAGE) {
+        return SessionInput{SessionInputKind::page_up};
+    }
+    if (key == KEY_NPAGE) {
+        return SessionInput{SessionInputKind::page_down};
+    }
+    if (key == KEY_LEFT) {
+        return SessionInput{SessionInputKind::left};
+    }
+    if (key == KEY_RIGHT) {
+        return SessionInput{SessionInputKind::right};
+    }
+    if (key == KEY_UP) {
+        return SessionInput{SessionInputKind::up};
+    }
+    if (key == KEY_DOWN) {
+        return SessionInput{SessionInputKind::down};
+    }
+    if (key == KEY_HOME) {
+        return SessionInput{SessionInputKind::home};
+    }
+    if (key == KEY_END) {
+        return SessionInput{SessionInputKind::end};
+    }
+    if (key == KEY_DC) {
+        return SessionInput{SessionInputKind::erase};
+    }
+    if (key == KEY_BACKSPACE || key == 127 || key == L'\b') {
+        return SessionInput{SessionInputKind::backspace};
+    }
+    if (key == 27) {
+        return SessionInput{SessionInputKind::escape};
+    }
+    if (key == 3) {
+        return SessionInput{SessionInputKind::interrupt};
+    }
+    if (key == L'\n' || key == L'\r' || key == KEY_ENTER) {
+        return SessionInput{SessionInputKind::enter};
+    }
+    if (result == OK && std::iswprint(key) != 0) {
+        return SessionInput{
+            .kind = SessionInputKind::character,
+            .character = static_cast<wchar_t>(key),
+        };
+    }
+    return SessionInput{};
 }
 
 void Tui::render(const Conversation& conversation, const InputEditor& editor, bool generating, std::string_view notice) {
@@ -126,6 +182,10 @@ void Tui::scroll_down() {
 
 void Tui::resize() {
     terminal_.resize();
+}
+
+bool Tui::input_closed() const {
+    return !::isatty(STDIN_FILENO);
 }
 
 void Tui::replace_pad(WINDOW*& pad, int rows, int columns) {

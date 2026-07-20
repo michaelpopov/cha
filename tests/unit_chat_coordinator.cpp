@@ -225,5 +225,59 @@ TEST(ChatCoordinator, DoesNotAttributePromptInsertionFailuresToTheAgent) {
     EXPECT_EQ(restored.back().text, "Failed to add the submitted prompt to the conversation");
 }
 
+TEST(ChatCoordinator, PersistsClearAndSystemMessages) {
+    TemporaryJournal temporary;
+    ConversationJournal journal(temporary.path);
+    Conversation conversation;
+    const ConversationEntry existing = make_notice_entry(1, "Existing");
+    journal.append(existing);
+    conversation.add_entry(existing);
+    std::atomic_bool cancellation{false};
+    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation, 1, 2);
+
+    coordinator.clear();
+    EXPECT_TRUE(conversation.entries().empty());
+    EXPECT_TRUE(load_conversation_file(temporary.path).empty());
+
+    coordinator.add_system_message("Information");
+    const std::vector<ConversationEntry> entries = conversation.entries();
+    ASSERT_EQ(entries.size(), 1U);
+    EXPECT_EQ(entries.front().kind, EntryKind::notice);
+    EXPECT_EQ(entries.front().text, "Information");
+    EXPECT_EQ(load_conversation_file(temporary.path), entries);
+}
+
+TEST(ChatCoordinator, ReportsAClosedAgentEventChannel) {
+    TemporaryJournal temporary;
+    ConversationJournal journal(temporary.path);
+    Conversation conversation;
+    std::atomic_bool cancellation{false};
+    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
+    AgentEventChannel events;
+    events.close();
+
+    const CoordinatorUpdate update = coordinator.receive(events);
+
+    EXPECT_TRUE(update.channel_closed);
+}
+
+TEST(ChatCoordinator, ShutdownCancelsAnActiveTurnAndClosesRequests) {
+    TemporaryJournal temporary;
+    ConversationJournal journal(temporary.path);
+    Conversation conversation;
+    std::atomic_bool cancellation{false};
+    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
+    CompletionRequestChannel requests;
+    ASSERT_TRUE(coordinator.submit("Question", requests).empty());
+
+    coordinator.shutdown(requests);
+
+    EXPECT_TRUE(cancellation.load(std::memory_order_acquire));
+    CompletionRequest request;
+    EXPECT_EQ(requests.try_get(request), ChannelReadStatus::value);
+    EXPECT_EQ(requests.try_get(request), ChannelReadStatus::closed);
+    EXPECT_FALSE(requests.push({}));
+}
+
 } // namespace
 } // namespace cha
