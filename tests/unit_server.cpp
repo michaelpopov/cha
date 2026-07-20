@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <netinet/in.h>
@@ -296,8 +297,10 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     config.model = "initial-model";
     config.stream = true;
     config.temperature = 0.5;
-    config.api_key = "test-key";
+    config.reasoning_effort = "medium";
+    config.api_key_env = "CHA_TEST_API_KEY";
     config.system_prompt = "Be concise.";
+    ASSERT_EQ(::setenv("CHA_TEST_API_KEY", "test-key", 1), 0);
 
     Pipe pipe_in;
     Pipe pipe_out;
@@ -318,6 +321,7 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
 
     server.stop();
     mock.join();
+    ASSERT_EQ(::unsetenv("CHA_TEST_API_KEY"), 0);
     ASSERT_EQ(mock.requests().size(), 2U);
     EXPECT_NE(mock.requests()[0].find("Authorization: Bearer test-key"), std::string::npos);
 
@@ -325,6 +329,7 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     EXPECT_EQ(first_request["model"], "initial-model");
     EXPECT_TRUE(first_request["stream"]);
     EXPECT_DOUBLE_EQ(first_request["temperature"].get<double>(), 0.5);
+    EXPECT_EQ(first_request["reasoning_effort"], "medium");
     ASSERT_EQ(first_request["messages"].size(), 2U);
     EXPECT_EQ(first_request["messages"][0]["role"], "system");
     EXPECT_EQ(first_request["messages"][0]["content"], "Be concise.");

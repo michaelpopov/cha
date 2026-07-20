@@ -27,7 +27,10 @@ TEST(Config, LoadsHostAndPortFromToml) {
             << "model = \"example-model\"\n"
             << "stream = false\n"
             << "temperature = 0.25\n"
-            << "api_key = \"secret\"\n";
+            << "api_key = \"secret\"\n"
+            << "api_key_env = \"OPENAI_API_KEY\"\n"
+            << "reasoning_effort = \"medium\"\n"
+            << "https = true\n";
     }
 
     const Config config = Config::load(path);
@@ -40,6 +43,9 @@ TEST(Config, LoadsHostAndPortFromToml) {
     ASSERT_TRUE(config.temperature);
     EXPECT_DOUBLE_EQ(*config.temperature, 0.25);
     EXPECT_EQ(config.api_key, "secret");
+    EXPECT_EQ(config.api_key_env, "OPENAI_API_KEY");
+    EXPECT_EQ(config.reasoning_effort, "medium");
+    EXPECT_TRUE(config.https);
     EXPECT_EQ(config.system_prompt, "You are concise.");
 
     std::filesystem::remove_all(directory);

@@ -116,6 +116,35 @@ Config Config::load(const std::filesystem::path& path) {
         api_key = *value;
     }
 
+    std::string api_key_env;
+    if (table.contains("api_key_env")) {
+        const auto value = table["api_key_env"].value<std::string>();
+        if (!value) {
+            throw std::runtime_error("Config file '" + path.string() + "' requires string 'api_key_env' value");
+        }
+        api_key_env = *value;
+    }
+
+    std::string reasoning_effort;
+    if (table.contains("reasoning_effort")) {
+        const auto value = table["reasoning_effort"].value<std::string>();
+        if (!value) {
+            throw std::runtime_error(
+                "Config file '" + path.string() + "' requires string 'reasoning_effort' value"
+            );
+        }
+        reasoning_effort = *value;
+    }
+
+    bool https = false;
+    if (table.contains("https")) {
+        const auto value = table["https"].value<bool>();
+        if (!value) {
+            throw std::runtime_error("Config file '" + path.string() + "' requires boolean 'https' value");
+        }
+        https = *value;
+    }
+
     std::string system_prompt;
     std::ifstream prompt_file(path.parent_path() / "SYSTEM.md", std::ios::binary);
     if (prompt_file) {
@@ -132,6 +161,9 @@ Config Config::load(const std::filesystem::path& path) {
         stream,
         temperature,
         api_key,
+        api_key_env,
+        reasoning_effort,
+        https,
         std::move(system_prompt),
     };
 }

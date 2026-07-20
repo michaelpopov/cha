@@ -8,7 +8,7 @@ test: build
 	ctest --test-dir build/ninja --output-on-failure
 
 itest: build
-	./build/ninja/itest
+	cd workspace && ../build/ninja/itest
 
 run: build
 	cd workspace && ../build/ninja/cha

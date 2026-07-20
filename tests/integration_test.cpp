@@ -1,11 +1,13 @@
 #include "config.h"
 #include "conversation.h"
+#include "environment.h"
 #include "pipe.h"
 #include "server.h"
 
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <filesystem>
 #include <string>
 
 namespace cha {
@@ -17,11 +19,9 @@ struct ChatResult {
 };
 
 Config integration_config(bool stream) {
-    Config config;
-    config.host = "alien";
-    config.port = 8080;
-    config.mode = Mode::net;
-    config.model = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf";
+    const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
+    load_dotenv(workspace_directory / ".env");
+    Config config = Config::load(workspace_directory / "two" / "config.toml");
     config.stream = stream;
     return config;
 }

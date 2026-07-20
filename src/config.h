@@ -19,6 +19,9 @@ struct Config {
     bool stream{true};
     std::optional<double> temperature;
     std::string api_key;
+    std::string api_key_env;
+    std::string reasoning_effort;
+    bool https{};
     std::string system_prompt;
 
     [[nodiscard]] static Config load();

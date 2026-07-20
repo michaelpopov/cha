@@ -13,6 +13,9 @@ The application reads `servers` from the current working directory. The first no
 - `stream`: whether to request streamed SSE responses; defaults to `true`.
 - `temperature`: optional numeric sampling temperature. It is omitted from requests when unset.
 - `api_key`: optional bearer token. An empty string disables authentication.
+- `api_key_env`: optional environment-variable name containing a bearer token. It takes precedence over `api_key`.
+- `reasoning_effort`: optional reasoning level sent with chat-completions requests, such as `medium`.
+- `https`: use HTTPS instead of HTTP; defaults to `false`.
 
 Example:
 
@@ -36,6 +39,8 @@ Chat requests deliberately have no overall or low-speed timeout so long generati
 
 The system prompt is read from `SYSTEM.md` beside the selected server's `config.toml`. If the file is missing, the prompt is empty.
 
+HTTPS servers require a libcurl build with a TLS backend. When the bundled libcurl is used, CMake enables OpenSSL automatically when its development files are available.
+
 Before loading server configuration, the application optionally reads `.env` from the working directory. It accepts `NAME=value` entries, ignores blank lines and `#` comments, and does not replace variables already set in the process environment.
 
 ## Commands
@@ -57,7 +62,7 @@ The interface has a scrollable conversation transcript, a generation-status line
 
 ## Build and test
 
-The build uses an installed libcurl development package when available. Otherwise CMake downloads and builds a pinned HTTP-only libcurl automatically.
+The build uses an installed libcurl development package when available. Otherwise CMake downloads and builds a pinned libcurl automatically.
 
 ```bash
 make
@@ -65,7 +70,7 @@ make test
 make run
 ```
 
-Live integration tests are built as the `itest` application but are not included in `make test`. They connect to the configured test endpoint compiled into `tests/integration_test.cpp`:
+Live integration tests are built as the `itest` application but are not included in `make test`. They load `workspace/.env` and `workspace/two/config.toml`:
 
 ```bash
 make itest

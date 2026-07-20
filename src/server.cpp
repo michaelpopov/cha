@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -193,6 +194,16 @@ void Server::init(const Config& config) {
 void Server::initialize() {
 
     system_prompt_ = _config.system_prompt;
+
+    if (!_config.api_key_env.empty()) {
+        const char* api_key = std::getenv(_config.api_key_env.c_str());
+        if (!api_key || *api_key == '\0') {
+            throw std::runtime_error(
+                "Environment variable '" + _config.api_key_env + "' configured as api_key_env is not set"
+            );
+        }
+        _config.api_key = api_key;
+    }
 
     if (_config.mode == Mode::net) {
         (void)curl_global();
@@ -384,6 +395,9 @@ void Server::complete(Pipe& pipe_out) {
     if (_config.temperature) {
         body["temperature"] = *_config.temperature;
     }
+    if (!_config.reasoning_effort.empty()) {
+        body["reasoning_effort"] = _config.reasoning_effort;
+    }
 
     const std::string request_body = body.dump();
     ResponseContext response{
@@ -471,7 +485,7 @@ std::string Server::base_url() const {
     if (host.find(':') != std::string::npos && !host.starts_with('[')) {
         host = '[' + host + ']';
     }
-    return "http://" + host + ':' + std::to_string(_config.port);
+    return std::string(_config.https ? "https://" : "http://") + host + ':' + std::to_string(_config.port);
 }
 
 std::string Server::endpoint() const {

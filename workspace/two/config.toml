@@ -1,0 +1,8 @@
+host = "api.openai.com"
+port = 443
+https = true
+mode = "net"
+model = "gpt-5.6-terra"
+reasoning_effort = "medium"
+stream = true
+api_key_env = "OPENAI_API_KEY"
