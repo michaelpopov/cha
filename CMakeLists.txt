@@ -60,10 +60,12 @@ add_library(cha_core
     src/pipe.cpp
     src/server.cpp
     src/server_context.cpp
+    src/startup_selector.cpp
     src/tui.cpp
     src/user.cpp
     src/user_events.cpp
     src/user_session.cpp
+    src/workspace.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
@@ -99,6 +101,7 @@ if(BUILD_TESTING)
         tests/unit_server.cpp
         tests/unit_server_context.cpp
         tests/unit_user.cpp
+        tests/unit_workspace.cpp
     )
     target_link_libraries(cha_tests PRIVATE cha_core GTest::gtest_main)
 

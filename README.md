@@ -2,9 +2,13 @@
 
 `cha` is a C++20 terminal chat client for a llama.cpp server exposing the OpenAI-compatible chat-completions API.
 
-## Configuration
+## Workspace configuration
 
-The application reads `servers` from the current working directory. The first nonblank, non-comment line names the active server; its configuration is loaded from `<server-name>/config.toml`. The following top-level fields are supported:
+Run `cha` from a workspace containing `personas/` and `rooms/`. `rooms/rooms.list` is an ordered list of room names (one per line; blank lines and `#` comments are ignored). At startup, a terminal selector lets you choose a room and then an existing session or **New session**.
+
+Each room contains `personas.list`, which must name exactly one persona, and `USER.md`. The selected persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`. The effective system prompt is the persona `SYSTEM.md` followed by the room `USER.md`.
+
+Existing sessions are discovered only when both `sessions/<id>.data` and `sessions/<id>.meta` exist; their conversation data is restored when selected. A new session can be given an optional display name. Its files use a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored in its metadata. A new session creates its metadata immediately and saves its conversation when the chat closes. The following top-level persona configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
@@ -37,8 +41,6 @@ http://HOST:PORT/v1/chat/completions
 
 Chat requests deliberately have no overall or low-speed timeout so long generations can complete. Use `/stop`, Escape, or Ctrl-C to cancel an active request.
 
-The system prompt is read from `SYSTEM.md` beside the selected server's `config.toml`. If the file is missing, the prompt is empty.
-
 HTTPS servers require a libcurl build with a TLS backend. When the bundled libcurl is used, CMake enables OpenSSL automatically when its development files are available.
 
 Before loading server configuration, the application optionally reads `.env` from the working directory. It accepts `NAME=value` entries, ignores blank lines and `#` comments, and does not replace variables already set in the process environment.
@@ -70,7 +72,7 @@ make test
 make run
 ```
 
-Live integration tests are built as the `itest` application but are not included in `make test`. They load `workspace/.env` and `workspace/two/config.toml`:
+Live integration tests are built as the `itest` application but are not included in `make test`:
 
 ```bash
 make itest

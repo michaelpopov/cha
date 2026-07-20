@@ -1,6 +1,0 @@
-host = "alien"
-port = 8080
-mode = "net"
-stream = true
-api_key = ""
-system_prompt = "SYSTEM.md"

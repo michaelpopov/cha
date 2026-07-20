@@ -39,6 +39,16 @@ TEST(Conversation, ReturnsAnIndependentMessageSnapshot) {
     EXPECT_EQ(conversation.messages().front().text, "Original");
 }
 
+TEST(Conversation, ReplacesMessagesForSessionRestore) {
+    Conversation conversation;
+    conversation.add_message("You", "Old message");
+    conversation.replace_messages({{"You", "Restored"}, {"Guide", "Welcome"}});
+
+    EXPECT_EQ(
+        conversation.messages(),
+        (std::vector<ConversationMessage>{{"You", "Restored"}, {"Guide", "Welcome"}}));
+}
+
 TEST(ConversationFile, RoundTripsASelfContainedGeneration) {
     const auto path = std::filesystem::temp_directory_path()
         / ("cha_conversation_"

@@ -38,6 +38,7 @@ public:
     void append_to_message(std::string_view text);
     void finish_message();
     void discard_message();
+    void replace_messages(std::vector<ConversationMessage> messages);
 
     [[nodiscard]] ConversationSnapshot snapshot() const;
     [[nodiscard]] std::vector<ConversationMessage> messages() const;

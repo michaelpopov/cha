@@ -58,6 +58,20 @@ void Conversation::discard_message() {
     ++revision_;
 }
 
+void Conversation::replace_messages(std::vector<ConversationMessage> messages) {
+    std::lock_guard lock(mutex_);
+    if (message_open_) {
+        throw std::logic_error("Cannot replace messages while a message is open");
+    }
+    for (const ConversationMessage& message : messages) {
+        if (message.author.empty()) {
+            throw std::invalid_argument("Conversation message author cannot be empty");
+        }
+    }
+    messages_ = std::move(messages);
+    ++revision_;
+}
+
 ConversationSnapshot Conversation::snapshot() const {
     std::lock_guard lock(mutex_);
     return {messages_, revision_, message_open_};
