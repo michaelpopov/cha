@@ -36,6 +36,8 @@ Chat requests deliberately have no overall or low-speed timeout so long generati
 
 The system prompt is read from `SYSTEM.md` beside the selected server's `config.toml`. If the file is missing, the prompt is empty.
 
+Before loading server configuration, the application optionally reads `.env` from the working directory. It accepts `NAME=value` entries, ignores blank lines and `#` comments, and does not replace variables already set in the process environment.
+
 ## Commands
 
 - `.clear` clears conversation history while retaining the system prompt.

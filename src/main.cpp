@@ -1,4 +1,5 @@
 #include "conversation.h"
+#include "environment.h"
 #include "pipe.h"
 #include "server.h"
 #include "user.h"
@@ -19,6 +20,8 @@ int main() {
 }
 
 int main_internal() {
+    cha::load_dotenv();
+
     cha::Pipe pipe_user2server{};
     cha::Pipe pipe_server2user{};
     cha::Conversation conversation;

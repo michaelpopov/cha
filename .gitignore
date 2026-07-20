@@ -12,6 +12,8 @@ CPack*.cmake
 *.swp
 *~
 
+.env
+
 # Local backups
 *.bac
 
