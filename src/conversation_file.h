@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,9 @@ struct ConversationRestore {
 // Initializes a missing journal and removes an incomplete final record left by a crash.
 void prepare_conversation_file(const std::filesystem::path& path);
 
+// Creates and syncs a new journal, failing if the target path already exists.
+void create_conversation_file_exclusive(const std::filesystem::path& path);
+
 [[nodiscard]] ConversationRestore load_conversation_state(const std::filesystem::path& path);
 [[nodiscard]] std::vector<ConversationEntry> load_conversation_file(const std::filesystem::path& path);
 void save_conversation_file(const std::filesystem::path& path, const Conversation& conversation);
@@ -45,7 +49,7 @@ public:
         std::string_view agent_id,
         const ConversationEntry& prompt);
     void complete_turn(RequestId request_id, const ConversationEntry& response);
-    void cancel_turn(RequestId request_id, const ConversationEntry& response);
+    void cancel_turn(RequestId request_id, std::optional<ConversationEntry> response);
     void fail_turn(RequestId request_id, const ConversationEntry& error);
     void clear();
 

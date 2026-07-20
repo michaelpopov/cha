@@ -34,7 +34,7 @@ std::vector<AgentMessage> build_agent_context(
             }
             continue;
         }
-        if (entry.text.empty()) {
+        if (entry.status != CompletionStatus::complete || entry.text.empty()) {
             continue;
         }
         const std::string content = entry.participant_id == agent_id

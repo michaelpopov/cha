@@ -33,10 +33,9 @@ ChatResult run_chat(bool stream) {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
+    Agent agent({.config = config}, cancellation);
 
-    agent.run(requests, events);
+    agent.start(requests, events);
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     requests.push({1, agent.info().id, {}, make_human_entry(1, input, 1)});
@@ -65,10 +64,9 @@ ChatResult run_cancelled_chat() {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
+    Agent agent({.config = config}, cancellation);
 
-    agent.run(requests, events);
+    agent.start(requests, events);
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     requests.push({2, agent.info().id, {}, make_human_entry(1, input, 2)});

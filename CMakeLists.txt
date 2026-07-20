@@ -51,6 +51,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(tomlplusplus)
 
 add_library(cha_core
+    src/agent_definition.cpp
     src/command.cpp
     src/chat_coordinator.cpp
     src/config.cpp
@@ -100,6 +101,7 @@ if(BUILD_TESTING)
     FetchContent_MakeAvailable(googletest)
 
     add_executable(cha_tests
+        tests/unit_agent_definition.cpp
         tests/unit_config.cpp
         tests/unit_chat_coordinator.cpp
         tests/unit_conversation.cpp

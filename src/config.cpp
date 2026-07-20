@@ -2,11 +2,8 @@
 
 #include <toml++/toml.hpp>
 
-#include <fstream>
-#include <sstream>
 #include <stdexcept>
 #include <string_view>
-#include <utility>
 
 namespace cha {
 namespace {
@@ -122,14 +119,6 @@ Config Config::load(const std::filesystem::path& path) {
         https = *value;
     }
 
-    std::string system_prompt;
-    std::ifstream prompt_file(path.parent_path() / "SYSTEM.md", std::ios::binary);
-    if (prompt_file) {
-        std::ostringstream contents;
-        contents << prompt_file.rdbuf();
-        system_prompt = contents.str();
-    }
-
     return Config{
         .id = *id,
         .name = *name,
@@ -143,7 +132,6 @@ Config Config::load(const std::filesystem::path& path) {
         .api_key_env = api_key_env,
         .reasoning_effort = reasoning_effort,
         .https = https,
-        .system_prompt = std::move(system_prompt),
     };
 }
 

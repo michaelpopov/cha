@@ -28,7 +28,7 @@ TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
         }));
 }
 
-TEST(AgentContext, OmitsTypedNoticesErrorsFailedPromptsAndStreamingEntries) {
+TEST(AgentContext, OmitsNoticesErrorsFailedPromptsAndIncompleteAgentEntries) {
     const ConversationSnapshot conversation{
         .entries = {
             make_human_entry(1, "Failed request", 7),
@@ -36,9 +36,11 @@ TEST(AgentContext, OmitsTypedNoticesErrorsFailedPromptsAndStreamingEntries) {
             make_notice_entry(3, "Model information"),
             make_human_entry(4, "Current request", 8),
             make_agent_entry(
-                5, "reviewer-id", "Reviewer", "Partial", CompletionStatus::streaming, 8),
+                5, "reviewer-id", "Reviewer", "Stopped", CompletionStatus::cancelled, 8),
+            make_agent_entry(
+                6, "reviewer-id", "Reviewer", "Partial", CompletionStatus::streaming, 8),
         },
-        .open_entry_id = 5,
+        .open_entry_id = 6,
     };
 
     EXPECT_EQ(

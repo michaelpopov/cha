@@ -100,6 +100,19 @@ TEST(ConversationValidation, IsSharedByMemoryAndPersistence) {
     const auto path = temporary_path("cha_invalid_entry_");
     ConversationJournal journal(path);
     EXPECT_THROW(journal.append(invalid), std::invalid_argument);
+
+    const ConversationEntry empty_completion = make_agent_entry(
+        2, "reviewer-id", "Reviewer", {}, CompletionStatus::complete, 1);
+    EXPECT_THROW(validate_conversation_entry(empty_completion), std::invalid_argument);
+    EXPECT_THROW(conversation.add_entry(empty_completion), std::invalid_argument);
+    EXPECT_THROW(journal.append(empty_completion), std::invalid_argument);
+
+    Conversation streaming;
+    streaming.begin_entry(make_agent_entry(
+        1, "reviewer-id", "Reviewer", {}, CompletionStatus::streaming, 1));
+    EXPECT_THROW(
+        streaming.finish_entry(1, CompletionStatus::complete),
+        std::invalid_argument);
     std::filesystem::remove(path);
 }
 

@@ -23,6 +23,8 @@ public:
     [[nodiscard]] std::vector<Session> list() const;
     [[nodiscard]] Session create(std::string label) const;
     [[nodiscard]] std::filesystem::path data_path(const std::string& session_id) const;
+    // Revalidates a complete session pair before returning the selected conversation path.
+    [[nodiscard]] std::filesystem::path open_data_path(const std::string& session_id) const;
 
 private:
     std::filesystem::path directory_;

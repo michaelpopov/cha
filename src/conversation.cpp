@@ -84,6 +84,11 @@ void validate_conversation_entry(const ConversationEntry& entry) {
     if (entry.kind == EntryKind::agent && entry.status == CompletionStatus::failed) {
         throw std::invalid_argument("Agent entries cannot have failed status");
     }
+    if (entry.kind == EntryKind::agent
+        && entry.status == CompletionStatus::complete
+        && entry.text.empty()) {
+        throw std::invalid_argument("A completed agent entry requires text content");
+    }
 }
 
 void require_terminal_conversation_entry(const ConversationEntry& entry) {
@@ -138,6 +143,9 @@ void Conversation::finish_entry(EntryId entry_id, CompletionStatus status) {
     }
     if (status != CompletionStatus::complete && status != CompletionStatus::cancelled) {
         throw std::invalid_argument("A finished agent entry requires complete or cancelled status");
+    }
+    if (status == CompletionStatus::complete && entries_.back().text.empty()) {
+        throw std::invalid_argument("A completed agent entry requires text content");
     }
 
     entries_.back().status = status;

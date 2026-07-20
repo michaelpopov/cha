@@ -11,7 +11,7 @@ enum class Mode {
     test,
 };
 
-// Holds the connection and prompt settings used to initialize one chat agent.
+// Holds the identity, connection, and generation settings for one chat agent.
 struct Config {
     std::string id{"assistant"};
     std::string name{"Assistant"};
@@ -25,7 +25,6 @@ struct Config {
     std::string api_key_env;
     std::string reasoning_effort;
     bool https{};
-    std::string system_prompt;
 
     [[nodiscard]] static Config load(const std::filesystem::path& path);
 };

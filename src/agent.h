@@ -1,13 +1,14 @@
 #pragma once
 
+#include "agent_definition.h"
 #include "agent_info.h"
 #include "agent_protocol.h"
-#include "config.h"
 
 #include <atomic>
 #include <curl/curl.h>
 
-#include <filesystem>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -17,40 +18,57 @@ namespace cha {
 class Agent {
 public:
     Agent(
-        std::atomic_bool& cancellation,
-        std::string id = {},
-        std::string name = {});
+        AgentDefinition definition,
+        std::atomic_bool& cancellation);
     ~Agent();
 
     Agent(const Agent&) = delete;
     Agent& operator=(const Agent&) = delete;
 
-    void init(const Config& config);
-    // Loads this agent's persona settings and combines its prompt with room-specific instructions.
-    void init(const std::filesystem::path& persona_directory, const std::filesystem::path& room_directory);
-    void run(CompletionRequestChannel& requests, AgentEventChannel& events);
+    // Starts this agent's worker exactly once.
+    void start(CompletionRequestChannel& requests, AgentEventChannel& events);
     [[nodiscard]] AgentInfo info() const;
-    // Unblocks the worker before joining, making the same shutdown path safe for destruction.
+    // Unblocks and joins the worker; repeated calls are harmless.
     void stop();
 
 private:
-    void initialize();
+    // Tracks the enforced one-shot worker lifecycle.
+    enum class State {
+        ready,
+        running,
+        stopped,
+    };
+
+    // Classifies the terminal result of one network completion before it becomes an AgentEvent.
+    enum class CompletionOutcome {
+        completed,
+        cancelled,
+        protocol_error,
+        transport_error,
+    };
+
+    // Carries the classified completion result and an explanatory failure message when applicable.
+    struct CompletionResult {
+        CompletionOutcome outcome{CompletionOutcome::completed};
+        std::string message;
+    };
+
     void discover_model();
     void dialog(CompletionRequestChannel& requests, AgentEventChannel& events);
-    [[nodiscard]] bool complete(const CompletionRequest& request, AgentEventChannel& events);
+    [[nodiscard]] CompletionResult complete(const CompletionRequest& request, AgentEventChannel& events);
     [[nodiscard]] std::string base_url() const;
     [[nodiscard]] std::string endpoint() const;
     [[nodiscard]] std::string models_endpoint() const;
 
-    Config _config;
+    Config config_;
     std::string api_key_;
-    std::atomic_bool& _cancellation;
-    CURL* curl_{};
-    std::string id_;
-    std::string name_;
+    std::atomic_bool& cancellation_;
+    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl_{nullptr, &curl_easy_cleanup};
     std::string system_prompt_;
     std::thread thread_;
     CompletionRequestChannel* input_{};
+    std::mutex lifecycle_mutex_;
+    State state_{State::ready};
 };
 
 } // namespace cha

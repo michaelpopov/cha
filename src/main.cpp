@@ -1,4 +1,5 @@
 #include "agent_protocol.h"
+#include "agent_definition.h"
 #include "chat_coordinator.h"
 #include "conversation.h"
 #include "conversation_file.h"
@@ -71,8 +72,8 @@ int main_internal() {
             }
 
             session_name = selected_session->id;
-            session_data = session_repository->data_path(session_name);
             try {
+                session_data = session_repository->open_data_path(session_name);
                 cha::prepare_conversation_file(session_data);
                 restored = cha::load_conversation_state(session_data);
                 break;
@@ -96,8 +97,9 @@ int main_internal() {
     }
     std::atomic_bool cancellation{false};
 
-    cha::Agent agent(cancellation);
-    agent.init(workspace.persona_directory(room), room.directory);
+    cha::Agent agent(
+        cha::load_agent_definition(workspace.persona_directory(room), room.directory),
+        cancellation);
 
     const cha::AgentInfo agent_info = agent.info();
     const cha::RequestId next_request_id = restored ? restored->next_request_id : 1;
@@ -109,7 +111,7 @@ int main_internal() {
         conversation,
         next_request_id,
         next_entry_id);
-    agent.run(requests, agent_events);
+    agent.start(requests, agent_events);
     cha::run_user(terminal, coordinator, agent_events, requests);
     agent.stop();
     (void)coordinator.receive(agent_events);

@@ -147,6 +147,13 @@ void ChatCoordinator::apply(const AgentCompleted& event, CoordinatorUpdate& upda
     if (!matches(event.request_id)) {
         return;
     }
+    if (active_->response.empty()) {
+        fail_active_turn(
+            "Agent completed without text content",
+            agent_info_.id,
+            update);
+        return;
+    }
     journal_.complete_turn(event.request_id, response_entry(CompletionStatus::complete));
     finish_response_entry(CompletionStatus::complete);
     active_.reset();
@@ -159,8 +166,12 @@ void ChatCoordinator::apply(const AgentCancelled& event, CoordinatorUpdate& upda
     if (!matches(event.request_id)) {
         return;
     }
-    journal_.cancel_turn(event.request_id, response_entry(CompletionStatus::cancelled));
-    finish_response_entry(CompletionStatus::cancelled);
+    if (active_->entry_open) {
+        journal_.cancel_turn(event.request_id, response_entry(CompletionStatus::cancelled));
+        finish_response_entry(CompletionStatus::cancelled);
+    } else {
+        journal_.cancel_turn(event.request_id, std::nullopt);
+    }
     active_.reset();
     cancellation_.store(false, std::memory_order_release);
     update.render_needed = true;

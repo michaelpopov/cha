@@ -204,10 +204,9 @@ TEST(Agent, EchoesImmutableRequestPromptWithIdentifiedEvents) {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
+    Agent agent({.config = config}, cancellation);
 
-    agent.run(requests, events);
+    agent.start(requests, events);
     ASSERT_TRUE(requests.push(request(
         41,
         "local-agent",
@@ -220,7 +219,7 @@ TEST(Agent, EchoesImmutableRequestPromptWithIdentifiedEvents) {
     agent.stop();
 }
 
-TEST(Agent, LoadsItsConfigurationFromPersonaAndRoomDirectories) {
+TEST(Agent, UsesAFullyLoadedDefinition) {
     const auto directory = std::filesystem::temp_directory_path()
         / ("cha_server_directories_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     const auto persona_directory = directory / "guide";
@@ -238,8 +237,7 @@ TEST(Agent, LoadsItsConfigurationFromPersonaAndRoomDirectories) {
     }
 
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(persona_directory, room_directory);
+    Agent agent(load_agent_definition(persona_directory, room_directory), cancellation);
     EXPECT_EQ(agent.info().id, "guide-id");
     EXPECT_EQ(agent.info().name, "Guide");
 
@@ -255,9 +253,23 @@ TEST(Agent, ConstructionDoesNotRequireANetworkConnection) {
     config.model = "configured-model";
     std::atomic_bool cancellation{false};
     EXPECT_NO_THROW({
-        Agent agent(cancellation);
-        agent.init(config);
+        Agent agent({.config = config}, cancellation);
     });
+}
+
+TEST(Agent, CanOnlyBeStartedOnce) {
+    Config config;
+    CompletionRequestChannel first_requests;
+    CompletionRequestChannel second_requests;
+    AgentEventChannel events;
+    std::atomic_bool cancellation{false};
+    Agent agent({.config = config}, cancellation);
+
+    agent.start(first_requests, events);
+    EXPECT_THROW(agent.start(second_requests, events), std::logic_error);
+    agent.stop();
+    EXPECT_THROW(agent.start(second_requests, events), std::logic_error);
+    EXPECT_NO_THROW(agent.stop());
 }
 
 TEST(Agent, StoppingDoesNotCloseTheSharedOutputChannel) {
@@ -265,10 +277,9 @@ TEST(Agent, StoppingDoesNotCloseTheSharedOutputChannel) {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
+    Agent agent({.config = config}, cancellation);
 
-    agent.run(requests, events);
+    agent.start(requests, events);
     agent.stop();
 
     AgentEvent event = AgentCompleted{};
@@ -282,10 +293,9 @@ TEST(Agent, RejectsARequestForAnotherAgentAndContinues) {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
+    Agent agent({.config = config}, cancellation);
 
-    agent.run(requests, events);
+    agent.start(requests, events);
     ASSERT_TRUE(requests.push(request(1, "other-id", "rejected")));
     const AgentFailed failed = std::get<AgentFailed>(next_event(events));
     EXPECT_EQ(failed.request_id, 1U);
@@ -303,13 +313,12 @@ TEST(Agent, RejectsAnInvalidTypedPromptAndContinues) {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
+    Agent agent({.config = config}, cancellation);
 
     CompletionRequest invalid = request(1, "assistant", "rejected");
     invalid.prompt.status = CompletionStatus::cancelled;
 
-    agent.run(requests, events);
+    agent.start(requests, events);
     ASSERT_TRUE(requests.push(std::move(invalid)));
     const AgentFailed failed = std::get<AgentFailed>(next_event(events));
     EXPECT_EQ(failed.request_id, 1U);
@@ -327,9 +336,8 @@ TEST(Agent, CancelsAnIdentifiedRequestBeforeStartingIt) {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{true};
-    Agent agent(cancellation);
-    agent.init(config);
-    agent.run(requests, events);
+    Agent agent({.config = config}, cancellation);
+    agent.start(requests, events);
 
     ASSERT_TRUE(requests.push(request(9, "assistant", "Do not run")));
     EXPECT_EQ(std::get<AgentCancelled>(next_event(events)).request_id, 9U);
@@ -359,15 +367,15 @@ TEST(Agent, StreamsResponsesFromImmutableRequestHistory) {
     config.temperature = 0.5;
     config.reasoning_effort = "medium";
     config.api_key_env = "CHA_TEST_API_KEY";
-    config.system_prompt = "Be concise.";
     ASSERT_EQ(::setenv("CHA_TEST_API_KEY", "test-key", 1), 0);
 
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
-    agent.run(requests, events);
+    Agent agent(
+        {.config = config, .system_prompt = "Be concise."},
+        cancellation);
+    agent.start(requests, events);
 
     ASSERT_TRUE(requests.push(request(10, "assistant", "First question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Hello");
@@ -409,7 +417,7 @@ TEST(Agent, StreamsResponsesFromImmutableRequestHistory) {
     EXPECT_EQ(second_request["messages"][3]["content"], "Second question");
 }
 
-TEST(Agent, SkipsMalformedStreamingEvents) {
+TEST(Agent, FailsAStreamContainingMalformedJson) {
     const std::string stream =
         "data: not-json\n\n"
         "data: {\"choices\":[{\"delta\":{\"content\":\"Valid response\"}}]}\n\n"
@@ -427,13 +435,157 @@ TEST(Agent, SkipsMalformedStreamingEvents) {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
-    agent.run(requests, events);
+    Agent agent({.config = config}, cancellation);
+    agent.start(requests, events);
 
     ASSERT_TRUE(requests.push(request(3, "assistant", "Question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Valid response");
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 3U);
+    const AgentFailed failed = std::get<AgentFailed>(next_event(events));
+    EXPECT_EQ(failed.request_id, 3U);
+    EXPECT_NE(failed.message.find("malformed JSON"), std::string::npos);
+    agent.stop();
+    mock.join();
+}
+
+TEST(Agent, FailsAStreamWithoutTheCompletionMarker) {
+    const std::string stream =
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n";
+    MockHttpServer mock({http_response("text/event-stream", stream)});
+    mock.start();
+
+    Config config;
+    config.host = "127.0.0.1";
+    config.port = mock.port();
+    config.mode = Mode::net;
+    config.model = "configured-model";
+    config.stream = true;
+
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+    std::atomic_bool cancellation{false};
+    Agent agent({.config = config}, cancellation);
+    agent.start(requests, events);
+
+    ASSERT_TRUE(requests.push(request(31, "assistant", "Question")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Partial");
+    const AgentFailed failed = std::get<AgentFailed>(next_event(events));
+    EXPECT_EQ(failed.request_id, 31U);
+    EXPECT_NE(failed.message.find("[DONE]"), std::string::npos);
+    agent.stop();
+    mock.join();
+}
+
+TEST(Agent, ReportsATruncatedHttpResponseAsATransportFailure) {
+    const std::string body =
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n";
+    const std::string response =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: "
+        + std::to_string(body.size() + 20)
+        + "\r\nConnection: close\r\n\r\n" + body;
+    MockHttpServer mock({response});
+    mock.start();
+
+    Config config;
+    config.host = "127.0.0.1";
+    config.port = mock.port();
+    config.mode = Mode::net;
+    config.model = "configured-model";
+    config.stream = true;
+
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+    std::atomic_bool cancellation{false};
+    Agent agent({.config = config}, cancellation);
+    agent.start(requests, events);
+
+    ASSERT_TRUE(requests.push(request(34, "assistant", "Question")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Partial");
+    const AgentFailed failed = std::get<AgentFailed>(next_event(events));
+    EXPECT_EQ(failed.request_id, 34U);
+    EXPECT_NE(failed.message.find("HTTP request failed"), std::string::npos);
+    agent.stop();
+    mock.join();
+}
+
+TEST(Agent, FailsAStreamingJsonErrorReturnedWithHttpSuccess) {
+    const std::string body = R"({"error":{"message":"model unavailable"}})";
+    MockHttpServer mock({http_response("application/json", body)});
+    mock.start();
+
+    Config config;
+    config.host = "127.0.0.1";
+    config.port = mock.port();
+    config.mode = Mode::net;
+    config.model = "configured-model";
+    config.stream = true;
+
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+    std::atomic_bool cancellation{false};
+    Agent agent({.config = config}, cancellation);
+    agent.start(requests, events);
+
+    ASSERT_TRUE(requests.push(request(32, "assistant", "Question")));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(events));
+    EXPECT_EQ(failed.request_id, 32U);
+    EXPECT_NE(failed.message.find("model unavailable"), std::string::npos);
+    agent.stop();
+    mock.join();
+}
+
+TEST(Agent, FailsACompletedStreamWithoutTextContent) {
+    const std::string stream =
+        "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n"
+        "data: [DONE]\n\n";
+    MockHttpServer mock({http_response("text/event-stream", stream)});
+    mock.start();
+
+    Config config;
+    config.host = "127.0.0.1";
+    config.port = mock.port();
+    config.mode = Mode::net;
+    config.model = "configured-model";
+    config.stream = true;
+
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+    std::atomic_bool cancellation{false};
+    Agent agent({.config = config}, cancellation);
+    agent.start(requests, events);
+
+    ASSERT_TRUE(requests.push(request(33, "assistant", "Question")));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(events));
+    EXPECT_EQ(failed.request_id, 33U);
+    EXPECT_NE(failed.message.find("without text content"), std::string::npos);
+    agent.stop();
+    mock.join();
+}
+
+TEST(Agent, IgnoresAllDataAfterTheStreamingCompletionMarker) {
+    const std::string stream =
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Complete\"}}]}\n\n"
+        "data: [DONE]\n"
+        "data: not-json\n\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\" ignored\"}}]}\n\n";
+    MockHttpServer mock({http_response("text/event-stream", stream)});
+    mock.start();
+
+    Config config;
+    config.host = "127.0.0.1";
+    config.port = mock.port();
+    config.mode = Mode::net;
+    config.model = "configured-model";
+    config.stream = true;
+
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+    std::atomic_bool cancellation{false};
+    Agent agent({.config = config}, cancellation);
+    agent.start(requests, events);
+
+    ASSERT_TRUE(requests.push(request(35, "assistant", "Question")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Complete");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 35U);
     agent.stop();
     mock.join();
 }
@@ -456,9 +608,8 @@ TEST(Agent, DiscoversTheFirstEndpointModelWhenNoneIsConfigured) {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
-    agent.run(requests, events);
+    Agent agent({.config = config}, cancellation);
+    agent.start(requests, events);
 
     ASSERT_TRUE(requests.push(request(4, "assistant", "Question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Complete answer");
@@ -487,13 +638,12 @@ TEST(Agent, ProvidesInfoAndHandlesNonStreamingResponse) {
     CompletionRequestChannel requests;
     AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Agent agent(cancellation);
-    agent.init(config);
+    Agent agent({.config = config}, cancellation);
     const AgentInfo info = agent.info();
     EXPECT_EQ(info.model, "initial-model");
     EXPECT_FALSE(info.streaming);
     EXPECT_NE(info.api.find("/v1/chat/completions"), std::string::npos);
-    agent.run(requests, events);
+    agent.start(requests, events);
 
     ASSERT_TRUE(requests.push(request(5, "assistant", "Question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Complete answer");
@@ -508,6 +658,32 @@ TEST(Agent, ProvidesInfoAndHandlesNonStreamingResponse) {
     EXPECT_FALSE(request["stream"]);
     ASSERT_EQ(request["messages"].size(), 1U);
     EXPECT_EQ(request["messages"][0]["content"], "Question");
+}
+
+TEST(Agent, FailsANonStreamingResponseWithoutTextContent) {
+    const std::string response_body = R"({"choices":[{"message":{"content":""}}]})";
+    MockHttpServer mock({http_response("application/json", response_body)});
+    mock.start();
+
+    Config config;
+    config.host = "127.0.0.1";
+    config.port = mock.port();
+    config.mode = Mode::net;
+    config.model = "initial-model";
+    config.stream = false;
+
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+    std::atomic_bool cancellation{false};
+    Agent agent({.config = config}, cancellation);
+    agent.start(requests, events);
+
+    ASSERT_TRUE(requests.push(request(36, "assistant", "Question")));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(events));
+    EXPECT_EQ(failed.request_id, 36U);
+    EXPECT_NE(failed.message.find("without text content"), std::string::npos);
+    agent.stop();
+    mock.join();
 }
 
 TEST(Agent, NamedInstancesProjectTheProvidedHistoryForTheirOwnIdentity) {
@@ -526,12 +702,13 @@ TEST(Agent, NamedInstancesProjectTheProvidedHistoryForTheirOwnIdentity) {
     first_config.mode = Mode::net;
     first_config.model = "writer-model";
     first_config.stream = false;
+    first_config.id = "writer-id";
+    first_config.name = "Writer";
 
     CompletionRequestChannel first_input;
     AgentEventChannel first_output;
-    Agent writer(cancellation, "writer-id", "Writer");
-    writer.init(first_config);
-    writer.run(first_input, first_output);
+    Agent writer({.config = first_config}, cancellation);
+    writer.start(first_input, first_output);
     ASSERT_TRUE(first_input.push(request(6, "writer-id", "Draft an answer")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(first_output)).text, "Initial answer");
     EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(first_output)));
@@ -541,12 +718,13 @@ TEST(Agent, NamedInstancesProjectTheProvidedHistoryForTheirOwnIdentity) {
     Config second_config = first_config;
     second_config.port = second_mock.port();
     second_config.model = "reviewer-model";
+    second_config.id = "reviewer-id";
+    second_config.name = "Reviewer";
 
     CompletionRequestChannel second_input;
     AgentEventChannel second_output;
-    Agent reviewer(cancellation, "reviewer-id", "Reviewer");
-    reviewer.init(second_config);
-    reviewer.run(second_input, second_output);
+    Agent reviewer({.config = second_config}, cancellation);
+    reviewer.start(second_input, second_output);
     ASSERT_TRUE(second_input.push(request(
         7,
         "reviewer-id",

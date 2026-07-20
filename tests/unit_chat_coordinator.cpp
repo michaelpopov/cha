@@ -123,6 +123,49 @@ TEST(ChatCoordinator, PersistsAnIdentifiedCancelledResponse) {
     EXPECT_EQ(restored.back().text, "Partial");
 }
 
+TEST(ChatCoordinator, RecordsCancellationWithoutAnEmptyAssistantEntry) {
+    TemporaryJournal temporary;
+    ConversationJournal journal(temporary.path);
+    Conversation conversation;
+    std::atomic_bool cancellation{false};
+    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+
+    ASSERT_TRUE(coordinator.submit("Question", requests).empty());
+    coordinator.request_stop();
+    ASSERT_TRUE(events.push(AgentCancelled{1}));
+    coordinator.receive(events);
+
+    EXPECT_FALSE(coordinator.generating());
+    ASSERT_EQ(conversation.entries().size(), 1U);
+    EXPECT_EQ(conversation.entries().front().kind, EntryKind::human);
+    EXPECT_EQ(load_conversation_file(temporary.path), conversation.entries());
+}
+
+TEST(ChatCoordinator, RejectsCompletionWithoutResponseContent) {
+    TemporaryJournal temporary;
+    ConversationJournal journal(temporary.path);
+    Conversation conversation;
+    std::atomic_bool cancellation{false};
+    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+
+    ASSERT_TRUE(coordinator.submit("Question", requests).empty());
+    ASSERT_TRUE(events.push(AgentCompleted{1}));
+    const CoordinatorUpdate update = coordinator.receive(events);
+
+    EXPECT_FALSE(coordinator.generating());
+    ASSERT_TRUE(update.notice);
+    EXPECT_EQ(*update.notice, "Generation failed");
+    const std::vector<ConversationEntry> entries = conversation.entries();
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries.back().kind, EntryKind::error);
+    EXPECT_EQ(entries.back().text, "Agent completed without text content");
+    EXPECT_EQ(load_conversation_file(temporary.path), entries);
+}
+
 TEST(ChatCoordinator, ReplacesPartialOutputWithATypedError) {
     TemporaryJournal temporary;
     ConversationJournal journal(temporary.path);

@@ -215,14 +215,10 @@ ConversationEntry parse_entry(
 }
 
 void initialize_file(const std::filesystem::path& path) {
-    if (!path.parent_path().empty()) {
-        std::filesystem::create_directories(path.parent_path());
-    }
-    const std::string header = Json{{"type", "conversation"}, {"version", conversation_file_version}}.dump() + '\n';
     try {
-        append_bytes(path, header, O_CREAT | O_EXCL);
+        create_conversation_file_exclusive(path);
     } catch (const std::system_error& error) {
-        if (error.code().value() != EEXIST) {
+        if (error.code() != std::errc::file_exists) {
             throw;
         }
     }
@@ -266,6 +262,14 @@ void track_entry(
 }
 
 } // namespace
+
+void create_conversation_file_exclusive(const std::filesystem::path& path) {
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    const std::string header = Json{{"type", "conversation"}, {"version", conversation_file_version}}.dump() + '\n';
+    append_bytes(path, header, O_CREAT | O_EXCL);
+}
 
 void prepare_conversation_file(const std::filesystem::path& path) {
     initialize_file(path);
@@ -389,8 +393,13 @@ ConversationRestore load_conversation_state(const std::filesystem::path& path) {
             }
 
             const char* field = type == "turn_failed" ? "error" : "response";
-            if (!record.contains(field)) {
+            const bool response_optional = type == "turn_cancelled";
+            if (!response_optional && !record.contains(field)) {
                 invalid_file(path, line_number, "terminal turn record has no typed entry");
+            }
+            if (response_optional && !record.contains(field)) {
+                pending.reset();
+                continue;
             }
             ConversationEntry entry = parse_entry(path, line_number, record.at(field));
             const TurnRecordKind record_kind =
@@ -483,14 +492,25 @@ void ConversationJournal::complete_turn(RequestId request_id, const Conversation
     });
 }
 
-void ConversationJournal::cancel_turn(RequestId request_id, const ConversationEntry& response) {
-    validate_turn_entry(TurnRecordKind::cancelled, request_id, response);
+void ConversationJournal::cancel_turn(
+    RequestId request_id,
+    std::optional<ConversationEntry> response) {
+
+    if (request_id == 0) {
+        throw std::invalid_argument("A cancelled turn requires a positive request ID");
+    }
+    if (response) {
+        validate_turn_entry(TurnRecordKind::cancelled, request_id, *response);
+    }
     std::lock_guard lock(mutex_);
-    append_record(path_, Json{
+    Json record{
         {"type", "turn_cancelled"},
         {"request_id", request_id},
-        {"response", entry_json(response)},
-    });
+    };
+    if (response) {
+        record["response"] = entry_json(*response);
+    }
+    append_record(path_, record);
 }
 
 void ConversationJournal::fail_turn(RequestId request_id, const ConversationEntry& error) {

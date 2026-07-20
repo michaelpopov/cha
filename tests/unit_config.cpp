@@ -14,11 +14,7 @@ TEST(Config, LoadsHostAndPortFromToml) {
         / ("cha_config_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(directory);
     const auto path = directory / "config.toml";
-    const auto prompt_path = directory / "SYSTEM.md";
     {
-        std::ofstream prompt_file(prompt_path);
-        prompt_file << "You are concise.";
-
         std::ofstream config_file(path);
         config_file
             << "id = \"example-id\"\n"
@@ -50,7 +46,6 @@ TEST(Config, LoadsHostAndPortFromToml) {
     EXPECT_EQ(config.api_key_env, "OPENAI_API_KEY");
     EXPECT_EQ(config.reasoning_effort, "medium");
     EXPECT_TRUE(config.https);
-    EXPECT_EQ(config.system_prompt, "You are concise.");
 
     std::filesystem::remove_all(directory);
 }
@@ -67,7 +62,6 @@ TEST(Config, AllowsMissingModel) {
     const Config config = Config::load(path);
 
     EXPECT_TRUE(config.model.empty());
-    EXPECT_TRUE(config.system_prompt.empty());
     std::filesystem::remove(path);
 }
 
