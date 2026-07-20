@@ -1,7 +1,5 @@
 #pragma once
 
-#include "agent_protocol.h"
-
 namespace cha {
 
 // Represents terminal and agent-event readiness returned by the user-event polling boundary.
@@ -31,9 +29,9 @@ private:
     bool _terminal_closed;
     bool _agent_event;
 
-    friend UserEvents wait_for_user_events(const AgentEventChannel& events);
+    friend UserEvents wait_for_user_events(int agent_notification_fd);
 };
 
-[[nodiscard]] UserEvents wait_for_user_events(const AgentEventChannel& events);
+[[nodiscard]] UserEvents wait_for_user_events(int agent_notification_fd);
 
 } // namespace cha

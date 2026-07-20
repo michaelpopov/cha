@@ -1,14 +1,20 @@
-#include "agent_protocol.h"
 #include "chat_coordinator.h"
-#include "conversation.h"
+#include "completion_backend.h"
 #include "conversation_file.h"
 
 #include <gtest/gtest.h>
 
+#include <poll.h>
+
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <memory>
+#include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
+#include <vector>
 
 namespace cha {
 namespace {
@@ -19,7 +25,10 @@ public:
     TemporaryJournal()
       : path(std::filesystem::temp_directory_path()
              / ("cha_coordinator_"
-                + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+                + std::to_string(
+                    std::chrono::steady_clock::now()
+                        .time_since_epoch()
+                        .count())
                 + ".data")) {
     }
 
@@ -31,252 +40,387 @@ public:
     std::filesystem::path path;
 };
 
-AgentInfo test_agent_info() {
+// Returns scripted completion output while retaining the immutable request for assertions.
+class ScriptedBackend final : public CompletionBackend {
+public:
+    ScriptedBackend(
+        CompletionResult result = {},
+        std::vector<std::string> deltas = {},
+        bool wait_for_cancellation = false)
+      : result_(std::move(result)),
+        deltas_(std::move(deltas)),
+        wait_for_cancellation_(wait_for_cancellation) {
+    }
+
+    CompletionResult complete(
+        const CompletionRequest& request,
+        const CompletionDeltaSink& on_delta,
+        const std::atomic_bool& cancellation) override {
+        requests.push_back(request);
+        for (const std::string& delta : deltas_) {
+            on_delta(delta);
+        }
+        if (wait_for_cancellation_) {
+            while (!cancellation.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            return {CompletionOutcome::cancelled, {}};
+        }
+        return result_;
+    }
+
+    AgentInfo info() const override {
+        return {
+            .id = id_,
+            .name = "Guide",
+            .model = "test-model",
+            .api = "test://completion",
+            .streaming = true,
+        };
+    }
+
+    const std::string& agent_id() const override {
+        return id_;
+    }
+
+    std::vector<CompletionRequest> requests;
+
+private:
+    std::string id_{"guide-id"};
+    CompletionResult result_;
+    std::vector<std::string> deltas_;
+    bool wait_for_cancellation_{};
+};
+
+CoordinatorUpdate receive_until_idle(ChatCoordinator& coordinator) {
+    CoordinatorUpdate combined;
+    while (coordinator.generating()) {
+        pollfd descriptor{
+            coordinator.notification_fd(),
+            POLLIN,
+            0,
+        };
+        if (::poll(&descriptor, 1, 1000) != 1) {
+            throw std::runtime_error(
+                "Timed out waiting for coordinator event");
+        }
+        const CoordinatorUpdate update = coordinator.receive();
+        combined.render_needed =
+            combined.render_needed || update.render_needed;
+        combined.end_session =
+            combined.end_session || update.end_session;
+        combined.clear_input =
+            combined.clear_input || update.clear_input;
+        if (update.notice) {
+            combined.notice = update.notice;
+        }
+    }
+    return combined;
+}
+
+ConversationRestore restore_with(
+    std::vector<ConversationEntry> entries,
+    RequestId next_request_id,
+    EntryId next_entry_id) {
     return {
-        .id = "guide-id",
-        .name = "Guide",
-        .model = "test-model",
-        .api = "http://example.test/v1/chat/completions",
-        .streaming = true,
+        .entries = std::move(entries),
+        .next_request_id = next_request_id,
+        .next_entry_id = next_entry_id,
     };
 }
 
 TEST(ChatCoordinator, OwnsACompleteIdentifiedTypedTurn) {
     TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    const ConversationEntry earlier = make_human_entry(10, "Earlier");
-    journal.append(earlier);
-    conversation.add_entry(earlier);
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation, 17, 11);
-    CompletionRequestChannel requests;
-    AgentEventChannel events;
+    const ConversationEntry earlier =
+        make_human_entry(10, "Earlier");
+    {
+        ConversationJournal journal(temporary.path);
+        journal.append(earlier);
+    }
+    auto backend = std::make_unique<ScriptedBackend>(
+        CompletionResult{},
+        std::vector<std::string>{"Hello", " there"});
+    ScriptedBackend* backend_view = backend.get();
+    ChatCoordinator coordinator(
+        std::move(backend),
+        temporary.path,
+        restore_with({earlier}, 17, 11));
 
-    EXPECT_EQ(coordinator.submit("Current", requests), "");
-    const std::optional<CompletionRequest> request = requests.get();
-    ASSERT_TRUE(request);
-    EXPECT_EQ(request->request_id, 17U);
-    EXPECT_EQ(request->agent_id, "guide-id");
-    EXPECT_EQ(request->history, (std::vector<ConversationEntry>{earlier}));
-    EXPECT_EQ(request->prompt.kind, EntryKind::human);
-    EXPECT_EQ(request->prompt.text, "Current");
+    const CoordinatorUpdate submitted =
+        coordinator.handle_input("Current");
+    EXPECT_TRUE(submitted.render_needed);
+    const CoordinatorUpdate completed =
+        receive_until_idle(coordinator);
 
-    ASSERT_TRUE(events.push(AgentDelta{17, "Hello"}));
-    ASSERT_TRUE(events.push(AgentDelta{17, " there"}));
-    ASSERT_TRUE(events.push(AgentCompleted{17}));
-    const CoordinatorUpdate update = coordinator.receive(events);
+    ASSERT_EQ(backend_view->requests.size(), 1U);
+    const CompletionRequest& request =
+        backend_view->requests.front();
+    EXPECT_EQ(request.request_id, 17U);
+    EXPECT_EQ(request.agent_id, "guide-id");
+    EXPECT_EQ(
+        request.history,
+        (std::vector<ConversationEntry>{earlier}));
+    EXPECT_EQ(request.prompt.kind, EntryKind::human);
+    EXPECT_EQ(request.prompt.text, "Current");
+    EXPECT_TRUE(completed.render_needed);
 
-    EXPECT_TRUE(update.render_needed);
-    EXPECT_FALSE(coordinator.generating());
-    const auto completed_entries = conversation.entries();
-    ASSERT_EQ(completed_entries.size(), 3U);
-    const ConversationEntry& response = completed_entries.back();
+    const auto entries = coordinator.conversation().entries();
+    ASSERT_EQ(entries.size(), 3U);
+    const ConversationEntry& response = entries.back();
     EXPECT_EQ(response.kind, EntryKind::agent);
     EXPECT_EQ(response.participant_id, "guide-id");
     EXPECT_EQ(response.display_name, "Guide");
     EXPECT_EQ(response.text, "Hello there");
     EXPECT_EQ(response.status, CompletionStatus::complete);
-    EXPECT_EQ(load_conversation_file(temporary.path), conversation.entries());
-}
-
-TEST(ChatCoordinator, IgnoresEventsForAnotherRequest) {
-    TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
-    CompletionRequestChannel requests;
-    AgentEventChannel events;
-
-    ASSERT_TRUE(coordinator.submit("Question", requests).empty());
-    ASSERT_TRUE(events.push(AgentDelta{999, "wrong"}));
-    ASSERT_TRUE(events.push(AgentCompleted{999}));
-    coordinator.receive(events);
-
-    EXPECT_TRUE(coordinator.generating());
-    ASSERT_EQ(conversation.entries().size(), 1U);
-    EXPECT_EQ(conversation.entries().front().kind, EntryKind::human);
+    EXPECT_EQ(load_conversation_file(temporary.path), entries);
 }
 
 TEST(ChatCoordinator, PersistsAnIdentifiedCancelledResponse) {
     TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
-    CompletionRequestChannel requests;
-    AgentEventChannel events;
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(
+            CompletionResult{CompletionOutcome::cancelled, {}},
+            std::vector<std::string>{"Partial"}),
+        temporary.path);
 
-    ASSERT_TRUE(coordinator.submit("Question", requests).empty());
-    coordinator.request_stop();
-    ASSERT_TRUE(events.push(AgentDelta{1, "Partial"}));
-    ASSERT_TRUE(events.push(AgentCancelled{1}));
-    const CoordinatorUpdate update = coordinator.receive(events);
+    (void)coordinator.handle_input("Question");
+    const CoordinatorUpdate update =
+        receive_until_idle(coordinator);
 
     ASSERT_TRUE(update.notice);
     EXPECT_EQ(*update.notice, "Generation stopped");
-    const auto restored = load_conversation_file(temporary.path);
+    const auto restored =
+        load_conversation_file(temporary.path);
     ASSERT_EQ(restored.size(), 2U);
     EXPECT_EQ(restored.back().kind, EntryKind::agent);
-    EXPECT_EQ(restored.back().status, CompletionStatus::cancelled);
+    EXPECT_EQ(
+        restored.back().status,
+        CompletionStatus::cancelled);
     EXPECT_EQ(restored.back().text, "Partial");
 }
 
 TEST(ChatCoordinator, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
-    CompletionRequestChannel requests;
-    AgentEventChannel events;
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(
+            CompletionResult{CompletionOutcome::cancelled, {}}),
+        temporary.path);
 
-    ASSERT_TRUE(coordinator.submit("Question", requests).empty());
-    coordinator.request_stop();
-    ASSERT_TRUE(events.push(AgentCancelled{1}));
-    coordinator.receive(events);
+    (void)coordinator.handle_input("Question");
+    receive_until_idle(coordinator);
 
-    EXPECT_FALSE(coordinator.generating());
-    ASSERT_EQ(conversation.entries().size(), 1U);
-    EXPECT_EQ(conversation.entries().front().kind, EntryKind::human);
-    EXPECT_EQ(load_conversation_file(temporary.path), conversation.entries());
+    const auto entries = coordinator.conversation().entries();
+    ASSERT_EQ(entries.size(), 1U);
+    EXPECT_EQ(entries.front().kind, EntryKind::human);
+    EXPECT_EQ(load_conversation_file(temporary.path), entries);
 }
 
 TEST(ChatCoordinator, RejectsCompletionWithoutResponseContent) {
     TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
-    CompletionRequestChannel requests;
-    AgentEventChannel events;
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(),
+        temporary.path);
 
-    ASSERT_TRUE(coordinator.submit("Question", requests).empty());
-    ASSERT_TRUE(events.push(AgentCompleted{1}));
-    const CoordinatorUpdate update = coordinator.receive(events);
+    (void)coordinator.handle_input("Question");
+    const CoordinatorUpdate update =
+        receive_until_idle(coordinator);
 
-    EXPECT_FALSE(coordinator.generating());
     ASSERT_TRUE(update.notice);
     EXPECT_EQ(*update.notice, "Generation failed");
-    const std::vector<ConversationEntry> entries = conversation.entries();
+    const auto entries = coordinator.conversation().entries();
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.back().kind, EntryKind::error);
-    EXPECT_EQ(entries.back().text, "Agent completed without text content");
+    EXPECT_EQ(
+        entries.back().text,
+        "Agent completed without text content");
     EXPECT_EQ(load_conversation_file(temporary.path), entries);
 }
 
 TEST(ChatCoordinator, ReplacesPartialOutputWithATypedError) {
     TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
-    CompletionRequestChannel requests;
-    AgentEventChannel events;
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(
+            CompletionResult{
+                CompletionOutcome::transport_error,
+                "network unavailable",
+            },
+            std::vector<std::string>{"Discard me"}),
+        temporary.path);
 
-    ASSERT_TRUE(coordinator.submit("Question", requests).empty());
-    ASSERT_TRUE(events.push(AgentDelta{1, "Discard me"}));
-    ASSERT_TRUE(events.push(AgentFailed{1, "network unavailable"}));
-    coordinator.receive(events);
+    (void)coordinator.handle_input("Question");
+    receive_until_idle(coordinator);
 
-    const auto failed_entries = conversation.entries();
-    ASSERT_EQ(failed_entries.size(), 2U);
-    const ConversationEntry& error = failed_entries.back();
+    const auto entries = coordinator.conversation().entries();
+    ASSERT_EQ(entries.size(), 2U);
+    const ConversationEntry& error = entries.back();
     EXPECT_EQ(error.kind, EntryKind::error);
     EXPECT_EQ(error.display_name, "Error");
     EXPECT_EQ(error.participant_id, "guide-id");
     EXPECT_EQ(error.text, "network unavailable");
-    EXPECT_EQ(load_conversation_file(temporary.path), conversation.entries());
-}
-
-TEST(ChatCoordinator, RecordsDispatchFailureAsATerminalTurn) {
-    TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
-    CompletionRequestChannel requests;
-    requests.close();
-
-    EXPECT_EQ(coordinator.submit("Question", requests), "Request could not be dispatched");
-    EXPECT_FALSE(coordinator.generating());
-    const auto restored = load_conversation_file(temporary.path);
-    ASSERT_EQ(restored.size(), 2U);
-    EXPECT_EQ(restored.back().kind, EntryKind::error);
-    EXPECT_TRUE(restored.back().participant_id.empty());
-    EXPECT_EQ(restored.back().text, "Request channel is closed");
-}
-
-TEST(ChatCoordinator, DoesNotAttributePromptInsertionFailuresToTheAgent) {
-    TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    conversation.add_entry(make_notice_entry(2, "Existing"));
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation, 1, 1);
-    CompletionRequestChannel requests;
-
-    EXPECT_THROW((void)coordinator.submit("Question", requests), std::invalid_argument);
-    const auto restored = load_conversation_file(temporary.path);
-    ASSERT_EQ(restored.size(), 2U);
-    EXPECT_EQ(restored.back().kind, EntryKind::error);
-    EXPECT_TRUE(restored.back().participant_id.empty());
-    EXPECT_EQ(restored.back().text, "Failed to add the submitted prompt to the conversation");
-}
-
-TEST(ChatCoordinator, PersistsClearAndSystemMessages) {
-    TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    const ConversationEntry existing = make_notice_entry(1, "Existing");
-    journal.append(existing);
-    conversation.add_entry(existing);
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation, 1, 2);
-
-    coordinator.clear();
-    EXPECT_TRUE(conversation.entries().empty());
-    EXPECT_TRUE(load_conversation_file(temporary.path).empty());
-
-    coordinator.add_system_message("Information");
-    const std::vector<ConversationEntry> entries = conversation.entries();
-    ASSERT_EQ(entries.size(), 1U);
-    EXPECT_EQ(entries.front().kind, EntryKind::notice);
-    EXPECT_EQ(entries.front().text, "Information");
     EXPECT_EQ(load_conversation_file(temporary.path), entries);
 }
 
-TEST(ChatCoordinator, ReportsAClosedAgentEventChannel) {
+TEST(ChatCoordinator, OwnsClearInfoAndExitCommandSemantics) {
     TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
-    AgentEventChannel events;
-    events.close();
+    const ConversationEntry existing =
+        make_notice_entry(1, "Existing");
+    {
+        ConversationJournal journal(temporary.path);
+        journal.append(existing);
+    }
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(),
+        temporary.path,
+        restore_with({existing}, 1, 2));
 
-    const CoordinatorUpdate update = coordinator.receive(events);
+    const CoordinatorUpdate cleared =
+        coordinator.handle_input("/clear");
+    EXPECT_EQ(cleared.notice, "Conversation cleared");
+    EXPECT_TRUE(coordinator.conversation().entries().empty());
+    EXPECT_TRUE(load_conversation_file(temporary.path).empty());
 
-    EXPECT_TRUE(update.channel_closed);
+    (void)coordinator.handle_input("/info");
+    const auto entries = coordinator.conversation().entries();
+    ASSERT_EQ(entries.size(), 1U);
+    EXPECT_EQ(entries.front().kind, EntryKind::notice);
+    EXPECT_NE(
+        entries.front().text.find("Model: test-model"),
+        std::string::npos);
+    EXPECT_NE(
+        entries.front().text.find("Transcript entries: 0"),
+        std::string::npos);
+    EXPECT_EQ(load_conversation_file(temporary.path), entries);
+
+    EXPECT_TRUE(
+        coordinator.handle_input("/exit").end_session);
 }
 
-TEST(ChatCoordinator, ShutdownCancelsAnActiveTurnAndClosesRequests) {
+TEST(ChatCoordinator, RejectsCommandsAndNewPromptsDuringGeneration) {
     TemporaryJournal temporary;
-    ConversationJournal journal(temporary.path);
-    Conversation conversation;
-    std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation);
-    CompletionRequestChannel requests;
-    ASSERT_TRUE(coordinator.submit("Question", requests).empty());
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(
+            CompletionResult{},
+            std::vector<std::string>{},
+            true),
+        temporary.path);
 
-    coordinator.shutdown(requests);
+    (void)coordinator.handle_input("Question");
+    const CoordinatorUpdate blocked =
+        coordinator.handle_input("Another");
+    EXPECT_FALSE(blocked.clear_input);
+    EXPECT_EQ(
+        blocked.notice,
+        "Generation in progress; use /stop, Esc, or Ctrl-C");
+    const CoordinatorUpdate stopping =
+        coordinator.handle_input("/stop");
+    EXPECT_TRUE(stopping.clear_input);
+    EXPECT_EQ(stopping.notice, "Stopping generation...");
+    receive_until_idle(coordinator);
+}
 
-    EXPECT_TRUE(cancellation.load(std::memory_order_acquire));
-    CompletionRequest request;
-    EXPECT_EQ(requests.try_get(request), ChannelReadStatus::value);
-    EXPECT_EQ(requests.try_get(request), ChannelReadStatus::closed);
-    EXPECT_FALSE(requests.push({}));
+TEST(ChatCoordinator, IgnoresEventsForAnotherRequest) {
+    TemporaryJournal temporary;
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(
+            CompletionResult{},
+            std::vector<std::string>{},
+            true),
+        temporary.path);
+
+    (void)coordinator.handle_input("Question");
+    const CoordinatorUpdate delta =
+        coordinator.handle_agent_event(
+            AgentDelta{999, "Wrong response"});
+    const CoordinatorUpdate completed =
+        coordinator.handle_agent_event(
+            AgentCompleted{999});
+
+    EXPECT_FALSE(delta.render_needed);
+    EXPECT_FALSE(completed.render_needed);
+    EXPECT_TRUE(coordinator.generating());
+    const auto entries = coordinator.conversation().entries();
+    ASSERT_EQ(entries.size(), 1U);
+    EXPECT_EQ(entries.front().kind, EntryKind::human);
+
+    (void)coordinator.request_stop();
+    receive_until_idle(coordinator);
+}
+
+TEST(ChatCoordinator, DoesNotAttributeLocalDispatchFailuresToTheAgent) {
+    TemporaryJournal temporary;
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(),
+        temporary.path);
+    coordinator.shutdown();
+
+    const CoordinatorUpdate update =
+        coordinator.handle_input("Question");
+
+    EXPECT_EQ(update.notice, "Request could not be dispatched");
+    const auto restored =
+        load_conversation_file(temporary.path);
+    ASSERT_EQ(restored.size(), 2U);
+    EXPECT_EQ(restored.back().kind, EntryKind::error);
+    EXPECT_TRUE(restored.back().participant_id.empty());
+    EXPECT_EQ(restored.back().text, "Agent worker is closed");
+}
+
+TEST(ChatCoordinator, FinalizesInterruptedTurnsDuringRestore) {
+    TemporaryJournal temporary;
+    {
+        ConversationJournal journal(temporary.path);
+        const ConversationEntry prompt =
+            make_human_entry(1, "Interrupted", 5);
+        journal.start_turn(5, "guide-id", prompt);
+    }
+    ConversationRestore restored =
+        load_conversation_state(temporary.path);
+    ASSERT_EQ(restored.interrupted_turns.size(), 1U);
+
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(),
+        temporary.path,
+        std::move(restored));
+
+    const ConversationRestore repaired =
+        load_conversation_state(temporary.path);
+    EXPECT_TRUE(repaired.interrupted_turns.empty());
+    ASSERT_EQ(repaired.entries.size(), 2U);
+    EXPECT_EQ(repaired.entries.back().kind, EntryKind::error);
+    EXPECT_NE(
+        repaired.entries.back().text.find("interrupted"),
+        std::string::npos);
+}
+
+TEST(ChatCoordinator, ShutdownCancelsAndPersistsAnActiveTurn) {
+    TemporaryJournal temporary;
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(
+            CompletionResult{},
+            std::vector<std::string>{"Partial"},
+            true),
+        temporary.path);
+
+    (void)coordinator.handle_input("Question");
+    pollfd descriptor{
+        coordinator.notification_fd(),
+        POLLIN,
+        0,
+    };
+    ASSERT_EQ(::poll(&descriptor, 1, 1000), 1);
+    const CoordinatorUpdate partial = coordinator.receive();
+    EXPECT_TRUE(partial.render_needed);
+    EXPECT_TRUE(coordinator.generating());
+    coordinator.shutdown();
+
+    EXPECT_FALSE(coordinator.generating());
+    const auto entries =
+        load_conversation_file(temporary.path);
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(
+        entries.back().status,
+        CompletionStatus::cancelled);
+    EXPECT_EQ(entries.back().text, "Partial");
 }
 
 } // namespace

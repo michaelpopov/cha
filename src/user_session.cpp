@@ -1,9 +1,7 @@
 #include "user_session.h"
 
 #include "chat_coordinator.h"
-#include "command.h"
 
-#include <sstream>
 #include <utility>
 
 namespace cha {
@@ -46,25 +44,32 @@ void UserSession::report_terminal_failure() {
     request_render();
 }
 
-void UserSession::receive_responses(AgentEventChannel& events) {
-    const CoordinatorUpdate update = coordinator_.receive(events);
+void UserSession::receive_responses() {
+    const CoordinatorUpdate update = coordinator_.receive();
+    apply_update(update);
+}
+
+void UserSession::apply_update(const CoordinatorUpdate& update) {
+    if (update.clear_input) {
+        editor_.clear();
+    }
     if (update.render_needed) {
         request_render();
     }
     if (update.notice) {
         notice_ = *update.notice;
     }
-    if (update.channel_closed) {
+    if (update.end_session) {
         running_ = false;
     }
 }
 
-void UserSession::receive_terminal_input(CompletionRequestChannel& requests) {
+void UserSession::receive_terminal_input() {
     bool received_input = false;
     while (const std::optional<SessionInput> input = view_.read_input()) {
         received_input = true;
         request_render();
-        handle_input(requests, *input);
+        handle_input(*input);
         if (!running_) {
             break;
         }
@@ -79,7 +84,7 @@ void UserSession::request_render() {
     render_needed_ = true;
 }
 
-void UserSession::handle_input(CompletionRequestChannel& requests, const SessionInput& input) {
+void UserSession::handle_input(const SessionInput& input) {
     switch (input.kind) {
     case SessionInputKind::resize:
         view_.resize();
@@ -126,7 +131,7 @@ void UserSession::handle_input(CompletionRequestChannel& requests, const Session
         }
         break;
     case SessionInputKind::enter:
-        submit_input(requests);
+        submit_input();
         break;
     case SessionInputKind::character:
         editor_.insert(input.character);
@@ -137,77 +142,22 @@ void UserSession::handle_input(CompletionRequestChannel& requests, const Session
     }
 }
 
-void UserSession::submit_input(CompletionRequestChannel& requests) {
+void UserSession::submit_input() {
     if (editor_.ends_with_continuation()) {
         editor_.continue_line();
         return;
     }
 
     const std::string input = editor_.value();
-    if (input.empty()) {
-        return;
-    }
-    const Command command = parse_command(input);
-
-    if (coordinator_.generating()) {
-        if (command.kind == CommandKind::stop && command.argument.empty()) {
-            editor_.clear();
-            request_stop();
-        } else {
-            notice_ = "Generation in progress; use /stop, Esc, or Ctrl-C";
-        }
-        return;
-    }
-
-    editor_.clear();
-
-    if (command.kind != CommandKind::text) {
-        if (!command.argument.empty() && command.kind != CommandKind::unknown) {
-            notice_ = "Command does not accept arguments";
-            return;
-        }
-
-        switch (command.kind) {
-        case CommandKind::clear:
-            coordinator_.clear();
-            notice_ = "Conversation cleared";
-            return;
-        case CommandKind::info: {
-            const std::size_t message_count = coordinator_.conversation().snapshot().entries.size();
-            const AgentInfo& agent_info = coordinator_.agent_info();
-            std::ostringstream info;
-            info << "Model: " << agent_info.model << '\n'
-                 << "API: " << agent_info.api << '\n'
-                 << "Streaming: " << (agent_info.streaming ? "yes" : "no") << '\n'
-                 << "Transcript entries: " << message_count;
-            coordinator_.add_system_message(info.str());
-            notice_.clear();
-            return;
-        }
-        case CommandKind::stop:
-            notice_ = "No generation is active";
-            return;
-        case CommandKind::exit:
-            running_ = false;
-            return;
-        case CommandKind::unknown:
-            notice_ = "Unknown command. Commands: /clear, /info, /stop, /exit";
-            return;
-        case CommandKind::text:
-            break;
-        }
-    }
-
-    notice_ = coordinator_.submit(input, requests);
+    apply_update(coordinator_.handle_input(input));
 }
 
 void UserSession::request_stop() {
-    coordinator_.request_stop();
-    notice_ = "Stopping generation...";
+    apply_update(coordinator_.request_stop());
 }
 
-void UserSession::shutdown(CompletionRequestChannel& requests) {
-    coordinator_.shutdown(requests);
+void UserSession::shutdown() {
+    coordinator_.shutdown();
 }
 
 } // namespace cha

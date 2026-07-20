@@ -1,17 +1,13 @@
-#include "agent_protocol.h"
 #include "agent_definition.h"
 #include "chat_coordinator.h"
-#include "conversation.h"
 #include "conversation_file.h"
 #include "environment.h"
-#include "agent.h"
 #include "session_repository.h"
 #include "startup_selector.h"
 #include "terminal.h"
 #include "user.h"
 #include "workspace.h"
 
-#include <atomic>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -83,39 +79,13 @@ int main_internal() {
         }
     }
 
-    cha::CompletionRequestChannel requests;
-    cha::AgentEventChannel agent_events;
-    cha::Conversation conversation;
-    if (restored) {
-        conversation.replace_entries(std::move(restored->entries));
-    }
-    cha::ConversationJournal journal(session_data);
-    if (restored) {
-        for (const cha::InterruptedTurn& turn : restored->interrupted_turns) {
-            journal.fail_turn(turn.request_id, turn.error_entry);
-        }
-    }
-    std::atomic_bool cancellation{false};
-
-    cha::Agent agent(
-        cha::load_agent_definition(workspace.persona_directory(room), room.directory),
-        cancellation);
-
-    const cha::AgentInfo agent_info = agent.info();
-    const cha::RequestId next_request_id = restored ? restored->next_request_id : 1;
-    const cha::EntryId next_entry_id = restored ? restored->next_entry_id : 1;
     cha::ChatCoordinator coordinator(
-        agent_info,
-        journal,
-        cancellation,
-        conversation,
-        next_request_id,
-        next_entry_id);
-    agent.start(requests, agent_events);
-    cha::run_user(terminal, coordinator, agent_events, requests);
-    agent.stop();
-    (void)coordinator.receive(agent_events);
-    agent_events.close();
+        cha::load_agent_definition(
+            workspace.persona_directory(room),
+            room.directory),
+        session_data,
+        restored ? std::move(*restored) : cha::ConversationRestore{});
+    cha::run_user(terminal, coordinator);
 
     return 0;
 }

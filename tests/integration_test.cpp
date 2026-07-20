@@ -1,13 +1,15 @@
 #include "agent_protocol.h"
 #include "config.h"
 #include "environment.h"
-#include "agent.h"
+#include "agent_worker.h"
 
 #include <gtest/gtest.h>
 
+#include <poll.h>
+
 #include <cstddef>
 #include <filesystem>
-#include <optional>
+#include <stdexcept>
 #include <string>
 #include <variant>
 
@@ -28,66 +30,66 @@ Config integration_config(bool stream) {
     return config;
 }
 
+AgentEvent wait_for_agent_event(AgentWorker& worker) {
+    pollfd descriptor{worker.notification_fd(), POLLIN, 0};
+    if (::poll(&descriptor, 1, -1) != 1) {
+        throw std::runtime_error(
+            "Failed to wait for integration agent event");
+    }
+    AgentEvent event = AgentCompleted{};
+    if (worker.try_receive(event) != ChannelReadStatus::value) {
+        throw std::runtime_error(
+            "Integration agent event channel closed unexpectedly");
+    }
+    return event;
+}
+
 ChatResult run_chat(bool stream) {
     const Config config = integration_config(stream);
-    CompletionRequestChannel requests;
-    AgentEventChannel events;
-    std::atomic_bool cancellation{false};
-    Agent agent({.config = config}, cancellation);
-
-    agent.start(requests, events);
+    AgentWorker worker({.config = config});
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
-    requests.push({1, agent.info().id, {}, make_human_entry(1, input, 1)});
+    EXPECT_TRUE(worker.submit(
+        {1, worker.info().id, {}, make_human_entry(1, input, 1)}));
 
     ChatResult result;
     while (true) {
-        const std::optional<AgentEvent> event = events.get();
-        if (!event) {
-            break;
-        }
-        if (const auto* delta = std::get_if<AgentDelta>(&*event)) {
+        const AgentEvent event = wait_for_agent_event(worker);
+        if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
         } else {
-            EXPECT_TRUE(std::holds_alternative<AgentCompleted>(*event));
+            EXPECT_TRUE(std::holds_alternative<AgentCompleted>(event));
             break;
         }
     }
 
-    agent.stop();
+    worker.stop();
     return result;
 }
 
 ChatResult run_cancelled_chat() {
     const Config config = integration_config(true);
-    CompletionRequestChannel requests;
-    AgentEventChannel events;
-    std::atomic_bool cancellation{false};
-    Agent agent({.config = config}, cancellation);
-
-    agent.start(requests, events);
+    AgentWorker worker({.config = config});
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
-    requests.push({2, agent.info().id, {}, make_human_entry(1, input, 2)});
+    EXPECT_TRUE(worker.submit(
+        {2, worker.info().id, {}, make_human_entry(1, input, 2)}));
 
     ChatResult result;
     while (true) {
-        const std::optional<AgentEvent> event = events.get();
-        if (!event) {
-            break;
-        }
-        if (const auto* delta = std::get_if<AgentDelta>(&*event)) {
+        const AgentEvent event = wait_for_agent_event(worker);
+        if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
-            cancellation.store(true, std::memory_order_release);
+            worker.cancel();
         } else {
-            EXPECT_TRUE(std::holds_alternative<AgentCancelled>(*event));
+            EXPECT_TRUE(std::holds_alternative<AgentCancelled>(event));
             break;
         }
     }
 
-    agent.stop();
+    worker.stop();
     return result;
 }
 

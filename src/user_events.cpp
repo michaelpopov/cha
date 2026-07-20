@@ -1,7 +1,5 @@
 #include "user_events.h"
 
-#include "agent_protocol.h"
-
 #include <cerrno>
 #include <poll.h>
 #include <unistd.h>
@@ -36,10 +34,10 @@ bool UserEvents::agent_event_ready() const {
     return _agent_event;
 }
 
-UserEvents wait_for_user_events(const AgentEventChannel& events) {
+UserEvents wait_for_user_events(int agent_notification_fd) {
     pollfd descriptors[] = {
         {STDIN_FILENO, POLLIN, 0},
-        {events.notification_fd(), POLLIN, 0},
+        {agent_notification_fd, POLLIN, 0},
     };
 
     if (::poll(descriptors, 2, -1) == -1) {

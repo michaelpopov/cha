@@ -61,7 +61,7 @@ add_library(cha_core
     src/environment.cpp
     src/input_editor.cpp
     src/path_name.cpp
-    src/agent.cpp
+    src/agent_worker.cpp
     src/agent_context.cpp
     src/agent_protocol.cpp
     src/session_repository.cpp
@@ -111,7 +111,7 @@ if(BUILD_TESTING)
         tests/unit_event_channel.cpp
         tests/unit_text.cpp
         tests/unit_transcript_renderer.cpp
-        tests/unit_agent.cpp
+        tests/unit_agent_worker.cpp
         tests/unit_agent_context.cpp
         tests/unit_user.cpp
         tests/unit_user_session.cpp

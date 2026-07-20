@@ -56,7 +56,7 @@ TEST(CompletionClient, EchoesOnePromptInTestMode) {
     config.id = "local-agent";
     config.name = "Local agent";
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = config}, cancellation);
+    CompletionClient client({.config = config});
     std::vector<std::string> deltas;
 
     CompletionRequest completion_request =
@@ -66,10 +66,33 @@ TEST(CompletionClient, EchoesOnePromptInTestMode) {
         completion_request,
         [&deltas](std::string text) {
             deltas.push_back(std::move(text));
-        });
+        },
+        cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     EXPECT_EQ(deltas, (std::vector<std::string>{"hello"}));
+}
+
+TEST(CompletionClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
+    Config config;
+    config.id = "local-agent";
+    config.name = "Local agent";
+    std::atomic_bool cancellation{true};
+    CompletionClient client({.config = config});
+    bool received_delta = false;
+
+    CompletionRequest completion_request =
+        client_request(2, "do not dispatch");
+    completion_request.agent_id = "local-agent";
+    const CompletionResult result = client.complete(
+        completion_request,
+        [&received_delta](std::string) {
+            received_delta = true;
+        },
+        cancellation);
+
+    EXPECT_EQ(result.outcome, CompletionOutcome::cancelled);
+    EXPECT_FALSE(received_delta);
 }
 
 TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
@@ -88,8 +111,7 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
     config.api_key = "test-key";
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = config, .system_prompt = "Be concise."},
-        cancellation);
+        {.config = config, .system_prompt = "Be concise."});
     std::vector<std::string> deltas;
 
     const CompletionResult result = client.complete(
@@ -108,7 +130,8 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
             }),
         [&deltas](std::string text) {
             deltas.push_back(std::move(text));
-        });
+        },
+        cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     EXPECT_EQ(
@@ -149,15 +172,15 @@ TEST(CompletionClient, ReportsMalformedStreamingProtocolDirectly) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port())},
-        cancellation);
+        {.config = network_config(mock.port())});
     std::string output;
 
     const CompletionResult result = client.complete(
         client_request(8, "Question"),
         [&output](std::string text) {
             output += text;
-        });
+        },
+        cancellation);
 
     EXPECT_EQ(
         result.outcome,
@@ -179,15 +202,15 @@ TEST(CompletionClient, RejectsAStreamWithoutTheCompletionMarker) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port())},
-        cancellation);
+        {.config = network_config(mock.port())});
     std::string output;
 
     const CompletionResult result = client.complete(
         client_request(9, "Question"),
         [&output](std::string text) {
             output += text;
-        });
+        },
+        cancellation);
 
     EXPECT_EQ(
         result.outcome,
@@ -211,15 +234,15 @@ TEST(CompletionClient, ReportsATruncatedResponseAsATransportError) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port())},
-        cancellation);
+        {.config = network_config(mock.port())});
     std::string output;
 
     const CompletionResult result = client.complete(
         client_request(10, "Question"),
         [&output](std::string text) {
             output += text;
-        });
+        },
+        cancellation);
 
     EXPECT_EQ(
         result.outcome,
@@ -243,8 +266,7 @@ TEST(CompletionClient, CancelsAnActiveStreamingTransfer) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port())},
-        cancellation);
+        {.config = network_config(mock.port())});
     std::string output;
 
     const CompletionResult result = client.complete(
@@ -252,7 +274,8 @@ TEST(CompletionClient, CancelsAnActiveStreamingTransfer) {
         [&output, &cancellation](std::string text) {
             output += text;
             cancellation.store(true, std::memory_order_release);
-        });
+        },
+        cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::cancelled);
     EXPECT_EQ(output, "Partial");
@@ -269,12 +292,12 @@ TEST(CompletionClient, ReportsAJsonErrorReturnedInsteadOfAStream) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port())},
-        cancellation);
+        {.config = network_config(mock.port())});
 
     const CompletionResult result = client.complete(
         client_request(11, "Question"),
-        [](std::string) {});
+        [](std::string) {},
+        cancellation);
 
     EXPECT_EQ(
         result.outcome,
@@ -296,12 +319,12 @@ TEST(CompletionClient, RejectsACompletedStreamWithoutText) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port())},
-        cancellation);
+        {.config = network_config(mock.port())});
 
     const CompletionResult result = client.complete(
         client_request(12, "Question"),
-        [](std::string) {});
+        [](std::string) {},
+        cancellation);
 
     EXPECT_EQ(
         result.outcome,
@@ -325,15 +348,15 @@ TEST(CompletionClient, IgnoresDataAfterTheCompletionMarker) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port())},
-        cancellation);
+        {.config = network_config(mock.port())});
     std::string output;
 
     const CompletionResult result = client.complete(
         client_request(13, "Question"),
         [&output](std::string text) {
             output += text;
-        });
+        },
+        cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     EXPECT_EQ(output, "Complete");
@@ -350,15 +373,15 @@ TEST(CompletionClient, ParsesNonStreamingResponses) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port(), false)},
-        cancellation);
+        {.config = network_config(mock.port(), false)});
     std::vector<std::string> deltas;
 
     const CompletionResult result = client.complete(
         client_request(14, "Question"),
         [&deltas](std::string text) {
             deltas.push_back(std::move(text));
-        });
+        },
+        cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     EXPECT_EQ(
@@ -381,12 +404,12 @@ TEST(CompletionClient, RejectsANonStreamingResponseWithoutText) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port(), false)},
-        cancellation);
+        {.config = network_config(mock.port(), false)});
 
     const CompletionResult result = client.complete(
         client_request(15, "Question"),
-        [](std::string) {});
+        [](std::string) {},
+        cancellation);
 
     EXPECT_EQ(
         result.outcome,
@@ -411,12 +434,12 @@ TEST(CompletionClient, ReportsNonSuccessfulHttpStatus) {
 
     std::atomic_bool cancellation{false};
     CompletionClient client(
-        {.config = network_config(mock.port())},
-        cancellation);
+        {.config = network_config(mock.port())});
 
     const CompletionResult result = client.complete(
         client_request(16, "Question"),
-        [](std::string) {});
+        [](std::string) {},
+        cancellation);
 
     EXPECT_EQ(
         result.outcome,
@@ -442,12 +465,13 @@ TEST(CompletionClient, DiscoversItsModelBeforeTheFirstCompletion) {
     Config config = network_config(mock.port(), false);
     config.model.clear();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = config}, cancellation);
+    CompletionClient client({.config = config});
     EXPECT_EQ(client.info().model, "discovered-model");
 
     const CompletionResult result = client.complete(
         client_request(17, "Question"),
-        [](std::string) {});
+        [](std::string) {},
+        cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     mock.join();

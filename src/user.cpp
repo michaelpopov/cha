@@ -1,6 +1,5 @@
 #include "user.h"
 
-#include "agent_protocol.h"
 #include "chat_coordinator.h"
 #include "tui.h"
 #include "user_events.h"
@@ -11,16 +10,15 @@ namespace cha {
 // Coordinate semantic events here while leaving polling details and mutable UI state to their modules.
 void run_user(
     Terminal& terminal,
-    ChatCoordinator& coordinator,
-    AgentEventChannel& agent_events,
-    CompletionRequestChannel& requests) {
+    ChatCoordinator& coordinator) {
 
     Tui tui(terminal);
     UserSession session(tui, coordinator);
     session.render();
 
     while (session.running()) {
-        const UserEvents ready = wait_for_user_events(agent_events);
+        const UserEvents ready =
+            wait_for_user_events(coordinator.notification_fd());
         if (ready.interrupted()) {
             session.resize();
             session.render_if_needed();
@@ -37,17 +35,17 @@ void run_user(
         }
 
         if (ready.agent_event_ready()) {
-            session.receive_responses(agent_events);
+            session.receive_responses();
         }
 
         if (session.running() && ready.terminal_input_ready()) {
-            session.receive_terminal_input(requests);
+            session.receive_terminal_input();
         }
 
         session.render_if_needed();
     }
 
-    session.shutdown(requests);
+    session.shutdown();
 }
 
 } // namespace cha

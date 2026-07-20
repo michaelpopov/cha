@@ -1,6 +1,5 @@
 #pragma once
 
-#include "agent_protocol.h"
 #include "input_editor.h"
 #include "session_view.h"
 
@@ -9,6 +8,7 @@
 namespace cha {
 
 class ChatCoordinator;
+struct CoordinatorUpdate;
 
 // Coordinates testable session state, typed input, rendering, and agent notifications for one run.
 class UserSession {
@@ -23,14 +23,15 @@ public:
     void resize();
     void close_terminal();
     void report_terminal_failure();
-    void receive_responses(AgentEventChannel& events);
-    void receive_terminal_input(CompletionRequestChannel& requests);
-    void shutdown(CompletionRequestChannel& requests);
+    void receive_responses();
+    void receive_terminal_input();
+    void shutdown();
 
 private:
     void request_render();
-    void handle_input(CompletionRequestChannel& requests, const SessionInput& input);
-    void submit_input(CompletionRequestChannel& requests);
+    void apply_update(const CoordinatorUpdate& update);
+    void handle_input(const SessionInput& input);
+    void submit_input();
     void request_stop();
 
     SessionView& view_;

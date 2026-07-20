@@ -206,11 +206,8 @@ void require_curl(CURLcode result, std::string_view operation) {
 
 } // namespace
 
-CompletionClient::CompletionClient(
-    AgentDefinition definition,
-    std::atomic_bool& cancellation)
+CompletionClient::CompletionClient(AgentDefinition definition)
     : config_(std::move(definition.config)),
-      cancellation_(cancellation),
       system_prompt_(std::move(definition.system_prompt)) {
     if (config_.id.empty() || config_.name.empty()) {
         throw std::runtime_error(
@@ -326,7 +323,11 @@ void CompletionClient::discover_model() {
 
 CompletionResult CompletionClient::complete(
     const CompletionRequest& request,
-    const CompletionDeltaSink& on_delta) {
+    const CompletionDeltaSink& on_delta,
+    const std::atomic_bool& cancellation) {
+    if (cancellation.load(std::memory_order_acquire)) {
+        return {CompletionOutcome::cancelled, {}};
+    }
     if (config_.mode == Mode::test) {
         on_delta(request.prompt.text);
         return {CompletionOutcome::completed, {}};
@@ -413,7 +414,7 @@ CompletionResult CompletionClient::complete(
         curl_easy_setopt(
             curl_.get(),
             CURLOPT_XFERINFODATA,
-            &cancellation_),
+            &cancellation),
         "Failed to configure cancellation state");
 
     curl_slist* raw_headers = nullptr;
@@ -446,7 +447,7 @@ CompletionResult CompletionClient::complete(
         std::rethrow_exception(response.error);
     }
     if (perform_result == CURLE_ABORTED_BY_CALLBACK
-        && cancellation_.load(std::memory_order_acquire)) {
+        && cancellation.load(std::memory_order_acquire)) {
         return {CompletionOutcome::cancelled, {}};
     }
     if (perform_result != CURLE_OK) {

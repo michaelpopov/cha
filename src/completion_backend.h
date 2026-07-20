@@ -3,6 +3,7 @@
 #include "agent_info.h"
 #include "agent_protocol.h"
 
+#include <atomic>
 #include <functional>
 #include <string>
 
@@ -25,14 +26,15 @@ struct CompletionResult {
 // Receives one transport-level text fragment without attaching worker request identity.
 using CompletionDeltaSink = std::function<void(std::string)>;
 
-// Defines the synchronous completion operations consumed by an Agent worker.
+// Defines the synchronous completion operations consumed by an AgentWorker.
 class CompletionBackend {
 public:
     virtual ~CompletionBackend() = default;
 
     [[nodiscard]] virtual CompletionResult complete(
         const CompletionRequest& request,
-        const CompletionDeltaSink& on_delta) = 0;
+        const CompletionDeltaSink& on_delta,
+        const std::atomic_bool& cancellation) = 0;
     [[nodiscard]] virtual AgentInfo info() const = 0;
     [[nodiscard]] virtual const std::string& agent_id() const = 0;
 };
