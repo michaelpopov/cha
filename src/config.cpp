@@ -2,7 +2,6 @@
 
 #include <toml++/toml.hpp>
 
-#include <cctype>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -10,54 +9,6 @@
 #include <utility>
 
 namespace cha {
-
-namespace {
-
-std::string_view trim(std::string_view value) {
-    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
-        value.remove_prefix(1);
-    }
-    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
-        value.remove_suffix(1);
-    }
-    return value;
-}
-
-} // namespace
-
-Config Config::load() {
-    return load_from_directory(".");
-}
-
-Config Config::load_from_directory(const std::filesystem::path& directory) {
-    const std::filesystem::path servers_path = directory / "servers";
-    std::ifstream servers_file(servers_path);
-    if (!servers_file) {
-        throw std::runtime_error("Failed to read servers file '" + servers_path.string() + "'");
-    }
-
-    std::string line;
-    while (std::getline(servers_file, line)) {
-        const std::string_view server_name = trim(line);
-        if (server_name.empty() || server_name.front() == '#') {
-            continue;
-        }
-
-        const std::filesystem::path server_directory{server_name};
-        if (server_directory.is_absolute() || server_directory.has_parent_path()
-            || server_name == "." || server_name == "..") {
-            throw std::runtime_error(
-                "Servers file '" + servers_path.string() + "' contains invalid server name '"
-                + std::string(server_name) + "'");
-        }
-
-        Config config = load(directory / server_directory / "config.toml");
-        config.name = server_name;
-        return config;
-    }
-
-    throw std::runtime_error("Servers file '" + servers_path.string() + "' does not name a server");
-}
 
 Config Config::load(const std::filesystem::path& path) {
     const toml::table table = toml::parse_file(path.string());

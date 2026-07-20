@@ -51,31 +51,6 @@ TEST(Config, LoadsHostAndPortFromToml) {
     std::filesystem::remove_all(directory);
 }
 
-TEST(Config, LoadsFirstServerFromDirectory) {
-    const auto directory = std::filesystem::temp_directory_path()
-        / ("cha_servers_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    const auto server_directory = directory / "local";
-    std::filesystem::create_directories(server_directory);
-    {
-        std::ofstream servers_file(directory / "servers");
-        servers_file << "\n# Prefer local development\n  local  \nbackup\n";
-
-        std::ofstream config_file(server_directory / "config.toml");
-        config_file
-            << "host = \"127.0.0.1\"\n"
-            << "port = 8080\n"
-            << "model = \"local-model\"\n";
-    }
-
-    const Config config = Config::load_from_directory(directory);
-
-    EXPECT_EQ(config.host, "127.0.0.1");
-    EXPECT_EQ(config.model, "local-model");
-    EXPECT_EQ(config.name, "local");
-
-    std::filesystem::remove_all(directory);
-}
-
 TEST(Config, AllowsMissingModel) {
     const auto path = std::filesystem::temp_directory_path()
         / ("cha_no_model_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".toml");

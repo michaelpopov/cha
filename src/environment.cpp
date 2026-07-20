@@ -1,5 +1,7 @@
 #include "environment.h"
 
+#include "text.h"
+
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
@@ -9,16 +11,6 @@
 
 namespace cha {
 namespace {
-
-std::string_view trim(std::string_view value) {
-    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
-        value.remove_prefix(1);
-    }
-    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
-        value.remove_suffix(1);
-    }
-    return value;
-}
 
 bool is_name(std::string_view value) {
     if (value.empty() || (std::isalpha(static_cast<unsigned char>(value.front())) == 0 && value.front() != '_')) {
@@ -34,7 +26,7 @@ bool is_name(std::string_view value) {
 }
 
 std::string parse_value(std::string_view value) {
-    value = trim(value);
+    value = trim_view(value);
     if (value.size() >= 2 && ((value.front() == '"' && value.back() == '"')
                               || (value.front() == '\'' && value.back() == '\''))) {
         value.remove_prefix(1);
@@ -58,13 +50,13 @@ void load_dotenv(const std::filesystem::path& path) {
     std::size_t line_number = 0;
     while (std::getline(file, line)) {
         ++line_number;
-        const std::string_view entry = trim(line);
+        const std::string_view entry = trim_view(line);
         if (entry.empty() || entry.front() == '#') {
             continue;
         }
 
         const std::size_t separator = entry.find('=');
-        const std::string_view name = trim(entry.substr(0, separator));
+        const std::string_view name = trim_view(entry.substr(0, separator));
         if (separator == std::string_view::npos || !is_name(name)) {
             throw std::runtime_error(
                 "Invalid dotenv entry in '" + path.string() + "' at line " + std::to_string(line_number));

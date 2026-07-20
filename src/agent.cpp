@@ -1,17 +1,17 @@
-#include "server.h"
+#include "agent.h"
 
-#include "command.h"
 #include "conversation.h"
-#include "pipe.h"
-#include "server_context.h"
+#include "agent_context.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
+#include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -21,6 +21,7 @@ namespace {
 
 using Json = nlohmann::json;
 
+// Initializes libcurl once per process while any network-backed Agent may use it.
 class CurlGlobal {
 public:
     CurlGlobal() {
@@ -35,6 +36,7 @@ public:
     }
 };
 
+// Releases curl header lists when their owning smart pointer leaves scope.
 struct CurlHeadersDeleter {
     void operator()(curl_slist* headers) const {
         curl_slist_free_all(headers);
@@ -45,9 +47,10 @@ using CurlHeaders = std::unique_ptr<curl_slist, CurlHeadersDeleter>;
 
 constexpr std::size_t max_streaming_error_body_size = 64 * 1024;
 
+// Accumulates HTTP response state and routes streaming updates into the active conversation.
 struct ResponseContext {
-    Pipe* pipe{};
-    Conversation* conversation{};
+    AgentEventChannel* events{};
+    RequestId request_id{};
     bool streaming{};
     bool done{};
     std::string body;
@@ -97,8 +100,7 @@ void process_stream_event(std::string_view event, ResponseContext& context) {
 
                     if (value.contains(content_pointer) && value.at(content_pointer).is_string()) {
                         const std::string content = value.at(content_pointer).get<std::string>();
-                        context.conversation->append_to_message(content);
-                        context.pipe->conversation_updated();
+                        context.events->push(AgentDelta{context.request_id, content});
                     }
                 } catch (const Json::parse_error&) {
                     // A malformed event should not discard valid chunks elsewhere in the stream.
@@ -166,37 +168,50 @@ void require_curl(CURLcode result, std::string_view operation) {
     }
 }
 
+std::string read_prompt(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("Failed to read prompt file '" + path.string() + "'");
+    }
+    std::ostringstream contents;
+    contents << file.rdbuf();
+    return contents.str();
+}
+
 } // namespace
 
-Server::Server(
+Agent::Agent(
     std::atomic_bool& cancellation,
-    Conversation& conversation,
     std::string name)
     : _cancellation(cancellation),
-      _conversation(conversation),
       name_(std::move(name)) {
 
 }
 
-Server::~Server() {
+Agent::~Agent() {
     stop();
 }
 
-void Server::init() {
-    init(cha::Config::load());
-}
-
-void Server::init(const Config& config) {
+void Agent::init(const Config& config) {
     _config = config;
     initialize();
 }
 
-void Server::initialize() {
+void Agent::init(const std::filesystem::path& persona_directory, const std::filesystem::path& room_directory) {
+    Config config = Config::load(persona_directory / "config.toml");
+    config.name = persona_directory.filename().string();
+    config.system_prompt = read_prompt(persona_directory / "SYSTEM.md")
+        + "\n\n" + read_prompt(room_directory / "USER.md");
+    init(config);
+}
+
+void Agent::initialize() {
 
     if (name_.empty()) {
         name_ = _config.name;
     }
     system_prompt_ = _config.system_prompt;
+    api_key_ = _config.api_key;
 
     if (!_config.api_key_env.empty()) {
         const char* api_key = std::getenv(_config.api_key_env.c_str());
@@ -205,7 +220,7 @@ void Server::initialize() {
                 "Environment variable '" + _config.api_key_env + "' configured as api_key_env is not set"
             );
         }
-        _config.api_key = api_key;
+        api_key_ = api_key;
     }
 
     if (_config.mode == Mode::net) {
@@ -220,7 +235,7 @@ void Server::initialize() {
     }
 }
 
-void Server::discover_model() {
+void Agent::discover_model() {
     ResponseContext response{.streaming = false};
 
     curl_easy_reset(curl_);
@@ -230,12 +245,14 @@ void Server::discover_model() {
     require_curl(curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, receive_response), "Failed to configure models response callback");
     require_curl(curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &response), "Failed to configure models response destination");
     require_curl(curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, 10L), "Failed to configure models connection timeout");
+    // Model discovery is a small metadata request and must not block startup indefinitely.
+    require_curl(curl_easy_setopt(curl_, CURLOPT_TIMEOUT, 10L), "Failed to configure models request timeout");
     require_curl(curl_easy_setopt(curl_, CURLOPT_NOSIGNAL, 1L), "Failed to configure libcurl signals");
 
     curl_slist* raw_headers = nullptr;
     raw_headers = curl_slist_append(raw_headers, "Accept: application/json");
-    if (!_config.api_key.empty()) {
-        raw_headers = curl_slist_append(raw_headers, ("Authorization: Bearer " + _config.api_key).c_str());
+    if (!api_key_.empty()) {
+        raw_headers = curl_slist_append(raw_headers, ("Authorization: Bearer " + api_key_).c_str());
     }
     if (!raw_headers) {
         throw std::runtime_error("Failed to create models request headers");
@@ -269,16 +286,16 @@ void Server::discover_model() {
     }
 }
 
-void Server::run(Pipe& pipe_in, Pipe& pipe_out) {
+void Agent::run(CompletionRequestChannel& requests, AgentEventChannel& events) {
     if (thread_.joinable()) {
-        throw std::logic_error("Server is already running");
+        throw std::logic_error("Agent is already running");
     }
 
-    input_ = &pipe_in;
-    thread_ = std::thread(&Server::dialog, this, std::ref(pipe_in), std::ref(pipe_out));
+    input_ = &requests;
+    thread_ = std::thread(&Agent::dialog, this, std::ref(requests), std::ref(events));
 }
 
-void Server::stop() {
+void Agent::stop() {
     if (thread_.joinable()) {
         const bool was_cancelled = _cancellation.exchange(true, std::memory_order_acq_rel);
         input_->close();
@@ -295,101 +312,63 @@ void Server::stop() {
     curl_ = nullptr;
 }
 
-void Server::dialog(Pipe& pipe_in, Pipe& pipe_out) {
+void Agent::dialog(CompletionRequestChannel& requests, AgentEventChannel& events) {
     while (true) {
+        const std::optional<CompletionRequest> request = requests.get();
+        if (!request) {
+            break;
+        }
         try {
-            const PipeEvent input = pipe_in.get();
-
-            if (input.kind == PipeEventKind::closed) {
-                break;
+            if (request->agent_id != name_) {
+                throw std::runtime_error(
+                    "Completion request targets agent '" + request->agent_id + "', not '" + name_ + "'");
             }
-            if (input.kind == PipeEventKind::eom) {
+            if (_cancellation.load(std::memory_order_acquire)) {
+                events.push(AgentCancelled{request->request_id});
                 continue;
             }
-            if (input.kind != PipeEventKind::data) {
-                continue;
-            }
-
             if (_config.mode == Mode::test) {
-                _conversation.begin_message(name_);
-                _conversation.append_to_message(input.data);
-                pipe_out.conversation_updated();
-                _conversation.append_to_message(input.data);
-                pipe_out.conversation_updated();
-                _conversation.finish_message();
-                pipe_out.eom();
+                events.push(AgentDelta{request->request_id, request->prompt});
+                events.push(AgentDelta{request->request_id, request->prompt});
+                events.push(AgentCompleted{request->request_id});
                 continue;
             }
 
-            if (handle_command(input.data, pipe_out)) {
-                continue;
+            if (complete(*request, events)) {
+                events.push(AgentCancelled{request->request_id});
+            } else {
+                events.push(AgentCompleted{request->request_id});
             }
-
-            _conversation.begin_message(name_);
-            try {
-                complete(pipe_out);
-                _conversation.finish_message();
-            } catch (const std::exception& error) {
-                _conversation.discard_message();
-                const std::string message = "Error: " + std::string(error.what());
-                _conversation.add_message(std::string(system_author), message);
-                pipe_out.conversation_updated();
-            }
-            pipe_out.eom();
         } catch (const std::exception& error) {
-            _conversation.discard_message();
-            _conversation.add_message(std::string(system_author), "Error: " + std::string(error.what()));
-            pipe_out.conversation_updated();
-            pipe_out.eom();
+            events.push(AgentFailed{request->request_id, error.what()});
         }
     }
 }
 
-bool Server::handle_command(const std::string& input, Pipe& pipe_out) {
-    const Command command = parse_command(input);
-
-    const auto reply = [&](std::string text) {
-        _conversation.begin_message(name_);
-        _conversation.append_to_message(text);
-        _conversation.finish_message();
-        pipe_out.conversation_updated();
-        pipe_out.eom();
+AgentInfo Agent::info() const {
+    return {
+        .id = name_,
+        .name = name_,
+        .model = _config.model,
+        .api = endpoint(),
+        .streaming = _config.stream,
     };
-
-    if (command.kind == CommandKind::clear && command.argument.empty()) {
-        reply("Conversation cleared.");
-        return true;
-    }
-
-    if (command.kind == CommandKind::info && command.argument.empty()) {
-        std::ostringstream info;
-        info << "Model: " << _config.model << '\n'
-             << "API: " << endpoint() << '\n'
-             << "Streaming: " << (_config.stream ? "yes" : "no") << '\n'
-             << "Messages in memory: "
-             << build_server_context(_conversation.snapshot(), system_prompt_, name_).size();
-        reply(info.str());
-        return true;
-    }
-
-    if (command.kind != CommandKind::text) {
-        reply("Unknown command. Server commands: /clear, /info. Local commands: /stop, /exit");
-        return true;
-    }
-
-    return false;
 }
 
-void Server::complete(Pipe& pipe_out) {
+bool Agent::complete(const CompletionRequest& request, AgentEventChannel& events) {
     if (!curl_) {
-        throw std::runtime_error("Server HTTP client is closed");
+        throw std::runtime_error("Agent HTTP client is closed");
     }
 
     Json body;
     body["model"] = _config.model;
     body["stream"] = _config.stream;
     body["messages"] = Json::array();
-    for (const ServerMessage& message : build_server_context(_conversation.snapshot(), system_prompt_, name_)) {
+    ConversationSnapshot snapshot{
+        .messages = request.history,
+    };
+    snapshot.messages.push_back({std::string(user_author), request.prompt});
+    for (const AgentMessage& message : build_agent_context(snapshot, system_prompt_, name_)) {
         body["messages"].push_back({
             {"role", message.role},
             {"content", message.content},
@@ -404,8 +383,8 @@ void Server::complete(Pipe& pipe_out) {
 
     const std::string request_body = body.dump();
     ResponseContext response{
-        .pipe = &pipe_out,
-        .conversation = &_conversation,
+        .events = &events,
+        .request_id = request.request_id,
         .streaming = _config.stream,
     };
 
@@ -438,8 +417,8 @@ void Server::complete(Pipe& pipe_out) {
     curl_slist* raw_headers = nullptr;
     raw_headers = curl_slist_append(raw_headers, "Content-Type: application/json");
     raw_headers = curl_slist_append(raw_headers, _config.stream ? "Accept: text/event-stream" : "Accept: application/json");
-    if (!_config.api_key.empty()) {
-        raw_headers = curl_slist_append(raw_headers, ("Authorization: Bearer " + _config.api_key).c_str());
+    if (!api_key_.empty()) {
+        raw_headers = curl_slist_append(raw_headers, ("Authorization: Bearer " + api_key_).c_str());
     }
     if (!raw_headers) {
         throw std::runtime_error("Failed to create HTTP headers");
@@ -452,7 +431,7 @@ void Server::complete(Pipe& pipe_out) {
         std::rethrow_exception(response.error);
     }
     if (_cancellation.load(std::memory_order_acquire)) {
-        return;
+        return true;
     }
     if (perform_result != CURLE_OK) {
         throw std::runtime_error("HTTP request failed: " + std::string(curl_easy_strerror(perform_result)));
@@ -461,7 +440,7 @@ void Server::complete(Pipe& pipe_out) {
     long status = 0;
     require_curl(curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &status), "Failed to read HTTP status");
     if (status < 200 || status >= 300) {
-        throw std::runtime_error("Server returned HTTP " + std::to_string(status) + ": " + response_error(response.body));
+        throw std::runtime_error("Inference server returned HTTP " + std::to_string(status) + ": " + response_error(response.body));
     }
 
     if (_config.stream) {
@@ -469,7 +448,7 @@ void Server::complete(Pipe& pipe_out) {
             process_stream_event(response.pending, response);
             response.pending.clear();
         }
-        return;
+        return false;
     }
 
     const Json value = Json::parse(response.body);
@@ -479,11 +458,11 @@ void Server::complete(Pipe& pipe_out) {
     }
 
     const std::string output = value.at(content_pointer).get<std::string>();
-    _conversation.append_to_message(output);
-    pipe_out.conversation_updated();
+    events.push(AgentDelta{request.request_id, output});
+    return false;
 }
 
-std::string Server::base_url() const {
+std::string Agent::base_url() const {
     std::string host = _config.host;
     if (host.find(':') != std::string::npos && !host.starts_with('[')) {
         host = '[' + host + ']';
@@ -491,11 +470,11 @@ std::string Server::base_url() const {
     return std::string(_config.https ? "https://" : "http://") + host + ':' + std::to_string(_config.port);
 }
 
-std::string Server::endpoint() const {
+std::string Agent::endpoint() const {
     return base_url() + "/v1/chat/completions";
 }
 
-std::string Server::models_endpoint() const {
+std::string Agent::models_endpoint() const {
     return base_url() + "/v1/models";
 }
 

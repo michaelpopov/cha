@@ -1,5 +1,7 @@
 #include "user.h"
 
+#include "agent_protocol.h"
+#include "chat_coordinator.h"
 #include "user_events.h"
 #include "user_session.h"
 
@@ -7,42 +9,42 @@ namespace cha {
 
 // Coordinate semantic events here while leaving polling details and mutable UI state to their modules.
 void run_user(
-    std::atomic_bool& cancellation,
-    Conversation& conversation,
-    Pipe& pipe_in,
-    Pipe& pipe_out) {
+    Terminal& terminal,
+    ChatCoordinator& coordinator,
+    AgentEventChannel& agent_events,
+    CompletionRequestChannel& requests) {
 
-    UserSession session(cancellation, conversation);
+    UserSession session(terminal, coordinator);
     session.render();
 
     while (session.running()) {
-        const UserEvents events = wait_for_user_events(pipe_in);
-        if (events.interrupted()) {
+        const UserEvents ready = wait_for_user_events(agent_events);
+        if (ready.interrupted()) {
             session.resize();
             session.render_if_needed();
             continue;
         }
-        if (events.failed()) {
+        if (ready.failed()) {
             session.report_terminal_failure();
             break;
         }
 
-        if (events.terminal_closed()) {
+        if (ready.terminal_closed()) {
             session.close_terminal();
         }
 
-        if (events.pipe_input_ready()) {
-            session.receive_responses(pipe_in);
+        if (ready.agent_event_ready()) {
+            session.receive_responses(agent_events);
         }
 
-        if (session.running() && events.terminal_input_ready()) {
-            session.receive_keys(pipe_out);
+        if (session.running() && ready.terminal_input_ready()) {
+            session.receive_keys(requests);
         }
 
         session.render_if_needed();
     }
 
-    session.shutdown(pipe_out);
+    session.shutdown(requests);
 }
 
 } // namespace cha

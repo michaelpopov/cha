@@ -11,6 +11,7 @@ enum class Mode {
     test,
 };
 
+// Holds the connection and prompt settings used to initialize one chat agent.
 struct Config {
     std::string name{"Assistant"};
     std::string host;
@@ -25,9 +26,7 @@ struct Config {
     bool https{};
     std::string system_prompt;
 
-    [[nodiscard]] static Config load();
     [[nodiscard]] static Config load(const std::filesystem::path& path);
-    [[nodiscard]] static Config load_from_directory(const std::filesystem::path& directory);
 };
 
 } // namespace cha

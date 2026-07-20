@@ -58,6 +58,16 @@ void Conversation::discard_message() {
     ++revision_;
 }
 
+void Conversation::clear() {
+    std::lock_guard lock(mutex_);
+    if (message_open_) {
+        throw std::logic_error("Cannot clear a conversation while a message is open");
+    }
+    messages_.clear();
+    ++revision_;
+    ++history_epoch_;
+}
+
 void Conversation::replace_messages(std::vector<ConversationMessage> messages) {
     std::lock_guard lock(mutex_);
     if (message_open_) {
@@ -70,11 +80,12 @@ void Conversation::replace_messages(std::vector<ConversationMessage> messages) {
     }
     messages_ = std::move(messages);
     ++revision_;
+    ++history_epoch_;
 }
 
 ConversationSnapshot Conversation::snapshot() const {
     std::lock_guard lock(mutex_);
-    return {messages_, revision_, message_open_};
+    return {messages_, revision_, message_open_, history_epoch_};
 }
 
 std::vector<ConversationMessage> Conversation::messages() const {

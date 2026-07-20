@@ -52,15 +52,20 @@ FetchContent_MakeAvailable(tomlplusplus)
 
 add_library(cha_core
     src/command.cpp
+    src/chat_coordinator.cpp
     src/config.cpp
     src/conversation.cpp
     src/conversation_file.cpp
     src/environment.cpp
     src/input_editor.cpp
-    src/pipe.cpp
-    src/server.cpp
-    src/server_context.cpp
+    src/path_name.cpp
+    src/agent.cpp
+    src/agent_context.cpp
+    src/session_repository.cpp
     src/startup_selector.cpp
+    src/terminal.cpp
+    src/text.cpp
+    src/transcript_renderer.cpp
     src/tui.cpp
     src/user.cpp
     src/user_events.cpp
@@ -95,11 +100,14 @@ if(BUILD_TESTING)
 
     add_executable(cha_tests
         tests/unit_config.cpp
+        tests/unit_chat_coordinator.cpp
         tests/unit_conversation.cpp
         tests/unit_environment.cpp
-        tests/unit_pipe.cpp
-        tests/unit_server.cpp
-        tests/unit_server_context.cpp
+        tests/unit_event_channel.cpp
+        tests/unit_text.cpp
+        tests/unit_transcript_renderer.cpp
+        tests/unit_agent.cpp
+        tests/unit_agent_context.cpp
         tests/unit_user.cpp
         tests/unit_workspace.cpp
     )

@@ -14,6 +14,7 @@ enum class CommandKind {
     unknown,
 };
 
+// Represents one parsed slash command and its optional argument for command dispatch.
 struct Command {
     CommandKind kind{CommandKind::text};
     std::string argument;

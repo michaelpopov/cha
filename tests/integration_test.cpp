@@ -1,18 +1,20 @@
+#include "agent_protocol.h"
 #include "config.h"
-#include "conversation.h"
 #include "environment.h"
-#include "pipe.h"
-#include "server.h"
+#include "agent.h"
 
 #include <gtest/gtest.h>
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <variant>
 
 namespace cha {
 namespace {
 
+// Captures the response text and streaming chunk count produced by an integration chat run.
 struct ChatResult {
     std::string response;
     std::size_t chunks{};
@@ -28,74 +30,66 @@ Config integration_config(bool stream) {
 
 ChatResult run_chat(bool stream) {
     const Config config = integration_config(stream);
-    Pipe pipe_user2server;
-    Pipe pipe_server2user;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Conversation conversation;
-    Server server(cancellation, conversation);
-    server.init(config);
+    Agent agent(cancellation);
+    agent.init(config);
 
-    server.run(pipe_user2server, pipe_server2user);
+    agent.run(requests, events);
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
-    conversation.add_message(std::string(user_author), input);
-    pipe_user2server.put(input);
-    pipe_user2server.eom();
+    requests.push({1, agent.info().id, {}, input});
 
     ChatResult result;
     while (true) {
-        const PipeEvent event = pipe_server2user.get();
-        if (event.kind == PipeEventKind::eom) {
+        const std::optional<AgentEvent> event = events.get();
+        if (!event) {
             break;
         }
-        if (event.kind == PipeEventKind::conversation_updated) {
+        if (const auto* delta = std::get_if<AgentDelta>(&*event)) {
             ++result.chunks;
+            result.response += delta->text;
+        } else {
+            EXPECT_TRUE(std::holds_alternative<AgentCompleted>(*event));
+            break;
         }
     }
 
-    const auto messages = conversation.messages();
-    if (!messages.empty()) {
-        result.response = messages.back().text;
-    }
-
-    server.stop();
+    agent.stop();
     return result;
 }
 
 ChatResult run_cancelled_chat() {
     const Config config = integration_config(true);
-    Pipe pipe_user2server;
-    Pipe pipe_server2user;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Conversation conversation;
-    Server server(cancellation, conversation);
-    server.init(config);
+    Agent agent(cancellation);
+    agent.init(config);
 
-    server.run(pipe_user2server, pipe_server2user);
+    agent.run(requests, events);
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
-    conversation.add_message(std::string(user_author), input);
-    pipe_user2server.put(input);
-    pipe_user2server.eom();
+    requests.push({2, agent.info().id, {}, input});
 
     ChatResult result;
     while (true) {
-        const PipeEvent event = pipe_server2user.get();
-        if (event.kind == PipeEventKind::eom) {
+        const std::optional<AgentEvent> event = events.get();
+        if (!event) {
             break;
         }
-        if (event.kind == PipeEventKind::conversation_updated) {
+        if (const auto* delta = std::get_if<AgentDelta>(&*event)) {
             ++result.chunks;
+            result.response += delta->text;
             cancellation.store(true, std::memory_order_release);
+        } else {
+            EXPECT_TRUE(std::holds_alternative<AgentCancelled>(*event));
+            break;
         }
     }
 
-    const auto messages = conversation.messages();
-    if (!messages.empty()) {
-        result.response = messages.back().text;
-    }
-
-    server.stop();
+    agent.stop();
     return result;
 }
 

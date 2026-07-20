@@ -1,16 +1,21 @@
 #include "user_session.h"
 
+#include "chat_coordinator.h"
 #include "command.h"
-#include "pipe.h"
 
 #include <cwctype>
+#include <sstream>
+#include <utility>
 #include <unistd.h>
 
 namespace cha {
 
 // Coalesce session mutations behind this class so rendering happens consistently and only when needed.
-UserSession::UserSession(std::atomic_bool& cancellation, Conversation& conversation)
-  : _tui(), _cancellation(cancellation), _conversation(conversation) {
+UserSession::UserSession(
+    Terminal& terminal,
+    ChatCoordinator& coordinator)
+  : _tui(terminal),
+    _coordinator(coordinator) {
 }
 
 bool UserSession::running() const {
@@ -18,7 +23,7 @@ bool UserSession::running() const {
 }
 
 void UserSession::render() {
-    _tui.render(_conversation, _editor, _generating, _notice);
+    _tui.render(_coordinator.conversation(), _editor, _coordinator.generating(), _notice);
     _render_needed = false;
 }
 
@@ -42,29 +47,27 @@ void UserSession::report_terminal_failure() {
     request_render();
 }
 
-void UserSession::receive_responses(Pipe& pipe_in) {
-    PipeEvent response{PipeEventKind::eom, {}};
-    while (pipe_in.try_get(response)) {
-        if (response.kind == PipeEventKind::conversation_updated) {
-            request_render();
-        } else if (response.kind == PipeEventKind::closed) {
-            _running = false;
-            break;
-        } else if (response.kind == PipeEventKind::eom) {
-            finish_generation();
-            request_render();
-        }
+void UserSession::receive_responses(AgentEventChannel& events) {
+    const CoordinatorUpdate update = _coordinator.receive(events);
+    if (update.render_needed) {
+        request_render();
+    }
+    if (update.notice) {
+        _notice = *update.notice;
+    }
+    if (update.channel_closed) {
+        _running = false;
     }
 }
 
-void UserSession::receive_keys(Pipe& pipe_out) {
+void UserSession::receive_keys(CompletionRequestChannel& requests) {
     wint_t key = 0;
     int key_result = ERR;
     bool received_key = false;
     while ((key_result = _tui.read_key(key)) != ERR) {
         received_key = true;
         request_render();
-        handle_key(pipe_out, key, key_result);
+        handle_key(requests, key, key_result);
         if (!_running) {
             break;
         }
@@ -79,7 +82,7 @@ void UserSession::request_render() {
     _render_needed = true;
 }
 
-void UserSession::handle_key(Pipe& pipe_out, std::wint_t key, int key_result) {
+void UserSession::handle_key(CompletionRequestChannel& requests, std::wint_t key, int key_result) {
     if (key == KEY_RESIZE) {
         _tui.resize();
     } else if (key == KEY_PPAGE) {
@@ -103,7 +106,7 @@ void UserSession::handle_key(Pipe& pipe_out, std::wint_t key, int key_result) {
     } else if (key == KEY_BACKSPACE || key == 127 || key == L'\b') {
         _editor.backspace();
     } else if (key == 27 || key == 3) {
-        if (_generating) {
+        if (_coordinator.generating()) {
             request_stop();
         } else if (key == 3) {
             _running = false;
@@ -112,14 +115,14 @@ void UserSession::handle_key(Pipe& pipe_out, std::wint_t key, int key_result) {
             _notice.clear();
         }
     } else if (key == L'\n' || key == L'\r' || key == KEY_ENTER) {
-        submit_input(pipe_out);
+        submit_input(requests);
     } else if (key_result == OK && std::iswprint(key) != 0) {
         _editor.insert(static_cast<wchar_t>(key));
         _notice.clear();
     }
 }
 
-void UserSession::submit_input(Pipe& pipe_out) {
+void UserSession::submit_input(CompletionRequestChannel& requests) {
     if (_editor.ends_with_continuation()) {
         _editor.continue_line();
         return;
@@ -131,7 +134,7 @@ void UserSession::submit_input(Pipe& pipe_out) {
     }
     const Command command = parse_command(input);
 
-    if (_generating) {
+    if (_coordinator.generating()) {
         if (command.kind == CommandKind::stop && command.argument.empty()) {
             _editor.clear();
             request_stop();
@@ -143,39 +146,53 @@ void UserSession::submit_input(Pipe& pipe_out) {
 
     _editor.clear();
 
-    if (command.kind == CommandKind::exit && command.argument.empty()) {
-        _running = false;
-        return;
-    }
-    if (command.kind == CommandKind::stop && command.argument.empty()) {
-        _notice = "No generation is active";
-        return;
+    if (command.kind != CommandKind::text) {
+        if (!command.argument.empty() && command.kind != CommandKind::unknown) {
+            _notice = "Command does not accept arguments";
+            return;
+        }
+
+        switch (command.kind) {
+        case CommandKind::clear:
+            _coordinator.clear();
+            _notice = "Conversation cleared";
+            return;
+        case CommandKind::info: {
+            const std::size_t message_count = _coordinator.conversation().snapshot().messages.size();
+            const AgentInfo& agent_info = _coordinator.agent_info();
+            std::ostringstream info;
+            info << "Model: " << agent_info.model << '\n'
+                 << "API: " << agent_info.api << '\n'
+                 << "Streaming: " << (agent_info.streaming ? "yes" : "no") << '\n'
+                 << "Transcript messages: " << message_count;
+            _coordinator.add_system_message(info.str());
+            _notice.clear();
+            return;
+        }
+        case CommandKind::stop:
+            _notice = "No generation is active";
+            return;
+        case CommandKind::exit:
+            _running = false;
+            return;
+        case CommandKind::unknown:
+            _notice = "Unknown command. Commands: /clear, /info, /stop, /exit";
+            return;
+        case CommandKind::text:
+            break;
+        }
     }
 
-    _cancellation.store(false, std::memory_order_release);
-    _conversation.add_message(std::string(user_author), input);
-    pipe_out.put(input);
-    pipe_out.eom();
-    _generating = true;
-    _notice.clear();
-}
-
-void UserSession::finish_generation() {
-    _generating = false;
-    _notice = _cancellation.load(std::memory_order_acquire) ? "Generation stopped" : "";
-    _cancellation.store(false, std::memory_order_release);
+    _notice = _coordinator.submit(input, requests);
 }
 
 void UserSession::request_stop() {
-    _cancellation.store(true, std::memory_order_release);
+    _coordinator.request_stop();
     _notice = "Stopping generation...";
 }
 
-void UserSession::shutdown(Pipe& pipe_out) {
-    if (_generating) {
-        _cancellation.store(true, std::memory_order_release);
-    }
-    pipe_out.close();
+void UserSession::shutdown(CompletionRequestChannel& requests) {
+    _coordinator.shutdown(requests);
 }
 
 } // namespace cha

@@ -1,17 +1,17 @@
 #pragma once
 
+#include "agent_protocol.h"
+
 namespace cha {
 
-class Pipe;
-
-// Present platform input readiness as application-level events to keep callers independent of poll details.
+// Represents terminal and agent-event readiness returned by the user-event polling boundary.
 class UserEvents {
 public:
     [[nodiscard]] bool interrupted() const;
     [[nodiscard]] bool failed() const;
     [[nodiscard]] bool terminal_input_ready() const;
     [[nodiscard]] bool terminal_closed() const;
-    [[nodiscard]] bool pipe_input_ready() const;
+    [[nodiscard]] bool agent_event_ready() const;
 
 private:
     enum class Status {
@@ -24,16 +24,16 @@ private:
         Status status,
         bool terminal_input = false,
         bool terminal_closed = false,
-        bool pipe_input = false);
+        bool agent_event = false);
 
     Status _status;
     bool _terminal_input;
     bool _terminal_closed;
-    bool _pipe_input;
+    bool _agent_event;
 
-    friend UserEvents wait_for_user_events(const Pipe& pipe_in);
+    friend UserEvents wait_for_user_events(const AgentEventChannel& events);
 };
 
-[[nodiscard]] UserEvents wait_for_user_events(const Pipe& pipe_in);
+[[nodiscard]] UserEvents wait_for_user_events(const AgentEventChannel& events);
 
 } // namespace cha

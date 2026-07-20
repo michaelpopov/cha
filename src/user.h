@@ -1,18 +1,17 @@
 #pragma once
 
-#include <atomic>
-#include <string>
+#include "agent_protocol.h"
 
 namespace cha {
 
-class Conversation;
-class Pipe;
+class ChatCoordinator;
+class Terminal;
 
 // A free function keeps the top-level user workflow stateless and easy to compose in main.
 void run_user(
-    std::atomic_bool& cancellation,
-    Conversation& conversation,
-    Pipe& pipe_in,
-    Pipe& pipe_out);
+    Terminal& terminal,
+    ChatCoordinator& coordinator,
+    AgentEventChannel& events,
+    CompletionRequestChannel& requests);
 
 } // namespace cha

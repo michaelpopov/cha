@@ -1,11 +1,11 @@
-#include "server_context.h"
+#include "agent_context.h"
 
 #include <gtest/gtest.h>
 
 namespace cha {
 namespace {
 
-TEST(ServerContext, ProjectsMessagesForOneNamedServer) {
+TEST(AgentContext, ProjectsMessagesForOneNamedAgent) {
     const ConversationSnapshot conversation{
         .messages = {
             {"You", "Draft an answer"},
@@ -16,8 +16,8 @@ TEST(ServerContext, ProjectsMessagesForOneNamedServer) {
     };
 
     EXPECT_EQ(
-        build_server_context(conversation, "Be concise.", "Reviewer"),
-        (std::vector<ServerMessage>{
+        build_agent_context(conversation, "Be concise.", "Reviewer"),
+        (std::vector<AgentMessage>{
             {"system", "Be concise."},
             {"user", "Draft an answer"},
             {"user", "Writer: Initial draft"},
@@ -26,13 +26,9 @@ TEST(ServerContext, ProjectsMessagesForOneNamedServer) {
         }));
 }
 
-TEST(ServerContext, OmitsCommandsErrorsAndOpenResponses) {
+TEST(AgentContext, OmitsErrorsAndOpenResponses) {
     const ConversationSnapshot conversation{
         .messages = {
-            {"You", "Discarded by clear"},
-            {"Reviewer", "Old response"},
-            {"You", "/clear"},
-            {"Reviewer", "Conversation cleared."},
             {"You", "Failed request"},
             {"System", "Error: unavailable"},
             {"You", "Current request"},
@@ -42,8 +38,8 @@ TEST(ServerContext, OmitsCommandsErrorsAndOpenResponses) {
     };
 
     EXPECT_EQ(
-        build_server_context(conversation, {}, "Reviewer"),
-        (std::vector<ServerMessage>{{"user", "Current request"}}));
+        build_agent_context(conversation, {}, "Reviewer"),
+        (std::vector<AgentMessage>{{"user", "Current request"}}));
 }
 
 } // namespace

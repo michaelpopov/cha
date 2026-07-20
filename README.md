@@ -1,6 +1,6 @@
 # cha
 
-`cha` is a C++20 terminal chat client for a llama.cpp server exposing the OpenAI-compatible chat-completions API.
+`cha` is a C++20 terminal chat client for servers exposing the OpenAI-compatible chat-completions API.
 
 ## Workspace configuration
 
@@ -8,7 +8,7 @@ Run `cha` from a workspace containing `personas/` and `rooms/`. `rooms/rooms.lis
 
 Each room contains `personas.list`, which must name exactly one persona, and `USER.md`. The selected persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`. The effective system prompt is the persona `SYSTEM.md` followed by the room `USER.md`.
 
-Existing sessions are discovered only when both `sessions/<id>.data` and `sessions/<id>.meta` exist; their conversation data is restored when selected. A new session can be given an optional display name. Its files use a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored in its metadata. A new session creates its metadata immediately and saves its conversation when the chat closes. The following top-level persona configuration fields are supported:
+Existing sessions are discovered only when both `sessions/<id>.data` and `sessions/<id>.meta` exist; their conversation data is restored when selected. A new session can be given an optional display name. Its files use a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored in its metadata. New sessions create both files immediately. Each submitted turn and its identified completion, cancellation, or failure are appended and synced during the chat. A turn without a terminal record is reported as interrupted when the session is restored. The following top-level persona configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
@@ -48,7 +48,7 @@ Before loading server configuration, the application optionally reads `.env` fro
 ## Commands
 
 - `/clear` clears conversation history while retaining the system prompt.
-- `/info` displays the endpoint, configured model, streaming mode, and history size.
+- `/info` displays the endpoint, configured model, streaming mode, and transcript message count.
 - `/stop` cancels the active model response.
 - `/exit` exits the application.
 

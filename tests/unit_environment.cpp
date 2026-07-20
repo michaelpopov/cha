@@ -13,6 +13,7 @@
 namespace cha {
 namespace {
 
+// Temporarily sets one environment variable so dotenv tests do not affect each other.
 class ScopedEnvironmentVariable {
 public:
     explicit ScopedEnvironmentVariable(std::string name) : name_(std::move(name)) {

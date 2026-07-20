@@ -1,9 +1,11 @@
 #include "conversation.h"
 #include "conversation_file.h"
+#include "session_repository.h"
 #include "workspace.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -12,6 +14,7 @@
 namespace cha {
 namespace {
 
+// Builds and cleans up a minimal workspace fixture for room and session tests.
 class WorkspaceTest : public testing::Test {
 protected:
     void SetUp() override {
@@ -48,7 +51,7 @@ protected:
     std::filesystem::path root;
 };
 
-TEST_F(WorkspaceTest, LoadsRoomsAndComposesTheSelectedPersonaPrompt) {
+TEST_F(WorkspaceTest, LoadsRoomsAndResolvesTheirPersonaDirectory) {
     Workspace workspace(root);
 
     EXPECT_EQ(workspace.rooms(), (std::vector<std::string>{"lobby"}));
@@ -56,8 +59,7 @@ TEST_F(WorkspaceTest, LoadsRoomsAndComposesTheSelectedPersonaPrompt) {
 
     EXPECT_EQ(room.name, "lobby");
     EXPECT_EQ(room.persona_name, "guide");
-    EXPECT_EQ(room.config.name, "guide");
-    EXPECT_EQ(room.config.system_prompt, "Persona instructions\n\nRoom instructions");
+    EXPECT_EQ(workspace.persona_directory(room), root / "personas" / "guide");
 }
 
 TEST_F(WorkspaceTest, ListsOnlyCompleteSessionPairsAndReturnsTheirDataPath) {
@@ -73,31 +75,60 @@ TEST_F(WorkspaceTest, ListsOnlyCompleteSessionPairsAndReturnsTheirDataPath) {
 
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
-    EXPECT_EQ(workspace.sessions(room), (std::vector<Session>{{"saved", "saved"}}));
-    EXPECT_EQ(load_conversation_file(workspace.session_data_path(room, "saved")), conversation.messages());
+    SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
+    EXPECT_EQ(sessions.list(), (std::vector<Session>{{"saved", "saved"}}));
+    EXPECT_EQ(load_conversation_file(sessions.data_path("saved")), conversation.messages());
 }
 
-TEST_F(WorkspaceTest, CreatesSessionMetadataBeforeItsConversationIsSaved) {
+TEST_F(WorkspaceTest, CreatesSelectableSessionFilesImmediately) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
+    SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
 
-    const Session session = workspace.create_session(room, "A named session");
+    const Session session = sessions.create("A named session");
     EXPECT_TRUE(std::filesystem::is_regular_file(room.directory / "sessions" / (session.id + ".meta")));
-    EXPECT_FALSE(std::filesystem::exists(room.directory / "sessions" / (session.id + ".data")));
-    EXPECT_TRUE(workspace.sessions(room).empty());
+    EXPECT_TRUE(std::filesystem::is_regular_file(room.directory / "sessions" / (session.id + ".data")));
+    EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
 
     Conversation conversation;
     conversation.add_message("You", "Persist me");
     save_conversation_file(room.directory / "sessions" / (session.id + ".data"), conversation);
-    EXPECT_EQ(workspace.sessions(room), (std::vector<Session>{{session.id, "A named session"}}));
+    EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
 }
 
 TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) {
     Workspace workspace(root);
-    const Session session = workspace.create_session(workspace.load_room("lobby"), "");
+    const Room room = workspace.load_room("lobby");
+    SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
+    const Session session = sessions.create("");
 
     EXPECT_EQ(session.label, session.id);
     EXPECT_TRUE(std::regex_match(session.id, std::regex("[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-session")));
+}
+
+TEST_F(WorkspaceTest, ReportsInvalidMetadataWithoutHidingHealthySessions) {
+    Workspace workspace(root);
+    const Room room = workspace.load_room("lobby");
+    SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
+    const Session healthy = sessions.create("Healthy");
+    const Session session = sessions.create("Broken metadata");
+    {
+        std::ofstream meta(room.directory / "sessions" / (session.id + ".meta"), std::ios::trunc);
+        meta << "label = \"unterminated";
+    }
+
+    const std::vector<Session> listed = sessions.list();
+    ASSERT_EQ(listed.size(), 2U);
+    const auto broken = std::find_if(listed.begin(), listed.end(), [&](const Session& candidate) {
+        return candidate.id == session.id;
+    });
+    const auto valid = std::find_if(listed.begin(), listed.end(), [&](const Session& candidate) {
+        return candidate.id == healthy.id;
+    });
+    ASSERT_NE(broken, listed.end());
+    ASSERT_NE(valid, listed.end());
+    EXPECT_FALSE(broken->error.empty());
+    EXPECT_TRUE(valid->error.empty());
 }
 
 TEST_F(WorkspaceTest, RejectsRoomsWithMoreThanOnePersona) {

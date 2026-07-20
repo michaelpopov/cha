@@ -1,7 +1,6 @@
 #include "config.h"
-#include "conversation.h"
-#include "pipe.h"
-#include "server.h"
+#include "agent_protocol.h"
+#include "agent.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -21,6 +20,7 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <variant>
 #include <vector>
 
 namespace cha {
@@ -28,6 +28,7 @@ namespace {
 
 using Json = nlohmann::json;
 
+// Supplies scripted HTTP responses and records requests for isolated Agent tests.
 class MockHttpServer {
 public:
     explicit MockHttpServer(std::vector<std::string> responses) : responses_(std::move(responses)) {
@@ -175,48 +176,71 @@ std::string request_body(const std::string& request) {
     return request.substr(body_start + 4);
 }
 
-void send(Conversation& conversation, Pipe& pipe, std::string_view input) {
-    conversation.add_message(std::string(user_author), std::string(input));
-    pipe.put(input);
-    pipe.eom();
+CompletionRequest request(
+    RequestId request_id,
+    std::string agent_id,
+    std::string prompt,
+    std::vector<ConversationMessage> history = {}) {
+    return {
+        .request_id = request_id,
+        .agent_id = std::move(agent_id),
+        .history = std::move(history),
+        .prompt = std::move(prompt),
+    };
 }
 
-TEST(Server, EchoesEachInputLineTwiceThenEndsTheMessage) {
+AgentEvent next_event(AgentEventChannel& events) {
+    std::optional<AgentEvent> event = events.get();
+    if (!event) {
+        throw std::runtime_error("Agent event channel closed unexpectedly");
+    }
+    return std::move(*event);
+}
+
+TEST(Agent, EchoesImmutableRequestPromptWithIdentifiedEvents) {
     Config config;
-    config.name = "Local server";
-    Pipe pipe_in;
-    Pipe pipe_out;
+    config.name = "Local agent";
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Conversation conversation;
-    Server server(cancellation, conversation);
-    server.init(config);
+    Agent agent(cancellation);
+    agent.init(config);
 
-    server.run(pipe_in, pipe_out);
-    send(conversation, pipe_in, "hello");
+    agent.run(requests, events);
+    ASSERT_TRUE(requests.push(request(41, "Local agent", "hello", {{"You", "different history"}})));
 
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-
-    send(conversation, pipe_in, "again");
-
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-
-    server.stop();
-
-    EXPECT_EQ(
-        conversation.messages(),
-        (std::vector<ConversationMessage>{
-            {"You", "hello"},
-            {"Local server", "hellohello"},
-            {"You", "again"},
-            {"Local server", "againagain"},
-        }));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).request_id, 41U);
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "hello");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 41U);
+    agent.stop();
 }
 
-TEST(Server, ConstructionDoesNotRequireANetworkConnection) {
+TEST(Agent, LoadsItsConfigurationFromPersonaAndRoomDirectories) {
+    const auto directory = std::filesystem::temp_directory_path()
+        / ("cha_server_directories_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto persona_directory = directory / "guide";
+    const auto room_directory = directory / "room";
+    std::filesystem::create_directories(persona_directory);
+    std::filesystem::create_directories(room_directory);
+    {
+        std::ofstream config(persona_directory / "config.toml");
+        config << "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\n";
+        std::ofstream system_prompt(persona_directory / "SYSTEM.md");
+        system_prompt << "Persona instructions";
+        std::ofstream user_prompt(room_directory / "USER.md");
+        user_prompt << "Room instructions";
+    }
+
+    std::atomic_bool cancellation{false};
+    Agent agent(cancellation);
+    agent.init(persona_directory, room_directory);
+    EXPECT_EQ(agent.info().id, "guide");
+    EXPECT_EQ(agent.info().name, "guide");
+
+    std::filesystem::remove_all(directory);
+}
+
+TEST(Agent, ConstructionDoesNotRequireANetworkConnection) {
     Config config{
         .host = "127.0.0.1",
         .port = 1,
@@ -224,64 +248,65 @@ TEST(Server, ConstructionDoesNotRequireANetworkConnection) {
     };
     config.model = "configured-model";
     std::atomic_bool cancellation{false};
-    Conversation conversation;
     EXPECT_NO_THROW({
-        Server server(cancellation, conversation);
-        server.init(config);
+        Agent agent(cancellation);
+        agent.init(config);
     });
 }
 
-TEST(Server, StoppingDoesNotCloseTheSharedOutputPipe) {
+TEST(Agent, StoppingDoesNotCloseTheSharedOutputChannel) {
     Config config;
-    Pipe pipe_in;
-    Pipe pipe_out;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Conversation conversation;
-    Server server(cancellation, conversation);
-    server.init(config);
+    Agent agent(cancellation);
+    agent.init(config);
 
-    server.run(pipe_in, pipe_out);
-    server.stop();
+    agent.run(requests, events);
+    agent.stop();
 
-    PipeEvent event{PipeEventKind::eom, {}};
-    EXPECT_FALSE(pipe_out.try_get(event));
-    pipe_out.conversation_updated();
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    AgentEvent event = AgentCompleted{};
+    EXPECT_EQ(events.try_get(event), ChannelReadStatus::empty);
+    EXPECT_TRUE(events.push(AgentCompleted{7}));
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 7U);
 }
 
-TEST(Server, ContinuesAfterAConversationStateError) {
+TEST(Agent, RejectsARequestForAnotherAgentAndContinues) {
     Config config;
-    Pipe pipe_in;
-    Pipe pipe_out;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Conversation conversation;
-    Server server(cancellation, conversation);
-    server.init(config);
+    Agent agent(cancellation);
+    agent.init(config);
 
-    server.run(pipe_in, pipe_out);
-    conversation.begin_message("Interrupted writer");
-    pipe_in.put("rejected");
-    pipe_in.eom();
+    agent.run(requests, events);
+    ASSERT_TRUE(requests.push(request(1, "Other", "rejected")));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(events));
+    EXPECT_EQ(failed.request_id, 1U);
+    EXPECT_NE(failed.message.find("targets agent"), std::string::npos);
 
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-
-    send(conversation, pipe_in, "accepted");
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-    server.stop();
-
-    EXPECT_EQ(
-        conversation.messages(),
-        (std::vector<ConversationMessage>{
-            {"System", "Error: A conversation message is already open"},
-            {"You", "accepted"},
-            {"Assistant", "acceptedaccepted"},
-        }));
+    ASSERT_TRUE(requests.push(request(2, "Assistant", "accepted")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "accepted");
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "accepted");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 2U);
+    agent.stop();
 }
 
-TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
+TEST(Agent, CancelsAnIdentifiedRequestBeforeStartingIt) {
+    Config config;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+    std::atomic_bool cancellation{true};
+    Agent agent(cancellation);
+    agent.init(config);
+    agent.run(requests, events);
+
+    ASSERT_TRUE(requests.push(request(9, "Assistant", "Do not run")));
+    EXPECT_EQ(std::get<AgentCancelled>(next_event(events)).request_id, 9U);
+    agent.stop();
+}
+
+TEST(Agent, StreamsResponsesFromImmutableRequestHistory) {
     const std::string first_stream =
         "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"
         "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
@@ -307,24 +332,27 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     config.system_prompt = "Be concise.";
     ASSERT_EQ(::setenv("CHA_TEST_API_KEY", "test-key", 1), 0);
 
-    Pipe pipe_in;
-    Pipe pipe_out;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Conversation conversation;
-    Server server(cancellation, conversation);
-    server.init(config);
-    server.run(pipe_in, pipe_out);
+    Agent agent(cancellation);
+    agent.init(config);
+    agent.run(requests, events);
 
-    send(conversation, pipe_in, "First question");
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    ASSERT_TRUE(requests.push(request(10, "Assistant", "First question")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Hello");
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, " world");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 10U);
 
-    send(conversation, pipe_in, "Second question");
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    ASSERT_TRUE(requests.push(request(
+        11,
+        "Assistant",
+        "Second question",
+        {{"You", "First question"}, {"Assistant", "Hello world"}})));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Again");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 11U);
 
-    server.stop();
+    agent.stop();
     mock.join();
     ASSERT_EQ(::unsetenv("CHA_TEST_API_KEY"), 0);
     ASSERT_EQ(mock.requests().size(), 2U);
@@ -347,7 +375,7 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     EXPECT_EQ(second_request["messages"][3]["content"], "Second question");
 }
 
-TEST(Server, SkipsMalformedStreamingEvents) {
+TEST(Agent, SkipsMalformedStreamingEvents) {
     const std::string stream =
         "data: not-json\n\n"
         "data: {\"choices\":[{\"delta\":{\"content\":\"Valid response\"}}]}\n\n"
@@ -362,29 +390,21 @@ TEST(Server, SkipsMalformedStreamingEvents) {
     config.model = "configured-model";
     config.stream = true;
 
-    Pipe pipe_in;
-    Pipe pipe_out;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Conversation conversation;
-    Server server(cancellation, conversation);
-    server.init(config);
-    server.run(pipe_in, pipe_out);
+    Agent agent(cancellation);
+    agent.init(config);
+    agent.run(requests, events);
 
-    send(conversation, pipe_in, "Question");
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-    server.stop();
+    ASSERT_TRUE(requests.push(request(3, "Assistant", "Question")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Valid response");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 3U);
+    agent.stop();
     mock.join();
-
-    EXPECT_EQ(
-        conversation.messages(),
-        (std::vector<ConversationMessage>{
-            {"You", "Question"},
-            {"Assistant", "Valid response"},
-        }));
 }
 
-TEST(Server, DiscoversTheFirstEndpointModelWhenNoneIsConfigured) {
+TEST(Agent, DiscoversTheFirstEndpointModelWhenNoneIsConfigured) {
     const std::string models_response = R"({"data":[{"id":"discovered-model"},{"id":"other-model"}]})";
     const std::string chat_response = R"({"choices":[{"message":{"content":"Complete answer"}}]})";
     MockHttpServer mock({
@@ -399,18 +419,17 @@ TEST(Server, DiscoversTheFirstEndpointModelWhenNoneIsConfigured) {
     config.mode = Mode::net;
     config.stream = false;
 
-    Pipe pipe_in;
-    Pipe pipe_out;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Conversation conversation;
-    Server server(cancellation, conversation);
-    server.init(config);
-    server.run(pipe_in, pipe_out);
+    Agent agent(cancellation);
+    agent.init(config);
+    agent.run(requests, events);
 
-    send(conversation, pipe_in, "Question");
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-    server.stop();
+    ASSERT_TRUE(requests.push(request(4, "Assistant", "Question")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Complete answer");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 4U);
+    agent.stop();
     mock.join();
 
     ASSERT_EQ(mock.requests().size(), 2U);
@@ -419,7 +438,7 @@ TEST(Server, DiscoversTheFirstEndpointModelWhenNoneIsConfigured) {
     EXPECT_EQ(request["model"], "discovered-model");
 }
 
-TEST(Server, HandlesCommandsAndNonStreamingResponse) {
+TEST(Agent, ProvidesInfoAndHandlesNonStreamingResponse) {
     const std::string response_body = R"({"choices":[{"message":{"content":"Complete answer"}}]})";
     MockHttpServer mock({http_response("application/json", response_body)});
     mock.start();
@@ -431,36 +450,22 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     config.model = "initial-model";
     config.stream = false;
 
-    Pipe pipe_in;
-    Pipe pipe_out;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
     std::atomic_bool cancellation{false};
-    Conversation conversation;
-    Server server(cancellation, conversation);
-    server.init(config);
-    server.run(pipe_in, pipe_out);
+    Agent agent(cancellation);
+    agent.init(config);
+    const AgentInfo info = agent.info();
+    EXPECT_EQ(info.model, "initial-model");
+    EXPECT_FALSE(info.streaming);
+    EXPECT_NE(info.api.find("/v1/chat/completions"), std::string::npos);
+    agent.run(requests, events);
 
-    send(conversation, pipe_in, "/info");
-    const PipeEvent info = pipe_out.get();
-    ASSERT_EQ(info.kind, PipeEventKind::conversation_updated);
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-    const auto messages_after_info = conversation.messages();
-    ASSERT_FALSE(messages_after_info.empty());
-    EXPECT_NE(messages_after_info.back().text.find("Model: initial-model"), std::string::npos);
-    EXPECT_NE(messages_after_info.back().text.find("Streaming: no"), std::string::npos);
+    ASSERT_TRUE(requests.push(request(5, "Assistant", "Question")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Complete answer");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 5U);
 
-    send(conversation, pipe_in, "Question");
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-
-    send(conversation, pipe_in, "/clear");
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-
-    send(conversation, pipe_in, "/unknown");
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
-
-    server.stop();
+    agent.stop();
     mock.join();
 
     ASSERT_EQ(mock.requests().size(), 1U);
@@ -471,7 +476,7 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     EXPECT_EQ(request["messages"][0]["content"], "Question");
 }
 
-TEST(Server, NamedInstancesUseOneSharedConversation) {
+TEST(Agent, NamedInstancesProjectTheProvidedHistoryForTheirOwnIdentity) {
     const std::string first_body = R"({"choices":[{"message":{"content":"Initial answer"}}]})";
     const std::string second_body = R"({"choices":[{"message":{"content":"Reviewed answer"}}]})";
     MockHttpServer first_mock({http_response("application/json", first_body)});
@@ -479,7 +484,6 @@ TEST(Server, NamedInstancesUseOneSharedConversation) {
     first_mock.start();
     second_mock.start();
 
-    Conversation conversation;
     std::atomic_bool cancellation{false};
 
     Config first_config;
@@ -489,14 +493,14 @@ TEST(Server, NamedInstancesUseOneSharedConversation) {
     first_config.model = "writer-model";
     first_config.stream = false;
 
-    Pipe first_input;
-    Pipe first_output;
-    Server writer(cancellation, conversation, "Writer");
+    CompletionRequestChannel first_input;
+    AgentEventChannel first_output;
+    Agent writer(cancellation, "Writer");
     writer.init(first_config);
     writer.run(first_input, first_output);
-    send(conversation, first_input, "Draft an answer");
-    EXPECT_EQ(first_output.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(first_output.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    ASSERT_TRUE(first_input.push(request(6, "Writer", "Draft an answer")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(first_output)).text, "Initial answer");
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(first_output)));
     writer.stop();
     first_mock.join();
 
@@ -504,14 +508,18 @@ TEST(Server, NamedInstancesUseOneSharedConversation) {
     second_config.port = second_mock.port();
     second_config.model = "reviewer-model";
 
-    Pipe second_input;
-    Pipe second_output;
-    Server reviewer(cancellation, conversation, "Reviewer");
+    CompletionRequestChannel second_input;
+    AgentEventChannel second_output;
+    Agent reviewer(cancellation, "Reviewer");
     reviewer.init(second_config);
     reviewer.run(second_input, second_output);
-    send(conversation, second_input, "Review the draft");
-    EXPECT_EQ(second_output.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
-    EXPECT_EQ(second_output.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    ASSERT_TRUE(second_input.push(request(
+        7,
+        "Reviewer",
+        "Review the draft",
+        {{"You", "Draft an answer"}, {"Writer", "Initial answer"}})));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(second_output)).text, "Reviewed answer");
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(second_output)));
     reviewer.stop();
     second_mock.join();
 
@@ -521,15 +529,6 @@ TEST(Server, NamedInstancesUseOneSharedConversation) {
     EXPECT_EQ(request["messages"][0]["content"], "Draft an answer");
     EXPECT_EQ(request["messages"][1]["content"], "Writer: Initial answer");
     EXPECT_EQ(request["messages"][2]["content"], "Review the draft");
-
-    EXPECT_EQ(
-        conversation.messages(),
-        (std::vector<ConversationMessage>{
-            {"You", "Draft an answer"},
-            {"Writer", "Initial answer"},
-            {"You", "Review the draft"},
-            {"Reviewer", "Reviewed answer"},
-        }));
 }
 
 } // namespace

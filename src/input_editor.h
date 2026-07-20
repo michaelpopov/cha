@@ -5,6 +5,7 @@
 
 namespace cha {
 
+// Maintains editable multiline terminal input and converts it to submitted UTF-8 text.
 class InputEditor {
 public:
     void insert(wchar_t character);

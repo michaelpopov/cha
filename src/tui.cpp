@@ -1,7 +1,8 @@
 #include "tui.h"
 
+#include "terminal.h"
+
 #include <algorithm>
-#include <clocale>
 #include <cwchar>
 #include <stdexcept>
 #include <string>
@@ -13,63 +14,6 @@ namespace {
 
 constexpr int input_height = 5;
 constexpr int status_height = 1;
-
-// Estimate conservatively so curses pads have enough space before their content is rendered.
-void add_cells(int cells, int columns, int& rows, int& column) {
-    for (int cell = 0; cell < cells; ++cell) {
-        ++column;
-        if (column >= columns) {
-            ++rows;
-            column = 0;
-        }
-    }
-}
-
-int layout_rows(std::string_view text, int columns, int initial_cells = 0) {
-    columns = std::max(1, columns);
-    int result = 1;
-    int column = 0;
-    add_cells(initial_cells, columns, result, column);
-
-    for (const unsigned char character : text) {
-        if (character == '\n') {
-            ++result;
-            column = 0;
-        } else if (character == '\r') {
-            column = 0;
-        } else if (character == '\t') {
-            add_cells(8 - (column % 8), columns, result, column);
-        } else {
-            // Counting UTF-8 bytes is conservative, ensuring the pad is never too short.
-            add_cells(1, columns, result, column);
-        }
-    }
-
-    return result;
-}
-
-int layout_rows(std::wstring_view text, int columns, int initial_cells = 0) {
-    columns = std::max(1, columns);
-    int result = 1;
-    int column = 0;
-    add_cells(initial_cells, columns, result, column);
-
-    for (const wchar_t character : text) {
-        if (character == L'\n') {
-            ++result;
-            column = 0;
-        } else if (character == L'\r') {
-            column = 0;
-        } else if (character == L'\t') {
-            add_cells(8 - (column % 8), columns, result, column);
-        } else {
-            const int width = ::wcwidth(character);
-            add_cells(std::max(0, width), columns, result, column);
-        }
-    }
-
-    return result;
-}
 
 std::string message_label(const ConversationMessage& message) {
     return message.author + ": ";
@@ -115,15 +59,8 @@ void write_status(std::string_view text, int row, int columns) {
 
 } // namespace
 
-Tui::Tui() {
-    std::setlocale(LC_ALL, "");
-    initscr();
-    raw();
-    noecho();
-    keypad(stdscr, true);
-    set_escdelay(25);
-    nodelay(stdscr, true);
-    curs_set(1);
+Tui::Tui(Terminal& terminal) : terminal_(terminal) {
+    terminal_.configure_chat();
 }
 
 Tui::~Tui() {
@@ -133,7 +70,6 @@ Tui::~Tui() {
     if (input_pad_) {
         delwin(input_pad_);
     }
-    endwin();
 }
 
 int Tui::read_key(wint_t& key) {
@@ -155,8 +91,6 @@ void Tui::render(const Conversation& conversation, const InputEditor& editor, bo
     const int output_height = rows - input_height - status_height;
     const int status_y = output_height;
     const int input_y = status_y + status_height;
-    last_output_height_ = output_height;
-
     erase();
 
     std::string status = generating ? "[Generating] " : "[Idle] ";
@@ -187,20 +121,15 @@ void Tui::render(const Conversation& conversation, const InputEditor& editor, bo
 }
 
 void Tui::scroll_up() {
-    follow_output_ = false;
-    view_top_ = std::max(0, view_top_ - std::max(1, last_output_height_ / 2));
+    transcript_viewport_.scroll_up();
 }
 
 void Tui::scroll_down() {
-    const int bottom = std::max(0, transcript_lines_ - last_output_height_);
-    view_top_ = std::min(bottom, view_top_ + std::max(1, last_output_height_ / 2));
-    follow_output_ = view_top_ == bottom;
+    transcript_viewport_.scroll_down();
 }
 
 void Tui::resize() {
-    endwin();
-    refresh();
-    clear();
+    terminal_.resize();
 }
 
 void Tui::replace_pad(WINDOW*& pad, int rows, int columns) {
@@ -223,6 +152,33 @@ void Tui::ensure_transcript_capacity(int required_rows) {
         throw std::runtime_error("Failed to grow transcript pad");
     }
     transcript_capacity_ = capacity;
+}
+
+void Tui::ensure_input_pad(int required_rows, int columns) {
+    if (!input_pad_) {
+        const int capacity = std::max(required_rows, 16);
+        input_pad_ = newpad(capacity, columns);
+        if (!input_pad_) {
+            throw std::runtime_error("Failed to create curses input pad");
+        }
+        input_capacity_ = capacity;
+        input_columns_ = columns;
+        return;
+    }
+
+    if (required_rows <= input_capacity_ && columns == input_columns_) {
+        return;
+    }
+
+    int resized_capacity = input_capacity_;
+    if (required_rows > input_capacity_) {
+        resized_capacity = std::max(required_rows, input_capacity_ * 2);
+    }
+    if (wresize(input_pad_, resized_capacity, columns) == ERR) {
+        throw std::runtime_error("Failed to resize curses input pad");
+    }
+    input_capacity_ = resized_capacity;
+    input_columns_ = columns;
 }
 
 void Tui::write_transcript_entry(const ConversationMessage& message) {
@@ -248,86 +204,60 @@ void Tui::rebuild_transcript(const ConversationSnapshot& snapshot, int output_he
     for (const ConversationMessage& message : snapshot.messages) {
         write_transcript_entry(message);
     }
-
-    rendered_revision_ = snapshot.revision;
-    rendered_entry_count_ = snapshot.messages.size();
-    rendered_last_text_size_ = snapshot.messages.empty() ? 0 : snapshot.messages.back().text.size();
 }
 
 void Tui::render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns) {
-    // Preserve the existing pad when streamed output can be appended safely, avoiding full redraws.
+    const TranscriptRenderPlan plan = transcript_planner_.plan(snapshot, columns);
     const auto& entries = snapshot.messages;
-    if (!transcript_pad_ || transcript_columns_ != columns || entries.size() < rendered_entry_count_) {
+    if (plan.action == TranscriptRenderAction::rebuild) {
         rebuild_transcript(snapshot, output_height, columns);
-    } else if (rendered_revision_ != snapshot.revision) {
-        int tail_y = 0;
-        int tail_x = 0;
-        std::size_t first_new_entry = 0;
-        std::string previous_entry_suffix;
-
-        if (rendered_entry_count_ > 0) {
-            const ConversationMessage& previous_last = entries[rendered_entry_count_ - 1];
-            if (previous_last.text.size() < rendered_last_text_size_) {
-                rebuild_transcript(snapshot, output_height, columns);
-            } else {
-                tail_y = rendered_last_content_y_;
-                tail_x = rendered_last_content_x_;
-                previous_entry_suffix = previous_last.text.substr(rendered_last_text_size_);
-                first_new_entry = rendered_entry_count_;
-            }
+    } else if (plan.action == TranscriptRenderAction::append) {
+        const int tail_y = plan.resumes_last_message ? rendered_last_content_y_ : 0;
+        const int tail_x = plan.resumes_last_message ? rendered_last_content_x_ : 0;
+        std::string rendered_tail = plan.last_message_suffix;
+        if (plan.resumes_last_message) {
+            rendered_tail += "\n\n";
+        }
+        for (std::size_t index = plan.first_new_message; index < entries.size(); ++index) {
+            rendered_tail += message_label(entries[index]);
+            rendered_tail += entries[index].text;
+            rendered_tail += "\n\n";
         }
 
-        if (rendered_revision_ != snapshot.revision) {
-            std::string rendered_tail = previous_entry_suffix;
-            if (rendered_entry_count_ > 0) {
-                rendered_tail += "\n\n";
-            }
-            for (std::size_t index = first_new_entry; index < entries.size(); ++index) {
-                rendered_tail += message_label(entries[index]);
-                rendered_tail += entries[index].text;
-                rendered_tail += "\n\n";
-            }
+        const int tail_rows = layout_rows(rendered_tail, columns, tail_x);
+        ensure_transcript_capacity(std::max(output_height + 4, tail_y + tail_rows + 4));
+        wmove(transcript_pad_, tail_y, tail_x);
+        wclrtobot(transcript_pad_);
 
-            const int tail_rows = layout_rows(rendered_tail, columns, tail_x);
-            ensure_transcript_capacity(std::max(output_height + 4, tail_y + tail_rows + 4));
-            wmove(transcript_pad_, tail_y, tail_x);
-            wclrtobot(transcript_pad_);
-
-            if (rendered_entry_count_ > 0) {
-                waddstr(transcript_pad_, previous_entry_suffix.c_str());
-                getyx(transcript_pad_, rendered_last_content_y_, rendered_last_content_x_);
-                waddstr(transcript_pad_, "\n\n");
-            }
-            for (std::size_t index = first_new_entry; index < entries.size(); ++index) {
-                write_transcript_entry(entries[index]);
-            }
-
-            rendered_revision_ = snapshot.revision;
-            rendered_entry_count_ = entries.size();
-            rendered_last_text_size_ = entries.empty() ? 0 : entries.back().text.size();
+        if (plan.resumes_last_message) {
+            waddstr(transcript_pad_, plan.last_message_suffix.c_str());
+            getyx(transcript_pad_, rendered_last_content_y_, rendered_last_content_x_);
+            waddstr(transcript_pad_, "\n\n");
+        }
+        for (std::size_t index = plan.first_new_message; index < entries.size(); ++index) {
+            write_transcript_entry(entries[index]);
         }
     } else {
         ensure_transcript_capacity(output_height + 4);
     }
+    transcript_planner_.commit(snapshot, columns);
 
+    int transcript_lines = 0;
     int cursor_x = 0;
-    getyx(transcript_pad_, transcript_lines_, cursor_x);
-    ++transcript_lines_;
-    const int bottom = std::max(0, transcript_lines_ - output_height);
-    if (follow_output_) {
-        view_top_ = bottom;
-    } else {
-        view_top_ = std::min(view_top_, bottom);
-    }
+    getyx(transcript_pad_, transcript_lines, cursor_x);
+    ++transcript_lines;
+    transcript_viewport_.update(transcript_lines, output_height);
 
-    pnoutrefresh(transcript_pad_, view_top_, 0, 0, 0, output_height - 1, columns - 1);
+    pnoutrefresh(transcript_pad_, transcript_viewport_.top(), 0, 0, 0, output_height - 1, columns - 1);
 }
 
 void Tui::render_input(const InputEditor& editor, int input_y, int height, int columns) {
     const int inner_height = height - 2;
     const int inner_width = columns - 2;
     const int estimated_rows = layout_rows(editor.text(), inner_width, 2) + inner_height + 4;
-    replace_pad(input_pad_, estimated_rows, inner_width);
+    ensure_input_pad(estimated_rows, inner_width);
+    werase(input_pad_);
+    wmove(input_pad_, 0, 0);
 
     waddwstr(input_pad_, L"> ");
     const std::wstring prefix = editor.text().substr(0, editor.cursor());

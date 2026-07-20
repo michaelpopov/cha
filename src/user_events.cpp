@@ -1,6 +1,6 @@
 #include "user_events.h"
 
-#include "pipe.h"
+#include "agent_protocol.h"
 
 #include <cerrno>
 #include <poll.h>
@@ -9,11 +9,11 @@
 namespace cha {
 
 // Keep file-descriptor interpretation at this boundary so the user workflow remains platform-agnostic.
-UserEvents::UserEvents(Status status, bool terminal_input, bool terminal_closed, bool pipe_input)
+UserEvents::UserEvents(Status status, bool terminal_input, bool terminal_closed, bool agent_event)
   : _status(status),
     _terminal_input(terminal_input),
     _terminal_closed(terminal_closed),
-    _pipe_input(pipe_input) {
+    _agent_event(agent_event) {
 }
 
 bool UserEvents::interrupted() const {
@@ -32,14 +32,14 @@ bool UserEvents::terminal_closed() const {
     return _terminal_closed;
 }
 
-bool UserEvents::pipe_input_ready() const {
-    return _pipe_input;
+bool UserEvents::agent_event_ready() const {
+    return _agent_event;
 }
 
-UserEvents wait_for_user_events(const Pipe& pipe_in) {
+UserEvents wait_for_user_events(const AgentEventChannel& events) {
     pollfd descriptors[] = {
         {STDIN_FILENO, POLLIN, 0},
-        {pipe_in.notification_fd(), POLLIN, 0},
+        {events.notification_fd(), POLLIN, 0},
     };
 
     if (::poll(descriptors, 2, -1) == -1) {

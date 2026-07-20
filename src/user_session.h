@@ -1,21 +1,23 @@
 #pragma once
 
-#include "conversation.h"
+#include "agent_protocol.h"
 #include "input_editor.h"
 #include "tui.h"
 
-#include <atomic>
 #include <cwchar>
 #include <string>
 
 namespace cha {
 
-class Pipe;
+class ChatCoordinator;
+class Terminal;
 
-// Own all mutable state for one interactive run so callers use cohesive session operations.
+// Coordinates interactive chat state, key handling, rendering, and agent notifications for one run.
 class UserSession {
 public:
-    UserSession(std::atomic_bool& cancellation, Conversation& conversation);
+    UserSession(
+        Terminal& terminal,
+        ChatCoordinator& coordinator);
 
     [[nodiscard]] bool running() const;
     void render();
@@ -23,22 +25,19 @@ public:
     void resize();
     void close_terminal();
     void report_terminal_failure();
-    void receive_responses(Pipe& pipe_in);
-    void receive_keys(Pipe& pipe_out);
-    void shutdown(Pipe& pipe_out);
+    void receive_responses(AgentEventChannel& events);
+    void receive_keys(CompletionRequestChannel& requests);
+    void shutdown(CompletionRequestChannel& requests);
 
 private:
     void request_render();
-    void handle_key(Pipe& pipe_out, std::wint_t key, int key_result);
-    void submit_input(Pipe& pipe_out);
-    void finish_generation();
+    void handle_key(CompletionRequestChannel& requests, std::wint_t key, int key_result);
+    void submit_input(CompletionRequestChannel& requests);
     void request_stop();
 
     Tui _tui;
     InputEditor _editor;
-    std::atomic_bool& _cancellation;
-    Conversation& _conversation;
-    bool _generating{false};
+    ChatCoordinator& _coordinator;
     bool _running{true};
     bool _render_needed{false};
     std::string _notice;
