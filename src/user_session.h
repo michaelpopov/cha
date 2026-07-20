@@ -15,7 +15,7 @@ class Pipe;
 // Own all mutable state for one interactive run so callers use cohesive session operations.
 class UserSession {
 public:
-    UserSession(const std::string& model, std::atomic_bool& cancellation, Conversation& conversation);
+    UserSession(std::atomic_bool& cancellation, Conversation& conversation);
 
     [[nodiscard]] bool running() const;
     void render();

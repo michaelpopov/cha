@@ -115,7 +115,7 @@ void write_status(std::string_view text, int row, int columns) {
 
 } // namespace
 
-Tui::Tui(std::string model) : model_(std::move(model)) {
+Tui::Tui() {
     std::setlocale(LC_ALL, "");
     initscr();
     raw();
@@ -160,7 +160,6 @@ void Tui::render(const Conversation& conversation, const InputEditor& editor, bo
     erase();
 
     std::string status = generating ? "[Generating] " : "[Idle] ";
-    status += model_;
     if (generating) {
         status += " | type .stop or press Esc/Ctrl-C";
     }

@@ -13,7 +13,7 @@ namespace cha {
 // Own curses resources and rendering policy so the session remains independent of terminal mechanics.
 class Tui {
 public:
-    explicit Tui(std::string model);
+    explicit Tui();
     ~Tui();
 
     Tui(const Tui&) = delete;
@@ -33,7 +33,6 @@ private:
     void render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns);
     void render_input(const InputEditor& editor, int input_y, int input_height, int columns);
 
-    std::string model_;
     WINDOW* transcript_pad_{};
     WINDOW* input_pad_{};
     std::size_t rendered_revision_{};

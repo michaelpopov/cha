@@ -170,14 +170,29 @@ void require_curl(CURLcode result, std::string_view operation) {
 } // namespace
 
 Server::Server(
-    const Config& config,
     std::atomic_bool& cancellation,
     Conversation& conversation,
     std::string name)
-    : _config(config),
-      _cancellation(cancellation),
+    : _cancellation(cancellation),
       _conversation(conversation),
       name_(std::move(name)) {
+
+}
+
+Server::~Server() {
+    stop();
+}
+
+void Server::init() {
+    init(cha::Config::load());
+}
+
+void Server::init(const Config& config) {
+    _config = config;
+    initialize();
+}
+
+void Server::initialize() {
 
     if (!_config.system_prompt.empty()) {
         std::ifstream prompt_file(_config.system_prompt, std::ios::binary);
@@ -197,10 +212,6 @@ Server::Server(
             throw std::runtime_error("Failed to create libcurl handle");
         }
     }
-}
-
-Server::~Server() {
-    stop();
 }
 
 void Server::run(Pipe& pipe_in, Pipe& pipe_out) {

@@ -32,7 +32,8 @@ ChatResult run_chat(bool stream) {
     Pipe pipe_server2user;
     std::atomic_bool cancellation{false};
     Conversation conversation;
-    Server server(config, cancellation, conversation);
+    Server server(cancellation, conversation);
+    server.init(config);
 
     server.run(pipe_user2server, pipe_server2user);
 
@@ -67,7 +68,8 @@ ChatResult run_cancelled_chat() {
     Pipe pipe_server2user;
     std::atomic_bool cancellation{false};
     Conversation conversation;
-    Server server(config, cancellation, conversation);
+    Server server(cancellation, conversation);
+    server.init(config);
 
     server.run(pipe_user2server, pipe_server2user);
 

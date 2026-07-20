@@ -183,7 +183,8 @@ TEST(Server, EchoesEachInputLineTwiceThenEndsTheMessage) {
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
     Conversation conversation;
-    Server server(config, cancellation, conversation);
+    Server server(cancellation, conversation);
+    server.init(config);
 
     server.run(pipe_in, pipe_out);
     send(conversation, pipe_in, "hello");
@@ -214,7 +215,10 @@ TEST(Server, ConstructionDoesNotRequireANetworkConnection) {
     Config config{"127.0.0.1", 1, Mode::net};
     std::atomic_bool cancellation{false};
     Conversation conversation;
-    EXPECT_NO_THROW({ Server server(config, cancellation, conversation); });
+    EXPECT_NO_THROW({
+        Server server(cancellation, conversation);
+        server.init(config);
+    });
 }
 
 TEST(Server, StoppingDoesNotCloseTheSharedOutputPipe) {
@@ -223,7 +227,8 @@ TEST(Server, StoppingDoesNotCloseTheSharedOutputPipe) {
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
     Conversation conversation;
-    Server server(config, cancellation, conversation);
+    Server server(cancellation, conversation);
+    server.init(config);
 
     server.run(pipe_in, pipe_out);
     server.stop();
@@ -240,7 +245,8 @@ TEST(Server, ContinuesAfterAConversationStateError) {
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
     Conversation conversation;
-    Server server(config, cancellation, conversation);
+    Server server(cancellation, conversation);
+    server.init(config);
 
     server.run(pipe_in, pipe_out);
     conversation.begin_message("Interrupted writer");
@@ -299,7 +305,8 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
     Conversation conversation;
-    Server server(config, cancellation, conversation);
+    Server server(cancellation, conversation);
+    server.init(config);
     server.run(pipe_in, pipe_out);
 
     send(conversation, pipe_in, "First question");
@@ -352,7 +359,8 @@ TEST(Server, SkipsMalformedStreamingEvents) {
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
     Conversation conversation;
-    Server server(config, cancellation, conversation);
+    Server server(cancellation, conversation);
+    server.init(config);
     server.run(pipe_in, pipe_out);
 
     send(conversation, pipe_in, "Question");
@@ -385,7 +393,8 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
     Conversation conversation;
-    Server server(config, cancellation, conversation);
+    Server server(cancellation, conversation);
+    server.init(config);
     server.run(pipe_in, pipe_out);
 
     send(conversation, pipe_in, ".info");
@@ -440,7 +449,8 @@ TEST(Server, NamedInstancesUseOneSharedConversation) {
 
     Pipe first_input;
     Pipe first_output;
-    Server writer(first_config, cancellation, conversation, "Writer");
+    Server writer(cancellation, conversation, "Writer");
+    writer.init(first_config);
     writer.run(first_input, first_output);
     send(conversation, first_input, "Draft an answer");
     EXPECT_EQ(first_output.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
@@ -454,7 +464,8 @@ TEST(Server, NamedInstancesUseOneSharedConversation) {
 
     Pipe second_input;
     Pipe second_output;
-    Server reviewer(second_config, cancellation, conversation, "Reviewer");
+    Server reviewer(cancellation, conversation, "Reviewer");
+    reviewer.init(second_config);
     reviewer.run(second_input, second_output);
     send(conversation, second_input, "Review the draft");
     EXPECT_EQ(second_output.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));

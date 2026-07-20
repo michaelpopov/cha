@@ -9,8 +9,8 @@
 namespace cha {
 
 // Coalesce session mutations behind this class so rendering happens consistently and only when needed.
-UserSession::UserSession(const std::string& model, std::atomic_bool& cancellation, Conversation& conversation)
-  : _tui(model), _cancellation(cancellation), _conversation(conversation) {
+UserSession::UserSession(std::atomic_bool& cancellation, Conversation& conversation)
+  : _tui(), _cancellation(cancellation), _conversation(conversation) {
 }
 
 bool UserSession::running() const {
