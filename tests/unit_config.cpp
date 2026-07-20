@@ -71,6 +71,7 @@ TEST(Config, LoadsFirstServerFromDirectory) {
 
     EXPECT_EQ(config.host, "127.0.0.1");
     EXPECT_EQ(config.model, "local-model");
+    EXPECT_EQ(config.name, "local");
 
     std::filesystem::remove_all(directory);
 }

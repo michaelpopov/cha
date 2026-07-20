@@ -15,7 +15,7 @@ std::string trim(std::string_view value) {
 } // namespace
 
 Command parse_command(std::string_view input) {
-    if (!input.starts_with('.')) {
+    if (!input.starts_with('/')) {
         return {};
     }
 
@@ -23,16 +23,16 @@ Command parse_command(std::string_view input) {
     const std::string_view name = input.substr(0, separator);
     const std::string argument = separator == std::string_view::npos ? "" : trim(input.substr(separator));
 
-    if (name == ".clear") {
+    if (name == "/clear") {
         return {CommandKind::clear, argument};
     }
-    if (name == ".info") {
+    if (name == "/info") {
         return {CommandKind::info, argument};
     }
-    if (name == ".stop") {
+    if (name == "/stop") {
         return {CommandKind::stop, argument};
     }
-    if (name == ".exit") {
+    if (name == "/exit") {
         return {CommandKind::exit, argument};
     }
     return {CommandKind::unknown, argument};

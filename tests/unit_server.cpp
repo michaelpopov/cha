@@ -183,6 +183,7 @@ void send(Conversation& conversation, Pipe& pipe, std::string_view input) {
 
 TEST(Server, EchoesEachInputLineTwiceThenEndsTheMessage) {
     Config config;
+    config.name = "Local server";
     Pipe pipe_in;
     Pipe pipe_out;
     std::atomic_bool cancellation{false};
@@ -209,14 +210,18 @@ TEST(Server, EchoesEachInputLineTwiceThenEndsTheMessage) {
         conversation.messages(),
         (std::vector<ConversationMessage>{
             {"You", "hello"},
-            {"Assistant", "hellohello"},
+            {"Local server", "hellohello"},
             {"You", "again"},
-            {"Assistant", "againagain"},
+            {"Local server", "againagain"},
         }));
 }
 
 TEST(Server, ConstructionDoesNotRequireANetworkConnection) {
-    Config config{"127.0.0.1", 1, Mode::net};
+    Config config{
+        .host = "127.0.0.1",
+        .port = 1,
+        .mode = Mode::net,
+    };
     config.model = "configured-model";
     std::atomic_bool cancellation{false};
     Conversation conversation;
@@ -434,7 +439,7 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     server.init(config);
     server.run(pipe_in, pipe_out);
 
-    send(conversation, pipe_in, ".info");
+    send(conversation, pipe_in, "/info");
     const PipeEvent info = pipe_out.get();
     ASSERT_EQ(info.kind, PipeEventKind::conversation_updated);
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
@@ -447,11 +452,11 @@ TEST(Server, HandlesCommandsAndNonStreamingResponse) {
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    send(conversation, pipe_in, ".clear");
+    send(conversation, pipe_in, "/clear");
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 
-    send(conversation, pipe_in, ".unknown");
+    send(conversation, pipe_in, "/unknown");
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
     EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
 

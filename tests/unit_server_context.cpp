@@ -31,7 +31,7 @@ TEST(ServerContext, OmitsCommandsErrorsAndOpenResponses) {
         .messages = {
             {"You", "Discarded by clear"},
             {"Reviewer", "Old response"},
-            {"You", ".clear"},
+            {"You", "/clear"},
             {"Reviewer", "Conversation cleared."},
             {"You", "Failed request"},
             {"System", "Error: unavailable"},

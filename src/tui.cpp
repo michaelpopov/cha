@@ -161,7 +161,7 @@ void Tui::render(const Conversation& conversation, const InputEditor& editor, bo
 
     std::string status = generating ? "[Generating] " : "[Idle] ";
     if (generating) {
-        status += " | type .stop or press Esc/Ctrl-C";
+        status += " | type /stop or press Esc/Ctrl-C";
     }
     if (!notice.empty()) {
         status += " | ";

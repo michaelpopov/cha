@@ -193,6 +193,9 @@ void Server::init(const Config& config) {
 
 void Server::initialize() {
 
+    if (name_.empty()) {
+        name_ = _config.name;
+    }
     system_prompt_ = _config.system_prompt;
 
     if (!_config.api_key_env.empty()) {
@@ -370,7 +373,7 @@ bool Server::handle_command(const std::string& input, Pipe& pipe_out) {
     }
 
     if (command.kind != CommandKind::text) {
-        reply("Unknown command. Server commands: .clear, .info. Local commands: .stop, .exit");
+        reply("Unknown command. Server commands: /clear, /info. Local commands: /stop, /exit");
         return true;
     }
 
@@ -420,7 +423,7 @@ void Server::complete(Pipe& pipe_out) {
     require_curl(curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, 10L), "Failed to configure connection timeout");
     require_curl(curl_easy_setopt(curl_, CURLOPT_NOSIGNAL, 1L), "Failed to configure libcurl signals");
     require_curl(curl_easy_setopt(curl_, CURLOPT_TCP_KEEPALIVE, 1L), "Failed to configure TCP keepalive");
-    // Generation duration is intentionally unbounded; the TUI's .stop action
+    // Generation duration is intentionally unbounded; the TUI's /stop action
     // cancels the transfer through the progress callback below.
     require_curl(curl_easy_setopt(curl_, CURLOPT_NOPROGRESS, 0L), "Failed to enable transfer progress");
     require_curl(

@@ -35,7 +35,7 @@ In net mode, `cha` sends HTTP requests to:
 http://HOST:PORT/v1/chat/completions
 ```
 
-Chat requests deliberately have no overall or low-speed timeout so long generations can complete. Use `.stop`, Escape, or Ctrl-C to cancel an active request.
+Chat requests deliberately have no overall or low-speed timeout so long generations can complete. Use `/stop`, Escape, or Ctrl-C to cancel an active request.
 
 The system prompt is read from `SYSTEM.md` beside the selected server's `config.toml`. If the file is missing, the prompt is empty.
 
@@ -45,10 +45,10 @@ Before loading server configuration, the application optionally reads `.env` fro
 
 ## Commands
 
-- `.clear` clears conversation history while retaining the system prompt.
-- `.info` displays the endpoint, configured model, streaming mode, and history size.
-- `.stop` cancels the active model response.
-- `.exit` exits the application.
+- `/clear` clears conversation history while retaining the system prompt.
+- `/info` displays the endpoint, configured model, streaming mode, and history size.
+- `/stop` cancels the active model response.
+- `/exit` exits the application.
 
 ## Terminal interface
 

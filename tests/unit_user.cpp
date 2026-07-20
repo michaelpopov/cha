@@ -7,10 +7,10 @@ namespace cha {
 namespace {
 
 TEST(Command, ParsesCommands) {
-    EXPECT_EQ(parse_command(".stop").kind, CommandKind::stop);
+    EXPECT_EQ(parse_command("/stop").kind, CommandKind::stop);
     EXPECT_EQ(parse_command("Hello").kind, CommandKind::text);
-    EXPECT_EQ(parse_command(".unknown").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command(".model other-model").kind, CommandKind::unknown);
+    EXPECT_EQ(parse_command("/unknown").kind, CommandKind::unknown);
+    EXPECT_EQ(parse_command("/model other-model").kind, CommandKind::unknown);
 }
 
 TEST(InputEditor, EditsAndEncodesUnicodeInput) {

@@ -136,7 +136,7 @@ void UserSession::submit_input(Pipe& pipe_out) {
             _editor.clear();
             request_stop();
         } else {
-            _notice = "Generation in progress; use .stop, Esc, or Ctrl-C";
+            _notice = "Generation in progress; use /stop, Esc, or Ctrl-C";
         }
         return;
     }

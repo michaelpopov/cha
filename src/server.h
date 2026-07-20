@@ -18,7 +18,7 @@ public:
     Server(
         std::atomic_bool& cancellation,
         Conversation& conversation,
-        std::string name = "Assistant");
+        std::string name = {});
     ~Server();
 
     Server(const Server&) = delete;

@@ -51,7 +51,9 @@ Config Config::load_from_directory(const std::filesystem::path& directory) {
                 + std::string(server_name) + "'");
         }
 
-        return load(directory / server_directory / "config.toml");
+        Config config = load(directory / server_directory / "config.toml");
+        config.name = server_name;
+        return config;
     }
 
     throw std::runtime_error("Servers file '" + servers_path.string() + "' does not name a server");
@@ -154,17 +156,17 @@ Config Config::load(const std::filesystem::path& path) {
     }
 
     return Config{
-        *host,
-        *port,
-        mode,
-        model.value_or(""),
-        stream,
-        temperature,
-        api_key,
-        api_key_env,
-        reasoning_effort,
-        https,
-        std::move(system_prompt),
+        .host = *host,
+        .port = *port,
+        .mode = mode,
+        .model = model.value_or(""),
+        .stream = stream,
+        .temperature = temperature,
+        .api_key = api_key,
+        .api_key_env = api_key_env,
+        .reasoning_effort = reasoning_effort,
+        .https = https,
+        .system_prompt = std::move(system_prompt),
     };
 }
 

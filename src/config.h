@@ -12,6 +12,7 @@ enum class Mode {
 };
 
 struct Config {
+    std::string name{"Assistant"};
     std::string host;
     int port{};
     Mode mode{Mode::test};
