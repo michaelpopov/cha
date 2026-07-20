@@ -5,6 +5,7 @@
 #include "request_id.h"
 
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -14,9 +15,14 @@ namespace cha {
 struct CompletionRequest {
     RequestId request_id{};
     std::string agent_id;
-    std::vector<ConversationMessage> history;
-    std::string prompt;
+    std::vector<ConversationEntry> history;
+    ConversationEntry prompt;
 };
+
+// Validates the target and typed prompt invariants of one immutable completion request.
+void validate_completion_request(
+    const CompletionRequest& request,
+    std::string_view expected_agent_id);
 
 // Carries one streamed response fragment for an identified request.
 struct AgentDelta {

@@ -180,12 +180,12 @@ CompletionRequest request(
     RequestId request_id,
     std::string agent_id,
     std::string prompt,
-    std::vector<ConversationMessage> history = {}) {
+    std::vector<ConversationEntry> history = {}) {
     return {
         .request_id = request_id,
         .agent_id = std::move(agent_id),
         .history = std::move(history),
-        .prompt = std::move(prompt),
+        .prompt = make_human_entry(1000 + request_id, std::move(prompt), request_id),
     };
 }
 
@@ -199,6 +199,7 @@ AgentEvent next_event(AgentEventChannel& events) {
 
 TEST(Agent, EchoesImmutableRequestPromptWithIdentifiedEvents) {
     Config config;
+    config.id = "local-agent";
     config.name = "Local agent";
     CompletionRequestChannel requests;
     AgentEventChannel events;
@@ -207,7 +208,11 @@ TEST(Agent, EchoesImmutableRequestPromptWithIdentifiedEvents) {
     agent.init(config);
 
     agent.run(requests, events);
-    ASSERT_TRUE(requests.push(request(41, "Local agent", "hello", {{"You", "different history"}})));
+    ASSERT_TRUE(requests.push(request(
+        41,
+        "local-agent",
+        "hello",
+        {make_human_entry(1, "different history")})));
 
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).request_id, 41U);
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "hello");
@@ -224,7 +229,8 @@ TEST(Agent, LoadsItsConfigurationFromPersonaAndRoomDirectories) {
     std::filesystem::create_directories(room_directory);
     {
         std::ofstream config(persona_directory / "config.toml");
-        config << "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\n";
+        config << "id = \"guide-id\"\nname = \"Guide\"\n"
+               << "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\n";
         std::ofstream system_prompt(persona_directory / "SYSTEM.md");
         system_prompt << "Persona instructions";
         std::ofstream user_prompt(room_directory / "USER.md");
@@ -234,8 +240,8 @@ TEST(Agent, LoadsItsConfigurationFromPersonaAndRoomDirectories) {
     std::atomic_bool cancellation{false};
     Agent agent(cancellation);
     agent.init(persona_directory, room_directory);
-    EXPECT_EQ(agent.info().id, "guide");
-    EXPECT_EQ(agent.info().name, "guide");
+    EXPECT_EQ(agent.info().id, "guide-id");
+    EXPECT_EQ(agent.info().name, "Guide");
 
     std::filesystem::remove_all(directory);
 }
@@ -280,12 +286,36 @@ TEST(Agent, RejectsARequestForAnotherAgentAndContinues) {
     agent.init(config);
 
     agent.run(requests, events);
-    ASSERT_TRUE(requests.push(request(1, "Other", "rejected")));
+    ASSERT_TRUE(requests.push(request(1, "other-id", "rejected")));
     const AgentFailed failed = std::get<AgentFailed>(next_event(events));
     EXPECT_EQ(failed.request_id, 1U);
     EXPECT_NE(failed.message.find("targets agent"), std::string::npos);
 
-    ASSERT_TRUE(requests.push(request(2, "Assistant", "accepted")));
+    ASSERT_TRUE(requests.push(request(2, "assistant", "accepted")));
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "accepted");
+    EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "accepted");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 2U);
+    agent.stop();
+}
+
+TEST(Agent, RejectsAnInvalidTypedPromptAndContinues) {
+    Config config;
+    CompletionRequestChannel requests;
+    AgentEventChannel events;
+    std::atomic_bool cancellation{false};
+    Agent agent(cancellation);
+    agent.init(config);
+
+    CompletionRequest invalid = request(1, "assistant", "rejected");
+    invalid.prompt.status = CompletionStatus::cancelled;
+
+    agent.run(requests, events);
+    ASSERT_TRUE(requests.push(std::move(invalid)));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(events));
+    EXPECT_EQ(failed.request_id, 1U);
+    EXPECT_NE(failed.message.find("require complete status"), std::string::npos);
+
+    ASSERT_TRUE(requests.push(request(2, "assistant", "accepted")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "accepted");
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "accepted");
     EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 2U);
@@ -301,7 +331,7 @@ TEST(Agent, CancelsAnIdentifiedRequestBeforeStartingIt) {
     agent.init(config);
     agent.run(requests, events);
 
-    ASSERT_TRUE(requests.push(request(9, "Assistant", "Do not run")));
+    ASSERT_TRUE(requests.push(request(9, "assistant", "Do not run")));
     EXPECT_EQ(std::get<AgentCancelled>(next_event(events)).request_id, 9U);
     agent.stop();
 }
@@ -339,16 +369,20 @@ TEST(Agent, StreamsResponsesFromImmutableRequestHistory) {
     agent.init(config);
     agent.run(requests, events);
 
-    ASSERT_TRUE(requests.push(request(10, "Assistant", "First question")));
+    ASSERT_TRUE(requests.push(request(10, "assistant", "First question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Hello");
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, " world");
     EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 10U);
 
     ASSERT_TRUE(requests.push(request(
         11,
-        "Assistant",
+        "assistant",
         "Second question",
-        {{"You", "First question"}, {"Assistant", "Hello world"}})));
+        {
+            make_human_entry(1, "First question", 10),
+            make_agent_entry(
+                2, "assistant", "Assistant", "Hello world", CompletionStatus::complete, 10),
+        })));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Again");
     EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 11U);
 
@@ -397,7 +431,7 @@ TEST(Agent, SkipsMalformedStreamingEvents) {
     agent.init(config);
     agent.run(requests, events);
 
-    ASSERT_TRUE(requests.push(request(3, "Assistant", "Question")));
+    ASSERT_TRUE(requests.push(request(3, "assistant", "Question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Valid response");
     EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 3U);
     agent.stop();
@@ -426,7 +460,7 @@ TEST(Agent, DiscoversTheFirstEndpointModelWhenNoneIsConfigured) {
     agent.init(config);
     agent.run(requests, events);
 
-    ASSERT_TRUE(requests.push(request(4, "Assistant", "Question")));
+    ASSERT_TRUE(requests.push(request(4, "assistant", "Question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Complete answer");
     EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 4U);
     agent.stop();
@@ -461,7 +495,7 @@ TEST(Agent, ProvidesInfoAndHandlesNonStreamingResponse) {
     EXPECT_NE(info.api.find("/v1/chat/completions"), std::string::npos);
     agent.run(requests, events);
 
-    ASSERT_TRUE(requests.push(request(5, "Assistant", "Question")));
+    ASSERT_TRUE(requests.push(request(5, "assistant", "Question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(events)).text, "Complete answer");
     EXPECT_EQ(std::get<AgentCompleted>(next_event(events)).request_id, 5U);
 
@@ -495,10 +529,10 @@ TEST(Agent, NamedInstancesProjectTheProvidedHistoryForTheirOwnIdentity) {
 
     CompletionRequestChannel first_input;
     AgentEventChannel first_output;
-    Agent writer(cancellation, "Writer");
+    Agent writer(cancellation, "writer-id", "Writer");
     writer.init(first_config);
     writer.run(first_input, first_output);
-    ASSERT_TRUE(first_input.push(request(6, "Writer", "Draft an answer")));
+    ASSERT_TRUE(first_input.push(request(6, "writer-id", "Draft an answer")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(first_output)).text, "Initial answer");
     EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(first_output)));
     writer.stop();
@@ -510,14 +544,18 @@ TEST(Agent, NamedInstancesProjectTheProvidedHistoryForTheirOwnIdentity) {
 
     CompletionRequestChannel second_input;
     AgentEventChannel second_output;
-    Agent reviewer(cancellation, "Reviewer");
+    Agent reviewer(cancellation, "reviewer-id", "Reviewer");
     reviewer.init(second_config);
     reviewer.run(second_input, second_output);
     ASSERT_TRUE(second_input.push(request(
         7,
-        "Reviewer",
+        "reviewer-id",
         "Review the draft",
-        {{"You", "Draft an answer"}, {"Writer", "Initial answer"}})));
+        {
+            make_human_entry(1, "Draft an answer", 6),
+            make_agent_entry(
+                2, "writer-id", "Writer", "Initial answer", CompletionStatus::complete, 6),
+        })));
     EXPECT_EQ(std::get<AgentDelta>(next_event(second_output)).text, "Reviewed answer");
     EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(second_output)));
     reviewer.stop();
@@ -527,7 +565,9 @@ TEST(Agent, NamedInstancesProjectTheProvidedHistoryForTheirOwnIdentity) {
     const Json request = Json::parse(request_body(second_mock.requests()[0]));
     ASSERT_EQ(request["messages"].size(), 3U);
     EXPECT_EQ(request["messages"][0]["content"], "Draft an answer");
-    EXPECT_EQ(request["messages"][1]["content"], "Writer: Initial answer");
+    EXPECT_EQ(request["messages"][1]["role"], "assistant");
+    EXPECT_FALSE(request["messages"][1].contains("name"));
+    EXPECT_EQ(request["messages"][1]["content"], "writer-id: Initial answer");
     EXPECT_EQ(request["messages"][2]["content"], "Review the draft");
 }
 

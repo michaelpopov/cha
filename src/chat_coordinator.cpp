@@ -14,12 +14,14 @@ ChatCoordinator::ChatCoordinator(
     ConversationJournal& journal,
     std::atomic_bool& cancellation,
     Conversation& conversation,
-    RequestId next_request_id)
+    RequestId next_request_id,
+    EntryId next_entry_id)
   : agent_info_(std::move(agent_info)),
     journal_(journal),
     cancellation_(cancellation),
     conversation_(conversation),
-    next_request_id_(next_request_id) {
+    next_request_id_(next_request_id),
+    next_entry_id_(next_entry_id) {
 }
 
 const Conversation& ChatCoordinator::conversation() const {
@@ -40,37 +42,47 @@ std::string ChatCoordinator::submit(std::string prompt, CompletionRequestChannel
     }
 
     const ConversationSnapshot snapshot = conversation_.snapshot();
+    const RequestId request_id = next_request_id_++;
+    ConversationEntry prompt_entry = make_human_entry(next_entry_id_++, std::move(prompt), request_id);
     CompletionRequest request{
-        .request_id = next_request_id_++,
+        .request_id = request_id,
         .agent_id = agent_info_.id,
-        .history = snapshot.messages,
-        .prompt = std::move(prompt),
+        .history = snapshot.entries,
+        .prompt = prompt_entry,
     };
 
     journal_.start_turn(request.request_id, request.agent_id, request.prompt);
     try {
-        conversation_.add_message(std::string(user_author), request.prompt);
+        conversation_.add_entry(std::move(prompt_entry));
     } catch (...) {
-        journal_.fail_turn(request.request_id, "Failed to add the submitted prompt to the conversation");
+        const ConversationEntry error = make_error_entry(
+            next_entry_id_++,
+            "Failed to add the submitted prompt to the conversation",
+            request.request_id);
+        journal_.fail_turn(request.request_id, error);
         throw;
     }
 
     cancellation_.store(false, std::memory_order_release);
-    active_ = ActiveTurn{.request_id = request.request_id};
+    active_ = ActiveTurn{
+        .request_id = request.request_id,
+        .response_entry_id = next_entry_id_++,
+    };
     try {
         if (requests.push(std::move(request))) {
             return {};
         }
     } catch (const std::exception& error) {
         CoordinatorUpdate ignored;
-        apply(
-            AgentFailed{active_->request_id, "Failed to dispatch request: " + std::string(error.what())},
+        fail_active_turn(
+            "Failed to dispatch request: " + std::string(error.what()),
+            {},
             ignored);
         return "Request could not be dispatched";
     }
 
     CoordinatorUpdate ignored;
-    apply(AgentFailed{active_->request_id, "Request channel is closed"}, ignored);
+    fail_active_turn("Request channel is closed", {}, ignored);
     return "Request could not be dispatched";
 }
 
@@ -83,9 +95,9 @@ void ChatCoordinator::clear() {
 }
 
 void ChatCoordinator::add_system_message(std::string text) {
-    ConversationMessage message{std::string(system_author), std::move(text)};
-    journal_.append(message);
-    conversation_.add_message(std::move(message.author), std::move(message.text));
+    ConversationEntry entry = make_notice_entry(next_entry_id_++, std::move(text));
+    journal_.append(entry);
+    conversation_.add_entry(std::move(entry));
 }
 
 void ChatCoordinator::request_stop() {
@@ -122,11 +134,11 @@ void ChatCoordinator::apply(const AgentDelta& event, CoordinatorUpdate& update) 
     if (!matches(event.request_id) || event.text.empty()) {
         return;
     }
-    if (!active_->message_open) {
-        conversation_.begin_message(agent_info_.name);
-        active_->message_open = true;
+    if (!active_->entry_open) {
+        conversation_.begin_entry(response_entry(CompletionStatus::streaming));
+        active_->entry_open = true;
     }
-    conversation_.append_to_message(event.text);
+    conversation_.append_to_entry(active_->response_entry_id, event.text);
     active_->response += event.text;
     update.render_needed = true;
 }
@@ -135,8 +147,8 @@ void ChatCoordinator::apply(const AgentCompleted& event, CoordinatorUpdate& upda
     if (!matches(event.request_id)) {
         return;
     }
-    journal_.complete_turn(event.request_id, agent_info_.name, active_->response);
-    finish_response_message();
+    journal_.complete_turn(event.request_id, response_entry(CompletionStatus::complete));
+    finish_response_entry(CompletionStatus::complete);
     active_.reset();
     cancellation_.store(false, std::memory_order_release);
     update.render_needed = true;
@@ -147,8 +159,8 @@ void ChatCoordinator::apply(const AgentCancelled& event, CoordinatorUpdate& upda
     if (!matches(event.request_id)) {
         return;
     }
-    journal_.cancel_turn(event.request_id, agent_info_.name, active_->response);
-    finish_response_message();
+    journal_.cancel_turn(event.request_id, response_entry(CompletionStatus::cancelled));
+    finish_response_entry(CompletionStatus::cancelled);
     active_.reset();
     cancellation_.store(false, std::memory_order_release);
     update.render_needed = true;
@@ -159,23 +171,46 @@ void ChatCoordinator::apply(const AgentFailed& event, CoordinatorUpdate& update)
     if (!matches(event.request_id)) {
         return;
     }
-    journal_.fail_turn(event.request_id, event.message);
-    if (active_->message_open) {
-        conversation_.discard_message();
+    fail_active_turn(event.message, agent_info_.id, update);
+}
+
+void ChatCoordinator::fail_active_turn(
+    std::string message,
+    ParticipantId participant_id,
+    CoordinatorUpdate& update) {
+
+    ConversationEntry error = make_error_entry(
+        next_entry_id_++,
+        std::move(message),
+        active_->request_id,
+        std::move(participant_id));
+    journal_.fail_turn(active_->request_id, error);
+    if (active_->entry_open) {
+        conversation_.discard_entry(active_->response_entry_id);
     }
-    conversation_.add_message(std::string(system_author), "Error: " + event.message);
+    conversation_.add_entry(std::move(error));
     active_.reset();
     cancellation_.store(false, std::memory_order_release);
     update.render_needed = true;
     update.notice = "Generation failed";
 }
 
-void ChatCoordinator::finish_response_message() {
-    if (active_->message_open) {
-        conversation_.finish_message();
+void ChatCoordinator::finish_response_entry(CompletionStatus status) {
+    if (active_->entry_open) {
+        conversation_.finish_entry(active_->response_entry_id, status);
     } else {
-        conversation_.add_message(agent_info_.name, {});
+        conversation_.add_entry(response_entry(status));
     }
+}
+
+ConversationEntry ChatCoordinator::response_entry(CompletionStatus status) const {
+    return make_agent_entry(
+        active_->response_entry_id,
+        agent_info_.id,
+        agent_info_.name,
+        active_->response,
+        status,
+        active_->request_id);
 }
 
 bool ChatCoordinator::matches(RequestId request_id) const {

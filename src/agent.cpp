@@ -182,8 +182,10 @@ std::string read_prompt(const std::filesystem::path& path) {
 
 Agent::Agent(
     std::atomic_bool& cancellation,
+    std::string id,
     std::string name)
     : _cancellation(cancellation),
+      id_(std::move(id)),
       name_(std::move(name)) {
 
 }
@@ -199,7 +201,6 @@ void Agent::init(const Config& config) {
 
 void Agent::init(const std::filesystem::path& persona_directory, const std::filesystem::path& room_directory) {
     Config config = Config::load(persona_directory / "config.toml");
-    config.name = persona_directory.filename().string();
     config.system_prompt = read_prompt(persona_directory / "SYSTEM.md")
         + "\n\n" + read_prompt(room_directory / "USER.md");
     init(config);
@@ -207,8 +208,14 @@ void Agent::init(const std::filesystem::path& persona_directory, const std::file
 
 void Agent::initialize() {
 
+    if (id_.empty()) {
+        id_ = _config.id;
+    }
     if (name_.empty()) {
         name_ = _config.name;
+    }
+    if (id_.empty() || name_.empty()) {
+        throw std::runtime_error("Agent ID and display name cannot be empty");
     }
     system_prompt_ = _config.system_prompt;
     api_key_ = _config.api_key;
@@ -319,17 +326,14 @@ void Agent::dialog(CompletionRequestChannel& requests, AgentEventChannel& events
             break;
         }
         try {
-            if (request->agent_id != name_) {
-                throw std::runtime_error(
-                    "Completion request targets agent '" + request->agent_id + "', not '" + name_ + "'");
-            }
+            validate_completion_request(*request, id_);
             if (_cancellation.load(std::memory_order_acquire)) {
                 events.push(AgentCancelled{request->request_id});
                 continue;
             }
             if (_config.mode == Mode::test) {
-                events.push(AgentDelta{request->request_id, request->prompt});
-                events.push(AgentDelta{request->request_id, request->prompt});
+                events.push(AgentDelta{request->request_id, request->prompt.text});
+                events.push(AgentDelta{request->request_id, request->prompt.text});
                 events.push(AgentCompleted{request->request_id});
                 continue;
             }
@@ -347,7 +351,7 @@ void Agent::dialog(CompletionRequestChannel& requests, AgentEventChannel& events
 
 AgentInfo Agent::info() const {
     return {
-        .id = name_,
+        .id = id_,
         .name = name_,
         .model = _config.model,
         .api = endpoint(),
@@ -365,14 +369,15 @@ bool Agent::complete(const CompletionRequest& request, AgentEventChannel& events
     body["stream"] = _config.stream;
     body["messages"] = Json::array();
     ConversationSnapshot snapshot{
-        .messages = request.history,
+        .entries = request.history,
     };
-    snapshot.messages.push_back({std::string(user_author), request.prompt});
-    for (const AgentMessage& message : build_agent_context(snapshot, system_prompt_, name_)) {
-        body["messages"].push_back({
+    snapshot.entries.push_back(request.prompt);
+    for (const AgentMessage& message : build_agent_context(snapshot, system_prompt_, id_)) {
+        Json protocol_message{
             {"role", message.role},
             {"content", message.content},
-        });
+        };
+        body["messages"].push_back(std::move(protocol_message));
     }
     if (_config.temperature) {
         body["temperature"] = *_config.temperature;

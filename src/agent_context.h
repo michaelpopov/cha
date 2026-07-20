@@ -8,7 +8,7 @@
 
 namespace cha {
 
-// Represents one role/content record in the OpenAI-compatible request sent by an agent.
+// Represents one portable protocol-role record for an inference request.
 struct AgentMessage {
     std::string role;
     std::string content;
@@ -16,10 +16,10 @@ struct AgentMessage {
     bool operator==(const AgentMessage&) const = default;
 };
 
-// Projects shared conversation records into the role-based history expected by one agent.
+// Projects typed transcript entries into protocol roles for one stable agent participant ID.
 [[nodiscard]] std::vector<AgentMessage> build_agent_context(
     const ConversationSnapshot& conversation,
     std::string_view system_prompt,
-    std::string_view agent_name);
+    std::string_view agent_id);
 
 } // namespace cha

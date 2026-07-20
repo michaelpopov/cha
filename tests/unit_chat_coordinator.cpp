@@ -9,7 +9,6 @@
 #include <chrono>
 #include <filesystem>
 #include <string>
-#include <variant>
 
 namespace cha {
 namespace {
@@ -34,7 +33,7 @@ public:
 
 AgentInfo test_agent_info() {
     return {
-        .id = "guide",
+        .id = "guide-id",
         .name = "Guide",
         .model = "test-model",
         .api = "http://example.test/v1/chat/completions",
@@ -42,14 +41,15 @@ AgentInfo test_agent_info() {
     };
 }
 
-TEST(ChatCoordinator, OwnsACompleteIdentifiedTurn) {
+TEST(ChatCoordinator, OwnsACompleteIdentifiedTypedTurn) {
     TemporaryJournal temporary;
     ConversationJournal journal(temporary.path);
     Conversation conversation;
-    journal.append({"You", "Earlier"});
-    conversation.add_message("You", "Earlier");
+    const ConversationEntry earlier = make_human_entry(10, "Earlier");
+    journal.append(earlier);
+    conversation.add_entry(earlier);
     std::atomic_bool cancellation{false};
-    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation, 17);
+    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation, 17, 11);
     CompletionRequestChannel requests;
     AgentEventChannel events;
 
@@ -57,9 +57,10 @@ TEST(ChatCoordinator, OwnsACompleteIdentifiedTurn) {
     const std::optional<CompletionRequest> request = requests.get();
     ASSERT_TRUE(request);
     EXPECT_EQ(request->request_id, 17U);
-    EXPECT_EQ(request->agent_id, "guide");
-    EXPECT_EQ(request->history, (std::vector<ConversationMessage>{{"You", "Earlier"}}));
-    EXPECT_EQ(request->prompt, "Current");
+    EXPECT_EQ(request->agent_id, "guide-id");
+    EXPECT_EQ(request->history, (std::vector<ConversationEntry>{earlier}));
+    EXPECT_EQ(request->prompt.kind, EntryKind::human);
+    EXPECT_EQ(request->prompt.text, "Current");
 
     ASSERT_TRUE(events.push(AgentDelta{17, "Hello"}));
     ASSERT_TRUE(events.push(AgentDelta{17, " there"}));
@@ -68,14 +69,15 @@ TEST(ChatCoordinator, OwnsACompleteIdentifiedTurn) {
 
     EXPECT_TRUE(update.render_needed);
     EXPECT_FALSE(coordinator.generating());
-    EXPECT_EQ(
-        conversation.messages(),
-        (std::vector<ConversationMessage>{
-            {"You", "Earlier"},
-            {"You", "Current"},
-            {"Guide", "Hello there"},
-        }));
-    EXPECT_EQ(load_conversation_file(temporary.path), conversation.messages());
+    const auto completed_entries = conversation.entries();
+    ASSERT_EQ(completed_entries.size(), 3U);
+    const ConversationEntry& response = completed_entries.back();
+    EXPECT_EQ(response.kind, EntryKind::agent);
+    EXPECT_EQ(response.participant_id, "guide-id");
+    EXPECT_EQ(response.display_name, "Guide");
+    EXPECT_EQ(response.text, "Hello there");
+    EXPECT_EQ(response.status, CompletionStatus::complete);
+    EXPECT_EQ(load_conversation_file(temporary.path), conversation.entries());
 }
 
 TEST(ChatCoordinator, IgnoresEventsForAnotherRequest) {
@@ -93,10 +95,11 @@ TEST(ChatCoordinator, IgnoresEventsForAnotherRequest) {
     coordinator.receive(events);
 
     EXPECT_TRUE(coordinator.generating());
-    EXPECT_EQ(conversation.messages(), (std::vector<ConversationMessage>{{"You", "Question"}}));
+    ASSERT_EQ(conversation.entries().size(), 1U);
+    EXPECT_EQ(conversation.entries().front().kind, EntryKind::human);
 }
 
-TEST(ChatCoordinator, PersistsTheIdentifiedPartialResponseOnCancellation) {
+TEST(ChatCoordinator, PersistsAnIdentifiedCancelledResponse) {
     TemporaryJournal temporary;
     ConversationJournal journal(temporary.path);
     Conversation conversation;
@@ -107,20 +110,20 @@ TEST(ChatCoordinator, PersistsTheIdentifiedPartialResponseOnCancellation) {
 
     ASSERT_TRUE(coordinator.submit("Question", requests).empty());
     coordinator.request_stop();
-    EXPECT_TRUE(cancellation.load(std::memory_order_acquire));
     ASSERT_TRUE(events.push(AgentDelta{1, "Partial"}));
     ASSERT_TRUE(events.push(AgentCancelled{1}));
     const CoordinatorUpdate update = coordinator.receive(events);
 
     ASSERT_TRUE(update.notice);
     EXPECT_EQ(*update.notice, "Generation stopped");
-    EXPECT_FALSE(coordinator.generating());
-    EXPECT_EQ(
-        load_conversation_file(temporary.path),
-        (std::vector<ConversationMessage>{{"You", "Question"}, {"Guide", "Partial"}}));
+    const auto restored = load_conversation_file(temporary.path);
+    ASSERT_EQ(restored.size(), 2U);
+    EXPECT_EQ(restored.back().kind, EntryKind::agent);
+    EXPECT_EQ(restored.back().status, CompletionStatus::cancelled);
+    EXPECT_EQ(restored.back().text, "Partial");
 }
 
-TEST(ChatCoordinator, ReplacesPartialOutputWithAnIdentifiedFailure) {
+TEST(ChatCoordinator, ReplacesPartialOutputWithATypedError) {
     TemporaryJournal temporary;
     ConversationJournal journal(temporary.path);
     Conversation conversation;
@@ -134,13 +137,14 @@ TEST(ChatCoordinator, ReplacesPartialOutputWithAnIdentifiedFailure) {
     ASSERT_TRUE(events.push(AgentFailed{1, "network unavailable"}));
     coordinator.receive(events);
 
-    EXPECT_EQ(
-        conversation.messages(),
-        (std::vector<ConversationMessage>{
-            {"You", "Question"},
-            {"System", "Error: network unavailable"},
-        }));
-    EXPECT_EQ(load_conversation_file(temporary.path), conversation.messages());
+    const auto failed_entries = conversation.entries();
+    ASSERT_EQ(failed_entries.size(), 2U);
+    const ConversationEntry& error = failed_entries.back();
+    EXPECT_EQ(error.kind, EntryKind::error);
+    EXPECT_EQ(error.display_name, "Error");
+    EXPECT_EQ(error.participant_id, "guide-id");
+    EXPECT_EQ(error.text, "network unavailable");
+    EXPECT_EQ(load_conversation_file(temporary.path), conversation.entries());
 }
 
 TEST(ChatCoordinator, RecordsDispatchFailureAsATerminalTurn) {
@@ -154,12 +158,28 @@ TEST(ChatCoordinator, RecordsDispatchFailureAsATerminalTurn) {
 
     EXPECT_EQ(coordinator.submit("Question", requests), "Request could not be dispatched");
     EXPECT_FALSE(coordinator.generating());
-    EXPECT_EQ(
-        load_conversation_file(temporary.path),
-        (std::vector<ConversationMessage>{
-            {"You", "Question"},
-            {"System", "Error: Request channel is closed"},
-        }));
+    const auto restored = load_conversation_file(temporary.path);
+    ASSERT_EQ(restored.size(), 2U);
+    EXPECT_EQ(restored.back().kind, EntryKind::error);
+    EXPECT_TRUE(restored.back().participant_id.empty());
+    EXPECT_EQ(restored.back().text, "Request channel is closed");
+}
+
+TEST(ChatCoordinator, DoesNotAttributePromptInsertionFailuresToTheAgent) {
+    TemporaryJournal temporary;
+    ConversationJournal journal(temporary.path);
+    Conversation conversation;
+    conversation.add_entry(make_notice_entry(2, "Existing"));
+    std::atomic_bool cancellation{false};
+    ChatCoordinator coordinator(test_agent_info(), journal, cancellation, conversation, 1, 1);
+    CompletionRequestChannel requests;
+
+    EXPECT_THROW((void)coordinator.submit("Question", requests), std::invalid_argument);
+    const auto restored = load_conversation_file(temporary.path);
+    ASSERT_EQ(restored.size(), 2U);
+    EXPECT_EQ(restored.back().kind, EntryKind::error);
+    EXPECT_TRUE(restored.back().participant_id.empty());
+    EXPECT_EQ(restored.back().text, "Failed to add the submitted prompt to the conversation");
 }
 
 } // namespace

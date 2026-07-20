@@ -86,12 +86,12 @@ int main_internal() {
     cha::AgentEventChannel agent_events;
     cha::Conversation conversation;
     if (restored) {
-        conversation.replace_messages(std::move(restored->messages));
+        conversation.replace_entries(std::move(restored->entries));
     }
     cha::ConversationJournal journal(session_data);
     if (restored) {
         for (const cha::InterruptedTurn& turn : restored->interrupted_turns) {
-            journal.fail_turn(turn.request_id, "Response interrupted before completion");
+            journal.fail_turn(turn.request_id, turn.error_entry);
         }
     }
     std::atomic_bool cancellation{false};
@@ -101,7 +101,14 @@ int main_internal() {
 
     const cha::AgentInfo agent_info = agent.info();
     const cha::RequestId next_request_id = restored ? restored->next_request_id : 1;
-    cha::ChatCoordinator coordinator(agent_info, journal, cancellation, conversation, next_request_id);
+    const cha::EntryId next_entry_id = restored ? restored->next_entry_id : 1;
+    cha::ChatCoordinator coordinator(
+        agent_info,
+        journal,
+        cancellation,
+        conversation,
+        next_request_id,
+        next_entry_id);
     agent.run(requests, agent_events);
     cha::run_user(terminal, coordinator, agent_events, requests);
     agent.stop();

@@ -10,185 +10,233 @@
 namespace cha {
 namespace {
 
-TEST(Conversation, StoresCompleteAndStreamingMessages) {
+std::filesystem::path temporary_path(std::string_view prefix) {
+    return std::filesystem::temp_directory_path()
+        / (std::string(prefix)
+           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+           + ".data");
+}
+
+TEST(Conversation, StoresTypedCompleteAndStreamingEntries) {
     Conversation conversation;
-    conversation.add_message("You", "Review this code");
-    conversation.begin_message("Reviewer");
-    conversation.append_to_message("Two ");
-    conversation.append_to_message("issues found");
+    conversation.add_entry(make_human_entry(1, "Review this code", 10));
+    conversation.begin_entry(make_agent_entry(
+        2, "reviewer-id", "Reviewer", {}, CompletionStatus::streaming, 10));
+    conversation.append_to_entry(2, "Two ");
+    conversation.append_to_entry(2, "issues found");
 
-    EXPECT_TRUE(conversation.message_open());
-    EXPECT_EQ(conversation.revision(), 4U);
-
-    conversation.finish_message();
-    EXPECT_FALSE(conversation.message_open());
+    EXPECT_EQ(conversation.open_entry_id(), 2U);
+    conversation.finish_entry(2, CompletionStatus::complete);
+    EXPECT_FALSE(conversation.open_entry_id());
     EXPECT_EQ(
-        conversation.messages(),
-        (std::vector<ConversationMessage>{
-            {"You", "Review this code"},
-            {"Reviewer", "Two issues found"},
+        conversation.entries(),
+        (std::vector<ConversationEntry>{
+            make_human_entry(1, "Review this code", 10),
+            make_agent_entry(
+                2, "reviewer-id", "Reviewer", "Two issues found", CompletionStatus::complete, 10),
         }));
 }
 
-TEST(Conversation, ReturnsAnIndependentMessageSnapshot) {
+TEST(Conversation, RequiresTheStreamingEntryHandleForMutation) {
     Conversation conversation;
-    conversation.add_message("You", "Original");
+    conversation.begin_entry(make_agent_entry(
+        4, "reviewer-id", "Reviewer", {}, CompletionStatus::streaming, 2));
 
-    auto snapshot = conversation.messages();
+    EXPECT_THROW(conversation.append_to_entry(5, "wrong"), std::logic_error);
+    EXPECT_THROW(conversation.discard_entry(5), std::logic_error);
+    EXPECT_EQ(conversation.open_entry_id(), 4U);
+}
+
+TEST(Conversation, ReturnsAnIndependentEntrySnapshot) {
+    Conversation conversation;
+    conversation.add_entry(make_notice_entry(1, "Original"));
+
+    auto snapshot = conversation.entries();
     snapshot.front().text = "Changed";
 
-    EXPECT_EQ(conversation.messages().front().text, "Original");
+    EXPECT_EQ(conversation.entries().front().text, "Original");
 }
 
-TEST(Conversation, ReplacesMessagesForSessionRestore) {
+TEST(Conversation, ReplacesAndClearsEntries) {
     Conversation conversation;
-    conversation.add_message("You", "Old message");
+    conversation.add_entry(make_notice_entry(1, "Old"));
     const std::size_t initial_epoch = conversation.snapshot().history_epoch;
-    conversation.replace_messages({{"You", "Restored"}, {"Guide", "Welcome"}});
+    conversation.replace_entries({
+        make_human_entry(2, "Restored"),
+        make_agent_entry(3, "guide-id", "Guide", "Welcome", CompletionStatus::complete),
+    });
 
-    EXPECT_EQ(
-        conversation.messages(),
-        (std::vector<ConversationMessage>{{"You", "Restored"}, {"Guide", "Welcome"}}));
+    EXPECT_EQ(conversation.entries().size(), 2U);
     EXPECT_EQ(conversation.snapshot().history_epoch, initial_epoch + 1);
-}
-
-TEST(Conversation, ClearRemovesStoredMessages) {
-    Conversation conversation;
-    conversation.add_message("You", "Old request");
-    conversation.add_message("Guide", "Old response");
-    const std::size_t initial_epoch = conversation.snapshot().history_epoch;
-
     conversation.clear();
-
-    EXPECT_TRUE(conversation.messages().empty());
-    EXPECT_EQ(conversation.snapshot().history_epoch, initial_epoch + 1);
+    EXPECT_TRUE(conversation.entries().empty());
+    EXPECT_EQ(conversation.snapshot().history_epoch, initial_epoch + 2);
 }
 
-TEST(ConversationFile, RoundTripsASelfContainedGeneration) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_conversation_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".jsonl");
+TEST(Conversation, RequiresStrictlyIncreasingEntryIds) {
+    Conversation conversation;
+    conversation.add_entry(make_notice_entry(2, "First"));
+
+    EXPECT_THROW(conversation.add_entry(make_notice_entry(2, "Duplicate")), std::invalid_argument);
+    EXPECT_THROW(conversation.add_entry(make_notice_entry(1, "Out of order")), std::invalid_argument);
+    EXPECT_NO_THROW(conversation.add_entry(make_notice_entry(5, "Gap is allowed")));
+
+    EXPECT_THROW(
+        conversation.replace_entries({
+            make_notice_entry(10, "Later"),
+            make_notice_entry(9, "Earlier"),
+        }),
+        std::invalid_argument);
+}
+
+TEST(ConversationValidation, IsSharedByMemoryAndPersistence) {
+    ConversationEntry invalid = make_error_entry(1, "Failure");
+    invalid.status = CompletionStatus::complete;
+    EXPECT_THROW(validate_conversation_entry(invalid), std::invalid_argument);
 
     Conversation conversation;
-    conversation.add_message("You", "Hello");
-    conversation.add_message("Reviewer", "Hello back");
-    save_conversation_file(path, conversation);
+    EXPECT_THROW(conversation.add_entry(invalid), std::invalid_argument);
 
-    EXPECT_EQ(load_conversation_file(path), conversation.messages());
-
+    const auto path = temporary_path("cha_invalid_entry_");
+    ConversationJournal journal(path);
+    EXPECT_THROW(journal.append(invalid), std::invalid_argument);
     std::filesystem::remove(path);
 }
 
-TEST(ConversationFile, RejectsAnInProgressMessage) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_open_conversation_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".jsonl");
-
+TEST(ConversationFile, RoundTripsTypedEntries) {
+    const auto path = temporary_path("cha_conversation_");
     Conversation conversation;
-    conversation.begin_message("Reviewer");
+    conversation.add_entry(make_human_entry(1, "Hello", 1));
+    conversation.add_entry(make_agent_entry(
+        2, "reviewer-id", "Reviewer", "Hello back", CompletionStatus::complete, 1));
+    conversation.add_entry(make_notice_entry(3, "Information"));
+    save_conversation_file(path, conversation);
+
+    EXPECT_EQ(load_conversation_file(path), conversation.entries());
+    std::filesystem::remove(path);
+}
+
+TEST(ConversationFile, RejectsAStreamingEntry) {
+    const auto path = temporary_path("cha_open_conversation_");
+    Conversation conversation;
+    conversation.begin_entry(make_agent_entry(
+        1, "reviewer-id", "Reviewer", {}, CompletionStatus::streaming, 1));
 
     EXPECT_THROW(save_conversation_file(path, conversation), std::logic_error);
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
-TEST(ConversationJournal, ReplaysMessagesAndClearEvents) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_journal_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".data");
-
+TEST(ConversationJournal, ReplaysStandaloneEntriesAndClearEvents) {
+    const auto path = temporary_path("cha_journal_");
     ConversationJournal journal(path);
-    journal.append({"You", "Old request"});
-    journal.append({"Guide", "Old response"});
+    journal.append(make_notice_entry(1, "Old"));
     journal.clear();
-    journal.append({"You", "Current request"});
+    journal.append(make_notice_entry(2, "Current"));
 
     EXPECT_EQ(
         load_conversation_file(path),
-        (std::vector<ConversationMessage>{{"You", "Current request"}}));
+        (std::vector<ConversationEntry>{make_notice_entry(2, "Current")}));
+    std::filesystem::remove(path);
+}
+
+TEST(ConversationJournal, RejectsOutOfOrderEntryIdsDuringRestore) {
+    const auto path = temporary_path("cha_out_of_order_journal_");
+    ConversationJournal journal(path);
+    journal.append(make_notice_entry(2, "Later ID"));
+    journal.append(make_notice_entry(1, "Earlier ID"));
+
+    EXPECT_THROW((void)load_conversation_state(path), std::runtime_error);
     std::filesystem::remove(path);
 }
 
 TEST(ConversationJournal, RepairsAnIncompleteFinalRecord) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_torn_journal_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".data");
-
+    const auto path = temporary_path("cha_torn_journal_");
     {
         ConversationJournal journal(path);
-        journal.append({"You", "Complete"});
+        journal.append(make_notice_entry(1, "Complete"));
     }
     {
         std::ofstream file(path, std::ios::binary | std::ios::app);
-        file << R"({"type":"message","author":"Guide")";
+        file << R"({"type":"entry","entry":)";
     }
 
     prepare_conversation_file(path);
     EXPECT_EQ(
         load_conversation_file(path),
-        (std::vector<ConversationMessage>{{"You", "Complete"}}));
+        (std::vector<ConversationEntry>{make_notice_entry(1, "Complete")}));
 
     ConversationJournal journal(path);
-    journal.append({"Guide", "Recovered"});
-    EXPECT_EQ(
-        load_conversation_file(path),
-        (std::vector<ConversationMessage>{{"You", "Complete"}, {"Guide", "Recovered"}}));
+    journal.append(make_notice_entry(2, "Recovered"));
+    EXPECT_EQ(load_conversation_file(path).size(), 2U);
     std::filesystem::remove(path);
 }
 
-TEST(ConversationJournal, ReplaysIdentifiedTurnOutcomes) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_identified_journal_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".data");
-
+TEST(ConversationJournal, ReplaysIdentifiedTypedTurnOutcomes) {
+    const auto path = temporary_path("cha_identified_journal_");
     ConversationJournal journal(path);
-    journal.start_turn(7, "guide", "First");
-    journal.complete_turn(7, "Guide", "Answer");
-    journal.start_turn(8, "guide", "Second");
-    journal.fail_turn(8, "Unavailable");
+    journal.start_turn(7, "guide-id", make_human_entry(1, "First", 7));
+    journal.complete_turn(7, make_agent_entry(
+        2, "guide-id", "Guide", "Answer", CompletionStatus::complete, 7));
+    journal.start_turn(8, "guide-id", make_human_entry(3, "Second", 8));
+    journal.fail_turn(8, make_error_entry(4, "Unavailable", 8, "guide-id"));
 
     const ConversationRestore restored = load_conversation_state(path);
     EXPECT_EQ(restored.next_request_id, 9U);
+    EXPECT_EQ(restored.next_entry_id, 5U);
     EXPECT_TRUE(restored.interrupted_turns.empty());
     EXPECT_EQ(
-        restored.messages,
-        (std::vector<ConversationMessage>{
-            {"You", "First"},
-            {"Guide", "Answer"},
-            {"You", "Second"},
-            {"System", "Error: Unavailable"},
+        restored.entries,
+        (std::vector<ConversationEntry>{
+            make_human_entry(1, "First", 7),
+            make_agent_entry(2, "guide-id", "Guide", "Answer", CompletionStatus::complete, 7),
+            make_human_entry(3, "Second", 8),
+            make_error_entry(4, "Unavailable", 8, "guide-id"),
         }));
     std::filesystem::remove(path);
 }
 
-TEST(ConversationJournal, RecognizesAnInterruptedIdentifiedTurn) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_interrupted_journal_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".data");
-
+TEST(ConversationJournal, RejectsEntriesThatDoNotMatchTheirTurnRecords) {
+    const auto path = temporary_path("cha_invalid_turn_entry_");
     ConversationJournal journal(path);
-    journal.start_turn(12, "guide", "Pending");
+
+    EXPECT_THROW(
+        journal.start_turn(7, "guide-id", make_human_entry(1, "Prompt", 8)),
+        std::invalid_argument);
+    EXPECT_THROW(
+        journal.complete_turn(7, make_agent_entry(
+            2, "guide-id", "Guide", "Answer", CompletionStatus::cancelled, 7)),
+        std::invalid_argument);
+    EXPECT_THROW(
+        journal.cancel_turn(7, make_agent_entry(
+            2, "guide-id", "Guide", "Answer", CompletionStatus::complete, 7)),
+        std::invalid_argument);
+    EXPECT_THROW(
+        journal.fail_turn(7, make_error_entry(2, "Failure", 8, "guide-id")),
+        std::invalid_argument);
+
+    std::filesystem::remove(path);
+}
+
+TEST(ConversationJournal, RecognizesAnInterruptedTypedTurn) {
+    const auto path = temporary_path("cha_interrupted_journal_");
+    ConversationJournal journal(path);
+    journal.start_turn(12, "guide-id", make_human_entry(5, "Pending", 12));
 
     const ConversationRestore restored = load_conversation_state(path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
     EXPECT_EQ(restored.interrupted_turns.front().request_id, 12U);
+    EXPECT_EQ(restored.interrupted_turns.front().error_entry.kind, EntryKind::error);
+    EXPECT_EQ(restored.interrupted_turns.front().error_entry.participant_id, "guide-id");
     EXPECT_EQ(restored.next_request_id, 13U);
-    EXPECT_EQ(
-        restored.messages,
-        (std::vector<ConversationMessage>{
-            {"You", "Pending"},
-            {"System", "Error: Response interrupted before completion"},
-        }));
+    EXPECT_EQ(restored.next_entry_id, 7U);
     std::filesystem::remove(path);
 }
 
-TEST(ConversationJournal, RejectsAnUnsupportedOlderHeader) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_old_journal_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".data");
+TEST(ConversationJournal, RejectsThePreviousUntypedFormat) {
+    const auto path = temporary_path("cha_old_journal_");
     {
         std::ofstream file(path, std::ios::binary);
-        file << R"({"type":"conversation","version":2})" << '\n'
-             << R"({"type":"message","author":"You","text":"Existing"})" << '\n';
+        file << R"({"type":"conversation","version":3})" << '\n';
     }
 
     EXPECT_THROW(ConversationJournal journal(path), std::runtime_error);

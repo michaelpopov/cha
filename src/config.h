@@ -13,6 +13,7 @@ enum class Mode {
 
 // Holds the connection and prompt settings used to initialize one chat agent.
 struct Config {
+    std::string id{"assistant"};
     std::string name{"Assistant"};
     std::string host;
     int port{};

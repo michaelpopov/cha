@@ -1,3 +1,5 @@
+id = "cheburashka"
+name = "Cheburashka"
 host = "api.openai.com"
 port = 443
 https = true

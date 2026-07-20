@@ -15,10 +15,6 @@ namespace {
 constexpr int input_height = 5;
 constexpr int status_height = 1;
 
-std::string message_label(const ConversationMessage& message) {
-    return message.author + ": ";
-}
-
 void write_status(std::string_view text, int row, int columns) {
     move(row, 0);
 
@@ -181,34 +177,34 @@ void Tui::ensure_input_pad(int required_rows, int columns) {
     input_columns_ = columns;
 }
 
-void Tui::write_transcript_entry(const ConversationMessage& message) {
+void Tui::write_transcript_entry(const ConversationEntry& entry) {
     wattron(transcript_pad_, A_BOLD);
-    const std::string label = message_label(message);
+    const std::string label = transcript_entry_label(entry);
     waddstr(transcript_pad_, label.c_str());
     wattroff(transcript_pad_, A_BOLD);
-    waddstr(transcript_pad_, message.text.c_str());
+    waddstr(transcript_pad_, entry.text.c_str());
     getyx(transcript_pad_, rendered_last_content_y_, rendered_last_content_x_);
     waddstr(transcript_pad_, "\n\n");
 }
 
 void Tui::rebuild_transcript(const ConversationSnapshot& snapshot, int output_height, int columns) {
     int estimated_rows = output_height + 4;
-    for (const ConversationMessage& message : snapshot.messages) {
-        const std::string rendered_entry = message_label(message) + message.text + "\n\n";
+    for (const ConversationEntry& entry : snapshot.entries) {
+        const std::string rendered_entry = transcript_entry_label(entry) + entry.text + "\n\n";
         estimated_rows += layout_rows(rendered_entry, columns);
     }
     replace_pad(transcript_pad_, estimated_rows, columns);
     transcript_capacity_ = estimated_rows;
     transcript_columns_ = columns;
 
-    for (const ConversationMessage& message : snapshot.messages) {
-        write_transcript_entry(message);
+    for (const ConversationEntry& entry : snapshot.entries) {
+        write_transcript_entry(entry);
     }
 }
 
 void Tui::render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns) {
     const TranscriptRenderPlan plan = transcript_planner_.plan(snapshot, columns);
-    const auto& entries = snapshot.messages;
+    const auto& entries = snapshot.entries;
     if (plan.action == TranscriptRenderAction::rebuild) {
         rebuild_transcript(snapshot, output_height, columns);
     } else if (plan.action == TranscriptRenderAction::append) {
@@ -219,7 +215,7 @@ void Tui::render_transcript(const ConversationSnapshot& snapshot, int output_hei
             rendered_tail += "\n\n";
         }
         for (std::size_t index = plan.first_new_message; index < entries.size(); ++index) {
-            rendered_tail += message_label(entries[index]);
+            rendered_tail += transcript_entry_label(entries[index]);
             rendered_tail += entries[index].text;
             rendered_tail += "\n\n";
         }

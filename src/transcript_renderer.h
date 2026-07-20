@@ -35,8 +35,8 @@ private:
     int columns_{};
     std::size_t revision_{};
     std::size_t history_epoch_{};
-    std::size_t message_count_{};
-    std::optional<ConversationMessage> last_message_;
+    std::size_t entry_count_{};
+    std::optional<ConversationEntry> last_entry_;
 };
 
 // Maintains transcript scrolling independently of terminal rendering calls.
@@ -57,6 +57,9 @@ private:
     int top_{};
     bool follows_output_{true};
 };
+
+// Produces an unambiguous display label from an entry's semantic kind.
+[[nodiscard]] std::string transcript_entry_label(const ConversationEntry& entry);
 
 // Conservatively estimates pad rows for UTF-8 terminal text.
 [[nodiscard]] int layout_rows(std::string_view text, int columns, int initial_cells = 0);

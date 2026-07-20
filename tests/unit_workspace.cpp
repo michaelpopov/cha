@@ -28,7 +28,8 @@ protected:
         }
         {
             std::ofstream file(root / "personas" / "guide" / "config.toml");
-            file << "host = \"127.0.0.1\"\nport = 8080\n";
+            file << "id = \"guide-id\"\nname = \"Guide\"\n"
+                 << "host = \"127.0.0.1\"\nport = 8080\n";
         }
         {
             std::ofstream file(root / "personas" / "guide" / "SYSTEM.md");
@@ -64,7 +65,7 @@ TEST_F(WorkspaceTest, LoadsRoomsAndResolvesTheirPersonaDirectory) {
 
 TEST_F(WorkspaceTest, ListsOnlyCompleteSessionPairsAndReturnsTheirDataPath) {
     Conversation conversation;
-    conversation.add_message("You", "Hello");
+    conversation.add_entry(make_human_entry(1, "Hello"));
     save_conversation_file(root / "rooms" / "lobby" / "sessions" / "saved.data", conversation);
     {
         std::ofstream meta(root / "rooms" / "lobby" / "sessions" / "saved.meta");
@@ -77,7 +78,7 @@ TEST_F(WorkspaceTest, ListsOnlyCompleteSessionPairsAndReturnsTheirDataPath) {
     const Room room = workspace.load_room("lobby");
     SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{"saved", "saved"}}));
-    EXPECT_EQ(load_conversation_file(sessions.data_path("saved")), conversation.messages());
+    EXPECT_EQ(load_conversation_file(sessions.data_path("saved")), conversation.entries());
 }
 
 TEST_F(WorkspaceTest, CreatesSelectableSessionFilesImmediately) {
@@ -91,7 +92,7 @@ TEST_F(WorkspaceTest, CreatesSelectableSessionFilesImmediately) {
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
 
     Conversation conversation;
-    conversation.add_message("You", "Persist me");
+    conversation.add_entry(make_human_entry(1, "Persist me"));
     save_conversation_file(room.directory / "sessions" / (session.id + ".data"), conversation);
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
 }

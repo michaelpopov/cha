@@ -1,33 +1,87 @@
 #pragma once
 
+#include "request_id.h"
+
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace cha {
 
-inline constexpr std::string_view user_author = "You";
-inline constexpr std::string_view system_author = "System";
+using EntryId = std::uint64_t;
+using ParticipantId = std::string;
 
-// Stores one authored transcript entry for rendering, persistence, and agent context.
-struct ConversationMessage {
-    std::string author;
+inline constexpr std::string_view human_participant_id = "human";
+inline constexpr std::string_view human_display_name = "You";
+inline constexpr std::string_view notice_display_name = "System";
+inline constexpr std::string_view error_display_name = "Error";
+
+// Classifies transcript semantics independently of the label rendered to the user.
+enum class EntryKind {
+    human,
+    agent,
+    notice,
+    error,
+};
+
+// Describes whether an entry is final or represents an active or terminated completion.
+enum class CompletionStatus {
+    complete,
+    streaming,
+    cancelled,
+    failed,
+};
+
+// Stores one typed transcript record for rendering, persistence, and context projection.
+struct ConversationEntry {
+    EntryId id{};
+    EntryKind kind{EntryKind::notice};
+    ParticipantId participant_id;
+    std::string display_name;
     std::string text;
+    CompletionStatus status{CompletionStatus::complete};
+    std::optional<RequestId> request_id;
 
-    bool operator==(const ConversationMessage&) const = default;
+    bool operator==(const ConversationEntry&) const = default;
 };
 
 // Provides a consistent read-only copy of conversation state for concurrent consumers.
 struct ConversationSnapshot {
-    std::vector<ConversationMessage> messages;
+    std::vector<ConversationEntry> entries;
     std::size_t revision{};
-    bool message_open{};
+    std::optional<EntryId> open_entry_id;
     std::size_t history_epoch{};
 };
 
-// Keeps the thread-safe logical transcript independent of rendering and file storage.
+[[nodiscard]] ConversationEntry make_human_entry(
+    EntryId id,
+    std::string text,
+    std::optional<RequestId> request_id = std::nullopt);
+[[nodiscard]] ConversationEntry make_agent_entry(
+    EntryId id,
+    ParticipantId participant_id,
+    std::string display_name,
+    std::string text,
+    CompletionStatus status,
+    std::optional<RequestId> request_id = std::nullopt);
+[[nodiscard]] ConversationEntry make_notice_entry(EntryId id, std::string text);
+[[nodiscard]] ConversationEntry make_error_entry(
+    EntryId id,
+    std::string text,
+    std::optional<RequestId> request_id = std::nullopt,
+    ParticipantId participant_id = {});
+
+// Validates the semantic fields and kind/status combination of one transcript entry.
+void validate_conversation_entry(const ConversationEntry& entry);
+
+// Validates an entry and rejects active streaming state where a terminal record is required.
+void require_terminal_conversation_entry(const ConversationEntry& entry);
+
+// Keeps a thread-safe typed transcript with at most one coordinator-owned streaming entry.
 class Conversation {
 public:
     Conversation() = default;
@@ -36,24 +90,26 @@ public:
     Conversation(Conversation&&) = delete;
     Conversation& operator=(Conversation&&) = delete;
 
-    void add_message(std::string author, std::string text);
-    void begin_message(std::string author);
-    void append_to_message(std::string_view text);
-    void finish_message();
-    void discard_message();
+    void add_entry(ConversationEntry entry);
+    void begin_entry(ConversationEntry entry);
+    void append_to_entry(EntryId entry_id, std::string_view text);
+    void finish_entry(EntryId entry_id, CompletionStatus status);
+    void discard_entry(EntryId entry_id);
     void clear();
-    void replace_messages(std::vector<ConversationMessage> messages);
+    void replace_entries(std::vector<ConversationEntry> entries);
 
     [[nodiscard]] ConversationSnapshot snapshot() const;
-    [[nodiscard]] std::vector<ConversationMessage> messages() const;
+    [[nodiscard]] std::vector<ConversationEntry> entries() const;
     [[nodiscard]] std::size_t revision() const;
-    [[nodiscard]] bool message_open() const;
+    [[nodiscard]] std::optional<EntryId> open_entry_id() const;
 
 private:
+    void require_next_id(EntryId entry_id) const;
+
     mutable std::mutex mutex_;
-    std::vector<ConversationMessage> messages_;
+    std::vector<ConversationEntry> entries_;
     std::size_t revision_{};
-    bool message_open_{};
+    std::optional<EntryId> open_entry_id_;
     std::size_t history_epoch_{};
 };
 

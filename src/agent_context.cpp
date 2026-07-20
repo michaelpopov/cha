@@ -1,43 +1,46 @@
 #include "agent_context.h"
 
+#include <unordered_set>
+
 namespace cha {
 
 std::vector<AgentMessage> build_agent_context(
     const ConversationSnapshot& conversation,
     std::string_view system_prompt,
-    std::string_view agent_name) {
+    std::string_view agent_id) {
 
     std::vector<AgentMessage> result;
     if (!system_prompt.empty()) {
         result.push_back({"system", std::string(system_prompt)});
     }
 
-    const std::size_t system_messages = result.size();
-    const std::size_t message_count = conversation.messages.size()
-        - (conversation.message_open && !conversation.messages.empty() ? 1 : 0);
+    std::unordered_set<RequestId> failed_requests;
+    for (const ConversationEntry& entry : conversation.entries) {
+        if (entry.kind == EntryKind::error && entry.request_id) {
+            failed_requests.insert(*entry.request_id);
+        }
+    }
 
-    for (std::size_t index = 0; index < message_count; ++index) {
-        const ConversationMessage& message = conversation.messages[index];
-        if (message.author == system_author) {
-            if (result.size() > system_messages && result.back().role == "user") {
-                result.pop_back();
+    for (const ConversationEntry& entry : conversation.entries) {
+        if (conversation.open_entry_id && *conversation.open_entry_id == entry.id) {
+            continue;
+        }
+        if (entry.kind == EntryKind::notice || entry.kind == EntryKind::error) {
+            continue;
+        }
+        if (entry.kind == EntryKind::human) {
+            if (!entry.request_id || !failed_requests.contains(*entry.request_id)) {
+                result.push_back({"user", entry.text});
             }
             continue;
         }
-
-        if (message.author == user_author) {
-            result.push_back({"user", message.text});
+        if (entry.text.empty()) {
             continue;
         }
-        if (message.text.empty()) {
-            continue;
-        }
-
-        if (message.author == agent_name) {
-            result.push_back({"assistant", message.text});
-        } else {
-            result.push_back({"user", message.author + ": " + message.text});
-        }
+        const std::string content = entry.participant_id == agent_id
+            ? entry.text
+            : entry.participant_id + ": " + entry.text;
+        result.push_back({"assistant", content});
     }
 
     return result;

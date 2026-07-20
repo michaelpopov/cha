@@ -158,13 +158,13 @@ void UserSession::submit_input(CompletionRequestChannel& requests) {
             _notice = "Conversation cleared";
             return;
         case CommandKind::info: {
-            const std::size_t message_count = _coordinator.conversation().snapshot().messages.size();
+            const std::size_t message_count = _coordinator.conversation().snapshot().entries.size();
             const AgentInfo& agent_info = _coordinator.agent_info();
             std::ostringstream info;
             info << "Model: " << agent_info.model << '\n'
                  << "API: " << agent_info.api << '\n'
                  << "Streaming: " << (agent_info.streaming ? "yes" : "no") << '\n'
-                 << "Transcript messages: " << message_count;
+                 << "Transcript entries: " << message_count;
             _coordinator.add_system_message(info.str());
             _notice.clear();
             return;

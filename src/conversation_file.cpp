@@ -19,7 +19,49 @@ namespace {
 
 using Json = nlohmann::json;
 
-constexpr int conversation_file_version = 3;
+constexpr int conversation_file_version = 4;
+
+// Retains the target identity needed to materialize an interrupted turn as a typed error.
+struct PendingTurn {
+    RequestId request_id{};
+    ParticipantId agent_id;
+};
+
+enum class TurnRecordKind {
+    started,
+    completed,
+    cancelled,
+    failed,
+};
+
+void validate_turn_entry(
+    TurnRecordKind record_kind,
+    RequestId request_id,
+    const ConversationEntry& entry) {
+
+    EntryKind expected_kind = EntryKind::human;
+    CompletionStatus expected_status = CompletionStatus::complete;
+    switch (record_kind) {
+    case TurnRecordKind::started:
+        break;
+    case TurnRecordKind::completed:
+        expected_kind = EntryKind::agent;
+        break;
+    case TurnRecordKind::cancelled:
+        expected_kind = EntryKind::agent;
+        expected_status = CompletionStatus::cancelled;
+        break;
+    case TurnRecordKind::failed:
+        expected_kind = EntryKind::error;
+        expected_status = CompletionStatus::failed;
+        break;
+    }
+
+    if (request_id == 0 || entry.kind != expected_kind || entry.status != expected_status
+        || !entry.request_id || *entry.request_id != request_id) {
+        throw std::invalid_argument("Turn entry does not match its record type and request ID");
+    }
+}
 
 [[noreturn]] void invalid_file(const std::filesystem::path& path, std::size_t line, const std::string& reason) {
     throw std::runtime_error(
@@ -62,6 +104,116 @@ void append_record(const std::filesystem::path& path, const Json& record) {
     append_bytes(path, line, O_APPEND);
 }
 
+std::string_view kind_name(EntryKind kind) {
+    switch (kind) {
+    case EntryKind::human:
+        return "human";
+    case EntryKind::agent:
+        return "agent";
+    case EntryKind::notice:
+        return "notice";
+    case EntryKind::error:
+        return "error";
+    }
+    throw std::logic_error("Unknown conversation entry kind");
+}
+
+std::string_view status_name(CompletionStatus status) {
+    switch (status) {
+    case CompletionStatus::complete:
+        return "complete";
+    case CompletionStatus::streaming:
+        return "streaming";
+    case CompletionStatus::cancelled:
+        return "cancelled";
+    case CompletionStatus::failed:
+        return "failed";
+    }
+    throw std::logic_error("Unknown completion status");
+}
+
+EntryKind parse_kind(const std::filesystem::path& path, std::size_t line, std::string_view name) {
+    if (name == "human") {
+        return EntryKind::human;
+    }
+    if (name == "agent") {
+        return EntryKind::agent;
+    }
+    if (name == "notice") {
+        return EntryKind::notice;
+    }
+    if (name == "error") {
+        return EntryKind::error;
+    }
+    invalid_file(path, line, "unknown entry kind");
+}
+
+CompletionStatus parse_status(const std::filesystem::path& path, std::size_t line, std::string_view name) {
+    if (name == "complete") {
+        return CompletionStatus::complete;
+    }
+    if (name == "streaming") {
+        return CompletionStatus::streaming;
+    }
+    if (name == "cancelled") {
+        return CompletionStatus::cancelled;
+    }
+    if (name == "failed") {
+        return CompletionStatus::failed;
+    }
+    invalid_file(path, line, "unknown completion status");
+}
+
+Json entry_json(const ConversationEntry& entry) {
+    require_terminal_conversation_entry(entry);
+    Json result{
+        {"id", entry.id},
+        {"kind", kind_name(entry.kind)},
+        {"participant_id", entry.participant_id},
+        {"display_name", entry.display_name},
+        {"text", entry.text},
+        {"status", status_name(entry.status)},
+    };
+    if (entry.request_id) {
+        result["request_id"] = *entry.request_id;
+    }
+    return result;
+}
+
+ConversationEntry parse_entry(
+    const std::filesystem::path& path,
+    std::size_t line,
+    const Json& value) {
+    if (!value.is_object()
+        || !value.contains("id") || !value.at("id").is_number_unsigned()
+        || !value.contains("kind") || !value.at("kind").is_string()
+        || !value.contains("participant_id") || !value.at("participant_id").is_string()
+        || !value.contains("display_name") || !value.at("display_name").is_string()
+        || !value.contains("text") || !value.at("text").is_string()
+        || !value.contains("status") || !value.at("status").is_string()
+        || (value.contains("request_id") && !value.at("request_id").is_number_unsigned())) {
+        invalid_file(path, line, "invalid typed conversation entry");
+    }
+
+    ConversationEntry entry{
+        .id = value.at("id").get<EntryId>(),
+        .kind = parse_kind(path, line, value.at("kind").get<std::string>()),
+        .participant_id = value.at("participant_id").get<std::string>(),
+        .display_name = value.at("display_name").get<std::string>(),
+        .text = value.at("text").get<std::string>(),
+        .status = parse_status(path, line, value.at("status").get<std::string>()),
+    };
+    if (value.contains("request_id")) {
+        entry.request_id = value.at("request_id").get<RequestId>();
+    }
+    try {
+        require_terminal_conversation_entry(entry);
+    } catch (const std::invalid_argument&) {
+        invalid_file(path, line, "invalid typed conversation entry values");
+    }
+    return entry;
+}
+
 void initialize_file(const std::filesystem::path& path) {
     if (!path.parent_path().empty()) {
         std::filesystem::create_directories(path.parent_path());
@@ -93,10 +245,24 @@ void validate_header(const std::filesystem::path& path) {
     } catch (const Json::exception& error) {
         invalid_file(path, 1, error.what());
     }
-    const int version = header.value("version", 0);
-    if (header.value("type", "") != "conversation" || version != conversation_file_version) {
+    if (header.value("type", "") != "conversation"
+        || header.value("version", 0) != conversation_file_version) {
         invalid_file(path, 1, "unsupported header");
     }
+}
+
+void track_entry(
+    const std::filesystem::path& path,
+    std::size_t line,
+    ConversationRestore& result,
+    EntryId& last_entry_id,
+    ConversationEntry entry) {
+    if (entry.id <= last_entry_id) {
+        invalid_file(path, line, "conversation entry IDs must be strictly increasing");
+    }
+    last_entry_id = entry.id;
+    result.next_entry_id = std::max(result.next_entry_id, entry.id + 1);
+    result.entries.push_back(std::move(entry));
 }
 
 } // namespace
@@ -147,7 +313,8 @@ ConversationRestore load_conversation_state(const std::filesystem::path& path) {
     }
 
     ConversationRestore result;
-    std::optional<RequestId> pending_request;
+    std::optional<PendingTurn> pending;
+    EntryId last_entry_id = 0;
     std::string line;
     std::size_t line_number = 0;
     while (std::getline(file, line)) {
@@ -164,8 +331,8 @@ ConversationRestore load_conversation_state(const std::filesystem::path& path) {
         }
 
         if (line_number == 1) {
-            const int version = record.value("version", 0);
-            if (record.value("type", "") != "conversation" || version != conversation_file_version) {
+            if (record.value("type", "") != "conversation"
+                || record.value("version", 0) != conversation_file_version) {
                 invalid_file(path, line_number, "unsupported header");
             }
             continue;
@@ -173,74 +340,70 @@ ConversationRestore load_conversation_state(const std::filesystem::path& path) {
 
         const std::string type = record.value("type", "");
         if (type == "clear") {
-            result.messages.clear();
-            pending_request.reset();
+            result.entries.clear();
+            pending.reset();
             continue;
         }
-
-        if (type == "message") {
-            if (!record.contains("author") || !record.at("author").is_string()
-                || !record.contains("text") || !record.at("text").is_string()) {
-                invalid_file(path, line_number, "invalid message record");
+        if (type == "entry") {
+            if (!record.contains("entry")) {
+                invalid_file(path, line_number, "entry record has no entry");
             }
-            std::string author = record.at("author").get<std::string>();
-            if (author.empty()) {
-                invalid_file(path, line_number, "message author cannot be empty");
-            }
-            result.messages.push_back({std::move(author), record.at("text").get<std::string>()});
+            track_entry(
+                path,
+                line_number,
+                result,
+                last_entry_id,
+                parse_entry(path, line_number, record.at("entry")));
             continue;
         }
-
         if (type == "turn_started") {
-            if (pending_request) {
+            if (pending) {
                 invalid_file(path, line_number, "a previous turn has no terminal record");
             }
             if (!record.contains("request_id") || !record.at("request_id").is_number_unsigned()
                 || !record.contains("agent_id") || !record.at("agent_id").is_string()
-                || !record.contains("prompt") || !record.at("prompt").is_string()) {
+                || record.at("agent_id").get_ref<const std::string&>().empty()
+                || !record.contains("prompt")) {
                 invalid_file(path, line_number, "invalid turn_started record");
             }
             const RequestId request_id = record.at("request_id").get<RequestId>();
-            if (request_id == 0) {
-                invalid_file(path, line_number, "request_id must be positive");
+            ConversationEntry prompt = parse_entry(path, line_number, record.at("prompt"));
+            try {
+                validate_turn_entry(TurnRecordKind::started, request_id, prompt);
+            } catch (const std::invalid_argument& error) {
+                invalid_file(path, line_number, error.what());
             }
-            pending_request = request_id;
+            pending = PendingTurn{request_id, record.at("agent_id").get<std::string>()};
             result.next_request_id = std::max(result.next_request_id, request_id + 1);
-            result.messages.push_back({std::string(user_author), record.at("prompt").get<std::string>()});
+            track_entry(path, line_number, result, last_entry_id, std::move(prompt));
             continue;
         }
-
         if (type == "turn_completed" || type == "turn_cancelled" || type == "turn_failed") {
             if (!record.contains("request_id") || !record.at("request_id").is_number_unsigned()) {
-                invalid_file(path, line_number, "terminal turn record has no valid request_id");
+                invalid_file(path, line_number, "terminal turn record has no request ID");
             }
             const RequestId request_id = record.at("request_id").get<RequestId>();
             result.next_request_id = std::max(result.next_request_id, request_id + 1);
-            if (!pending_request || *pending_request != request_id) {
+            if (!pending || pending->request_id != request_id) {
                 invalid_file(path, line_number, "terminal turn record does not match the active request");
             }
 
-            if (type == "turn_failed") {
-                if (!record.contains("error") || !record.at("error").is_string()) {
-                    invalid_file(path, line_number, "invalid turn_failed record");
-                }
-                result.messages.push_back({
-                    std::string(system_author),
-                    "Error: " + record.at("error").get<std::string>(),
-                });
-            } else {
-                const std::string field = type == "turn_completed" ? "response" : "partial_response";
-                if (!record.contains("author") || !record.at("author").is_string()
-                    || record.at("author").get_ref<const std::string&>().empty()
-                    || !record.contains(field) || !record.at(field).is_string()) {
-                    invalid_file(path, line_number, "invalid response terminal record");
-                }
-                result.messages.push_back({
-                    record.at("author").get<std::string>(),
-                    record.at(field).get<std::string>(),
-                });
+            const char* field = type == "turn_failed" ? "error" : "response";
+            if (!record.contains(field)) {
+                invalid_file(path, line_number, "terminal turn record has no typed entry");
             }
-            pending_request.reset();
+            ConversationEntry entry = parse_entry(path, line_number, record.at(field));
+            const TurnRecordKind record_kind =
+                type == "turn_completed" ? TurnRecordKind::completed
+                : type == "turn_cancelled" ? TurnRecordKind::cancelled
+                                           : TurnRecordKind::failed;
+            try {
+                validate_turn_entry(record_kind, request_id, entry);
+            } catch (const std::invalid_argument& error) {
+                invalid_file(path, line_number, error.what());
+            }
+            track_entry(path, line_number, result, last_entry_id, std::move(entry));
+            pending.reset();
             continue;
         }
 
@@ -251,31 +414,33 @@ ConversationRestore load_conversation_state(const std::filesystem::path& path) {
         invalid_file(path, 1, "missing header");
     }
 
-    if (pending_request) {
-        result.interrupted_turns.push_back({*pending_request});
-        result.messages.push_back({
-            std::string(system_author),
-            "Error: Response interrupted before completion",
-        });
+    if (pending) {
+        ConversationEntry error = make_error_entry(
+            result.next_entry_id++,
+            "Response interrupted before completion",
+            pending->request_id,
+            pending->agent_id);
+        result.entries.push_back(error);
+        result.interrupted_turns.push_back({pending->request_id, std::move(error)});
     }
 
     return result;
 }
 
-std::vector<ConversationMessage> load_conversation_file(const std::filesystem::path& path) {
-    return load_conversation_state(path).messages;
+std::vector<ConversationEntry> load_conversation_file(const std::filesystem::path& path) {
+    return load_conversation_state(path).entries;
 }
 
 void save_conversation_file(const std::filesystem::path& path, const Conversation& conversation) {
     const ConversationSnapshot snapshot = conversation.snapshot();
-    if (snapshot.message_open) {
-        throw std::logic_error("Cannot save a conversation with an open message");
+    if (snapshot.open_entry_id) {
+        throw std::logic_error("Cannot save a conversation with a streaming entry");
     }
 
     const std::filesystem::path temporary = path.string() + ".tmp-" + std::to_string(::getpid());
     std::string contents = Json{{"type", "conversation"}, {"version", conversation_file_version}}.dump() + '\n';
-    for (const ConversationMessage& message : snapshot.messages) {
-        contents += Json{{"type", "message"}, {"author", message.author}, {"text", message.text}}.dump();
+    for (const ConversationEntry& entry : snapshot.entries) {
+        contents += Json{{"type", "entry"}, {"entry", entry_json(entry)}}.dump();
         contents.push_back('\n');
     }
     append_bytes(temporary, contents, O_CREAT | O_TRUNC);
@@ -286,71 +451,55 @@ ConversationJournal::ConversationJournal(std::filesystem::path path) : path_(std
     prepare_conversation_file(path_);
 }
 
-void ConversationJournal::append(const ConversationMessage& message) {
-    if (message.author.empty()) {
-        throw std::invalid_argument("Conversation message author cannot be empty");
-    }
+void ConversationJournal::append(const ConversationEntry& entry) {
     std::lock_guard lock(mutex_);
-    append_record(path_, Json{{"type", "message"}, {"author", message.author}, {"text", message.text}});
+    append_record(path_, Json{{"type", "entry"}, {"entry", entry_json(entry)}});
 }
 
 void ConversationJournal::start_turn(
     RequestId request_id,
     std::string_view agent_id,
-    std::string_view prompt) {
-    if (request_id == 0 || agent_id.empty()) {
-        throw std::invalid_argument("A turn requires a positive request ID and an agent ID");
+    const ConversationEntry& prompt) {
+    if (agent_id.empty()) {
+        throw std::invalid_argument("A turn requires a non-empty agent identity");
     }
+    validate_turn_entry(TurnRecordKind::started, request_id, prompt);
     std::lock_guard lock(mutex_);
     append_record(path_, Json{
         {"type", "turn_started"},
         {"request_id", request_id},
         {"agent_id", agent_id},
-        {"prompt", prompt},
+        {"prompt", entry_json(prompt)},
     });
 }
 
-void ConversationJournal::complete_turn(
-    RequestId request_id,
-    std::string_view author,
-    std::string_view response) {
-    if (request_id == 0 || author.empty()) {
-        throw std::invalid_argument("A completed turn requires a request ID and response author");
-    }
+void ConversationJournal::complete_turn(RequestId request_id, const ConversationEntry& response) {
+    validate_turn_entry(TurnRecordKind::completed, request_id, response);
     std::lock_guard lock(mutex_);
     append_record(path_, Json{
         {"type", "turn_completed"},
         {"request_id", request_id},
-        {"author", author},
-        {"response", response},
+        {"response", entry_json(response)},
     });
 }
 
-void ConversationJournal::cancel_turn(
-    RequestId request_id,
-    std::string_view author,
-    std::string_view partial_response) {
-    if (request_id == 0 || author.empty()) {
-        throw std::invalid_argument("A cancelled turn requires a request ID and response author");
-    }
+void ConversationJournal::cancel_turn(RequestId request_id, const ConversationEntry& response) {
+    validate_turn_entry(TurnRecordKind::cancelled, request_id, response);
     std::lock_guard lock(mutex_);
     append_record(path_, Json{
         {"type", "turn_cancelled"},
         {"request_id", request_id},
-        {"author", author},
-        {"partial_response", partial_response},
+        {"response", entry_json(response)},
     });
 }
 
-void ConversationJournal::fail_turn(RequestId request_id, std::string_view error) {
-    if (request_id == 0 || error.empty()) {
-        throw std::invalid_argument("A failed turn requires a request ID and error");
-    }
+void ConversationJournal::fail_turn(RequestId request_id, const ConversationEntry& error) {
+    validate_turn_entry(TurnRecordKind::failed, request_id, error);
     std::lock_guard lock(mutex_);
     append_record(path_, Json{
         {"type", "turn_failed"},
         {"request_id", request_id},
-        {"error", error},
+        {"error", entry_json(error)},
     });
 }
 

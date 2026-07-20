@@ -27,7 +27,8 @@ public:
         ConversationJournal& journal,
         std::atomic_bool& cancellation,
         Conversation& conversation,
-        RequestId next_request_id = 1);
+        RequestId next_request_id = 1,
+        EntryId next_entry_id = 1);
 
     [[nodiscard]] const Conversation& conversation() const;
     [[nodiscard]] const AgentInfo& agent_info() const;
@@ -44,15 +45,21 @@ private:
     // Tracks the exact response message associated with the only active single-agent turn.
     struct ActiveTurn {
         RequestId request_id{};
+        EntryId response_entry_id{};
         std::string response;
-        bool message_open{};
+        bool entry_open{};
     };
 
     void apply(const AgentDelta& event, CoordinatorUpdate& update);
     void apply(const AgentCompleted& event, CoordinatorUpdate& update);
     void apply(const AgentCancelled& event, CoordinatorUpdate& update);
     void apply(const AgentFailed& event, CoordinatorUpdate& update);
-    void finish_response_message();
+    void fail_active_turn(
+        std::string message,
+        ParticipantId participant_id,
+        CoordinatorUpdate& update);
+    void finish_response_entry(CompletionStatus status);
+    [[nodiscard]] ConversationEntry response_entry(CompletionStatus status) const;
     [[nodiscard]] bool matches(RequestId request_id) const;
 
     AgentInfo agent_info_;
@@ -60,6 +67,7 @@ private:
     std::atomic_bool& cancellation_;
     Conversation& conversation_;
     RequestId next_request_id_;
+    EntryId next_entry_id_;
     std::optional<ActiveTurn> active_;
 };
 

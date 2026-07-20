@@ -2,13 +2,35 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+#include <utility>
+
 namespace cha {
 namespace {
+
+ConversationEntry human(EntryId id, std::string text) {
+    return make_human_entry(id, std::move(text));
+}
+
+ConversationEntry agent(EntryId id, std::string text) {
+    return make_agent_entry(
+        id, "guide-id", "Guide", std::move(text), CompletionStatus::complete);
+}
+
+TEST(TranscriptLabel, DistinguishesKindsEvenWhenDisplayNamesCollide) {
+    EXPECT_EQ(transcript_entry_label(make_human_entry(1, "Question")), "[You] ");
+    EXPECT_EQ(
+        transcript_entry_label(
+            make_agent_entry(2, "agent-id", "You", "Answer", CompletionStatus::complete)),
+        "[Agent: You] ");
+    EXPECT_EQ(transcript_entry_label(make_notice_entry(3, "Notice")), "[System] ");
+    EXPECT_EQ(transcript_entry_label(make_error_entry(4, "Failure")), "[Error] ");
+}
 
 TEST(TranscriptRenderPlanner, RebuildsInitiallyAndAfterWidthChanges) {
     TranscriptRenderPlanner planner;
     const ConversationSnapshot snapshot{
-        .messages = {{"You", "Hello"}},
+        .entries = {human(1, "Hello")},
         .revision = 1,
     };
 
@@ -22,16 +44,24 @@ TEST(TranscriptRenderPlanner, RebuildsInitiallyAndAfterWidthChanges) {
 TEST(TranscriptRenderPlanner, AppendsAStreamingSuffixAndNewMessages) {
     TranscriptRenderPlanner planner;
     const ConversationSnapshot initial{
-        .messages = {{"You", "Question"}, {"Guide", "Partial"}},
+        .entries = {
+            human(1, "Question"),
+            make_agent_entry(
+                2, "guide-id", "Guide", "Partial", CompletionStatus::streaming),
+        },
         .revision = 2,
-        .message_open = true,
+        .open_entry_id = 2,
     };
     planner.commit(initial, 80);
 
     const ConversationSnapshot streamed{
-        .messages = {{"You", "Question"}, {"Guide", "Partial answer"}},
+        .entries = {
+            human(1, "Question"),
+            make_agent_entry(
+                2, "guide-id", "Guide", "Partial answer", CompletionStatus::streaming),
+        },
         .revision = 3,
-        .message_open = true,
+        .open_entry_id = 2,
     };
     const TranscriptRenderPlan stream_plan = planner.plan(streamed, 80);
     EXPECT_EQ(stream_plan.action, TranscriptRenderAction::append);
@@ -41,10 +71,10 @@ TEST(TranscriptRenderPlanner, AppendsAStreamingSuffixAndNewMessages) {
     planner.commit(streamed, 80);
 
     const ConversationSnapshot with_new_message{
-        .messages = {
-            {"You", "Question"},
-            {"Guide", "Partial answer"},
-            {"You", "Follow-up"},
+        .entries = {
+            human(1, "Question"),
+            agent(2, "Partial answer"),
+            human(3, "Follow-up"),
         },
         .revision = 4,
     };
@@ -60,7 +90,7 @@ TEST(TranscriptRenderPlanner, AppendsFromAnEmptyRenderedTranscript) {
     planner.commit({.revision = 1}, 80);
 
     const ConversationSnapshot snapshot{
-        .messages = {{"You", "First"}},
+        .entries = {human(1, "First")},
         .revision = 2,
     };
     const TranscriptRenderPlan plan = planner.plan(snapshot, 80);
@@ -73,26 +103,26 @@ TEST(TranscriptRenderPlanner, AppendsFromAnEmptyRenderedTranscript) {
 TEST(TranscriptRenderPlanner, RebuildsWhenRenderedContentIsNotAnAppend) {
     TranscriptRenderPlanner planner;
     const ConversationSnapshot initial{
-        .messages = {{"You", "First"}, {"Guide", "Second"}},
+        .entries = {human(1, "First"), agent(2, "Second")},
         .revision = 1,
     };
     planner.commit(initial, 80);
 
     const ConversationSnapshot changed_prefix{
-        .messages = {{"You", "Changed"}, {"Guide", "Second"}},
+        .entries = {human(1, "Changed"), agent(2, "Second")},
         .revision = 2,
         .history_epoch = 1,
     };
     EXPECT_EQ(planner.plan(changed_prefix, 80).action, TranscriptRenderAction::rebuild);
 
     const ConversationSnapshot shortened_last{
-        .messages = {{"You", "First"}, {"Guide", "Sec"}},
+        .entries = {human(1, "First"), agent(2, "Sec")},
         .revision = 3,
     };
     EXPECT_EQ(planner.plan(shortened_last, 80).action, TranscriptRenderAction::rebuild);
 
     const ConversationSnapshot fewer_messages{
-        .messages = {{"You", "First"}},
+        .entries = {human(1, "First")},
         .revision = 4,
     };
     EXPECT_EQ(planner.plan(fewer_messages, 80).action, TranscriptRenderAction::rebuild);
@@ -101,13 +131,13 @@ TEST(TranscriptRenderPlanner, RebuildsWhenRenderedContentIsNotAnAppend) {
 TEST(TranscriptRenderPlanner, IgnoresARevisionOnlyChange) {
     TranscriptRenderPlanner planner;
     const ConversationSnapshot initial{
-        .messages = {{"You", "Same"}},
+        .entries = {human(1, "Same")},
         .revision = 1,
     };
     planner.commit(initial, 80);
 
     const ConversationSnapshot unchanged{
-        .messages = {{"You", "Same"}},
+        .entries = {human(1, "Same")},
         .revision = 2,
     };
     EXPECT_EQ(planner.plan(unchanged, 80).action, TranscriptRenderAction::none);

@@ -22,12 +22,26 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 
 } // namespace
 
+std::string transcript_entry_label(const ConversationEntry& entry) {
+    switch (entry.kind) {
+    case EntryKind::human:
+        return "[You] ";
+    case EntryKind::agent:
+        return "[Agent: " + entry.display_name + "] ";
+    case EntryKind::notice:
+        return "[System] ";
+    case EntryKind::error:
+        return "[Error] ";
+    }
+    return "[Unknown] ";
+}
+
 TranscriptRenderPlan TranscriptRenderPlanner::plan(
     const ConversationSnapshot& snapshot,
     int columns
 ) const {
     if (!initialized_ || columns != columns_ || snapshot.history_epoch != history_epoch_
-        || snapshot.messages.size() < message_count_) {
+        || snapshot.entries.size() < entry_count_) {
         return {.action = TranscriptRenderAction::rebuild};
     }
 
@@ -35,13 +49,17 @@ TranscriptRenderPlan TranscriptRenderPlanner::plan(
         return {};
     }
 
-    if (last_message_) {
-        const ConversationMessage& old_last = *last_message_;
-        const ConversationMessage& new_last = snapshot.messages[message_count_ - 1];
-        if (snapshot.messages.size() == message_count_ && new_last == old_last) {
+    if (last_entry_) {
+        const ConversationEntry& old_last = *last_entry_;
+        const ConversationEntry& new_last = snapshot.entries[entry_count_ - 1];
+        if (snapshot.entries.size() == entry_count_ && new_last == old_last) {
             return {};
         }
-        if (new_last.author != old_last.author || !starts_with(new_last.text, old_last.text)) {
+        if (new_last.id != old_last.id
+            || new_last.kind != old_last.kind
+            || new_last.participant_id != old_last.participant_id
+            || new_last.display_name != old_last.display_name
+            || !starts_with(new_last.text, old_last.text)) {
             return {.action = TranscriptRenderAction::rebuild};
         }
 
@@ -49,7 +67,7 @@ TranscriptRenderPlan TranscriptRenderPlanner::plan(
             .action = TranscriptRenderAction::append,
             .resumes_last_message = true,
             .last_message_suffix = new_last.text.substr(old_last.text.size()),
-            .first_new_message = message_count_,
+            .first_new_message = entry_count_,
         };
     }
 
@@ -64,11 +82,11 @@ void TranscriptRenderPlanner::commit(const ConversationSnapshot& snapshot, int c
     columns_ = columns;
     revision_ = snapshot.revision;
     history_epoch_ = snapshot.history_epoch;
-    message_count_ = snapshot.messages.size();
-    if (snapshot.messages.empty()) {
-        last_message_.reset();
+    entry_count_ = snapshot.entries.size();
+    if (snapshot.entries.empty()) {
+        last_entry_.reset();
     } else {
-        last_message_ = snapshot.messages.back();
+        last_entry_ = snapshot.entries.back();
     }
 }
 

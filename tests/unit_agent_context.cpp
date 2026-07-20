@@ -5,41 +5,59 @@
 namespace cha {
 namespace {
 
-TEST(AgentContext, ProjectsMessagesForOneNamedAgent) {
+TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
     const ConversationSnapshot conversation{
-        .messages = {
-            {"You", "Draft an answer"},
-            {"Writer", "Initial draft"},
-            {"You", "Review it"},
-            {"Reviewer", "Looks good"},
+        .entries = {
+            make_human_entry(1, "Draft an answer", 1),
+            make_agent_entry(
+                2, "writer-id", "You", "Initial draft", CompletionStatus::complete, 1),
+            make_human_entry(3, "Review it", 2),
+            make_agent_entry(
+                4, "reviewer-id", "System", "Looks good", CompletionStatus::complete, 2),
         },
     };
 
     EXPECT_EQ(
-        build_agent_context(conversation, "Be concise.", "Reviewer"),
+        build_agent_context(conversation, "Be concise.", "reviewer-id"),
         (std::vector<AgentMessage>{
             {"system", "Be concise."},
             {"user", "Draft an answer"},
-            {"user", "Writer: Initial draft"},
+            {"assistant", "writer-id: Initial draft"},
             {"user", "Review it"},
             {"assistant", "Looks good"},
         }));
 }
 
-TEST(AgentContext, OmitsErrorsAndOpenResponses) {
+TEST(AgentContext, OmitsTypedNoticesErrorsFailedPromptsAndStreamingEntries) {
     const ConversationSnapshot conversation{
-        .messages = {
-            {"You", "Failed request"},
-            {"System", "Error: unavailable"},
-            {"You", "Current request"},
-            {"Reviewer", "Partial response"},
+        .entries = {
+            make_human_entry(1, "Failed request", 7),
+            make_error_entry(2, "unavailable", 7, "reviewer-id"),
+            make_notice_entry(3, "Model information"),
+            make_human_entry(4, "Current request", 8),
+            make_agent_entry(
+                5, "reviewer-id", "Reviewer", "Partial", CompletionStatus::streaming, 8),
         },
-        .message_open = true,
+        .open_entry_id = 5,
     };
 
     EXPECT_EQ(
-        build_agent_context(conversation, {}, "Reviewer"),
+        build_agent_context(conversation, {}, "reviewer-id"),
         (std::vector<AgentMessage>{{"user", "Current request"}}));
+}
+
+TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {
+    ConversationSnapshot before{
+        .entries = {
+            make_agent_entry(
+                1, "stable-id", "Old name", "Answer", CompletionStatus::complete, 1),
+        },
+    };
+    ConversationSnapshot after = before;
+    after.entries.front().display_name = "New name";
+
+    EXPECT_EQ(build_agent_context(before, {}, "stable-id"), (std::vector<AgentMessage>{{"assistant", "Answer"}}));
+    EXPECT_EQ(build_agent_context(after, {}, "stable-id"), (std::vector<AgentMessage>{{"assistant", "Answer"}}));
 }
 
 } // namespace

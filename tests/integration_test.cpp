@@ -39,7 +39,7 @@ ChatResult run_chat(bool stream) {
     agent.run(requests, events);
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
-    requests.push({1, agent.info().id, {}, input});
+    requests.push({1, agent.info().id, {}, make_human_entry(1, input, 1)});
 
     ChatResult result;
     while (true) {
@@ -71,7 +71,7 @@ ChatResult run_cancelled_chat() {
     agent.run(requests, events);
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
-    requests.push({2, agent.info().id, {}, input});
+    requests.push({2, agent.info().id, {}, make_human_entry(1, input, 2)});
 
     ChatResult result;
     while (true) {

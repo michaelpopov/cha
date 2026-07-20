@@ -9,16 +9,40 @@
 #include <utility>
 
 namespace cha {
+namespace {
+
+bool is_participant_id(std::string_view id) {
+    for (const char character : id) {
+        const bool ascii_letter = (character >= 'a' && character <= 'z')
+            || (character >= 'A' && character <= 'Z');
+        const bool digit = character >= '0' && character <= '9';
+        if (!ascii_letter && !digit && character != '_' && character != '-') {
+            return false;
+        }
+    }
+    return !id.empty();
+}
+
+} // namespace
 
 Config Config::load(const std::filesystem::path& path) {
     const toml::table table = toml::parse_file(path.string());
     const auto host = table["host"].value<std::string>();
     const auto port = table["port"].value<int>();
     const auto model = table["model"].value<std::string>();
+    const auto id = table["id"].value<std::string>();
+    const auto name = table["name"].value<std::string>();
 
-    if (!host || !port) {
+    if (!host || !port || !id || !name || id->empty() || name->empty()) {
         throw std::runtime_error(
-            "Config file '" + path.string() + "' requires string 'host' and integer 'port' values"
+            "Config file '" + path.string()
+            + "' requires non-empty string 'id' and 'name', string 'host', and integer 'port' values"
+        );
+    }
+    if (!is_participant_id(*id)) {
+        throw std::runtime_error(
+            "Config file '" + path.string()
+            + "' requires 'id' to contain only ASCII letters, digits, underscores, and hyphens"
         );
     }
     if (table.contains("model") && !model) {
@@ -107,6 +131,8 @@ Config Config::load(const std::filesystem::path& path) {
     }
 
     return Config{
+        .id = *id,
+        .name = *name,
         .host = *host,
         .port = *port,
         .mode = mode,

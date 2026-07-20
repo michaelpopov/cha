@@ -21,6 +21,8 @@ TEST(Config, LoadsHostAndPortFromToml) {
 
         std::ofstream config_file(path);
         config_file
+            << "id = \"example-id\"\n"
+            << "name = \"Example\"\n"
             << "host = \"example.com\"\n"
             << "port = 8080\n"
             << "mode = \"net\"\n"
@@ -35,6 +37,8 @@ TEST(Config, LoadsHostAndPortFromToml) {
 
     const Config config = Config::load(path);
 
+    EXPECT_EQ(config.id, "example-id");
+    EXPECT_EQ(config.name, "Example");
     EXPECT_EQ(config.host, "example.com");
     EXPECT_EQ(config.port, 8080);
     EXPECT_EQ(config.mode, Mode::net);
@@ -56,7 +60,8 @@ TEST(Config, AllowsMissingModel) {
         / ("cha_no_model_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".toml");
     {
         std::ofstream config_file(path);
-        config_file << "host = \"example.com\"\nport = 8080\n";
+        config_file << "id = \"example-id\"\nname = \"Example\"\n"
+                    << "host = \"example.com\"\nport = 8080\n";
     }
 
     const Config config = Config::load(path);
@@ -72,6 +77,8 @@ TEST(Config, RejectsOutOfRangePort) {
     {
         std::ofstream config_file(path);
         config_file
+            << "id = \"example-id\"\n"
+            << "name = \"Example\"\n"
             << "host = \"example.com\"\n"
             << "port = 65536\n"
             << "model = \"example-model\"\n";
@@ -83,6 +90,38 @@ TEST(Config, RejectsOutOfRangePort) {
             (void)config;
         },
         std::runtime_error);
+    std::filesystem::remove(path);
+}
+
+TEST(Config, RequiresStableIdentityAndDisplayName) {
+    const auto path = std::filesystem::temp_directory_path()
+        / ("cha_missing_identity_"
+           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+           + ".toml");
+    {
+        std::ofstream config_file(path);
+        config_file << "host = \"example.com\"\nport = 8080\n";
+    }
+
+    EXPECT_THROW((void)Config::load(path), std::runtime_error);
+    std::filesystem::remove(path);
+}
+
+TEST(Config, RejectsParticipantIdsThatAreUnsafeForProtocolUse) {
+    const auto path = std::filesystem::temp_directory_path()
+        / ("cha_invalid_identity_"
+           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+           + ".toml");
+    {
+        std::ofstream config_file(path);
+        config_file
+            << "id = \"example agent\"\n"
+            << "name = \"Example\"\n"
+            << "host = \"example.com\"\n"
+            << "port = 8080\n";
+    }
+
+    EXPECT_THROW((void)Config::load(path), std::runtime_error);
     std::filesystem::remove(path);
 }
 

@@ -61,6 +61,7 @@ add_library(cha_core
     src/path_name.cpp
     src/agent.cpp
     src/agent_context.cpp
+    src/agent_protocol.cpp
     src/session_repository.cpp
     src/startup_selector.cpp
     src/terminal.cpp

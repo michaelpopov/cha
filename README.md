@@ -6,12 +6,14 @@
 
 Run `cha` from a workspace containing `personas/` and `rooms/`. `rooms/rooms.list` is an ordered list of room names (one per line; blank lines and `#` comments are ignored). At startup, a terminal selector lets you choose a room and then an existing session or **New session**.
 
-Each room contains `personas.list`, which must name exactly one persona, and `USER.md`. The selected persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`. The effective system prompt is the persona `SYSTEM.md` followed by the room `USER.md`.
+Each room contains `personas.list`, which must name exactly one persona, and `USER.md`. The selected persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`. The effective system prompt is the persona `SYSTEM.md` followed by the room `USER.md`. A persona's immutable `id` identifies its transcript entries and protocol messages; its `name` is display-only and may change without reclassifying restored history.
 
 Existing sessions are discovered only when both `sessions/<id>.data` and `sessions/<id>.meta` exist; their conversation data is restored when selected. A new session can be given an optional display name. Its files use a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored in its metadata. New sessions create both files immediately. Each submitted turn and its identified completion, cancellation, or failure are appended and synced during the chat. A turn without a terminal record is reported as interrupted when the session is restored. The following top-level persona configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
+- `id`: required stable persona identifier containing only ASCII letters, digits, underscores, and hyphens. Do not change it when renaming or moving the persona directory.
+- `name`: required display name shown in the transcript. Transcript entry kinds remain visibly distinct even when a persona uses a name such as `You` or `System`.
 - `mode`: `net` for llama.cpp or `test` for the built-in echo server; defaults to `test`.
 - `model`: optional model name sent in chat-completions requests. If omitted, the first model returned by the endpoint's `/v1/models` API is used.
 - `stream`: whether to request streamed SSE responses; defaults to `true`.
@@ -24,6 +26,8 @@ Existing sessions are discovered only when both `sessions/<id>.data` and `sessio
 Example:
 
 ```toml
+id = "local-assistant"
+name = "Local assistant"
 host = "127.0.0.1"
 port = 8080
 mode = "net"

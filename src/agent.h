@@ -18,6 +18,7 @@ class Agent {
 public:
     Agent(
         std::atomic_bool& cancellation,
+        std::string id = {},
         std::string name = {});
     ~Agent();
 
@@ -45,6 +46,7 @@ private:
     std::string api_key_;
     std::atomic_bool& _cancellation;
     CURL* curl_{};
+    std::string id_;
     std::string name_;
     std::string system_prompt_;
     std::thread thread_;

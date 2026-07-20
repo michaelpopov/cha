@@ -1,95 +1,197 @@
 #include "conversation.h"
 
-#include <mutex>
 #include <stdexcept>
+#include <utility>
 
 namespace cha {
 
-void Conversation::add_message(std::string author, std::string text) {
-    std::lock_guard lock(mutex_);
-    if (message_open_) {
-        throw std::logic_error("Cannot add a message while another message is open");
-    }
-    if (author.empty()) {
-        throw std::invalid_argument("Conversation message author cannot be empty");
-    }
+ConversationEntry make_human_entry(
+    EntryId id,
+    std::string text,
+    std::optional<RequestId> request_id) {
+    return {
+        .id = id,
+        .kind = EntryKind::human,
+        .participant_id = std::string(human_participant_id),
+        .display_name = std::string(human_display_name),
+        .text = std::move(text),
+        .status = CompletionStatus::complete,
+        .request_id = request_id,
+    };
+}
 
-    messages_.push_back(ConversationMessage{std::move(author), std::move(text)});
+ConversationEntry make_agent_entry(
+    EntryId id,
+    ParticipantId participant_id,
+    std::string display_name,
+    std::string text,
+    CompletionStatus status,
+    std::optional<RequestId> request_id) {
+    return {
+        .id = id,
+        .kind = EntryKind::agent,
+        .participant_id = std::move(participant_id),
+        .display_name = std::move(display_name),
+        .text = std::move(text),
+        .status = status,
+        .request_id = request_id,
+    };
+}
+
+ConversationEntry make_notice_entry(EntryId id, std::string text) {
+    return {
+        .id = id,
+        .kind = EntryKind::notice,
+        .display_name = std::string(notice_display_name),
+        .text = std::move(text),
+    };
+}
+
+ConversationEntry make_error_entry(
+    EntryId id,
+    std::string text,
+    std::optional<RequestId> request_id,
+    ParticipantId participant_id) {
+    return {
+        .id = id,
+        .kind = EntryKind::error,
+        .participant_id = std::move(participant_id),
+        .display_name = std::string(error_display_name),
+        .text = std::move(text),
+        .status = CompletionStatus::failed,
+        .request_id = request_id,
+    };
+}
+
+void validate_conversation_entry(const ConversationEntry& entry) {
+    if (entry.id == 0) {
+        throw std::invalid_argument("Conversation entry ID must be positive");
+    }
+    if (entry.display_name.empty()) {
+        throw std::invalid_argument("Conversation entry display name cannot be empty");
+    }
+    if ((entry.kind == EntryKind::human || entry.kind == EntryKind::agent)
+        && entry.participant_id.empty()) {
+        throw std::invalid_argument("Participant transcript entries require a participant ID");
+    }
+    if (entry.kind == EntryKind::error && entry.status != CompletionStatus::failed) {
+        throw std::invalid_argument("Error entries require failed status");
+    }
+    if ((entry.kind == EntryKind::human || entry.kind == EntryKind::notice)
+        && entry.status != CompletionStatus::complete) {
+        throw std::invalid_argument("Human and notice entries require complete status");
+    }
+    if (entry.kind == EntryKind::agent && entry.status == CompletionStatus::failed) {
+        throw std::invalid_argument("Agent entries cannot have failed status");
+    }
+}
+
+void require_terminal_conversation_entry(const ConversationEntry& entry) {
+    validate_conversation_entry(entry);
+    if (entry.status == CompletionStatus::streaming) {
+        throw std::invalid_argument("A terminal conversation entry cannot have streaming status");
+    }
+}
+
+void Conversation::add_entry(ConversationEntry entry) {
+    std::lock_guard lock(mutex_);
+    if (open_entry_id_) {
+        throw std::logic_error("Cannot add an entry while another entry is streaming");
+    }
+    require_terminal_conversation_entry(entry);
+    require_next_id(entry.id);
+
+    entries_.push_back(std::move(entry));
     ++revision_;
 }
 
-void Conversation::begin_message(std::string author) {
+void Conversation::begin_entry(ConversationEntry entry) {
     std::lock_guard lock(mutex_);
-    if (message_open_) {
-        throw std::logic_error("A conversation message is already open");
+    if (open_entry_id_) {
+        throw std::logic_error("A conversation entry is already streaming");
     }
-    if (author.empty()) {
-        throw std::invalid_argument("Conversation message author cannot be empty");
+    validate_conversation_entry(entry);
+    if (entry.kind != EntryKind::agent || entry.status != CompletionStatus::streaming) {
+        throw std::invalid_argument("Only an agent entry with streaming status can be opened");
     }
+    require_next_id(entry.id);
 
-    messages_.push_back(ConversationMessage{std::move(author), {}});
-    message_open_ = true;
+    open_entry_id_ = entry.id;
+    entries_.push_back(std::move(entry));
     ++revision_;
 }
 
-void Conversation::append_to_message(std::string_view text) {
+void Conversation::append_to_entry(EntryId entry_id, std::string_view text) {
     std::lock_guard lock(mutex_);
-    if (!message_open_) {
-        throw std::logic_error("No conversation message is open");
+    if (!open_entry_id_ || *open_entry_id_ != entry_id) {
+        throw std::logic_error("The requested conversation entry is not streaming");
     }
 
-    messages_.back().text.append(text);
+    entries_.back().text.append(text);
     ++revision_;
 }
 
-void Conversation::finish_message() {
+void Conversation::finish_entry(EntryId entry_id, CompletionStatus status) {
     std::lock_guard lock(mutex_);
-    message_open_ = false;
-}
-
-void Conversation::discard_message() {
-    std::lock_guard lock(mutex_);
-    if (!message_open_) {
-        return;
+    if (!open_entry_id_ || *open_entry_id_ != entry_id) {
+        throw std::logic_error("The requested conversation entry is not streaming");
+    }
+    if (status != CompletionStatus::complete && status != CompletionStatus::cancelled) {
+        throw std::invalid_argument("A finished agent entry requires complete or cancelled status");
     }
 
-    messages_.pop_back();
-    message_open_ = false;
+    entries_.back().status = status;
+    open_entry_id_.reset();
+    ++revision_;
+}
+
+void Conversation::discard_entry(EntryId entry_id) {
+    std::lock_guard lock(mutex_);
+    if (!open_entry_id_ || *open_entry_id_ != entry_id) {
+        throw std::logic_error("The requested conversation entry is not streaming");
+    }
+
+    entries_.pop_back();
+    open_entry_id_.reset();
     ++revision_;
 }
 
 void Conversation::clear() {
     std::lock_guard lock(mutex_);
-    if (message_open_) {
-        throw std::logic_error("Cannot clear a conversation while a message is open");
+    if (open_entry_id_) {
+        throw std::logic_error("Cannot clear a conversation while an entry is streaming");
     }
-    messages_.clear();
+    entries_.clear();
     ++revision_;
     ++history_epoch_;
 }
 
-void Conversation::replace_messages(std::vector<ConversationMessage> messages) {
+void Conversation::replace_entries(std::vector<ConversationEntry> entries) {
     std::lock_guard lock(mutex_);
-    if (message_open_) {
-        throw std::logic_error("Cannot replace messages while a message is open");
+    if (open_entry_id_) {
+        throw std::logic_error("Cannot replace entries while an entry is streaming");
     }
-    for (const ConversationMessage& message : messages) {
-        if (message.author.empty()) {
-            throw std::invalid_argument("Conversation message author cannot be empty");
+    EntryId previous_id = 0;
+    for (const ConversationEntry& entry : entries) {
+        require_terminal_conversation_entry(entry);
+        if (entry.id <= previous_id) {
+            throw std::invalid_argument("Conversation entry IDs must be strictly increasing");
         }
+        previous_id = entry.id;
     }
-    messages_ = std::move(messages);
+
+    entries_ = std::move(entries);
     ++revision_;
     ++history_epoch_;
 }
 
 ConversationSnapshot Conversation::snapshot() const {
     std::lock_guard lock(mutex_);
-    return {messages_, revision_, message_open_, history_epoch_};
+    return {entries_, revision_, open_entry_id_, history_epoch_};
 }
 
-std::vector<ConversationMessage> Conversation::messages() const {
-    return snapshot().messages;
+std::vector<ConversationEntry> Conversation::entries() const {
+    return snapshot().entries;
 }
 
 std::size_t Conversation::revision() const {
@@ -97,9 +199,15 @@ std::size_t Conversation::revision() const {
     return revision_;
 }
 
-bool Conversation::message_open() const {
+std::optional<EntryId> Conversation::open_entry_id() const {
     std::lock_guard lock(mutex_);
-    return message_open_;
+    return open_entry_id_;
+}
+
+void Conversation::require_next_id(EntryId entry_id) const {
+    if (!entries_.empty() && entry_id <= entries_.back().id) {
+        throw std::invalid_argument("Conversation entry IDs must be strictly increasing");
+    }
 }
 
 } // namespace cha

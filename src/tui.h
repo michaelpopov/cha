@@ -33,7 +33,7 @@ private:
     void ensure_transcript_capacity(int required_rows);
     void ensure_input_pad(int required_rows, int columns);
     void rebuild_transcript(const ConversationSnapshot& snapshot, int output_height, int columns);
-    void write_transcript_entry(const ConversationMessage& message);
+    void write_transcript_entry(const ConversationEntry& entry);
     void render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns);
     void render_input(const InputEditor& editor, int input_y, int input_height, int columns);
 
