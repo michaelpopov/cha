@@ -54,6 +54,7 @@ add_library(cha_core
     src/agent_definition.cpp
     src/command.cpp
     src/chat_coordinator.cpp
+    src/completion_client.cpp
     src/config.cpp
     src/conversation.cpp
     src/conversation_file.cpp
@@ -104,6 +105,7 @@ if(BUILD_TESTING)
         tests/unit_agent_definition.cpp
         tests/unit_config.cpp
         tests/unit_chat_coordinator.cpp
+        tests/unit_completion_client.cpp
         tests/unit_conversation.cpp
         tests/unit_environment.cpp
         tests/unit_event_channel.cpp
