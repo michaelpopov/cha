@@ -1,7 +1,6 @@
 host = "alien"
 port = 8080
 mode = "net"
-model = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
 stream = true
 api_key = ""
 system_prompt = "SYSTEM.md"

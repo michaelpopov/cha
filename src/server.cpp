@@ -9,8 +9,6 @@
 
 #include <algorithm>
 #include <exception>
-#include <filesystem>
-#include <fstream>
 #include <functional>
 #include <memory>
 #include <sstream>
@@ -194,16 +192,7 @@ void Server::init(const Config& config) {
 
 void Server::initialize() {
 
-    if (!_config.system_prompt.empty()) {
-        std::ifstream prompt_file(_config.system_prompt, std::ios::binary);
-        if (!prompt_file) {
-            throw std::runtime_error("Failed to read system prompt file '" + _config.system_prompt.string() + "'");
-        }
-
-        std::ostringstream contents;
-        contents << prompt_file.rdbuf();
-        system_prompt_ = contents.str();
-    }
+    system_prompt_ = _config.system_prompt;
 
     if (_config.mode == Mode::net) {
         (void)curl_global();
@@ -211,6 +200,58 @@ void Server::initialize() {
         if (!curl_) {
             throw std::runtime_error("Failed to create libcurl handle");
         }
+        if (_config.model.empty()) {
+            discover_model();
+        }
+    }
+}
+
+void Server::discover_model() {
+    ResponseContext response{.streaming = false};
+
+    curl_easy_reset(curl_);
+    const std::string url = models_endpoint();
+    require_curl(curl_easy_setopt(curl_, CURLOPT_URL, url.c_str()), "Failed to configure models request URL");
+    require_curl(curl_easy_setopt(curl_, CURLOPT_HTTPGET, 1L), "Failed to configure models request");
+    require_curl(curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, receive_response), "Failed to configure models response callback");
+    require_curl(curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &response), "Failed to configure models response destination");
+    require_curl(curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, 10L), "Failed to configure models connection timeout");
+    require_curl(curl_easy_setopt(curl_, CURLOPT_NOSIGNAL, 1L), "Failed to configure libcurl signals");
+
+    curl_slist* raw_headers = nullptr;
+    raw_headers = curl_slist_append(raw_headers, "Accept: application/json");
+    if (!_config.api_key.empty()) {
+        raw_headers = curl_slist_append(raw_headers, ("Authorization: Bearer " + _config.api_key).c_str());
+    }
+    if (!raw_headers) {
+        throw std::runtime_error("Failed to create models request headers");
+    }
+    CurlHeaders headers(raw_headers);
+    require_curl(curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, headers.get()), "Failed to configure models request headers");
+
+    const CURLcode perform_result = curl_easy_perform(curl_);
+    if (response.error) {
+        std::rethrow_exception(response.error);
+    }
+    if (perform_result != CURLE_OK) {
+        throw std::runtime_error("Models request failed: " + std::string(curl_easy_strerror(perform_result)));
+    }
+
+    long status = 0;
+    require_curl(curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &status), "Failed to read models response status");
+    if (status < 200 || status >= 300) {
+        throw std::runtime_error("Models request returned HTTP " + std::to_string(status) + ": " + response_error(response.body));
+    }
+
+    try {
+        const Json value = Json::parse(response.body);
+        const Json::json_pointer model_pointer("/data/0/id");
+        if (!value.contains(model_pointer) || !value.at(model_pointer).is_string()) {
+            throw std::runtime_error("Models response did not contain data[0].id");
+        }
+        _config.model = value.at(model_pointer).get<std::string>();
+    } catch (const Json::exception& error) {
+        throw std::runtime_error("Failed to parse models response: " + std::string(error.what()));
     }
 }
 
@@ -435,6 +476,10 @@ std::string Server::base_url() const {
 
 std::string Server::endpoint() const {
     return base_url() + "/v1/chat/completions";
+}
+
+std::string Server::models_endpoint() const {
+    return base_url() + "/v1/models";
 }
 
 } // namespace cha

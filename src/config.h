@@ -19,9 +19,11 @@ struct Config {
     bool stream{true};
     std::optional<double> temperature;
     std::string api_key;
-    std::filesystem::path system_prompt;
+    std::string system_prompt;
 
-    [[nodiscard]] static Config load(const std::filesystem::path& path = "config.toml");
+    [[nodiscard]] static Config load();
+    [[nodiscard]] static Config load(const std::filesystem::path& path);
+    [[nodiscard]] static Config load_from_directory(const std::filesystem::path& directory);
 };
 
 } // namespace cha

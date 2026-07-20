@@ -32,11 +32,13 @@ public:
 
 private:
     void initialize();
+    void discover_model();
     void dialog(Pipe& pipe_in, Pipe& pipe_out);
     [[nodiscard]] bool handle_command(const std::string& input, Pipe& pipe_out);
     void complete(Pipe& pipe_out);
     [[nodiscard]] std::string base_url() const;
     [[nodiscard]] std::string endpoint() const;
+    [[nodiscard]] std::string models_endpoint() const;
 
     Config _config;
     std::atomic_bool& _cancellation;

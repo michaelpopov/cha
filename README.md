@@ -4,16 +4,15 @@
 
 ## Configuration
 
-The application loads `config.toml` from the current working directory. The following top-level fields are supported:
+The application reads `servers` from the current working directory. The first nonblank, non-comment line names the active server; its configuration is loaded from `<server-name>/config.toml`. The following top-level fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
 - `mode`: `net` for llama.cpp or `test` for the built-in echo server; defaults to `test`.
-- `model`: required model name sent in chat-completions requests.
+- `model`: optional model name sent in chat-completions requests. If omitted, the first model returned by the endpoint's `/v1/models` API is used.
 - `stream`: whether to request streamed SSE responses; defaults to `true`.
 - `temperature`: optional numeric sampling temperature. It is omitted from requests when unset.
 - `api_key`: optional bearer token. An empty string disables authentication.
-- `system_prompt`: optional path to a UTF-8 text file. Relative paths are resolved from the directory containing `config.toml`.
 
 Example:
 
@@ -25,7 +24,6 @@ model = "local-model"
 stream = true
 temperature = 0.7
 api_key = ""
-system_prompt = "system.txt"
 ```
 
 In net mode, `cha` sends HTTP requests to:
@@ -36,7 +34,7 @@ http://HOST:PORT/v1/chat/completions
 
 Chat requests deliberately have no overall or low-speed timeout so long generations can complete. Use `.stop`, Escape, or Ctrl-C to cancel an active request.
 
-The system prompt file is loaded during server initialization. A missing or unreadable prompt file prevents the application from starting.
+The system prompt is read from `SYSTEM.md` beside the selected server's `config.toml`. If the file is missing, the prompt is empty.
 
 ## Commands
 

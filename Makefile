@@ -11,4 +11,4 @@ itest: build
 	./build/ninja/itest
 
 run: build
-	./build/ninja/cha
+	cd workspace && ../build/ninja/cha

@@ -131,6 +131,9 @@ private:
 
             const std::size_t length_start = request.find("Content-Length:");
             if (length_start == std::string::npos) {
+                if (request.starts_with("GET ")) {
+                    return request;
+                }
                 throw std::runtime_error("Mock request has no Content-Length header");
             }
             const std::size_t value_start = length_start + std::string_view("Content-Length:").size();
@@ -213,6 +216,7 @@ TEST(Server, EchoesEachInputLineTwiceThenEndsTheMessage) {
 
 TEST(Server, ConstructionDoesNotRequireANetworkConnection) {
     Config config{"127.0.0.1", 1, Mode::net};
+    config.model = "configured-model";
     std::atomic_bool cancellation{false};
     Conversation conversation;
     EXPECT_NO_THROW({
@@ -285,12 +289,6 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     });
     mock.start();
 
-    const auto prompt_path = std::filesystem::temp_directory_path() / "cha_server_system_prompt.txt";
-    {
-        std::ofstream prompt_file(prompt_path);
-        prompt_file << "Be concise.";
-    }
-
     Config config;
     config.host = "127.0.0.1";
     config.port = mock.port();
@@ -299,7 +297,7 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
     config.stream = true;
     config.temperature = 0.5;
     config.api_key = "test-key";
-    config.system_prompt = prompt_path;
+    config.system_prompt = "Be concise.";
 
     Pipe pipe_in;
     Pipe pipe_out;
@@ -320,8 +318,6 @@ TEST(Server, StreamsResponsesAndMaintainsConversationHistory) {
 
     server.stop();
     mock.join();
-    std::filesystem::remove(prompt_path);
-
     ASSERT_EQ(mock.requests().size(), 2U);
     EXPECT_NE(mock.requests()[0].find("Authorization: Bearer test-key"), std::string::npos);
 
@@ -353,6 +349,7 @@ TEST(Server, SkipsMalformedStreamingEvents) {
     config.host = "127.0.0.1";
     config.port = mock.port();
     config.mode = Mode::net;
+    config.model = "configured-model";
     config.stream = true;
 
     Pipe pipe_in;
@@ -375,6 +372,41 @@ TEST(Server, SkipsMalformedStreamingEvents) {
             {"You", "Question"},
             {"Assistant", "Valid response"},
         }));
+}
+
+TEST(Server, DiscoversTheFirstEndpointModelWhenNoneIsConfigured) {
+    const std::string models_response = R"({"data":[{"id":"discovered-model"},{"id":"other-model"}]})";
+    const std::string chat_response = R"({"choices":[{"message":{"content":"Complete answer"}}]})";
+    MockHttpServer mock({
+        http_response("application/json", models_response),
+        http_response("application/json", chat_response),
+    });
+    mock.start();
+
+    Config config;
+    config.host = "127.0.0.1";
+    config.port = mock.port();
+    config.mode = Mode::net;
+    config.stream = false;
+
+    Pipe pipe_in;
+    Pipe pipe_out;
+    std::atomic_bool cancellation{false};
+    Conversation conversation;
+    Server server(cancellation, conversation);
+    server.init(config);
+    server.run(pipe_in, pipe_out);
+
+    send(conversation, pipe_in, "Question");
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::conversation_updated, {}}));
+    EXPECT_EQ(pipe_out.get(), (PipeEvent{PipeEventKind::eom, {}}));
+    server.stop();
+    mock.join();
+
+    ASSERT_EQ(mock.requests().size(), 2U);
+    EXPECT_TRUE(mock.requests()[0].starts_with("GET /v1/models HTTP/1.1"));
+    const Json request = Json::parse(request_body(mock.requests()[1]));
+    EXPECT_EQ(request["model"], "discovered-model");
 }
 
 TEST(Server, HandlesCommandsAndNonStreamingResponse) {
