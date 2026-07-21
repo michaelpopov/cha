@@ -5,6 +5,30 @@
 
 namespace cha {
 
+ConversationReadView::ConversationReadView(const Conversation& conversation)
+    : lock_(conversation.mutex_),
+      entries_(&conversation.entries_),
+      revision_(conversation.revision_),
+      open_entry_id_(conversation.open_entry_id_),
+      history_epoch_(conversation.history_epoch_) {
+}
+
+std::span<const ConversationEntry> ConversationReadView::entries() const noexcept {
+    return *entries_;
+}
+
+std::size_t ConversationReadView::revision() const noexcept {
+    return revision_;
+}
+
+std::optional<EntryId> ConversationReadView::open_entry_id() const noexcept {
+    return open_entry_id_;
+}
+
+std::size_t ConversationReadView::history_epoch() const noexcept {
+    return history_epoch_;
+}
+
 ConversationEntry make_human_entry(
     EntryId id,
     std::string text,
@@ -210,6 +234,10 @@ std::size_t Conversation::revision() const {
 std::optional<EntryId> Conversation::open_entry_id() const {
     std::lock_guard lock(mutex_);
     return open_entry_id_;
+}
+
+ConversationReadView Conversation::read() const {
+    return ConversationReadView(*this);
 }
 
 void Conversation::require_next_id(EntryId entry_id) const {

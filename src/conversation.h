@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -57,6 +58,36 @@ struct ConversationSnapshot {
     std::size_t history_epoch{};
 };
 
+class Conversation;
+
+// Holds the conversation mutex while exposing a non-owning, consistent read view.
+// Spans and references obtained from this object are valid only while it is alive.
+class ConversationReadView {
+public:
+    ~ConversationReadView() = default;
+
+    ConversationReadView(const ConversationReadView&) = delete;
+    ConversationReadView& operator=(const ConversationReadView&) = delete;
+    ConversationReadView(ConversationReadView&&) = delete;
+    ConversationReadView& operator=(ConversationReadView&&) = delete;
+
+    [[nodiscard]] std::span<const ConversationEntry> entries() const noexcept;
+    [[nodiscard]] std::size_t revision() const noexcept;
+    [[nodiscard]] std::optional<EntryId> open_entry_id() const noexcept;
+    [[nodiscard]] std::size_t history_epoch() const noexcept;
+
+private:
+    friend class Conversation;
+
+    explicit ConversationReadView(const Conversation& conversation);
+
+    std::unique_lock<std::mutex> lock_;
+    const std::vector<ConversationEntry>* entries_{};
+    std::size_t revision_{};
+    std::optional<EntryId> open_entry_id_;
+    std::size_t history_epoch_{};
+};
+
 [[nodiscard]] ConversationEntry make_human_entry(
     EntryId id,
     std::string text,
@@ -102,8 +133,10 @@ public:
     [[nodiscard]] std::vector<ConversationEntry> entries() const;
     [[nodiscard]] std::size_t revision() const;
     [[nodiscard]] std::optional<EntryId> open_entry_id() const;
+    [[nodiscard]] ConversationReadView read() const;
 
 private:
+    friend class ConversationReadView;
     void require_next_id(EntryId entry_id) const;
 
     mutable std::mutex mutex_;

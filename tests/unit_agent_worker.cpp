@@ -5,6 +5,8 @@
 #include <poll.h>
 
 #include <atomic>
+#include <chrono>
+#include <future>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -17,20 +19,18 @@ namespace cha {
 namespace {
 
 CompletionRequest request(
+    Conversation& conversation,
     RequestId request_id,
     std::string agent_id,
-    std::string prompt,
-    std::vector<ConversationEntry> history = {}) {
-    return {
+    std::string prompt) {
+    CompletionRequest result{
         .request_id = request_id,
         .agent_id = std::move(agent_id),
-        .history = std::move(history),
-        .prompt =
-            make_human_entry(
-                1000 + request_id,
-                std::move(prompt),
-                request_id),
+        .prompt = make_human_entry(1000 + request_id, std::move(prompt), request_id),
     };
+    conversation.add_entry(result.prompt);
+    result.conversation_revision = conversation.revision();
+    return result;
 }
 
 AgentEvent next_event(AgentWorker& worker) {
@@ -45,7 +45,6 @@ AgentEvent next_event(AgentWorker& worker) {
     return event;
 }
 
-// Supplies deterministic results while recording immutable requests passed by the worker.
 class FakeCompletionBackend final : public CompletionBackend {
 public:
     explicit FakeCompletionBackend(
@@ -59,11 +58,18 @@ public:
         release_after_cancellation_(release_after_cancellation) {
     }
 
-    CompletionResult complete(
+    RequestPayload prepare(
         const CompletionRequest& completion_request,
+        const ConversationReadView& conversation) override {
+        requests.push_back(completion_request);
+        latest_prompts.push_back(conversation.entries().back());
+        return {.bytes = completion_request.prompt.text};
+    }
+
+    CompletionResult perform(
+        RequestPayload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
-        requests.push_back(completion_request);
         for (const std::string& delta : deltas_) {
             on_delta(delta);
         }
@@ -72,8 +78,7 @@ public:
                 std::this_thread::yield();
             }
             while (release_after_cancellation_
-                   && !release_after_cancellation_->load(
-                       std::memory_order_acquire)) {
+                   && !release_after_cancellation_->load(std::memory_order_acquire)) {
                 std::this_thread::yield();
             }
             return {CompletionOutcome::cancelled, {}};
@@ -83,19 +88,15 @@ public:
 
     AgentInfo info() const override {
         return {
-            .id = id_,
-            .name = "Fake assistant",
-            .model = "fake-model",
-            .api = "fake://completion",
-            .streaming = true,
+            .id = id_, .name = "Fake assistant", .model = "fake-model",
+            .api = "fake://completion", .streaming = true,
         };
     }
 
-    const std::string& agent_id() const override {
-        return id_;
-    }
+    const std::string& agent_id() const override { return id_; }
 
     std::vector<CompletionRequest> requests;
+    std::vector<ConversationEntry> latest_prompts;
 
 private:
     std::string id_{"assistant"};
@@ -105,157 +106,216 @@ private:
     const std::atomic_bool* release_after_cancellation_{};
 };
 
-TEST(AgentWorker, StartsOnConstructionAndStopsIdempotently) {
-    AgentWorker worker(std::make_unique<FakeCompletionBackend>());
+class BoundaryBackend final : public CompletionBackend {
+public:
+    RequestPayload prepare(
+        const CompletionRequest& request,
+        const ConversationReadView& conversation) override {
+        if (conversation.entries().back() != request.prompt) {
+            throw std::logic_error("prompt was not latest");
+        }
+        prepared.set_value();
+        return {.bytes = request.prompt.text};
+    }
 
-    ASSERT_TRUE(worker.submit(
-        request(1, "assistant", "Question")));
-    EXPECT_EQ(
-        std::get<AgentCompleted>(next_event(worker)).request_id,
-        1U);
+    CompletionResult perform(
+        RequestPayload,
+        const CompletionDeltaSink&,
+        const std::atomic_bool&) override {
+        while (!release.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        return {};
+    }
+
+    AgentInfo info() const override {
+        return {.id = id_, .name = "Boundary", .model = "fake", .api = "fake://", .streaming = true};
+    }
+
+    const std::string& agent_id() const override { return id_; }
+
+    std::promise<void> prepared;
+    std::atomic_bool release{false};
+
+private:
+    std::string id_{"assistant"};
+};
+
+class ThrowingPrepareBackend final : public CompletionBackend {
+public:
+    RequestPayload prepare(
+        const CompletionRequest&,
+        const ConversationReadView&) override {
+        throw std::runtime_error("preparation failed");
+    }
+
+    CompletionResult perform(
+        RequestPayload,
+        const CompletionDeltaSink&,
+        const std::atomic_bool&) override {
+        performed.store(true, std::memory_order_release);
+        return {};
+    }
+
+    AgentInfo info() const override {
+        return {.id = id_, .name = "Throwing", .model = "fake", .api = "fake://", .streaming = true};
+    }
+
+    const std::string& agent_id() const override { return id_; }
+
+    std::atomic_bool performed{false};
+
+private:
+    std::string id_{"assistant"};
+};
+
+TEST(AgentWorker, StartsOnConstructionAndStopsIdempotently) {
+    Conversation conversation;
+    AgentWorker worker(conversation, std::make_unique<FakeCompletionBackend>());
+
+    ASSERT_TRUE(worker.submit(request(conversation, 1, "assistant", "Question")));
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(worker)).request_id, 1U);
     worker.stop();
     EXPECT_NO_THROW(worker.stop());
-    EXPECT_FALSE(worker.submit(
-        request(2, "assistant", "Another question")));
+    EXPECT_FALSE(worker.submit(request(conversation, 2, "assistant", "Another question")));
 }
 
 TEST(AgentWorker, RejectsARequestForAnotherAgentAndContinues) {
+    Conversation conversation;
     auto backend = std::make_unique<FakeCompletionBackend>(
-        CompletionResult{},
-        std::vector<std::string>{"accepted"});
+        CompletionResult{}, std::vector<std::string>{"accepted"});
     FakeCompletionBackend* backend_view = backend.get();
-    AgentWorker worker(std::move(backend));
+    AgentWorker worker(conversation, std::move(backend));
 
-    ASSERT_TRUE(worker.submit(request(1, "other-id", "rejected")));
-    const AgentFailed failed =
-        std::get<AgentFailed>(next_event(worker));
+    CompletionRequest rejected{
+        .request_id = 1,
+        .agent_id = "other-id",
+        .conversation_revision = 1,
+        .prompt = make_human_entry(1001, "rejected", 1),
+    };
+    ASSERT_TRUE(worker.submit(std::move(rejected)));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(worker));
     EXPECT_EQ(failed.request_id, 1U);
     EXPECT_NE(failed.message.find("targets agent"), std::string::npos);
 
-    ASSERT_TRUE(worker.submit(request(2, "assistant", "accepted")));
+    ASSERT_TRUE(worker.submit(request(conversation, 2, "assistant", "accepted")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(worker)).text, "accepted");
-    EXPECT_EQ(
-        std::get<AgentCompleted>(next_event(worker)).request_id,
-        2U);
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(worker)).request_id, 2U);
     worker.stop();
     ASSERT_EQ(backend_view->requests.size(), 1U);
     EXPECT_EQ(backend_view->requests.front().request_id, 2U);
 }
 
 TEST(AgentWorker, RejectsAnInvalidTypedPromptAndContinues) {
+    Conversation conversation;
     auto backend = std::make_unique<FakeCompletionBackend>();
     FakeCompletionBackend* backend_view = backend.get();
-    AgentWorker worker(std::move(backend));
-    CompletionRequest invalid =
-        request(1, "assistant", "rejected");
+    AgentWorker worker(conversation, std::move(backend));
+    CompletionRequest invalid = request(conversation, 1, "assistant", "rejected");
     invalid.prompt.status = CompletionStatus::cancelled;
 
     ASSERT_TRUE(worker.submit(std::move(invalid)));
-    const AgentFailed failed =
-        std::get<AgentFailed>(next_event(worker));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(worker));
     EXPECT_EQ(failed.request_id, 1U);
-    EXPECT_NE(
-        failed.message.find("require complete status"),
-        std::string::npos);
-
-    ASSERT_TRUE(worker.submit(request(2, "assistant", "accepted")));
-    EXPECT_EQ(
-        std::get<AgentCompleted>(next_event(worker)).request_id,
-        2U);
+    EXPECT_NE(failed.message.find("require complete status"), std::string::npos);
     worker.stop();
-    ASSERT_EQ(backend_view->requests.size(), 1U);
+    EXPECT_TRUE(backend_view->requests.empty());
 }
 
 TEST(AgentWorker, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
+    Conversation conversation;
+    conversation.add_entry(make_human_entry(1, "Earlier question", 3));
     auto backend = std::make_unique<FakeCompletionBackend>(
-        CompletionResult{},
-        std::vector<std::string>{"Hello", " world"});
+        CompletionResult{}, std::vector<std::string>{"Hello", " world"});
     FakeCompletionBackend* backend_view = backend.get();
-    AgentWorker worker(std::move(backend));
-    const ConversationEntry prior =
-        make_human_entry(1, "Earlier question", 3);
+    AgentWorker worker(conversation, std::move(backend));
 
-    ASSERT_TRUE(worker.submit(request(
-        10,
-        "assistant",
-        "Current question",
-        {prior})));
-
-    const AgentDelta first =
-        std::get<AgentDelta>(next_event(worker));
-    const AgentDelta second =
-        std::get<AgentDelta>(next_event(worker));
+    ASSERT_TRUE(worker.submit(request(conversation, 10, "assistant", "Current question")));
+    const AgentDelta first = std::get<AgentDelta>(next_event(worker));
+    const AgentDelta second = std::get<AgentDelta>(next_event(worker));
     EXPECT_EQ(first.request_id, 10U);
     EXPECT_EQ(first.text, "Hello");
     EXPECT_EQ(second.request_id, 10U);
     EXPECT_EQ(second.text, " world");
-    EXPECT_EQ(
-        std::get<AgentCompleted>(next_event(worker)).request_id,
-        10U);
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(worker)).request_id, 10U);
     worker.stop();
 
     ASSERT_EQ(backend_view->requests.size(), 1U);
-    EXPECT_EQ(
-        backend_view->requests.front().history,
-        (std::vector{prior}));
-    EXPECT_EQ(
-        backend_view->requests.front().prompt.text,
-        "Current question");
+    EXPECT_EQ(backend_view->requests.front().prompt.text, "Current question");
+    EXPECT_EQ(backend_view->latest_prompts.front(), backend_view->requests.front().prompt);
     EXPECT_EQ(worker.info().model, "fake-model");
 }
 
 TEST(AgentWorker, MapsCompletionFailureToAgentFailed) {
-    AgentWorker worker(std::make_unique<FakeCompletionBackend>(
-        CompletionResult{
-            CompletionOutcome::protocol_error,
-            "malformed response",
-        }));
+    Conversation conversation;
+    AgentWorker worker(conversation, std::make_unique<FakeCompletionBackend>(
+        CompletionResult{CompletionOutcome::protocol_error, "malformed response"}));
 
-    ASSERT_TRUE(worker.submit(request(12, "assistant", "Question")));
-
-    const AgentFailed failed =
-        std::get<AgentFailed>(next_event(worker));
+    ASSERT_TRUE(worker.submit(request(conversation, 12, "assistant", "Question")));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(worker));
     EXPECT_EQ(failed.request_id, 12U);
     EXPECT_EQ(failed.message, "malformed response");
 }
 
 TEST(AgentWorker, CancelsItsActiveRequestWithItsOwnToken) {
-    AgentWorker worker(std::make_unique<FakeCompletionBackend>(
-        CompletionResult{},
-        std::vector<std::string>{"Partial"},
-        true));
+    Conversation conversation;
+    AgentWorker worker(conversation, std::make_unique<FakeCompletionBackend>(
+        CompletionResult{}, std::vector<std::string>{"Partial"}, true));
 
-    ASSERT_TRUE(worker.submit(request(13, "assistant", "Question")));
+    ASSERT_TRUE(worker.submit(request(conversation, 13, "assistant", "Question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(worker)).text, "Partial");
     worker.cancel();
-    EXPECT_EQ(
-        std::get<AgentCancelled>(next_event(worker)).request_id,
-        13U);
+    EXPECT_EQ(std::get<AgentCancelled>(next_event(worker)).request_id, 13U);
 }
 
-TEST(AgentWorker, RejectsASecondRequestWithoutUndoingCancellation) {
-    std::atomic_bool release_after_cancellation{false};
-    AgentWorker worker(std::make_unique<FakeCompletionBackend>(
-        CompletionResult{},
-        std::vector<std::string>{"Partial"},
-        true,
-        &release_after_cancellation));
+TEST(AgentWorker, RejectsRevisionMismatchBeforeBackendPreparation) {
+    Conversation conversation;
+    auto backend = std::make_unique<FakeCompletionBackend>();
+    FakeCompletionBackend* backend_view = backend.get();
+    AgentWorker worker(conversation, std::move(backend));
+    CompletionRequest pending = request(conversation, 20, "assistant", "Question");
+    conversation.clear();
 
-    ASSERT_TRUE(worker.submit(
-        request(14, "assistant", "First question")));
-    EXPECT_EQ(
-        std::get<AgentDelta>(next_event(worker)).text,
-        "Partial");
+    ASSERT_TRUE(worker.submit(std::move(pending)));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(worker));
+    EXPECT_NE(failed.message.find("revision changed"), std::string::npos);
+    EXPECT_TRUE(backend_view->requests.empty());
+}
 
-    worker.cancel();
-    EXPECT_FALSE(worker.submit(
-        request(15, "assistant", "Second question")));
-    release_after_cancellation.store(
-        true,
-        std::memory_order_release);
-    EXPECT_EQ(
-        std::get<AgentCancelled>(next_event(worker)).request_id,
-        14U);
+TEST(AgentWorker, ReleasesTheConversationViewBeforePerforming) {
+    Conversation conversation;
+    auto backend = std::make_unique<BoundaryBackend>();
+    BoundaryBackend* backend_view = backend.get();
+    std::future<void> prepared = backend_view->prepared.get_future();
+    AgentWorker worker(conversation, std::move(backend));
+
+    ASSERT_TRUE(worker.submit(request(conversation, 21, "assistant", "Question")));
+    ASSERT_EQ(prepared.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    std::future<void> mutation = std::async(std::launch::async, [&conversation] {
+        conversation.clear();
+    });
+    EXPECT_EQ(mutation.wait_for(std::chrono::milliseconds(100)), std::future_status::ready);
+    mutation.get();
+
+    backend_view->release.store(true, std::memory_order_release);
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(worker)).request_id, 21U);
+}
+
+TEST(AgentWorker, FailingPreparationReleasesTheViewAndDoesNotPerform) {
+    Conversation conversation;
+    auto backend = std::make_unique<ThrowingPrepareBackend>();
+    ThrowingPrepareBackend* backend_view = backend.get();
+    AgentWorker worker(conversation, std::move(backend));
+
+    ASSERT_TRUE(worker.submit(request(conversation, 22, "assistant", "Question")));
+    const AgentFailed failed = std::get<AgentFailed>(next_event(worker));
+    EXPECT_EQ(failed.request_id, 22U);
+    EXPECT_NE(failed.message.find("preparation failed"), std::string::npos);
+    EXPECT_FALSE(backend_view->performed.load(std::memory_order_acquire));
+
+    EXPECT_NO_THROW(conversation.clear());
+    AgentEvent no_second_event = AgentCompleted{};
+    EXPECT_EQ(worker.try_receive(no_second_event), ChannelReadStatus::empty);
 }
 
 } // namespace

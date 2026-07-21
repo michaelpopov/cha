@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <variant>
 
 namespace cha {
@@ -25,7 +26,8 @@ struct ChatResult {
 Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
-    Config config = Config::load(workspace_directory / "two" / "config.toml");
+    Config config = Config::load(
+        workspace_directory / "personas" / "Ismael" / "config.toml");
     config.stream = stream;
     return config;
 }
@@ -46,11 +48,18 @@ AgentEvent wait_for_agent_event(AgentWorker& worker) {
 
 ChatResult run_chat(bool stream) {
     const Config config = integration_config(stream);
-    AgentWorker worker({.config = config});
+    Conversation conversation;
+    AgentWorker worker(conversation, {.config = config});
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
-    EXPECT_TRUE(worker.submit(
-        {1, worker.info().id, {}, make_human_entry(1, input, 1)}));
+    CompletionRequest request{
+        .request_id = 1,
+        .agent_id = worker.info().id,
+        .prompt = make_human_entry(1, input, 1),
+    };
+    conversation.add_entry(request.prompt);
+    request.conversation_revision = conversation.revision();
+    EXPECT_TRUE(worker.submit(std::move(request)));
 
     ChatResult result;
     while (true) {
@@ -70,11 +79,18 @@ ChatResult run_chat(bool stream) {
 
 ChatResult run_cancelled_chat() {
     const Config config = integration_config(true);
-    AgentWorker worker({.config = config});
+    Conversation conversation;
+    AgentWorker worker(conversation, {.config = config});
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
-    EXPECT_TRUE(worker.submit(
-        {2, worker.info().id, {}, make_human_entry(1, input, 2)}));
+    CompletionRequest request{
+        .request_id = 2,
+        .agent_id = worker.info().id,
+        .prompt = make_human_entry(1, input, 2),
+    };
+    conversation.add_entry(request.prompt);
+    request.conversation_revision = conversation.revision();
+    EXPECT_TRUE(worker.submit(std::move(request)));
 
     ChatResult result;
     while (true) {

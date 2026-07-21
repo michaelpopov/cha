@@ -2,24 +2,35 @@
 
 #include "conversation.h"
 
-#include <string>
+#include <optional>
+#include <span>
 #include <string_view>
-#include <vector>
 
 namespace cha {
 
-// Represents one portable protocol-role record for an inference request.
-struct AgentMessage {
-    std::string role;
-    std::string content;
+// Classifies model-visible message roles independently of their JSON spelling.
+enum class AgentRole {
+    system,
+    user,
+    assistant,
+};
 
-    bool operator==(const AgentMessage&) const = default;
+// Consumes one projected model message synchronously without owning its content.
+class AgentContextWriter {
+public:
+    virtual ~AgentContextWriter() = default;
+
+    virtual void begin_message(AgentRole role) = 0;
+    virtual void append_content(std::string_view text) = 0;
+    virtual void end_message() = 0;
 };
 
 // Projects typed transcript entries into protocol roles for one stable agent participant ID.
-[[nodiscard]] std::vector<AgentMessage> build_agent_context(
-    const ConversationSnapshot& conversation,
+void write_agent_context(
+    std::span<const ConversationEntry> entries,
+    std::optional<EntryId> open_entry_id,
     std::string_view system_prompt,
-    std::string_view agent_id);
+    std::string_view agent_id,
+    AgentContextWriter& writer);
 
 } // namespace cha

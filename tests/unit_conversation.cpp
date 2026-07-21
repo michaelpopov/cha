@@ -6,6 +6,9 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <thread>
+#include <type_traits>
 
 namespace cha {
 namespace {
@@ -55,6 +58,47 @@ TEST(Conversation, ReturnsAnIndependentEntrySnapshot) {
     snapshot.front().text = "Changed";
 
     EXPECT_EQ(conversation.entries().front().text, "Original");
+}
+
+TEST(Conversation, ReadViewIsLockedNonOwningAndNeitherCopyableNorMovable) {
+    static_assert(!std::is_copy_constructible_v<ConversationReadView>);
+    static_assert(!std::is_move_constructible_v<ConversationReadView>);
+
+    Conversation conversation;
+    conversation.add_entry(make_notice_entry(1, "Original"));
+    const std::size_t revision = conversation.revision();
+    ConversationReadView view = conversation.read();
+
+    EXPECT_EQ(view.entries().size(), 1U);
+    EXPECT_EQ(view.entries().front().text, "Original");
+    EXPECT_EQ(view.revision(), revision);
+    EXPECT_FALSE(view.open_entry_id());
+}
+
+TEST(Conversation, MutationWaitsUntilTheReadViewIsDestroyed) {
+    Conversation conversation;
+    conversation.add_entry(make_notice_entry(1, "Original"));
+    std::promise<void> view_ready;
+    std::future<void> ready = view_ready.get_future();
+    std::promise<void> release_view;
+    std::shared_future<void> release = release_view.get_future().share();
+
+    std::thread reader([&] {
+        ConversationReadView view = conversation.read();
+        view_ready.set_value();
+        release.wait();
+    });
+    ASSERT_EQ(ready.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    std::future<void> mutation = std::async(std::launch::async, [&] {
+        conversation.add_entry(make_notice_entry(2, "Later"));
+    });
+    EXPECT_EQ(mutation.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+
+    release_view.set_value();
+    reader.join();
+    EXPECT_EQ(mutation.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    mutation.get();
 }
 
 TEST(Conversation, ReplacesAndClearsEntries) {

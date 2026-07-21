@@ -1,4 +1,5 @@
 #include "chat_coordinator.h"
+#include "agent_context.h"
 #include "completion_backend.h"
 #include "conversation_file.h"
 
@@ -18,6 +19,27 @@
 
 namespace cha {
 namespace {
+
+struct ContextMessage {
+    AgentRole role{};
+    std::string content;
+
+    bool operator==(const ContextMessage&) const = default;
+};
+
+class ContextRecorder final : public AgentContextWriter {
+public:
+    void begin_message(AgentRole role) override {
+        current_ = {.role = role};
+    }
+    void append_content(std::string_view text) override { current_.content += text; }
+    void end_message() override { messages.push_back(std::move(current_)); }
+
+    std::vector<ContextMessage> messages;
+
+private:
+    ContextMessage current_;
+};
 
 // Removes one temporary journal when a coordinator test leaves scope.
 class TemporaryJournal {
@@ -40,7 +62,7 @@ public:
     std::filesystem::path path;
 };
 
-// Returns scripted completion output while retaining the immutable request for assertions.
+// Returns scripted completion output while retaining prompt-only requests for assertions.
 class ScriptedBackend final : public CompletionBackend {
 public:
     ScriptedBackend(
@@ -52,11 +74,26 @@ public:
         wait_for_cancellation_(wait_for_cancellation) {
     }
 
-    CompletionResult complete(
+    RequestPayload prepare(
         const CompletionRequest& request,
+        const ConversationReadView& conversation) override {
+        requests.push_back(request);
+        latest_prompt = conversation.entries().back();
+        ContextRecorder writer;
+        write_agent_context(
+            conversation.entries(),
+            conversation.open_entry_id(),
+            {},
+            id_,
+            writer);
+        model_contexts.push_back(std::move(writer.messages));
+        return {.bytes = request.prompt.text};
+    }
+
+    CompletionResult perform(
+        RequestPayload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
-        requests.push_back(request);
         for (const std::string& delta : deltas_) {
             on_delta(delta);
         }
@@ -84,6 +121,8 @@ public:
     }
 
     std::vector<CompletionRequest> requests;
+    std::vector<std::vector<ContextMessage>> model_contexts;
+    ConversationEntry latest_prompt;
 
 private:
     std::string id_{"guide-id"};
@@ -157,11 +196,16 @@ TEST(ChatCoordinator, OwnsACompleteIdentifiedTypedTurn) {
         backend_view->requests.front();
     EXPECT_EQ(request.request_id, 17U);
     EXPECT_EQ(request.agent_id, "guide-id");
-    EXPECT_EQ(
-        request.history,
-        (std::vector<ConversationEntry>{earlier}));
+    EXPECT_EQ(request.conversation_revision, 2U);
     EXPECT_EQ(request.prompt.kind, EntryKind::human);
     EXPECT_EQ(request.prompt.text, "Current");
+    EXPECT_EQ(backend_view->latest_prompt, request.prompt);
+    EXPECT_EQ(
+        backend_view->model_contexts.front(),
+        (std::vector<ContextMessage>{
+            {AgentRole::user, "Earlier"},
+            {AgentRole::user, "Current"},
+        }));
     EXPECT_TRUE(completed.render_needed);
 
     const auto entries = coordinator.conversation().entries();
@@ -173,6 +217,87 @@ TEST(ChatCoordinator, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(response.text, "Hello there");
     EXPECT_EQ(response.status, CompletionStatus::complete);
     EXPECT_EQ(load_conversation_file(temporary.path), entries);
+}
+
+TEST(ChatCoordinator, PreparesTheSecondTurnFromTheSharedCompletedConversation) {
+    TemporaryJournal temporary;
+    auto backend = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Answer"});
+    ScriptedBackend* backend_view = backend.get();
+    ChatCoordinator coordinator(std::move(backend), temporary.path);
+
+    (void)coordinator.handle_input("First");
+    receive_until_idle(coordinator);
+    (void)coordinator.handle_input("Second");
+    receive_until_idle(coordinator);
+
+    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
+    EXPECT_EQ(
+        backend_view->model_contexts[1],
+        (std::vector<ContextMessage>{
+            {AgentRole::user, "First"},
+            {AgentRole::assistant, "Answer"},
+            {AgentRole::user, "Second"},
+        }));
+}
+
+TEST(ChatCoordinator, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
+    TemporaryJournal temporary;
+    auto backend = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Answer"});
+    ScriptedBackend* backend_view = backend.get();
+    ChatCoordinator coordinator(std::move(backend), temporary.path);
+
+    (void)coordinator.handle_input("First");
+    receive_until_idle(coordinator);
+    (void)coordinator.handle_input("/clear");
+    (void)coordinator.handle_input("Second");
+    receive_until_idle(coordinator);
+
+    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
+    EXPECT_EQ(
+        backend_view->model_contexts[1],
+        (std::vector<ContextMessage>{{AgentRole::user, "Second"}}));
+}
+
+TEST(ChatCoordinator, ExcludesFailedTurnsFromTheFollowingModelContext) {
+    TemporaryJournal temporary;
+    auto backend = std::make_unique<ScriptedBackend>(
+        CompletionResult{CompletionOutcome::transport_error, "unavailable"});
+    ScriptedBackend* backend_view = backend.get();
+    ChatCoordinator coordinator(std::move(backend), temporary.path);
+
+    (void)coordinator.handle_input("Failed");
+    receive_until_idle(coordinator);
+    (void)coordinator.handle_input("Second");
+    receive_until_idle(coordinator);
+
+    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
+    EXPECT_EQ(
+        backend_view->model_contexts[1],
+        (std::vector<ContextMessage>{{AgentRole::user, "Second"}}));
+}
+
+TEST(ChatCoordinator, ExcludesCancelledPartialOutputFromFollowingModelContext) {
+    TemporaryJournal temporary;
+    auto backend = std::make_unique<ScriptedBackend>(
+        CompletionResult{CompletionOutcome::cancelled, {}},
+        std::vector<std::string>{"Partial"});
+    ScriptedBackend* backend_view = backend.get();
+    ChatCoordinator coordinator(std::move(backend), temporary.path);
+
+    (void)coordinator.handle_input("First");
+    receive_until_idle(coordinator);
+    (void)coordinator.handle_input("Second");
+    receive_until_idle(coordinator);
+
+    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
+    EXPECT_EQ(
+        backend_view->model_contexts[1],
+        (std::vector<ContextMessage>{
+            {AgentRole::user, "First"},
+            {AgentRole::user, "Second"},
+        }));
 }
 
 TEST(ChatCoordinator, PersistsAnIdentifiedCancelledResponse) {

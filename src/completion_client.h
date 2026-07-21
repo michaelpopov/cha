@@ -19,8 +19,11 @@ public:
     CompletionClient(const CompletionClient&) = delete;
     CompletionClient& operator=(const CompletionClient&) = delete;
 
-    [[nodiscard]] CompletionResult complete(
+    [[nodiscard]] RequestPayload prepare(
         const CompletionRequest& request,
+        const ConversationReadView& conversation) override;
+    [[nodiscard]] CompletionResult perform(
+        RequestPayload payload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override;
     [[nodiscard]] AgentInfo info() const override;

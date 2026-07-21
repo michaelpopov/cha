@@ -60,6 +60,7 @@ add_library(cha_core
     src/conversation_file.cpp
     src/environment.cpp
     src/input_editor.cpp
+    src/json_string.cpp
     src/path_name.cpp
     src/agent_worker.cpp
     src/agent_context.cpp
@@ -109,10 +110,12 @@ if(BUILD_TESTING)
         tests/unit_conversation.cpp
         tests/unit_environment.cpp
         tests/unit_event_channel.cpp
+        tests/unit_json_string.cpp
         tests/unit_text.cpp
         tests/unit_transcript_renderer.cpp
         tests/unit_agent_worker.cpp
         tests/unit_agent_context.cpp
+        tests/unit_agent_protocol.cpp
         tests/unit_user.cpp
         tests/unit_user_session.cpp
         tests/unit_workspace.cpp

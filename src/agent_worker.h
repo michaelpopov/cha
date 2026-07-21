@@ -4,6 +4,7 @@
 #include "agent_info.h"
 #include "agent_protocol.h"
 #include "completion_backend.h"
+#include "conversation.h"
 
 #include <atomic>
 #include <memory>
@@ -14,9 +15,11 @@ namespace cha {
 // Runs one construction-started completion thread and owns its channels and cancellation token.
 class AgentWorker {
 public:
-    explicit AgentWorker(AgentDefinition definition);
+    AgentWorker(const Conversation& conversation, AgentDefinition definition);
     // Accepts a completion backend for isolated worker tests or alternate transports.
-    explicit AgentWorker(std::unique_ptr<CompletionBackend> client);
+    AgentWorker(
+        const Conversation& conversation,
+        std::unique_ptr<CompletionBackend> client);
     ~AgentWorker() noexcept;
 
     AgentWorker(const AgentWorker&) = delete;
@@ -37,6 +40,7 @@ private:
 
     std::atomic_bool cancellation_{false};
     std::atomic_bool request_outstanding_{false};
+    const Conversation& conversation_;
     std::unique_ptr<CompletionBackend> client_;
     CompletionRequestChannel requests_;
     AgentEventChannel events_;

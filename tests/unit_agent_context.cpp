@@ -2,8 +2,66 @@
 
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
 namespace cha {
 namespace {
+
+struct MaterializedMessage {
+    AgentRole role{};
+    std::string content;
+
+    bool operator==(const MaterializedMessage&) const = default;
+};
+
+class MaterializingWriter final : public AgentContextWriter {
+public:
+    void begin_message(AgentRole role) override {
+        if (open_) {
+            throw std::logic_error("message already open");
+        }
+        current_ = {.role = role};
+        open_ = true;
+    }
+
+    void append_content(std::string_view text) override {
+        if (!open_) {
+            throw std::logic_error("no open message");
+        }
+        current_.content += text;
+    }
+
+    void end_message() override {
+        if (!open_) {
+            throw std::logic_error("no open message");
+        }
+        messages.push_back(std::move(current_));
+        open_ = false;
+    }
+
+    std::vector<MaterializedMessage> messages;
+
+private:
+    MaterializedMessage current_;
+    bool open_{};
+};
+
+std::vector<MaterializedMessage> context(
+    const ConversationSnapshot& conversation,
+    std::string_view system_prompt,
+    std::string_view agent_id) {
+    MaterializingWriter writer;
+    write_agent_context(
+        conversation.entries,
+        conversation.open_entry_id,
+        system_prompt,
+        agent_id,
+        writer);
+    return writer.messages;
+}
 
 TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
     const ConversationSnapshot conversation{
@@ -18,13 +76,13 @@ TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
     };
 
     EXPECT_EQ(
-        build_agent_context(conversation, "Be concise.", "reviewer-id"),
-        (std::vector<AgentMessage>{
-            {"system", "Be concise."},
-            {"user", "Draft an answer"},
-            {"assistant", "writer-id: Initial draft"},
-            {"user", "Review it"},
-            {"assistant", "Looks good"},
+        context(conversation, "Be concise.", "reviewer-id"),
+        (std::vector<MaterializedMessage>{
+            {AgentRole::system, "Be concise."},
+            {AgentRole::user, "Draft an answer"},
+            {AgentRole::assistant, "writer-id: Initial draft"},
+            {AgentRole::user, "Review it"},
+            {AgentRole::assistant, "Looks good"},
         }));
 }
 
@@ -44,8 +102,8 @@ TEST(AgentContext, OmitsNoticesErrorsFailedPromptsAndIncompleteAgentEntries) {
     };
 
     EXPECT_EQ(
-        build_agent_context(conversation, {}, "reviewer-id"),
-        (std::vector<AgentMessage>{{"user", "Current request"}}));
+        context(conversation, {}, "reviewer-id"),
+        (std::vector<MaterializedMessage>{{AgentRole::user, "Current request"}}));
 }
 
 TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {
@@ -58,8 +116,26 @@ TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {
     ConversationSnapshot after = before;
     after.entries.front().display_name = "New name";
 
-    EXPECT_EQ(build_agent_context(before, {}, "stable-id"), (std::vector<AgentMessage>{{"assistant", "Answer"}}));
-    EXPECT_EQ(build_agent_context(after, {}, "stable-id"), (std::vector<AgentMessage>{{"assistant", "Answer"}}));
+    EXPECT_EQ(
+        context(before, {}, "stable-id"),
+        (std::vector<MaterializedMessage>{{AgentRole::assistant, "Answer"}}));
+    EXPECT_EQ(
+        context(after, {}, "stable-id"),
+        (std::vector<MaterializedMessage>{{AgentRole::assistant, "Answer"}}));
+}
+
+TEST(AgentContext, SupportsArbitrarilyFragmentedWriterContent) {
+    MaterializingWriter writer;
+    writer.begin_message(AgentRole::assistant);
+    writer.append_content("one");
+    writer.append_content(" two");
+    writer.append_content(" three");
+    writer.append_content(" four");
+    writer.end_message();
+
+    EXPECT_EQ(
+        writer.messages,
+        (std::vector<MaterializedMessage>{{AgentRole::assistant, "one two three four"}}));
 }
 
 } // namespace

@@ -23,6 +23,11 @@ struct CompletionResult {
     std::string message;
 };
 
+// Owns all backend-defined data needed after conversation request preparation.
+struct RequestPayload {
+    std::string bytes;
+};
+
 // Receives one transport-level text fragment without attaching worker request identity.
 using CompletionDeltaSink = std::function<void(std::string)>;
 
@@ -31,8 +36,11 @@ class CompletionBackend {
 public:
     virtual ~CompletionBackend() = default;
 
-    [[nodiscard]] virtual CompletionResult complete(
+    [[nodiscard]] virtual RequestPayload prepare(
         const CompletionRequest& request,
+        const ConversationReadView& conversation) = 0;
+    [[nodiscard]] virtual CompletionResult perform(
+        RequestPayload payload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) = 0;
     [[nodiscard]] virtual AgentInfo info() const = 0;

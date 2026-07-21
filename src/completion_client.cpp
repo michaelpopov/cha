@@ -1,7 +1,7 @@
 #include "completion_client.h"
 
 #include "agent_context.h"
-#include "conversation.h"
+#include "json_string.h"
 
 #include <nlohmann/json.hpp>
 
@@ -204,6 +204,101 @@ void require_curl(CURLcode result, std::string_view operation) {
     }
 }
 
+std::string_view role_name(AgentRole role) {
+    switch (role) {
+    case AgentRole::system: return "system";
+    case AgentRole::user: return "user";
+    case AgentRole::assistant: return "assistant";
+    }
+    throw std::logic_error("Unknown agent context role");
+}
+
+class JsonAgentContextWriter final : public AgentContextWriter {
+public:
+    explicit JsonAgentContextWriter(std::string& output)
+        : output_(output) {
+    }
+
+    void begin_message(AgentRole role) override {
+        if (message_open_) {
+            throw std::logic_error("Agent context message is already open");
+        }
+        if (!first_message_) {
+            output_ += ',';
+        }
+        first_message_ = false;
+        output_ += "{\"role\":\"";
+        output_ += role_name(role);
+        output_ += "\",\"content\":\"";
+        message_open_ = true;
+    }
+
+    void append_content(std::string_view text) override {
+        if (!message_open_) {
+            throw std::logic_error("Agent context content has no open message");
+        }
+        append_json_string_content(output_, text);
+    }
+
+    void end_message() override {
+        if (!message_open_) {
+            throw std::logic_error("Agent context message is not open");
+        }
+        output_ += "\"}";
+        message_open_ = false;
+    }
+
+    void require_closed() const {
+        if (message_open_) {
+            throw std::logic_error("Agent context message was not closed");
+        }
+    }
+
+private:
+    std::string& output_;
+    bool first_message_{true};
+    bool message_open_{};
+};
+
+std::string build_request_body(
+    const ConversationReadView& conversation,
+    const Config& config,
+    std::string_view system_prompt) {
+    std::size_t capacity = 128 + config.model.size() + system_prompt.size()
+        + config.reasoning_effort.size();
+    for (const ConversationEntry& entry : conversation.entries()) {
+        capacity += entry.text.size() + entry.participant_id.size() + 32;
+    }
+
+    std::string body;
+    body.reserve(capacity);
+    body += "{\"model\":\"";
+    append_json_string_content(body, config.model);
+    body += "\",\"stream\":";
+    body += config.stream ? "true" : "false";
+    body += ",\"messages\":[";
+    JsonAgentContextWriter writer(body);
+    write_agent_context(
+        conversation.entries(),
+        conversation.open_entry_id(),
+        system_prompt,
+        config.id,
+        writer);
+    writer.require_closed();
+    body += ']';
+    if (config.temperature) {
+        body += ",\"temperature\":";
+        body += Json(*config.temperature).dump();
+    }
+    if (!config.reasoning_effort.empty()) {
+        body += ",\"reasoning_effort\":\"";
+        append_json_string_content(body, config.reasoning_effort);
+        body += '"';
+    }
+    body += '}';
+    return body;
+}
+
 } // namespace
 
 CompletionClient::CompletionClient(AgentDefinition definition)
@@ -321,42 +416,33 @@ void CompletionClient::discover_model() {
     }
 }
 
-CompletionResult CompletionClient::complete(
+RequestPayload CompletionClient::prepare(
     const CompletionRequest& request,
+    const ConversationReadView& conversation) {
+    if (config_.mode == Mode::test) {
+        return {.bytes = request.prompt.text};
+    }
+    return {
+        .bytes = build_request_body(
+            conversation,
+            config_,
+            system_prompt_),
+    };
+}
+
+CompletionResult CompletionClient::perform(
+    RequestPayload payload,
     const CompletionDeltaSink& on_delta,
     const std::atomic_bool& cancellation) {
     if (cancellation.load(std::memory_order_acquire)) {
         return {CompletionOutcome::cancelled, {}};
     }
     if (config_.mode == Mode::test) {
-        on_delta(request.prompt.text);
+        on_delta(std::move(payload.bytes));
         return {CompletionOutcome::completed, {}};
     }
 
-    Json body;
-    body["model"] = config_.model;
-    body["stream"] = config_.stream;
-    body["messages"] = Json::array();
-    ConversationSnapshot snapshot{
-        .entries = request.history,
-    };
-    snapshot.entries.push_back(request.prompt);
-    for (const AgentMessage& message :
-         build_agent_context(snapshot, system_prompt_, config_.id)) {
-        Json protocol_message{
-            {"role", message.role},
-            {"content", message.content},
-        };
-        body["messages"].push_back(std::move(protocol_message));
-    }
-    if (config_.temperature) {
-        body["temperature"] = *config_.temperature;
-    }
-    if (!config_.reasoning_effort.empty()) {
-        body["reasoning_effort"] = config_.reasoning_effort;
-    }
-
-    const std::string request_body = body.dump();
+    const std::string& request_body = payload.bytes;
     ResponseContext response{
         .on_delta = &on_delta,
         .streaming = config_.stream,

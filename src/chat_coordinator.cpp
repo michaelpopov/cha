@@ -31,7 +31,7 @@ ChatCoordinator::ChatCoordinator(
     std::filesystem::path journal_path,
     ConversationRestore restored)
   : journal_(std::move(journal_path)),
-    worker_(std::move(definition)),
+    worker_(conversation_, std::move(definition)),
     agent_info_(worker_.info()) {
     initialize(std::move(restored));
 }
@@ -41,7 +41,7 @@ ChatCoordinator::ChatCoordinator(
     std::filesystem::path journal_path,
     ConversationRestore restored)
   : journal_(std::move(journal_path)),
-    worker_(std::move(backend)),
+    worker_(conversation_, std::move(backend)),
     agent_info_(worker_.info()) {
     initialize(std::move(restored));
 }
@@ -138,20 +138,17 @@ CoordinatorUpdate ChatCoordinator::handle_input(std::string input) {
 CoordinatorUpdate ChatCoordinator::submit(std::string prompt) {
     CoordinatorUpdate update;
     update.clear_input = true;
-    const ConversationSnapshot snapshot = conversation_.snapshot();
     const RequestId request_id = next_request_id_++;
-    ConversationEntry prompt_entry =
-        make_human_entry(next_entry_id_++, std::move(prompt), request_id);
     CompletionRequest request{
         .request_id = request_id,
         .agent_id = agent_info_.id,
-        .history = snapshot.entries,
-        .prompt = prompt_entry,
+        .prompt = make_human_entry(next_entry_id_++, std::move(prompt), request_id),
     };
 
     journal_.start_turn(request.request_id, request.agent_id, request.prompt);
     try {
-        conversation_.add_entry(std::move(prompt_entry));
+        conversation_.add_entry(request.prompt);
+        request.conversation_revision = conversation_.revision();
     } catch (...) {
         const ConversationEntry error = make_error_entry(
             next_entry_id_++,

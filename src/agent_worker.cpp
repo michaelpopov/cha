@@ -9,14 +9,20 @@
 
 namespace cha {
 
-AgentWorker::AgentWorker(AgentDefinition definition)
+AgentWorker::AgentWorker(
+    const Conversation& conversation,
+    AgentDefinition definition)
     : AgentWorker(
+          conversation,
           std::make_unique<CompletionClient>(
               std::move(definition))) {
 }
 
-AgentWorker::AgentWorker(std::unique_ptr<CompletionBackend> client)
-    : client_(std::move(client)) {
+AgentWorker::AgentWorker(
+    const Conversation& conversation,
+    std::unique_ptr<CompletionBackend> client)
+    : conversation_(conversation),
+      client_(std::move(client)) {
     if (!client_) {
         throw std::invalid_argument(
             "Agent worker requires a completion backend");
@@ -100,8 +106,19 @@ void AgentWorker::dialog() {
         }
         try {
             validate_completion_request(*request, client_->agent_id());
-            const CompletionResult result = client_->complete(
-                *request,
+            if (cancellation_.load(std::memory_order_acquire)) {
+                publish_terminal(AgentCancelled{request->request_id});
+                continue;
+            }
+
+            RequestPayload payload;
+            {
+                ConversationReadView conversation = conversation_.read();
+                validate_completion_context(*request, conversation);
+                payload = client_->prepare(*request, conversation);
+            }
+            const CompletionResult result = client_->perform(
+                std::move(payload),
                 [this, request_id = request->request_id](std::string text) {
                     events_.push(AgentDelta{request_id, std::move(text)});
                 },

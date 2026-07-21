@@ -118,8 +118,14 @@ public:
       : wait_for_cancellation_(wait_for_cancellation) {
     }
 
-    CompletionResult complete(
+    RequestPayload prepare(
         const CompletionRequest& request,
+        const ConversationReadView&) override {
+        return {.bytes = request.prompt.text};
+    }
+
+    CompletionResult perform(
+        RequestPayload payload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
         if (wait_for_cancellation_) {
@@ -128,7 +134,7 @@ public:
             }
             return {CompletionOutcome::cancelled, {}};
         }
-        on_delta("Answer to " + request.prompt.text);
+        on_delta("Answer to " + payload.bytes);
         return {};
     }
 
