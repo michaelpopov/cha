@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <vector>
 
 static int main_internal();
 
@@ -33,6 +34,7 @@ int main_internal() {
     std::string session_name;
     std::filesystem::path session_database;
     std::optional<cha::ConversationRestore> restored;
+    std::vector<cha::AgentDefinition> definitions;
     cha::Terminal terminal;
     {
         cha::StartupSelector selector(terminal);
@@ -41,7 +43,10 @@ int main_internal() {
             return 0;
         }
         room = workspace.load_room(*room_name);
-        session_repository.emplace(room.directory / "sessions", room.name, room.persona_name);
+        std::vector<std::filesystem::path> persona_directories;
+        for (const std::string& persona : room.persona_names) persona_directories.push_back(workspace.persona_directory(persona));
+        definitions = cha::load_agent_definitions(persona_directories, room.directory);
+        session_repository.emplace(room.directory / "sessions", room.name);
         std::string selection_error;
         while (true) {
             const auto selected_session = selector.select_session(session_repository->list(), selection_error);
@@ -79,9 +84,7 @@ int main_internal() {
     }
 
     cha::ChatCoordinator coordinator(
-        cha::load_agent_definition(
-            workspace.persona_directory(room),
-            room.directory),
+        std::move(definitions),
         session_database,
         restored ? std::move(*restored) : cha::ConversationRestore{});
     cha::run_user(terminal, coordinator);

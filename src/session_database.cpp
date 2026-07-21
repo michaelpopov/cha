@@ -19,7 +19,7 @@ namespace cha {
 namespace {
 
 constexpr int session_application_id = 0x43484131; // "CHA1"
-constexpr int session_database_version = 1;
+constexpr int session_database_version = 2;
 
 static_assert(static_cast<std::int64_t>(EntryKind::human) == 0);
 static_assert(static_cast<std::int64_t>(EntryKind::agent) == 1);
@@ -309,7 +309,6 @@ void create_schema(Database& database) {
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             id TEXT NOT NULL UNIQUE CHECK (id <> ''),
             room TEXT NOT NULL CHECK (room <> ''),
-            persona TEXT NOT NULL CHECK (persona <> ''),
             label TEXT NOT NULL CHECK (label <> '')
         ) STRICT;
 
@@ -323,7 +322,6 @@ void create_schema(Database& database) {
         CREATE TABLE turns (
             request_id INTEGER PRIMARY KEY CHECK (request_id > 0),
             epoch INTEGER NOT NULL CHECK (epoch > 0),
-            agent_id TEXT NOT NULL CHECK (agent_id <> ''),
             state INTEGER NOT NULL CHECK (state BETWEEN 0 AND 3)
         ) STRICT;
 
@@ -339,9 +337,13 @@ void create_schema(Database& database) {
             kind INTEGER NOT NULL CHECK (kind BETWEEN 0 AND 3),
             participant_id TEXT NOT NULL,
             display_name TEXT NOT NULL CHECK (display_name <> ''),
+            addressed_to TEXT NOT NULL DEFAULT '',
+            addressed_to_name TEXT NOT NULL DEFAULT '',
             text TEXT NOT NULL,
             status INTEGER NOT NULL CHECK (status IN (0, 2, 3)),
             CHECK (kind NOT IN (0, 1) OR participant_id <> ''),
+            CHECK (kind <> 0 OR (addressed_to <> '' AND addressed_to_name <> '')),
+            CHECK (kind = 0 OR (addressed_to = '' AND addressed_to_name = '')),
             CHECK (kind <> 3 OR status = 3),
             CHECK (kind NOT IN (0, 2) OR status = 0),
             CHECK (kind <> 1 OR status <> 3),
@@ -350,6 +352,10 @@ void create_schema(Database& database) {
 
         CREATE INDEX entries_by_epoch
             ON entries (epoch, entry_id);
+
+        CREATE UNIQUE INDEX one_prompt_per_turn
+            ON entries (request_id)
+            WHERE kind = 0 AND request_id IS NOT NULL;
 
         INSERT INTO state (
             singleton,
@@ -396,6 +402,13 @@ void validate_database(Database& database) {
     }
 
     (void)read_state(database);
+    Statement turns_without_prompt = database.prepare(
+        "SELECT t.request_id FROM turns AS t LEFT JOIN entries AS e "
+        "ON e.request_id = t.request_id AND e.epoch = t.epoch AND e.kind = 0 "
+        "GROUP BY t.request_id HAVING COUNT(e.entry_id) <> 1 LIMIT 1");
+    if (turns_without_prompt.step()) {
+        throw std::runtime_error("Session database '" + database.path() + "' has a turn without exactly one prompt");
+    }
 }
 
 [[nodiscard]] EntryKind parse_kind(std::int64_t value) {
@@ -492,14 +505,16 @@ void insert_entry(
         : std::nullopt;
     Statement statement = database.prepare(
         "INSERT INTO entries ("
-        "entry_id, epoch, request_id, kind, participant_id, display_name, text, status"
-        ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "entry_id, epoch, request_id, kind, participant_id, display_name, addressed_to, addressed_to_name, text, status"
+        ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         sqlite_id(entry.id, "Conversation entry ID"),
         epoch,
         request_id,
         static_cast<std::int64_t>(entry.kind),
         std::string_view(entry.participant_id),
         std::string_view(entry.display_name),
+        std::string_view(entry.addressed_to),
+        std::string_view(entry.addressed_to_name),
         std::string_view(entry.text),
         static_cast<std::int64_t>(entry.status));
     statement.run();
@@ -511,8 +526,10 @@ void insert_entry(
         .kind = parse_kind(statement.integer(2)),
         .participant_id = statement.text(3),
         .display_name = statement.text(4),
-        .text = statement.text(5),
-        .status = parse_status(statement.integer(6)),
+        .addressed_to = statement.text(5),
+        .addressed_to_name = statement.text(6),
+        .text = statement.text(7),
+        .status = parse_status(statement.integer(8)),
     };
     if (!statement.is_null(1)) {
         entry.request_id = unsigned_id(statement.integer(1), "request ID");
@@ -611,7 +628,7 @@ bool create_session_database(
     const std::filesystem::path& path,
     const SessionDatabaseMetadata& metadata) {
 
-    if (metadata.id.empty() || metadata.room.empty() || metadata.persona.empty()
+    if (metadata.id.empty() || metadata.room.empty()
         || metadata.label.empty()) {
         throw std::invalid_argument(
             "Session database metadata fields cannot be empty");
@@ -627,11 +644,10 @@ bool create_session_database(
             Transaction transaction(database);
             create_schema(database);
             Statement statement = database.prepare(
-                "INSERT INTO session (singleton, id, room, persona, label) "
-                "VALUES (1, ?1, ?2, ?3, ?4)",
+                "INSERT INTO session (singleton, id, room, label) "
+                "VALUES (1, ?1, ?2, ?3)",
                 std::string_view(metadata.id),
                 std::string_view(metadata.room),
-                std::string_view(metadata.persona),
                 std::string_view(metadata.label));
             statement.run();
             transaction.commit();
@@ -654,7 +670,7 @@ SessionDatabaseMetadata read_session_database_metadata(
     Database database(path, Database::Mode::read_only);
     validate_database(database);
     Statement statement = database.prepare(
-        "SELECT id, room, persona, label FROM session WHERE singleton = 1");
+        "SELECT id, room, label FROM session WHERE singleton = 1");
     if (!statement.step()) {
         throw std::runtime_error(
             "Session database '" + path.string() + "' has no metadata");
@@ -662,8 +678,7 @@ SessionDatabaseMetadata read_session_database_metadata(
     return {
         .id = statement.text(0),
         .room = statement.text(1),
-        .persona = statement.text(2),
-        .label = statement.text(3),
+        .label = statement.text(2),
     };
 }
 
@@ -680,7 +695,7 @@ ConversationRestore load_conversation_state(
     };
 
     Statement entries = database.prepare(
-        "SELECT entry_id, request_id, kind, participant_id, display_name, text, status "
+        "SELECT entry_id, request_id, kind, participant_id, display_name, addressed_to, addressed_to_name, text, status "
         "FROM entries WHERE epoch = ?1 ORDER BY entry_id",
         state.epoch);
     while (entries.step()) {
@@ -688,8 +703,9 @@ ConversationRestore load_conversation_state(
     }
 
     Statement interrupted = database.prepare(
-        "SELECT request_id, agent_id FROM turns "
-        "WHERE state = 0 ORDER BY request_id");
+        "SELECT t.request_id, e.addressed_to FROM turns AS t JOIN entries AS e "
+        "ON e.request_id = t.request_id AND e.epoch = t.epoch AND e.kind = 0 "
+        "WHERE t.state = 0 ORDER BY t.request_id");
     while (interrupted.step()) {
         const RequestId request_id =
             unsigned_id(interrupted.integer(0), "interrupted request ID");
@@ -732,23 +748,17 @@ void ConversationJournal::append(const ConversationEntry& entry) {
 
 void ConversationJournal::start_turn(
     RequestId request_id,
-    std::string_view agent_id,
     const ConversationEntry& prompt) {
-
-    if (agent_id.empty()) {
-        throw std::invalid_argument("A turn requires a non-empty agent identity");
-    }
     validate_turn_entry(TurnRecordKind::started, request_id, prompt);
 
     Transaction transaction(impl_->database);
     advance_request_id(impl_->database, request_id);
     const std::int64_t epoch = current_epoch(impl_->database);
     Statement turn = impl_->database.prepare(
-        "INSERT INTO turns (request_id, epoch, agent_id, state) "
-        "VALUES (?1, ?2, ?3, 0)",
+        "INSERT INTO turns (request_id, epoch, state) "
+        "VALUES (?1, ?2, 0)",
         sqlite_id(request_id, "Request ID"),
-        epoch,
-        agent_id);
+        epoch);
     turn.run();
     insert_entry(impl_->database, epoch, prompt);
     transaction.commit();

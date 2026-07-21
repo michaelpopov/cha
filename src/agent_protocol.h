@@ -13,7 +13,6 @@ namespace cha {
 // Carries the new prompt and correlation data for one completion request.
 struct CompletionRequest {
     RequestId request_id{};
-    std::string agent_id;
     std::size_t conversation_revision{};
     ConversationEntry prompt;
 };

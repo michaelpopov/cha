@@ -41,7 +41,6 @@ public:
                 {
                     .id = "user-session-test",
                     .room = "test-room",
-                    .persona = "test-persona",
                     .label = "User session test",
                 })) {
             throw std::runtime_error("Failed to create user-session test database");
@@ -71,12 +70,15 @@ public:
     void render(
         const Conversation& conversation,
         const InputEditor& editor,
-        bool generating,
+        GenerationStatus status,
+        bool show_addressing,
         std::string_view notice) override {
         ++render_count;
         rendered_entries = conversation.entries();
         rendered_input = editor.value();
-        rendered_generating = generating;
+        rendered_generating = status.active;
+        rendered_agent_name = std::move(status.agent_name);
+        rendered_show_addressing = show_addressing;
         rendered_notice = notice;
     }
 
@@ -114,6 +116,8 @@ public:
     std::string rendered_input;
     std::string rendered_notice;
     bool rendered_generating{};
+    std::string rendered_agent_name;
+    bool rendered_show_addressing{};
     int render_count{};
     int scroll_up_count{};
     int scroll_down_count{};

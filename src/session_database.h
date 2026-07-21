@@ -16,7 +16,6 @@ namespace cha {
 struct SessionDatabaseMetadata {
     std::string id;
     std::string room;
-    std::string persona;
     std::string label;
 };
 
@@ -62,7 +61,6 @@ public:
     void append(const ConversationEntry& entry);
     void start_turn(
         RequestId request_id,
-        std::string_view agent_id,
         const ConversationEntry& prompt);
     void complete_turn(RequestId request_id, const ConversationEntry& response);
     void cancel_turn(RequestId request_id, std::optional<ConversationEntry> response);

@@ -1,27 +1,13 @@
 #include "config.h"
 
+#include "agent_identity.h"
+
 #include <toml++/toml.hpp>
 
 #include <stdexcept>
 #include <string_view>
 
 namespace cha {
-namespace {
-
-bool is_participant_id(std::string_view id) {
-    for (const char character : id) {
-        const bool ascii_letter = (character >= 'a' && character <= 'z')
-            || (character >= 'A' && character <= 'Z');
-        const bool digit = character >= '0' && character <= '9';
-        if (!ascii_letter && !digit && character != '_' && character != '-') {
-            return false;
-        }
-    }
-    return !id.empty();
-}
-
-} // namespace
-
 Config Config::load(const std::filesystem::path& path) {
     const toml::table table = toml::parse_file(path.string());
     const auto host = table["host"].value<std::string>();
@@ -36,11 +22,11 @@ Config Config::load(const std::filesystem::path& path) {
             + "' requires non-empty string 'id' and 'name', string 'host', and integer 'port' values"
         );
     }
-    if (!is_participant_id(*id)) {
-        throw std::runtime_error(
-            "Config file '" + path.string()
-            + "' requires 'id' to contain only ASCII letters, digits, underscores, and hyphens"
-        );
+    try {
+        validate_agent_id(*id);
+        validate_agent_name(*name);
+    } catch (const std::invalid_argument& error) {
+        throw std::runtime_error("Config file '" + path.string() + "': " + error.what());
     }
     if (table.contains("model") && !model) {
         throw std::runtime_error("Config file '" + path.string() + "' requires string 'model' value");

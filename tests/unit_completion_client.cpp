@@ -26,8 +26,12 @@ CompletionRequest client_request(
     }
     CompletionRequest request{
         .request_id = request_id,
-        .agent_id = "assistant",
-        .prompt = make_human_entry(1000 + request_id, std::move(prompt), request_id),
+        .prompt = make_human_entry(
+            1000 + request_id,
+            "assistant",
+            "Assistant",
+            std::move(prompt),
+            request_id),
     };
     conversation.add_entry(request.prompt);
     request.conversation_revision = conversation.revision();
@@ -51,6 +55,8 @@ CompletionResult complete(
 
 Config network_config(int port, bool stream = true) {
     Config config;
+    config.id = "assistant";
+    config.name = "Assistant";
     config.host = "127.0.0.1";
     config.port = port;
     config.mode = Mode::net;
@@ -72,13 +78,12 @@ std::string status_response(
 
 TEST(CompletionClient, EchoesOnePromptInTestMode) {
     Config config;
-    config.id = "local-agent";
-    config.name = "Local agent";
+    config.id = "assistant";
+    config.name = "Assistant";
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = config});
     Conversation conversation;
     CompletionRequest request = client_request(conversation, 1, "hello");
-    request.agent_id = "local-agent";
     std::vector<std::string> deltas;
 
     const CompletionResult result = complete(
@@ -92,13 +97,12 @@ TEST(CompletionClient, EchoesOnePromptInTestMode) {
 
 TEST(CompletionClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
     Config config;
-    config.id = "local-agent";
-    config.name = "Local agent";
+    config.id = "assistant";
+    config.name = "Assistant";
     std::atomic_bool cancellation{true};
     CompletionClient client({.config = config});
     Conversation conversation;
     CompletionRequest request = client_request(conversation, 2, "do not dispatch");
-    request.agent_id = "local-agent";
     bool received_delta = false;
 
     const CompletionResult result = complete(
@@ -127,7 +131,7 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
     Conversation conversation;
     const CompletionRequest request = client_request(
         conversation, 7, "Question", {
-            make_human_entry(1, "Earlier question", 6),
+            make_human_entry(1, "assistant", "Assistant", "Earlier question", 6),
             make_agent_entry(2, "assistant", "Assistant", "Earlier answer", CompletionStatus::complete, 6),
             make_notice_entry(3, "hidden"),
             make_agent_entry(4, "other", "Other", "Other answer", CompletionStatus::complete, 6),
@@ -151,10 +155,9 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
     EXPECT_EQ(body["reasoning_effort"], "medium");
     EXPECT_EQ(body["messages"], Json::array({
         {{"role", "system"}, {"content", "Be concise."}},
-        {{"role", "user"}, {"content", "Earlier question"}},
+        {{"role", "user"}, {"content", "User: Earlier question"}},
         {{"role", "assistant"}, {"content", "Earlier answer"}},
-        {{"role", "assistant"}, {"content", "other: Other answer"}},
-        {{"role", "user"}, {"content", "Question"}},
+        {{"role", "user"}, {"content", "Other: Other answer\n\nUser: Question"}},
     }));
 }
 

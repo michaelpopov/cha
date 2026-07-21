@@ -2,14 +2,15 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cha {
 
-// Describes a resolved room, including its selected persona name and storage directory.
+// Describes a resolved room, including its ordered persona roster and storage directory.
 struct Room {
     std::string name;
-    std::string persona_name;
+    std::vector<std::string> persona_names;
     std::filesystem::path directory;
 };
 
@@ -21,11 +22,11 @@ public:
     [[nodiscard]] std::vector<std::string> rooms() const;
     [[nodiscard]] Room load_room(const std::string& name) const;
     // Resolves the selected persona directory without loading its agent configuration.
-    [[nodiscard]] std::filesystem::path persona_directory(const Room& room) const;
+    [[nodiscard]] std::filesystem::path persona_directory(std::string_view persona_name) const;
 
 private:
     [[nodiscard]] std::filesystem::path room_directory(const std::string& name) const;
-    [[nodiscard]] static std::string read_single_name_list(const std::filesystem::path& path);
+    [[nodiscard]] static std::vector<std::string> read_name_list(const std::filesystem::path& path);
 
     std::filesystem::path root_;
 };

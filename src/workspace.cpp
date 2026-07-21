@@ -5,6 +5,7 @@
 
 #include <fstream>
 #include <stdexcept>
+#include <unordered_set>
 #include <string_view>
 
 namespace cha {
@@ -47,19 +48,24 @@ Room Workspace::load_room(const std::string& name) const {
     if (!std::filesystem::is_directory(directory)) {
         throw std::runtime_error("Room '" + name + "' does not exist");
     }
-    const std::string persona_name = read_single_name_list(directory / "personas.list");
-    const std::filesystem::path persona_directory = root_ / "personas" / persona_name;
-    if (!std::filesystem::is_directory(persona_directory)) {
-        throw std::runtime_error("Persona '" + persona_name + "' selected by room '" + name + "' does not exist");
+    const std::vector<std::string> persona_names = read_name_list(directory / "personas.list");
+    for (const std::string& persona_name : persona_names) {
+        try {
+            (void)persona_directory(persona_name);
+        } catch (const std::exception&) {
+            throw std::runtime_error(
+                "Persona '" + persona_name + "' selected by room '" + name
+                + "' does not exist");
+        }
     }
-
-    return {name, persona_name, directory};
+    return {name, persona_names, directory};
 }
 
-std::filesystem::path Workspace::persona_directory(const Room& room) const {
-    const std::filesystem::path persona_directory = root_ / "personas" / room.persona_name;
+std::filesystem::path Workspace::persona_directory(std::string_view persona_name) const {
+    require_path_component(persona_name, root_ / "personas");
+    const std::filesystem::path persona_directory = root_ / "personas" / std::string(persona_name);
     if (!std::filesystem::is_directory(persona_directory)) {
-        throw std::runtime_error("Persona '" + room.persona_name + "' selected by room '" + room.name + "' does not exist");
+        throw std::runtime_error("Persona '" + std::string(persona_name) + "' does not exist");
     }
     return persona_directory;
 }
@@ -69,12 +75,13 @@ std::filesystem::path Workspace::room_directory(const std::string& name) const {
     return root_ / "rooms" / name;
 }
 
-std::string Workspace::read_single_name_list(const std::filesystem::path& path) {
+std::vector<std::string> Workspace::read_name_list(const std::filesystem::path& path) {
     std::ifstream file(path);
     if (!file) {
         throw std::runtime_error("Failed to read personas list '" + path.string() + "'");
     }
-    std::string result;
+    std::vector<std::string> result;
+    std::unordered_set<std::string> seen;
     std::string line;
     while (std::getline(file, line)) {
         const std::string_view value = trim_view(line);
@@ -82,10 +89,10 @@ std::string Workspace::read_single_name_list(const std::filesystem::path& path) 
             continue;
         }
         require_path_component(value, path);
-        if (!result.empty()) {
-            throw std::runtime_error("Personas list '" + path.string() + "' must name exactly one persona");
+        if (!seen.insert(std::string(value)).second) {
+            throw std::runtime_error("Personas list '" + path.string() + "' names persona '" + std::string(value) + "' more than once");
         }
-        result = value;
+        result.emplace_back(value);
     }
     if (result.empty()) {
         throw std::runtime_error("Personas list '" + path.string() + "' does not name a persona");

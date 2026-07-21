@@ -22,10 +22,10 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 
 } // namespace
 
-std::string transcript_entry_label(const ConversationEntry& entry) {
+std::string transcript_entry_label(const ConversationEntry& entry, bool show_addressing) {
     switch (entry.kind) {
     case EntryKind::human:
-        return "[You] ";
+        return show_addressing ? "[You → " + entry.addressed_to_name + "] " : "[You] ";
     case EntryKind::agent:
         return "[Agent: " + entry.display_name + "] ";
     case EntryKind::notice:

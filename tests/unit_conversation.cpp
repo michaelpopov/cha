@@ -26,16 +26,23 @@ void create_test_database(const std::filesystem::path& path) {
             {
                 .id = path.stem().string(),
                 .room = "test-room",
-                .persona = "test-persona",
                 .label = "Test session",
             })) {
         throw std::runtime_error("Failed to create test session database");
     }
 }
 
+ConversationEntry human(
+    EntryId id,
+    std::string text,
+    std::optional<RequestId> request_id = std::nullopt) {
+    return make_human_entry(
+        id, "reviewer-id", "Reviewer", std::move(text), request_id);
+}
+
 TEST(Conversation, StoresTypedCompleteAndStreamingEntries) {
     Conversation conversation;
-    conversation.add_entry(make_human_entry(1, "Review this code", 10));
+    conversation.add_entry(human(1, "Review this code", 10));
     conversation.begin_entry(make_agent_entry(
         2, "reviewer-id", "Reviewer", {}, CompletionStatus::streaming, 10));
     conversation.append_to_entry(2, "Two ");
@@ -47,7 +54,7 @@ TEST(Conversation, StoresTypedCompleteAndStreamingEntries) {
     EXPECT_EQ(
         conversation.entries(),
         (std::vector<ConversationEntry>{
-            make_human_entry(1, "Review this code", 10),
+            human(1, "Review this code", 10),
             make_agent_entry(
                 2, "reviewer-id", "Reviewer", "Two issues found", CompletionStatus::complete, 10),
         }));
@@ -119,7 +126,7 @@ TEST(Conversation, ReplacesAndClearsEntries) {
     conversation.add_entry(make_notice_entry(1, "Old"));
     const std::size_t initial_epoch = conversation.snapshot().history_epoch;
     conversation.replace_entries({
-        make_human_entry(2, "Restored"),
+        human(2, "Restored"),
         make_agent_entry(3, "guide-id", "Guide", "Welcome", CompletionStatus::complete),
     });
 
@@ -178,7 +185,7 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     const auto path = temporary_path("cha_conversation_");
     create_test_database(path);
     ConversationJournal journal(path);
-    journal.start_turn(1, "reviewer-id", make_human_entry(1, "Hello", 1));
+    journal.start_turn(1, human(1, "Hello", 1));
     journal.complete_turn(1, make_agent_entry(
         2, "reviewer-id", "Reviewer", "Hello back", CompletionStatus::complete, 1));
     journal.append(make_notice_entry(3, "Information"));
@@ -186,7 +193,7 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     EXPECT_EQ(
         load_conversation_entries(path),
         (std::vector<ConversationEntry>{
-            make_human_entry(1, "Hello", 1),
+            human(1, "Hello", 1),
             make_agent_entry(
                 2,
                 "reviewer-id",
@@ -253,7 +260,7 @@ TEST(ConversationJournal, RollsBackAnInvalidTerminalTransition) {
     const auto path = temporary_path("cha_rollback_journal_");
     create_test_database(path);
     ConversationJournal journal(path);
-    journal.start_turn(1, "guide-id", make_human_entry(1, "Question", 1));
+    journal.start_turn(1, human(1, "Question", 1));
     EXPECT_THROW(
         journal.complete_turn(
             1,
@@ -268,7 +275,7 @@ TEST(ConversationJournal, RollsBackAnInvalidTerminalTransition) {
 
     const ConversationRestore restored = load_conversation_state(path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
-    EXPECT_EQ(restored.entries.front(), make_human_entry(1, "Question", 1));
+    EXPECT_EQ(restored.entries.front(), human(1, "Question", 1));
     std::filesystem::remove(path);
 }
 
@@ -276,10 +283,10 @@ TEST(ConversationJournal, ReplaysIdentifiedTypedTurnOutcomes) {
     const auto path = temporary_path("cha_identified_journal_");
     create_test_database(path);
     ConversationJournal journal(path);
-    journal.start_turn(7, "guide-id", make_human_entry(1, "First", 7));
+    journal.start_turn(7, human(1, "First", 7));
     journal.complete_turn(7, make_agent_entry(
         2, "guide-id", "Guide", "Answer", CompletionStatus::complete, 7));
-    journal.start_turn(8, "guide-id", make_human_entry(3, "Second", 8));
+    journal.start_turn(8, human(3, "Second", 8));
     journal.fail_turn(8, make_error_entry(4, "Unavailable", 8, "guide-id"));
 
     const ConversationRestore restored = load_conversation_state(path);
@@ -289,9 +296,9 @@ TEST(ConversationJournal, ReplaysIdentifiedTypedTurnOutcomes) {
     EXPECT_EQ(
         restored.entries,
         (std::vector<ConversationEntry>{
-            make_human_entry(1, "First", 7),
+            human(1, "First", 7),
             make_agent_entry(2, "guide-id", "Guide", "Answer", CompletionStatus::complete, 7),
-            make_human_entry(3, "Second", 8),
+            human(3, "Second", 8),
             make_error_entry(4, "Unavailable", 8, "guide-id"),
         }));
     std::filesystem::remove(path);
@@ -303,7 +310,7 @@ TEST(ConversationJournal, RejectsEntriesThatDoNotMatchTheirTurnRecords) {
     ConversationJournal journal(path);
 
     EXPECT_THROW(
-        journal.start_turn(7, "guide-id", make_human_entry(1, "Prompt", 8)),
+        journal.start_turn(7, human(1, "Prompt", 8)),
         std::invalid_argument);
     EXPECT_THROW(
         journal.complete_turn(7, make_agent_entry(
@@ -325,8 +332,8 @@ TEST(ConversationJournal, RecognizesAnInterruptedTypedTurn) {
     create_test_database(path);
     ConversationJournal journal(path);
     const ConversationEntry prompt =
-        make_human_entry(5, "Pending", 12);
-    journal.start_turn(12, "guide-id", prompt);
+        make_human_entry(5, "guide-id", "Guide", "Pending", 12);
+    journal.start_turn(12, prompt);
 
     const ConversationRestore restored = load_conversation_state(path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);

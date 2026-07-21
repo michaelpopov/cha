@@ -76,7 +76,10 @@ target_compile_definitions(
 )
 
 add_library(cha_core
+    src/agent_identity.cpp
     src/agent_definition.cpp
+    src/agent_registry.cpp
+    src/agent_roster.cpp
     src/command.cpp
     src/chat_coordinator.cpp
     src/completion_client.cpp
@@ -85,6 +88,7 @@ add_library(cha_core
     src/environment.cpp
     src/input_editor.cpp
     src/json_string.cpp
+    src/mention.cpp
     src/path_name.cpp
     src/session_database.cpp
     src/agent_worker.cpp
@@ -118,8 +122,25 @@ target_link_libraries(
         cha_sqlite3
 )
 
+function(cha_enable_warnings target)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        target_compile_options(
+            ${target}
+            PRIVATE
+                -Wall
+                -Wextra
+                -Wpedantic
+                -Wno-missing-field-initializers)
+    elseif(MSVC)
+        target_compile_options(${target} PRIVATE /W4)
+    endif()
+endfunction()
+
+cha_enable_warnings(cha_core)
+
 add_executable(cha src/main.cpp)
 target_link_libraries(cha PRIVATE cha_core)
+cha_enable_warnings(cha)
 
 if(BUILD_TESTING)
     FetchContent_Declare(
@@ -131,6 +152,9 @@ if(BUILD_TESTING)
 
     add_executable(cha_tests
         tests/unit_agent_definition.cpp
+        tests/unit_agent_registry.cpp
+        tests/unit_agent_roster.cpp
+        tests/unit_mention.cpp
         tests/unit_config.cpp
         tests/unit_chat_coordinator.cpp
         tests/unit_completion_client.cpp
@@ -148,9 +172,11 @@ if(BUILD_TESTING)
         tests/unit_workspace.cpp
     )
     target_link_libraries(cha_tests PRIVATE cha_core GTest::gtest_main)
+    cha_enable_warnings(cha_tests)
 
     add_executable(itest tests/integration_test.cpp)
     target_link_libraries(itest PRIVATE cha_core GTest::gtest_main)
+    cha_enable_warnings(itest)
     target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
 
     include(GoogleTest)

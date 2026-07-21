@@ -59,7 +59,7 @@ private:
 };
 
 // Produces an unambiguous display label from an entry's semantic kind.
-[[nodiscard]] std::string transcript_entry_label(const ConversationEntry& entry);
+[[nodiscard]] std::string transcript_entry_label(const ConversationEntry& entry, bool show_addressing);
 
 // Conservatively estimates pad rows for UTF-8 terminal text.
 [[nodiscard]] int layout_rows(std::string_view text, int columns, int initial_cells = 0);

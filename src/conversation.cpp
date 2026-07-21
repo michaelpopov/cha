@@ -31,6 +31,8 @@ std::size_t ConversationReadView::history_epoch() const noexcept {
 
 ConversationEntry make_human_entry(
     EntryId id,
+    ParticipantId addressed_to,
+    std::string addressed_to_name,
     std::string text,
     std::optional<RequestId> request_id) {
     return {
@@ -38,6 +40,8 @@ ConversationEntry make_human_entry(
         .kind = EntryKind::human,
         .participant_id = std::string(human_participant_id),
         .display_name = std::string(human_display_name),
+        .addressed_to = std::move(addressed_to),
+        .addressed_to_name = std::move(addressed_to_name),
         .text = std::move(text),
         .status = CompletionStatus::complete,
         .request_id = request_id,
@@ -97,6 +101,14 @@ void validate_conversation_entry(const ConversationEntry& entry) {
     if ((entry.kind == EntryKind::human || entry.kind == EntryKind::agent)
         && entry.participant_id.empty()) {
         throw std::invalid_argument("Participant transcript entries require a participant ID");
+    }
+    if (entry.kind == EntryKind::human
+        && (entry.addressed_to.empty() || entry.addressed_to_name.empty())) {
+        throw std::invalid_argument("Human transcript entries require an addressed agent");
+    }
+    if (entry.kind != EntryKind::human
+        && (!entry.addressed_to.empty() || !entry.addressed_to_name.empty())) {
+        throw std::invalid_argument("Only human transcript entries may address an agent");
     }
     if (entry.kind == EntryKind::error && entry.status != CompletionStatus::failed) {
         throw std::invalid_argument("Error entries require failed status");

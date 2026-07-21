@@ -11,6 +11,8 @@ enum class CommandKind {
     info,
     stop,
     exit,
+    agents,
+    set_default,
     unknown,
 };
 
@@ -18,6 +20,7 @@ enum class CommandKind {
 struct Command {
     CommandKind kind{CommandKind::text};
     std::string argument;
+    std::string handle;
 };
 
 [[nodiscard]] Command parse_command(std::string_view input);

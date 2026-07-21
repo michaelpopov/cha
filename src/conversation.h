@@ -43,6 +43,8 @@ struct ConversationEntry {
     EntryKind kind{EntryKind::notice};
     ParticipantId participant_id;
     std::string display_name;
+    ParticipantId addressed_to;
+    std::string addressed_to_name;
     std::string text;
     CompletionStatus status{CompletionStatus::complete};
     std::optional<RequestId> request_id;
@@ -90,6 +92,8 @@ private:
 
 [[nodiscard]] ConversationEntry make_human_entry(
     EntryId id,
+    ParticipantId addressed_to,
+    std::string addressed_to_name,
     std::string text,
     std::optional<RequestId> request_id = std::nullopt);
 [[nodiscard]] ConversationEntry make_agent_entry(

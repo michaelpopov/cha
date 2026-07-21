@@ -12,13 +12,13 @@
 
 namespace cha {
 
-// Runs one construction-started completion thread and owns its channels and cancellation token.
+// Runs one construction-started completion thread using the registry-owned event channel.
 class AgentWorker {
 public:
-    AgentWorker(const Conversation& conversation, AgentDefinition definition);
-    // Accepts a completion backend for isolated worker tests or alternate transports.
+    AgentWorker(const Conversation& conversation, AgentEventChannel& events, AgentDefinition definition);
     AgentWorker(
         const Conversation& conversation,
+        AgentEventChannel& events,
         std::unique_ptr<CompletionBackend> client);
     ~AgentWorker() noexcept;
 
@@ -28,8 +28,6 @@ public:
     // Queues one request, returning false while another request is outstanding or after stop.
     [[nodiscard]] bool submit(CompletionRequest request);
     void cancel();
-    [[nodiscard]] ChannelReadStatus try_receive(AgentEvent& event);
-    [[nodiscard]] int notification_fd() const;
     [[nodiscard]] AgentInfo info() const;
     // Cancels, unblocks, and joins the worker; repeated calls are harmless.
     void stop();
@@ -43,7 +41,7 @@ private:
     const Conversation& conversation_;
     std::unique_ptr<CompletionBackend> client_;
     CompletionRequestChannel requests_;
-    AgentEventChannel events_;
+    AgentEventChannel* events_{};
     std::thread thread_;
     bool stopped_{};
 };

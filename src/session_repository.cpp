@@ -29,7 +29,6 @@ void validate_metadata(
     const std::filesystem::path& path,
     std::string_view expected_id,
     std::string_view expected_room,
-    std::string_view expected_persona,
     const SessionDatabaseMetadata& metadata) {
 
     if (metadata.id != expected_id) {
@@ -42,12 +41,6 @@ void validate_metadata(
             "Session database '" + path.string() + "' does not belong to room '"
             + std::string(expected_room) + "'");
     }
-    if (metadata.persona != expected_persona) {
-        throw std::runtime_error(
-            "Session database '" + path.string()
-            + "' does not belong to persona '"
-            + std::string(expected_persona) + "'");
-    }
 }
 
 } // namespace
@@ -55,11 +48,9 @@ void validate_metadata(
 SessionRepository::SessionRepository(
     std::filesystem::path directory,
     std::string room_name,
-    std::string persona_name,
     Clock clock)
     : directory_(std::move(directory)),
       room_name_(std::move(room_name)),
-      persona_name_(std::move(persona_name)),
       clock_(std::move(clock)) {
     if (!clock_) {
         clock_ = [] { return std::time(nullptr); };
@@ -92,7 +83,6 @@ std::vector<Session> SessionRepository::list() const {
                 entry.path(),
                 id,
                 room_name_,
-                persona_name_,
                 metadata);
             label = metadata.label;
         } catch (const std::exception& exception) {
@@ -119,7 +109,6 @@ Session SessionRepository::create(std::string label) const {
                 {
                     .id = id,
                     .room = room_name_,
-                    .persona = persona_name_,
                     .label = effective_label,
                 })) {
             return {id, effective_label};
@@ -148,7 +137,6 @@ std::filesystem::path SessionRepository::open_database_path(
         path,
         session_id,
         room_name_,
-        persona_name_,
         metadata);
     return path;
 }

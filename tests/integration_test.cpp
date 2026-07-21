@@ -32,14 +32,14 @@ Config integration_config(bool stream) {
     return config;
 }
 
-AgentEvent wait_for_agent_event(AgentWorker& worker) {
-    pollfd descriptor{worker.notification_fd(), POLLIN, 0};
+AgentEvent wait_for_agent_event(AgentEventChannel& events) {
+    pollfd descriptor{events.notification_fd(), POLLIN, 0};
     if (::poll(&descriptor, 1, -1) != 1) {
         throw std::runtime_error(
             "Failed to wait for integration agent event");
     }
     AgentEvent event = AgentCompleted{};
-    if (worker.try_receive(event) != ChannelReadStatus::value) {
+    if (events.try_get(event) != ChannelReadStatus::value) {
         throw std::runtime_error(
             "Integration agent event channel closed unexpectedly");
     }
@@ -49,13 +49,13 @@ AgentEvent wait_for_agent_event(AgentWorker& worker) {
 ChatResult run_chat(bool stream) {
     const Config config = integration_config(stream);
     Conversation conversation;
-    AgentWorker worker(conversation, {.config = config});
+    AgentEventChannel events;
+    AgentWorker worker(conversation, events, {.config = config});
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     CompletionRequest request{
         .request_id = 1,
-        .agent_id = worker.info().id,
-        .prompt = make_human_entry(1, input, 1),
+        .prompt = make_human_entry(1, config.id, config.name, input, 1),
     };
     conversation.add_entry(request.prompt);
     request.conversation_revision = conversation.revision();
@@ -63,7 +63,7 @@ ChatResult run_chat(bool stream) {
 
     ChatResult result;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(worker);
+        const AgentEvent event = wait_for_agent_event(events);
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
@@ -80,13 +80,13 @@ ChatResult run_chat(bool stream) {
 ChatResult run_cancelled_chat() {
     const Config config = integration_config(true);
     Conversation conversation;
-    AgentWorker worker(conversation, {.config = config});
+    AgentEventChannel events;
+    AgentWorker worker(conversation, events, {.config = config});
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     CompletionRequest request{
         .request_id = 2,
-        .agent_id = worker.info().id,
-        .prompt = make_human_entry(1, input, 2),
+        .prompt = make_human_entry(1, config.id, config.name, input, 2),
     };
     conversation.add_entry(request.prompt);
     request.conversation_revision = conversation.revision();
@@ -94,7 +94,7 @@ ChatResult run_cancelled_chat() {
 
     ChatResult result;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(worker);
+        const AgentEvent event = wait_for_agent_event(events);
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;

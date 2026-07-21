@@ -25,7 +25,6 @@ public:
     SessionRepository(
         std::filesystem::path directory,
         std::string room_name,
-        std::string persona_name,
         Clock clock = {});
 
     [[nodiscard]] std::vector<Session> list() const;
@@ -37,7 +36,6 @@ public:
 private:
     std::filesystem::path directory_;
     std::string room_name_;
-    std::string persona_name_;
     Clock clock_;
 };
 

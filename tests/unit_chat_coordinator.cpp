@@ -57,7 +57,6 @@ public:
                 {
                     .id = "coordinator-test",
                     .room = "test-room",
-                    .persona = "test-persona",
                     .label = "Coordinator test",
                 })) {
             throw std::runtime_error("Failed to create coordinator test database");
@@ -78,8 +77,12 @@ public:
     ScriptedBackend(
         CompletionResult result = {},
         std::vector<std::string> deltas = {},
-        bool wait_for_cancellation = false)
-      : result_(std::move(result)),
+        bool wait_for_cancellation = false,
+        std::string id = "guide-id",
+        std::string name = "Guide")
+      : id_(std::move(id)),
+        name_(std::move(name)),
+        result_(std::move(result)),
         deltas_(std::move(deltas)),
         wait_for_cancellation_(wait_for_cancellation) {
     }
@@ -119,7 +122,7 @@ public:
     AgentInfo info() const override {
         return {
             .id = id_,
-            .name = "Guide",
+            .name = name_,
             .model = "test-model",
             .api = "test://completion",
             .streaming = true,
@@ -136,6 +139,7 @@ public:
 
 private:
     std::string id_{"guide-id"};
+    std::string name_{"Guide"};
     CompletionResult result_;
     std::vector<std::string> deltas_;
     bool wait_for_cancellation_{};
@@ -181,7 +185,7 @@ ConversationRestore restore_with(
 TEST(ChatCoordinator, OwnsACompleteIdentifiedTypedTurn) {
     TemporaryJournal temporary;
     const ConversationEntry earlier =
-        make_human_entry(10, "Earlier");
+        make_human_entry(10, "guide-id", "Guide", "Earlier");
     {
         ConversationJournal journal(temporary.path);
         journal.append(earlier);
@@ -205,7 +209,7 @@ TEST(ChatCoordinator, OwnsACompleteIdentifiedTypedTurn) {
     const CompletionRequest& request =
         backend_view->requests.front();
     EXPECT_EQ(request.request_id, 17U);
-    EXPECT_EQ(request.agent_id, "guide-id");
+    EXPECT_EQ(request.prompt.addressed_to, "guide-id");
     EXPECT_EQ(request.conversation_revision, 2U);
     EXPECT_EQ(request.prompt.kind, EntryKind::human);
     EXPECT_EQ(request.prompt.text, "Current");
@@ -481,7 +485,7 @@ TEST(ChatCoordinator, IgnoresEventsForAnotherRequest) {
     receive_until_idle(coordinator);
 }
 
-TEST(ChatCoordinator, DoesNotAttributeLocalDispatchFailuresToTheAgent) {
+TEST(ChatCoordinator, AttributesDispatchFailuresToTheTargetAgent) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
         std::make_unique<ScriptedBackend>(),
@@ -496,7 +500,7 @@ TEST(ChatCoordinator, DoesNotAttributeLocalDispatchFailuresToTheAgent) {
         load_conversation_entries(temporary.path);
     ASSERT_EQ(restored.size(), 2U);
     EXPECT_EQ(restored.back().kind, EntryKind::error);
-    EXPECT_TRUE(restored.back().participant_id.empty());
+    EXPECT_EQ(restored.back().participant_id, "guide-id");
     EXPECT_EQ(restored.back().text, "Agent worker is closed");
 }
 
@@ -505,8 +509,8 @@ TEST(ChatCoordinator, FinalizesInterruptedTurnsDuringRestore) {
     {
         ConversationJournal journal(temporary.path);
         const ConversationEntry prompt =
-            make_human_entry(1, "Interrupted", 5);
-        journal.start_turn(5, "guide-id", prompt);
+            make_human_entry(1, "guide-id", "Guide", "Interrupted", 5);
+        journal.start_turn(5, prompt);
     }
     ConversationRestore restored =
         load_conversation_state(temporary.path);
@@ -525,6 +529,71 @@ TEST(ChatCoordinator, FinalizesInterruptedTurnsDuringRestore) {
     EXPECT_NE(
         repaired.entries.back().text.find("interrupted"),
         std::string::npos);
+}
+
+TEST(ChatCoordinator, RoutesMentionsAndDefaultChangesAcrossTheRoster) {
+    TemporaryJournal temporary;
+    auto guide = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Guide answer"});
+    auto ismael = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Ismael answer"}, false,
+        "ismael-id", "Ismael");
+    ScriptedBackend* guide_view = guide.get();
+    ScriptedBackend* ismael_view = ismael.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(guide));
+    backends.push_back(std::move(ismael));
+    ChatCoordinator coordinator(std::move(backends), temporary.path);
+
+    const CoordinatorUpdate mentioned = coordinator.handle_input("  @Ism hello");
+    EXPECT_TRUE(mentioned.clear_input);
+    receive_until_idle(coordinator);
+    ASSERT_EQ(ismael_view->requests.size(), 1U);
+    EXPECT_EQ(ismael_view->requests.front().prompt.addressed_to, "ismael-id");
+    EXPECT_TRUE(guide_view->requests.empty());
+
+    const CoordinatorUpdate default_changed = coordinator.handle_input("/@Gui");
+    EXPECT_TRUE(default_changed.clear_input);
+    EXPECT_EQ(default_changed.notice, "Default agent is now Guide");
+    (void)coordinator.handle_input("next");
+    receive_until_idle(coordinator);
+    ASSERT_EQ(guide_view->requests.size(), 1U);
+    EXPECT_EQ(guide_view->requests.front().prompt.addressed_to, "guide-id");
+
+    const std::size_t entries_before_rejection = coordinator.conversation().entries().size();
+    const CoordinatorUpdate rejected = coordinator.handle_input("@nobody text");
+    EXPECT_FALSE(rejected.clear_input);
+    EXPECT_NE(rejected.notice->find("@nobody"), std::string::npos);
+    EXPECT_EQ(coordinator.conversation().entries().size(), entries_before_rejection);
+
+    const CoordinatorUpdate agents = coordinator.handle_input("/agents");
+    EXPECT_TRUE(agents.clear_input);
+    const std::vector<ConversationEntry> entries =
+        coordinator.conversation().entries();
+    const ConversationEntry& notice = entries.back();
+    EXPECT_NE(
+        notice.text.find("Any unambiguous prefix works."),
+        std::string::npos);
+    EXPECT_EQ(notice.text.find("Cheburashka"), std::string::npos);
+    EXPECT_NE(notice.text.find("@Ismael"), std::string::npos);
+}
+
+TEST(ChatCoordinator, RestoredForeignHistoryEnablesAddressingUntilClear) {
+    TemporaryJournal temporary;
+    ConversationRestore restored{
+        .entries = {
+            make_human_entry(1, "guide-id", "Guide", "Question", 1),
+            make_agent_entry(2, "former-id", "Former", "Answer", CompletionStatus::complete, 1),
+        },
+        .next_request_id = 2,
+        .next_entry_id = 3,
+    };
+    ChatCoordinator coordinator(
+        std::make_unique<ScriptedBackend>(), temporary.path, std::move(restored));
+
+    EXPECT_TRUE(coordinator.show_addressing());
+    (void)coordinator.handle_input("/clear");
+    EXPECT_FALSE(coordinator.show_addressing());
 }
 
 TEST(ChatCoordinator, ShutdownCancelsAndPersistsAnActiveTurn) {

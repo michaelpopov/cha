@@ -66,10 +66,10 @@ std::vector<MaterializedMessage> context(
 TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
     const ConversationSnapshot conversation{
         .entries = {
-            make_human_entry(1, "Draft an answer", 1),
+            make_human_entry(1, "reviewer-id", "Reviewer", "Draft an answer", 1),
             make_agent_entry(
                 2, "writer-id", "You", "Initial draft", CompletionStatus::complete, 1),
-            make_human_entry(3, "Review it", 2),
+            make_human_entry(3, "reviewer-id", "Reviewer", "Review it", 2),
             make_agent_entry(
                 4, "reviewer-id", "System", "Looks good", CompletionStatus::complete, 2),
         },
@@ -79,9 +79,7 @@ TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
         context(conversation, "Be concise.", "reviewer-id"),
         (std::vector<MaterializedMessage>{
             {AgentRole::system, "Be concise."},
-            {AgentRole::user, "Draft an answer"},
-            {AgentRole::assistant, "writer-id: Initial draft"},
-            {AgentRole::user, "Review it"},
+            {AgentRole::user, "User: Draft an answer\n\nYou: Initial draft\n\nUser: Review it"},
             {AgentRole::assistant, "Looks good"},
         }));
 }
@@ -89,10 +87,10 @@ TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
 TEST(AgentContext, OmitsNoticesErrorsFailedPromptsAndIncompleteAgentEntries) {
     const ConversationSnapshot conversation{
         .entries = {
-            make_human_entry(1, "Failed request", 7),
+            make_human_entry(1, "reviewer-id", "Reviewer", "Failed request", 7),
             make_error_entry(2, "unavailable", 7, "reviewer-id"),
             make_notice_entry(3, "Model information"),
-            make_human_entry(4, "Current request", 8),
+            make_human_entry(4, "reviewer-id", "Reviewer", "Current request", 8),
             make_agent_entry(
                 5, "reviewer-id", "Reviewer", "Stopped", CompletionStatus::cancelled, 8),
             make_agent_entry(
@@ -122,6 +120,41 @@ TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {
     EXPECT_EQ(
         context(after, {}, "stable-id"),
         (std::vector<MaterializedMessage>{{AgentRole::assistant, "Answer"}}));
+}
+
+TEST(AgentContext, PreservesTheSingleAgentWireShapeByteForByte) {
+    const ConversationSnapshot conversation{
+        .entries = {
+            make_human_entry(1, "assistant", "Assistant", "First", 1),
+            make_agent_entry(2, "assistant", "Assistant", "Answer", CompletionStatus::complete, 1),
+            make_human_entry(3, "assistant", "Assistant", "Second", 2),
+        },
+    };
+
+    EXPECT_EQ(
+        context(conversation, {}, "assistant"),
+        (std::vector<MaterializedMessage>{
+            {AgentRole::user, "First"},
+            {AgentRole::assistant, "Answer"},
+            {AgentRole::user, "Second"},
+        }));
+}
+
+TEST(AgentContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
+    const ConversationSnapshot conversation{
+        .entries = {
+            make_human_entry(1, "assistant", "Assistant", "First", 1),
+            make_agent_entry(2, "assistant", "Assistant", "Partial", CompletionStatus::cancelled, 1),
+            make_human_entry(3, "assistant", "Assistant", "Second", 2),
+        },
+    };
+
+    EXPECT_EQ(
+        context(conversation, {}, "assistant"),
+        (std::vector<MaterializedMessage>{
+            {AgentRole::user, "First"},
+            {AgentRole::user, "Second"},
+        }));
 }
 
 TEST(AgentContext, SupportsArbitrarilyFragmentedWriterContent) {

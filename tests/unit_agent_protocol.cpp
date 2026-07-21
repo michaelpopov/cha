@@ -10,9 +10,8 @@ namespace {
 CompletionRequest request(std::size_t revision = 1) {
     return {
         .request_id = 7,
-        .agent_id = "assistant",
         .conversation_revision = revision,
-        .prompt = make_human_entry(1, "Question", 7),
+        .prompt = make_human_entry(1, "assistant", "Assistant", "Question", 7),
     };
 }
 
@@ -21,7 +20,7 @@ TEST(AgentProtocol, RejectsInvalidStandaloneRequests) {
     EXPECT_THROW(validate_completion_request(invalid_revision, "assistant"), std::invalid_argument);
 
     CompletionRequest invalid_target = request();
-    invalid_target.agent_id = "other";
+    invalid_target.prompt.addressed_to = "other";
     EXPECT_THROW(validate_completion_request(invalid_target, "assistant"), std::invalid_argument);
 
     CompletionRequest invalid_participant = request();

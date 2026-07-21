@@ -1,5 +1,7 @@
 #pragma once
 
+#include "generation_status.h"
+
 #include <optional>
 #include <string_view>
 
@@ -43,7 +45,8 @@ public:
     virtual void render(
         const Conversation& conversation,
         const InputEditor& editor,
-        bool generating,
+        GenerationStatus status,
+        bool show_addressing,
         std::string_view notice) = 0;
     virtual void scroll_up() = 0;
     virtual void scroll_down() = 0;

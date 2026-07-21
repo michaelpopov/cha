@@ -9,7 +9,7 @@ namespace cha {
 namespace {
 
 ConversationEntry human(EntryId id, std::string text) {
-    return make_human_entry(id, std::move(text));
+    return make_human_entry(id, "guide-id", "Guide", std::move(text));
 }
 
 ConversationEntry agent(EntryId id, std::string text) {
@@ -18,13 +18,15 @@ ConversationEntry agent(EntryId id, std::string text) {
 }
 
 TEST(TranscriptLabel, DistinguishesKindsEvenWhenDisplayNamesCollide) {
-    EXPECT_EQ(transcript_entry_label(make_human_entry(1, "Question")), "[You] ");
+    EXPECT_EQ(
+        transcript_entry_label(human(1, "Question"), false),
+        "[You] ");
     EXPECT_EQ(
         transcript_entry_label(
-            make_agent_entry(2, "agent-id", "You", "Answer", CompletionStatus::complete)),
+            make_agent_entry(2, "agent-id", "You", "Answer", CompletionStatus::complete), false),
         "[Agent: You] ");
-    EXPECT_EQ(transcript_entry_label(make_notice_entry(3, "Notice")), "[System] ");
-    EXPECT_EQ(transcript_entry_label(make_error_entry(4, "Failure")), "[Error] ");
+    EXPECT_EQ(transcript_entry_label(make_notice_entry(3, "Notice"), false), "[System] ");
+    EXPECT_EQ(transcript_entry_label(make_error_entry(4, "Failure"), false), "[Error] ");
 }
 
 TEST(TranscriptRenderPlanner, RebuildsInitiallyAndAfterWidthChanges) {

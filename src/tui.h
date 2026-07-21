@@ -27,7 +27,8 @@ public:
     void render(
         const Conversation& conversation,
         const InputEditor& editor,
-        bool generating,
+        GenerationStatus status,
+        bool show_addressing,
         std::string_view notice = {}) override;
     void scroll_up() override;
     void scroll_down() override;
@@ -38,9 +39,9 @@ private:
     void replace_pad(WINDOW*& pad, int rows, int columns);
     void ensure_transcript_capacity(int required_rows);
     void ensure_input_pad(int required_rows, int columns);
-    void rebuild_transcript(const ConversationSnapshot& snapshot, int output_height, int columns);
-    void write_transcript_entry(const ConversationEntry& entry);
-    void render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns);
+    void rebuild_transcript(const ConversationSnapshot& snapshot, int output_height, int columns, bool show_addressing);
+    void write_transcript_entry(const ConversationEntry& entry, bool show_addressing);
+    void render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns, bool show_addressing);
     void render_input(const InputEditor& editor, int input_y, int input_height, int columns);
 
     WINDOW* transcript_pad_{};

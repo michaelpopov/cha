@@ -19,7 +19,9 @@ bool UserSession::running() const {
 }
 
 void UserSession::render() {
-    view_.render(coordinator_.conversation(), editor_, coordinator_.generating(), notice_);
+    view_.render(
+        coordinator_.conversation(), editor_, coordinator_.generation_status(),
+        coordinator_.show_addressing(), notice_);
     render_needed_ = false;
 }
 

@@ -11,9 +11,10 @@ void validate_completion_request(
     if (request.request_id == 0) {
         throw std::invalid_argument("Completion request ID must be positive");
     }
-    if (request.agent_id != expected_agent_id) {
+    const std::string_view target = request.prompt.addressed_to;
+    if (target != expected_agent_id) {
         throw std::invalid_argument(
-            "Completion request targets agent '" + request.agent_id
+            "Completion request targets agent '" + std::string(target)
             + "', not '" + std::string(expected_agent_id) + "'");
     }
     if (request.conversation_revision == 0) {

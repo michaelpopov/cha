@@ -11,18 +11,22 @@ namespace cha {
 
 AgentWorker::AgentWorker(
     const Conversation& conversation,
+    AgentEventChannel& events,
     AgentDefinition definition)
     : AgentWorker(
           conversation,
+          events,
           std::make_unique<CompletionClient>(
               std::move(definition))) {
 }
 
 AgentWorker::AgentWorker(
     const Conversation& conversation,
+    AgentEventChannel& events,
     std::unique_ptr<CompletionBackend> client)
     : conversation_(conversation),
-      client_(std::move(client)) {
+      client_(std::move(client)),
+      events_(&events) {
     if (!client_) {
         throw std::invalid_argument(
             "Agent worker requires a completion backend");
@@ -76,14 +80,6 @@ void AgentWorker::cancel() {
     cancellation_.store(true, std::memory_order_release);
 }
 
-ChannelReadStatus AgentWorker::try_receive(AgentEvent& event) {
-    return events_.try_get(event);
-}
-
-int AgentWorker::notification_fd() const {
-    return events_.notification_fd();
-}
-
 void AgentWorker::stop() {
     if (stopped_) {
         return;
@@ -94,7 +90,6 @@ void AgentWorker::stop() {
     if (thread_.joinable()) {
         thread_.join();
     }
-    events_.close();
     stopped_ = true;
 }
 
@@ -120,7 +115,7 @@ void AgentWorker::dialog() {
             const CompletionResult result = client_->perform(
                 std::move(payload),
                 [this, request_id = request->request_id](std::string text) {
-                    events_.push(AgentDelta{request_id, std::move(text)});
+                    events_->push(AgentDelta{request_id, std::move(text)});
                 },
                 cancellation_);
             if (result.outcome == CompletionOutcome::cancelled) {
@@ -144,7 +139,7 @@ void AgentWorker::dialog() {
 
 void AgentWorker::publish_terminal(AgentEvent event) {
     request_outstanding_.store(false, std::memory_order_release);
-    events_.push(std::move(event));
+    events_->push(std::move(event));
 }
 
 AgentInfo AgentWorker::info() const {

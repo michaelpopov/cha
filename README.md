@@ -6,14 +6,16 @@
 
 Run `cha` from a workspace containing `personas/` and `rooms/`. `rooms/rooms.list` is an ordered list of room names (one per line; blank lines and `#` comments are ignored). At startup, a terminal selector lets you choose a room and then an existing session or **New session**.
 
-Each room contains `personas.list`, which must name exactly one persona, and `USER.md`. The selected persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`. The effective system prompt is the persona `SYSTEM.md` followed by the room `USER.md`. A persona's immutable `id` identifies its transcript entries and protocol messages; its `name` is display-only and may change without reclassifying restored history.
+Each room contains `personas.list`, an ordered list of one or more personas, and `USER.md`. Every listed persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (`SYSTEM.md` followed by the room `USER.md`). The first persona is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
-Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, room, and persona must match the selected room before the conversation can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial responses remain visible but are not sent back to the model as completed history. Successful responses require non-empty text; streaming responses also require a `[DONE]` marker, after which further data is ignored. The following top-level persona configuration fields are supported:
+Each persona's immutable `id` identifies transcript entries; its `name` is the visible `@mention` handle. Names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A room cannot contain duplicate IDs or names. All agents share one conversation: other agents' prior answers are attributed when sent as context. A session stores only its room and transcript, so it can be reopened even if the room's roster changed.
+
+Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and room must match the selected room before the conversation can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial responses remain visible but are not sent back to the model as completed history. Successful responses require non-empty text; streaming responses also require a `[DONE]` marker, after which further data is ignored. The following top-level persona configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
 - `id`: required stable persona identifier containing only ASCII letters, digits, underscores, and hyphens. Do not change it when renaming or moving the persona directory.
-- `name`: required display name shown in the transcript. Transcript entry kinds remain visibly distinct even when a persona uses a name such as `You` or `System`.
+- `name`: required display name and `@mention` handle. It cannot contain whitespace, start with `@` or `/`, or equal `User` case-insensitively.
 - `mode`: `net` for llama.cpp or `test` for the built-in echo server; defaults to `test`.
 - `model`: optional model name sent in chat-completions requests. If omitted, the first model returned by the endpoint's `/v1/models` API is used.
 - `stream`: whether to request streamed SSE responses; defaults to `true`.
@@ -54,6 +56,8 @@ Before loading server configuration, the application optionally reads `.env` fro
 - `/clear` starts a new visible history while retaining the system prompt.
   Earlier transcript rows remain in the session database.
 - `/info` displays the endpoint, configured model, streaming mode, and transcript message count.
+- `/agents` displays the current room roster and marks the default agent.
+- `/@Name` changes the default agent for this run only.
 - `/stop` cancels the active model response.
 - `/exit` exits the application.
 

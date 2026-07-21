@@ -33,31 +33,59 @@ void write_agent_context(
         }
     }
 
+    const auto projectable = [&failed_requests, open_entry_id](const ConversationEntry& entry) {
+        if (open_entry_id && *open_entry_id == entry.id) return false;
+        if (entry.kind == EntryKind::notice || entry.kind == EntryKind::error) return false;
+        if (entry.kind == EntryKind::human) return !entry.request_id || !failed_requests.contains(*entry.request_id);
+        return entry.status == CompletionStatus::complete && !entry.text.empty();
+    };
+
+    bool attributed = false;
     for (const ConversationEntry& entry : entries) {
-        if (open_entry_id && *open_entry_id == entry.id) {
-            continue;
-        }
-        if (entry.kind == EntryKind::notice || entry.kind == EntryKind::error) {
-            continue;
-        }
-        if (entry.kind == EntryKind::human) {
-            if (!entry.request_id || !failed_requests.contains(*entry.request_id)) {
-                write_message(writer, AgentRole::user, entry.text);
-            }
-            continue;
-        }
-        if (entry.status != CompletionStatus::complete || entry.text.empty()) {
-            continue;
+        if (!projectable(entry)) continue;
+        attributed = attributed || (entry.kind == EntryKind::agent && entry.participant_id != agent_id)
+            || (entry.kind == EntryKind::human && entry.addressed_to != agent_id);
+    }
+
+    bool message_open = false;
+    AgentRole open_role = AgentRole::system;
+    bool previous_foreign = false;
+    for (const ConversationEntry& entry : entries) {
+        if (!projectable(entry)) continue;
+        const bool foreign = entry.kind == EntryKind::agent && entry.participant_id != agent_id;
+        const AgentRole role = entry.kind == EntryKind::human || foreign
+            ? AgentRole::user : AgentRole::assistant;
+        const bool coalesce = message_open && role == AgentRole::user && open_role == AgentRole::user
+            && (previous_foreign || foreign);
+        if (!message_open || !coalesce) {
+            if (message_open) writer.end_message();
+            writer.begin_message(role);
+            message_open = true;
+            open_role = role;
+        } else {
+            writer.append_content("\n\n");
         }
 
-        writer.begin_message(AgentRole::assistant);
-        if (entry.participant_id != agent_id) {
-            writer.append_content(entry.participant_id);
+        if (entry.kind == EntryKind::human) {
+            if (attributed) {
+                writer.append_content("User: ");
+                if (entry.addressed_to != agent_id) {
+                    writer.append_content("[to ");
+                    writer.append_content(entry.addressed_to_name);
+                    writer.append_content("] ");
+                }
+            }
+            writer.append_content(entry.text);
+        } else if (foreign) {
+            writer.append_content(entry.display_name);
             writer.append_content(": ");
+            writer.append_content(entry.text);
+        } else {
+            writer.append_content(entry.text);
         }
-        writer.append_content(entry.text);
-        writer.end_message();
+        previous_foreign = foreign;
     }
+    if (message_open) writer.end_message();
 }
 
 } // namespace cha
