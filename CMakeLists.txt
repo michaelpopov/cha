@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 cmake_policy(SET CMP0135 NEW)
 
-project(cha LANGUAGES CXX)
+project(cha LANGUAGES C CXX)
 
 include(CTest)
 
@@ -50,6 +50,31 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
+FetchContent_Declare(
+    sqlite_amalgamation
+    URL https://www.sqlite.org/2024/sqlite-amalgamation-3460100.zip
+    URL_HASH SHA256=77823cb110929c2bcb0f5d48e4833b5c59a8a6e40cdea3936b99e199dbbe5784
+)
+FetchContent_MakeAvailable(sqlite_amalgamation)
+
+add_library(cha_sqlite3 STATIC
+    "${sqlite_amalgamation_SOURCE_DIR}/sqlite3.c"
+)
+set_target_properties(cha_sqlite3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(
+    cha_sqlite3
+    SYSTEM PUBLIC
+        "${sqlite_amalgamation_SOURCE_DIR}"
+)
+target_compile_definitions(
+    cha_sqlite3
+    PRIVATE
+        SQLITE_DQS=0
+        SQLITE_OMIT_DEPRECATED
+        SQLITE_OMIT_LOAD_EXTENSION
+        SQLITE_THREADSAFE=1
+)
+
 add_library(cha_core
     src/agent_definition.cpp
     src/command.cpp
@@ -57,11 +82,11 @@ add_library(cha_core
     src/completion_client.cpp
     src/config.cpp
     src/conversation.cpp
-    src/conversation_file.cpp
     src/environment.cpp
     src/input_editor.cpp
     src/json_string.cpp
     src/path_name.cpp
+    src/session_database.cpp
     src/agent_worker.cpp
     src/agent_context.cpp
     src/agent_protocol.cpp
@@ -89,6 +114,8 @@ target_link_libraries(
         Threads::Threads
         nlohmann_json::nlohmann_json
         tomlplusplus::tomlplusplus
+    PRIVATE
+        cha_sqlite3
 )
 
 add_executable(cha src/main.cpp)

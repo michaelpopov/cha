@@ -22,19 +22,19 @@ inline constexpr std::string_view notice_display_name = "System";
 inline constexpr std::string_view error_display_name = "Error";
 
 // Classifies transcript semantics independently of the label rendered to the user.
-enum class EntryKind {
-    human,
-    agent,
-    notice,
-    error,
+enum class EntryKind : std::int64_t {
+    human = 0,
+    agent = 1,
+    notice = 2,
+    error = 3,
 };
 
 // Describes whether an entry is final or represents an active or terminated completion.
-enum class CompletionStatus {
-    complete,
-    streaming,
-    cancelled,
-    failed,
+enum class CompletionStatus : std::int64_t {
+    complete = 0,
+    streaming = 1,
+    cancelled = 2,
+    failed = 3,
 };
 
 // Stores one typed transcript record for rendering, persistence, and context projection.

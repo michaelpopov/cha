@@ -1,5 +1,5 @@
 #include "conversation.h"
-#include "conversation_file.h"
+#include "session_database.h"
 #include "session_repository.h"
 #include "workspace.h"
 
@@ -49,6 +49,27 @@ protected:
         std::filesystem::remove_all(root);
     }
 
+    std::filesystem::path create_database(
+        std::string id,
+        std::string label,
+        std::string room = "lobby",
+        std::string persona = "guide") {
+
+        const std::filesystem::path path =
+            root / "rooms" / "lobby" / "sessions" / (id + ".sqlite3");
+        if (!create_session_database(
+                path,
+                {
+                    .id = std::move(id),
+                    .room = std::move(room),
+                    .persona = std::move(persona),
+                    .label = std::move(label),
+                })) {
+            throw std::runtime_error("Failed to create workspace test database");
+        }
+        return path;
+    }
+
     std::filesystem::path root;
 };
 
@@ -63,41 +84,46 @@ TEST_F(WorkspaceTest, LoadsRoomsAndResolvesTheirPersonaDirectory) {
     EXPECT_EQ(workspace.persona_directory(room), root / "personas" / "guide");
 }
 
-TEST_F(WorkspaceTest, ListsOnlyCompleteSessionPairsAndReturnsTheirDataPath) {
-    Conversation conversation;
-    conversation.add_entry(make_human_entry(1, "Hello"));
-    save_conversation_file(root / "rooms" / "lobby" / "sessions" / "saved.data", conversation);
+TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
+    const std::filesystem::path saved =
+        create_database("saved", "Saved session");
     {
-        std::ofstream meta(root / "rooms" / "lobby" / "sessions" / "saved.meta");
-        meta << "version = 1\n"
-             << "room = \"lobby\"\n"
-             << "persona = \"guide\"\n"
-             << "label = \"saved\"\n";
-        std::ofstream orphan(root / "rooms" / "lobby" / "sessions" / "orphan.data");
-        orphan << "ignored";
+        ConversationJournal journal(saved);
+        journal.append(make_human_entry(1, "Hello"));
+        std::ofstream unrelated(
+            root / "rooms" / "lobby" / "sessions" / "ignored.data");
+        unrelated << "not a session database";
     }
 
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
     SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
-    EXPECT_EQ(sessions.list(), (std::vector<Session>{{"saved", "saved"}}));
-    EXPECT_EQ(load_conversation_file(sessions.open_data_path("saved")), conversation.entries());
+    EXPECT_EQ(
+        sessions.list(),
+        (std::vector<Session>{{"saved", "Saved session"}}));
+    EXPECT_EQ(
+        load_conversation_entries(sessions.open_database_path("saved")),
+        (std::vector<ConversationEntry>{make_human_entry(1, "Hello")}));
 }
 
-TEST_F(WorkspaceTest, CreatesSelectableSessionFilesImmediately) {
+TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
     SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
 
     const Session session = sessions.create("A named session");
-    EXPECT_TRUE(std::filesystem::is_regular_file(room.directory / "sessions" / (session.id + ".meta")));
-    EXPECT_TRUE(std::filesystem::is_regular_file(room.directory / "sessions" / (session.id + ".data")));
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        room.directory / "sessions" / (session.id + ".sqlite3")));
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
 
-    Conversation conversation;
-    conversation.add_entry(make_human_entry(1, "Persist me"));
-    save_conversation_file(room.directory / "sessions" / (session.id + ".data"), conversation);
+    {
+        ConversationJournal journal(sessions.database_path(session.id));
+        journal.append(make_human_entry(1, "Persist me"));
+    }
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
+    EXPECT_EQ(
+        load_conversation_entries(sessions.open_database_path(session.id)),
+        (std::vector<ConversationEntry>{make_human_entry(1, "Persist me")}));
 }
 
 TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) {
@@ -110,28 +136,30 @@ TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) 
     EXPECT_TRUE(std::regex_match(session.id, std::regex("[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-session")));
 }
 
-TEST_F(WorkspaceTest, ReportsInvalidMetadataWithoutHidingHealthySessions) {
+TEST_F(WorkspaceTest, ReportsAnInvalidDatabaseWithoutHidingHealthySessions) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
     SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
     const Session healthy = sessions.create("Healthy");
-    const Session session = sessions.create("Broken metadata");
+    const Session broken = sessions.create("Broken database");
     {
-        std::ofstream meta(room.directory / "sessions" / (session.id + ".meta"), std::ios::trunc);
-        meta << "label = \"unterminated";
+        std::ofstream database(
+            sessions.database_path(broken.id),
+            std::ios::binary | std::ios::trunc);
+        database << "not SQLite";
     }
 
     const std::vector<Session> listed = sessions.list();
     ASSERT_EQ(listed.size(), 2U);
-    const auto broken = std::find_if(listed.begin(), listed.end(), [&](const Session& candidate) {
-        return candidate.id == session.id;
+    const auto broken_result = std::find_if(listed.begin(), listed.end(), [&](const Session& candidate) {
+        return candidate.id == broken.id;
     });
     const auto valid = std::find_if(listed.begin(), listed.end(), [&](const Session& candidate) {
         return candidate.id == healthy.id;
     });
-    ASSERT_NE(broken, listed.end());
+    ASSERT_NE(broken_result, listed.end());
     ASSERT_NE(valid, listed.end());
-    EXPECT_FALSE(broken->error.empty());
+    EXPECT_FALSE(broken_result->error.empty());
     EXPECT_TRUE(valid->error.empty());
 }
 
@@ -139,19 +167,14 @@ TEST_F(WorkspaceTest, RejectsMismatchedSessionMetadataWhenOpening) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
     SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
-    const Session session = sessions.create("Wrong room");
-    {
-        std::ofstream meta(room.directory / "sessions" / (session.id + ".meta"), std::ios::trunc);
-        meta << "version = 1\n"
-             << "room = \"hall\"\n"
-             << "persona = \"guide\"\n"
-             << "label = \"Wrong room\"\n";
-    }
+    create_database("wrong-room", "Wrong room", "hall");
 
     const std::vector<Session> listed = sessions.list();
     ASSERT_EQ(listed.size(), 1U);
     EXPECT_FALSE(listed.front().error.empty());
-    EXPECT_THROW((void)sessions.open_data_path(session.id), std::runtime_error);
+    EXPECT_THROW(
+        (void)sessions.open_database_path("wrong-room"),
+        std::runtime_error);
 }
 
 TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
@@ -159,41 +182,21 @@ TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
     const Room room = workspace.load_room("lobby");
     SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
 
-    const Session unsupported = sessions.create("Unsupported");
+    create_database("wrong-filename", "Wrong filename");
+    std::filesystem::rename(
+        sessions.database_path("wrong-filename"),
+        sessions.database_path("renamed"));
+    create_database("wrong-persona", "Wrong persona", "lobby", "other");
     {
-        std::ofstream meta(
-            room.directory / "sessions" / (unsupported.id + ".meta"),
-            std::ios::trunc);
-        meta << "version = 2\n"
-             << "room = \"lobby\"\n"
-             << "persona = \"guide\"\n"
-             << "label = \"Unsupported\"\n";
+        std::ofstream unsupported(
+            sessions.database_path("unsupported"),
+            std::ios::binary);
+        unsupported << "unsupported database";
     }
 
-    const Session wrong_persona = sessions.create("Wrong persona");
-    {
-        std::ofstream meta(
-            room.directory / "sessions" / (wrong_persona.id + ".meta"),
-            std::ios::trunc);
-        meta << "version = 1\n"
-             << "room = \"lobby\"\n"
-             << "persona = \"other\"\n"
-             << "label = \"Wrong persona\"\n";
-    }
-
-    const Session incomplete = sessions.create("Incomplete");
-    {
-        std::ofstream meta(
-            room.directory / "sessions" / (incomplete.id + ".meta"),
-            std::ios::trunc);
-        meta << "version = 1\n"
-             << "persona = \"guide\"\n"
-             << "label = \"Incomplete\"\n";
-    }
-
-    EXPECT_THROW((void)sessions.open_data_path(unsupported.id), std::runtime_error);
-    EXPECT_THROW((void)sessions.open_data_path(wrong_persona.id), std::runtime_error);
-    EXPECT_THROW((void)sessions.open_data_path(incomplete.id), std::runtime_error);
+    EXPECT_THROW((void)sessions.open_database_path("renamed"), std::runtime_error);
+    EXPECT_THROW((void)sessions.open_database_path("wrong-persona"), std::runtime_error);
+    EXPECT_THROW((void)sessions.open_database_path("unsupported"), std::runtime_error);
     const std::vector<Session> listed = sessions.list();
     ASSERT_EQ(listed.size(), 3U);
     for (const Session& session : listed) {
@@ -201,25 +204,32 @@ TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
     }
 }
 
-TEST_F(WorkspaceTest, DoesNotAdoptAnOrphanedConversationFile) {
+TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
-    SessionRepository sessions(room.directory / "sessions", room.name, room.persona_name);
-    const Session orphan = sessions.create("Orphan");
-    const std::filesystem::path orphan_meta =
-        room.directory / "sessions" / (orphan.id + ".meta");
-    const std::filesystem::path orphan_data =
-        room.directory / "sessions" / (orphan.id + ".data");
-    std::filesystem::remove(orphan_meta);
+    SessionRepository sessions(
+        room.directory / "sessions",
+        room.name,
+        room.persona_name,
+        [] { return std::time_t{1'700'000'000}; });
+    const Session first = sessions.create("First");
+    const Session second = sessions.create("Second");
 
-    const Session created = sessions.create("Replacement");
-
-    EXPECT_NE(created.id, orphan.id);
-    EXPECT_TRUE(std::filesystem::is_regular_file(orphan_data));
+    EXPECT_EQ(second.id, first.id + "-2");
     EXPECT_TRUE(std::filesystem::is_regular_file(
-        room.directory / "sessions" / (created.id + ".meta")));
+        sessions.database_path(first.id)));
     EXPECT_TRUE(std::filesystem::is_regular_file(
-        room.directory / "sessions" / (created.id + ".data")));
+        sessions.database_path(second.id)));
+    EXPECT_EQ(
+        read_session_database_metadata(sessions.database_path(first.id)).label,
+        "First");
+    EXPECT_EQ(
+        read_session_database_metadata(sessions.database_path(second.id)).label,
+        "Second");
+    for (const auto& entry :
+         std::filesystem::directory_iterator(room.directory / "sessions")) {
+        EXPECT_FALSE(entry.path().filename().string().starts_with("."));
+    }
 }
 
 TEST_F(WorkspaceTest, RejectsRoomsWithMoreThanOnePersona) {

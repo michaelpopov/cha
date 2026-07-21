@@ -1,6 +1,6 @@
 #include "agent_definition.h"
 #include "chat_coordinator.h"
-#include "conversation_file.h"
+#include "session_database.h"
 #include "environment.h"
 #include "session_repository.h"
 #include "startup_selector.h"
@@ -31,7 +31,7 @@ int main_internal() {
     cha::Room room;
     std::optional<cha::SessionRepository> session_repository;
     std::string session_name;
-    std::filesystem::path session_data;
+    std::filesystem::path session_database;
     std::optional<cha::ConversationRestore> restored;
     cha::Terminal terminal;
     {
@@ -59,7 +59,7 @@ int main_internal() {
                 }
                 try {
                     session_name = session_repository->create(*session_label).id;
-                    session_data = session_repository->data_path(session_name);
+                    session_database = session_repository->database_path(session_name);
                     break;
                 } catch (const std::exception& error) {
                     selection_error = error.what();
@@ -69,9 +69,8 @@ int main_internal() {
 
             session_name = selected_session->id;
             try {
-                session_data = session_repository->open_data_path(session_name);
-                cha::prepare_conversation_file(session_data);
-                restored = cha::load_conversation_state(session_data);
+                session_database = session_repository->open_database_path(session_name);
+                restored = cha::load_conversation_state(session_database);
                 break;
             } catch (const std::exception& error) {
                 selection_error = error.what();
@@ -83,7 +82,7 @@ int main_internal() {
         cha::load_agent_definition(
             workspace.persona_directory(room),
             room.directory),
-        session_data,
+        session_database,
         restored ? std::move(*restored) : cha::ConversationRestore{});
     cha::run_user(terminal, coordinator);
 

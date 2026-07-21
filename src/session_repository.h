@@ -1,6 +1,8 @@
 #pragma once
 
+#include <ctime>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -15,21 +17,28 @@ struct Session {
     bool operator==(const Session&) const = default;
 };
 
-// Lists, creates, and resolves persisted sessions for one room without retaining session state.
+// Lists, creates, and resolves self-contained SQLite sessions for one room.
 class SessionRepository {
 public:
-    SessionRepository(std::filesystem::path directory, std::string room_name, std::string persona_name);
+    using Clock = std::function<std::time_t()>;
+
+    SessionRepository(
+        std::filesystem::path directory,
+        std::string room_name,
+        std::string persona_name,
+        Clock clock = {});
 
     [[nodiscard]] std::vector<Session> list() const;
     [[nodiscard]] Session create(std::string label) const;
-    [[nodiscard]] std::filesystem::path data_path(const std::string& session_id) const;
-    // Revalidates a complete session pair before returning the selected conversation path.
-    [[nodiscard]] std::filesystem::path open_data_path(const std::string& session_id) const;
+    [[nodiscard]] std::filesystem::path database_path(const std::string& session_id) const;
+    // Revalidates the embedded identity before returning the selected database.
+    [[nodiscard]] std::filesystem::path open_database_path(const std::string& session_id) const;
 
 private:
     std::filesystem::path directory_;
     std::string room_name_;
     std::string persona_name_;
+    Clock clock_;
 };
 
 } // namespace cha

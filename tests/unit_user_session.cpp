@@ -1,6 +1,6 @@
 #include "chat_coordinator.h"
 #include "completion_backend.h"
-#include "conversation_file.h"
+#include "session_database.h"
 #include "input_editor.h"
 #include "session_view.h"
 #include "user_session.h"
@@ -25,7 +25,7 @@
 namespace cha {
 namespace {
 
-// Removes one temporary session journal when a controller test leaves scope.
+// Removes one temporary session database when a controller test leaves scope.
 class TemporarySessionJournal {
 public:
     TemporarySessionJournal()
@@ -35,7 +35,17 @@ public:
                     std::chrono::steady_clock::now()
                         .time_since_epoch()
                         .count())
-                + ".data")) {
+                + ".sqlite3")) {
+        if (!create_session_database(
+                path,
+                {
+                    .id = "user-session-test",
+                    .room = "test-room",
+                    .persona = "test-persona",
+                    .label = "User session test",
+                })) {
+            throw std::runtime_error("Failed to create user-session test database");
+        }
     }
 
     ~TemporarySessionJournal() {
@@ -193,7 +203,7 @@ TEST(UserSession, SubmitsEditedInputThroughTheCoordinator) {
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.front().text, "Question");
     EXPECT_EQ(entries.back().text, "Answer to Question");
-    EXPECT_EQ(load_conversation_file(temporary.path), entries);
+    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
 }
 
 TEST(UserSession, DelegatesClearAndInfoCommandsToTheCoordinator) {
@@ -216,7 +226,7 @@ TEST(UserSession, DelegatesClearAndInfoCommandsToTheCoordinator) {
     session.render_if_needed();
 
     EXPECT_TRUE(coordinator.conversation().entries().empty());
-    EXPECT_TRUE(load_conversation_file(temporary.path).empty());
+    EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
     EXPECT_EQ(view.rendered_notice, "Conversation cleared");
 }
 
@@ -238,7 +248,7 @@ TEST(UserSession, StopInputDrivesCoordinatorCancellation) {
     receive_when_ready(coordinator, session);
     EXPECT_FALSE(coordinator.generating());
     EXPECT_EQ(
-        load_conversation_file(temporary.path),
+        load_conversation_entries(temporary.path),
         coordinator.conversation().entries());
 }
 
@@ -354,7 +364,7 @@ TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {
 
     EXPECT_FALSE(coordinator.generating());
     EXPECT_EQ(
-        load_conversation_file(temporary.path),
+        load_conversation_entries(temporary.path),
         coordinator.conversation().entries());
 }
 

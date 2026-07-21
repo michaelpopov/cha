@@ -1,7 +1,7 @@
 #include "chat_coordinator.h"
 #include "agent_context.h"
 #include "completion_backend.h"
-#include "conversation_file.h"
+#include "session_database.h"
 
 #include <gtest/gtest.h>
 
@@ -41,7 +41,7 @@ private:
     ContextMessage current_;
 };
 
-// Removes one temporary journal when a coordinator test leaves scope.
+// Removes one temporary session database when a coordinator test leaves scope.
 class TemporaryJournal {
 public:
     TemporaryJournal()
@@ -51,7 +51,17 @@ public:
                     std::chrono::steady_clock::now()
                         .time_since_epoch()
                         .count())
-                + ".data")) {
+                + ".sqlite3")) {
+        if (!create_session_database(
+                path,
+                {
+                    .id = "coordinator-test",
+                    .room = "test-room",
+                    .persona = "test-persona",
+                    .label = "Coordinator test",
+                })) {
+            throw std::runtime_error("Failed to create coordinator test database");
+        }
     }
 
     ~TemporaryJournal() {
@@ -216,7 +226,7 @@ TEST(ChatCoordinator, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(response.display_name, "Guide");
     EXPECT_EQ(response.text, "Hello there");
     EXPECT_EQ(response.status, CompletionStatus::complete);
-    EXPECT_EQ(load_conversation_file(temporary.path), entries);
+    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
 }
 
 TEST(ChatCoordinator, PreparesTheSecondTurnFromTheSharedCompletedConversation) {
@@ -315,7 +325,7 @@ TEST(ChatCoordinator, PersistsAnIdentifiedCancelledResponse) {
     ASSERT_TRUE(update.notice);
     EXPECT_EQ(*update.notice, "Generation stopped");
     const auto restored =
-        load_conversation_file(temporary.path);
+        load_conversation_entries(temporary.path);
     ASSERT_EQ(restored.size(), 2U);
     EXPECT_EQ(restored.back().kind, EntryKind::agent);
     EXPECT_EQ(
@@ -337,7 +347,7 @@ TEST(ChatCoordinator, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     const auto entries = coordinator.conversation().entries();
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().kind, EntryKind::human);
-    EXPECT_EQ(load_conversation_file(temporary.path), entries);
+    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
 }
 
 TEST(ChatCoordinator, RejectsCompletionWithoutResponseContent) {
@@ -358,7 +368,7 @@ TEST(ChatCoordinator, RejectsCompletionWithoutResponseContent) {
     EXPECT_EQ(
         entries.back().text,
         "Agent completed without text content");
-    EXPECT_EQ(load_conversation_file(temporary.path), entries);
+    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
 }
 
 TEST(ChatCoordinator, ReplacesPartialOutputWithATypedError) {
@@ -382,7 +392,7 @@ TEST(ChatCoordinator, ReplacesPartialOutputWithATypedError) {
     EXPECT_EQ(error.display_name, "Error");
     EXPECT_EQ(error.participant_id, "guide-id");
     EXPECT_EQ(error.text, "network unavailable");
-    EXPECT_EQ(load_conversation_file(temporary.path), entries);
+    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
 }
 
 TEST(ChatCoordinator, OwnsClearInfoAndExitCommandSemantics) {
@@ -402,7 +412,7 @@ TEST(ChatCoordinator, OwnsClearInfoAndExitCommandSemantics) {
         coordinator.handle_input("/clear");
     EXPECT_EQ(cleared.notice, "Conversation cleared");
     EXPECT_TRUE(coordinator.conversation().entries().empty());
-    EXPECT_TRUE(load_conversation_file(temporary.path).empty());
+    EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
 
     (void)coordinator.handle_input("/info");
     const auto entries = coordinator.conversation().entries();
@@ -414,7 +424,7 @@ TEST(ChatCoordinator, OwnsClearInfoAndExitCommandSemantics) {
     EXPECT_NE(
         entries.front().text.find("Transcript entries: 0"),
         std::string::npos);
-    EXPECT_EQ(load_conversation_file(temporary.path), entries);
+    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
 
     EXPECT_TRUE(
         coordinator.handle_input("/exit").end_session);
@@ -483,7 +493,7 @@ TEST(ChatCoordinator, DoesNotAttributeLocalDispatchFailuresToTheAgent) {
 
     EXPECT_EQ(update.notice, "Request could not be dispatched");
     const auto restored =
-        load_conversation_file(temporary.path);
+        load_conversation_entries(temporary.path);
     ASSERT_EQ(restored.size(), 2U);
     EXPECT_EQ(restored.back().kind, EntryKind::error);
     EXPECT_TRUE(restored.back().participant_id.empty());
@@ -540,7 +550,7 @@ TEST(ChatCoordinator, ShutdownCancelsAndPersistsAnActiveTurn) {
 
     EXPECT_FALSE(coordinator.generating());
     const auto entries =
-        load_conversation_file(temporary.path);
+        load_conversation_entries(temporary.path);
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(
         entries.back().status,

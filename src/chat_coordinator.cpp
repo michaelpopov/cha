@@ -28,9 +28,9 @@ void merge_update(
 
 ChatCoordinator::ChatCoordinator(
     AgentDefinition definition,
-    std::filesystem::path journal_path,
+    std::filesystem::path database_path,
     ConversationRestore restored)
-  : journal_(std::move(journal_path)),
+  : journal_(std::move(database_path)),
     worker_(conversation_, std::move(definition)),
     agent_info_(worker_.info()) {
     initialize(std::move(restored));
@@ -38,9 +38,9 @@ ChatCoordinator::ChatCoordinator(
 
 ChatCoordinator::ChatCoordinator(
     std::unique_ptr<CompletionBackend> backend,
-    std::filesystem::path journal_path,
+    std::filesystem::path database_path,
     ConversationRestore restored)
-  : journal_(std::move(journal_path)),
+  : journal_(std::move(database_path)),
     worker_(conversation_, std::move(backend)),
     agent_info_(worker_.info()) {
     initialize(std::move(restored));
@@ -59,6 +59,7 @@ void ChatCoordinator::initialize(ConversationRestore restored) {
     next_entry_id_ = restored.next_entry_id;
     for (const InterruptedTurn& turn : restored.interrupted_turns) {
         journal_.fail_turn(turn.request_id, turn.error_entry);
+        conversation_.add_entry(turn.error_entry);
     }
 }
 

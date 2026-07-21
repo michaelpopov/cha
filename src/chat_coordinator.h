@@ -5,7 +5,7 @@
 #include "agent_protocol.h"
 #include "agent_worker.h"
 #include "conversation.h"
-#include "conversation_file.h"
+#include "session_database.h"
 
 #include <filesystem>
 #include <memory>
@@ -27,12 +27,12 @@ class ChatCoordinator {
 public:
     ChatCoordinator(
         AgentDefinition definition,
-        std::filesystem::path journal_path,
+        std::filesystem::path database_path,
         ConversationRestore restored = {});
     // Accepts an alternate completion backend for coordinator and application tests.
     ChatCoordinator(
         std::unique_ptr<CompletionBackend> backend,
-        std::filesystem::path journal_path,
+        std::filesystem::path database_path,
         ConversationRestore restored = {});
     ~ChatCoordinator();
 

@@ -8,7 +8,7 @@ Run `cha` from a workspace containing `personas/` and `rooms/`. `rooms/rooms.lis
 
 Each room contains `personas.list`, which must name exactly one persona, and `USER.md`. The selected persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`. The effective system prompt is the persona `SYSTEM.md` followed by the room `USER.md`. A persona's immutable `id` identifies its transcript entries and protocol messages; its `name` is display-only and may change without reclassifying restored history.
 
-Existing sessions are discovered only when both `sessions/<id>.data` and `sessions/<id>.meta` exist. Metadata version, room, and persona must match the selected room before its conversation data can be restored. A new session can be given an optional display name. Its files use a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored in its metadata. New sessions create both files immediately without adopting orphaned files. Each submitted turn and its identified completion, cancellation, or failure are appended and synced during the chat. A turn without a terminal record is reported as interrupted when the session is restored. Cancelled partial responses remain visible but are not sent back to the model as completed history. Successful responses require non-empty text; streaming responses also require a `[DONE]` marker, after which further data is ignored. The following top-level persona configuration fields are supported:
+Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, room, and persona must match the selected room before the conversation can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial responses remain visible but are not sent back to the model as completed history. Successful responses require non-empty text; streaming responses also require a `[DONE]` marker, after which further data is ignored. The following top-level persona configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
@@ -51,7 +51,8 @@ Before loading server configuration, the application optionally reads `.env` fro
 
 ## Commands
 
-- `/clear` clears conversation history while retaining the system prompt.
+- `/clear` starts a new visible history while retaining the system prompt.
+  Earlier transcript rows remain in the session database.
 - `/info` displays the endpoint, configured model, streaming mode, and transcript message count.
 - `/stop` cancels the active model response.
 - `/exit` exits the application.
