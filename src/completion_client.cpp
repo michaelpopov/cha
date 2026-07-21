@@ -3,6 +3,7 @@
 #include "agent_context.h"
 #include "json_string.h"
 
+#include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -14,6 +15,68 @@
 #include <utility>
 
 namespace cha {
+
+// Owns one reusable easy handle and keeps libcurl's variadic API behind typed calls.
+class CompletionClient::CurlEasyHandle {
+public:
+    CurlEasyHandle()
+        : handle_(curl_easy_init(), &curl_easy_cleanup) {
+        if (!handle_) {
+            throw std::runtime_error("Failed to create libcurl handle");
+        }
+    }
+
+    void reset() noexcept { curl_easy_reset(handle_.get()); }
+
+    void set(CURLoption option, long value, std::string_view operation) {
+        require(curl_easy_setopt(handle_.get(), option, value), operation);
+    }
+
+    void set_offset(CURLoption option, curl_off_t value, std::string_view operation) {
+        require(curl_easy_setopt(handle_.get(), option, value), operation);
+    }
+
+    void set(CURLoption option, const char* value, std::string_view operation) {
+        require(curl_easy_setopt(handle_.get(), option, value), operation);
+    }
+
+    template<typename T>
+    void set(CURLoption option, T* value, std::string_view operation) {
+        void* data = const_cast<void*>(static_cast<const void*>(value));
+        require(curl_easy_setopt(handle_.get(), option, data), operation);
+    }
+
+    void set(CURLoption option, curl_slist* value, std::string_view operation) {
+        require(curl_easy_setopt(handle_.get(), option, value), operation);
+    }
+
+    void set(CURLoption option, curl_write_callback callback, std::string_view operation) {
+        require(curl_easy_setopt(handle_.get(), option, callback), operation);
+    }
+
+    void set(CURLoption option, curl_xferinfo_callback callback, std::string_view operation) {
+        require(curl_easy_setopt(handle_.get(), option, callback), operation);
+    }
+
+    [[nodiscard]] CURLcode perform() { return curl_easy_perform(handle_.get()); }
+
+    [[nodiscard]] long response_code(std::string_view operation) {
+        long status = 0;
+        require(curl_easy_getinfo(handle_.get(), CURLINFO_RESPONSE_CODE, &status), operation);
+        return status;
+    }
+
+private:
+    static void require(CURLcode result, std::string_view operation) {
+        if (result != CURLE_OK) {
+            throw std::runtime_error(
+                std::string(operation) + ": " + curl_easy_strerror(result));
+        }
+    }
+
+    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle_;
+};
+
 namespace {
 
 using Json = nlohmann::json;
@@ -197,13 +260,6 @@ std::string response_error(const std::string& body) {
     return body.empty() ? "unknown server error" : body;
 }
 
-void require_curl(CURLcode result, std::string_view operation) {
-    if (result != CURLE_OK) {
-        throw std::runtime_error(
-            std::string(operation) + ": " + curl_easy_strerror(result));
-    }
-}
-
 std::string_view role_name(AgentRole role) {
     switch (role) {
     case AgentRole::system: return "system";
@@ -322,46 +378,28 @@ CompletionClient::CompletionClient(AgentDefinition definition)
 
     if (config_.mode == Mode::net) {
         (void)curl_global();
-        curl_.reset(curl_easy_init());
-        if (!curl_) {
-            throw std::runtime_error("Failed to create libcurl handle");
-        }
+        curl_ = std::make_unique<CurlEasyHandle>();
         if (config_.model.empty()) {
             discover_model();
         }
     }
 }
 
+CompletionClient::~CompletionClient() = default;
+
 void CompletionClient::discover_model() {
     ResponseContext response{.streaming = false};
 
-    curl_easy_reset(curl_.get());
+    curl_->reset();
     const std::string url = models_endpoint();
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_URL, url.c_str()),
-        "Failed to configure models request URL");
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_HTTPGET, 1L),
-        "Failed to configure models request");
-    require_curl(
-        curl_easy_setopt(
-            curl_.get(),
-            CURLOPT_WRITEFUNCTION,
-            receive_response),
-        "Failed to configure models response callback");
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_WRITEDATA, &response),
-        "Failed to configure models response destination");
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_CONNECTTIMEOUT, 10L),
-        "Failed to configure models connection timeout");
+    curl_->set(CURLOPT_URL, url.c_str(), "Failed to configure models request URL");
+    curl_->set(CURLOPT_HTTPGET, 1L, "Failed to configure models request");
+    curl_->set(CURLOPT_WRITEFUNCTION, receive_response, "Failed to configure models response callback");
+    curl_->set(CURLOPT_WRITEDATA, &response, "Failed to configure models response destination");
+    curl_->set(CURLOPT_CONNECTTIMEOUT, 10L, "Failed to configure models connection timeout");
     // Model discovery is a small metadata request and must not block startup indefinitely.
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_TIMEOUT, 10L),
-        "Failed to configure models request timeout");
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_NOSIGNAL, 1L),
-        "Failed to configure libcurl signals");
+    curl_->set(CURLOPT_TIMEOUT, 10L, "Failed to configure models request timeout");
+    curl_->set(CURLOPT_NOSIGNAL, 1L, "Failed to configure libcurl signals");
 
     curl_slist* raw_headers = nullptr;
     raw_headers = curl_slist_append(raw_headers, "Accept: application/json");
@@ -374,14 +412,9 @@ void CompletionClient::discover_model() {
         throw std::runtime_error("Failed to create models request headers");
     }
     CurlHeaders headers(raw_headers);
-    require_curl(
-        curl_easy_setopt(
-            curl_.get(),
-            CURLOPT_HTTPHEADER,
-            headers.get()),
-        "Failed to configure models request headers");
+    curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure models request headers");
 
-    const CURLcode perform_result = curl_easy_perform(curl_.get());
+    const CURLcode perform_result = curl_->perform();
     if (response.error) {
         std::rethrow_exception(response.error);
     }
@@ -391,9 +424,7 @@ void CompletionClient::discover_model() {
             + std::string(curl_easy_strerror(perform_result)));
     }
 
-    long status = 0;
-    require_curl(
-        curl_easy_getinfo(curl_.get(), CURLINFO_RESPONSE_CODE, &status),
+    const long status = curl_->response_code(
         "Failed to read models response status");
     if (status < 200 || status >= 300) {
         throw std::runtime_error(
@@ -448,60 +479,24 @@ CompletionResult CompletionClient::perform(
         .streaming = config_.stream,
     };
 
-    curl_easy_reset(curl_.get());
+    curl_->reset();
     const std::string url = endpoint();
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_URL, url.c_str()),
-        "Failed to configure request URL");
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_POST, 1L),
-        "Failed to configure POST request");
-    require_curl(
-        curl_easy_setopt(
-            curl_.get(),
-            CURLOPT_POSTFIELDS,
-            request_body.data()),
-        "Failed to configure request body");
-    require_curl(
-        curl_easy_setopt(
-            curl_.get(),
-            CURLOPT_POSTFIELDSIZE_LARGE,
-            static_cast<curl_off_t>(request_body.size())),
+    curl_->set(CURLOPT_URL, url.c_str(), "Failed to configure request URL");
+    curl_->set(CURLOPT_POST, 1L, "Failed to configure POST request");
+    curl_->set(CURLOPT_POSTFIELDS, request_body.data(), "Failed to configure request body");
+    curl_->set_offset(
+        CURLOPT_POSTFIELDSIZE_LARGE,
+        static_cast<curl_off_t>(request_body.size()),
         "Failed to configure request body size");
-    require_curl(
-        curl_easy_setopt(
-            curl_.get(),
-            CURLOPT_WRITEFUNCTION,
-            receive_response),
-        "Failed to configure response callback");
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_WRITEDATA, &response),
-        "Failed to configure response destination");
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_CONNECTTIMEOUT, 10L),
-        "Failed to configure connection timeout");
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_NOSIGNAL, 1L),
-        "Failed to configure libcurl signals");
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_TCP_KEEPALIVE, 1L),
-        "Failed to configure TCP keepalive");
+    curl_->set(CURLOPT_WRITEFUNCTION, receive_response, "Failed to configure response callback");
+    curl_->set(CURLOPT_WRITEDATA, &response, "Failed to configure response destination");
+    curl_->set(CURLOPT_CONNECTTIMEOUT, 10L, "Failed to configure connection timeout");
+    curl_->set(CURLOPT_NOSIGNAL, 1L, "Failed to configure libcurl signals");
+    curl_->set(CURLOPT_TCP_KEEPALIVE, 1L, "Failed to configure TCP keepalive");
     // Generation duration is intentionally unbounded; callers cancel it through this flag.
-    require_curl(
-        curl_easy_setopt(curl_.get(), CURLOPT_NOPROGRESS, 0L),
-        "Failed to enable transfer progress");
-    require_curl(
-        curl_easy_setopt(
-            curl_.get(),
-            CURLOPT_XFERINFOFUNCTION,
-            transfer_progress),
-        "Failed to configure cancellation callback");
-    require_curl(
-        curl_easy_setopt(
-            curl_.get(),
-            CURLOPT_XFERINFODATA,
-            &cancellation),
-        "Failed to configure cancellation state");
+    curl_->set(CURLOPT_NOPROGRESS, 0L, "Failed to enable transfer progress");
+    curl_->set(CURLOPT_XFERINFOFUNCTION, transfer_progress, "Failed to configure cancellation callback");
+    curl_->set(CURLOPT_XFERINFODATA, &cancellation, "Failed to configure cancellation state");
 
     curl_slist* raw_headers = nullptr;
     raw_headers = curl_slist_append(
@@ -521,14 +516,9 @@ CompletionResult CompletionClient::perform(
         throw std::runtime_error("Failed to create HTTP headers");
     }
     CurlHeaders headers(raw_headers);
-    require_curl(
-        curl_easy_setopt(
-            curl_.get(),
-            CURLOPT_HTTPHEADER,
-            headers.get()),
-        "Failed to configure HTTP headers");
+    curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure HTTP headers");
 
-    const CURLcode perform_result = curl_easy_perform(curl_.get());
+    const CURLcode perform_result = curl_->perform();
     if (response.error) {
         std::rethrow_exception(response.error);
     }
@@ -544,9 +534,7 @@ CompletionResult CompletionClient::perform(
         };
     }
 
-    long status = 0;
-    require_curl(
-        curl_easy_getinfo(curl_.get(), CURLINFO_RESPONSE_CODE, &status),
+    const long status = curl_->response_code(
         "Failed to read HTTP status");
     if (status < 200 || status >= 300) {
         return {

@@ -4,7 +4,6 @@
 #include "completion_backend.h"
 
 #include <atomic>
-#include <curl/curl.h>
 
 #include <memory>
 #include <string>
@@ -15,6 +14,7 @@ namespace cha {
 class CompletionClient final : public CompletionBackend {
 public:
     explicit CompletionClient(AgentDefinition definition);
+    ~CompletionClient() override;
 
     CompletionClient(const CompletionClient&) = delete;
     CompletionClient& operator=(const CompletionClient&) = delete;
@@ -30,6 +30,8 @@ public:
     [[nodiscard]] const std::string& agent_id() const override;
 
 private:
+    class CurlEasyHandle;
+
     void discover_model();
     [[nodiscard]] std::string base_url() const;
     [[nodiscard]] std::string endpoint() const;
@@ -37,7 +39,7 @@ private:
 
     Config config_;
     std::string api_key_;
-    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl_{nullptr, &curl_easy_cleanup};
+    std::unique_ptr<CurlEasyHandle> curl_;
     std::string system_prompt_;
 };
 
