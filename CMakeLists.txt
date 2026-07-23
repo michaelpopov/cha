@@ -155,6 +155,7 @@ if(BUILD_TESTING)
         tests/unit_agent_registry.cpp
         tests/unit_agent_roster.cpp
         tests/unit_mention.cpp
+        tests/unit_command.cpp
         tests/unit_config.cpp
         tests/unit_chat_coordinator.cpp
         tests/unit_completion_client.cpp
@@ -171,9 +172,12 @@ if(BUILD_TESTING)
         tests/unit_user_session.cpp
         tests/unit_workspace.cpp
     )
-    target_link_libraries(cha_tests PRIVATE cha_core GTest::gtest_main)
+    # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
+    target_link_libraries(cha_tests PRIVATE cha_core cha_sqlite3 GTest::gtest_main)
     cha_enable_warnings(cha_tests)
 
+    # The integration suite, run by "make itest": it drives the real stack against
+    # the checked-in workspace, including its live endpoint.
     add_executable(itest tests/integration_test.cpp)
     target_link_libraries(itest PRIVATE cha_core GTest::gtest_main)
     cha_enable_warnings(itest)

@@ -70,7 +70,7 @@ public:
     void render(
         const Conversation& conversation,
         const InputEditor& editor,
-        GenerationStatus status,
+        const GenerationStatus& status,
         bool show_addressing,
         std::string_view notice) override {
         ++render_count;
@@ -128,8 +128,13 @@ public:
 // Echoes or blocks a completion so UI-to-coordinator behavior is deterministic.
 class SessionBackend final : public CompletionBackend {
 public:
-    explicit SessionBackend(bool wait_for_cancellation = false)
-      : wait_for_cancellation_(wait_for_cancellation) {
+    explicit SessionBackend(
+        bool wait_for_cancellation = false,
+        std::string id = "guide-id",
+        std::string name = "Guide")
+      : id_(std::move(id)),
+        name_(std::move(name)),
+        wait_for_cancellation_(wait_for_cancellation) {
     }
 
     RequestPayload prepare(
@@ -155,7 +160,7 @@ public:
     AgentInfo info() const override {
         return {
             .id = id_,
-            .name = "Guide",
+            .name = name_,
             .model = "test-model",
             .api = "test://completion",
             .streaming = true,
@@ -167,9 +172,17 @@ public:
     }
 
 private:
-    std::string id_{"guide-id"};
+    std::string id_;
+    std::string name_;
     bool wait_for_cancellation_{};
 };
+
+std::vector<std::unique_ptr<CompletionBackend>> two_agents() {
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::make_unique<SessionBackend>(false, "guide-id", "Guide"));
+    backends.push_back(std::make_unique<SessionBackend>(false, "ismael", "Ismael"));
+    return backends;
+}
 
 void enter(FakeSessionView& view, std::string_view text) {
     view.type(text);
@@ -352,6 +365,85 @@ TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
     EXPECT_FALSE(session.running());
     EXPECT_EQ(view.render_count, 1);
     EXPECT_EQ(view.rendered_notice, "Terminal input failed.");
+}
+
+TEST(UserSession, RendersTheGeneratingAgentByName) {
+    TemporarySessionJournal temporary;
+    ChatCoordinator coordinator(two_agents(), temporary.path);
+    FakeSessionView view;
+    UserSession session(view, coordinator);
+
+    session.resize();
+    session.render_if_needed();
+    EXPECT_FALSE(view.rendered_generating);
+    EXPECT_TRUE(view.rendered_agent_name.empty());
+
+    enter(view, "@Ismael Question");
+    session.receive_terminal_input();
+    session.render_if_needed();
+
+    EXPECT_TRUE(view.rendered_generating);
+    EXPECT_EQ(view.rendered_agent_name, "Ismael");
+
+    receive_when_ready(coordinator, session);
+    session.render_if_needed();
+    EXPECT_FALSE(view.rendered_generating);
+    EXPECT_TRUE(view.rendered_agent_name.empty());
+}
+
+TEST(UserSession, RendersAddressingWheneverTheRoomHostsSeveralAgents) {
+    TemporarySessionJournal temporary;
+    ChatCoordinator coordinator(two_agents(), temporary.path);
+    FakeSessionView view;
+    UserSession session(view, coordinator);
+
+    session.resize();
+    session.render_if_needed();
+    EXPECT_TRUE(view.rendered_show_addressing);
+
+    enter(view, "/clear");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    EXPECT_TRUE(view.rendered_show_addressing)
+        << "a multi-agent roster keeps showing every prompt's target";
+}
+
+TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOtherwise) {
+    TemporarySessionJournal temporary;
+    {
+        ChatCoordinator coordinator(
+            std::make_unique<SessionBackend>(), temporary.path);
+        FakeSessionView view;
+        UserSession session(view, coordinator);
+        session.resize();
+        session.render_if_needed();
+        EXPECT_FALSE(view.rendered_show_addressing);
+
+        enter(view, "Question");
+        session.receive_terminal_input();
+        receive_when_ready(coordinator, session);
+        session.render_if_needed();
+        EXPECT_FALSE(view.rendered_show_addressing);
+    }
+
+    // Reopening with history from an agent that has since left the room.
+    ConversationRestore restored = load_conversation_state(temporary.path);
+    restored.entries.front().addressed_to = "departed";
+    restored.entries.front().addressed_to_name = "Departed";
+    ChatCoordinator reopened(
+        std::make_unique<SessionBackend>(), temporary.path, std::move(restored));
+    FakeSessionView view;
+    UserSession session(view, reopened);
+
+    session.resize();
+    session.render_if_needed();
+    EXPECT_TRUE(view.rendered_show_addressing);
+
+    enter(view, "/clear");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    EXPECT_FALSE(view.rendered_show_addressing)
+        << "clearing removes the only reason a one-agent room showed addressing";
 }
 
 TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {

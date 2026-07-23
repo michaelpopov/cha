@@ -423,11 +423,12 @@ TEST(ChatCoordinator, OwnsClearInfoAndExitCommandSemantics) {
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().kind, EntryKind::notice);
     EXPECT_NE(
-        entries.front().text.find("Model: test-model"),
-        std::string::npos);
-    EXPECT_NE(
         entries.front().text.find("Transcript entries: 0"),
         std::string::npos);
+    EXPECT_NE(
+        entries.front().text.find("* @Guide  test-model  test://completion  streaming"),
+        std::string::npos);
+    EXPECT_EQ(entries.front().text.find("Model:"), std::string::npos);
     EXPECT_EQ(load_conversation_entries(temporary.path), entries);
 
     EXPECT_TRUE(

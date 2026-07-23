@@ -1,5 +1,7 @@
 #include "agent_identity.h"
 
+#include "text.h"
+
 #include <cctype>
 #include <stdexcept>
 
@@ -32,24 +34,9 @@ void validate_agent_name(std::string_view name) {
             throw std::invalid_argument("Agent name cannot contain whitespace");
         }
     }
-    if (name.size() == 4
-        && std::tolower(static_cast<unsigned char>(name[0])) == 'u'
-        && std::tolower(static_cast<unsigned char>(name[1])) == 's'
-        && std::tolower(static_cast<unsigned char>(name[2])) == 'e'
-        && std::tolower(static_cast<unsigned char>(name[3])) == 'r') {
+    if (fold_ascii(name) == "user") {
         throw std::invalid_argument("Agent name 'User' is reserved");
     }
-}
-
-std::string fold_ascii(std::string_view value) {
-    std::string result(value);
-    for (char& character : result) {
-        const unsigned char byte = static_cast<unsigned char>(character);
-        if (byte < 128) {
-            character = static_cast<char>(std::tolower(byte));
-        }
-    }
-    return result;
 }
 
 } // namespace cha

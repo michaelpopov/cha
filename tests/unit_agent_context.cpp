@@ -157,6 +157,100 @@ TEST(AgentContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
         }));
 }
 
+// Reproduces the two-agent transcript of the design proposal's worked example.
+ConversationSnapshot lobby_conversation() {
+    return {
+        .entries = {
+            make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1),
+            make_agent_entry(
+                2, "cheburashka", "Cheburashka", "I am Cheburashka.",
+                CompletionStatus::complete, 1),
+            make_human_entry(3, "ismael", "Ismael", "And you?", 2),
+            make_agent_entry(
+                4, "ismael", "Ismael", "Call me Ismael.", CompletionStatus::complete, 2),
+            make_human_entry(5, "cheburashka", "Cheburashka", "What did he say?", 3),
+        },
+    };
+}
+
+TEST(AgentContext, ProjectsTheSharedConversationForTheAddressedAgent) {
+    EXPECT_EQ(
+        context(lobby_conversation(), "Cheburashka system", "cheburashka"),
+        (std::vector<MaterializedMessage>{
+            {AgentRole::system, "Cheburashka system"},
+            {AgentRole::user, "User: Who are you?"},
+            {AgentRole::assistant, "I am Cheburashka."},
+            {AgentRole::user,
+             "User: [to Ismael] And you?"
+             "\n\nIsmael: Call me Ismael."
+             "\n\nUser: What did he say?"},
+        }));
+}
+
+TEST(AgentContext, ProjectsTheSameConversationFromTheOtherAgentsPointOfView) {
+    EXPECT_EQ(
+        context(lobby_conversation(), "Ismael system", "ismael"),
+        (std::vector<MaterializedMessage>{
+            {AgentRole::system, "Ismael system"},
+            {AgentRole::user,
+             "User: [to Cheburashka] Who are you?"
+             "\n\nCheburashka: I am Cheburashka."
+             "\n\nUser: And you?"},
+            {AgentRole::assistant, "Call me Ismael."},
+            {AgentRole::user, "User: [to Cheburashka] What did he say?"},
+        }));
+}
+
+TEST(AgentContext, MarksOnlyPromptsAddressedToSomebodyElse) {
+    const std::vector<MaterializedMessage> projected =
+        context(lobby_conversation(), {}, "cheburashka");
+
+    ASSERT_EQ(projected.size(), 3U);
+    // Rule 2 of the projection: "User: " always, "[to X] " only for foreign targets.
+    EXPECT_EQ(projected.front().content, "User: Who are you?");
+    EXPECT_EQ(projected.front().content.find("[to "), std::string::npos);
+    EXPECT_NE(projected.back().content.find("User: [to Ismael] And you?"), std::string::npos);
+    EXPECT_NE(projected.back().content.find("\n\nUser: What did he say?"), std::string::npos);
+    EXPECT_EQ(projected.back().content.find("[to Cheburashka]"), std::string::npos);
+}
+
+TEST(AgentContext, OmitsTheAddressingMarkerEntirelyWithOneParticipant) {
+    const ConversationSnapshot conversation{
+        .entries = {
+            make_human_entry(1, "ismael", "Ismael", "Who are you?", 1),
+            make_agent_entry(
+                2, "ismael", "Ismael", "Call me Ismael.", CompletionStatus::complete, 1),
+        },
+    };
+
+    EXPECT_EQ(
+        context(conversation, {}, "ismael"),
+        (std::vector<MaterializedMessage>{
+            {AgentRole::user, "Who are you?"},
+            {AgentRole::assistant, "Call me Ismael."},
+        }));
+}
+
+TEST(AgentContext, AttributesAgentsThatNoRosterStillContains) {
+    const ConversationSnapshot conversation{
+        .entries = {
+            make_human_entry(1, "departed", "Departed", "Say something", 1),
+            make_agent_entry(
+                2, "departed", "Departed", "Farewell", CompletionStatus::complete, 1),
+            make_human_entry(3, "ismael", "Ismael", "Your turn", 2),
+        },
+    };
+
+    EXPECT_EQ(
+        context(conversation, {}, "ismael"),
+        (std::vector<MaterializedMessage>{
+            {AgentRole::user,
+             "User: [to Departed] Say something"
+             "\n\nDeparted: Farewell"
+             "\n\nUser: Your turn"},
+        }));
+}
+
 TEST(AgentContext, SupportsArbitrarilyFragmentedWriterContent) {
     MaterializingWriter writer;
     writer.begin_message(AgentRole::assistant);

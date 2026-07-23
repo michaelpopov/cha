@@ -1,6 +1,7 @@
 #include "agent_roster.h"
 
 #include "agent_identity.h"
+#include "text.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -9,13 +10,29 @@
 namespace cha {
 namespace {
 
-bool equal_folded(std::string_view left, std::string_view right) {
-    return fold_ascii(left) == fold_ascii(right);
+bool ascii_iequals(std::string_view left, std::string_view right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        char left_character = left[index];
+        char right_character = right[index];
+        if (left_character >= 'A' && left_character <= 'Z') {
+            left_character = static_cast<char>(left_character - 'A' + 'a');
+        }
+        if (right_character >= 'A' && right_character <= 'Z') {
+            right_character = static_cast<char>(right_character - 'A' + 'a');
+        }
+        if (left_character != right_character) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool starts_with_folded(std::string_view value, std::string_view prefix) {
     return value.size() >= prefix.size()
-        && equal_folded(value.substr(0, prefix.size()), prefix);
+        && ascii_iequals(value.substr(0, prefix.size()), prefix);
 }
 
 std::string_view trim_punctuation(std::string_view handle) {
@@ -66,7 +83,7 @@ HandleResolution AgentRoster::resolve_handle(std::string_view handle) const {
     }
     const auto named = [this](std::string_view value) -> const AgentInfo* {
         const auto found = std::find_if(agents_.begin(), agents_.end(), [value](const AgentInfo& agent) {
-            return equal_folded(agent.name, value);
+            return ascii_iequals(agent.name, value);
         });
         return found == agents_.end() ? nullptr : &*found;
     };

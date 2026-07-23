@@ -1,8 +1,9 @@
 #include "agent_definition.h"
 
-#include <fstream>
 #include "agent_identity.h"
+#include "text.h"
 
+#include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -66,13 +67,27 @@ std::vector<AgentDefinition> load_agent_definitions(
     std::vector<AgentDefinition> definitions;
     std::unordered_map<std::string, std::filesystem::path> ids;
     std::unordered_map<std::string, std::filesystem::path> names;
+    // Keep this validation before the final AgentRoster boundary so errors name
+    // both conflicting persona directories.
     for (const auto& directory : persona_directories) {
-        AgentDefinition definition = load_agent_definition(directory, room_directory);
+        AgentDefinition definition =
+            load_agent_definition(directory, room_directory);
         const auto [id, fresh_id] = ids.emplace(definition.config.id, directory);
-        if (!fresh_id) throw std::runtime_error("Personas '" + id->second.filename().string() + "' and '" + directory.filename().string() + "' declare the same agent id '" + definition.config.id + "'");
+        if (!fresh_id) {
+            throw std::runtime_error(
+                "Personas '" + id->second.filename().string() + "' and '"
+                + directory.filename().string() + "' declare the same agent id '"
+                + definition.config.id + "'");
+        }
         const std::string folded = fold_ascii(definition.config.name);
         const auto [name, fresh_name] = names.emplace(folded, directory);
-        if (!fresh_name) throw std::runtime_error("Personas '" + name->second.filename().string() + "' and '" + directory.filename().string() + "' declare the same agent name '" + definition.config.name + "'");
+        if (!fresh_name) {
+            throw std::runtime_error(
+                "Personas '" + name->second.filename().string() + "' and '"
+                + directory.filename().string()
+                + "' declare the same agent name '" + definition.config.name
+                + "'");
+        }
         definitions.push_back(std::move(definition));
     }
     return definitions;

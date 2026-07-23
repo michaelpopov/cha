@@ -18,7 +18,6 @@ struct HandleResolution {
 
 class AgentRoster {
 public:
-    AgentRoster() = default;
     explicit AgentRoster(std::vector<AgentInfo> agents);
 
     [[nodiscard]] const std::vector<AgentInfo>& agents() const noexcept;

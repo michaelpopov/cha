@@ -74,10 +74,11 @@ void ChatCoordinator::initialize(ConversationRestore restored) {
     show_addressing_ = registry_.roster().agents().size() > 1;
     if (!show_addressing_) {
         for (const ConversationEntry& entry : restored.entries) {
-            show_addressing_ =
+            const bool foreign =
                 (entry.kind == EntryKind::agent && entry.participant_id != sole)
                 || (entry.kind == EntryKind::human && entry.addressed_to != sole);
-            if (show_addressing_) {
+            if (foreign) {
+                show_addressing_ = true;
                 break;
             }
         }
@@ -155,9 +156,7 @@ CoordinatorUpdate ChatCoordinator::handle_input(std::string input) {
         break;
     }
     case CommandKind::info: {
-        const AgentInfo* current = roster().find(default_agent_id_);
         std::ostringstream text;
-        if (current) text << "Model: " << current->model << "\n";
         text << "Transcript entries: " << conversation_.snapshot().entries.size()
              << "\n" << roster_notice();
         add_notice(text.str());
@@ -234,31 +233,184 @@ CoordinatorUpdate ChatCoordinator::submit(std::string input) {
     return update;
 }
 
-void ChatCoordinator::clear() { journal_.clear(); conversation_.clear(); show_addressing_ = roster().agents().size() > 1; }
-void ChatCoordinator::add_notice(std::string text) { ConversationEntry entry = make_notice_entry(next_entry_id_++, std::move(text)); journal_.append(entry); conversation_.add_entry(std::move(entry)); }
+void ChatCoordinator::clear() {
+    journal_.clear();
+    conversation_.clear();
+    show_addressing_ = roster().agents().size() > 1;
+}
+
+void ChatCoordinator::add_notice(std::string text) {
+    ConversationEntry entry =
+        make_notice_entry(next_entry_id_++, std::move(text));
+    journal_.append(entry);
+    conversation_.add_entry(std::move(entry));
+}
+
 std::string ChatCoordinator::handle_notice(std::string_view handle, const HandleResolution& resolution) const {
-    if (resolution.match == HandleMatch::unknown) return "Unknown agent @" + std::string(handle) + ". Agents in this room: " + roster().handle_list();
-    std::string result = "Ambiguous agent @" + std::string(handle) + ": matches ";
-    for (std::size_t i = 0; i < resolution.candidates.size(); ++i) { if (i) result += ", "; result += "@" + resolution.candidates[i]->name; }
+    if (resolution.match == HandleMatch::unknown) {
+        return "Unknown agent @" + std::string(handle)
+            + ". Agents in this room: " + roster().handle_list();
+    }
+    std::string result =
+        "Ambiguous agent @" + std::string(handle) + ": matches ";
+    for (std::size_t i = 0; i < resolution.candidates.size(); ++i) {
+        if (i) {
+            result += ", ";
+        }
+        result += "@" + resolution.candidates[i]->name;
+    }
     return result + ". Type more of the name.";
 }
+
 std::string ChatCoordinator::roster_notice() const {
-    std::ostringstream result; result << "Agents in this room (" << roster().agents().size() << "), * marks the default.";
+    std::ostringstream result;
+    result << "Agents in this room (" << roster().agents().size()
+           << "), * marks the default.";
     result << "\nAny unambiguous prefix works.";
-    for (const AgentInfo& agent : roster().agents()) result << "\n" << (agent.id == default_agent_id_ ? "* " : "  ") << "@" << agent.name << "  " << agent.model << "  " << agent.api << "  " << (agent.streaming ? "streaming" : "non-streaming");
+    for (const AgentInfo& agent : roster().agents()) {
+        result << "\n" << (agent.id == default_agent_id_ ? "* " : "  ")
+               << "@" << agent.name << "  " << agent.model << "  "
+               << agent.api << "  "
+               << (agent.streaming ? "streaming" : "non-streaming");
+    }
     return result.str();
 }
-CoordinatorUpdate ChatCoordinator::request_stop() { CoordinatorUpdate update; if (!active_) { update.notice = "No generation is active"; return update; } registry_.cancel(active_->agent_id); update.notice = "Stopping generation..."; return update; }
-CoordinatorUpdate ChatCoordinator::receive() { CoordinatorUpdate update; AgentEvent event = AgentCompleted{}; while (true) { const ChannelReadStatus status = registry_.try_receive(event); if (status == ChannelReadStatus::empty) break; if (status == ChannelReadStatus::closed) { update.end_session = true; break; } merge_update(update, handle_agent_event(std::move(event))); } return update; }
-CoordinatorUpdate ChatCoordinator::handle_agent_event(AgentEvent event) { CoordinatorUpdate update; std::visit([this, &update](const auto& value){ apply(value, update); }, event); return update; }
-void ChatCoordinator::shutdown() { if (shutdown_) return; registry_.stop(); (void)receive(); shutdown_ = true; }
-void ChatCoordinator::apply(const AgentDelta& event, CoordinatorUpdate& update) { if (!matches(event.request_id) || event.text.empty()) return; if (!active_->entry_open) { conversation_.begin_entry(response_entry(CompletionStatus::streaming)); active_->entry_open = true; } conversation_.append_to_entry(active_->response_entry_id, event.text); active_->response += event.text; update.render_needed = true; }
-void ChatCoordinator::apply(const AgentCompleted& event, CoordinatorUpdate& update) { if (!matches(event.request_id)) return; if (active_->response.empty()) { fail_active_turn("Agent completed without text content", active_->agent_id, update); return; } journal_.complete_turn(event.request_id, response_entry(CompletionStatus::complete)); finish_response_entry(CompletionStatus::complete); active_.reset(); update.render_needed = true; update.notice = ""; }
-void ChatCoordinator::apply(const AgentCancelled& event, CoordinatorUpdate& update) { if (!matches(event.request_id)) return; if (active_->entry_open) { journal_.cancel_turn(event.request_id, response_entry(CompletionStatus::cancelled)); finish_response_entry(CompletionStatus::cancelled); } else journal_.cancel_turn(event.request_id, std::nullopt); active_.reset(); update.render_needed = true; update.notice = "Generation stopped"; }
-void ChatCoordinator::apply(const AgentFailed& event, CoordinatorUpdate& update) { if (matches(event.request_id)) fail_active_turn(event.message, active_->agent_id, update); }
-void ChatCoordinator::fail_active_turn(std::string message, ParticipantId participant_id, CoordinatorUpdate& update) { ConversationEntry error = make_error_entry(next_entry_id_++, std::move(message), active_->request_id, std::move(participant_id)); journal_.fail_turn(active_->request_id, error); if (active_->entry_open) conversation_.discard_entry(active_->response_entry_id); conversation_.add_entry(std::move(error)); active_.reset(); update.render_needed = true; update.notice = "Generation failed"; }
-void ChatCoordinator::finish_response_entry(CompletionStatus status) { if (active_->entry_open) conversation_.finish_entry(active_->response_entry_id, status); else conversation_.add_entry(response_entry(status)); }
-ConversationEntry ChatCoordinator::response_entry(CompletionStatus status) const { return make_agent_entry(active_->response_entry_id, active_->agent_id, active_->agent_name, active_->response, status, active_->request_id); }
-bool ChatCoordinator::matches(RequestId request_id) const { return active_ && active_->request_id == request_id; }
+
+CoordinatorUpdate ChatCoordinator::request_stop() {
+    CoordinatorUpdate update;
+    if (!active_) {
+        update.notice = "No generation is active";
+        return update;
+    }
+    registry_.cancel(active_->agent_id);
+    update.notice = "Stopping generation...";
+    return update;
+}
+
+CoordinatorUpdate ChatCoordinator::receive() {
+    CoordinatorUpdate update;
+    AgentEvent event = AgentCompleted{};
+    while (true) {
+        const ChannelReadStatus status = registry_.try_receive(event);
+        if (status == ChannelReadStatus::empty) {
+            break;
+        }
+        if (status == ChannelReadStatus::closed) {
+            update.end_session = true;
+            break;
+        }
+        merge_update(update, handle_agent_event(std::move(event)));
+    }
+    return update;
+}
+
+CoordinatorUpdate ChatCoordinator::handle_agent_event(AgentEvent event) {
+    CoordinatorUpdate update;
+    std::visit(
+        [this, &update](const auto& value) { apply(value, update); }, event);
+    return update;
+}
+
+void ChatCoordinator::shutdown() {
+    if (shutdown_) {
+        return;
+    }
+    registry_.stop();
+    (void)receive();
+    shutdown_ = true;
+}
+
+void ChatCoordinator::apply(const AgentDelta& event, CoordinatorUpdate& update) {
+    if (!matches(event.request_id) || event.text.empty()) {
+        return;
+    }
+    if (!active_->entry_open) {
+        conversation_.begin_entry(response_entry(CompletionStatus::streaming));
+        active_->entry_open = true;
+    }
+    conversation_.append_to_entry(active_->response_entry_id, event.text);
+    active_->response += event.text;
+    update.render_needed = true;
+}
+
+void ChatCoordinator::apply(const AgentCompleted& event, CoordinatorUpdate& update) {
+    if (!matches(event.request_id)) {
+        return;
+    }
+    if (active_->response.empty()) {
+        fail_active_turn(
+            "Agent completed without text content", active_->agent_id, update);
+        return;
+    }
+    journal_.complete_turn(
+        event.request_id, response_entry(CompletionStatus::complete));
+    finish_response_entry(CompletionStatus::complete);
+    active_.reset();
+    update.render_needed = true;
+    update.notice = "";
+}
+
+void ChatCoordinator::apply(const AgentCancelled& event, CoordinatorUpdate& update) {
+    if (!matches(event.request_id)) {
+        return;
+    }
+    if (active_->entry_open) {
+        journal_.cancel_turn(
+            event.request_id, response_entry(CompletionStatus::cancelled));
+        finish_response_entry(CompletionStatus::cancelled);
+    } else {
+        journal_.cancel_turn(event.request_id, std::nullopt);
+    }
+    active_.reset();
+    update.render_needed = true;
+    update.notice = "Generation stopped";
+}
+
+void ChatCoordinator::apply(const AgentFailed& event, CoordinatorUpdate& update) {
+    if (matches(event.request_id)) {
+        fail_active_turn(event.message, active_->agent_id, update);
+    }
+}
+
+void ChatCoordinator::fail_active_turn(
+    std::string message,
+    ParticipantId participant_id,
+    CoordinatorUpdate& update) {
+    ConversationEntry error = make_error_entry(
+        next_entry_id_++,
+        std::move(message),
+        active_->request_id,
+        std::move(participant_id));
+    journal_.fail_turn(active_->request_id, error);
+    if (active_->entry_open) {
+        conversation_.discard_entry(active_->response_entry_id);
+    }
+    conversation_.add_entry(std::move(error));
+    active_.reset();
+    update.render_needed = true;
+    update.notice = "Generation failed";
+}
+
+void ChatCoordinator::finish_response_entry(CompletionStatus status) {
+    if (active_->entry_open) {
+        conversation_.finish_entry(active_->response_entry_id, status);
+    } else {
+        conversation_.add_entry(response_entry(status));
+    }
+}
+
+ConversationEntry ChatCoordinator::response_entry(CompletionStatus status) const {
+    return make_agent_entry(
+        active_->response_entry_id,
+        active_->agent_id,
+        active_->agent_name,
+        active_->response,
+        status,
+        active_->request_id);
+}
+
+bool ChatCoordinator::matches(RequestId request_id) const {
+    return active_ && active_->request_id == request_id;
+}
 
 } // namespace cha

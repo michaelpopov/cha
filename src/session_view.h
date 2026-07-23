@@ -45,7 +45,7 @@ public:
     virtual void render(
         const Conversation& conversation,
         const InputEditor& editor,
-        GenerationStatus status,
+        const GenerationStatus& status,
         bool show_addressing,
         std::string_view notice) = 0;
     virtual void scroll_up() = 0;

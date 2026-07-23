@@ -128,7 +128,12 @@ std::optional<SessionInput> Tui::read_input() {
     return SessionInput{};
 }
 
-void Tui::render(const Conversation& conversation, const InputEditor& editor, GenerationStatus status, bool show_addressing, std::string_view notice) {
+void Tui::render(
+    const Conversation& conversation,
+    const InputEditor& editor,
+    const GenerationStatus& status,
+    bool show_addressing,
+    std::string_view notice) {
     int rows = 0;
     int columns = 0;
     getmaxyx(stdscr, rows, columns);

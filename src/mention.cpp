@@ -1,12 +1,12 @@
 #include "mention.h"
 
-#include <cctype>
+#include "text.h"
 
 namespace cha {
 
 AddressedPrompt parse_addressed_prompt(std::string_view input) {
     std::size_t start = 0;
-    while (start < input.size() && std::isspace(static_cast<unsigned char>(input[start]))) {
+    while (start < input.size() && is_space(input[start])) {
         ++start;
     }
     const std::string_view trimmed = input.substr(start);
@@ -19,14 +19,14 @@ AddressedPrompt parse_addressed_prompt(std::string_view input) {
         return {{}, std::move(text)};
     }
     std::size_t end = 1;
-    while (end < trimmed.size() && !std::isspace(static_cast<unsigned char>(trimmed[end]))) {
+    while (end < trimmed.size() && !is_space(trimmed[end])) {
         ++end;
     }
     if (end == 1) {
         return {{}, std::string(input)};
     }
     std::size_t body = end;
-    while (body < trimmed.size() && std::isspace(static_cast<unsigned char>(trimmed[body]))) {
+    while (body < trimmed.size() && is_space(trimmed[body])) {
         ++body;
     }
     return {std::string(trimmed.substr(1, end - 1)), std::string(trimmed.substr(body))};

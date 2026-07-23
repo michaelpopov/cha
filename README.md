@@ -55,7 +55,7 @@ Before loading server configuration, the application optionally reads `.env` fro
 
 - `/clear` starts a new visible history while retaining the system prompt.
   Earlier transcript rows remain in the session database.
-- `/info` displays the endpoint, configured model, streaming mode, and transcript message count.
+- `/info` displays the transcript entry count followed by the current room roster.
 - `/agents` displays the current room roster and marks the default agent.
 - `/@Name` changes the default agent for this run only.
 - `/stop` cancels the active model response.

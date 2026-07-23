@@ -57,8 +57,10 @@ void write_agent_context(
             ? AgentRole::user : AgentRole::assistant;
         const bool coalesce = message_open && role == AgentRole::user && open_role == AgentRole::user
             && (previous_foreign || foreign);
-        if (!message_open || !coalesce) {
-            if (message_open) writer.end_message();
+        if (message_open && !coalesce) {
+            writer.end_message();
+        }
+        if (!coalesce) {
             writer.begin_message(role);
             message_open = true;
             open_role = role;

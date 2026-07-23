@@ -21,6 +21,13 @@ TEST(Text, FindsTheFirstStandardWhitespaceCharacter) {
     EXPECT_EQ(find_whitespace("command"), std::string_view::npos);
 }
 
+TEST(Text, FoldsOnlyAsciiLetters) {
+    EXPECT_EQ(fold_ascii("Ada_123"), "ada_123");
+    EXPECT_EQ(
+        fold_ascii("\xD0\x98\xD0\xB2\xD0\xB0\xD0\xBD"),
+        "\xD0\x98\xD0\xB2\xD0\xB0\xD0\xBD");
+}
+
 TEST(PathName, AcceptsOneSafePathComponent) {
     EXPECT_NO_THROW(require_path_component("session-1", "sessions"));
 }

@@ -6,7 +6,6 @@
 
 #include <memory>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace cha {
@@ -31,7 +30,6 @@ public:
 private:
     AgentEventChannel events_;
     std::vector<std::unique_ptr<AgentWorker>> workers_;
-    std::unordered_map<std::string, std::size_t> index_;
     AgentRoster roster_;
     bool stopped_{};
 };

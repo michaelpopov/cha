@@ -44,7 +44,9 @@ int main_internal() {
         }
         room = workspace.load_room(*room_name);
         std::vector<std::filesystem::path> persona_directories;
-        for (const std::string& persona : room.persona_names) persona_directories.push_back(workspace.persona_directory(persona));
+        for (const std::string& persona : room.persona_names) {
+            persona_directories.push_back(workspace.persona_directory(persona));
+        }
         definitions = cha::load_agent_definitions(persona_directories, room.directory);
         session_repository.emplace(room.directory / "sessions", room.name);
         std::string selection_error;

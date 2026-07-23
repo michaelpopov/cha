@@ -27,4 +27,14 @@ std::string_view trim_view(std::string_view value) {
     return value;
 }
 
+std::string fold_ascii(std::string_view value) {
+    std::string result(value);
+    for (char& character : result) {
+        if (character >= 'A' && character <= 'Z') {
+            character = static_cast<char>(character - 'A' + 'a');
+        }
+    }
+    return result;
+}
+
 } // namespace cha

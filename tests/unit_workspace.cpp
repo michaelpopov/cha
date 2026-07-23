@@ -252,5 +252,105 @@ TEST_F(WorkspaceTest, LoadsRoomsWithMultiplePersonasInDeclaredOrder) {
         (std::vector<std::string>{"guide", "other"}));
 }
 
+TEST_F(WorkspaceTest, IgnoresBlankLinesAndCommentsInThePersonaList) {
+    {
+        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        file << "# the roster\n\n  other  \n\n# guide moved down\nguide\n";
+    }
+    Workspace workspace(root);
+    EXPECT_EQ(
+        workspace.load_room("lobby").persona_names,
+        (std::vector<std::string>{"other", "guide"}));
+}
+
+TEST_F(WorkspaceTest, RejectsAPersonaListNamingOnePersonaTwice) {
+    {
+        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        file << "guide\nother\nguide\n";
+    }
+    Workspace workspace(root);
+
+    try {
+        (void)workspace.load_room("lobby");
+        FAIL() << "expected a duplicate persona diagnostic";
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("personas.list"), std::string::npos) << message;
+        EXPECT_NE(message.find("'guide' more than once"), std::string::npos) << message;
+    }
+}
+
+TEST_F(WorkspaceTest, DefersMissingPersonaValidationUntilPersonaResolution) {
+    {
+        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        file << "guide\nabsent\n";
+    }
+    Workspace workspace(root);
+
+    EXPECT_EQ(
+        workspace.load_room("lobby").persona_names,
+        (std::vector<std::string>{"guide", "absent"}));
+    EXPECT_THROW((void)workspace.persona_directory("absent"), std::runtime_error);
+}
+
+TEST_F(WorkspaceTest, RejectsAnEmptyOrAbsentPersonaList) {
+    Workspace workspace(root);
+    {
+        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        file << "# nobody lives here\n\n";
+    }
+
+    try {
+        (void)workspace.load_room("lobby");
+        FAIL() << "expected an empty persona list diagnostic";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("does not name a persona"), std::string::npos)
+            << error.what();
+    }
+
+    std::filesystem::remove(root / "rooms" / "lobby" / "personas.list");
+    EXPECT_THROW((void)workspace.load_room("lobby"), std::runtime_error);
+}
+
+TEST_F(WorkspaceTest, RejectsAPersonaNameThatEscapesThePersonaDirectory) {
+    {
+        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        file << "../personas/guide\n";
+    }
+    Workspace workspace(root);
+
+    EXPECT_THROW((void)workspace.load_room("lobby"), std::runtime_error);
+}
+
+TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentRosterIs) {
+    Workspace workspace(root);
+    SessionRepository sessions(
+        workspace.load_room("lobby").directory / "sessions", "lobby");
+    const Session session = sessions.create("Two agents");
+    {
+        ConversationJournal journal(sessions.database_path(session.id));
+        journal.append(make_human_entry(1, "other-id", "Other", "Question"));
+        journal.append(make_agent_entry(
+            2, "other-id", "Other", "Answer", CompletionStatus::complete));
+    }
+
+    // The room now hosts a completely different roster; the session is unaffected.
+    {
+        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        file << "guide\n";
+    }
+    const Room reduced = workspace.load_room("lobby");
+    SessionRepository reopened(reduced.directory / "sessions", reduced.name);
+
+    ASSERT_EQ(reopened.list().size(), 1U);
+    EXPECT_TRUE(reopened.list().front().error.empty());
+    EXPECT_EQ(
+        load_conversation_entries(reopened.open_database_path(session.id)).size(),
+        2U);
+    EXPECT_EQ(read_session_database_metadata(
+                  reopened.open_database_path(session.id)).room,
+              "lobby");
+}
+
 } // namespace
 } // namespace cha

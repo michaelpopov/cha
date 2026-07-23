@@ -1,17 +1,81 @@
+#include "agent_context.h"
 #include "conversation.h"
 #include "session_database.h"
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace cha {
 namespace {
+
+struct MaterializedContextMessage {
+    AgentRole role{};
+    std::string content;
+
+    bool operator==(const MaterializedContextMessage&) const = default;
+};
+
+// Collects projected context messages so a restored transcript can be asserted on.
+class MaterializingContextWriter final : public AgentContextWriter {
+public:
+    void begin_message(AgentRole role) override { current_ = {.role = role}; }
+    void append_content(std::string_view text) override { current_.content += text; }
+    void end_message() override { messages.push_back(std::move(current_)); }
+
+    std::vector<MaterializedContextMessage> messages;
+
+private:
+    MaterializedContextMessage current_;
+};
+
+// Runs one statement directly against a session database and returns its SQLite code.
+// The tests use it to reach schema constraints that the journal API refuses to violate.
+int raw_execute(const std::filesystem::path& path, const std::string& sql) {
+    sqlite3* handle = nullptr;
+    if (sqlite3_open_v2(path.c_str(), &handle, SQLITE_OPEN_READWRITE, nullptr)
+        != SQLITE_OK) {
+        sqlite3_close_v2(handle);
+        throw std::runtime_error("Failed to open '" + path.string() + "' directly");
+    }
+    const int result = sqlite3_exec(handle, sql.c_str(), nullptr, nullptr, nullptr);
+    sqlite3_close_v2(handle);
+    return result;
+}
+
+std::vector<std::string> table_columns(
+    const std::filesystem::path& path,
+    const std::string& table) {
+    sqlite3* handle = nullptr;
+    if (sqlite3_open_v2(path.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr)
+        != SQLITE_OK) {
+        sqlite3_close_v2(handle);
+        throw std::runtime_error("Failed to open '" + path.string() + "' directly");
+    }
+    sqlite3_stmt* statement = nullptr;
+    const std::string sql = "PRAGMA table_info(" + table + ")";
+    std::vector<std::string> columns;
+    if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &statement, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(statement) == SQLITE_ROW) {
+            columns.emplace_back(
+                reinterpret_cast<const char*>(sqlite3_column_text(statement, 1)));
+        }
+    }
+    sqlite3_finalize(statement);
+    sqlite3_close_v2(handle);
+    return columns;
+}
 
 std::filesystem::path temporary_path(std::string_view prefix) {
     return std::filesystem::temp_directory_path()
@@ -368,6 +432,236 @@ TEST(SessionDatabase, JournalDoesNotCreateAMissingDatabase) {
 
     EXPECT_THROW(ConversationJournal journal(path), std::runtime_error);
     EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST(ConversationValidation, RequiresATargetOnHumanEntriesAndForbidsItElsewhere) {
+    ConversationEntry untargeted = human(1, "No target");
+    untargeted.addressed_to.clear();
+    EXPECT_THROW(validate_conversation_entry(untargeted), std::invalid_argument);
+
+    ConversationEntry unnamed = human(1, "No target name");
+    unnamed.addressed_to_name.clear();
+    EXPECT_THROW(validate_conversation_entry(unnamed), std::invalid_argument);
+
+    ConversationEntry addressed_agent = make_agent_entry(
+        2, "guide-id", "Guide", "Answer", CompletionStatus::complete);
+    addressed_agent.addressed_to = "reviewer-id";
+    addressed_agent.addressed_to_name = "Reviewer";
+    EXPECT_THROW(validate_conversation_entry(addressed_agent), std::invalid_argument);
+
+    ConversationEntry addressed_notice = make_notice_entry(3, "Notice");
+    addressed_notice.addressed_to_name = "Reviewer";
+    EXPECT_THROW(validate_conversation_entry(addressed_notice), std::invalid_argument);
+
+    ConversationEntry addressed_error = make_error_entry(4, "Failure");
+    addressed_error.addressed_to = "reviewer-id";
+    EXPECT_THROW(validate_conversation_entry(addressed_error), std::invalid_argument);
+
+    EXPECT_NO_THROW(validate_conversation_entry(human(1, "Targeted")));
+}
+
+TEST(ConversationValidation, RejectsAddressingViolationsInMemoryAndInSqlite) {
+    ConversationEntry untargeted = human(1, "No target");
+    untargeted.addressed_to.clear();
+    untargeted.addressed_to_name.clear();
+
+    Conversation conversation;
+    EXPECT_THROW(conversation.add_entry(untargeted), std::invalid_argument);
+
+    const auto path = temporary_path("cha_addressing_");
+    create_test_database(path);
+    ConversationJournal journal(path);
+    EXPECT_THROW(journal.append(untargeted), std::invalid_argument);
+    EXPECT_TRUE(load_conversation_entries(path).empty());
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
+    const auto path = temporary_path("cha_addressed_round_trip_");
+    create_test_database(path);
+    ConversationJournal journal(path);
+    journal.start_turn(1, make_human_entry(1, "ismael", "Ismael", "And you?", 1));
+    journal.complete_turn(1, make_agent_entry(
+        2, "ismael", "Ismael", "Call me Ismael.", CompletionStatus::complete, 1));
+
+    const std::vector<ConversationEntry> restored = load_conversation_entries(path);
+    ASSERT_EQ(restored.size(), 2U);
+    EXPECT_EQ(restored.front().addressed_to, "ismael");
+    EXPECT_EQ(restored.front().addressed_to_name, "Ismael");
+    EXPECT_TRUE(restored.back().addressed_to.empty());
+    EXPECT_TRUE(restored.back().addressed_to_name.empty());
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, RefusesAVersionOneDatabase) {
+    const auto path = temporary_path("cha_version_one_");
+    create_test_database(path);
+    ASSERT_EQ(raw_execute(path, "PRAGMA user_version = 1"), SQLITE_OK);
+
+    try {
+        (void)load_conversation_state(path);
+        FAIL() << "expected the older schema version to be refused";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("Unsupported session database"),
+                  std::string::npos)
+            << error.what();
+    }
+    EXPECT_THROW(ConversationJournal journal(path), std::runtime_error);
+    EXPECT_THROW((void)read_session_database_metadata(path), std::runtime_error);
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, StoresTheTargetOnlyOnThePromptItself) {
+    const auto path = temporary_path("cha_schema_shape_");
+    create_test_database(path);
+
+    EXPECT_EQ(
+        table_columns(path, "turns"),
+        (std::vector<std::string>{"request_id", "epoch", "state"}))
+        << "the turn must not duplicate its prompt's target";
+
+    const std::vector<std::string> entries = table_columns(path, "entries");
+    EXPECT_NE(std::find(entries.begin(), entries.end(), "addressed_to"), entries.end());
+    EXPECT_NE(std::find(entries.begin(), entries.end(), "addressed_to_name"), entries.end());
+
+    EXPECT_EQ(
+        table_columns(path, "session"),
+        (std::vector<std::string>{"singleton", "id", "room", "label"}))
+        << "a session belongs to a room, not to a roster";
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, ConstrainsAddressingColumnsByEntryKind) {
+    const auto path = temporary_path("cha_addressing_checks_");
+    create_test_database(path);
+    const auto insert = [&path](
+        int entry_id, int kind, std::string_view participant, std::string_view name,
+        std::string_view addressed_to, std::string_view addressed_to_name) {
+        return raw_execute(
+            path,
+            "INSERT INTO entries (entry_id, epoch, request_id, kind, participant_id,"
+            " display_name, addressed_to, addressed_to_name, text, status) VALUES ("
+                + std::to_string(entry_id) + ", 1, NULL, " + std::to_string(kind)
+                + ", '" + std::string(participant) + "', '" + std::string(name)
+                + "', '" + std::string(addressed_to) + "', '"
+                + std::string(addressed_to_name) + "', 'Text', 0)");
+    };
+
+    EXPECT_EQ(insert(1, 0, "human", "You", "ismael", "Ismael"), SQLITE_OK);
+    EXPECT_EQ(insert(2, 0, "human", "You", "", ""), SQLITE_CONSTRAINT);
+    EXPECT_EQ(insert(3, 0, "human", "You", "ismael", ""), SQLITE_CONSTRAINT);
+    EXPECT_EQ(insert(4, 0, "human", "You", "", "Ismael"), SQLITE_CONSTRAINT);
+    EXPECT_EQ(insert(5, 1, "ismael", "Ismael", "human", "You"), SQLITE_CONSTRAINT);
+    EXPECT_EQ(insert(6, 2, "", "System", "ismael", "Ismael"), SQLITE_CONSTRAINT);
+    EXPECT_EQ(insert(7, 2, "", "System", "", "Ismael"), SQLITE_CONSTRAINT);
+    EXPECT_EQ(insert(8, 1, "ismael", "Ismael", "", ""), SQLITE_OK);
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, AllowsOnlyOnePromptPerTurn) {
+    const auto path = temporary_path("cha_one_prompt_");
+    create_test_database(path);
+    ASSERT_EQ(
+        raw_execute(path, "INSERT INTO turns (request_id, epoch, state) VALUES (1, 1, 1)"),
+        SQLITE_OK);
+    const auto insert_entry = [&path](int entry_id, int kind, std::string_view participant) {
+        return raw_execute(
+            path,
+            "INSERT INTO entries (entry_id, epoch, request_id, kind, participant_id,"
+            " display_name, addressed_to, addressed_to_name, text, status) VALUES ("
+                + std::to_string(entry_id) + ", 1, 1, " + std::to_string(kind) + ", '"
+                + std::string(participant) + "', 'Name', "
+                + (kind == 0 ? "'ismael', 'Ismael'" : "'', ''") + ", 'Text', 0)");
+    };
+
+    EXPECT_EQ(insert_entry(1, 0, "human"), SQLITE_OK);
+    EXPECT_EQ(insert_entry(2, 0, "human"), SQLITE_CONSTRAINT);
+    EXPECT_EQ(insert_entry(3, 1, "ismael"), SQLITE_OK)
+        << "the index constrains prompts only, not the turn's response";
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, RejectsATurnThatHasNoPrompt) {
+    const auto path = temporary_path("cha_turn_without_prompt_");
+    create_test_database(path);
+    ASSERT_EQ(
+        raw_execute(path, "INSERT INTO turns (request_id, epoch, state) VALUES (4, 1, 1)"),
+        SQLITE_OK);
+
+    try {
+        (void)load_conversation_state(path);
+        FAIL() << "expected a turn without a prompt to be rejected";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("turn without exactly one prompt"),
+                  std::string::npos)
+            << error.what();
+    }
+    EXPECT_THROW(ConversationJournal journal(path), std::runtime_error);
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
+    const auto path = temporary_path("cha_interrupted_target_");
+    create_test_database(path);
+    {
+        ConversationJournal journal(path);
+        journal.start_turn(1, make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1));
+        journal.complete_turn(1, make_agent_entry(
+            2, "cheburashka", "Cheburashka", "I am Cheburashka.",
+            CompletionStatus::complete, 1));
+        journal.start_turn(2, make_human_entry(3, "ismael", "Ismael", "And you?", 2));
+    }
+
+    const ConversationRestore restored = load_conversation_state(path);
+
+    ASSERT_EQ(restored.interrupted_turns.size(), 1U);
+    const InterruptedTurn& interrupted = restored.interrupted_turns.front();
+    EXPECT_EQ(interrupted.request_id, 2U);
+    EXPECT_EQ(interrupted.error_entry.participant_id, "ismael")
+        << "the error belongs to the agent the prompt was addressed to";
+    EXPECT_EQ(interrupted.error_entry.request_id, 2U);
+    EXPECT_EQ(restored.entries.size(), 3U);
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, RestoresAndProjectsASessionWhoseRoomLostAnAgent) {
+    const auto path = temporary_path("cha_roster_drift_");
+    create_test_database(path);
+    {
+        ConversationJournal journal(path);
+        journal.start_turn(1, make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1));
+        journal.complete_turn(1, make_agent_entry(
+            2, "cheburashka", "Cheburashka", "I am Cheburashka.",
+            CompletionStatus::complete, 1));
+        journal.start_turn(2, make_human_entry(3, "ismael", "Ismael", "And you?", 2));
+        journal.complete_turn(2, make_agent_entry(
+            4, "ismael", "Ismael", "Call me Ismael.", CompletionStatus::complete, 2));
+    }
+
+    // Cheburashka has left the room; only Ismael remains on the roster.
+    const ConversationRestore restored = load_conversation_state(path);
+
+    EXPECT_TRUE(restored.interrupted_turns.empty());
+    ASSERT_EQ(restored.entries.size(), 4U);
+    EXPECT_EQ(restored.entries.front().addressed_to, "cheburashka");
+    EXPECT_EQ(restored.entries[1].display_name, "Cheburashka");
+
+    ConversationSnapshot snapshot{.entries = restored.entries};
+    MaterializingContextWriter writer;
+    write_agent_context(
+        snapshot.entries, snapshot.open_entry_id, "Ismael system", "ismael", writer);
+
+    EXPECT_EQ(
+        writer.messages,
+        (std::vector<MaterializedContextMessage>{
+            {AgentRole::system, "Ismael system"},
+            {AgentRole::user,
+             "User: [to Cheburashka] Who are you?"
+             "\n\nCheburashka: I am Cheburashka."
+             "\n\nUser: And you?"},
+            {AgentRole::assistant, "Call me Ismael."},
+        }));
+    std::filesystem::remove(path);
 }
 
 } // namespace

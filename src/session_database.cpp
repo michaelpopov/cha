@@ -394,13 +394,16 @@ struct DurableState {
     };
 }
 
-void validate_database(Database& database) {
+void validate_database_identity(Database& database) {
     if (database.pragma_integer("application_id") != session_application_id
         || database.pragma_integer("user_version") != session_database_version) {
         throw std::runtime_error(
             "Unsupported session database '" + database.path() + "'");
     }
+}
 
+void validate_database(Database& database) {
+    validate_database_identity(database);
     (void)read_state(database);
     Statement turns_without_prompt = database.prepare(
         "SELECT t.request_id FROM turns AS t LEFT JOIN entries AS e "
@@ -668,7 +671,9 @@ SessionDatabaseMetadata read_session_database_metadata(
     const std::filesystem::path& path) {
 
     Database database(path, Database::Mode::read_only);
-    validate_database(database);
+    // Listing sessions needs only stable identity metadata; opening one later
+    // performs the full transcript validation below.
+    validate_database_identity(database);
     Statement statement = database.prepare(
         "SELECT id, room, label FROM session WHERE singleton = 1");
     if (!statement.step()) {

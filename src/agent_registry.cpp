@@ -8,13 +8,8 @@
 namespace cha {
 namespace {
 
-void build_workers(
-    std::vector<std::unique_ptr<AgentWorker>>& workers,
-    AgentRoster& roster,
-    std::unordered_map<std::string, std::size_t>& index,
-    const Conversation& conversation,
-    AgentEventChannel& events,
-    std::vector<std::unique_ptr<CompletionBackend>> backends) {
+AgentRoster build_roster(
+    const std::vector<std::unique_ptr<CompletionBackend>>& backends) {
     if (backends.empty()) {
         throw std::invalid_argument("Agent registry requires at least one agent");
     }
@@ -26,22 +21,10 @@ void build_workers(
         }
         infos.push_back(backend->info());
     }
-    roster = AgentRoster(std::move(infos));
-    for (std::size_t i = 0; i < roster.agents().size(); ++i) {
-        index.emplace(roster.agents()[i].id, i);
-    }
-    workers.reserve(backends.size());
-    for (auto& backend : backends) {
-        workers.push_back(
-            std::make_unique<AgentWorker>(
-                conversation, events, std::move(backend)));
-    }
+    return AgentRoster(std::move(infos));
 }
 
-} // namespace
-
-AgentRegistry::AgentRegistry(
-    const Conversation& conversation,
+std::vector<std::unique_ptr<CompletionBackend>> build_backends(
     std::vector<AgentDefinition> definitions) {
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.reserve(definitions.size());
@@ -57,15 +40,27 @@ AgentRegistry::AgentRegistry(
                 + "') failed to initialize: " + error.what());
         }
     }
-    build_workers(
-        workers_, roster_, index_, conversation, events_, std::move(backends));
+    return backends;
+}
+
+} // namespace
+
+AgentRegistry::AgentRegistry(
+    const Conversation& conversation,
+    std::vector<AgentDefinition> definitions)
+    : AgentRegistry(conversation, build_backends(std::move(definitions))) {
 }
 
 AgentRegistry::AgentRegistry(
     const Conversation& conversation,
-    std::vector<std::unique_ptr<CompletionBackend>> backends) {
-    build_workers(
-        workers_, roster_, index_, conversation, events_, std::move(backends));
+    std::vector<std::unique_ptr<CompletionBackend>> backends)
+    : roster_(build_roster(backends)) {
+    workers_.reserve(backends.size());
+    for (auto& backend : backends) {
+        workers_.push_back(
+            std::make_unique<AgentWorker>(
+                conversation, events_, std::move(backend)));
+    }
 }
 
 AgentRegistry::~AgentRegistry() noexcept {
@@ -81,14 +76,22 @@ bool AgentRegistry::submit(CompletionRequest request) {
     if (stopped_) {
         return false;
     }
-    const auto found = index_.find(request.prompt.addressed_to);
-    return found != index_.end()
-        && workers_[found->second]->submit(std::move(request));
+    const std::vector<AgentInfo>& agents = roster_.agents();
+    for (std::size_t index = 0; index < agents.size(); ++index) {
+        if (agents[index].id == request.prompt.addressed_to) {
+            return workers_[index]->submit(std::move(request));
+        }
+    }
+    return false;
 }
 
 void AgentRegistry::cancel(std::string_view agent_id) {
-    if (const auto found = index_.find(std::string(agent_id)); found != index_.end()) {
-        workers_[found->second]->cancel();
+    const std::vector<AgentInfo>& agents = roster_.agents();
+    for (std::size_t index = 0; index < agents.size(); ++index) {
+        if (agents[index].id == agent_id) {
+            workers_[index]->cancel();
+            return;
+        }
     }
 }
 

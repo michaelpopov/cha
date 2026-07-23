@@ -49,15 +49,6 @@ Room Workspace::load_room(const std::string& name) const {
         throw std::runtime_error("Room '" + name + "' does not exist");
     }
     const std::vector<std::string> persona_names = read_name_list(directory / "personas.list");
-    for (const std::string& persona_name : persona_names) {
-        try {
-            (void)persona_directory(persona_name);
-        } catch (const std::exception&) {
-            throw std::runtime_error(
-                "Persona '" + persona_name + "' selected by room '" + name
-                + "' does not exist");
-        }
-    }
     return {name, persona_names, directory};
 }
 
