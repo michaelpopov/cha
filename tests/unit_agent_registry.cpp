@@ -113,7 +113,6 @@ CompletionRequest request(
         .prompt = make_human_entry(id, std::move(target), std::move(name), std::move(text), id),
     };
     conversation.add_entry(result.prompt);
-    result.conversation_revision = conversation.revision();
     return result;
 }
 

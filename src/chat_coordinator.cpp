@@ -3,17 +3,13 @@
 #include "command.h"
 #include "mention.h"
 
+#include <exception>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 
 namespace cha {
 namespace {
-std::vector<std::unique_ptr<CompletionBackend>> one_backend(
-    std::unique_ptr<CompletionBackend> backend) {
-    std::vector<std::unique_ptr<CompletionBackend>> result;
-    result.push_back(std::move(backend));
-    return result;
-}
 void merge_update(CoordinatorUpdate& all, CoordinatorUpdate one) {
     all.render_needed = all.render_needed || one.render_needed;
     all.end_session = all.end_session || one.end_session;
@@ -21,6 +17,24 @@ void merge_update(CoordinatorUpdate& all, CoordinatorUpdate one) {
     if (one.notice) {
         all.notice = std::move(one.notice);
     }
+}
+
+template<typename Operation>
+void persist(std::string action, Operation&& operation) {
+    try {
+        operation();
+    } catch (const std::exception& error) {
+        throw std::runtime_error(
+            "Failed to " + std::move(action) + ": " + error.what());
+    }
+}
+
+std::string request_action(
+    std::string_view action,
+    RequestId request_id,
+    std::string_view agent_name) {
+    return std::string(action) + " request " + std::to_string(request_id)
+        + " for @" + std::string(agent_name);
 }
 } // namespace
 
@@ -42,24 +56,6 @@ ChatCoordinator::ChatCoordinator(
       registry_(conversation_, std::move(backends)),
       default_agent_id_(registry_.roster().first().id) {
     initialize(std::move(restored));
-}
-
-ChatCoordinator::ChatCoordinator(
-    AgentDefinition definition,
-    std::filesystem::path path,
-    ConversationRestore restored)
-    : ChatCoordinator(
-          std::vector<AgentDefinition>{std::move(definition)},
-          std::move(path),
-          std::move(restored)) {
-}
-
-ChatCoordinator::ChatCoordinator(
-    std::unique_ptr<CompletionBackend> backend,
-    std::filesystem::path path,
-    ConversationRestore restored)
-    : ChatCoordinator(
-          one_backend(std::move(backend)), std::move(path), std::move(restored)) {
 }
 
 ChatCoordinator::~ChatCoordinator() {
@@ -87,7 +83,14 @@ void ChatCoordinator::initialize(ConversationRestore restored) {
     next_request_id_ = restored.next_request_id;
     next_entry_id_ = restored.next_entry_id;
     for (const InterruptedTurn& turn : restored.interrupted_turns) {
-        journal_.fail_turn(turn.request_id, turn.error_entry);
+        persist(
+            request_action(
+                "persist interrupted-turn repair for",
+                turn.request_id,
+                turn.error_entry.participant_id),
+            [this, &turn] {
+                journal_.fail_turn(turn.request_id, turn.error_entry);
+            });
         conversation_.add_entry(turn.error_entry);
     }
 }
@@ -137,9 +140,8 @@ CoordinatorUpdate ChatCoordinator::handle_input(std::string input) {
         update.end_session = true;
         break;
     case CommandKind::agents:
-        add_notice(roster_notice());
+        update.notice = roster_notice();
         update.render_needed = true;
-        update.notice = "";
         break;
     case CommandKind::set_default: {
         if (command.handle.empty()) {
@@ -158,10 +160,9 @@ CoordinatorUpdate ChatCoordinator::handle_input(std::string input) {
     case CommandKind::info: {
         std::ostringstream text;
         text << "Transcript entries: " << conversation_.snapshot().entries.size()
-             << "\n" << roster_notice();
-        add_notice(text.str());
+             << " | " << roster_notice();
+        update.notice = text.str();
         update.render_needed = true;
-        update.notice = "";
         break;
     }
     case CommandKind::unknown:
@@ -202,17 +203,30 @@ CoordinatorUpdate ChatCoordinator::submit(std::string input) {
         .prompt = make_human_entry(
             next_entry_id_++, target->id, target->name, parsed.text, request_id),
     };
-    journal_.start_turn(request.request_id, request.prompt);
+    persist(
+        request_action(
+            "persist start of",
+            request.request_id,
+            target->name),
+        [this, &request] {
+            journal_.start_turn(request.request_id, request.prompt);
+        });
     try {
         conversation_.add_entry(request.prompt);
-        request.conversation_revision = conversation_.revision();
     } catch (...) {
         ConversationEntry error = make_error_entry(
             next_entry_id_++,
             "Failed to add the submitted prompt to the conversation",
             request.request_id,
             target->id);
-        journal_.fail_turn(request.request_id, error);
+        persist(
+            request_action(
+                "persist failure of",
+                request.request_id,
+                target->name),
+            [this, &request, &error] {
+                journal_.fail_turn(request.request_id, error);
+            });
         throw;
     }
     active_ = ActiveTurn{
@@ -220,7 +234,6 @@ CoordinatorUpdate ChatCoordinator::submit(std::string input) {
         .response_entry_id = next_entry_id_++,
         .agent_id = target->id,
         .agent_name = target->name,
-        .response = {},
         .entry_open = false,
     };
     if (registry_.submit(std::move(request))) {
@@ -234,19 +247,14 @@ CoordinatorUpdate ChatCoordinator::submit(std::string input) {
 }
 
 void ChatCoordinator::clear() {
-    journal_.clear();
+    persist("persist /clear", [this] { journal_.clear(); });
     conversation_.clear();
     show_addressing_ = roster().agents().size() > 1;
 }
 
-void ChatCoordinator::add_notice(std::string text) {
-    ConversationEntry entry =
-        make_notice_entry(next_entry_id_++, std::move(text));
-    journal_.append(entry);
-    conversation_.add_entry(std::move(entry));
-}
-
-std::string ChatCoordinator::handle_notice(std::string_view handle, const HandleResolution& resolution) const {
+std::string ChatCoordinator::handle_notice(
+    std::string_view handle,
+    const HandleResolution& resolution) const {
     if (resolution.match == HandleMatch::unknown) {
         return "Unknown agent @" + std::string(handle)
             + ". Agents in this room: " + roster().handle_list();
@@ -266,9 +274,9 @@ std::string ChatCoordinator::roster_notice() const {
     std::ostringstream result;
     result << "Agents in this room (" << roster().agents().size()
            << "), * marks the default.";
-    result << "\nAny unambiguous prefix works.";
+    result << " Any unambiguous prefix works.";
     for (const AgentInfo& agent : roster().agents()) {
-        result << "\n" << (agent.id == default_agent_id_ ? "* " : "  ")
+        result << " | " << (agent.id == default_agent_id_ ? "* " : "")
                << "@" << agent.name << "  " << agent.model << "  "
                << agent.api << "  "
                << (agent.streaming ? "streaming" : "non-streaming");
@@ -329,7 +337,6 @@ void ChatCoordinator::apply(const AgentDelta& event, CoordinatorUpdate& update) 
         active_->entry_open = true;
     }
     conversation_.append_to_entry(active_->response_entry_id, event.text);
-    active_->response += event.text;
     update.render_needed = true;
 }
 
@@ -337,13 +344,21 @@ void ChatCoordinator::apply(const AgentCompleted& event, CoordinatorUpdate& upda
     if (!matches(event.request_id)) {
         return;
     }
-    if (active_->response.empty()) {
+    if (!active_->entry_open) {
         fail_active_turn(
             "Agent completed without text content", active_->agent_id, update);
         return;
     }
-    journal_.complete_turn(
-        event.request_id, response_entry(CompletionStatus::complete));
+    const ConversationEntry response =
+        response_entry(CompletionStatus::complete);
+    persist(
+        request_action(
+            "persist completion of",
+            event.request_id,
+            active_->agent_name),
+        [this, &event, &response] {
+            journal_.complete_turn(event.request_id, response);
+        });
     finish_response_entry(CompletionStatus::complete);
     active_.reset();
     update.render_needed = true;
@@ -355,11 +370,26 @@ void ChatCoordinator::apply(const AgentCancelled& event, CoordinatorUpdate& upda
         return;
     }
     if (active_->entry_open) {
-        journal_.cancel_turn(
-            event.request_id, response_entry(CompletionStatus::cancelled));
+        const ConversationEntry response =
+            response_entry(CompletionStatus::cancelled);
+        persist(
+            request_action(
+                "persist cancellation of",
+                event.request_id,
+                active_->agent_name),
+            [this, &event, &response] {
+                journal_.cancel_turn(event.request_id, response);
+            });
         finish_response_entry(CompletionStatus::cancelled);
     } else {
-        journal_.cancel_turn(event.request_id, std::nullopt);
+        persist(
+            request_action(
+                "persist cancellation of",
+                event.request_id,
+                active_->agent_name),
+            [this, &event] {
+                journal_.cancel_turn(event.request_id, std::nullopt);
+            });
     }
     active_.reset();
     update.render_needed = true;
@@ -381,7 +411,14 @@ void ChatCoordinator::fail_active_turn(
         std::move(message),
         active_->request_id,
         std::move(participant_id));
-    journal_.fail_turn(active_->request_id, error);
+    persist(
+        request_action(
+            "persist failure of",
+            active_->request_id,
+            active_->agent_name),
+        [this, &error] {
+            journal_.fail_turn(active_->request_id, error);
+        });
     if (active_->entry_open) {
         conversation_.discard_entry(active_->response_entry_id);
     }
@@ -400,11 +437,24 @@ void ChatCoordinator::finish_response_entry(CompletionStatus status) {
 }
 
 ConversationEntry ChatCoordinator::response_entry(CompletionStatus status) const {
+    std::string text;
+    if (active_->entry_open) {
+        const ConversationReadView view = conversation_.read();
+        const std::span<const ConversationEntry> entries = view.entries();
+        if (!view.open_entry_id()
+            || *view.open_entry_id() != active_->response_entry_id
+            || entries.empty()
+            || entries.back().id != active_->response_entry_id) {
+            throw std::logic_error(
+                "Active response does not match the open conversation entry");
+        }
+        text = entries.back().text;
+    }
     return make_agent_entry(
         active_->response_entry_id,
         active_->agent_id,
         active_->agent_name,
-        active_->response,
+        std::move(text),
         status,
         active_->request_id);
 }

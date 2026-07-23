@@ -1,6 +1,10 @@
 #include "input_editor.h"
+#include "user_events.h"
 
 #include <gtest/gtest.h>
+
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 namespace cha {
 namespace {
@@ -27,6 +31,29 @@ TEST(InputEditor, ConcatenatesContinuedLines) {
     }
 
     EXPECT_EQ(editor.value(), "firstsecond");
+}
+
+TEST(UserEvents, ReportsClosedStdinFromPoll) {
+    int pipe_descriptors[2]{};
+    ASSERT_EQ(::pipe(pipe_descriptors), 0);
+    const int saved_stdin = ::dup(STDIN_FILENO);
+    ASSERT_NE(saved_stdin, -1);
+    const int agent_descriptor =
+        ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    ASSERT_NE(agent_descriptor, -1);
+    ASSERT_NE(::dup2(pipe_descriptors[0], STDIN_FILENO), -1);
+    ::close(pipe_descriptors[0]);
+    ::close(pipe_descriptors[1]);
+
+    const UserEvents ready =
+        wait_for_user_events(agent_descriptor);
+
+    const int restore_result = ::dup2(saved_stdin, STDIN_FILENO);
+    ::close(saved_stdin);
+    ::close(agent_descriptor);
+    ASSERT_NE(restore_result, -1);
+    EXPECT_TRUE(ready.terminal_closed());
+    EXPECT_FALSE(ready.failed());
 }
 
 } // namespace

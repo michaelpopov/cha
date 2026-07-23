@@ -463,7 +463,6 @@ void validate_turn_entry(
         throw std::invalid_argument(
             "Turn entry does not match its record type and request ID");
     }
-    require_terminal_conversation_entry(entry);
 }
 
 [[nodiscard]] std::int64_t current_epoch(Database& database) {
@@ -500,7 +499,6 @@ void insert_entry(
     std::int64_t epoch,
     const ConversationEntry& entry) {
 
-    require_terminal_conversation_entry(entry);
     advance_entry_id(database, entry.id);
 
     const std::optional<std::int64_t> request_id = entry.request_id

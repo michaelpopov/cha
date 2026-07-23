@@ -1,11 +1,8 @@
 #include "config.h"
 
-#include "agent_identity.h"
-
 #include <toml++/toml.hpp>
 
 #include <stdexcept>
-#include <string_view>
 
 namespace cha {
 Config Config::load(const std::filesystem::path& path) {
@@ -21,12 +18,6 @@ Config Config::load(const std::filesystem::path& path) {
             "Config file '" + path.string()
             + "' requires non-empty string 'id' and 'name', string 'host', and integer 'port' values"
         );
-    }
-    try {
-        validate_agent_id(*id);
-        validate_agent_name(*name);
-    } catch (const std::invalid_argument& error) {
-        throw std::runtime_error("Config file '" + path.string() + "': " + error.what());
     }
     if (table.contains("model") && !model) {
         throw std::runtime_error("Config file '" + path.string() + "' requires string 'model' value");

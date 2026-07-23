@@ -33,7 +33,6 @@ public:
     void scroll_up() override;
     void scroll_down() override;
     void resize() override;
-    [[nodiscard]] bool input_closed() const override;
 
 private:
     void replace_pad(WINDOW*& pad, int rows, int columns);

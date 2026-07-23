@@ -1,7 +1,6 @@
 #include "completion_client.h"
 
 #include "agent_context.h"
-#include "json_string.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -269,90 +268,43 @@ std::string_view role_name(AgentRole role) {
     throw std::logic_error("Unknown agent context role");
 }
 
-class JsonAgentContextWriter final : public AgentContextWriter {
-public:
-    explicit JsonAgentContextWriter(std::string& output)
-        : output_(output) {
-    }
-
-    void begin_message(AgentRole role) override {
-        if (message_open_) {
-            throw std::logic_error("Agent context message is already open");
-        }
-        if (!first_message_) {
-            output_ += ',';
-        }
-        first_message_ = false;
-        output_ += "{\"role\":\"";
-        output_ += role_name(role);
-        output_ += "\",\"content\":\"";
-        message_open_ = true;
-    }
-
-    void append_content(std::string_view text) override {
-        if (!message_open_) {
-            throw std::logic_error("Agent context content has no open message");
-        }
-        append_json_string_content(output_, text);
-    }
-
-    void end_message() override {
-        if (!message_open_) {
-            throw std::logic_error("Agent context message is not open");
-        }
-        output_ += "\"}";
-        message_open_ = false;
-    }
-
-    void require_closed() const {
-        if (message_open_) {
-            throw std::logic_error("Agent context message was not closed");
-        }
-    }
-
-private:
-    std::string& output_;
-    bool first_message_{true};
-    bool message_open_{};
-};
-
 std::string build_request_body(
     const ConversationReadView& conversation,
     const Config& config,
     std::string_view system_prompt) {
-    std::size_t capacity = 128 + config.model.size() + system_prompt.size()
-        + config.reasoning_effort.size();
-    for (const ConversationEntry& entry : conversation.entries()) {
-        capacity += entry.text.size() + entry.participant_id.size() + 32;
+    Json messages = Json::array();
+    for (const AgentMessage& message : project_agent_context(
+             conversation.entries(),
+             conversation.open_entry_id(),
+             system_prompt,
+             config.id)) {
+        messages.push_back({
+            {"role", role_name(message.role)},
+            {"content", message.content},
+        });
     }
 
-    std::string body;
-    body.reserve(capacity);
-    body += "{\"model\":\"";
-    append_json_string_content(body, config.model);
-    body += "\",\"stream\":";
-    body += config.stream ? "true" : "false";
-    body += ",\"messages\":[";
-    JsonAgentContextWriter writer(body);
-    write_agent_context(
-        conversation.entries(),
-        conversation.open_entry_id(),
-        system_prompt,
-        config.id,
-        writer);
-    writer.require_closed();
-    body += ']';
+    Json body{
+        {"model", config.model},
+        {"stream", config.stream},
+        {"messages", std::move(messages)},
+    };
     if (config.temperature) {
-        body += ",\"temperature\":";
-        body += Json(*config.temperature).dump();
+        body["temperature"] = *config.temperature;
     }
     if (!config.reasoning_effort.empty()) {
-        body += ",\"reasoning_effort\":\"";
-        append_json_string_content(body, config.reasoning_effort);
-        body += '"';
+        body["reasoning_effort"] = config.reasoning_effort;
     }
-    body += '}';
-    return body;
+
+    try {
+        return body.dump();
+    } catch (const Json::type_error& error) {
+        if (error.id == 316) {
+            throw std::runtime_error(
+                "Completion request contains invalid UTF-8");
+        }
+        throw;
+    }
 }
 
 } // namespace

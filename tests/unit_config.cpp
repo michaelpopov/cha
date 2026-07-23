@@ -7,7 +7,6 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 
 namespace cha {
 namespace {
@@ -101,73 +100,6 @@ TEST(Config, RequiresStableIdentityAndDisplayName) {
     }
 
     EXPECT_THROW((void)Config::load(path), std::runtime_error);
-    std::filesystem::remove(path);
-}
-
-TEST(Config, RejectsParticipantIdsThatAreUnsafeForProtocolUse) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_invalid_identity_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
-           + ".toml");
-    {
-        std::ofstream config_file(path);
-        config_file
-            << "id = \"example agent\"\n"
-            << "name = \"Example\"\n"
-            << "host = \"example.com\"\n"
-            << "port = 8080\n";
-    }
-
-    EXPECT_THROW((void)Config::load(path), std::runtime_error);
-    std::filesystem::remove(path);
-}
-
-// Writes a persona config carrying the given display name and returns its path.
-std::filesystem::path config_named(std::string_view name) {
-    static int counter = 0;
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_named_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
-           + "_" + std::to_string(++counter) + ".toml");
-    std::ofstream config_file(path);
-    config_file
-        << "id = \"example-id\"\n"
-        << "name = \"" << name << "\"\n"
-        << "host = \"example.com\"\n"
-        << "port = 8080\n";
-    return path;
-}
-
-TEST(Config, RejectsDisplayNamesThatCannotBeUsedAsAMention) {
-    for (const std::string_view name :
-         {"Local assistant", "Two\tWords", "@Ismael", "/Ismael", "User", "uSeR"}) {
-        const auto path = config_named(name);
-        EXPECT_THROW((void)Config::load(path), std::runtime_error)
-            << "accepted unusable display name '" << name << "'";
-        std::filesystem::remove(path);
-    }
-}
-
-TEST(Config, AcceptsDisplayNamesThatOnlyResembleTheReservedLabel) {
-    for (const std::string_view name : {"Users", "Use", "User.", "Ismael."}) {
-        const auto path = config_named(name);
-        EXPECT_NO_THROW((void)Config::load(path))
-            << "rejected usable display name '" << name << "'";
-        std::filesystem::remove(path);
-    }
-}
-
-TEST(Config, ExplainsIdentityFailuresWithTheOffendingConfigPath) {
-    const auto path = config_named("Local assistant");
-
-    try {
-        (void)Config::load(path);
-        FAIL() << "expected an identity diagnostic";
-    } catch (const std::runtime_error& error) {
-        const std::string message = error.what();
-        EXPECT_NE(message.find(path.string()), std::string::npos) << message;
-        EXPECT_NE(message.find("whitespace"), std::string::npos) << message;
-    }
     std::filesystem::remove(path);
 }
 

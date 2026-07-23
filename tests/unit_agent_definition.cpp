@@ -118,42 +118,6 @@ TEST(AgentDefinitions, LoadsEveryPersonaInTheDeclaredOrder) {
     std::filesystem::remove_all(root);
 }
 
-TEST(AgentDefinitions, RejectsTwoPersonasDeclaringTheSameAgentId) {
-    const std::filesystem::path root = unique_definition_directory();
-    const std::filesystem::path room = make_room(root);
-    const std::filesystem::path first = make_persona(root, "one", "shared", "First");
-    const std::filesystem::path second = make_persona(root, "two", "shared", "Second");
-
-    try {
-        (void)load_agent_definitions({first, second}, room);
-        FAIL() << "expected a duplicate agent id diagnostic";
-    } catch (const std::runtime_error& error) {
-        const std::string message = error.what();
-        EXPECT_NE(message.find("'one'"), std::string::npos) << message;
-        EXPECT_NE(message.find("'two'"), std::string::npos) << message;
-        EXPECT_NE(message.find("same agent id 'shared'"), std::string::npos) << message;
-    }
-    std::filesystem::remove_all(root);
-}
-
-TEST(AgentDefinitions, RejectsTwoPersonasDeclaringTheSameDisplayNameIgnoringCase) {
-    const std::filesystem::path root = unique_definition_directory();
-    const std::filesystem::path room = make_room(root);
-    const std::filesystem::path first = make_persona(root, "one", "first-id", "Ismael");
-    const std::filesystem::path second = make_persona(root, "two", "second-id", "ISMAEL");
-
-    try {
-        (void)load_agent_definitions({first, second}, room);
-        FAIL() << "expected a duplicate agent name diagnostic";
-    } catch (const std::runtime_error& error) {
-        const std::string message = error.what();
-        EXPECT_NE(message.find("'one'"), std::string::npos) << message;
-        EXPECT_NE(message.find("'two'"), std::string::npos) << message;
-        EXPECT_NE(message.find("same agent name"), std::string::npos) << message;
-    }
-    std::filesystem::remove_all(root);
-}
-
 TEST(AgentDefinitions, RefusesToOpenARoomWithAPartialRoster) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path room = make_room(root);
@@ -168,14 +132,6 @@ TEST(AgentDefinitions, RefusesToOpenARoomWithAPartialRoster) {
         EXPECT_NE(std::string(error.what()).find("broken"), std::string::npos)
             << error.what();
     }
-    std::filesystem::remove_all(root);
-}
-
-TEST(AgentDefinitions, RequiresAtLeastOnePersona) {
-    const std::filesystem::path root = unique_definition_directory();
-    const std::filesystem::path room = make_room(root);
-
-    EXPECT_THROW((void)load_agent_definitions({}, room), std::invalid_argument);
     std::filesystem::remove_all(root);
 }
 

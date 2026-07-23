@@ -20,26 +20,6 @@
 namespace cha {
 namespace {
 
-struct MaterializedContextMessage {
-    AgentRole role{};
-    std::string content;
-
-    bool operator==(const MaterializedContextMessage&) const = default;
-};
-
-// Collects projected context messages so a restored transcript can be asserted on.
-class MaterializingContextWriter final : public AgentContextWriter {
-public:
-    void begin_message(AgentRole role) override { current_ = {.role = role}; }
-    void append_content(std::string_view text) override { current_.content += text; }
-    void end_message() override { messages.push_back(std::move(current_)); }
-
-    std::vector<MaterializedContextMessage> messages;
-
-private:
-    MaterializedContextMessage current_;
-};
-
 // Runs one statement directly against a session database and returns its SQLite code.
 // The tests use it to reach schema constraints that the journal API refuses to violate.
 int raw_execute(const std::filesystem::path& path, const std::string& sql) {
@@ -150,12 +130,10 @@ TEST(Conversation, ReadViewIsLockedNonOwningAndNeitherCopyableNorMovable) {
 
     Conversation conversation;
     conversation.add_entry(make_notice_entry(1, "Original"));
-    const std::size_t revision = conversation.revision();
     ConversationReadView view = conversation.read();
 
     EXPECT_EQ(view.entries().size(), 1U);
     EXPECT_EQ(view.entries().front().text, "Original");
-    EXPECT_EQ(view.revision(), revision);
     EXPECT_FALSE(view.open_entry_id());
 }
 
@@ -217,7 +195,7 @@ TEST(Conversation, RequiresStrictlyIncreasingEntryIds) {
         std::invalid_argument);
 }
 
-TEST(ConversationValidation, IsSharedByMemoryAndPersistence) {
+TEST(ConversationValidation, IsEnforcedByMemoryAndDatabase) {
     ConversationEntry invalid = make_error_entry(1, "Failure");
     invalid.status = CompletionStatus::complete;
     EXPECT_THROW(validate_conversation_entry(invalid), std::invalid_argument);
@@ -228,13 +206,13 @@ TEST(ConversationValidation, IsSharedByMemoryAndPersistence) {
     const auto path = temporary_path("cha_invalid_entry_");
     create_test_database(path);
     ConversationJournal journal(path);
-    EXPECT_THROW(journal.append(invalid), std::invalid_argument);
+    EXPECT_THROW(journal.append(invalid), std::runtime_error);
 
     const ConversationEntry empty_completion = make_agent_entry(
         2, "reviewer-id", "Reviewer", {}, CompletionStatus::complete, 1);
     EXPECT_THROW(validate_conversation_entry(empty_completion), std::invalid_argument);
     EXPECT_THROW(conversation.add_entry(empty_completion), std::invalid_argument);
-    EXPECT_THROW(journal.append(empty_completion), std::invalid_argument);
+    EXPECT_THROW(journal.append(empty_completion), std::runtime_error);
 
     Conversation streaming;
     streaming.begin_entry(make_agent_entry(
@@ -286,7 +264,7 @@ TEST(SessionDatabase, RejectsAStreamingEntry) {
             {},
             CompletionStatus::streaming,
             1)),
-        std::invalid_argument);
+        std::runtime_error);
     EXPECT_TRUE(load_conversation_entries(path).empty());
     std::filesystem::remove(path);
 }
@@ -471,7 +449,7 @@ TEST(ConversationValidation, RejectsAddressingViolationsInMemoryAndInSqlite) {
     const auto path = temporary_path("cha_addressing_");
     create_test_database(path);
     ConversationJournal journal(path);
-    EXPECT_THROW(journal.append(untargeted), std::invalid_argument);
+    EXPECT_THROW(journal.append(untargeted), std::runtime_error);
     EXPECT_TRUE(load_conversation_entries(path).empty());
     std::filesystem::remove(path);
 }
@@ -647,13 +625,13 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseRoomLostAnAgent) {
     EXPECT_EQ(restored.entries[1].display_name, "Cheburashka");
 
     ConversationSnapshot snapshot{.entries = restored.entries};
-    MaterializingContextWriter writer;
-    write_agent_context(
-        snapshot.entries, snapshot.open_entry_id, "Ismael system", "ismael", writer);
-
     EXPECT_EQ(
-        writer.messages,
-        (std::vector<MaterializedContextMessage>{
+        project_agent_context(
+            snapshot.entries,
+            snapshot.open_entry_id,
+            "Ismael system",
+            "ismael"),
+        (std::vector<AgentMessage>{
             {AgentRole::system, "Ismael system"},
             {AgentRole::user,
              "User: [to Cheburashka] Who are you?"

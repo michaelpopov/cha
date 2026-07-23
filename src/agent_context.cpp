@@ -3,27 +3,15 @@
 #include <unordered_set>
 
 namespace cha {
-namespace {
 
-void write_message(
-    AgentContextWriter& writer,
-    AgentRole role,
-    std::string_view content) {
-    writer.begin_message(role);
-    writer.append_content(content);
-    writer.end_message();
-}
-
-} // namespace
-
-void write_agent_context(
+std::vector<AgentMessage> project_agent_context(
     std::span<const ConversationEntry> entries,
     std::optional<EntryId> open_entry_id,
     std::string_view system_prompt,
-    std::string_view agent_id,
-    AgentContextWriter& writer) {
+    std::string_view agent_id) {
+    std::vector<AgentMessage> messages;
     if (!system_prompt.empty()) {
-        write_message(writer, AgentRole::system, system_prompt);
+        messages.push_back({AgentRole::system, std::string(system_prompt)});
     }
 
     std::unordered_set<RequestId> failed_requests;
@@ -47,47 +35,43 @@ void write_agent_context(
             || (entry.kind == EntryKind::human && entry.addressed_to != agent_id);
     }
 
-    bool message_open = false;
-    AgentRole open_role = AgentRole::system;
     bool previous_foreign = false;
     for (const ConversationEntry& entry : entries) {
         if (!projectable(entry)) continue;
         const bool foreign = entry.kind == EntryKind::agent && entry.participant_id != agent_id;
         const AgentRole role = entry.kind == EntryKind::human || foreign
             ? AgentRole::user : AgentRole::assistant;
-        const bool coalesce = message_open && role == AgentRole::user && open_role == AgentRole::user
+        const bool coalesce = !messages.empty()
+            && role == AgentRole::user
+            && messages.back().role == AgentRole::user
             && (previous_foreign || foreign);
-        if (message_open && !coalesce) {
-            writer.end_message();
-        }
         if (!coalesce) {
-            writer.begin_message(role);
-            message_open = true;
-            open_role = role;
+            messages.push_back({role, {}});
         } else {
-            writer.append_content("\n\n");
+            messages.back().content.append("\n\n");
         }
 
+        std::string& content = messages.back().content;
         if (entry.kind == EntryKind::human) {
             if (attributed) {
-                writer.append_content("User: ");
+                content.append("User: ");
                 if (entry.addressed_to != agent_id) {
-                    writer.append_content("[to ");
-                    writer.append_content(entry.addressed_to_name);
-                    writer.append_content("] ");
+                    content.append("[to ");
+                    content.append(entry.addressed_to_name);
+                    content.append("] ");
                 }
             }
-            writer.append_content(entry.text);
+            content.append(entry.text);
         } else if (foreign) {
-            writer.append_content(entry.display_name);
-            writer.append_content(": ");
-            writer.append_content(entry.text);
+            content.append(entry.display_name);
+            content.append(": ");
+            content.append(entry.text);
         } else {
-            writer.append_content(entry.text);
+            content.append(entry.text);
         }
         previous_foreign = foreign;
     }
-    if (message_open) writer.end_message();
+    return messages;
 }
 
 } // namespace cha

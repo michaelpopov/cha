@@ -14,6 +14,11 @@ public:
     void configure_selector();
     void configure_chat();
     void resize();
+    // Leaves ncurses mode; repeated calls are harmless.
+    void restore();
+
+private:
+    bool active_{true};
 };
 
 } // namespace cha

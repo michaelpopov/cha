@@ -67,18 +67,12 @@ void UserSession::apply_update(const CoordinatorUpdate& update) {
 }
 
 void UserSession::receive_terminal_input() {
-    bool received_input = false;
     while (const std::optional<SessionInput> input = view_.read_input()) {
-        received_input = true;
         request_render();
         handle_input(*input);
         if (!running_) {
             break;
         }
-    }
-
-    if (!received_input && view_.input_closed()) {
-        running_ = false;
     }
 }
 

@@ -9,7 +9,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <unistd.h>
 #include <utility>
 
 namespace cha {
@@ -187,10 +186,6 @@ void Tui::scroll_down() {
 
 void Tui::resize() {
     terminal_.resize();
-}
-
-bool Tui::input_closed() const {
-    return !::isatty(STDIN_FILENO);
 }
 
 void Tui::replace_pad(WINDOW*& pad, int rows, int columns) {

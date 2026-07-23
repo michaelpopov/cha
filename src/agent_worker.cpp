@@ -100,7 +100,6 @@ void AgentWorker::dialog() {
             break;
         }
         try {
-            validate_completion_request(*request, client_->agent_id());
             if (cancellation_.load(std::memory_order_acquire)) {
                 publish_terminal(AgentCancelled{request->request_id});
                 continue;
@@ -109,7 +108,6 @@ void AgentWorker::dialog() {
             RequestPayload payload;
             {
                 ConversationReadView conversation = conversation_.read();
-                validate_completion_context(*request, conversation);
                 payload = client_->prepare(*request, conversation);
             }
             const CompletionResult result = client_->perform(

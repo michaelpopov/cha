@@ -129,11 +129,10 @@ resolves each entry.
 
 For each persona, `load_agent_definition()` loads `config.toml`, reads
 `SYSTEM.md`, reads the selected room's `USER.md`, and joins the prompts with two
-newlines. `load_agent_definitions()` preserves list order and rejects duplicate
-configured agent IDs or ASCII-case-insensitive names with diagnostics naming
-both persona directories. `AgentRoster` repeats identity and uniqueness checks
-as the final boundary because tests and other callers can inject backends
-without using workspace loading.
+newlines. `load_agent_definitions()` preserves list order. `AgentRoster` is the
+single boundary for a non-empty roster and for valid, unique configured agent
+IDs and ASCII-case-insensitive names, including when tests inject backends
+without workspace loading.
 
 Agent IDs are non-empty ASCII letters, digits, underscores, or hyphens. Display
 names are non-empty, contain no whitespace, cannot begin with `@` or `/`, and
@@ -248,8 +247,8 @@ before persistence.
 ### Per-agent model context
 
 The transcript is a human-visible record; model context is a projection.
-`write_agent_context()` performs that projection for the agent handling the
-new prompt:
+`project_agent_context()` materializes that projection for the agent handling
+the new prompt:
 
 1. Emit that agent's effective system prompt, if non-empty.
 2. Exclude the currently open streaming entry.
@@ -282,24 +281,17 @@ For an idle coordinator:
 2. Allocate a request ID and human entry ID.
 3. Commit the `started` turn and prompt entry in one SQLite transaction.
 4. Add the prompt to the in-memory conversation.
-5. Record the resulting conversation revision in `CompletionRequest`.
-6. Reserve the response entry ID and create `ActiveTurn`.
-7. Route the request to the target worker.
+5. Reserve the response entry ID and create `ActiveTurn`.
+6. Route the request to the target worker.
 
 The database commit intentionally precedes the screen and worker. Once a
 started turn is durable, normal error paths drive it to a terminal state.
 
-The worker validates:
-
-- positive request ID and revision;
-- prompt target equals the worker backend's agent ID;
-- prompt is a matching typed human entry;
-- conversation revision has not changed;
-- no response entry is open;
-- the prompt is the latest conversation entry.
-
-It then prepares an owning `RequestPayload` under `ConversationReadView`,
-releases the lock, and calls the synchronous backend.
+The coordinator is the only conversation writer and accepts no mutating command
+while a turn is active. `AgentRegistry` routes the request by its already
+resolved target, so the worker does not revalidate coordinator-owned request
+and conversation invariants. It prepares an owning `RequestPayload` under
+`ConversationReadView`, releases the lock, and calls the synchronous backend.
 
 ### Streaming success
 
@@ -307,10 +299,11 @@ Each transport fragment becomes `AgentDelta`. The first non-empty delta opens
 the reserved agent entry as `streaming`; later deltas append to it. Deltas are
 in-memory only.
 
-On `AgentCompleted`, the coordinator rejects an empty accumulated response.
-Otherwise it first commits the completed response and turn transition, then
-marks the in-memory entry complete (or adds a complete entry if no streaming
-entry was opened), clears `ActiveTurn`, and requests a render.
+On `AgentCompleted`, the coordinator rejects completion if no response entry
+was opened. Otherwise it copies the open entry into the terminal persistence
+record, commits the completed response and turn transition, marks the in-memory
+entry complete, clears `ActiveTurn`, and requests a render. The open
+conversation entry is the sole accumulated response buffer.
 
 For non-streaming HTTP, the backend publishes the complete response as one
 delta followed by `AgentCompleted`.
@@ -331,9 +324,8 @@ The prompt remains in model context, but cancelled agent output does not.
 
 ### Failure
 
-Transport errors, protocol errors, validation failures, worker exceptions,
-dispatch failure, and a successful terminal event without response text all
-become a failed turn.
+Transport errors, protocol errors, worker exceptions, dispatch failure, and a
+successful terminal event without response text all become a failed turn.
 
 The coordinator commits a typed error entry, discards any open partial agent
 entry, adds the error to the transcript, and clears the active turn. Context
@@ -351,15 +343,16 @@ When idle, the coordinator accepts:
 
 - `/clear`: advance the durable history epoch, empty visible history, and reset
   addressing labels based on current roster size.
-- `/agents`: append a persisted notice containing the current roster; `*`
+- `/agents`: show a transient status notice containing the current roster; `*`
   marks the run-local default.
-- `/info`: append a persisted notice containing the current transcript entry
-  count followed by the same roster block.
+- `/info`: show a transient status notice containing the current transcript
+  entry count followed by the same roster information.
 - `/@Name`: change the run-local default agent.
 - `/stop`: report that no generation is active.
 - `/exit`: request session termination.
 
-Unknown commands and commands with unexpected arguments produce transient
+Command output is never added to the conversation or session database. Unknown
+commands and commands with unexpected arguments likewise produce transient
 status notices. While a turn is active, only bare `/stop` is accepted; other
 submitted text remains in the editor and produces a “Generation in progress”
 notice.
@@ -433,13 +426,16 @@ or after cancellation with partial text. Errors are terminal `error` entries.
 read-only, and performs lightweight identity/metadata validation: application
 ID, schema version, embedded session ID versus filename, and embedded room
 versus selected room. Broken candidates remain visible with an error so one bad
-file does not hide healthy sessions.
+file does not hide healthy sessions. Session-ID filename validation is part of
+that per-candidate error boundary, so even a malformed `.sqlite3` filename
+cannot abort the whole listing.
 
 Transcript-sized validation is deferred until selection. `main()` calls
 `open_database_path()` for metadata identity and immediately calls
 `load_conversation_state()`, which validates durable state, the turn/prompt
-invariant, and each restored entry. `ConversationJournal` performs the same
-full validation before accepting writes.
+invariant, and each restored entry. Before accepting writes,
+`ConversationJournal` validates database identity and structure; SQLite
+constraints enforce entry semantics.
 
 ### Creation
 
@@ -492,6 +488,29 @@ transaction, SQLite retains a `started` row and its prompt. On restore:
 No streamed partial response is durable before its terminal transaction, so a
 crash during streaming restores the prompt plus the interruption error.
 
+### Persistence failure policy
+
+Persistence errors are fatal for the current run. This is deliberate: after a
+turn's terminal worker event has been consumed, continuing without its SQLite
+transition would either diverge the visible transcript from durable state or
+leave the coordinator active with no event left to complete it. The application
+therefore does not convert database failures into ordinary transcript errors,
+because writing such an error depends on the same unavailable journal.
+
+Every coordinator journal mutation adds operation context before propagating
+the failure. Turn-related messages identify the request and agent, while a
+failed `/clear` identifies that operation. The chat loop preserves that
+original exception, destroys its curses view, explicitly restores the terminal,
+stops all workers, and then lets `main()` report the contextual failure.
+
+SQLite transaction unwinding attempts a rollback. Since journal writes precede
+their corresponding in-memory mutations, the database remains the authority:
+a failed turn-start write never appears in memory, while a failed terminal
+write leaves the durable turn in `started`. On the next open, normal crash
+recovery reports that turn as interrupted. Even potentially transient failures
+such as an exceeded busy timeout end the run rather than weakening the
+durability invariant.
+
 ## Transport
 
 `CompletionBackend` is a synchronous two-phase interface:
@@ -529,9 +548,9 @@ POST <scheme>://<host>:<port>/v1/chat/completions
 ```
 
 The JSON body is built from the per-agent context projection and includes
-model, stream mode, and configured optional generation fields. JSON string
-content is escaped by the local strict UTF-8 serializer. Bearer authorization
-is included when configured.
+model, stream mode, and configured optional generation fields. nlohmann/json
+owns serialization and rejects malformed UTF-8 before dispatch. Bearer
+authorization is included when configured.
 
 Completion requests have a ten-second connection timeout, TCP keepalive, and
 no total or low-speed timeout. Long generations are intentionally unbounded;
@@ -545,8 +564,11 @@ are surfaced as protocol errors; libcurl failures are transport errors.
 
 ## Shutdown and failure handling
 
-`run_user()` calls `UserSession::shutdown()` after every loop exit.
-`ChatCoordinator::shutdown()` is idempotent:
+After a normal loop exit, `run_user()` calls `UserSession::shutdown()`. On an
+exceptional exit it first preserves the original exception and destroys the
+`Tui`, then restores the terminal and calls `ChatCoordinator::shutdown()`
+directly. A shutdown exception does not replace the operation failure that
+caused the exceptional exit. `ChatCoordinator::shutdown()` is idempotent:
 
 1. `AgentRegistry::stop()` cancels all workers.
 2. Each worker closes its request channel, joins its thread, and becomes
@@ -578,7 +600,7 @@ database, so a mistaken path cannot silently become an empty session.
 | `session_database.*` | SQLite schema, restoration, journal transactions, and crash repair data. |
 | `conversation.*` | Typed, thread-safe transcript and streaming-entry state. |
 | `agent_context.*` | Per-agent projection from transcript semantics to model roles. |
-| `agent_protocol.*` | Request/event types and dispatch coherence validation. |
+| `agent_protocol.h` | Request/event values and their typed channels. |
 | `agent_registry.*` | Ordered worker ownership, routing, shared events, and shutdown. |
 | `agent_worker.*` | One blocking completion thread and request gate per agent. |
 | `completion_backend.h` | Injectable two-phase completion boundary. |
@@ -591,7 +613,7 @@ database, so a mistaken path cannot silently become an empty session.
 | `transcript_renderer.*` | Entry labels, incremental render planning, layout, viewport. |
 | `terminal.*` | Process-wide ncurses lifecycle and mode changes. |
 | `command.*` / `mention.*` | Slash-command and leading-address parsing. |
-| `text.*` / `path_name.*` / `json_string.*` | Shared text, path, and JSON utilities. |
+| `text.*` / `path_name.*` | Shared text and path utilities. |
 
 Everything except `main.cpp` is compiled into `cha_core`.
 
@@ -605,8 +627,8 @@ Everything except `main.cpp` is compiled into `cha_core`.
 6. At most one streaming conversation entry exists, and it is the last entry.
 7. The main thread is the only conversation and database writer.
 8. Backend preparation holds a read view; backend performance never does.
-9. A request targets exactly one worker and its prompt is the latest entry at
-   the recorded revision.
+9. Registry routing sends a request to exactly one worker while the active-turn
+   state prevents intervening conversation mutations.
 10. Request and entry IDs are positive, strictly increasing, and never reused.
 11. A durable started turn has exactly one human prompt in its originating
     epoch.
@@ -619,6 +641,8 @@ Everything except `main.cpp` is compiled into `cha_core`.
     to their distinct rules.
 16. Sessions bind to a room, not to the room's current roster.
 17. The shared event channel closes only after every worker has stopped.
+18. A journal mutation failure ends the current run; the application never
+    continues with transcript state it could not persist.
 
 ## Build and testing
 
@@ -637,9 +661,9 @@ bundled curl enables OpenSSL when it is available.
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
 configuration, identity, roster/mention routing, registry and worker behavior,
-protocol validation, conversation/context semantics, coordinator lifecycle,
-SQLite constraints and recovery, workspace/session handling, transport
-parsing, event channels, input/UI state, and incremental rendering.
+conversation/context semantics, coordinator lifecycle, SQLite constraints and
+recovery, workspace/session handling, transport parsing, event channels,
+input/UI state, and incremental rendering.
 
 `make itest` runs the separate integration binary from the checked-in
 `workspace/`. Its tests cover live configured streaming, non-streaming, and
@@ -650,7 +674,8 @@ The principal test seams are:
 
 - `CompletionBackend`, for coordinator/worker tests without a network;
 - `SessionView`, for `UserSession` tests without curses;
-- `AgentContextWriter`, for inspecting projected message boundaries and roles.
+- `project_agent_context()`, whose materialized messages expose projected
+  boundaries, roles, and content directly.
 
 Persistence, conversation logic, parsing, rendering plans, and other local
 components are concrete and tested directly.

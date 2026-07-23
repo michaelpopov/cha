@@ -85,7 +85,6 @@ private:
 
     std::unique_lock<std::mutex> lock_;
     const std::vector<ConversationEntry>* entries_{};
-    std::size_t revision_{};
     std::optional<EntryId> open_entry_id_;
     std::size_t history_epoch_{};
 };
@@ -135,7 +134,6 @@ public:
 
     [[nodiscard]] ConversationSnapshot snapshot() const;
     [[nodiscard]] std::vector<ConversationEntry> entries() const;
-    [[nodiscard]] std::size_t revision() const;
     [[nodiscard]] std::optional<EntryId> open_entry_id() const;
     [[nodiscard]] ConversationReadView read() const;
 

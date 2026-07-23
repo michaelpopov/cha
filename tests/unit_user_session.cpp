@@ -3,6 +3,7 @@
 #include "session_database.h"
 #include "input_editor.h"
 #include "session_view.h"
+#include "test_backends.h"
 #include "user_session.h"
 
 #include <gtest/gtest.h>
@@ -94,10 +95,6 @@ public:
         ++resize_count;
     }
 
-    [[nodiscard]] bool input_closed() const override {
-        return input_is_closed;
-    }
-
     void type(std::string_view text) {
         for (const char character : text) {
             inputs.push_back({
@@ -122,7 +119,6 @@ public:
     int scroll_up_count{};
     int scroll_down_count{};
     int resize_count{};
-    bool input_is_closed{};
 };
 
 // Echoes or blocks a completion so UI-to-coordinator behavior is deterministic.
@@ -207,7 +203,7 @@ void receive_when_ready(
 TEST(UserSession, SubmitsEditedInputThroughTheCoordinator) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(),
+        test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
     UserSession session(view, coordinator);
@@ -226,17 +222,19 @@ TEST(UserSession, SubmitsEditedInputThroughTheCoordinator) {
 TEST(UserSession, DelegatesClearAndInfoCommandsToTheCoordinator) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(),
+        test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
     UserSession session(view, coordinator);
 
     enter(view, "/info");
     session.receive_terminal_input();
-    ASSERT_EQ(coordinator.conversation().entries().size(), 1U);
-    EXPECT_EQ(
-        coordinator.conversation().entries().front().kind,
-        EntryKind::notice);
+    session.render_if_needed();
+    EXPECT_TRUE(coordinator.conversation().entries().empty());
+    EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
+    EXPECT_NE(
+        view.rendered_notice.find("Transcript entries: 0"),
+        std::string::npos);
 
     enter(view, "/clear");
     session.receive_terminal_input();
@@ -250,7 +248,7 @@ TEST(UserSession, DelegatesClearAndInfoCommandsToTheCoordinator) {
 TEST(UserSession, StopInputDrivesCoordinatorCancellation) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(true),
+        test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path);
     FakeSessionView view;
     UserSession session(view, coordinator);
@@ -272,7 +270,7 @@ TEST(UserSession, StopInputDrivesCoordinatorCancellation) {
 TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(true),
+        test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path);
     FakeSessionView view;
     UserSession session(view, coordinator);
@@ -293,7 +291,7 @@ TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
 TEST(UserSession, ConsumesStopCommandDuringGeneration) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(true),
+        test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path);
     FakeSessionView view;
     UserSession session(view, coordinator);
@@ -312,7 +310,7 @@ TEST(UserSession, ConsumesStopCommandDuringGeneration) {
 TEST(UserSession, ExitCommandStopsTheSession) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(),
+        test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
     UserSession session(view, coordinator);
@@ -326,7 +324,7 @@ TEST(UserSession, ExitCommandStopsTheSession) {
 TEST(UserSession, ClosedWorkerStopsTheSession) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(),
+        test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
     UserSession session(view, coordinator);
@@ -337,16 +335,15 @@ TEST(UserSession, ClosedWorkerStopsTheSession) {
     EXPECT_FALSE(session.running());
 }
 
-TEST(UserSession, ClosedTerminalInputStopsTheSession) {
+TEST(UserSession, PollReportedTerminalClosureStopsTheSession) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(),
+        test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
-    view.input_is_closed = true;
     UserSession session(view, coordinator);
 
-    session.receive_terminal_input();
+    session.close_terminal();
 
     EXPECT_FALSE(session.running());
 }
@@ -354,7 +351,7 @@ TEST(UserSession, ClosedTerminalInputStopsTheSession) {
 TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(),
+        test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
     UserSession session(view, coordinator);
@@ -412,7 +409,7 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
     TemporarySessionJournal temporary;
     {
         ChatCoordinator coordinator(
-            std::make_unique<SessionBackend>(), temporary.path);
+            test::one_backend(std::make_unique<SessionBackend>()), temporary.path);
         FakeSessionView view;
         UserSession session(view, coordinator);
         session.resize();
@@ -431,7 +428,7 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
     restored.entries.front().addressed_to = "departed";
     restored.entries.front().addressed_to_name = "Departed";
     ChatCoordinator reopened(
-        std::make_unique<SessionBackend>(), temporary.path, std::move(restored));
+        test::one_backend(std::make_unique<SessionBackend>()), temporary.path, std::move(restored));
     FakeSessionView view;
     UserSession session(view, reopened);
 
@@ -449,7 +446,7 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
 TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<SessionBackend>(true),
+        test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path);
     FakeSessionView view;
     UserSession session(view, coordinator);

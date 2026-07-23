@@ -51,7 +51,6 @@ public:
     virtual void scroll_up() = 0;
     virtual void scroll_down() = 0;
     virtual void resize() = 0;
-    [[nodiscard]] virtual bool input_closed() const = 0;
 };
 
 } // namespace cha

@@ -72,11 +72,11 @@ std::vector<Session> SessionRepository::list() const {
             continue;
         }
         const std::string id = entry.path().stem().string();
-        require_path_component(id, directory_);
 
         std::string label = id;
         std::string error;
         try {
+            require_path_component(id, directory_);
             const SessionDatabaseMetadata metadata =
                 read_session_database_metadata(entry.path());
             validate_metadata(

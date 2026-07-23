@@ -154,24 +154,36 @@ TEST_F(WorkspaceTest, ReportsAnInvalidDatabaseWithoutHidingHealthySessions) {
     SessionRepository sessions(room.directory / "sessions", room.name);
     const Session healthy = sessions.create("Healthy");
     const Session broken = sessions.create("Broken database");
+    const std::filesystem::path malformed_name =
+        room.directory / "sessions" / "..sqlite3";
     {
         std::ofstream database(
             sessions.database_path(broken.id),
             std::ios::binary | std::ios::trunc);
         database << "not SQLite";
     }
+    {
+        std::ofstream database(malformed_name);
+        database << "invalid session filename";
+    }
 
     const std::vector<Session> listed = sessions.list();
-    ASSERT_EQ(listed.size(), 2U);
+    ASSERT_EQ(listed.size(), 3U);
     const auto broken_result = std::find_if(listed.begin(), listed.end(), [&](const Session& candidate) {
         return candidate.id == broken.id;
     });
     const auto valid = std::find_if(listed.begin(), listed.end(), [&](const Session& candidate) {
         return candidate.id == healthy.id;
     });
+    const auto malformed = std::find_if(
+        listed.begin(),
+        listed.end(),
+        [](const Session& candidate) { return candidate.id == "."; });
     ASSERT_NE(broken_result, listed.end());
     ASSERT_NE(valid, listed.end());
+    ASSERT_NE(malformed, listed.end());
     EXPECT_FALSE(broken_result->error.empty());
+    EXPECT_FALSE(malformed->error.empty());
     EXPECT_TRUE(valid->error.empty());
 }
 

@@ -70,7 +70,6 @@ ChatResult run_chat(bool stream) {
         .prompt = make_human_entry(1, config.id, config.name, input, 1),
     };
     conversation.add_entry(request.prompt);
-    request.conversation_revision = conversation.revision();
     EXPECT_TRUE(worker.submit(std::move(request)));
 
     ChatResult result;
@@ -101,7 +100,6 @@ ChatResult run_cancelled_chat() {
         .prompt = make_human_entry(1, config.id, config.name, input, 2),
     };
     conversation.add_entry(request.prompt);
-    request.conversation_revision = conversation.revision();
     EXPECT_TRUE(worker.submit(std::move(request)));
 
     ChatResult result;

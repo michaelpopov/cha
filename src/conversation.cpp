@@ -8,17 +8,12 @@ namespace cha {
 ConversationReadView::ConversationReadView(const Conversation& conversation)
     : lock_(conversation.mutex_),
       entries_(&conversation.entries_),
-      revision_(conversation.revision_),
       open_entry_id_(conversation.open_entry_id_),
       history_epoch_(conversation.history_epoch_) {
 }
 
 std::span<const ConversationEntry> ConversationReadView::entries() const noexcept {
     return *entries_;
-}
-
-std::size_t ConversationReadView::revision() const noexcept {
-    return revision_;
 }
 
 std::optional<EntryId> ConversationReadView::open_entry_id() const noexcept {
@@ -236,11 +231,6 @@ ConversationSnapshot Conversation::snapshot() const {
 
 std::vector<ConversationEntry> Conversation::entries() const {
     return snapshot().entries;
-}
-
-std::size_t Conversation::revision() const {
-    std::lock_guard lock(mutex_);
-    return revision_;
 }
 
 std::optional<EntryId> Conversation::open_entry_id() const {

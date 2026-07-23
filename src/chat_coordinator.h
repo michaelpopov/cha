@@ -23,11 +23,14 @@ struct CoordinatorUpdate {
 
 class ChatCoordinator {
 public:
-    ChatCoordinator(std::vector<AgentDefinition> definitions, std::filesystem::path database_path, ConversationRestore restored = {});
-    ChatCoordinator(std::vector<std::unique_ptr<CompletionBackend>> backends, std::filesystem::path database_path, ConversationRestore restored = {});
-    // Retained as a convenient one-agent construction path.
-    ChatCoordinator(AgentDefinition definition, std::filesystem::path database_path, ConversationRestore restored = {});
-    ChatCoordinator(std::unique_ptr<CompletionBackend> backend, std::filesystem::path database_path, ConversationRestore restored = {});
+    ChatCoordinator(
+        std::vector<AgentDefinition> definitions,
+        std::filesystem::path database_path,
+        ConversationRestore restored = {});
+    ChatCoordinator(
+        std::vector<std::unique_ptr<CompletionBackend>> backends,
+        std::filesystem::path database_path,
+        ConversationRestore restored = {});
     ~ChatCoordinator();
     ChatCoordinator(const ChatCoordinator&) = delete;
     ChatCoordinator& operator=(const ChatCoordinator&) = delete;
@@ -50,14 +53,14 @@ private:
         EntryId response_entry_id{};
         ParticipantId agent_id;
         std::string agent_name;
-        std::string response;
         bool entry_open{};
     };
     void initialize(ConversationRestore restored);
     [[nodiscard]] CoordinatorUpdate submit(std::string input);
     void clear();
-    void add_notice(std::string text);
-    [[nodiscard]] std::string handle_notice(std::string_view handle, const HandleResolution& resolution) const;
+    [[nodiscard]] std::string handle_notice(
+        std::string_view handle,
+        const HandleResolution& resolution) const;
     [[nodiscard]] std::string roster_notice() const;
     void apply(const AgentDelta&, CoordinatorUpdate&);
     void apply(const AgentCompleted&, CoordinatorUpdate&);

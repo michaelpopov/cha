@@ -34,7 +34,6 @@ CompletionRequest client_request(
             request_id),
     };
     conversation.add_entry(request.prompt);
-    request.conversation_revision = conversation.revision();
     return request;
 }
 
@@ -47,7 +46,6 @@ CompletionResult complete(
     RequestPayload payload;
     {
         ConversationReadView view = conversation.read();
-        validate_completion_context(request, view);
         payload = client.prepare(request, view);
     }
     return client.perform(std::move(payload), on_delta, cancellation);
@@ -180,6 +178,25 @@ TEST(CompletionClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
     ASSERT_EQ(body["messages"].size(), 1U);
     EXPECT_EQ(body["messages"][0]["role"], "user");
     EXPECT_EQ(body["messages"][0]["content"], prompt);
+}
+
+TEST(CompletionClient, RejectsInvalidUtf8WhenPreparingRequest) {
+    CompletionClient client({.config = network_config(1, false)});
+    Conversation conversation;
+    const CompletionRequest request = client_request(
+        conversation,
+        20,
+        std::string("\xc0\x80", 2));
+
+    std::string message;
+    try {
+        const ConversationReadView view = conversation.read();
+        (void)client.prepare(request, view);
+    } catch (const std::runtime_error& error) {
+        message = error.what();
+    }
+
+    EXPECT_EQ(message, "Completion request contains invalid UTF-8");
 }
 
 TEST(CompletionClient, HandlesNonStreamingProviderResponse) {

@@ -2,6 +2,7 @@
 #include "agent_context.h"
 #include "completion_backend.h"
 #include "session_database.h"
+#include "test_backends.h"
 
 #include <gtest/gtest.h>
 
@@ -19,27 +20,6 @@
 
 namespace cha {
 namespace {
-
-struct ContextMessage {
-    AgentRole role{};
-    std::string content;
-
-    bool operator==(const ContextMessage&) const = default;
-};
-
-class ContextRecorder final : public AgentContextWriter {
-public:
-    void begin_message(AgentRole role) override {
-        current_ = {.role = role};
-    }
-    void append_content(std::string_view text) override { current_.content += text; }
-    void end_message() override { messages.push_back(std::move(current_)); }
-
-    std::vector<ContextMessage> messages;
-
-private:
-    ContextMessage current_;
-};
 
 // Removes one temporary session database when a coordinator test leaves scope.
 class TemporaryJournal {
@@ -92,14 +72,11 @@ public:
         const ConversationReadView& conversation) override {
         requests.push_back(request);
         latest_prompt = conversation.entries().back();
-        ContextRecorder writer;
-        write_agent_context(
+        model_contexts.push_back(project_agent_context(
             conversation.entries(),
             conversation.open_entry_id(),
             {},
-            id_,
-            writer);
-        model_contexts.push_back(std::move(writer.messages));
+            id_));
         return {.bytes = request.prompt.text};
     }
 
@@ -134,7 +111,7 @@ public:
     }
 
     std::vector<CompletionRequest> requests;
-    std::vector<std::vector<ContextMessage>> model_contexts;
+    std::vector<std::vector<AgentMessage>> model_contexts;
     ConversationEntry latest_prompt;
 
 private:
@@ -195,7 +172,7 @@ TEST(ChatCoordinator, OwnsACompleteIdentifiedTypedTurn) {
         std::vector<std::string>{"Hello", " there"});
     ScriptedBackend* backend_view = backend.get();
     ChatCoordinator coordinator(
-        std::move(backend),
+        test::one_backend(std::move(backend)),
         temporary.path,
         restore_with({earlier}, 17, 11));
 
@@ -210,13 +187,12 @@ TEST(ChatCoordinator, OwnsACompleteIdentifiedTypedTurn) {
         backend_view->requests.front();
     EXPECT_EQ(request.request_id, 17U);
     EXPECT_EQ(request.prompt.addressed_to, "guide-id");
-    EXPECT_EQ(request.conversation_revision, 2U);
     EXPECT_EQ(request.prompt.kind, EntryKind::human);
     EXPECT_EQ(request.prompt.text, "Current");
     EXPECT_EQ(backend_view->latest_prompt, request.prompt);
     EXPECT_EQ(
         backend_view->model_contexts.front(),
-        (std::vector<ContextMessage>{
+        (std::vector<AgentMessage>{
             {AgentRole::user, "Earlier"},
             {AgentRole::user, "Current"},
         }));
@@ -238,7 +214,7 @@ TEST(ChatCoordinator, PreparesTheSecondTurnFromTheSharedCompletedConversation) {
     auto backend = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"Answer"});
     ScriptedBackend* backend_view = backend.get();
-    ChatCoordinator coordinator(std::move(backend), temporary.path);
+    ChatCoordinator coordinator(test::one_backend(std::move(backend)), temporary.path);
 
     (void)coordinator.handle_input("First");
     receive_until_idle(coordinator);
@@ -248,7 +224,7 @@ TEST(ChatCoordinator, PreparesTheSecondTurnFromTheSharedCompletedConversation) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<ContextMessage>{
+        (std::vector<AgentMessage>{
             {AgentRole::user, "First"},
             {AgentRole::assistant, "Answer"},
             {AgentRole::user, "Second"},
@@ -260,7 +236,7 @@ TEST(ChatCoordinator, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     auto backend = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"Answer"});
     ScriptedBackend* backend_view = backend.get();
-    ChatCoordinator coordinator(std::move(backend), temporary.path);
+    ChatCoordinator coordinator(test::one_backend(std::move(backend)), temporary.path);
 
     (void)coordinator.handle_input("First");
     receive_until_idle(coordinator);
@@ -271,7 +247,7 @@ TEST(ChatCoordinator, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<ContextMessage>{{AgentRole::user, "Second"}}));
+        (std::vector<AgentMessage>{{AgentRole::user, "Second"}}));
 }
 
 TEST(ChatCoordinator, ExcludesFailedTurnsFromTheFollowingModelContext) {
@@ -279,7 +255,7 @@ TEST(ChatCoordinator, ExcludesFailedTurnsFromTheFollowingModelContext) {
     auto backend = std::make_unique<ScriptedBackend>(
         CompletionResult{CompletionOutcome::transport_error, "unavailable"});
     ScriptedBackend* backend_view = backend.get();
-    ChatCoordinator coordinator(std::move(backend), temporary.path);
+    ChatCoordinator coordinator(test::one_backend(std::move(backend)), temporary.path);
 
     (void)coordinator.handle_input("Failed");
     receive_until_idle(coordinator);
@@ -289,7 +265,7 @@ TEST(ChatCoordinator, ExcludesFailedTurnsFromTheFollowingModelContext) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<ContextMessage>{{AgentRole::user, "Second"}}));
+        (std::vector<AgentMessage>{{AgentRole::user, "Second"}}));
 }
 
 TEST(ChatCoordinator, ExcludesCancelledPartialOutputFromFollowingModelContext) {
@@ -298,7 +274,7 @@ TEST(ChatCoordinator, ExcludesCancelledPartialOutputFromFollowingModelContext) {
         CompletionResult{CompletionOutcome::cancelled, {}},
         std::vector<std::string>{"Partial"});
     ScriptedBackend* backend_view = backend.get();
-    ChatCoordinator coordinator(std::move(backend), temporary.path);
+    ChatCoordinator coordinator(test::one_backend(std::move(backend)), temporary.path);
 
     (void)coordinator.handle_input("First");
     receive_until_idle(coordinator);
@@ -308,7 +284,7 @@ TEST(ChatCoordinator, ExcludesCancelledPartialOutputFromFollowingModelContext) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<ContextMessage>{
+        (std::vector<AgentMessage>{
             {AgentRole::user, "First"},
             {AgentRole::user, "Second"},
         }));
@@ -317,9 +293,9 @@ TEST(ChatCoordinator, ExcludesCancelledPartialOutputFromFollowingModelContext) {
 TEST(ChatCoordinator, PersistsAnIdentifiedCancelledResponse) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(
+        test::one_backend(std::make_unique<ScriptedBackend>(
             CompletionResult{CompletionOutcome::cancelled, {}},
-            std::vector<std::string>{"Partial"}),
+            std::vector<std::string>{"Partial"})),
         temporary.path);
 
     (void)coordinator.handle_input("Question");
@@ -341,8 +317,8 @@ TEST(ChatCoordinator, PersistsAnIdentifiedCancelledResponse) {
 TEST(ChatCoordinator, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(
-            CompletionResult{CompletionOutcome::cancelled, {}}),
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            CompletionResult{CompletionOutcome::cancelled, {}})),
         temporary.path);
 
     (void)coordinator.handle_input("Question");
@@ -357,7 +333,7 @@ TEST(ChatCoordinator, RecordsCancellationWithoutAnEmptyAssistantEntry) {
 TEST(ChatCoordinator, RejectsCompletionWithoutResponseContent) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(),
+        test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path);
 
     (void)coordinator.handle_input("Question");
@@ -378,12 +354,12 @@ TEST(ChatCoordinator, RejectsCompletionWithoutResponseContent) {
 TEST(ChatCoordinator, ReplacesPartialOutputWithATypedError) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(
+        test::one_backend(std::make_unique<ScriptedBackend>(
             CompletionResult{
                 CompletionOutcome::transport_error,
                 "network unavailable",
             },
-            std::vector<std::string>{"Discard me"}),
+            std::vector<std::string>{"Discard me"})),
         temporary.path);
 
     (void)coordinator.handle_input("Question");
@@ -408,7 +384,7 @@ TEST(ChatCoordinator, OwnsClearInfoAndExitCommandSemantics) {
         journal.append(existing);
     }
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(),
+        test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         restore_with({existing}, 1, 2));
 
@@ -418,30 +394,55 @@ TEST(ChatCoordinator, OwnsClearInfoAndExitCommandSemantics) {
     EXPECT_TRUE(coordinator.conversation().entries().empty());
     EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
 
-    (void)coordinator.handle_input("/info");
-    const auto entries = coordinator.conversation().entries();
-    ASSERT_EQ(entries.size(), 1U);
-    EXPECT_EQ(entries.front().kind, EntryKind::notice);
+    const CoordinatorUpdate info = coordinator.handle_input("/info");
+    ASSERT_TRUE(info.notice);
     EXPECT_NE(
-        entries.front().text.find("Transcript entries: 0"),
+        info.notice->find("Transcript entries: 0"),
         std::string::npos);
     EXPECT_NE(
-        entries.front().text.find("* @Guide  test-model  test://completion  streaming"),
+        info.notice->find("* @Guide  test-model  test://completion  streaming"),
         std::string::npos);
-    EXPECT_EQ(entries.front().text.find("Model:"), std::string::npos);
-    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
+    EXPECT_EQ(info.notice->find("Model:"), std::string::npos);
+    EXPECT_TRUE(coordinator.conversation().entries().empty());
+    EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
 
     EXPECT_TRUE(
         coordinator.handle_input("/exit").end_session);
 }
 
+TEST(ChatCoordinator, PersistenceFailureIdentifiesTheRequestAndAgent) {
+    TemporaryJournal temporary;
+    ChatCoordinator coordinator(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path);
+    const std::filesystem::path moved = temporary.path.string() + ".moved";
+    std::filesystem::rename(temporary.path, moved);
+
+    std::string message;
+    try {
+        (void)coordinator.handle_input("Question");
+    } catch (const std::runtime_error& error) {
+        message = error.what();
+    }
+
+    std::filesystem::rename(moved, temporary.path);
+    coordinator.shutdown();
+    ASSERT_FALSE(message.empty());
+    EXPECT_NE(
+        message.find("Failed to persist start of request 1 for @Guide"),
+        std::string::npos)
+        << message;
+    EXPECT_NE(message.find("Session database"), std::string::npos)
+        << message;
+}
+
 TEST(ChatCoordinator, RejectsCommandsAndNewPromptsDuringGeneration) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(
+        test::one_backend(std::make_unique<ScriptedBackend>(
             CompletionResult{},
             std::vector<std::string>{},
-            true),
+            true)),
         temporary.path);
 
     (void)coordinator.handle_input("Question");
@@ -461,10 +462,10 @@ TEST(ChatCoordinator, RejectsCommandsAndNewPromptsDuringGeneration) {
 TEST(ChatCoordinator, IgnoresEventsForAnotherRequest) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(
+        test::one_backend(std::make_unique<ScriptedBackend>(
             CompletionResult{},
             std::vector<std::string>{},
-            true),
+            true)),
         temporary.path);
 
     (void)coordinator.handle_input("Question");
@@ -489,7 +490,7 @@ TEST(ChatCoordinator, IgnoresEventsForAnotherRequest) {
 TEST(ChatCoordinator, AttributesDispatchFailuresToTheTargetAgent) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(),
+        test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path);
     coordinator.shutdown();
 
@@ -518,7 +519,7 @@ TEST(ChatCoordinator, FinalizesInterruptedTurnsDuringRestore) {
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
 
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(),
+        test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         std::move(restored));
 
@@ -567,16 +568,20 @@ TEST(ChatCoordinator, RoutesMentionsAndDefaultChangesAcrossTheRoster) {
     EXPECT_NE(rejected.notice->find("@nobody"), std::string::npos);
     EXPECT_EQ(coordinator.conversation().entries().size(), entries_before_rejection);
 
+    const std::vector<ConversationEntry> entries_before_agents =
+        coordinator.conversation().entries();
     const CoordinatorUpdate agents = coordinator.handle_input("/agents");
     EXPECT_TRUE(agents.clear_input);
-    const std::vector<ConversationEntry> entries =
-        coordinator.conversation().entries();
-    const ConversationEntry& notice = entries.back();
+    ASSERT_TRUE(agents.notice);
     EXPECT_NE(
-        notice.text.find("Any unambiguous prefix works."),
+        agents.notice->find("Any unambiguous prefix works."),
         std::string::npos);
-    EXPECT_EQ(notice.text.find("Cheburashka"), std::string::npos);
-    EXPECT_NE(notice.text.find("@Ismael"), std::string::npos);
+    EXPECT_EQ(agents.notice->find("Cheburashka"), std::string::npos);
+    EXPECT_NE(agents.notice->find("@Ismael"), std::string::npos);
+    EXPECT_EQ(coordinator.conversation().entries(), entries_before_agents);
+    EXPECT_EQ(
+        load_conversation_entries(temporary.path),
+        entries_before_agents);
 }
 
 TEST(ChatCoordinator, RestoredForeignHistoryEnablesAddressingUntilClear) {
@@ -590,7 +595,9 @@ TEST(ChatCoordinator, RestoredForeignHistoryEnablesAddressingUntilClear) {
         .next_entry_id = 3,
     };
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(), temporary.path, std::move(restored));
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        std::move(restored));
 
     EXPECT_TRUE(coordinator.show_addressing());
     (void)coordinator.handle_input("/clear");
@@ -600,10 +607,10 @@ TEST(ChatCoordinator, RestoredForeignHistoryEnablesAddressingUntilClear) {
 TEST(ChatCoordinator, ShutdownCancelsAndPersistsAnActiveTurn) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
-        std::make_unique<ScriptedBackend>(
+        test::one_backend(std::make_unique<ScriptedBackend>(
             CompletionResult{},
             std::vector<std::string>{"Partial"},
-            true),
+            true)),
         temporary.path);
 
     (void)coordinator.handle_input("Question");

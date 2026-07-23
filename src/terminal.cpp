@@ -16,7 +16,7 @@ Terminal::Terminal() {
 }
 
 Terminal::~Terminal() {
-    endwin();
+    restore();
 }
 
 void Terminal::configure_selector() {
@@ -33,6 +33,14 @@ void Terminal::resize() {
     endwin();
     refresh();
     clear();
+}
+
+void Terminal::restore() {
+    if (!active_) {
+        return;
+    }
+    endwin();
+    active_ = false;
 }
 
 } // namespace cha
