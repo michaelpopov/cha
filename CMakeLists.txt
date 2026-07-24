@@ -87,7 +87,7 @@ add_library(cha_core
     src/agents/completion_client.cpp
     src/application/chat_coordinator.cpp
     src/application/session_notices.cpp
-    src/application/turn_engine.cpp
+    src/application/response_controller.cpp
     src/application/workspace_service.cpp
     src/storage/agent_definition_loader.cpp
     src/storage/config_loader.cpp

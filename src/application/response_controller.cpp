@@ -1,4 +1,4 @@
-#include "application/turn_engine.h"
+#include "application/response_controller.h"
 
 #include <exception>
 #include <stdexcept>
@@ -28,7 +28,7 @@ std::string request_action(
 
 } // namespace
 
-TurnEngine::TurnEngine(
+ResponseController::ResponseController(
     Conversation& conversation,
     ConversationJournal& journal,
     AgentRegistry& registry)
@@ -36,7 +36,7 @@ TurnEngine::TurnEngine(
       journal_(journal),
       registry_(registry) {}
 
-void TurnEngine::restore(ConversationRestore restored) {
+void ResponseController::restore(ConversationRestore restored) {
     conversation_.replace_entries(std::move(restored.entries));
     next_request_id_ = restored.next_request_id;
     next_entry_id_ = restored.next_entry_id;
@@ -53,7 +53,7 @@ void TurnEngine::restore(ConversationRestore restored) {
     }
 }
 
-GenerationStatus TurnEngine::generation_status() const {
+GenerationStatus ResponseController::generation_status() const {
     return {
         active_.has_value(),
         active_ ? active_->agent_name : "",
@@ -61,10 +61,10 @@ GenerationStatus TurnEngine::generation_status() const {
     };
 }
 
-TurnUpdate TurnEngine::start(
+ResponseUpdate ResponseController::start(
     std::string text,
     const AgentInfo& target) {
-    TurnUpdate update;
+    ResponseUpdate update;
     const RequestId request_id = next_request_id_++;
     CompletionRequest request{
         .request_id = request_id,
@@ -97,7 +97,7 @@ TurnUpdate TurnEngine::start(
             });
         throw;
     }
-    active_ = ActiveTurn{
+    active_ = ActiveResponse{
         .request_id = request.request_id,
         .response_entry_id = next_entry_id_++,
         .agent_id = target.id,
@@ -109,20 +109,20 @@ TurnUpdate TurnEngine::start(
         update.notice = "";
         return update;
     }
-    fail_active_turn("Agent execution is unavailable", target.id, update);
+    fail_active_response("Agent execution is unavailable", target.id, update);
     update.notice = "Request could not be dispatched";
     return update;
 }
 
-TurnUpdate TurnEngine::apply(AgentEvent event) {
-    TurnUpdate update;
+ResponseUpdate ResponseController::apply(AgentEvent event) {
+    ResponseUpdate update;
     std::visit(
         [this, &update](const auto& value) { apply(value, update); },
         event);
     return update;
 }
 
-void TurnEngine::apply(const AgentDelta& event, TurnUpdate& update) {
+void ResponseController::apply(const AgentDelta& event, ResponseUpdate& update) {
     if (!matches(event.request_id) || event.text.empty()) {
         return;
     }
@@ -139,12 +139,12 @@ void TurnEngine::apply(const AgentDelta& event, TurnUpdate& update) {
     update.render_needed = true;
 }
 
-void TurnEngine::apply(const AgentCompleted& event, TurnUpdate& update) {
+void ResponseController::apply(const AgentCompleted& event, ResponseUpdate& update) {
     if (!matches(event.request_id)) {
         return;
     }
     if (active_->phase != ResponsePhase::answering) {
-        fail_active_turn(
+        fail_active_response(
             "Agent completed without answer content", active_->agent_id, update);
         return;
     }
@@ -164,7 +164,7 @@ void TurnEngine::apply(const AgentCompleted& event, TurnUpdate& update) {
     update.notice = "";
 }
 
-void TurnEngine::apply(const AgentCancelled& event, TurnUpdate& update) {
+void ResponseController::apply(const AgentCancelled& event, ResponseUpdate& update) {
     if (!matches(event.request_id)) {
         return;
     }
@@ -198,16 +198,16 @@ void TurnEngine::apply(const AgentCancelled& event, TurnUpdate& update) {
     update.notice = "Generation stopped";
 }
 
-void TurnEngine::apply(const AgentFailed& event, TurnUpdate& update) {
+void ResponseController::apply(const AgentFailed& event, ResponseUpdate& update) {
     if (matches(event.request_id)) {
-        fail_active_turn(event.message, active_->agent_id, update);
+        fail_active_response(event.message, active_->agent_id, update);
     }
 }
 
-void TurnEngine::fail_active_turn(
+void ResponseController::fail_active_response(
     std::string message,
     ParticipantId participant_id,
-    TurnUpdate& update) {
+    ResponseUpdate& update) {
     ConversationEntry error = make_error_entry(
         next_entry_id_++,
         std::move(message),
@@ -230,11 +230,11 @@ void TurnEngine::fail_active_turn(
     update.notice = "Generation failed";
 }
 
-void TurnEngine::finish_response_entry(CompletionStatus status) {
+void ResponseController::finish_response_entry(CompletionStatus status) {
     conversation_.finish_entry(active_->response_entry_id, status);
 }
 
-ConversationEntry TurnEngine::response_entry(CompletionStatus status) const {
+ConversationEntry ResponseController::response_entry(CompletionStatus status) const {
     std::string text;
     if (active_->phase != ResponsePhase::waiting) {
         const ConversationReadView view = conversation_.read();
@@ -257,7 +257,7 @@ ConversationEntry TurnEngine::response_entry(CompletionStatus status) const {
         active_->request_id);
 }
 
-bool TurnEngine::matches(RequestId request_id) const {
+bool ResponseController::matches(RequestId request_id) const {
     return active_ && active_->request_id == request_id;
 }
 

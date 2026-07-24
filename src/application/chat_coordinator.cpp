@@ -45,7 +45,7 @@ ChatCoordinator::ChatCoordinator(
     ConversationRestore restored)
     : journal_(std::move(path)),
       registry_(conversation_, std::move(definitions)),
-      turns_(conversation_, journal_, registry_),
+      response_(conversation_, journal_, registry_),
       default_agent_id_(registry_.roster().first().id) {
     initialize(std::move(restored));
 }
@@ -56,7 +56,7 @@ ChatCoordinator::ChatCoordinator(
     ConversationRestore restored)
     : journal_(std::move(path)),
       registry_(conversation_, std::move(backends)),
-      turns_(conversation_, journal_, registry_),
+      response_(conversation_, journal_, registry_),
       default_agent_id_(registry_.roster().first().id) {
     initialize(std::move(restored));
 }
@@ -69,13 +69,13 @@ ChatCoordinator::~ChatCoordinator() {
 }
 
 void ChatCoordinator::initialize(ConversationRestore restored) {
-    turns_.restore(std::move(restored));
+    response_.restore(std::move(restored));
 }
 
-void ChatCoordinator::merge_turn(CoordinatorUpdate& update, TurnUpdate turn) {
-    update.render_needed = update.render_needed || turn.render_needed;
-    if (turn.notice) {
-        update.notice = std::move(turn.notice);
+void ChatCoordinator::merge_response(CoordinatorUpdate& update, ResponseUpdate response) {
+    update.render_needed = update.render_needed || response.render_needed;
+    if (response.notice) {
+        update.notice = std::move(response.notice);
     }
 }
 
@@ -86,7 +86,7 @@ CoordinatorUpdate ChatCoordinator::busy_notice() const {
 CoordinatorUpdate ChatCoordinator::submit_prompt(
     std::string text,
     std::string handle) {
-    if (turns_.generation_status().active) {
+    if (response_.generation_status().active) {
         return busy_notice();
     }
     if (text.empty() && handle.empty()) {
@@ -114,12 +114,12 @@ CoordinatorUpdate ChatCoordinator::submit_prompt(
     }
 
     update.clear_input = true;
-    merge_turn(update, turns_.start(std::move(text), *target));
+    merge_response(update, response_.start(std::move(text), *target));
     return update;
 }
 
 CoordinatorUpdate ChatCoordinator::clear_conversation() {
-    if (turns_.generation_status().active) {
+    if (response_.generation_status().active) {
         return busy_notice();
     }
     try {
@@ -137,7 +137,7 @@ CoordinatorUpdate ChatCoordinator::clear_conversation() {
 }
 
 CoordinatorUpdate ChatCoordinator::session_information() {
-    if (turns_.generation_status().active) {
+    if (response_.generation_status().active) {
         return busy_notice();
     }
     return {
@@ -149,7 +149,7 @@ CoordinatorUpdate ChatCoordinator::session_information() {
 }
 
 CoordinatorUpdate ChatCoordinator::agent_information() {
-    if (turns_.generation_status().active) {
+    if (response_.generation_status().active) {
         return busy_notice();
     }
     return {
@@ -160,7 +160,7 @@ CoordinatorUpdate ChatCoordinator::agent_information() {
 }
 
 CoordinatorUpdate ChatCoordinator::set_default_agent(std::string_view handle) {
-    if (turns_.generation_status().active) {
+    if (response_.generation_status().active) {
         return busy_notice();
     }
     CoordinatorUpdate update{.clear_input = true};
@@ -180,7 +180,7 @@ CoordinatorUpdate ChatCoordinator::set_default_agent(std::string_view handle) {
 
 CoordinatorUpdate ChatCoordinator::request_stop() {
     CoordinatorUpdate update;
-    if (!turns_.generation_status().active) {
+    if (!response_.generation_status().active) {
         update.notice = "No generation is active";
         return update;
     }
@@ -191,7 +191,7 @@ CoordinatorUpdate ChatCoordinator::request_stop() {
 
 CoordinatorUpdate ChatCoordinator::handle_agent_event(AgentEvent event) {
     CoordinatorUpdate update;
-    merge_turn(update, turns_.apply(std::move(event)));
+    merge_response(update, response_.apply(std::move(event)));
     return update;
 }
 

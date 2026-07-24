@@ -14,15 +14,15 @@
 
 namespace cha {
 
-struct TurnUpdate {
+struct ResponseUpdate {
     bool render_needed{};
     std::optional<std::string> notice;
 };
 
-// Owns the single in-flight generation: conversation/journal mutations and agent event application.
-class TurnEngine {
+// Owns the single in-flight agent response: conversation/journal mutations and event application.
+class ResponseController {
 public:
-    TurnEngine(
+    ResponseController(
         Conversation& conversation,
         ConversationJournal& journal,
         AgentRegistry& registry);
@@ -33,15 +33,15 @@ public:
     RequestId next_request_id() const { return next_request_id_; }
     EntryId next_entry_id() const { return next_entry_id_; }
 
-    // Starts a turn for the already-resolved target agent. On success, notice is set to "".
-    TurnUpdate start(
+    // Starts a response for the already-resolved target agent. On success, notice is set to "".
+    ResponseUpdate start(
         std::string text,
         const AgentInfo& target);
 
-    TurnUpdate apply(AgentEvent event);
+    ResponseUpdate apply(AgentEvent event);
 
 private:
-    struct ActiveTurn {
+    struct ActiveResponse {
         RequestId request_id{};
         EntryId response_entry_id{};
         ParticipantId agent_id;
@@ -49,14 +49,14 @@ private:
         ResponsePhase phase{ResponsePhase::waiting};
     };
 
-    void apply(const AgentDelta& event, TurnUpdate& update);
-    void apply(const AgentCompleted& event, TurnUpdate& update);
-    void apply(const AgentCancelled& event, TurnUpdate& update);
-    void apply(const AgentFailed& event, TurnUpdate& update);
-    void fail_active_turn(
+    void apply(const AgentDelta& event, ResponseUpdate& update);
+    void apply(const AgentCompleted& event, ResponseUpdate& update);
+    void apply(const AgentCancelled& event, ResponseUpdate& update);
+    void apply(const AgentFailed& event, ResponseUpdate& update);
+    void fail_active_response(
         std::string message,
         ParticipantId participant_id,
-        TurnUpdate& update);
+        ResponseUpdate& update);
     void finish_response_entry(CompletionStatus status);
     ConversationEntry response_entry(CompletionStatus status) const;
     bool matches(RequestId request_id) const;
@@ -66,7 +66,7 @@ private:
     AgentRegistry& registry_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
-    std::optional<ActiveTurn> active_;
+    std::optional<ActiveResponse> active_;
 };
 
 } // namespace cha

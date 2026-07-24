@@ -3,7 +3,7 @@
 #include "agents/agent_definition.h"
 #include "agents/agent_registry.h"
 #include "application/generation_status.h"
-#include "application/turn_engine.h"
+#include "application/response_controller.h"
 #include "conversation/conversation.h"
 #include "storage/session_database.h"
 
@@ -46,7 +46,7 @@ public:
 
     // --- Session state (read model) -------------------------------------------
     const Conversation& conversation() const { return conversation_; }
-    GenerationStatus generation_status() const { return turns_.generation_status(); }
+    GenerationStatus generation_status() const { return response_.generation_status(); }
     const AgentRoster& roster() const { return registry_.roster(); }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
     int notification_fd() const { return registry_.notification_fd(); }
@@ -77,12 +77,12 @@ private:
 
     void initialize(ConversationRestore restored);
     CoordinatorUpdate busy_notice() const;
-    static void merge_turn(CoordinatorUpdate& update, TurnUpdate turn);
+    static void merge_response(CoordinatorUpdate& update, ResponseUpdate response);
 
     Conversation conversation_;
     ConversationJournal journal_;
     AgentRegistry registry_;
-    TurnEngine turns_;
+    ResponseController response_;
     ParticipantId default_agent_id_;
     bool shutdown_{};
 };
