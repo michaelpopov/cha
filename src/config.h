@@ -11,6 +11,13 @@ enum class Mode {
     test,
 };
 
+enum class ReasoningFormat {
+    automatic,
+    none,
+    reasoning_content,
+    reasoning,
+};
+
 // Holds the identity, connection, and generation settings for one chat agent.
 struct Config {
     std::string id{"assistant"};
@@ -24,6 +31,7 @@ struct Config {
     std::string api_key;
     std::string api_key_env;
     std::string reasoning_effort;
+    ReasoningFormat reasoning_format{ReasoningFormat::automatic};
     bool https{};
 
     [[nodiscard]] static Config load(const std::filesystem::path& path);

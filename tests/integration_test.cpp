@@ -208,6 +208,105 @@ Json body_of(const MockHttpServer& server) {
     return Json::parse(request_body(server.requests().front()));
 }
 
+std::string streamed_answer(
+    std::string_view reasoning,
+    std::string_view answer_text) {
+    const std::string body =
+        "data: "
+        + Json{{"choices",
+                Json::array({
+                    Json{{"delta",
+                          Json{{"reasoning_content", reasoning}}}},
+                })}}
+              .dump()
+        + "\n\n"
+        + "data: "
+        + Json{{"choices",
+                Json::array({
+                    Json{{"delta", Json{{"content", answer_text}}}},
+                })}}
+              .dump()
+        + "\n\n"
+        + "data: [DONE]\n\n";
+    return http_response("text/event-stream", body);
+}
+
+TEST(ReasoningIntegration, StreamsLiveReasoningButPersistsAndReplaysOnlyAnswer) {
+    std::vector<AgentDefinition> definitions = lobby_definitions();
+    definitions.resize(1);
+    constexpr std::string_view reasoning_marker =
+        "INTEGRATION_PRIVATE_REASONING_731";
+    MockHttpServer server({
+        streamed_answer(reasoning_marker, "First answer"),
+        streamed_answer("SECOND_PRIVATE_REASONING", "Second answer"),
+    });
+    server.start();
+    point_at(definitions.front(), server.port());
+    definitions.front().config.stream = true;
+    definitions.front().config.reasoning_format =
+        ReasoningFormat::automatic;
+
+    TemporarySession session;
+    {
+        ChatCoordinator coordinator(std::move(definitions), session.path);
+        (void)coordinator.handle_input("First question");
+        run_until_idle(coordinator);
+        const std::vector<ConversationEntry> live =
+            coordinator.conversation().entries();
+        ASSERT_EQ(live.size(), 2U);
+        EXPECT_EQ(live.back().reasoning_text, reasoning_marker);
+        EXPECT_EQ(live.back().text, "First answer");
+
+        (void)coordinator.handle_input("Second question");
+        run_until_idle(coordinator);
+    }
+    server.join();
+
+    ASSERT_EQ(server.requests().size(), 2U);
+    const Json second_body =
+        Json::parse(request_body(server.requests().back()));
+    const std::string serialized = second_body.dump();
+    EXPECT_EQ(serialized.find(reasoning_marker), std::string::npos);
+    EXPECT_NE(serialized.find("First answer"), std::string::npos);
+
+    const std::vector<ConversationEntry> restored =
+        load_conversation_entries(session.path);
+    ASSERT_EQ(restored.size(), 4U);
+    for (const ConversationEntry& entry : restored) {
+        EXPECT_TRUE(entry.reasoning_text.empty());
+    }
+    EXPECT_EQ(restored[1].text, "First answer");
+    EXPECT_EQ(restored[3].text, "Second answer");
+}
+
+TEST(ReasoningIntegration, ParsesNonStreamingStructuredReasoning) {
+    std::vector<AgentDefinition> definitions = lobby_definitions();
+    definitions.resize(1);
+    MockHttpServer server({http_response(
+        "application/json",
+        R"({"choices":[{"message":{"reasoning":"Non-stream thought","content":"Non-stream answer"}}]})")});
+    server.start();
+    point_at(definitions.front(), server.port());
+    definitions.front().config.reasoning_format =
+        ReasoningFormat::reasoning;
+
+    TemporarySession session;
+    ChatCoordinator coordinator(std::move(definitions), session.path);
+    (void)coordinator.handle_input("Question");
+    run_until_idle(coordinator);
+    server.join();
+
+    const std::vector<ConversationEntry> live =
+        coordinator.conversation().entries();
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().reasoning_text, "Non-stream thought");
+    EXPECT_EQ(live.back().text, "Non-stream answer");
+    const std::vector<ConversationEntry> restored =
+        load_conversation_entries(session.path);
+    EXPECT_TRUE(restored.back().reasoning_text.empty());
+    EXPECT_EQ(restored.back().text, "Non-stream answer");
+}
+
 TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     std::vector<AgentDefinition> definitions = lobby_definitions();
     ASSERT_EQ(definitions.size(), 2U);

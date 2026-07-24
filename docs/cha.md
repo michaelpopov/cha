@@ -108,9 +108,12 @@ failures receive one failed-request publication attempt; repeated failure is
 fatal because silently losing the event would leave an accepted request with
 no observable outcome.
 
-The event variant contains:
+The transport maps output into
+`CompletionDelta { kind = reasoning | answer, text }`. The registry attaches
+request identity without merging or reordering fragments. The event variant
+contains:
 
-- `AgentDelta { request_id, text }`
+- `AgentDelta { request_id, kind, text }`
 - `AgentCompleted { request_id }`
 - `AgentCancelled { request_id }`
 - `AgentFailed { request_id, message }`
@@ -235,7 +238,8 @@ participant_id
 display_name
 addressed_to          human entries only
 addressed_to_name     human entries only
-text
+reasoning_text         agent entries only; live and ephemeral
+text                   answer text for agents
 status                complete | streaming | cancelled | failed
 request_id            optional correlation with a turn
 ```
@@ -273,10 +277,14 @@ is the locked non-owning API used during backend preparation.
 - human and notice entries must be complete;
 - error entries must be failed;
 - agent entries may be streaming, complete, or cancelled, but never failed;
-- a complete agent entry must contain text.
+- a complete agent entry must contain answer text;
+- a cancelled live agent entry must contain reasoning or answer text;
+- non-agent entries cannot contain reasoning.
 
 `require_terminal_conversation_entry()` additionally rejects streaming state
-before persistence.
+before persistence. `require_storable_conversation_entry()` also rejects
+reasoning and requires answer text on a stored cancelled response. The journal
+calls this guard before binding any entry fields.
 
 ### Per-agent model context
 
@@ -292,6 +300,9 @@ the new prompt:
    remains visible but is not sent back to a model.
 6. Emit the target agent's own completed responses as `assistant`.
 7. Emit human prompts and other agents' completed responses as `user`.
+
+Projection always uses agent `text` and never `reasoning_text`, including for
+the same agent that produced the reasoning.
 
 When the projected history contains cross-agent evidence, human messages are
 attributed as `User: ...`; a prompt addressed elsewhere becomes
@@ -331,18 +342,23 @@ backend.
 
 ### Streaming success
 
-Each transport fragment becomes `AgentDelta`. The first non-empty delta opens
-the reserved agent entry as `streaming`; later deltas append to it. Deltas are
-in-memory only.
+Each transport fragment becomes a typed `AgentDelta`. The first non-empty
+delta opens the reserved agent entry as `streaming`; reasoning appends to
+`reasoning_text` and answers append to `text`. Deltas are in-memory only.
 
-On `AgentCompleted`, the coordinator rejects completion if no response entry
-was opened. Otherwise it copies the open entry into the terminal persistence
-record, commits the completed response and turn transition, marks the in-memory
-entry complete, clears `ActiveTurn`, and requests a render. The open
-conversation entry is the sole accumulated response buffer.
+`ActiveTurn` and `GenerationStatus` share one monotonic `ResponsePhase`:
+`waiting`, `reasoning`, or `answering`. An answer advances the phase to
+`answering`; late reasoning remains visible without moving it backward.
 
-For non-streaming HTTP, the backend publishes the complete response as one
-delta followed by `AgentCompleted`.
+On `AgentCompleted`, the coordinator requires the `answering` phase. It
+constructs a fresh answer-only entry, commits that response and turn
+transition, marks the live entry complete without clearing its reasoning,
+clears `ActiveTurn`, and requests a render.
+
+For non-streaming HTTP, the backend uses the same event lifecycle: it publishes
+one reasoning delta when selected and present, then one answer delta, followed
+by `AgentCompleted`. A content-only response still produces only the answer
+delta.
 
 ### Cancellation
 
@@ -358,17 +374,22 @@ same atomic flag.
 
 On `AgentCancelled`:
 
-- if text was streamed, the coordinator commits a cancelled response and
-  finishes the visible entry as cancelled;
-- if no text was streamed, it commits only the cancelled turn transition.
+- while waiting, the coordinator commits only the cancelled turn transition;
+- after reasoning only, it finishes the live reasoning entry as cancelled but
+  stores no response row;
+- after answer output, it stores a fresh answer-only cancelled response and
+  retains any reasoning in the live entry.
 
 The prompt remains in model context, but cancelled agent output does not.
 
 ### Failure
 
 Transport errors, protocol errors, backend execution exceptions, dispatch
-failure, and a successful terminal event without response text all become a
-failed turn.
+failure, and a successful terminal event without answer content all become a
+failed turn. In an explicitly configured reasoning format, a present non-null
+reasoning field with the wrong JSON type is a protocol error even if the same
+response also supplied valid answer text. This strict contract is intentional;
+`auto` mode ignores malformed optional reasoning extensions.
 
 The coordinator commits a typed error entry, discards any open partial agent
 entry, adds the error to the transcript, and clears the active turn. Context
@@ -418,17 +439,29 @@ Key behavior:
 - Closed stdin ends the session.
 
 `Tui` renders a transcript pad, reverse-video status line, and persistent input
-pad. `GenerationStatus` includes the active agent's display name. Human labels
-are `[You]` or `[You → Name]`; agent labels always include the display name.
+pad. `GenerationStatus` includes the active agent's display name and shared
+response phase. Status text is `generating`, `reasoning`, or `responding`.
+Human labels are `[You]` or `[You → Name]`; agent labels always include the
+display name.
 Addressed human labels are enabled whenever the current roster has multiple
 agents, or when restored single-agent history contains another participant or
 target. `/clear` forgets historical addressing evidence but keeps addressing
 enabled for a currently multi-agent room.
 
+An agent entry without reasoning retains the compact
+`[Agent: Name] Answer` form. When reasoning is present, the TUI places the
+agent label, a bold/dim `[Reasoning]` label, dim reasoning text, and normal
+answer text on distinct lines. Every complete-entry, incremental-suffix, and
+input-pane path explicitly restores normal attributes.
+
 `TranscriptRenderPlanner` compares snapshot revision, history epoch, width,
 entry count, and the former last entry. It chooses no work, suffix append, or
-full rebuild. `TranscriptViewport` follows output until the user scrolls and
-clamps its position when content shrinks.
+full rebuild. Reasoning-only and established answer suffixes append with
+homogeneous styling. The first answer after reasoning, late reasoning, or
+simultaneous growth requires a rebuild. A recording `TranscriptSurface` test
+seam verifies the `[Reasoning]` label, dim reasoning, normal answers, and
+attribute restoration. `TranscriptViewport` follows output until the user
+scrolls and clamps its position when content shrinks.
 
 ## Persistence
 
@@ -455,13 +488,21 @@ The build pins SQLite 3.46.1. The schema contains:
 | `turns` | `request_id`, originating epoch, and lifecycle state. |
 | `entries` | Typed transcript fields, target attribution, text, and terminal status. |
 
+The schema remains version 2 and contains no reasoning column. Reasoning exists
+only in live `ConversationEntry` objects. Completed responses and
+answer-bearing cancellations are persisted through freshly constructed
+answer-only entries; the journal rejects any entry with non-empty reasoning.
+
 Turn states are `started`, `completed`, `cancelled`, and `failed`. A partial
 unique index permits only one started turn in the entire session. Another
 partial unique index permits only one human prompt per request. Full validation
 also verifies that every turn has exactly one prompt in the same epoch.
 
 Streaming status is never stored. A response row exists only after completion
-or after cancellation with partial text. Errors are terminal `error` entries.
+with a non-empty answer or after cancellation with partial answer text. A
+reasoning-only cancelled entry remains visible during the current run but has
+no durable response row; after reopening it disappears. A mixed cancelled
+entry restores only its answer. Errors are terminal `error` entries.
 
 ### Session listing and opening
 
@@ -574,8 +615,23 @@ cannot extend into transport work.
 
 For each agent, configuration includes stable ID/name, host, port, mode, model,
 streaming flag, optional temperature, API key or environment-based key,
-optional reasoning effort, and HTTP/HTTPS selection. `api_key_env` overrides
-`api_key` and must resolve to a non-empty environment value.
+optional reasoning effort, reasoning format, and HTTP/HTTPS selection.
+`api_key_env` overrides `api_key` and must resolve to a non-empty environment
+value. `reasoning_effort` controls the requested generation policy;
+`reasoning_format` independently describes the provider's response shape.
+
+`reasoning_format` defaults to `auto` and accepts:
+
+| Value | Response mapping |
+| --- | --- |
+| `auto` | Read non-empty string `reasoning_content`, otherwise `reasoning`; ignore malformed optional reasoning values. |
+| `none` | Ignore structured reasoning fields. |
+| `reasoning_content` | Read only that field and reject a present non-null non-string value. |
+| `reasoning` | Read only that field and reject a present non-null non-string value. |
+
+All modes continue to map ordinary `content` to answer output. The client does
+not parse `<think>` or other tags embedded in `content`; tagged content is
+therefore displayed, stored, and replayed as answer text.
 
 If a net-mode model is absent, construction performs:
 
@@ -600,11 +656,30 @@ Completion requests have a ten-second connection timeout, TCP keepalive, and
 no total or low-speed timeout. Long generations are intentionally unbounded;
 the user controls them through cooperative cancellation.
 
-Streaming mode parses SSE `data:` events, forwards content deltas, requires a
-`[DONE]` marker, rejects malformed JSON/protocol shapes and empty output, and
-ignores data after completion. Non-streaming mode parses
-`choices[0].message.content` and also requires non-empty text. Non-2xx bodies
-are surfaced as protocol errors; libcurl failures are transport errors.
+Streaming mode parses SSE `data:` events from `choices[0].delta`. When one
+event contains both selected reasoning and answer content, reasoning is emitted
+first. In `auto`, `reasoning_content` takes precedence over `reasoning` per
+event; later events may use a different supported field. Empty strings,
+`null`, role-only deltas, and finish metadata do not emit output. Data after
+`[DONE]` is ignored.
+
+The streaming response context separately tracks recognized reasoning,
+recognized answer output, total received bytes, `[DONE]`, and the first
+protocol error. Successful completion requires both `[DONE]` and at least one
+non-empty answer delta; reasoning alone is not a completed assistant response.
+An early end distinguishes “output received before `[DONE]`” from “not valid
+SSE”.
+
+Non-streaming mode applies the same reasoning-format mapping to
+`choices[0].message`, emits reasoning before `message.content`, and likewise
+requires non-empty answer content.
+
+Non-2xx bodies may provide the existing structured server-error message.
+Successful-HTTP streaming protocol errors never echo body bytes; they include
+only numeric status, a control-character-free content type capped at 128
+bytes (or `unknown`), and the saturating total byte count. The client retains
+at most 64 KiB of a streaming body so a response later identified as non-2xx
+can still supply its error message. libcurl failures are transport errors.
 
 ## Shutdown and failure handling
 
@@ -647,6 +722,7 @@ database, so a mistaken path cannot silently become an empty session.
 | `conversation.*` | Typed, thread-safe transcript and streaming-entry state. |
 | `agent_context.*` | Per-agent projection from transcript semantics to model roles. |
 | `agent_protocol.h` | Request and typed event values plus the shared event channel alias. |
+| `response_content.h` | Transport-neutral reasoning/answer delta kinds and fragments. |
 | `agent_registry.*` | Ordered backend ownership, serial request execution, routing, shared events, cancellation, and shutdown. |
 | `completion_backend.h` | Injectable two-phase completion boundary. |
 | `completion_client.*` | Test echo mode, request serialization, libcurl, SSE/JSON parsing. |
@@ -655,7 +731,7 @@ database, so a mistaken path cannot silently become an empty session.
 | `user_session.*` | Testable UI state machine and render coalescing. |
 | `session_view.h` / `tui.*` | View seam and ncurses implementation. |
 | `input_editor.*` | Wide-character editing and UTF-8 submission. |
-| `transcript_renderer.*` | Entry labels, incremental render planning, layout, viewport. |
+| `transcript_renderer.*` | Styled entry/suffix writing seam, incremental render planning, layout, and viewport. |
 | `terminal.*` | Process-wide ncurses lifecycle and mode changes. |
 | `command.*` / `mention.*` | Slash-command and leading-address parsing. |
 | `text.*` / `path_name.*` | Shared text and path utilities. |
@@ -682,19 +758,35 @@ Everything except `main.cpp` is compiled into `cha_core`.
 14. Registry routing sends a request to exactly one backend while the
     active-turn state prevents intervening conversation mutations.
 15. The outstanding gate clears before a terminal event becomes observable.
-16. Request and entry IDs are positive, strictly increasing, and never reused.
+16. Request IDs are positive, strictly increasing, and durable. Entry IDs are
+    positive and strictly increasing within the live or restored transcript;
+    gaps are valid, and an ephemeral reasoning-only response ID may be
+    allocated again after reopening if no later durable entry advanced the
+    database counter.
 17. A durable started turn has exactly one human prompt in its originating
     epoch.
 18. Streaming entries are never persisted.
-19. Completion, cancellation, and failure transition only the currently
+19. Reasoning is live-only: it is never stored in SQLite or projected into
+    later model context.
+20. Complete responses require non-empty answer content; reasoning alone
+    cannot complete a turn.
+21. The journal rejects every entry with non-empty `reasoning_text`; it never
+    silently strips reasoning.
+22. `ResponsePhase` is monotonic from `waiting` through optional `reasoning` to
+    `answering`; late reasoning never moves it backward.
+23. Completion, cancellation, and failure transition only the currently
     started turn.
-20. Database state is committed before the corresponding in-memory terminal
+24. Database state is committed before the corresponding in-memory terminal
     mutation.
-21. Failed turns and cancelled output are excluded from model context according
+25. Failed turns and cancelled output are excluded from model context according
     to their distinct rules.
-22. Sessions bind to a room, not to the room's current roster.
-23. The shared event channel closes only after the execution thread stops.
-24. A journal mutation failure ends the current run; the application never
+26. Successful-HTTP streaming protocol errors never contain response-body
+    bytes.
+27. Every styled transcript and input-rendering path restores normal
+    attributes.
+28. Sessions bind to a room, not to the room's current roster.
+29. The shared event channel closes only after the execution thread stops.
+30. A journal mutation failure ends the current run; the application never
     continues with transcript state it could not persist.
 
 ## Build and testing
@@ -715,18 +807,21 @@ bundled curl enables OpenSSL when it is available.
 `make test` builds and runs the unit suite through CTest. Unit tests cover
 configuration, identity, roster/mention routing, registry execution behavior,
 conversation/context semantics, coordinator lifecycle, SQLite constraints and
-recovery, workspace/session handling, transport parsing, event channels,
-input/UI state, and incremental rendering.
+recovery, workspace/session handling, structured reasoning parsing and safe
+diagnostics, event channels, input/UI state, and styled incremental rendering.
 
 `make itest` runs the separate integration binary from the checked-in
 `workspace/`. Its tests cover live configured streaming, non-streaming, and
 cancellation paths plus local mock-server multi-agent routing, per-agent
-context, persistence, and reopening after a roster change.
+context, structured streaming and non-streaming reasoning, answer-only
+persistence/context replay, and reopening after a roster change.
 
 The principal test seams are:
 
 - `CompletionBackend`, for registry/coordinator tests without a network;
 - `SessionView`, for `UserSession` tests without curses;
+- `TranscriptSurface`, for complete and incremental attribute-state recording
+  without curses;
 - `project_agent_context()`, whose materialized messages expose projected
   boundaries, roles, and content directly.
 

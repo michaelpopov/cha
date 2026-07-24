@@ -88,9 +88,9 @@ TEST(Conversation, StoresTypedCompleteAndStreamingEntries) {
     Conversation conversation;
     conversation.add_entry(human(1, "Review this code", 10));
     conversation.begin_entry(make_agent_entry(
-        2, "reviewer-id", "Reviewer", {}, CompletionStatus::streaming, 10));
-    conversation.append_to_entry(2, "Two ");
-    conversation.append_to_entry(2, "issues found");
+        2, "reviewer-id", "Reviewer", std::string{}, CompletionStatus::streaming, 10));
+    conversation.append_to_entry(2, CompletionDeltaKind::answer, "Two ");
+    conversation.append_to_entry(2, CompletionDeltaKind::answer, "issues found");
 
     EXPECT_EQ(conversation.open_entry_id(), 2U);
     conversation.finish_entry(2, CompletionStatus::complete);
@@ -107,11 +107,76 @@ TEST(Conversation, StoresTypedCompleteAndStreamingEntries) {
 TEST(Conversation, RequiresTheStreamingEntryHandleForMutation) {
     Conversation conversation;
     conversation.begin_entry(make_agent_entry(
-        4, "reviewer-id", "Reviewer", {}, CompletionStatus::streaming, 2));
+        4, "reviewer-id", "Reviewer", std::string{}, CompletionStatus::streaming, 2));
 
-    EXPECT_THROW(conversation.append_to_entry(5, "wrong"), std::logic_error);
+    EXPECT_THROW(
+        conversation.append_to_entry(
+            5, CompletionDeltaKind::answer, "wrong"),
+        std::logic_error);
     EXPECT_THROW(conversation.discard_entry(5), std::logic_error);
     EXPECT_EQ(conversation.open_entry_id(), 4U);
+}
+
+TEST(Conversation, SeparatesReasoningFromAnswerAndValidatesTerminalContent) {
+    Conversation conversation;
+    conversation.begin_entry(make_agent_entry(
+        1,
+        "reviewer-id",
+        "Reviewer",
+        std::string{},
+        CompletionStatus::streaming,
+        1));
+    conversation.append_to_entry(
+        1, CompletionDeltaKind::reasoning, "PRIVATE_REASONING");
+    EXPECT_EQ(conversation.entries().back().reasoning_text, "PRIVATE_REASONING");
+    EXPECT_TRUE(conversation.entries().back().text.empty());
+    EXPECT_THROW(
+        conversation.finish_entry(1, CompletionStatus::complete),
+        std::invalid_argument);
+    EXPECT_NO_THROW(
+        conversation.finish_entry(1, CompletionStatus::cancelled));
+
+    ConversationEntry non_agent = make_notice_entry(2, "Notice");
+    non_agent.reasoning_text = "invalid";
+    EXPECT_THROW(
+        validate_conversation_entry(non_agent),
+        std::invalid_argument);
+    EXPECT_THROW(
+        require_storable_conversation_entry(conversation.entries().back()),
+        std::invalid_argument);
+}
+
+TEST(ConversationJournal, RejectsReasoningAndRollsBackTheTurn) {
+    const std::filesystem::path path =
+        temporary_path("cha_reasoning_guard_");
+    create_test_database(path);
+    ConversationJournal journal(path);
+    const ConversationEntry prompt =
+        make_human_entry(1, "reviewer-id", "Reviewer", "Question", 1);
+    journal.start_turn(1, prompt);
+    const ConversationEntry response = make_agent_entry(
+        2,
+        "reviewer-id",
+        "Reviewer",
+        {
+            .reasoning = "UNIQUE_REASONING_MARKER_42",
+            .answer = "Answer",
+        },
+        CompletionStatus::complete,
+        1);
+
+    EXPECT_THROW(journal.complete_turn(1, response), std::runtime_error);
+    const ConversationRestore restored = load_conversation_state(path);
+    ASSERT_EQ(restored.entries.size(), 1U);
+    EXPECT_EQ(restored.entries.front(), prompt);
+    ASSERT_EQ(restored.interrupted_turns.size(), 1U);
+
+    std::ifstream database(path, std::ios::binary);
+    const std::string bytes{
+        std::istreambuf_iterator<char>(database),
+        std::istreambuf_iterator<char>()};
+    EXPECT_EQ(bytes.find("UNIQUE_REASONING_MARKER_42"), std::string::npos);
+    std::filesystem::remove(path);
 }
 
 TEST(Conversation, ReturnsAnIndependentEntrySnapshot) {
@@ -209,14 +274,14 @@ TEST(ConversationValidation, IsEnforcedByMemoryAndDatabase) {
     EXPECT_THROW(journal.append(invalid), std::runtime_error);
 
     const ConversationEntry empty_completion = make_agent_entry(
-        2, "reviewer-id", "Reviewer", {}, CompletionStatus::complete, 1);
+        2, "reviewer-id", "Reviewer", std::string{}, CompletionStatus::complete, 1);
     EXPECT_THROW(validate_conversation_entry(empty_completion), std::invalid_argument);
     EXPECT_THROW(conversation.add_entry(empty_completion), std::invalid_argument);
     EXPECT_THROW(journal.append(empty_completion), std::runtime_error);
 
     Conversation streaming;
     streaming.begin_entry(make_agent_entry(
-        1, "reviewer-id", "Reviewer", {}, CompletionStatus::streaming, 1));
+        1, "reviewer-id", "Reviewer", std::string{}, CompletionStatus::streaming, 1));
     EXPECT_THROW(
         streaming.finish_entry(1, CompletionStatus::complete),
         std::invalid_argument);
@@ -261,7 +326,7 @@ TEST(SessionDatabase, RejectsAStreamingEntry) {
             1,
             "reviewer-id",
             "Reviewer",
-            {},
+            std::string{},
             CompletionStatus::streaming,
             1)),
         std::runtime_error);

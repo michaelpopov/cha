@@ -47,7 +47,7 @@ ConversationEntry make_agent_entry(
     EntryId id,
     ParticipantId participant_id,
     std::string display_name,
-    std::string text,
+    AgentResponseText response,
     CompletionStatus status,
     std::optional<RequestId> request_id) {
     return {
@@ -55,10 +55,27 @@ ConversationEntry make_agent_entry(
         .kind = EntryKind::agent,
         .participant_id = std::move(participant_id),
         .display_name = std::move(display_name),
-        .text = std::move(text),
+        .reasoning_text = std::move(response.reasoning),
+        .text = std::move(response.answer),
         .status = status,
         .request_id = request_id,
     };
+}
+
+ConversationEntry make_agent_entry(
+    EntryId id,
+    ParticipantId participant_id,
+    std::string display_name,
+    std::string text,
+    CompletionStatus status,
+    std::optional<RequestId> request_id) {
+    return make_agent_entry(
+        id,
+        std::move(participant_id),
+        std::move(display_name),
+        {.reasoning = {}, .answer = std::move(text)},
+        status,
+        request_id);
 }
 
 ConversationEntry make_notice_entry(EntryId id, std::string text) {
@@ -115,10 +132,19 @@ void validate_conversation_entry(const ConversationEntry& entry) {
     if (entry.kind == EntryKind::agent && entry.status == CompletionStatus::failed) {
         throw std::invalid_argument("Agent entries cannot have failed status");
     }
+    if (entry.kind != EntryKind::agent && !entry.reasoning_text.empty()) {
+        throw std::invalid_argument("Only agent entries may contain reasoning");
+    }
     if (entry.kind == EntryKind::agent
         && entry.status == CompletionStatus::complete
         && entry.text.empty()) {
         throw std::invalid_argument("A completed agent entry requires text content");
+    }
+    if (entry.kind == EntryKind::agent
+        && entry.status == CompletionStatus::cancelled
+        && entry.reasoning_text.empty()
+        && entry.text.empty()) {
+        throw std::invalid_argument("A cancelled agent entry requires content");
     }
 }
 
@@ -126,6 +152,19 @@ void require_terminal_conversation_entry(const ConversationEntry& entry) {
     validate_conversation_entry(entry);
     if (entry.status == CompletionStatus::streaming) {
         throw std::invalid_argument("A terminal conversation entry cannot have streaming status");
+    }
+}
+
+void require_storable_conversation_entry(const ConversationEntry& entry) {
+    require_terminal_conversation_entry(entry);
+    if (!entry.reasoning_text.empty()) {
+        throw std::invalid_argument("A stored conversation entry cannot contain reasoning");
+    }
+    if (entry.kind == EntryKind::agent
+        && entry.status == CompletionStatus::cancelled
+        && entry.text.empty()) {
+        throw std::invalid_argument(
+            "A stored cancelled agent entry requires answer content");
     }
 }
 
@@ -157,13 +196,20 @@ void Conversation::begin_entry(ConversationEntry entry) {
     ++revision_;
 }
 
-void Conversation::append_to_entry(EntryId entry_id, std::string_view text) {
+void Conversation::append_to_entry(
+    EntryId entry_id,
+    CompletionDeltaKind kind,
+    std::string_view text) {
     std::lock_guard lock(mutex_);
     if (!open_entry_id_ || *open_entry_id_ != entry_id) {
         throw std::logic_error("The requested conversation entry is not streaming");
     }
 
-    entries_.back().text.append(text);
+    if (kind == CompletionDeltaKind::reasoning) {
+        entries_.back().reasoning_text.append(text);
+    } else {
+        entries_.back().text.append(text);
+    }
     ++revision_;
 }
 
@@ -177,6 +223,11 @@ void Conversation::finish_entry(EntryId entry_id, CompletionStatus status) {
     }
     if (status == CompletionStatus::complete && entries_.back().text.empty()) {
         throw std::invalid_argument("A completed agent entry requires text content");
+    }
+    if (status == CompletionStatus::cancelled
+        && entries_.back().reasoning_text.empty()
+        && entries_.back().text.empty()) {
+        throw std::invalid_argument("A cancelled agent entry requires content");
     }
 
     entries_.back().status = status;

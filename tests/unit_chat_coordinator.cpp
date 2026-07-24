@@ -63,6 +63,24 @@ public:
       : id_(std::move(id)),
         name_(std::move(name)),
         result_(std::move(result)),
+        wait_for_cancellation_(wait_for_cancellation) {
+        for (std::string& delta : deltas) {
+            deltas_.push_back({
+                CompletionDeltaKind::answer,
+                std::move(delta),
+            });
+        }
+    }
+
+    ScriptedBackend(
+        std::vector<CompletionDelta> deltas,
+        CompletionResult result = {},
+        bool wait_for_cancellation = false,
+        std::string id = "guide-id",
+        std::string name = "Guide")
+      : id_(std::move(id)),
+        name_(std::move(name)),
+        result_(std::move(result)),
         deltas_(std::move(deltas)),
         wait_for_cancellation_(wait_for_cancellation) {
     }
@@ -84,7 +102,7 @@ public:
         RequestPayload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
-        for (const std::string& delta : deltas_) {
+        for (const CompletionDelta& delta : deltas_) {
             on_delta(delta);
         }
         if (wait_for_cancellation_) {
@@ -118,7 +136,7 @@ private:
     std::string id_{"guide-id"};
     std::string name_{"Guide"};
     CompletionResult result_;
-    std::vector<std::string> deltas_;
+    std::vector<CompletionDelta> deltas_;
     bool wait_for_cancellation_{};
 };
 
@@ -330,6 +348,97 @@ TEST(ChatCoordinator, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     EXPECT_EQ(load_conversation_entries(temporary.path), entries);
 }
 
+TEST(ChatCoordinator, TracksReasoningAnswerAndLateReasoningMonotonically) {
+    TemporaryJournal temporary;
+    ChatCoordinator coordinator(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            CompletionResult{},
+            std::vector<std::string>{},
+            true)),
+        temporary.path);
+
+    (void)coordinator.handle_input("Question");
+    EXPECT_EQ(
+        coordinator.generation_status().phase,
+        ResponsePhase::waiting);
+
+    (void)coordinator.handle_agent_event(AgentDelta{
+        1,
+        CompletionDeltaKind::reasoning,
+        "PRIVATE_REASONING",
+    });
+    EXPECT_EQ(
+        coordinator.generation_status().phase,
+        ResponsePhase::reasoning);
+    ASSERT_EQ(coordinator.conversation().entries().size(), 2U);
+    EXPECT_EQ(
+        coordinator.conversation().entries().back().reasoning_text,
+        "PRIVATE_REASONING");
+
+    (void)coordinator.handle_agent_event(AgentDelta{
+        1,
+        CompletionDeltaKind::answer,
+        "Answer",
+    });
+    EXPECT_EQ(
+        coordinator.generation_status().phase,
+        ResponsePhase::answering);
+    (void)coordinator.handle_agent_event(AgentDelta{
+        1,
+        CompletionDeltaKind::reasoning,
+        " late",
+    });
+    EXPECT_EQ(
+        coordinator.generation_status().phase,
+        ResponsePhase::answering);
+
+    (void)coordinator.handle_agent_event(AgentCompleted{1});
+    EXPECT_FALSE(coordinator.generating());
+    const std::vector<ConversationEntry> live =
+        coordinator.conversation().entries();
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().reasoning_text, "PRIVATE_REASONING late");
+    EXPECT_EQ(live.back().text, "Answer");
+    EXPECT_EQ(live.back().status, CompletionStatus::complete);
+
+    const std::vector<ConversationEntry> restored =
+        load_conversation_entries(temporary.path);
+    ASSERT_EQ(restored.size(), 2U);
+    EXPECT_TRUE(restored.back().reasoning_text.empty());
+    EXPECT_EQ(restored.back().text, "Answer");
+}
+
+TEST(ChatCoordinator, ReasoningOnlyCancellationIsLiveButNotDurable) {
+    TemporaryJournal temporary;
+    ChatCoordinator coordinator(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            CompletionResult{},
+            std::vector<std::string>{},
+            true)),
+        temporary.path);
+
+    (void)coordinator.handle_input("Question");
+    (void)coordinator.handle_agent_event(AgentDelta{
+        1,
+        CompletionDeltaKind::reasoning,
+        "EPHEMERAL_REASONING_ONLY",
+    });
+    (void)coordinator.request_stop();
+    receive_until_idle(coordinator);
+
+    const std::vector<ConversationEntry> live =
+        coordinator.conversation().entries();
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().status, CompletionStatus::cancelled);
+    EXPECT_EQ(live.back().reasoning_text, "EPHEMERAL_REASONING_ONLY");
+    EXPECT_TRUE(live.back().text.empty());
+
+    const std::vector<ConversationEntry> restored =
+        load_conversation_entries(temporary.path);
+    ASSERT_EQ(restored.size(), 1U);
+    EXPECT_EQ(restored.front().kind, EntryKind::human);
+}
+
 TEST(ChatCoordinator, RejectsCompletionWithoutResponseContent) {
     TemporaryJournal temporary;
     ChatCoordinator coordinator(
@@ -347,7 +456,7 @@ TEST(ChatCoordinator, RejectsCompletionWithoutResponseContent) {
     EXPECT_EQ(entries.back().kind, EntryKind::error);
     EXPECT_EQ(
         entries.back().text,
-        "Agent completed without text content");
+        "Agent completed without answer content");
     EXPECT_EQ(load_conversation_entries(temporary.path), entries);
 }
 
@@ -471,7 +580,11 @@ TEST(ChatCoordinator, IgnoresEventsForAnotherRequest) {
     (void)coordinator.handle_input("Question");
     const CoordinatorUpdate delta =
         coordinator.handle_agent_event(
-            AgentDelta{999, "Wrong response"});
+            AgentDelta{
+                999,
+                CompletionDeltaKind::answer,
+                "Wrong response",
+            });
     const CoordinatorUpdate completed =
         coordinator.handle_agent_event(
             AgentCompleted{999});

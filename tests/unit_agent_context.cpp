@@ -78,6 +78,38 @@ TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {
         (std::vector<AgentMessage>{{AgentRole::assistant, "Answer"}}));
 }
 
+TEST(AgentContext, ExcludesOwnAndForeignAgentReasoning) {
+    const ConversationSnapshot conversation{
+        .entries = {
+            make_agent_entry(
+                1,
+                "reviewer-id",
+                "Reviewer",
+                {.reasoning = "PRIVATE_OWN_REASONING", .answer = "Own answer"},
+                CompletionStatus::complete,
+                1),
+            make_agent_entry(
+                2,
+                "writer-id",
+                "Writer",
+                {.reasoning = "PRIVATE_FOREIGN_REASONING", .answer = "Foreign answer"},
+                CompletionStatus::complete,
+                2),
+        },
+    };
+
+    const std::vector<AgentMessage> projected =
+        context(conversation, {}, "reviewer-id");
+    ASSERT_EQ(projected.size(), 2U);
+    EXPECT_EQ(projected[0], (AgentMessage{AgentRole::assistant, "Own answer"}));
+    EXPECT_EQ(
+        projected[1],
+        (AgentMessage{AgentRole::user, "Writer: Foreign answer"}));
+    for (const AgentMessage& message : projected) {
+        EXPECT_EQ(message.content.find("PRIVATE_"), std::string::npos);
+    }
+}
+
 TEST(AgentContext, PreservesTheSingleAgentWireShapeByteForByte) {
     const ConversationSnapshot conversation{
         .entries = {

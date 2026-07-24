@@ -30,6 +30,7 @@ TEST(Config, LoadsHostAndPortFromToml) {
             << "api_key = \"secret\"\n"
             << "api_key_env = \"OPENAI_API_KEY\"\n"
             << "reasoning_effort = \"medium\"\n"
+            << "reasoning_format = \"reasoning_content\"\n"
             << "https = true\n";
     }
 
@@ -47,9 +48,49 @@ TEST(Config, LoadsHostAndPortFromToml) {
     EXPECT_EQ(config.api_key, "secret");
     EXPECT_EQ(config.api_key_env, "OPENAI_API_KEY");
     EXPECT_EQ(config.reasoning_effort, "medium");
+    EXPECT_EQ(config.reasoning_format, ReasoningFormat::reasoning_content);
     EXPECT_TRUE(config.https);
 
     std::filesystem::remove_all(directory);
+}
+
+TEST(Config, DefaultsAndValidatesReasoningFormat) {
+    const auto path = std::filesystem::temp_directory_path()
+        / ("cha_reasoning_format_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count())
+           + ".toml");
+    {
+        std::ofstream config_file(path);
+        config_file << "id = \"example-id\"\n"
+                    << "name = \"Example\"\n"
+                    << "host = \"example.com\"\n"
+                    << "port = 8080\n";
+    }
+    EXPECT_EQ(
+        Config::load(path).reasoning_format,
+        ReasoningFormat::automatic);
+
+    {
+        std::ofstream config_file(path);
+        config_file << "id = \"example-id\"\n"
+                    << "name = \"Example\"\n"
+                    << "host = \"example.com\"\n"
+                    << "port = 8080\n"
+                    << "reasoning_format = \"tags\"\n";
+    }
+    try {
+        (void)Config::load(path);
+        FAIL() << "Expected invalid reasoning_format to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(
+            std::string(error.what()).find(path.string()),
+            std::string::npos);
+        EXPECT_NE(
+            std::string(error.what()).find("reasoning_format"),
+            std::string::npos);
+    }
+    std::filesystem::remove(path);
 }
 
 TEST(Config, AllowsMissingModel) {

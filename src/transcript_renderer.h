@@ -20,9 +20,35 @@ enum class TranscriptRenderAction {
 struct TranscriptRenderPlan {
     TranscriptRenderAction action{TranscriptRenderAction::none};
     bool resumes_last_message{};
+    CompletionDeltaKind suffix_kind{CompletionDeltaKind::answer};
     std::string last_message_suffix;
     std::size_t first_new_message{};
 };
+
+enum class TranscriptAttributes {
+    normal,
+    bold,
+    dim,
+    bold_dim,
+};
+
+class TranscriptSurface {
+public:
+    virtual ~TranscriptSurface() = default;
+    virtual void attributes(TranscriptAttributes value) = 0;
+    virtual void write(std::string_view text) = 0;
+};
+
+// Writes one entry's labeled content and always restores normal attributes.
+void write_transcript_entry(
+    TranscriptSurface& surface,
+    const ConversationEntry& entry,
+    bool show_addressing);
+void write_transcript_suffix(
+    TranscriptSurface& surface,
+    CompletionDeltaKind kind,
+    std::string_view text);
+void initialize_transcript_surface(TranscriptSurface& surface);
 
 // Tracks rendered conversation state and computes safe incremental update plans.
 class TranscriptRenderPlanner {

@@ -36,6 +36,56 @@ std::string transcript_entry_label(const ConversationEntry& entry, bool show_add
     return "[Unknown] ";
 }
 
+void write_transcript_entry(
+    TranscriptSurface& surface,
+    const ConversationEntry& entry,
+    bool show_addressing) {
+    std::string label = transcript_entry_label(entry, show_addressing);
+    if (entry.kind == EntryKind::agent && !entry.reasoning_text.empty()) {
+        if (label.ends_with(' ')) {
+            label.pop_back();
+        }
+        surface.attributes(TranscriptAttributes::bold);
+        surface.write(label);
+        surface.attributes(TranscriptAttributes::normal);
+        surface.write("\n");
+        surface.attributes(TranscriptAttributes::bold_dim);
+        surface.write("[Reasoning]");
+        surface.attributes(TranscriptAttributes::normal);
+        surface.write("\n");
+        surface.attributes(TranscriptAttributes::dim);
+        surface.write(entry.reasoning_text);
+        surface.attributes(TranscriptAttributes::normal);
+        if (!entry.text.empty()) {
+            surface.write("\n\n");
+            surface.attributes(TranscriptAttributes::normal);
+            surface.write(entry.text);
+        }
+    } else {
+        surface.attributes(TranscriptAttributes::bold);
+        surface.write(label);
+        surface.attributes(TranscriptAttributes::normal);
+        surface.write(entry.text);
+    }
+    surface.attributes(TranscriptAttributes::normal);
+}
+
+void write_transcript_suffix(
+    TranscriptSurface& surface,
+    CompletionDeltaKind kind,
+    std::string_view text) {
+    surface.attributes(
+        kind == CompletionDeltaKind::reasoning
+            ? TranscriptAttributes::dim
+            : TranscriptAttributes::normal);
+    surface.write(text);
+    surface.attributes(TranscriptAttributes::normal);
+}
+
+void initialize_transcript_surface(TranscriptSurface& surface) {
+    surface.attributes(TranscriptAttributes::normal);
+}
+
 TranscriptRenderPlan TranscriptRenderPlanner::plan(
     const ConversationSnapshot& snapshot,
     int columns
@@ -59,14 +109,41 @@ TranscriptRenderPlan TranscriptRenderPlanner::plan(
             || new_last.kind != old_last.kind
             || new_last.participant_id != old_last.participant_id
             || new_last.display_name != old_last.display_name
+            || new_last.addressed_to != old_last.addressed_to
+            || new_last.addressed_to_name != old_last.addressed_to_name
+            || new_last.request_id != old_last.request_id
+            || !starts_with(new_last.reasoning_text, old_last.reasoning_text)
             || !starts_with(new_last.text, old_last.text)) {
             return {.action = TranscriptRenderAction::rebuild};
         }
 
+        const bool reasoning_grew =
+            new_last.reasoning_text.size() != old_last.reasoning_text.size();
+        const bool answer_grew =
+            new_last.text.size() != old_last.text.size();
+        if (reasoning_grew && answer_grew) {
+            return {.action = TranscriptRenderAction::rebuild};
+        }
+        if (reasoning_grew && !new_last.text.empty()) {
+            return {.action = TranscriptRenderAction::rebuild};
+        }
+        if (answer_grew
+            && !old_last.reasoning_text.empty()
+            && old_last.text.empty()) {
+            return {.action = TranscriptRenderAction::rebuild};
+        }
+
+        const CompletionDeltaKind suffix_kind = reasoning_grew
+            ? CompletionDeltaKind::reasoning
+            : CompletionDeltaKind::answer;
+        const std::string suffix = reasoning_grew
+            ? new_last.reasoning_text.substr(old_last.reasoning_text.size())
+            : new_last.text.substr(old_last.text.size());
         return {
             .action = TranscriptRenderAction::append,
             .resumes_last_message = true,
-            .last_message_suffix = new_last.text.substr(old_last.text.size()),
+            .suffix_kind = suffix_kind,
+            .last_message_suffix = suffix,
             .first_new_message = entry_count_,
         };
     }

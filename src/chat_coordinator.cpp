@@ -97,7 +97,11 @@ void ChatCoordinator::initialize(ConversationRestore restored) {
 const Conversation& ChatCoordinator::conversation() const { return conversation_; }
 bool ChatCoordinator::generating() const { return active_.has_value(); }
 GenerationStatus ChatCoordinator::generation_status() const {
-    return {active_.has_value(), active_ ? active_->agent_name : ""};
+    return {
+        active_.has_value(),
+        active_ ? active_->agent_name : "",
+        active_ ? active_->phase : ResponsePhase::waiting,
+    };
 }
 bool ChatCoordinator::show_addressing() const { return show_addressing_; }
 const AgentRoster& ChatCoordinator::roster() const { return registry_.roster(); }
@@ -234,7 +238,7 @@ CoordinatorUpdate ChatCoordinator::submit(std::string input) {
         .response_entry_id = next_entry_id_++,
         .agent_id = target->id,
         .agent_name = target->name,
-        .entry_open = false,
+        .phase = ResponsePhase::waiting,
     };
     if (registry_.submit(std::move(request))) {
         update.render_needed = true;
@@ -332,11 +336,16 @@ void ChatCoordinator::apply(const AgentDelta& event, CoordinatorUpdate& update) 
     if (!matches(event.request_id) || event.text.empty()) {
         return;
     }
-    if (!active_->entry_open) {
+    if (active_->phase == ResponsePhase::waiting) {
         conversation_.begin_entry(response_entry(CompletionStatus::streaming));
-        active_->entry_open = true;
     }
-    conversation_.append_to_entry(active_->response_entry_id, event.text);
+    conversation_.append_to_entry(
+        active_->response_entry_id, event.kind, event.text);
+    if (event.kind == CompletionDeltaKind::answer) {
+        active_->phase = ResponsePhase::answering;
+    } else if (active_->phase == ResponsePhase::waiting) {
+        active_->phase = ResponsePhase::reasoning;
+    }
     update.render_needed = true;
 }
 
@@ -344,9 +353,9 @@ void ChatCoordinator::apply(const AgentCompleted& event, CoordinatorUpdate& upda
     if (!matches(event.request_id)) {
         return;
     }
-    if (!active_->entry_open) {
+    if (active_->phase != ResponsePhase::answering) {
         fail_active_turn(
-            "Agent completed without text content", active_->agent_id, update);
+            "Agent completed without answer content", active_->agent_id, update);
         return;
     }
     const ConversationEntry response =
@@ -369,7 +378,7 @@ void ChatCoordinator::apply(const AgentCancelled& event, CoordinatorUpdate& upda
     if (!matches(event.request_id)) {
         return;
     }
-    if (active_->entry_open) {
+    if (active_->phase == ResponsePhase::answering) {
         const ConversationEntry response =
             response_entry(CompletionStatus::cancelled);
         persist(
@@ -390,6 +399,9 @@ void ChatCoordinator::apply(const AgentCancelled& event, CoordinatorUpdate& upda
             [this, &event] {
                 journal_.cancel_turn(event.request_id, std::nullopt);
             });
+        if (active_->phase == ResponsePhase::reasoning) {
+            finish_response_entry(CompletionStatus::cancelled);
+        }
     }
     active_.reset();
     update.render_needed = true;
@@ -419,7 +431,7 @@ void ChatCoordinator::fail_active_turn(
         [this, &error] {
             journal_.fail_turn(active_->request_id, error);
         });
-    if (active_->entry_open) {
+    if (active_->phase != ResponsePhase::waiting) {
         conversation_.discard_entry(active_->response_entry_id);
     }
     conversation_.add_entry(std::move(error));
@@ -429,16 +441,12 @@ void ChatCoordinator::fail_active_turn(
 }
 
 void ChatCoordinator::finish_response_entry(CompletionStatus status) {
-    if (active_->entry_open) {
-        conversation_.finish_entry(active_->response_entry_id, status);
-    } else {
-        conversation_.add_entry(response_entry(status));
-    }
+    conversation_.finish_entry(active_->response_entry_id, status);
 }
 
 ConversationEntry ChatCoordinator::response_entry(CompletionStatus status) const {
     std::string text;
-    if (active_->entry_open) {
+    if (active_->phase != ResponsePhase::waiting) {
         const ConversationReadView view = conversation_.read();
         const std::span<const ConversationEntry> entries = view.entries();
         if (!view.open_entry_id()

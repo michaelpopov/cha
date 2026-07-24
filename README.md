@@ -10,7 +10,7 @@ Each room contains `personas.list`, an ordered list of one or more personas, and
 
 Each persona's immutable `id` identifies transcript entries; its `name` is the visible `@mention` handle. Names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A room cannot contain duplicate IDs or names. All agents share one conversation: other agents' prior answers are attributed when sent as context. A session stores only its room and transcript, so it can be reopened even if the room's roster changed.
 
-Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and room must match the selected room before the conversation can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial responses remain visible but are not sent back to the model as completed history. Successful responses require non-empty text; streaming responses also require a `[DONE]` marker, after which further data is ignored. The following top-level persona configuration fields are supported:
+Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and room must match the selected room before the conversation can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored. The following top-level persona configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
@@ -23,6 +23,7 @@ Each session is stored in one self-contained `sessions/<id>.sqlite3` database. I
 - `api_key`: optional bearer token. An empty string disables authentication.
 - `api_key_env`: optional environment-variable name containing a bearer token. It takes precedence over `api_key`.
 - `reasoning_effort`: optional reasoning level sent with chat-completions requests, such as `medium`.
+- `reasoning_format`: representation used for provider-visible reasoning output; defaults to `auto`. Supported values are `auto`, `none`, `reasoning_content`, and `reasoning`.
 - `https`: use HTTPS instead of HTTP; defaults to `false`.
 
 Example:
@@ -37,7 +38,28 @@ model = "local-model"
 stream = true
 temperature = 0.7
 api_key = ""
+reasoning_format = "auto"
 ```
+
+`reasoning_effort` requests a generation policy; `reasoning_format` describes
+how to interpret the response. They are independent. In `auto` mode, `cha`
+recognizes `choices[0].delta.reasoning_content` and `.reasoning` (or the
+corresponding non-streaming `message` fields), preferring
+`reasoning_content` when both are present. `none` disables extraction, while
+the two named formats strictly select one field. Ordinary `content` always
+remains answer text.
+
+Reasoning is labeled and dimmed while the current process is running, but it
+is never stored in SQLite or sent in later model context. Reopening a session
+therefore restores answers without reasoning blocks. A cancellation containing
+only reasoning has no restored response entry; a cancellation with reasoning
+and a partial answer restores only that answer.
+
+Reasoning embedded inside ordinary `content`, including `<think>` tags, is not
+parsed. Such content is displayed, stored, and replayed as answer text because
+there is no structured semantic boundary. Malformed successful streaming
+responses report only sanitized HTTP status, content type, and byte-count
+metadata; model-output body bytes are not copied into the error.
 
 In net mode, `cha` sends HTTP requests to:
 
@@ -64,6 +86,9 @@ Before loading server configuration, the application optionally reads `.env` fro
 ## Terminal interface
 
 The interface has a scrollable conversation transcript, a generation-status line, and a persistent multiline input pane. Input remains available while a response is streaming.
+
+The status changes from `generating` to `reasoning` when structured reasoning
+arrives, then to `responding` when answer text begins.
 
 - Press `Page Up` and `Page Down` to scroll through the transcript.
 - Press `Esc` or `Ctrl-C` while generating to stop the response immediately.

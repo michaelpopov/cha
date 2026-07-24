@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
@@ -65,6 +66,12 @@ public:
         return status;
     }
 
+    [[nodiscard]] std::string content_type(std::string_view operation) {
+        char* value = nullptr;
+        require(curl_easy_getinfo(handle_.get(), CURLINFO_CONTENT_TYPE, &value), operation);
+        return value ? value : "";
+    }
+
 private:
     static void require(CURLcode result, std::string_view operation) {
         if (result != CURLE_OK) {
@@ -114,11 +121,18 @@ struct ResponseContext {
     const CompletionDeltaSink* on_delta{};
     bool streaming{};
     bool done{};
-    bool received_content{};
+    bool received_reasoning{};
+    bool received_answer{};
+    std::size_t received_bytes{};
+    ReasoningFormat reasoning_format{ReasoningFormat::automatic};
     std::string body;
     std::string pending;
     std::string protocol_error;
     std::exception_ptr error;
+
+    [[nodiscard]] bool received_output() const noexcept {
+        return received_reasoning || received_answer;
+    }
 };
 
 int transfer_progress(void* user_data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
@@ -135,6 +149,73 @@ void normalize_newlines(std::string& text) {
     std::size_t index = 0;
     while ((index = text.find("\r\n", index)) != std::string::npos) {
         text.erase(index, 1);
+    }
+}
+
+void emit_delta(
+    ResponseContext& context,
+    CompletionDeltaKind kind,
+    std::string text) {
+    if (text.empty()) {
+        return;
+    }
+    if (kind == CompletionDeltaKind::reasoning) {
+        context.received_reasoning = true;
+    } else {
+        context.received_answer = true;
+    }
+    (*context.on_delta)(CompletionDelta{kind, std::move(text)});
+}
+
+void process_response_object(
+    const Json& object,
+    ReasoningFormat format,
+    ResponseContext& context) {
+    const auto emit_field = [&object, &context](
+                                std::string_view field,
+                                bool strict) -> bool {
+        const auto iterator = object.find(field);
+        if (iterator == object.end() || iterator->is_null()) {
+            return false;
+        }
+        if (!iterator->is_string()) {
+            if (strict && context.protocol_error.empty()) {
+                context.protocol_error =
+                    "Reasoning field '" + std::string(field)
+                    + "' was not a string or null";
+            }
+            return false;
+        }
+        std::string text = iterator->get<std::string>();
+        if (text.empty()) {
+            return false;
+        }
+        emit_delta(context, CompletionDeltaKind::reasoning, std::move(text));
+        return true;
+    };
+
+    switch (format) {
+    case ReasoningFormat::automatic:
+        if (!emit_field("reasoning_content", false)) {
+            (void)emit_field("reasoning", false);
+        }
+        break;
+    case ReasoningFormat::none:
+        break;
+    case ReasoningFormat::reasoning_content:
+        (void)emit_field("reasoning_content", true);
+        break;
+    case ReasoningFormat::reasoning:
+        (void)emit_field("reasoning", true);
+        break;
+    }
+
+    const auto content = object.find("content");
+    if (content != object.end() && content->is_string()) {
+        emit_delta(
+            context,
+            CompletionDeltaKind::answer,
+            content->get<std::string>());
     }
 }
 
@@ -166,24 +247,21 @@ void process_stream_event(std::string_view event, ResponseContext& context) {
             if (!data.empty()) {
                 try {
                     const Json value = Json::parse(data);
-                    const Json::json_pointer content_pointer(
-                        "/choices/0/delta/content");
                     const Json::json_pointer choices_pointer("/choices");
-
-                    if (value.contains(content_pointer)
-                        && value.at(content_pointer).is_string()) {
-                        std::string content =
-                            value.at(content_pointer).get<std::string>();
-                        if (!content.empty()) {
-                            context.received_content = true;
-                            (*context.on_delta)(std::move(content));
-                        }
-                    } else if (!value.contains(choices_pointer)
+                    const Json::json_pointer delta_pointer(
+                        "/choices/0/delta");
+                    if (!value.contains(choices_pointer)
                         || !value.at(choices_pointer).is_array()) {
                         if (context.protocol_error.empty()) {
                             context.protocol_error =
                                 "Streaming event did not contain a choices array";
                         }
+                    } else if (value.contains(delta_pointer)
+                        && value.at(delta_pointer).is_object()) {
+                        process_response_object(
+                            value.at(delta_pointer),
+                            context.reasoning_format,
+                            context);
                     }
                 } catch (const Json::parse_error&) {
                     if (context.protocol_error.empty()) {
@@ -221,10 +299,18 @@ std::size_t receive_response(
     std::size_t size,
     std::size_t count,
     void* user_data) {
-    const std::size_t bytes = size * count;
+    const std::size_t bytes =
+        size != 0 && count > std::numeric_limits<std::size_t>::max() / size
+        ? std::numeric_limits<std::size_t>::max()
+        : size * count;
     auto& context = *static_cast<ResponseContext*>(user_data);
 
     try {
+        if (bytes > std::numeric_limits<std::size_t>::max() - context.received_bytes) {
+            context.received_bytes = std::numeric_limits<std::size_t>::max();
+        } else {
+            context.received_bytes += bytes;
+        }
         if (!context.streaming) {
             context.body.append(data, bytes);
         } else if (context.body.size() < max_streaming_error_body_size) {
@@ -243,6 +329,30 @@ std::size_t receive_response(
     }
 
     return bytes;
+}
+
+std::string sanitize_content_type(std::string_view content_type) {
+    constexpr std::size_t maximum_size = 128;
+    std::string result;
+    result.reserve(std::min(content_type.size(), maximum_size));
+    for (const unsigned char character : content_type) {
+        if (result.size() == maximum_size) {
+            break;
+        }
+        if (character >= 0x20 && character != 0x7f) {
+            result.push_back(static_cast<char>(character));
+        }
+    }
+    return result.empty() ? "unknown" : result;
+}
+
+std::string streaming_metadata(
+    long status,
+    std::string_view content_type,
+    std::size_t received_bytes) {
+    return " (HTTP " + std::to_string(status)
+        + ", Content-Type: " + sanitize_content_type(content_type)
+        + ", " + std::to_string(received_bytes) + " bytes)";
 }
 
 std::string response_error(const std::string& body) {
@@ -421,7 +531,10 @@ CompletionResult CompletionClient::perform(
         return {CompletionOutcome::cancelled, {}};
     }
     if (config_.mode == Mode::test) {
-        on_delta(std::move(payload.bytes));
+        on_delta({
+            CompletionDeltaKind::answer,
+            std::move(payload.bytes),
+        });
         return {CompletionOutcome::completed, {}};
     }
 
@@ -429,6 +542,7 @@ CompletionResult CompletionClient::perform(
     ResponseContext response{
         .on_delta = &on_delta,
         .streaming = config_.stream,
+        .reasoning_format = config_.reasoning_format,
     };
 
     curl_->reset();
@@ -488,6 +602,8 @@ CompletionResult CompletionClient::perform(
 
     const long status = curl_->response_code(
         "Failed to read HTTP status");
+    const std::string content_type = curl_->content_type(
+        "Failed to read HTTP content type");
     if (status < 200 || status >= 300) {
         return {
             CompletionOutcome::protocol_error,
@@ -504,22 +620,29 @@ CompletionResult CompletionClient::perform(
         if (!response.protocol_error.empty()) {
             return {
                 CompletionOutcome::protocol_error,
-                response.protocol_error,
+                response.protocol_error
+                    + streaming_metadata(
+                        status,
+                        content_type,
+                        response.received_bytes),
             };
         }
         if (!response.done) {
-            const std::string detail = response_error(response.body);
             return {
                 CompletionOutcome::protocol_error,
-                response.received_content
+                (response.received_output()
                     ? "Streaming response ended before [DONE]"
-                    : "Streaming response was not valid SSE: " + detail,
+                    : "Streaming response was not valid SSE")
+                    + streaming_metadata(
+                        status,
+                        content_type,
+                        response.received_bytes),
             };
         }
-        if (!response.received_content) {
+        if (!response.received_answer) {
             return {
                 CompletionOutcome::protocol_error,
-                "Streaming response completed without text content",
+                "Streaming response completed without answer content",
             };
         }
         return {CompletionOutcome::completed, {}};
@@ -535,24 +658,31 @@ CompletionResult CompletionClient::perform(
                 + std::string(error.what()),
         };
     }
-    const Json::json_pointer content_pointer(
-        "/choices/0/message/content");
-    if (!value.contains(content_pointer)
-        || !value.at(content_pointer).is_string()) {
+    const Json::json_pointer message_pointer(
+        "/choices/0/message");
+    if (!value.contains(message_pointer)
+        || !value.at(message_pointer).is_object()) {
         return {
             CompletionOutcome::protocol_error,
-            "Response did not contain choices[0].message.content",
+            "Response did not contain choices[0].message",
         };
     }
-
-    std::string output = value.at(content_pointer).get<std::string>();
-    if (output.empty()) {
+    process_response_object(
+        value.at(message_pointer),
+        config_.reasoning_format,
+        response);
+    if (!response.protocol_error.empty()) {
         return {
             CompletionOutcome::protocol_error,
-            "Response completed without text content",
+            response.protocol_error,
         };
     }
-    on_delta(std::move(output));
+    if (!response.received_answer) {
+        return {
+            CompletionOutcome::protocol_error,
+            "Response completed without answer content",
+        };
+    }
     return {CompletionOutcome::completed, {}};
 }
 

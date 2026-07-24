@@ -163,9 +163,12 @@ void AgentRegistry::dialog() {
             }
             const CompletionResult result = backend.perform(
                 std::move(*payload),
-                [this, request_id](std::string text) {
-                    publish_event(
-                        AgentDelta{request_id, std::move(text)});
+                [this, request_id](CompletionDelta delta) {
+                    publish_event(AgentDelta{
+                        request_id,
+                        delta.kind,
+                        std::move(delta.text),
+                    });
                 },
                 cancellation_);
             if (result.outcome == CompletionOutcome::cancelled) {

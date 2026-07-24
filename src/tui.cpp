@@ -17,6 +17,39 @@ namespace {
 constexpr int input_height = 5;
 constexpr int status_height = 1;
 
+class CursesTranscriptSurface final : public TranscriptSurface {
+public:
+    explicit CursesTranscriptSurface(WINDOW* window) : window_(window) {}
+
+    void attributes(TranscriptAttributes value) override {
+        int attributes = A_NORMAL;
+        switch (value) {
+        case TranscriptAttributes::normal:
+            break;
+        case TranscriptAttributes::bold:
+            attributes = A_BOLD;
+            break;
+        case TranscriptAttributes::dim:
+            attributes = A_DIM;
+            break;
+        case TranscriptAttributes::bold_dim:
+            attributes = A_BOLD | A_DIM;
+            break;
+        }
+        wattrset(window_, attributes);
+    }
+
+    void write(std::string_view text) override {
+        waddnstr(
+            window_,
+            text.data(),
+            static_cast<int>(text.size()));
+    }
+
+private:
+    WINDOW* window_{};
+};
+
 void write_status(std::string_view text, int row, int columns) {
     move(row, 0);
 
@@ -149,7 +182,15 @@ void Tui::render(
     const int input_y = status_y + status_height;
     erase();
 
-    std::string status_text = status.active ? "[" + status.agent_name + " generating] " : "[Idle] ";
+    std::string phase = "generating";
+    if (status.phase == ResponsePhase::reasoning) {
+        phase = "reasoning";
+    } else if (status.phase == ResponsePhase::answering) {
+        phase = "responding";
+    }
+    std::string status_text = status.active
+        ? "[" + status.agent_name + " " + phase + "] "
+        : "[Idle] ";
     if (status.active) {
         status_text += " | type /stop or press Esc/Ctrl-C";
     }
@@ -238,19 +279,33 @@ void Tui::ensure_input_pad(int required_rows, int columns) {
 }
 
 void Tui::write_transcript_entry(const ConversationEntry& entry, bool show_addressing) {
-    wattron(transcript_pad_, A_BOLD);
-    const std::string label = transcript_entry_label(entry, show_addressing);
-    waddstr(transcript_pad_, label.c_str());
-    wattroff(transcript_pad_, A_BOLD);
-    waddstr(transcript_pad_, entry.text.c_str());
+    CursesTranscriptSurface surface(transcript_pad_);
+    cha::write_transcript_entry(surface, entry, show_addressing);
     getyx(transcript_pad_, rendered_last_content_y_, rendered_last_content_x_);
     waddstr(transcript_pad_, "\n\n");
+    wattrset(transcript_pad_, A_NORMAL);
 }
 
 void Tui::rebuild_transcript(const ConversationSnapshot& snapshot, int output_height, int columns, bool show_addressing) {
     int estimated_rows = output_height + 4;
     for (const ConversationEntry& entry : snapshot.entries) {
-        const std::string rendered_entry = transcript_entry_label(entry, show_addressing) + entry.text + "\n\n";
+        std::string rendered_entry;
+        if (entry.kind == EntryKind::agent && !entry.reasoning_text.empty()) {
+            std::string label = transcript_entry_label(entry, show_addressing);
+            if (label.ends_with(' ')) {
+                label.pop_back();
+            }
+            rendered_entry = label + "\n[Reasoning]\n"
+                + entry.reasoning_text;
+            if (!entry.text.empty()) {
+                rendered_entry += "\n\n" + entry.text;
+            }
+            rendered_entry += "\n\n";
+        } else {
+            rendered_entry =
+                transcript_entry_label(entry, show_addressing)
+                + entry.text + "\n\n";
+        }
         estimated_rows += layout_rows(rendered_entry, columns);
     }
     replace_pad(transcript_pad_, estimated_rows, columns);
@@ -286,7 +341,11 @@ void Tui::render_transcript(const ConversationSnapshot& snapshot, int output_hei
         wclrtobot(transcript_pad_);
 
         if (plan.resumes_last_message) {
-            waddstr(transcript_pad_, plan.last_message_suffix.c_str());
+            CursesTranscriptSurface surface(transcript_pad_);
+            write_transcript_suffix(
+                surface,
+                plan.suffix_kind,
+                plan.last_message_suffix);
             getyx(transcript_pad_, rendered_last_content_y_, rendered_last_content_x_);
             waddstr(transcript_pad_, "\n\n");
         }
@@ -312,6 +371,8 @@ void Tui::render_input(const InputEditor& editor, int input_y, int height, int c
     const int inner_width = columns - 2;
     const int estimated_rows = layout_rows(editor.text(), inner_width, 2) + inner_height + 4;
     ensure_input_pad(estimated_rows, inner_width);
+    CursesTranscriptSurface surface(input_pad_);
+    initialize_transcript_surface(surface);
     werase(input_pad_);
     wmove(input_pad_, 0, 0);
 

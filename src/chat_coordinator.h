@@ -53,7 +53,7 @@ private:
         EntryId response_entry_id{};
         ParticipantId agent_id;
         std::string agent_name;
-        bool entry_open{};
+        ResponsePhase phase{ResponsePhase::waiting};
     };
     void initialize(ConversationRestore restored);
     [[nodiscard]] CoordinatorUpdate submit(std::string input);

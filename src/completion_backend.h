@@ -2,6 +2,7 @@
 
 #include "agent_info.h"
 #include "agent_protocol.h"
+#include "response_content.h"
 
 #include <atomic>
 #include <functional>
@@ -28,8 +29,8 @@ struct RequestPayload {
     std::string bytes;
 };
 
-// Receives one transport-level text fragment without attaching request identity.
-using CompletionDeltaSink = std::function<void(std::string)>;
+// Receives one semantic transport fragment without attaching request identity.
+using CompletionDeltaSink = std::function<void(CompletionDelta)>;
 
 // Defines the synchronous completion operations consumed by the agent execution thread.
 class CompletionBackend {

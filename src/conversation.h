@@ -1,6 +1,7 @@
 #pragma once
 
 #include "request_id.h"
+#include "response_content.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -45,11 +46,17 @@ struct ConversationEntry {
     std::string display_name;
     ParticipantId addressed_to;
     std::string addressed_to_name;
+    std::string reasoning_text;
     std::string text;
     CompletionStatus status{CompletionStatus::complete};
     std::optional<RequestId> request_id;
 
     bool operator==(const ConversationEntry&) const = default;
+};
+
+struct AgentResponseText {
+    std::string reasoning;
+    std::string answer;
 };
 
 // Provides a consistent read-only copy of conversation state for concurrent consumers.
@@ -99,6 +106,13 @@ private:
     EntryId id,
     ParticipantId participant_id,
     std::string display_name,
+    AgentResponseText response,
+    CompletionStatus status,
+    std::optional<RequestId> request_id = std::nullopt);
+[[nodiscard]] ConversationEntry make_agent_entry(
+    EntryId id,
+    ParticipantId participant_id,
+    std::string display_name,
     std::string text,
     CompletionStatus status,
     std::optional<RequestId> request_id = std::nullopt);
@@ -115,6 +129,9 @@ void validate_conversation_entry(const ConversationEntry& entry);
 // Validates an entry and rejects active streaming state where a terminal record is required.
 void require_terminal_conversation_entry(const ConversationEntry& entry);
 
+// Validates that an entry is terminal and contains no ephemeral reasoning.
+void require_storable_conversation_entry(const ConversationEntry& entry);
+
 // Keeps a thread-safe typed transcript with at most one coordinator-owned streaming entry.
 class Conversation {
 public:
@@ -126,7 +143,10 @@ public:
 
     void add_entry(ConversationEntry entry);
     void begin_entry(ConversationEntry entry);
-    void append_to_entry(EntryId entry_id, std::string_view text);
+    void append_to_entry(
+        EntryId entry_id,
+        CompletionDeltaKind kind,
+        std::string_view text);
     void finish_entry(EntryId entry_id, CompletionStatus status);
     void discard_entry(EntryId entry_id);
     void clear();

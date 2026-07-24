@@ -3,6 +3,7 @@
 #include "conversation.h"
 #include "event_channel.h"
 #include "request_id.h"
+#include "response_content.h"
 
 #include <string>
 #include <variant>
@@ -18,6 +19,7 @@ struct CompletionRequest {
 // Carries one streamed response fragment for an identified request.
 struct AgentDelta {
     RequestId request_id{};
+    CompletionDeltaKind kind{CompletionDeltaKind::answer};
     std::string text;
 };
 

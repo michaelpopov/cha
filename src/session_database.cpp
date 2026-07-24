@@ -499,6 +499,13 @@ void insert_entry(
     std::int64_t epoch,
     const ConversationEntry& entry) {
 
+    try {
+        require_storable_conversation_entry(entry);
+    } catch (const std::invalid_argument& error) {
+        throw std::runtime_error(
+            "Cannot store invalid conversation entry: "
+            + std::string(error.what()));
+    }
     advance_entry_id(database, entry.id);
 
     const std::optional<std::int64_t> request_id = entry.request_id
@@ -536,7 +543,7 @@ void insert_entry(
         entry.request_id = unsigned_id(statement.integer(1), "request ID");
     }
     try {
-        require_terminal_conversation_entry(entry);
+        require_storable_conversation_entry(entry);
     } catch (const std::invalid_argument& error) {
         throw std::runtime_error(
             "Session database contains an invalid conversation entry: "

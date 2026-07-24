@@ -87,6 +87,29 @@ Config Config::load(const std::filesystem::path& path) {
         reasoning_effort = *value;
     }
 
+    ReasoningFormat reasoning_format = ReasoningFormat::automatic;
+    if (table.contains("reasoning_format")) {
+        const auto value = table["reasoning_format"].value<std::string>();
+        if (!value) {
+            throw std::runtime_error(
+                "Config file '" + path.string()
+                + "' requires string 'reasoning_format' value");
+        }
+        if (*value == "auto") {
+            reasoning_format = ReasoningFormat::automatic;
+        } else if (*value == "none") {
+            reasoning_format = ReasoningFormat::none;
+        } else if (*value == "reasoning_content") {
+            reasoning_format = ReasoningFormat::reasoning_content;
+        } else if (*value == "reasoning") {
+            reasoning_format = ReasoningFormat::reasoning;
+        } else {
+            throw std::runtime_error(
+                "Config file '" + path.string()
+                + "' has unsupported reasoning_format '" + *value + "'");
+        }
+    }
+
     bool https = false;
     if (table.contains("https")) {
         const auto value = table["https"].value<bool>();
@@ -108,6 +131,7 @@ Config Config::load(const std::filesystem::path& path) {
         .api_key = api_key,
         .api_key_env = api_key_env,
         .reasoning_effort = reasoning_effort,
+        .reasoning_format = reasoning_format,
         .https = https,
     };
 }

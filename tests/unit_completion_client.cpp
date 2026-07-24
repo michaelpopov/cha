@@ -86,7 +86,10 @@ TEST(CompletionClient, EchoesOnePromptInTestMode) {
 
     const CompletionResult result = complete(
         client, request, conversation,
-        [&deltas](std::string text) { deltas.push_back(std::move(text)); },
+        [&deltas](CompletionDelta delta) {
+            EXPECT_EQ(delta.kind, CompletionDeltaKind::answer);
+            deltas.push_back(std::move(delta.text));
+        },
         cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
@@ -105,7 +108,7 @@ TEST(CompletionClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
 
     const CompletionResult result = complete(
         client, request, conversation,
-        [&received_delta](std::string) { received_delta = true; },
+        [&received_delta](CompletionDelta) { received_delta = true; },
         cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::cancelled);
@@ -138,7 +141,9 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
 
     const CompletionResult result = complete(
         client, request, conversation,
-        [&deltas](std::string text) { deltas.push_back(std::move(text)); },
+        [&deltas](CompletionDelta delta) {
+            deltas.push_back(std::move(delta.text));
+        },
         cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
@@ -170,7 +175,7 @@ TEST(CompletionClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
     const CompletionRequest request = client_request(conversation, 19, prompt);
 
     const CompletionResult result = complete(
-        client, request, conversation, [](std::string) {}, cancellation);
+        client, request, conversation, [](CompletionDelta) {}, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     mock.join();
@@ -211,7 +216,7 @@ TEST(CompletionClient, HandlesNonStreamingProviderResponse) {
 
     const CompletionResult result = complete(
         client, request, conversation,
-        [&output](std::string text) { output += text; }, cancellation);
+        [&output](CompletionDelta delta) { output += delta.text; }, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     EXPECT_EQ(output, "Answer");
@@ -229,7 +234,7 @@ TEST(CompletionClient, ReportsProviderHttpFailure) {
     const CompletionRequest request = client_request(conversation, 9, "Question");
 
     const CompletionResult result = complete(
-        client, request, conversation, [](std::string) {}, cancellation);
+        client, request, conversation, [](CompletionDelta) {}, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::protocol_error);
     EXPECT_NE(result.message.find("HTTP 503"), std::string::npos);
@@ -252,7 +257,7 @@ TEST(CompletionClient, ReportsMalformedStreamingProtocolDirectly) {
 
     const CompletionResult result = complete(
         client, request, conversation,
-        [&output](std::string text) { output += text; }, cancellation);
+        [&output](CompletionDelta delta) { output += delta.text; }, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::protocol_error);
     EXPECT_NE(result.message.find("malformed JSON"), std::string::npos);
@@ -272,7 +277,7 @@ TEST(CompletionClient, RejectsAStreamWithoutTheCompletionMarker) {
 
     const CompletionResult result = complete(
         client, request, conversation,
-        [&output](std::string text) { output += text; }, cancellation);
+        [&output](CompletionDelta delta) { output += delta.text; }, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::protocol_error);
     EXPECT_NE(result.message.find("[DONE]"), std::string::npos);
@@ -295,7 +300,7 @@ TEST(CompletionClient, ReportsATruncatedResponseAsATransportError) {
 
     const CompletionResult result = complete(
         client, request, conversation,
-        [&output](std::string text) { output += text; }, cancellation);
+        [&output](CompletionDelta delta) { output += delta.text; }, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::transport_error);
     EXPECT_NE(result.message.find("HTTP request failed"), std::string::npos);
@@ -318,8 +323,8 @@ TEST(CompletionClient, CancelsAnActiveStreamingTransfer) {
 
     const CompletionResult result = complete(
         client, request, conversation,
-        [&output, &cancellation](std::string text) {
-            output += text;
+        [&output, &cancellation](CompletionDelta delta) {
+            output += delta.text;
             cancellation.store(true, std::memory_order_release);
         }, cancellation);
 
@@ -338,10 +343,12 @@ TEST(CompletionClient, ReportsAJsonErrorReturnedInsteadOfAStream) {
     const CompletionRequest request = client_request(conversation, 14, "Question");
 
     const CompletionResult result = complete(
-        client, request, conversation, [](std::string) {}, cancellation);
+        client, request, conversation, [](CompletionDelta) {}, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::protocol_error);
-    EXPECT_NE(result.message.find("model unavailable"), std::string::npos);
+    EXPECT_EQ(result.message.find("model unavailable"), std::string::npos);
+    EXPECT_NE(result.message.find("HTTP 200"), std::string::npos);
+    EXPECT_NE(result.message.find("application/json"), std::string::npos);
     mock.join();
 }
 
@@ -357,10 +364,10 @@ TEST(CompletionClient, RejectsACompletedStreamWithoutText) {
     const CompletionRequest request = client_request(conversation, 15, "Question");
 
     const CompletionResult result = complete(
-        client, request, conversation, [](std::string) {}, cancellation);
+        client, request, conversation, [](CompletionDelta) {}, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::protocol_error);
-    EXPECT_NE(result.message.find("without text content"), std::string::npos);
+    EXPECT_NE(result.message.find("without answer content"), std::string::npos);
     mock.join();
 }
 
@@ -380,7 +387,7 @@ TEST(CompletionClient, IgnoresDataAfterTheCompletionMarker) {
 
     const CompletionResult result = complete(
         client, request, conversation,
-        [&output](std::string text) { output += text; }, cancellation);
+        [&output](CompletionDelta delta) { output += delta.text; }, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     EXPECT_EQ(output, "Complete");
@@ -397,10 +404,10 @@ TEST(CompletionClient, RejectsANonStreamingResponseWithoutText) {
     const CompletionRequest request = client_request(conversation, 17, "Question");
 
     const CompletionResult result = complete(
-        client, request, conversation, [](std::string) {}, cancellation);
+        client, request, conversation, [](CompletionDelta) {}, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::protocol_error);
-    EXPECT_NE(result.message.find("without text content"), std::string::npos);
+    EXPECT_NE(result.message.find("without answer content"), std::string::npos);
     mock.join();
 }
 
@@ -419,13 +426,169 @@ TEST(CompletionClient, DiscoversItsModelBeforeTheFirstCompletion) {
     const CompletionRequest request = client_request(conversation, 18, "Question");
 
     const CompletionResult result = complete(
-        client, request, conversation, [](std::string) {}, cancellation);
+        client, request, conversation, [](CompletionDelta) {}, cancellation);
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     mock.join();
     ASSERT_EQ(mock.requests().size(), 2U);
     EXPECT_TRUE(mock.requests()[0].starts_with("GET /v1/models HTTP/1.1"));
     EXPECT_EQ(Json::parse(request_body(mock.requests()[1]))["model"], "discovered-model");
+}
+
+TEST(CompletionClient, StreamsStructuredReasoningBeforeAnswerWithAutoPrecedence) {
+    const std::string stream =
+        "data: {\"choices\":[{\"delta\":{"
+        "\"reasoning_content\":\"Primary\","
+        "\"reasoning\":\"Ignored\","
+        "\"content\":\"Answer\"}}]}\n\n"
+        "data: {\"choices\":[{\"delta\":{\"reasoning\":\" late\"}}]}\n\n"
+        "data: [DONE]\n\n";
+    MockHttpServer mock({http_response("text/event-stream", stream)});
+    mock.start();
+    CompletionClient client({.config = network_config(mock.port())});
+    Conversation conversation;
+    const CompletionRequest request =
+        client_request(conversation, 21, "Question");
+    std::atomic_bool cancellation{false};
+    std::vector<CompletionDelta> deltas;
+
+    const CompletionResult result = complete(
+        client,
+        request,
+        conversation,
+        [&deltas](CompletionDelta delta) {
+            deltas.push_back(std::move(delta));
+        },
+        cancellation);
+
+    EXPECT_EQ(result.outcome, CompletionOutcome::completed);
+    ASSERT_EQ(deltas.size(), 3U);
+    EXPECT_EQ(deltas[0].kind, CompletionDeltaKind::reasoning);
+    EXPECT_EQ(deltas[0].text, "Primary");
+    EXPECT_EQ(deltas[1].kind, CompletionDeltaKind::answer);
+    EXPECT_EQ(deltas[1].text, "Answer");
+    EXPECT_EQ(deltas[2].kind, CompletionDeltaKind::reasoning);
+    EXPECT_EQ(deltas[2].text, " late");
+    mock.join();
+}
+
+TEST(CompletionClient, AppliesExplicitReasoningFormatStrictly) {
+    const std::string stream =
+        "data: {\"choices\":[{\"delta\":{"
+        "\"reasoning_content\":{\"bad\":true},"
+        "\"content\":\"Answer\"}}]}\n\n"
+        "data: [DONE]\n\n";
+    MockHttpServer mock({http_response("text/event-stream", stream)});
+    mock.start();
+    Config config = network_config(mock.port());
+    config.reasoning_format = ReasoningFormat::reasoning_content;
+    CompletionClient client({.config = config});
+    Conversation conversation;
+    const CompletionRequest request =
+        client_request(conversation, 22, "Question");
+    std::atomic_bool cancellation{false};
+    std::string answer;
+
+    const CompletionResult result = complete(
+        client,
+        request,
+        conversation,
+        [&answer](CompletionDelta delta) {
+            if (delta.kind == CompletionDeltaKind::answer) {
+                answer += delta.text;
+            }
+        },
+        cancellation);
+
+    EXPECT_EQ(result.outcome, CompletionOutcome::protocol_error);
+    EXPECT_EQ(answer, "Answer");
+    EXPECT_NE(result.message.find("not a string or null"), std::string::npos);
+    EXPECT_NE(result.message.find("HTTP 200"), std::string::npos);
+    EXPECT_EQ(result.message.find("{\"bad\""), std::string::npos);
+    mock.join();
+}
+
+TEST(CompletionClient, ParsesNonStreamingReasoningAndRequiresAnAnswer) {
+    MockHttpServer mock({
+        http_response(
+            "application/json",
+            R"({"choices":[{"message":{"reasoning":"Think","content":"Answer"}}]})"),
+        http_response(
+            "application/json",
+            R"({"choices":[{"message":{"reasoning":"Only","content":""}}]})"),
+    });
+    mock.start();
+    Config config = network_config(mock.port(), false);
+    config.reasoning_format = ReasoningFormat::reasoning;
+    CompletionClient client({.config = config});
+    std::atomic_bool cancellation{false};
+
+    Conversation first_conversation;
+    const CompletionRequest first =
+        client_request(first_conversation, 23, "Question");
+    std::vector<CompletionDelta> deltas;
+    const CompletionResult success = complete(
+        client,
+        first,
+        first_conversation,
+        [&deltas](CompletionDelta delta) {
+            deltas.push_back(std::move(delta));
+        },
+        cancellation);
+    EXPECT_EQ(success.outcome, CompletionOutcome::completed);
+    ASSERT_EQ(deltas.size(), 2U);
+    EXPECT_EQ(deltas[0].kind, CompletionDeltaKind::reasoning);
+    EXPECT_EQ(deltas[1].kind, CompletionDeltaKind::answer);
+
+    Conversation second_conversation;
+    const CompletionRequest second =
+        client_request(second_conversation, 24, "Question");
+    const CompletionResult failure = complete(
+        client,
+        second,
+        second_conversation,
+        [](CompletionDelta) {},
+        cancellation);
+    EXPECT_EQ(failure.outcome, CompletionOutcome::protocol_error);
+    EXPECT_NE(
+        failure.message.find("without answer content"),
+        std::string::npos);
+    mock.join();
+}
+
+TEST(CompletionClient, ReasoningOnlyStreamIsNotACompletedAnswer) {
+    const std::string stream =
+        "data: {\"choices\":[{\"delta\":{"
+        "\"reasoning_content\":\"PRIVATE_ONLY_REASONING\"}}]}\n\n"
+        "data: [DONE]\n\n";
+    MockHttpServer mock({http_response("text/event-stream", stream)});
+    mock.start();
+    CompletionClient client({.config = network_config(mock.port())});
+    Conversation conversation;
+    const CompletionRequest request =
+        client_request(conversation, 25, "Question");
+    std::atomic_bool cancellation{false};
+    std::vector<CompletionDelta> deltas;
+
+    const CompletionResult result = complete(
+        client,
+        request,
+        conversation,
+        [&deltas](CompletionDelta delta) {
+            deltas.push_back(std::move(delta));
+        },
+        cancellation);
+
+    EXPECT_EQ(result.outcome, CompletionOutcome::protocol_error);
+    EXPECT_NE(
+        result.message.find("without answer content"),
+        std::string::npos);
+    EXPECT_EQ(
+        result.message.find("PRIVATE_ONLY_REASONING"),
+        std::string::npos);
+    ASSERT_EQ(deltas.size(), 1U);
+    EXPECT_EQ(deltas.front().kind, CompletionDeltaKind::reasoning);
+    mock.join();
 }
 
 } // namespace

@@ -4,6 +4,7 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace cha {
 namespace {
@@ -16,6 +17,44 @@ ConversationEntry agent(EntryId id, std::string text) {
     return make_agent_entry(
         id, "guide-id", "Guide", std::move(text), CompletionStatus::complete);
 }
+
+ConversationEntry reasoning_agent(
+    EntryId id,
+    std::string reasoning,
+    std::string answer,
+    CompletionStatus status = CompletionStatus::streaming) {
+    return make_agent_entry(
+        id,
+        "guide-id",
+        "Guide",
+        {
+            .reasoning = std::move(reasoning),
+            .answer = std::move(answer),
+        },
+        status);
+}
+
+class RecordingSurface final : public TranscriptSurface {
+public:
+    void attributes(TranscriptAttributes value) override {
+        current = value;
+        operations.push_back({value, {}});
+    }
+
+    void write(std::string_view text) override {
+        operations.push_back({current, std::string(text)});
+        output += text;
+    }
+
+    struct Operation {
+        TranscriptAttributes attributes;
+        std::string text;
+    };
+
+    TranscriptAttributes current{TranscriptAttributes::normal};
+    std::vector<Operation> operations;
+    std::string output;
+};
 
 TEST(TranscriptLabel, DistinguishesKindsEvenWhenDisplayNamesCollide) {
     EXPECT_EQ(
@@ -143,6 +182,119 @@ TEST(TranscriptRenderPlanner, IgnoresARevisionOnlyChange) {
         .revision = 2,
     };
     EXPECT_EQ(planner.plan(unchanged, 80).action, TranscriptRenderAction::none);
+}
+
+TEST(TranscriptRenderPlanner, HandlesReasoningAndAnswerPhaseBoundaries) {
+    TranscriptRenderPlanner planner;
+    const ConversationSnapshot initial{
+        .entries = {reasoning_agent(1, "Think", "")},
+        .revision = 1,
+        .open_entry_id = 1,
+    };
+    planner.commit(initial, 80);
+
+    ConversationSnapshot reasoning_growth{
+        .entries = {reasoning_agent(1, "Thinking", "")},
+        .revision = 2,
+        .open_entry_id = 1,
+    };
+    TranscriptRenderPlan plan = planner.plan(reasoning_growth, 80);
+    EXPECT_EQ(plan.action, TranscriptRenderAction::append);
+    EXPECT_EQ(plan.suffix_kind, CompletionDeltaKind::reasoning);
+    EXPECT_EQ(plan.last_message_suffix, "ing");
+    planner.commit(reasoning_growth, 80);
+
+    ConversationSnapshot first_answer{
+        .entries = {reasoning_agent(1, "Thinking", "Answer")},
+        .revision = 3,
+        .open_entry_id = 1,
+    };
+    EXPECT_EQ(
+        planner.plan(first_answer, 80).action,
+        TranscriptRenderAction::rebuild);
+    planner.commit(first_answer, 80);
+
+    ConversationSnapshot answer_growth{
+        .entries = {reasoning_agent(1, "Thinking", "Answer grows")},
+        .revision = 4,
+        .open_entry_id = 1,
+    };
+    plan = planner.plan(answer_growth, 80);
+    EXPECT_EQ(plan.action, TranscriptRenderAction::append);
+    EXPECT_EQ(plan.suffix_kind, CompletionDeltaKind::answer);
+    EXPECT_EQ(plan.last_message_suffix, " grows");
+    planner.commit(answer_growth, 80);
+
+    ConversationSnapshot late_reasoning{
+        .entries = {reasoning_agent(1, "Thinking again", "Answer grows")},
+        .revision = 5,
+        .open_entry_id = 1,
+    };
+    EXPECT_EQ(
+        planner.plan(late_reasoning, 80).action,
+        TranscriptRenderAction::rebuild);
+}
+
+TEST(TranscriptRendering, LabelsReasoningAndRestoresNormalAttributes) {
+    RecordingSurface surface;
+    write_transcript_entry(
+        surface,
+        reasoning_agent(
+            1,
+            "Compare constraints",
+            "Use the second option",
+            CompletionStatus::complete),
+        false);
+
+    EXPECT_EQ(
+        surface.output,
+        "[Agent: Guide]\n[Reasoning]\nCompare constraints\n\n"
+        "Use the second option");
+    EXPECT_EQ(surface.current, TranscriptAttributes::normal);
+
+    bool reasoning_was_dim = false;
+    bool answer_was_normal = false;
+    for (const RecordingSurface::Operation& operation : surface.operations) {
+        if (operation.text == "Compare constraints") {
+            reasoning_was_dim =
+                operation.attributes == TranscriptAttributes::dim;
+        }
+        if (operation.text == "Use the second option") {
+            answer_was_normal =
+                operation.attributes == TranscriptAttributes::normal;
+        }
+    }
+    EXPECT_TRUE(reasoning_was_dim);
+    EXPECT_TRUE(answer_was_normal);
+
+    write_transcript_entry(surface, human(2, "Ordinary"), false);
+    EXPECT_EQ(surface.current, TranscriptAttributes::normal);
+    EXPECT_EQ(surface.operations.back().attributes, TranscriptAttributes::normal);
+}
+
+TEST(TranscriptRendering, IncrementalAndInputInitializationRestoreNormalAttributes) {
+    RecordingSurface surface;
+    surface.current = TranscriptAttributes::bold_dim;
+    write_transcript_suffix(
+        surface,
+        CompletionDeltaKind::reasoning,
+        " more thought");
+    EXPECT_EQ(surface.current, TranscriptAttributes::normal);
+    ASSERT_GE(surface.operations.size(), 3U);
+    EXPECT_EQ(
+        surface.operations[surface.operations.size() - 2].attributes,
+        TranscriptAttributes::dim);
+
+    surface.current = TranscriptAttributes::dim;
+    write_transcript_suffix(
+        surface,
+        CompletionDeltaKind::answer,
+        " more answer");
+    EXPECT_EQ(surface.current, TranscriptAttributes::normal);
+
+    surface.current = TranscriptAttributes::dim;
+    initialize_transcript_surface(surface);
+    EXPECT_EQ(surface.current, TranscriptAttributes::normal);
 }
 
 TEST(TranscriptLayout, AccountsForWrappingOffsetsAndControlCharacters) {

@@ -79,6 +79,7 @@ public:
         rendered_input = editor.value();
         rendered_generating = status.active;
         rendered_agent_name = std::move(status.agent_name);
+        rendered_phase = status.phase;
         rendered_show_addressing = show_addressing;
         rendered_notice = notice;
     }
@@ -114,6 +115,7 @@ public:
     std::string rendered_notice;
     bool rendered_generating{};
     std::string rendered_agent_name;
+    ResponsePhase rendered_phase{ResponsePhase::waiting};
     bool rendered_show_addressing{};
     int render_count{};
     int scroll_up_count{};
@@ -149,7 +151,10 @@ public:
             }
             return {CompletionOutcome::cancelled, {}};
         }
-        on_delta("Answer to " + payload.bytes);
+        on_delta({
+            CompletionDeltaKind::answer,
+            "Answer to " + payload.bytes,
+        });
         return {};
     }
 

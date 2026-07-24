@@ -35,7 +35,10 @@ public:
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool&) override {
         performed = true;
-        on_delta(name_ + ":" + payload.bytes);
+        on_delta({
+            CompletionDeltaKind::answer,
+            name_ + ":" + payload.bytes,
+        });
         return {};
     }
 
@@ -70,7 +73,10 @@ public:
         RequestPayload payload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
-        on_delta(name_ + ":" + payload.bytes);
+        on_delta({
+            CompletionDeltaKind::answer,
+            name_ + ":" + payload.bytes,
+        });
         entered_perform.store(true, std::memory_order_release);
         while (!release.load(std::memory_order_acquire)
                && !cancellation.load(std::memory_order_acquire)) {
@@ -122,7 +128,7 @@ public:
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
         for (const std::string& delta : deltas_) {
-            on_delta(delta);
+            on_delta({delta_kind, delta});
         }
         if (wait_for_cancellation_) {
             while (!cancellation.load(std::memory_order_acquire)) {
@@ -152,6 +158,7 @@ public:
 
     std::vector<CompletionRequest> requests;
     std::vector<ConversationEntry> latest_prompts;
+    CompletionDeltaKind delta_kind{CompletionDeltaKind::answer};
 
 private:
     std::string id_{"assistant"};
@@ -394,6 +401,7 @@ TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
     auto backend = std::make_unique<ConfigurableBackend>(
         CompletionResult{}, std::vector<std::string>{"Hello", " world"});
     ConfigurableBackend* backend_view = backend.get();
+    backend_view->delta_kind = CompletionDeltaKind::reasoning;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
     AgentRegistry registry(conversation, std::move(backends));
@@ -408,8 +416,10 @@ TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
     const AgentDelta first = std::get<AgentDelta>(next_event(registry));
     const AgentDelta second = std::get<AgentDelta>(next_event(registry));
     EXPECT_EQ(first.request_id, 10U);
+    EXPECT_EQ(first.kind, CompletionDeltaKind::reasoning);
     EXPECT_EQ(first.text, "Hello");
     EXPECT_EQ(second.request_id, 10U);
+    EXPECT_EQ(second.kind, CompletionDeltaKind::reasoning);
     EXPECT_EQ(second.text, " world");
     EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 10U);
 
