@@ -8,9 +8,7 @@ knowing how entries are rendered, persisted, or sent to a completion provider.
 
 | Source | Responsibility |
 | --- | --- |
-| `request_id.h` | Request identifier shared by prompts, agent events, and durable turn state. |
-| `response_content.h` | Reasoning-versus-answer classification for completion deltas. |
-| `conversation.*` | Entry types, validation, entry factories, snapshots, read views, and the thread-safe `Conversation` container. |
+| `conversation.*` | Entry/request IDs, completion deltas, entry types, validation, factories, snapshots, read views, and the thread-safe `Conversation` container. |
 
 ## Functionality
 

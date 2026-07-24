@@ -2,8 +2,6 @@
 
 #include "conversation/conversation.h"
 #include "agents/event_channel.h"
-#include "conversation/request_id.h"
-#include "conversation/response_content.h"
 
 #include <string>
 #include <variant>

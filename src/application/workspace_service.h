@@ -1,7 +1,5 @@
 #pragma once
 
-#include "application/session_summary.h"
-
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -10,6 +8,15 @@
 namespace cha {
 
 class ChatCoordinator;
+
+// Describes one selectable session without exposing its storage representation.
+struct SessionSummary {
+    std::string id;
+    std::string label;
+    std::string error;
+
+    bool operator==(const SessionSummary&) const = default;
+};
 
 // Exposes workspace and session use cases independently of a user interface.
 class WorkspaceService {

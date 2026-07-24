@@ -1,6 +1,6 @@
 #pragma once
 
-#include "application/session_summary.h"
+#include "application/workspace_service.h"
 
 #include <optional>
 #include <string>

@@ -5,7 +5,6 @@
 #include "agents/agent_roster.h"
 #include "application/generation_status.h"
 #include "conversation/conversation.h"
-#include "conversation/request_id.h"
 #include "storage/session_database.h"
 
 #include <optional>

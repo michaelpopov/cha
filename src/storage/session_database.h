@@ -1,7 +1,6 @@
 #pragma once
 
 #include "conversation/conversation.h"
-#include "conversation/request_id.h"
 
 #include <filesystem>
 #include <memory>

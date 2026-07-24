@@ -18,6 +18,7 @@ namespace {
 std::vector<AgentDefinition> load_definitions(
     const Workspace& workspace,
     const Room& room) {
+
     std::vector<std::filesystem::path> persona_directories;
     persona_directories.reserve(room.persona_names.size());
     for (const std::string& persona : room.persona_names) {
@@ -30,6 +31,7 @@ std::vector<AgentDefinition> load_definitions(
 SessionRepository session_repository(
     const Workspace& workspace,
     const std::string& room_name) {
+
     const Room room = workspace.load_room(room_name);
     return SessionRepository(room.directory / "sessions", room.name);
 }
@@ -62,9 +64,12 @@ std::vector<std::string> WorkspaceService::rooms() const {
 
 std::vector<SessionSummary> WorkspaceService::sessions(
     const std::string& room_name) const {
+
     const SessionRepository repository =
         session_repository(impl_->workspace, room_name);
+
     const std::vector<Session> stored = repository.list();
+
     std::vector<SessionSummary> result;
     result.reserve(stored.size());
     for (const Session& session : stored) {
@@ -76,12 +81,14 @@ std::vector<SessionSummary> WorkspaceService::sessions(
 std::unique_ptr<ChatCoordinator> WorkspaceService::create_session(
     const std::string& room_name,
     std::string label) const {
+
     const Room room = impl_->workspace.load_room(room_name);
     std::vector<AgentDefinition> definitions =
         load_definitions(impl_->workspace, room);
     const SessionRepository repository(
         room.directory / "sessions",
         room.name);
+
     const Session session = repository.create(std::move(label));
     return ChatCoordinator::from_definitions(
         std::move(definitions),
@@ -91,12 +98,14 @@ std::unique_ptr<ChatCoordinator> WorkspaceService::create_session(
 std::unique_ptr<ChatCoordinator> WorkspaceService::open_session(
     const std::string& room_name,
     const std::string& session_id) const {
+
     const Room room = impl_->workspace.load_room(room_name);
     std::vector<AgentDefinition> definitions =
         load_definitions(impl_->workspace, room);
     const SessionRepository repository(
         room.directory / "sessions",
         room.name);
+
     const std::filesystem::path database_path =
         repository.open_database_path(session_id);
     ConversationRestore restored = load_conversation_state(database_path);

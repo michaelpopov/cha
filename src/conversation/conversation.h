@@ -1,8 +1,5 @@
 #pragma once
 
-#include "conversation/request_id.h"
-#include "conversation/response_content.h"
-
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -14,6 +11,7 @@
 
 namespace cha {
 
+using RequestId = std::uint64_t;
 using EntryId = std::uint64_t;
 using ParticipantId = std::string;
 
@@ -36,6 +34,18 @@ enum class CompletionStatus : std::int64_t {
     streaming = 1,
     cancelled = 2,
     failed = 3,
+};
+
+// Classifies one streamed completion fragment as reasoning or answer text.
+enum class CompletionDeltaKind {
+    reasoning,
+    answer,
+};
+
+// Carries one semantic transport fragment without attaching request identity.
+struct CompletionDelta {
+    CompletionDeltaKind kind{CompletionDeltaKind::answer};
+    std::string text;
 };
 
 // Stores one typed transcript record for rendering, persistence, and context projection.

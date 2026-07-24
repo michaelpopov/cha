@@ -9,8 +9,7 @@ that do not depend on terminal command syntax or UI widgets.
 | Source | Responsibility |
 | --- | --- |
 | `chat_coordinator.*` | Coordinate one live session, including prompts, agent events, persistence, and shutdown. |
-| `workspace_service.*` | Expose room/session use cases and construct the selected coordinator. |
-| `session_summary.h` | Present selectable session metadata without exposing the storage representation. |
+| `workspace_service.*` | Expose room/session use cases, `SessionSummary`, and construct the selected coordinator. |
 | `generation_status.h` | Describe active generation state and provide the shared in-progress notice. |
 
 ## Chat coordination

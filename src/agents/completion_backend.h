@@ -2,7 +2,6 @@
 
 #include "agents/agent_info.h"
 #include "agents/agent_protocol.h"
-#include "conversation/response_content.h"
 
 #include <atomic>
 #include <functional>
