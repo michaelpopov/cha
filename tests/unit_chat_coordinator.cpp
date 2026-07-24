@@ -503,7 +503,7 @@ TEST(ChatCoordinator, AttributesDispatchFailuresToTheTargetAgent) {
     ASSERT_EQ(restored.size(), 2U);
     EXPECT_EQ(restored.back().kind, EntryKind::error);
     EXPECT_EQ(restored.back().participant_id, "guide-id");
-    EXPECT_EQ(restored.back().text, "Agent worker is closed");
+    EXPECT_EQ(restored.back().text, "Agent execution is unavailable");
 }
 
 TEST(ChatCoordinator, FinalizesInterruptedTurnsDuringRestore) {

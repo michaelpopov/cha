@@ -1,11 +1,16 @@
 #pragma once
 
 #include "agent_definition.h"
+#include "agent_protocol.h"
 #include "agent_roster.h"
-#include "agent_worker.h"
+#include "completion_backend.h"
+#include "conversation.h"
+#include "event_channel.h"
 
+#include <atomic>
+#include <cstddef>
 #include <memory>
-#include <string_view>
+#include <thread>
 #include <vector>
 
 namespace cha {
@@ -21,16 +26,29 @@ public:
 
     [[nodiscard]] const AgentRoster& roster() const noexcept;
     [[nodiscard]] bool submit(CompletionRequest request);
-    void cancel(std::string_view agent_id);
-    void cancel_all();
+    void cancel();
     [[nodiscard]] ChannelReadStatus try_receive(AgentEvent& event);
     [[nodiscard]] int notification_fd() const;
     void stop();
 
 private:
-    AgentEventChannel events_;
-    std::vector<std::unique_ptr<AgentWorker>> workers_;
+    struct WorkItem {
+        std::size_t backend_index{};
+        CompletionRequest request;
+    };
+
+    void dialog();
+    void publish_event(AgentEvent event);
+    void publish_terminal(AgentEvent event);
+
+    const Conversation& conversation_;
+    std::vector<std::unique_ptr<CompletionBackend>> backends_;
     AgentRoster roster_;
+    EventChannel<WorkItem> requests_;
+    AgentEventChannel events_;
+    std::atomic_bool cancellation_{false};
+    std::atomic_bool request_outstanding_{false};
+    std::thread thread_;
     bool stopped_{};
 };
 

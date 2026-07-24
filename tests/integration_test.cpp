@@ -1,11 +1,11 @@
 #include "agent_definition.h"
 #include "agent_protocol.h"
+#include "agent_registry.h"
 #include "chat_coordinator.h"
 #include "config.h"
 #include "environment.h"
 #include "mock_http_server.h"
 #include "session_database.h"
-#include "agent_worker.h"
 #include "workspace.h"
 
 #include <gtest/gtest.h>
@@ -44,14 +44,14 @@ Config integration_config(bool stream) {
     return config;
 }
 
-AgentEvent wait_for_agent_event(AgentEventChannel& events) {
-    pollfd descriptor{events.notification_fd(), POLLIN, 0};
+AgentEvent wait_for_agent_event(AgentRegistry& registry) {
+    pollfd descriptor{registry.notification_fd(), POLLIN, 0};
     if (::poll(&descriptor, 1, -1) != 1) {
         throw std::runtime_error(
             "Failed to wait for integration agent event");
     }
     AgentEvent event = AgentCompleted{};
-    if (events.try_get(event) != ChannelReadStatus::value) {
+    if (registry.try_receive(event) != ChannelReadStatus::value) {
         throw std::runtime_error(
             "Integration agent event channel closed unexpectedly");
     }
@@ -61,8 +61,9 @@ AgentEvent wait_for_agent_event(AgentEventChannel& events) {
 ChatResult run_chat(bool stream) {
     const Config config = integration_config(stream);
     Conversation conversation;
-    AgentEventChannel events;
-    AgentWorker worker(conversation, events, {.config = config});
+    std::vector<AgentDefinition> definitions;
+    definitions.push_back({.config = config});
+    AgentRegistry registry(conversation, std::move(definitions));
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     CompletionRequest request{
@@ -70,11 +71,11 @@ ChatResult run_chat(bool stream) {
         .prompt = make_human_entry(1, config.id, config.name, input, 1),
     };
     conversation.add_entry(request.prompt);
-    EXPECT_TRUE(worker.submit(std::move(request)));
+    EXPECT_TRUE(registry.submit(std::move(request)));
 
     ChatResult result;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(events);
+        const AgentEvent event = wait_for_agent_event(registry);
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
@@ -84,15 +85,16 @@ ChatResult run_chat(bool stream) {
         }
     }
 
-    worker.stop();
+    registry.stop();
     return result;
 }
 
 ChatResult run_cancelled_chat() {
     const Config config = integration_config(true);
     Conversation conversation;
-    AgentEventChannel events;
-    AgentWorker worker(conversation, events, {.config = config});
+    std::vector<AgentDefinition> definitions;
+    definitions.push_back({.config = config});
+    AgentRegistry registry(conversation, std::move(definitions));
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     CompletionRequest request{
@@ -100,22 +102,22 @@ ChatResult run_cancelled_chat() {
         .prompt = make_human_entry(1, config.id, config.name, input, 2),
     };
     conversation.add_entry(request.prompt);
-    EXPECT_TRUE(worker.submit(std::move(request)));
+    EXPECT_TRUE(registry.submit(std::move(request)));
 
     ChatResult result;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(events);
+        const AgentEvent event = wait_for_agent_event(registry);
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
-            worker.cancel();
+            registry.cancel();
         } else {
             EXPECT_TRUE(std::holds_alternative<AgentCancelled>(event));
             break;
         }
     }
 
-    worker.stop();
+    registry.stop();
     return result;
 }
 

@@ -39,7 +39,7 @@ public:
     EventChannel& operator=(const EventChannel&) = delete;
 
     // Enqueues one semantic value, returning false when the channel is already closed.
-    bool push(T value) {
+    [[nodiscard]] bool push(T value) {
         std::lock_guard lock(mutex_);
         if (closed_) {
             return false;
@@ -117,6 +117,11 @@ private:
         while (::eventfd_write(notification_fd_, value) == -1) {
             if (errno == EINTR) {
                 continue;
+            }
+            if (errno == EAGAIN) {
+                // The counter is saturated, so the descriptor is already
+                // readable and a notification is pending.
+                return;
             }
             throw std::system_error(errno, std::generic_category(), "Failed to signal channel notification");
         }

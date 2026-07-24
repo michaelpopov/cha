@@ -38,7 +38,6 @@ struct AgentFailed {
 };
 
 using AgentEvent = std::variant<AgentDelta, AgentCompleted, AgentCancelled, AgentFailed>;
-using CompletionRequestChannel = EventChannel<CompletionRequest>;
 using AgentEventChannel = EventChannel<AgentEvent>;
 
 } // namespace cha

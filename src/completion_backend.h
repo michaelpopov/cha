@@ -28,10 +28,10 @@ struct RequestPayload {
     std::string bytes;
 };
 
-// Receives one transport-level text fragment without attaching worker request identity.
+// Receives one transport-level text fragment without attaching request identity.
 using CompletionDeltaSink = std::function<void(std::string)>;
 
-// Defines the synchronous completion operations consumed by an AgentWorker.
+// Defines the synchronous completion operations consumed by the agent execution thread.
 class CompletionBackend {
 public:
     virtual ~CompletionBackend() = default;

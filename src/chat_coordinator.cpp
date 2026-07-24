@@ -241,7 +241,7 @@ CoordinatorUpdate ChatCoordinator::submit(std::string input) {
         update.notice = "";
         return update;
     }
-    fail_active_turn("Agent worker is closed", target->id, update);
+    fail_active_turn("Agent execution is unavailable", target->id, update);
     update.notice = "Request could not be dispatched";
     return update;
 }
@@ -290,7 +290,7 @@ CoordinatorUpdate ChatCoordinator::request_stop() {
         update.notice = "No generation is active";
         return update;
     }
-    registry_.cancel(active_->agent_id);
+    registry_.cancel();
     update.notice = "Stopping generation...";
     return update;
 }

@@ -3,7 +3,7 @@
 This document describes the current implementation of `cha`, a C++20 terminal
 client for OpenAI-compatible chat-completion servers. It is an architecture and
 maintenance guide; user-facing setup and command documentation lives in
-[README.md](README.md).
+[README.md](../README.md).
 
 - [Architecture](#architecture)
 - [Startup and workspace loading](#startup-and-workspace-loading)
@@ -20,10 +20,10 @@ maintenance guide; user-facing setup and command documentation lives in
 
 ## Architecture
 
-`cha` has one main/UI thread and one worker thread per agent in the selected
-room. The main thread owns all transcript and database mutation. Worker threads
-prepare and perform blocking completions, then return typed events through one
-shared channel.
+`cha` has two long-lived application threads: the main/UI thread and one shared
+agent-execution thread. The main thread owns all transcript and database
+mutation. The execution thread prepares and performs one blocking completion at
+a time, then returns typed events through one shared channel.
 
 ```text
 Startup
@@ -36,10 +36,13 @@ Main/UI thread                  ChatCoordinator
   Tui                         +-- AgentRegistry
        ^                              |
        | CoordinatorUpdate            +-- AgentRoster
+       |                              +-- WorkItem request queue
        |                              +-- shared AgentEventChannel
-       |                              +-- AgentWorker[0] -- CompletionClient[0]
-       |                              +-- AgentWorker[1] -- CompletionClient[1]
-       |                              +-- ...
+       |                              +-- agent-execution thread
+       |                                      |
+       |                                      +-- CompletionClient[0]
+       |                                      +-- CompletionClient[1]
+       |                                      +-- ...
        |
        +---- poll(stdin, shared agent-event eventfd)
 ```
@@ -52,28 +55,58 @@ The ownership graph is:
 - `ChatCoordinator` owns the in-memory `Conversation`, SQLite
   `ConversationJournal`, `AgentRegistry`, current default agent, and optional
   active turn.
-- `AgentRegistry` owns a non-empty ordered `AgentRoster`, a shared
-  `AgentEventChannel`, and one `AgentWorker` per roster slot.
-- Each `AgentWorker` owns one backend, one request channel, a worker thread, and
-  its cancellation/outstanding-request atomics.
+- `AgentRegistry` owns a non-empty ordered `AgentRoster`, every backend, one
+  request channel, one shared `AgentEventChannel`, one execution thread, and
+  shared cancellation/outstanding-request atomics.
 - Each production backend is a `CompletionClient` with one reusable libcurl easy
   handle and one agent-specific system prompt and configuration.
+
+The registry holds a non-owning reference to `Conversation`. The conversation
+must outlive the registry and its joined execution thread. `ChatCoordinator`
+satisfies this through member declaration order: its conversation is declared
+before its registry and therefore destroyed afterward.
+
+Backend construction and optional model discovery happen on the main thread
+before the execution thread starts. After startup, only the execution thread
+calls backend `prepare()` or `perform()`; the clients therefore need no
+internal synchronization.
 
 ### Thread communication
 
 `EventChannel<T>` is a mutex-protected `std::deque` paired with a Linux
-`eventfd` opened with `EFD_NONBLOCK | EFD_SEMAPHORE`. There are two channel
-directions:
+`eventfd` opened with `EFD_NONBLOCK | EFD_SEMAPHORE`. The two channel
+directions are:
 
-- Each worker has a private `CompletionRequestChannel` from coordinator to
-  worker.
-- All workers publish `AgentEvent` values into the registry's shared
-  `AgentEventChannel`.
+- One private `EventChannel<WorkItem>` carries routed requests from the main
+  thread to the execution thread.
+- The execution thread publishes `AgentEvent` values into the registry's
+  shared `AgentEventChannel`.
+
+`submit()`, `cancel()`, and `stop()` are externally serialized main-thread
+control operations. Submission resolves a roster slot before atomically
+claiming one global outstanding-request gate, resets the shared cancellation
+flag, and enqueues an owning `WorkItem {backend_index, request}`. A second
+submission is rejected while that gate remains claimed, even when it targets a
+different backend.
+
+The execution thread blocks on the request channel, resolves the backend vector
+slot once, and performs one request to completion. The gate means the otherwise
+unbounded request channel has a logical capacity of one. The execution thread
+clears the gate immediately before publishing a terminal event, so once the
+main thread observes completion it can submit the next request without racing
+the previous turn's cleanup.
 
 The shared event channel exposes one descriptor to the UI. `run_user()` blocks
 in one `poll(2)` call over stdin and that descriptor, so input and streamed
 output wake the same event loop without timers or busy polling. When both are
 ready, agent events are applied before terminal input.
+
+The registry checks every outbound event publication. A closed event channel
+violates shutdown ordering and throws. A saturated `eventfd` already has a
+notification pending and is treated as successfully signaled. Other signaling
+failures receive one failed-request publication attempt; repeated failure is
+fatal because silently losing the event would leave an accepted request with
+no observable outcome.
 
 The event variant contains:
 
@@ -83,9 +116,9 @@ The event variant contains:
 - `AgentFailed { request_id, message }`
 
 `Conversation` is mutex-protected. The main thread is its sole writer.
-`AgentWorker` obtains a short-lived `ConversationReadView` while validating and
-preparing a request. That view holds the mutex and exposes a non-owning span; it
-is destroyed before network I/O and before any delta is published.
+The registry's execution loop obtains a short-lived `ConversationReadView`
+while preparing a request. That view holds the mutex and exposes a non-owning
+span; it is destroyed before network I/O and before any delta is published.
 
 ## Startup and workspace loading
 
@@ -100,7 +133,7 @@ is destroyed before network I/O and before any delta is published.
 6. Let the user choose or create a session in `<room>/sessions`.
 7. Fully restore an existing database, if selected.
 8. Construct `ChatCoordinator`; production backend construction may perform
-   model discovery before worker threads start.
+   model discovery before the execution thread starts.
 9. Enter `run_user()`.
 
 The workspace shape is:
@@ -151,10 +184,9 @@ initial default. `/@Name` changes the default in memory for the current run
 only.
 
 Only one turn may be active across the entire roster. The application does not
-run simultaneous answers, even though each agent owns a separate worker
-thread. This preserves one linear transcript, one streaming entry, and one
-unambiguous cancellation target. Each worker also independently rejects a
-second outstanding request, protecting its transport when tested or used
+run simultaneous answers. This preserves one linear transcript, one streaming
+entry, and one unambiguous cancellation target. A global registry gate also
+rejects a second outstanding request when the registry is tested or used
 outside the coordinator.
 
 ### Prompt addressing
@@ -183,9 +215,11 @@ The resolved target is stored on the human transcript entry as both:
 - `addressed_to_name`: display name at submission time, used for restored UI
   labels and target attribution.
 
-`AgentRegistry` keeps workers and roster entries in the same order. Submission
-and cancellation linearly scan the small roster to select the corresponding
-worker slot; there is no parallel index structure.
+`AgentRegistry` keeps backends and roster entries in the same order. Submission
+linearly scans the small roster to select the corresponding backend slot; there
+is no parallel index structure. Cancellation needs no target because only one
+request can be queued or executing, and the cancellation flag cannot be reset
+until that request releases the global gate.
 
 ## Conversation and context projection
 
@@ -282,16 +316,18 @@ For an idle coordinator:
 3. Commit the `started` turn and prompt entry in one SQLite transaction.
 4. Add the prompt to the in-memory conversation.
 5. Reserve the response entry ID and create `ActiveTurn`.
-6. Route the request to the target worker.
+6. Route the request to the target backend through the shared request queue.
 
-The database commit intentionally precedes the screen and worker. Once a
-started turn is durable, normal error paths drive it to a terminal state.
+The database commit intentionally precedes the screen and execution request.
+Once a started turn is durable, normal error paths drive it to a terminal
+state.
 
 The coordinator is the only conversation writer and accepts no mutating command
 while a turn is active. `AgentRegistry` routes the request by its already
-resolved target, so the worker does not revalidate coordinator-owned request
-and conversation invariants. It prepares an owning `RequestPayload` under
-`ConversationReadView`, releases the lock, and calls the synchronous backend.
+resolved target, so the execution thread does not revalidate coordinator-owned
+request and conversation invariants. It prepares an owning `RequestPayload`
+under `ConversationReadView`, releases the lock, and calls the synchronous
+backend.
 
 ### Streaming success
 
@@ -310,9 +346,15 @@ delta followed by `AgentCompleted`.
 
 ### Cancellation
 
-`/stop`, Esc, or Ctrl-C while generating sets the active worker's atomic
-cancellation flag. libcurl's progress callback observes it and aborts
+`/stop`, Esc, or Ctrl-C while generating sets the registry's shared atomic
+cancellation flag. The execution loop checks it before preparation, and
+libcurl's progress callback observes it during transport and aborts
 cooperatively.
+
+If cancellation is set while an accepted request is waiting to prepare, the
+execution thread publishes `AgentCancelled` without calling either backend
+method. Once `perform()` begins, cancellation remains cooperative through the
+same atomic flag.
 
 On `AgentCancelled`:
 
@@ -324,8 +366,9 @@ The prompt remains in model context, but cancelled agent output does not.
 
 ### Failure
 
-Transport errors, protocol errors, worker exceptions, dispatch failure, and a
-successful terminal event without response text all become a failed turn.
+Transport errors, protocol errors, backend execution exceptions, dispatch
+failure, and a successful terminal event without response text all become a
+failed turn.
 
 The coordinator commits a typed error entry, discards any open partial agent
 entry, adds the error to the transcript, and clears the active turn. Context
@@ -491,7 +534,7 @@ crash during streaming restores the prompt plus the interruption error.
 ### Persistence failure policy
 
 Persistence errors are fatal for the current run. This is deliberate: after a
-turn's terminal worker event has been consumed, continuing without its SQLite
+turn's terminal execution event has been consumed, continuing without its SQLite
 transition would either diverge the visible transcript from durable state or
 leave the coordinator active with no event left to complete it. The application
 therefore does not convert database failures into ordinary transcript errors,
@@ -501,7 +544,8 @@ Every coordinator journal mutation adds operation context before propagating
 the failure. Turn-related messages identify the request and agent, while a
 failed `/clear` identifies that operation. The chat loop preserves that
 original exception, destroys its curses view, explicitly restores the terminal,
-stops all workers, and then lets `main()` report the contextual failure.
+stops the execution thread, and then lets `main()` report the contextual
+failure.
 
 SQLite transaction unwinding attempts a rollback. Since journal writes precede
 their corresponding in-memory mutations, the database remains the authority:
@@ -570,16 +614,18 @@ exceptional exit it first preserves the original exception and destroys the
 directly. A shutdown exception does not replace the operation failure that
 caused the exceptional exit. `ChatCoordinator::shutdown()` is idempotent:
 
-1. `AgentRegistry::stop()` cancels all workers.
-2. Each worker closes its request channel, joins its thread, and becomes
-   permanently stopped.
-3. After all workers stop, the registry closes the shared event channel.
+1. `AgentRegistry::stop()` sets the shared cancellation flag.
+2. The registry closes its request channel, preserving any accepted work, and
+   joins the execution thread. A queued request observes cancellation and
+   publishes its terminal event before the thread exits.
+3. After the execution thread stops, the registry closes the shared event
+   channel and becomes permanently stopped.
 4. The coordinator drains remaining queued events so a final cancellation or
    completion receives its durable terminal transition.
 
-Destructors call their shutdown paths defensively. `AgentWorker` makes a final
-join attempt if ordinary shutdown throws, preventing destruction of a joinable
-`std::thread`.
+Destructors call their shutdown paths defensively. `AgentRegistry` makes a
+final join attempt if ordinary shutdown throws, preventing destruction of a
+joinable `std::thread`.
 
 Database writes remain on the main thread. A journal opens existing databases
 read-write without `SQLITE_OPEN_CREATE`; only session creation may initialize a
@@ -600,9 +646,8 @@ database, so a mistaken path cannot silently become an empty session.
 | `session_database.*` | SQLite schema, restoration, journal transactions, and crash repair data. |
 | `conversation.*` | Typed, thread-safe transcript and streaming-entry state. |
 | `agent_context.*` | Per-agent projection from transcript semantics to model roles. |
-| `agent_protocol.h` | Request/event values and their typed channels. |
-| `agent_registry.*` | Ordered worker ownership, routing, shared events, and shutdown. |
-| `agent_worker.*` | One blocking completion thread and request gate per agent. |
+| `agent_protocol.h` | Request and typed event values plus the shared event channel alias. |
+| `agent_registry.*` | Ordered backend ownership, serial request execution, routing, shared events, cancellation, and shutdown. |
 | `completion_backend.h` | Injectable two-phase completion boundary. |
 | `completion_client.*` | Test echo mode, request serialization, libcurl, SSE/JSON parsing. |
 | `chat_coordinator.*` | Commands, addressing, active turn, transcript/database lifecycle. |
@@ -621,27 +666,35 @@ Everything except `main.cpp` is compiled into `cha_core`.
 
 1. A roster is non-empty, ordered, and fixed for one run.
 2. Agent IDs and ASCII-folded display names are unique.
-3. Roster slot `i` and worker slot `i` describe the same agent.
-4. At most one turn is active across the session.
-5. At most one request is outstanding per worker.
-6. At most one streaming conversation entry exists, and it is the last entry.
-7. The main thread is the only conversation and database writer.
-8. Backend preparation holds a read view; backend performance never does.
-9. Registry routing sends a request to exactly one worker while the active-turn
-   state prevents intervening conversation mutations.
-10. Request and entry IDs are positive, strictly increasing, and never reused.
-11. A durable started turn has exactly one human prompt in its originating
+3. Roster slot `i` and backend slot `i` describe the same agent.
+4. Exactly one application-owned execution thread exists regardless of roster
+   size.
+5. Only the execution thread calls backend request methods after startup.
+6. At most one turn is active across the session.
+7. The request channel contains at most one work item, and at most one request
+   is queued or executing.
+8. Exactly one backend may perform at a time.
+9. Registry control operations are externally serialized on the main thread.
+10. At most one streaming conversation entry exists, and it is the last entry.
+11. The main thread is the only conversation and database writer.
+12. Backend preparation holds a read view; backend performance never does.
+13. The conversation outlives the registry and its joined execution thread.
+14. Registry routing sends a request to exactly one backend while the
+    active-turn state prevents intervening conversation mutations.
+15. The outstanding gate clears before a terminal event becomes observable.
+16. Request and entry IDs are positive, strictly increasing, and never reused.
+17. A durable started turn has exactly one human prompt in its originating
     epoch.
-12. Streaming entries are never persisted.
-13. Completion, cancellation, and failure transition only the currently
+18. Streaming entries are never persisted.
+19. Completion, cancellation, and failure transition only the currently
     started turn.
-14. Database state is committed before the corresponding in-memory terminal
+20. Database state is committed before the corresponding in-memory terminal
     mutation.
-15. Failed turns and cancelled output are excluded from model context according
+21. Failed turns and cancelled output are excluded from model context according
     to their distinct rules.
-16. Sessions bind to a room, not to the room's current roster.
-17. The shared event channel closes only after every worker has stopped.
-18. A journal mutation failure ends the current run; the application never
+22. Sessions bind to a room, not to the room's current roster.
+23. The shared event channel closes only after the execution thread stops.
+24. A journal mutation failure ends the current run; the application never
     continues with transcript state it could not persist.
 
 ## Build and testing
@@ -660,7 +713,7 @@ available, otherwise fetches pinned curl 8.14.1. It also fetches nlohmann/json
 bundled curl enables OpenSSL when it is available.
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
-configuration, identity, roster/mention routing, registry and worker behavior,
+configuration, identity, roster/mention routing, registry execution behavior,
 conversation/context semantics, coordinator lifecycle, SQLite constraints and
 recovery, workspace/session handling, transport parsing, event channels,
 input/UI state, and incremental rendering.
@@ -672,7 +725,7 @@ context, persistence, and reopening after a roster change.
 
 The principal test seams are:
 
-- `CompletionBackend`, for coordinator/worker tests without a network;
+- `CompletionBackend`, for registry/coordinator tests without a network;
 - `SessionView`, for `UserSession` tests without curses;
 - `project_agent_context()`, whose materialized messages expose projected
   boundaries, roles, and content directly.

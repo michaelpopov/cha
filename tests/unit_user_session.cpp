@@ -321,7 +321,7 @@ TEST(UserSession, ExitCommandStopsTheSession) {
     EXPECT_FALSE(session.running());
 }
 
-TEST(UserSession, ClosedWorkerStopsTheSession) {
+TEST(UserSession, ClosedAgentEventChannelStopsTheSession) {
     TemporarySessionJournal temporary;
     ChatCoordinator coordinator(
         test::one_backend(std::make_unique<SessionBackend>()),
