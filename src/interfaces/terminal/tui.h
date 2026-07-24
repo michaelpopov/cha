@@ -24,7 +24,7 @@ public:
     Tui(const Tui&) = delete;
     Tui& operator=(const Tui&) = delete;
 
-    [[nodiscard]] std::optional<SessionInput> read_input() override;
+    std::optional<SessionInput> read_input() override;
     void render(
         const Conversation& conversation,
         const InputEditor& editor,

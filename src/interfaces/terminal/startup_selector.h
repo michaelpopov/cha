@@ -19,14 +19,14 @@ public:
     StartupSelector(const StartupSelector&) = delete;
     StartupSelector& operator=(const StartupSelector&) = delete;
 
-    [[nodiscard]] std::optional<std::string> select_room(const std::vector<std::string>& rooms);
-    [[nodiscard]] std::optional<SessionSummary> select_session(
+    std::optional<std::string> select_room(const std::vector<std::string>& rooms);
+    std::optional<SessionSummary> select_session(
         const std::vector<SessionSummary>& sessions,
         std::string_view error = {});
-    [[nodiscard]] std::optional<std::string> prompt_session_name();
+    std::optional<std::string> prompt_session_name();
 
 private:
-    [[nodiscard]] std::optional<std::size_t> select(
+    std::optional<std::size_t> select(
         const std::string& title,
         const std::vector<std::string>& options,
         std::optional<std::size_t> emphasized_option = std::nullopt,

@@ -1,3 +1,6 @@
+#include "agents/agent_info.h"
+#include "agents/agent_roster.h"
+#include "conversation/conversation.h"
 #include "interfaces/terminal/transcript_renderer.h"
 
 #include <gtest/gtest.h>
@@ -55,6 +58,49 @@ public:
     std::vector<Operation> operations;
     std::string output;
 };
+
+TEST(ShowAddressing, DependsOnRosterAndForeignHistory) {
+    const AgentRoster single({
+        AgentInfo{
+            .id = "guide-id",
+            .name = "Guide",
+            .model = "m",
+            .api = "a",
+            .streaming = true,
+        },
+    });
+    const AgentRoster multi({
+        AgentInfo{
+            .id = "guide-id",
+            .name = "Guide",
+            .model = "m",
+            .api = "a",
+            .streaming = true,
+        },
+        AgentInfo{
+            .id = "ismael-id",
+            .name = "Ismael",
+            .model = "m",
+            .api = "a",
+            .streaming = true,
+        },
+    });
+
+    Conversation empty;
+    EXPECT_FALSE(show_addressing(single, empty));
+    EXPECT_TRUE(show_addressing(multi, empty));
+
+    Conversation foreign;
+    foreign.replace_entries({
+        make_human_entry(1, "guide-id", "Guide", "Question", 1),
+        make_agent_entry(
+            2, "former-id", "Former", "Answer", CompletionStatus::complete, 1),
+    });
+    EXPECT_TRUE(show_addressing(single, foreign));
+
+    foreign.clear();
+    EXPECT_FALSE(show_addressing(single, foreign));
+}
 
 TEST(TranscriptLabel, DistinguishesKindsEvenWhenDisplayNamesCollide) {
     EXPECT_EQ(

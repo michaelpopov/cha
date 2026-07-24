@@ -207,17 +207,17 @@ void receive_when_ready(
 
 TEST(UserSession, SubmitsEditedInputThroughTheCoordinator) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     enter(view, "Question");
     session.receive_terminal_input();
-    receive_when_ready(coordinator, session);
+    receive_when_ready(*coordinator, session);
 
-    const auto entries = coordinator.conversation().entries();
+    const auto entries = coordinator->conversation().entries();
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.front().text, "Question");
     EXPECT_EQ(entries.back().text, "Answer to Question");
@@ -226,16 +226,16 @@ TEST(UserSession, SubmitsEditedInputThroughTheCoordinator) {
 
 TEST(UserSession, DelegatesClearAndInfoCommandsToTheCoordinator) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     enter(view, "/info");
     session.receive_terminal_input();
     session.render_if_needed();
-    EXPECT_TRUE(coordinator.conversation().entries().empty());
+    EXPECT_TRUE(coordinator->conversation().entries().empty());
     EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
     EXPECT_NE(
         view.rendered_notice.find("Transcript entries: 0"),
@@ -245,18 +245,18 @@ TEST(UserSession, DelegatesClearAndInfoCommandsToTheCoordinator) {
     session.receive_terminal_input();
     session.render_if_needed();
 
-    EXPECT_TRUE(coordinator.conversation().entries().empty());
+    EXPECT_TRUE(coordinator->conversation().entries().empty());
     EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
     EXPECT_EQ(view.rendered_notice, "Conversation cleared");
 }
 
 TEST(UserSession, StopInputDrivesCoordinatorCancellation) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -265,20 +265,20 @@ TEST(UserSession, StopInputDrivesCoordinatorCancellation) {
     session.render_if_needed();
 
     EXPECT_EQ(view.rendered_notice, "Stopping generation...");
-    receive_when_ready(coordinator, session);
-    EXPECT_FALSE(coordinator.generating());
+    receive_when_ready(*coordinator, session);
+    EXPECT_FALSE(coordinator->generation_status().active);
     EXPECT_EQ(
         load_conversation_entries(temporary.path),
-        coordinator.conversation().entries());
+        coordinator->conversation().entries());
 }
 
 TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -295,11 +295,11 @@ TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
 
 TEST(UserSession, ConsumesStopCommandDuringGeneration) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -309,16 +309,16 @@ TEST(UserSession, ConsumesStopCommandDuringGeneration) {
 
     EXPECT_TRUE(view.rendered_input.empty());
     EXPECT_EQ(view.rendered_notice, "Stopping generation...");
-    receive_when_ready(coordinator, session);
+    receive_when_ready(*coordinator, session);
 }
 
 TEST(UserSession, ExitCommandStopsTheSession) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     enter(view, "/exit");
     session.receive_terminal_input();
@@ -328,12 +328,12 @@ TEST(UserSession, ExitCommandStopsTheSession) {
 
 TEST(UserSession, ClosedAgentEventChannelStopsTheSession) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
-    coordinator.shutdown();
+    UserSession session(view, *coordinator);
+    coordinator->shutdown();
 
     session.receive_responses();
 
@@ -342,11 +342,11 @@ TEST(UserSession, ClosedAgentEventChannelStopsTheSession) {
 
 TEST(UserSession, PollReportedTerminalClosureStopsTheSession) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     session.close_terminal();
 
@@ -355,11 +355,11 @@ TEST(UserSession, PollReportedTerminalClosureStopsTheSession) {
 
 TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     session.report_terminal_failure();
     session.render_if_needed();
@@ -371,9 +371,9 @@ TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
 
 TEST(UserSession, RendersTheGeneratingAgentByName) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(two_agents(), temporary.path);
+    auto coordinator = ChatCoordinator::from_backends_for_testing(two_agents(), temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     session.resize();
     session.render_if_needed();
@@ -387,7 +387,7 @@ TEST(UserSession, RendersTheGeneratingAgentByName) {
     EXPECT_TRUE(view.rendered_generating);
     EXPECT_EQ(view.rendered_agent_name, "Ismael");
 
-    receive_when_ready(coordinator, session);
+    receive_when_ready(*coordinator, session);
     session.render_if_needed();
     EXPECT_FALSE(view.rendered_generating);
     EXPECT_TRUE(view.rendered_agent_name.empty());
@@ -395,9 +395,9 @@ TEST(UserSession, RendersTheGeneratingAgentByName) {
 
 TEST(UserSession, RendersAddressingWheneverTheRoomHostsSeveralAgents) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(two_agents(), temporary.path);
+    auto coordinator = ChatCoordinator::from_backends_for_testing(two_agents(), temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     session.resize();
     session.render_if_needed();
@@ -413,17 +413,17 @@ TEST(UserSession, RendersAddressingWheneverTheRoomHostsSeveralAgents) {
 TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOtherwise) {
     TemporarySessionJournal temporary;
     {
-        ChatCoordinator coordinator(
+        auto coordinator = ChatCoordinator::from_backends_for_testing(
             test::one_backend(std::make_unique<SessionBackend>()), temporary.path);
         FakeSessionView view;
-        UserSession session(view, coordinator);
+        UserSession session(view, *coordinator);
         session.resize();
         session.render_if_needed();
         EXPECT_FALSE(view.rendered_show_addressing);
 
         enter(view, "Question");
         session.receive_terminal_input();
-        receive_when_ready(coordinator, session);
+        receive_when_ready(*coordinator, session);
         session.render_if_needed();
         EXPECT_FALSE(view.rendered_show_addressing);
     }
@@ -432,10 +432,10 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
     ConversationRestore restored = load_conversation_state(temporary.path);
     restored.entries.front().addressed_to = "departed";
     restored.entries.front().addressed_to_name = "Departed";
-    ChatCoordinator reopened(
+    auto reopened = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()), temporary.path, std::move(restored));
     FakeSessionView view;
-    UserSession session(view, reopened);
+    UserSession session(view, *reopened);
 
     session.resize();
     session.render_if_needed();
@@ -450,20 +450,20 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
 
 TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {
     TemporarySessionJournal temporary;
-    ChatCoordinator coordinator(
+    auto coordinator = ChatCoordinator::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path);
     FakeSessionView view;
-    UserSession session(view, coordinator);
+    UserSession session(view, *coordinator);
 
     enter(view, "Question");
     session.receive_terminal_input();
     session.shutdown();
 
-    EXPECT_FALSE(coordinator.generating());
+    EXPECT_FALSE(coordinator->generation_status().active);
     EXPECT_EQ(
         load_conversation_entries(temporary.path),
-        coordinator.conversation().entries());
+        coordinator->conversation().entries());
 }
 
 } // namespace

@@ -104,15 +104,15 @@ public:
         }
     }
 
-    [[nodiscard]] Statement prepare(std::string_view sql);
+    Statement prepare(std::string_view sql);
     template<typename First, typename... Rest>
-    [[nodiscard]] Statement prepare(
+    Statement prepare(
         std::string_view sql,
         const First& first,
         const Rest&... rest);
-    [[nodiscard]] int changes() const noexcept { return sqlite3_changes(handle_); }
-    [[nodiscard]] sqlite3* handle() const noexcept { return handle_; }
-    [[nodiscard]] const std::string& path() const noexcept { return path_; }
+    int changes() const noexcept { return sqlite3_changes(handle_); }
+    sqlite3* handle() const noexcept { return handle_; }
+    const std::string& path() const noexcept { return path_; }
     void rollback_noexcept() noexcept {
         (void)sqlite3_exec(handle_, "ROLLBACK", nullptr, nullptr, nullptr);
     }
@@ -126,7 +126,7 @@ public:
             + " (SQLite code " + std::to_string(code) + ")");
     }
 
-    [[nodiscard]] std::int64_t pragma_integer(std::string_view name);
+    std::int64_t pragma_integer(std::string_view name);
 
 private:
     sqlite3* handle_{};
@@ -196,7 +196,7 @@ public:
         value ? bind(index, *value) : bind_null(index);
     }
 
-    [[nodiscard]] bool step() {
+    bool step() {
         const int result = sqlite3_step(statement_);
         if (result == SQLITE_ROW) return true;
         if (result == SQLITE_DONE) return false;
@@ -210,11 +210,11 @@ public:
         }
     }
 
-    [[nodiscard]] std::int64_t integer(int column) const {
+    std::int64_t integer(int column) const {
         return sqlite3_column_int64(statement_, column);
     }
 
-    [[nodiscard]] std::string text(int column) const {
+    std::string text(int column) const {
         const unsigned char* value = sqlite3_column_text(statement_, column);
         if (!value) {
             throw std::runtime_error(
@@ -227,7 +227,7 @@ public:
         };
     }
 
-    [[nodiscard]] bool is_null(int column) const {
+    bool is_null(int column) const {
         return sqlite3_column_type(statement_, column) == SQLITE_NULL;
     }
 
@@ -287,7 +287,7 @@ private:
     Database* database_{};
 };
 
-[[nodiscard]] std::int64_t sqlite_id(std::uint64_t value, std::string_view name) {
+std::int64_t sqlite_id(std::uint64_t value, std::string_view name) {
     if (value == 0
         || value >= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         throw std::invalid_argument(std::string(name) + " is outside SQLite's positive integer range");
@@ -295,7 +295,7 @@ private:
     return static_cast<std::int64_t>(value);
 }
 
-[[nodiscard]] std::uint64_t unsigned_id(std::int64_t value, std::string_view name) {
+std::uint64_t unsigned_id(std::int64_t value, std::string_view name) {
     if (value <= 0) {
         throw std::runtime_error(
             "Session database contains an invalid " + std::string(name));
@@ -379,7 +379,7 @@ struct DurableState {
     RequestId next_request_id{};
 };
 
-[[nodiscard]] DurableState read_state(Database& database) {
+DurableState read_state(Database& database) {
     Statement state = database.prepare(
         "SELECT history_epoch, next_entry_id, next_request_id "
         "FROM state WHERE singleton = 1");
@@ -414,14 +414,14 @@ void validate_database(Database& database) {
     }
 }
 
-[[nodiscard]] EntryKind parse_kind(std::int64_t value) {
+EntryKind parse_kind(std::int64_t value) {
     if (value < 0 || value > 3) {
         throw std::runtime_error("Session database contains an unknown entry kind");
     }
     return static_cast<EntryKind>(value);
 }
 
-[[nodiscard]] CompletionStatus parse_status(std::int64_t value) {
+CompletionStatus parse_status(std::int64_t value) {
     if (value != 0 && value != 2 && value != 3) {
         throw std::runtime_error("Session database contains an unknown entry status");
     }
@@ -465,7 +465,7 @@ void validate_turn_entry(
     }
 }
 
-[[nodiscard]] std::int64_t current_epoch(Database& database) {
+std::int64_t current_epoch(Database& database) {
     return read_state(database).epoch;
 }
 
@@ -528,7 +528,7 @@ void insert_entry(
     statement.run();
 }
 
-[[nodiscard]] ConversationEntry read_entry(Statement& statement) {
+ConversationEntry read_entry(Statement& statement) {
     ConversationEntry entry{
         .id = unsigned_id(statement.integer(0), "conversation entry ID"),
         .kind = parse_kind(statement.integer(2)),
@@ -582,7 +582,7 @@ void finish_turn(
     transaction.commit();
 }
 
-[[nodiscard]] std::filesystem::path create_temporary_database_path(
+std::filesystem::path create_temporary_database_path(
     const std::filesystem::path& path) {
 
     const std::filesystem::path pattern_path =
@@ -614,7 +614,7 @@ void finish_turn(
     return temporary_path;
 }
 
-[[nodiscard]] bool publish_database_path(
+bool publish_database_path(
     const std::filesystem::path& temporary_path,
     const std::filesystem::path& path) {
 

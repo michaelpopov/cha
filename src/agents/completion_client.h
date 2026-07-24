@@ -19,23 +19,23 @@ public:
     CompletionClient(const CompletionClient&) = delete;
     CompletionClient& operator=(const CompletionClient&) = delete;
 
-    [[nodiscard]] RequestPayload prepare(
+    RequestPayload prepare(
         const CompletionRequest& request,
         const ConversationReadView& conversation) override;
-    [[nodiscard]] CompletionResult perform(
+    CompletionResult perform(
         RequestPayload payload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override;
-    [[nodiscard]] AgentInfo info() const override;
-    [[nodiscard]] const std::string& agent_id() const override;
+    AgentInfo info() const override;
+    const std::string& agent_id() const override;
 
 private:
     class CurlEasyHandle;
 
     void discover_model();
-    [[nodiscard]] std::string base_url() const;
-    [[nodiscard]] std::string endpoint() const;
-    [[nodiscard]] std::string models_endpoint() const;
+    std::string base_url() const;
+    std::string endpoint() const;
+    std::string models_endpoint() const;
 
     Config config_;
     std::string api_key_;

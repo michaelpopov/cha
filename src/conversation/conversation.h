@@ -80,10 +80,10 @@ public:
     ConversationReadView(ConversationReadView&&) = delete;
     ConversationReadView& operator=(ConversationReadView&&) = delete;
 
-    [[nodiscard]] std::span<const ConversationEntry> entries() const noexcept;
-    [[nodiscard]] std::size_t revision() const noexcept;
-    [[nodiscard]] std::optional<EntryId> open_entry_id() const noexcept;
-    [[nodiscard]] std::size_t history_epoch() const noexcept;
+    std::span<const ConversationEntry> entries() const noexcept;
+    std::size_t revision() const noexcept;
+    std::optional<EntryId> open_entry_id() const noexcept;
+    std::size_t history_epoch() const noexcept;
 
 private:
     friend class Conversation;
@@ -96,28 +96,28 @@ private:
     std::size_t history_epoch_{};
 };
 
-[[nodiscard]] ConversationEntry make_human_entry(
+ConversationEntry make_human_entry(
     EntryId id,
     ParticipantId addressed_to,
     std::string addressed_to_name,
     std::string text,
     std::optional<RequestId> request_id = std::nullopt);
-[[nodiscard]] ConversationEntry make_agent_entry(
+ConversationEntry make_agent_entry(
     EntryId id,
     ParticipantId participant_id,
     std::string display_name,
     AgentResponseText response,
     CompletionStatus status,
     std::optional<RequestId> request_id = std::nullopt);
-[[nodiscard]] ConversationEntry make_agent_entry(
+ConversationEntry make_agent_entry(
     EntryId id,
     ParticipantId participant_id,
     std::string display_name,
     std::string text,
     CompletionStatus status,
     std::optional<RequestId> request_id = std::nullopt);
-[[nodiscard]] ConversationEntry make_notice_entry(EntryId id, std::string text);
-[[nodiscard]] ConversationEntry make_error_entry(
+ConversationEntry make_notice_entry(EntryId id, std::string text);
+ConversationEntry make_error_entry(
     EntryId id,
     std::string text,
     std::optional<RequestId> request_id = std::nullopt,
@@ -152,10 +152,10 @@ public:
     void clear();
     void replace_entries(std::vector<ConversationEntry> entries);
 
-    [[nodiscard]] ConversationSnapshot snapshot() const;
-    [[nodiscard]] std::vector<ConversationEntry> entries() const;
-    [[nodiscard]] std::optional<EntryId> open_entry_id() const;
-    [[nodiscard]] ConversationReadView read() const;
+    ConversationSnapshot snapshot() const;
+    std::vector<ConversationEntry> entries() const;
+    std::optional<EntryId> open_entry_id() const;
+    ConversationReadView read() const;
 
 private:
     friend class ConversationReadView;

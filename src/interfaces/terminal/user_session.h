@@ -17,7 +17,7 @@ public:
         SessionView& view,
         ChatCoordinator& coordinator);
 
-    [[nodiscard]] bool running() const;
+    bool running() const;
     void render();
     void render_if_needed();
     void resize();

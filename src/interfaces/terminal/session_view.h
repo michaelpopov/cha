@@ -41,7 +41,7 @@ class SessionView {
 public:
     virtual ~SessionView() = default;
 
-    [[nodiscard]] virtual std::optional<SessionInput> read_input() = 0;
+    virtual std::optional<SessionInput> read_input() = 0;
     virtual void render(
         const Conversation& conversation,
         const InputEditor& editor,

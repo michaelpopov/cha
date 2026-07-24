@@ -26,7 +26,7 @@ struct AgentMessage {
 };
 
 // Projects typed transcript entries into protocol roles for one stable agent participant ID.
-[[nodiscard]] std::vector<AgentMessage> project_agent_context(
+std::vector<AgentMessage> project_agent_context(
     std::span<const ConversationEntry> entries,
     std::optional<EntryId> open_entry_id,
     std::string_view system_prompt,

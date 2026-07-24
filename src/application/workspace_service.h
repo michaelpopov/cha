@@ -10,32 +10,6 @@
 namespace cha {
 
 class ChatCoordinator;
-class WorkspaceService;
-
-// Holds one validated room and its loaded agent definitions for a selection run.
-class PreparedRoom {
-public:
-    ~PreparedRoom();
-
-    PreparedRoom(PreparedRoom&&) noexcept;
-    PreparedRoom& operator=(PreparedRoom&&) noexcept;
-    PreparedRoom(const PreparedRoom&) = delete;
-    PreparedRoom& operator=(const PreparedRoom&) = delete;
-
-    [[nodiscard]] std::vector<SessionSummary> sessions() const;
-    [[nodiscard]] std::unique_ptr<ChatCoordinator> create_session(
-        std::string label) const;
-    [[nodiscard]] std::unique_ptr<ChatCoordinator> open_session(
-        const std::string& session_id) const;
-
-private:
-    friend class WorkspaceService;
-    class Impl;
-
-    explicit PreparedRoom(std::unique_ptr<Impl> impl);
-
-    std::unique_ptr<Impl> impl_;
-};
 
 // Exposes workspace and session use cases independently of a user interface.
 class WorkspaceService {
@@ -46,9 +20,15 @@ public:
     WorkspaceService(const WorkspaceService&) = delete;
     WorkspaceService& operator=(const WorkspaceService&) = delete;
 
-    [[nodiscard]] std::vector<std::string> rooms() const;
-    [[nodiscard]] PreparedRoom prepare_room(
+    std::vector<std::string> rooms() const;
+    std::vector<SessionSummary> sessions(
         const std::string& room_name) const;
+    [[nodiscard]] std::unique_ptr<ChatCoordinator> create_session(
+        const std::string& room_name,
+        std::string label) const;
+    [[nodiscard]] std::unique_ptr<ChatCoordinator> open_session(
+        const std::string& room_name,
+        const std::string& session_id) const;
 
 private:
     class Impl;

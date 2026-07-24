@@ -27,11 +27,11 @@ public:
         std::string room_name,
         Clock clock = {});
 
-    [[nodiscard]] std::vector<Session> list() const;
+    std::vector<Session> list() const;
     [[nodiscard]] Session create(std::string label) const;
-    [[nodiscard]] std::filesystem::path database_path(const std::string& session_id) const;
+    std::filesystem::path database_path(const std::string& session_id) const;
     // Revalidates the embedded identity before returning the selected database.
-    [[nodiscard]] std::filesystem::path open_database_path(const std::string& session_id) const;
+    std::filesystem::path open_database_path(const std::string& session_id) const;
 
 private:
     std::filesystem::path directory_;

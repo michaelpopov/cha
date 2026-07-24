@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agents/agent_roster.h"
 #include "conversation/conversation.h"
 
 #include <cstddef>
@@ -53,7 +54,7 @@ void initialize_transcript_surface(TranscriptSurface& surface);
 // Tracks rendered conversation state and computes safe incremental update plans.
 class TranscriptRenderPlanner {
 public:
-    [[nodiscard]] TranscriptRenderPlan plan(const ConversationSnapshot& snapshot, int columns) const;
+    TranscriptRenderPlan plan(const ConversationSnapshot& snapshot, int columns) const;
     void commit(const ConversationSnapshot& snapshot, int columns);
 
 private:
@@ -72,11 +73,11 @@ public:
     void scroll_up();
     void scroll_down();
 
-    [[nodiscard]] int top() const;
-    [[nodiscard]] bool follows_output() const;
+    int top() const;
+    bool follows_output() const;
 
 private:
-    [[nodiscard]] int bottom() const;
+    int bottom() const;
 
     int transcript_lines_{};
     int output_height_{};
@@ -84,13 +85,18 @@ private:
     bool follows_output_{true};
 };
 
+// Whether transcript labels should include routing (multi-agent room or foreign history).
+bool show_addressing(
+    const AgentRoster& roster,
+    const Conversation& conversation);
+
 // Produces an unambiguous display label from an entry's semantic kind.
-[[nodiscard]] std::string transcript_entry_label(const ConversationEntry& entry, bool show_addressing);
+std::string transcript_entry_label(const ConversationEntry& entry, bool show_addressing);
 
 // Conservatively estimates pad rows for UTF-8 terminal text.
-[[nodiscard]] int layout_rows(std::string_view text, int columns, int initial_cells = 0);
+int layout_rows(std::string_view text, int columns, int initial_cells = 0);
 
 // Estimates pad rows for wide-character terminal input.
-[[nodiscard]] int layout_rows(std::wstring_view text, int columns, int initial_cells = 0);
+int layout_rows(std::wstring_view text, int columns, int initial_cells = 0);
 
 } // namespace cha

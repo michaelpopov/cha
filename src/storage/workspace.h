@@ -19,14 +19,14 @@ class Workspace {
 public:
     explicit Workspace(std::filesystem::path root = ".");
 
-    [[nodiscard]] std::vector<std::string> rooms() const;
-    [[nodiscard]] Room load_room(const std::string& name) const;
+    std::vector<std::string> rooms() const;
+    Room load_room(const std::string& name) const;
     // Resolves the selected persona directory without loading its agent configuration.
-    [[nodiscard]] std::filesystem::path persona_directory(std::string_view persona_name) const;
+    std::filesystem::path persona_directory(std::string_view persona_name) const;
 
 private:
-    [[nodiscard]] std::filesystem::path room_directory(const std::string& name) const;
-    [[nodiscard]] static std::vector<std::string> read_name_list(const std::filesystem::path& path);
+    std::filesystem::path room_directory(const std::string& name) const;
+    static std::vector<std::string> read_name_list(const std::filesystem::path& path);
 
     std::filesystem::path root_;
 };

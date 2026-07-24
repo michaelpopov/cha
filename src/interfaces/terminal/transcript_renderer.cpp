@@ -22,6 +22,24 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 
 } // namespace
 
+bool show_addressing(
+    const AgentRoster& roster,
+    const Conversation& conversation) {
+    if (roster.agents().size() > 1) {
+        return true;
+    }
+    const std::string_view sole = roster.first().id;
+    for (const ConversationEntry& entry : conversation.entries()) {
+        const bool foreign =
+            (entry.kind == EntryKind::agent && entry.participant_id != sole)
+            || (entry.kind == EntryKind::human && entry.addressed_to != sole);
+        if (foreign) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string transcript_entry_label(const ConversationEntry& entry, bool show_addressing) {
     switch (entry.kind) {
     case EntryKind::human:

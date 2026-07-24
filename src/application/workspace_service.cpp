@@ -27,6 +27,13 @@ std::vector<AgentDefinition> load_definitions(
     return load_agent_definitions(persona_directories, room.directory);
 }
 
+SessionRepository session_repository(
+    const Workspace& workspace,
+    const std::string& room_name) {
+    const Room room = workspace.load_room(room_name);
+    return SessionRepository(room.directory / "sessions", room.name);
+}
+
 SessionSummary summarize(const Session& stored) {
     return {
         .id = stored.id,
@@ -44,18 +51,6 @@ public:
     Workspace workspace;
 };
 
-class PreparedRoom::Impl {
-public:
-    Impl(const Workspace& workspace, std::string room_name)
-      : room(workspace.load_room(room_name)),
-        definitions(load_definitions(workspace, room)),
-        repository(room.directory / "sessions", room.name) {}
-
-    Room room;
-    std::vector<AgentDefinition> definitions;
-    SessionRepository repository;
-};
-
 WorkspaceService::WorkspaceService(std::filesystem::path root)
     : impl_(std::make_unique<Impl>(std::move(root))) {}
 
@@ -65,22 +60,11 @@ std::vector<std::string> WorkspaceService::rooms() const {
     return impl_->workspace.rooms();
 }
 
-PreparedRoom WorkspaceService::prepare_room(
+std::vector<SessionSummary> WorkspaceService::sessions(
     const std::string& room_name) const {
-    return PreparedRoom(std::make_unique<PreparedRoom::Impl>(
-        impl_->workspace,
-        room_name));
-}
-
-PreparedRoom::PreparedRoom(std::unique_ptr<Impl> impl)
-    : impl_(std::move(impl)) {}
-
-PreparedRoom::~PreparedRoom() = default;
-PreparedRoom::PreparedRoom(PreparedRoom&&) noexcept = default;
-PreparedRoom& PreparedRoom::operator=(PreparedRoom&&) noexcept = default;
-
-std::vector<SessionSummary> PreparedRoom::sessions() const {
-    const std::vector<Session> stored = impl_->repository.list();
+    const SessionRepository repository =
+        session_repository(impl_->workspace, room_name);
+    const std::vector<Session> stored = repository.list();
     std::vector<SessionSummary> result;
     result.reserve(stored.size());
     for (const Session& session : stored) {
@@ -89,21 +73,35 @@ std::vector<SessionSummary> PreparedRoom::sessions() const {
     return result;
 }
 
-std::unique_ptr<ChatCoordinator> PreparedRoom::create_session(
+std::unique_ptr<ChatCoordinator> WorkspaceService::create_session(
+    const std::string& room_name,
     std::string label) const {
-    const Session session = impl_->repository.create(std::move(label));
-    return std::make_unique<ChatCoordinator>(
-        impl_->definitions,
-        impl_->repository.database_path(session.id));
+    const Room room = impl_->workspace.load_room(room_name);
+    std::vector<AgentDefinition> definitions =
+        load_definitions(impl_->workspace, room);
+    const SessionRepository repository(
+        room.directory / "sessions",
+        room.name);
+    const Session session = repository.create(std::move(label));
+    return ChatCoordinator::from_definitions(
+        std::move(definitions),
+        repository.database_path(session.id));
 }
 
-std::unique_ptr<ChatCoordinator> PreparedRoom::open_session(
+std::unique_ptr<ChatCoordinator> WorkspaceService::open_session(
+    const std::string& room_name,
     const std::string& session_id) const {
+    const Room room = impl_->workspace.load_room(room_name);
+    std::vector<AgentDefinition> definitions =
+        load_definitions(impl_->workspace, room);
+    const SessionRepository repository(
+        room.directory / "sessions",
+        room.name);
     const std::filesystem::path database_path =
-        impl_->repository.open_database_path(session_id);
+        repository.open_database_path(session_id);
     ConversationRestore restored = load_conversation_state(database_path);
-    return std::make_unique<ChatCoordinator>(
-        impl_->definitions,
+    return ChatCoordinator::from_definitions(
+        std::move(definitions),
         database_path,
         std::move(restored));
 }

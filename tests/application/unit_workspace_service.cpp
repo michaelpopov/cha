@@ -62,55 +62,38 @@ TEST_F(WorkspaceServiceTest, ListsRoomsAndSessionsAsApplicationValues) {
     WorkspaceService workspace(root_);
 
     EXPECT_EQ(workspace.rooms(), (std::vector<std::string>{"lobby"}));
-    PreparedRoom room = workspace.prepare_room("lobby");
-    EXPECT_TRUE(room.sessions().empty());
+    EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
 TEST_F(WorkspaceServiceTest, CreatesAndReopensAChatSession) {
     WorkspaceService workspace(root_);
-    PreparedRoom room = workspace.prepare_room("lobby");
 
     std::unique_ptr<ChatCoordinator> created =
-        room.create_session("Browser-ready session");
+        workspace.create_session("lobby", "Browser-ready session");
     created->shutdown();
     created.reset();
 
     const std::vector<SessionSummary> sessions =
-        room.sessions();
+        workspace.sessions("lobby");
     ASSERT_EQ(sessions.size(), 1U);
     EXPECT_FALSE(sessions.front().id.empty());
     EXPECT_EQ(sessions.front().label, "Browser-ready session");
     EXPECT_TRUE(sessions.front().error.empty());
 
     std::unique_ptr<ChatCoordinator> reopened =
-        room.open_session(sessions.front().id);
+        workspace.open_session("lobby", sessions.front().id);
     EXPECT_TRUE(reopened->conversation().entries().empty());
     reopened->shutdown();
 }
 
-TEST_F(WorkspaceServiceTest, PreparedRoomReusesLoadedAgentDefinitions) {
-    WorkspaceService workspace(root_);
-    PreparedRoom room = workspace.prepare_room("lobby");
-    std::filesystem::remove(
-        root_ / "personas" / "guide" / "config.toml");
-    std::filesystem::remove(
-        root_ / "personas" / "guide" / "SYSTEM.md");
-
-    EXPECT_TRUE(room.sessions().empty());
-    std::unique_ptr<ChatCoordinator> created =
-        room.create_session("Uses cached definitions");
-    created->shutdown();
-}
-
 TEST_F(WorkspaceServiceTest, MapsInvalidStoredSessionDetails) {
     WorkspaceService workspace(root_);
-    PreparedRoom room = workspace.prepare_room("lobby");
     std::unique_ptr<ChatCoordinator> created =
-        room.create_session("Broken later");
+        workspace.create_session("lobby", "Broken later");
     created->shutdown();
     created.reset();
 
-    const std::vector<SessionSummary> healthy = room.sessions();
+    const std::vector<SessionSummary> healthy = workspace.sessions("lobby");
     ASSERT_EQ(healthy.size(), 1U);
     const std::string id = healthy.front().id;
     {
@@ -120,7 +103,7 @@ TEST_F(WorkspaceServiceTest, MapsInvalidStoredSessionDetails) {
         database << "not SQLite";
     }
 
-    const std::vector<SessionSummary> invalid = room.sessions();
+    const std::vector<SessionSummary> invalid = workspace.sessions("lobby");
     ASSERT_EQ(invalid.size(), 1U);
     EXPECT_EQ(invalid.front().id, id);
     EXPECT_EQ(invalid.front().label, id + " [invalid database]");

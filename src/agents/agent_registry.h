@@ -24,11 +24,12 @@ public:
     AgentRegistry(const AgentRegistry&) = delete;
     AgentRegistry& operator=(const AgentRegistry&) = delete;
 
-    [[nodiscard]] const AgentRoster& roster() const noexcept;
+    const AgentRoster& roster() const noexcept;
+    // False means the request was not accepted (busy/stopped).
     [[nodiscard]] bool submit(CompletionRequest request);
     void cancel();
     [[nodiscard]] ChannelReadStatus try_receive(AgentEvent& event);
-    [[nodiscard]] int notification_fd() const;
+    int notification_fd() const;
     void stop();
 
 private:

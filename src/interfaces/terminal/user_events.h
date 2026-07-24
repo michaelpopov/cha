@@ -5,11 +5,11 @@ namespace cha {
 // Represents terminal and agent-event readiness returned by the user-event polling boundary.
 class UserEvents {
 public:
-    [[nodiscard]] bool interrupted() const;
-    [[nodiscard]] bool failed() const;
-    [[nodiscard]] bool terminal_input_ready() const;
-    [[nodiscard]] bool terminal_closed() const;
-    [[nodiscard]] bool agent_event_ready() const;
+    bool interrupted() const;
+    bool failed() const;
+    bool terminal_input_ready() const;
+    bool terminal_closed() const;
+    bool agent_event_ready() const;
 
 private:
     enum class Status {
@@ -32,6 +32,6 @@ private:
     friend UserEvents wait_for_user_events(int agent_notification_fd);
 };
 
-[[nodiscard]] UserEvents wait_for_user_events(int agent_notification_fd);
+UserEvents wait_for_user_events(int agent_notification_fd);
 
 } // namespace cha

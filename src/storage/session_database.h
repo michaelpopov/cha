@@ -42,11 +42,11 @@ struct ConversationRestore {
     const std::filesystem::path& path,
     const SessionDatabaseMetadata& metadata);
 
-[[nodiscard]] SessionDatabaseMetadata read_session_database_metadata(
+SessionDatabaseMetadata read_session_database_metadata(
     const std::filesystem::path& path);
-[[nodiscard]] ConversationRestore load_conversation_state(
+ConversationRestore load_conversation_state(
     const std::filesystem::path& path);
-[[nodiscard]] std::vector<ConversationEntry> load_conversation_entries(
+std::vector<ConversationEntry> load_conversation_entries(
     const std::filesystem::path& path);
 
 // Persists typed transcript and turn-lifecycle changes as SQLite transactions.

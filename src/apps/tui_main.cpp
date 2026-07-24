@@ -9,6 +9,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 
 static int main_internal();
 
@@ -25,50 +26,34 @@ int main_internal() {
     cha::load_dotenv();
 
     cha::WorkspaceService workspace;
-    std::unique_ptr<cha::ChatCoordinator> coordinator;
     cha::Terminal terminal;
-    {
-        cha::StartupSelector selector(terminal);
-        const auto room_name = selector.select_room(workspace.rooms());
-        if (!room_name) {
-            return 0;
+    cha::StartupSelector selector(terminal);
+
+    const auto room_name = selector.select_room(workspace.rooms());
+    if (!room_name) {
+        throw std::runtime_error("Room selection cancelled");
+    }
+
+    const auto selected_session = selector.select_session(
+        workspace.sessions(*room_name));
+    if (!selected_session) {
+        throw std::runtime_error("Session selection cancelled");
+    }
+    if (!selected_session->error.empty()) {
+        throw std::runtime_error(selected_session->error);
+    }
+
+    std::unique_ptr<cha::ChatCoordinator> coordinator;
+    if (selected_session->id.empty()) {
+        const auto session_label = selector.prompt_session_name();
+        if (!session_label) {
+            throw std::runtime_error("Session name prompt cancelled");
         }
-        cha::PreparedRoom room = workspace.prepare_room(*room_name);
-        std::string selection_error;
-        while (true) {
-            const auto selected_session = selector.select_session(
-                room.sessions(),
-                selection_error);
-            if (!selected_session) {
-                return 0;
-            }
-            if (!selected_session->error.empty()) {
-                selection_error = selected_session->error;
-                continue;
-            }
-            if (selected_session->id.empty()) {
-                const auto session_label = selector.prompt_session_name();
-                if (!session_label) {
-                    return 0;
-                }
-                try {
-                    coordinator = room.create_session(*session_label);
-                    break;
-                } catch (const std::exception& error) {
-                    selection_error = error.what();
-                    continue;
-                }
-            }
-            try {
-                coordinator = room.open_session(selected_session->id);
-                break;
-            } catch (const std::exception& error) {
-                selection_error = error.what();
-            }
-        }
+        coordinator = workspace.create_session(*room_name, *session_label);
+    } else {
+        coordinator = workspace.open_session(*room_name, selected_session->id);
     }
 
     cha::run_user(terminal, *coordinator);
-
     return 0;
 }

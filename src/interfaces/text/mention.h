@@ -10,6 +10,6 @@ struct AddressedPrompt {
     std::string text;
 };
 
-[[nodiscard]] AddressedPrompt parse_addressed_prompt(std::string_view input);
+AddressedPrompt parse_addressed_prompt(std::string_view input);
 
 } // namespace cha

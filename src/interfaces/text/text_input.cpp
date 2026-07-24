@@ -15,7 +15,7 @@ CoordinatorUpdate handle_text_input(
         return update;
     }
     const Command command = parse_command(input);
-    if (coordinator.generating()) {
+    if (coordinator.generation_status().active) {
         if (command.kind == CommandKind::stop && command.argument.empty()) {
             update = coordinator.request_stop();
             update.clear_input = true;

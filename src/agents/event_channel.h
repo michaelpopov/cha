@@ -56,7 +56,7 @@ public:
     }
 
     // Waits for one value; after queued values drain, a closed channel keeps returning nullopt.
-    [[nodiscard]] std::optional<T> get() {
+    std::optional<T> get() {
         while (true) {
             {
                 std::lock_guard lock(mutex_);
@@ -107,7 +107,7 @@ public:
         closed_ = true;
     }
 
-    [[nodiscard]] int notification_fd() const {
+    int notification_fd() const {
         return notification_fd_;
     }
 
@@ -147,7 +147,7 @@ private:
         }
     }
 
-    [[nodiscard]] bool try_consume_notification() const {
+    bool try_consume_notification() const {
         eventfd_t value = 0;
         while (::eventfd_read(notification_fd_, &value) == -1) {
             if (errno == EINTR) {

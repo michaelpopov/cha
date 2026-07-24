@@ -58,15 +58,15 @@ public:
         require(curl_easy_setopt(handle_.get(), option, callback), operation);
     }
 
-    [[nodiscard]] CURLcode perform() { return curl_easy_perform(handle_.get()); }
+    CURLcode perform() { return curl_easy_perform(handle_.get()); }
 
-    [[nodiscard]] long response_code(std::string_view operation) {
+    long response_code(std::string_view operation) {
         long status = 0;
         require(curl_easy_getinfo(handle_.get(), CURLINFO_RESPONSE_CODE, &status), operation);
         return status;
     }
 
-    [[nodiscard]] std::string content_type(std::string_view operation) {
+    std::string content_type(std::string_view operation) {
         char* value = nullptr;
         require(curl_easy_getinfo(handle_.get(), CURLINFO_CONTENT_TYPE, &value), operation);
         return value ? value : "";
@@ -130,7 +130,7 @@ struct ResponseContext {
     std::string protocol_error;
     std::exception_ptr error;
 
-    [[nodiscard]] bool received_output() const noexcept {
+    bool received_output() const noexcept {
         return received_reasoning || received_answer;
     }
 };

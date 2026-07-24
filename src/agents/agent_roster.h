@@ -20,11 +20,11 @@ class AgentRoster {
 public:
     explicit AgentRoster(std::vector<AgentInfo> agents);
 
-    [[nodiscard]] const std::vector<AgentInfo>& agents() const noexcept;
-    [[nodiscard]] const AgentInfo& first() const;
-    [[nodiscard]] const AgentInfo* find(std::string_view id) const;
-    [[nodiscard]] HandleResolution resolve_handle(std::string_view handle) const;
-    [[nodiscard]] std::string handle_list() const;
+    const std::vector<AgentInfo>& agents() const noexcept;
+    const AgentInfo& first() const;
+    const AgentInfo* find(std::string_view id) const;
+    HandleResolution resolve_handle(std::string_view handle) const;
+    std::string handle_list() const;
 
 private:
     std::vector<AgentInfo> agents_;

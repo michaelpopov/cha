@@ -1,6 +1,7 @@
 #include "interfaces/terminal/user_session.h"
 
 #include "application/chat_coordinator.h"
+#include "interfaces/terminal/transcript_renderer.h"
 #include "interfaces/text/text_input.h"
 
 #include <utility>
@@ -21,8 +22,11 @@ bool UserSession::running() const {
 
 void UserSession::render() {
     view_.render(
-        coordinator_.conversation(), editor_, coordinator_.generation_status(),
-        coordinator_.show_addressing(), notice_);
+        coordinator_.conversation(),
+        editor_,
+        coordinator_.generation_status(),
+        show_addressing(coordinator_.roster(), coordinator_.conversation()),
+        notice_);
     render_needed_ = false;
 }
 
@@ -118,7 +122,7 @@ void UserSession::handle_input(const SessionInput& input) {
         break;
     case SessionInputKind::escape:
     case SessionInputKind::interrupt:
-        if (coordinator_.generating()) {
+        if (coordinator_.generation_status().active) {
             request_stop();
         } else if (input.kind == SessionInputKind::interrupt) {
             running_ = false;

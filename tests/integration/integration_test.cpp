@@ -3,6 +3,7 @@
 #include "agents/agent_registry.h"
 #include "application/chat_coordinator.h"
 #include "agents/config.h"
+#include "interfaces/terminal/transcript_renderer.h"
 #include "interfaces/text/text_input.h"
 #include "storage/agent_definition_loader.h"
 #include "storage/config_loader.h"
@@ -198,7 +199,7 @@ std::string answer(std::string_view text) {
 }
 
 void run_until_idle(ChatCoordinator& coordinator) {
-    while (coordinator.generating()) {
+    while (coordinator.generation_status().active) {
         pollfd descriptor{coordinator.notification_fd(), POLLIN, 0};
         if (::poll(&descriptor, 1, 5000) != 1) {
             throw std::runtime_error("Timed out waiting for an integration turn");
@@ -251,17 +252,17 @@ TEST(ReasoningIntegration, StreamsLiveReasoningButPersistsAndReplaysOnlyAnswer) 
 
     TemporarySession session;
     {
-        ChatCoordinator coordinator(std::move(definitions), session.path);
-        (void)handle_text_input(coordinator, "First question");
-        run_until_idle(coordinator);
+        auto coordinator = ChatCoordinator::from_definitions(std::move(definitions), session.path);
+        (void)handle_text_input(*coordinator, "First question");
+        run_until_idle(*coordinator);
         const std::vector<ConversationEntry> live =
-            coordinator.conversation().entries();
+            coordinator->conversation().entries();
         ASSERT_EQ(live.size(), 2U);
         EXPECT_EQ(live.back().reasoning_text, reasoning_marker);
         EXPECT_EQ(live.back().text, "First answer");
 
-        (void)handle_text_input(coordinator, "Second question");
-        run_until_idle(coordinator);
+        (void)handle_text_input(*coordinator, "Second question");
+        run_until_idle(*coordinator);
     }
     server.join();
 
@@ -294,13 +295,13 @@ TEST(ReasoningIntegration, ParsesNonStreamingStructuredReasoning) {
         ReasoningFormat::reasoning;
 
     TemporarySession session;
-    ChatCoordinator coordinator(std::move(definitions), session.path);
-    (void)handle_text_input(coordinator, "Question");
-    run_until_idle(coordinator);
+    auto coordinator = ChatCoordinator::from_definitions(std::move(definitions), session.path);
+    (void)handle_text_input(*coordinator, "Question");
+    run_until_idle(*coordinator);
     server.join();
 
     const std::vector<ConversationEntry> live =
-        coordinator.conversation().entries();
+        coordinator->conversation().entries();
     ASSERT_EQ(live.size(), 2U);
     EXPECT_EQ(live.back().reasoning_text, "Non-stream thought");
     EXPECT_EQ(live.back().text, "Non-stream answer");
@@ -328,19 +329,19 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
 
     TemporarySession session;
     {
-        ChatCoordinator coordinator(std::move(definitions), session.path);
-        ASSERT_EQ(coordinator.roster().first().id, "cheburashka");
-        EXPECT_TRUE(coordinator.show_addressing());
+        auto coordinator = ChatCoordinator::from_definitions(std::move(definitions), session.path);
+        ASSERT_EQ(coordinator->roster().first().id, "cheburashka");
+        EXPECT_TRUE(show_addressing(coordinator->roster(), coordinator->conversation()));
 
         // No mention: the first persona in personas.list answers.
-        CoordinatorUpdate update = handle_text_input(coordinator, "Who are you?");
+        CoordinatorUpdate update = handle_text_input(*coordinator, "Who are you?");
         ASSERT_TRUE(update.clear_input);
-        run_until_idle(coordinator);
+        run_until_idle(*coordinator);
 
         // An addressed prompt reaches the mentioned agent instead.
-        update = handle_text_input(coordinator, "@Ismael, and you?");
+        update = handle_text_input(*coordinator, "@Ismael, and you?");
         ASSERT_TRUE(update.clear_input);
-        run_until_idle(coordinator);
+        run_until_idle(*coordinator);
     }
     cheburashka_server.join();
     ismael_server.join();
@@ -395,11 +396,11 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
 
     TemporarySession session;
     {
-        ChatCoordinator coordinator(std::move(definitions), session.path);
-        (void)handle_text_input(coordinator, "Who are you?");
-        run_until_idle(coordinator);
-        (void)handle_text_input(coordinator, "@Ismael and you?");
-        run_until_idle(coordinator);
+        auto coordinator = ChatCoordinator::from_definitions(std::move(definitions), session.path);
+        (void)handle_text_input(*coordinator, "Who are you?");
+        run_until_idle(*coordinator);
+        (void)handle_text_input(*coordinator, "@Ismael and you?");
+        run_until_idle(*coordinator);
     }
     cheburashka_server.join();
 
@@ -408,19 +409,19 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
     ASSERT_EQ(restored.entries.size(), 4U);
     ASSERT_TRUE(restored.interrupted_turns.empty());
 
-    ChatCoordinator reopened(
+    auto reopened = ChatCoordinator::from_definitions(
         std::vector<AgentDefinition>{std::move(ismael_only)},
         session.path,
         std::move(restored));
-    EXPECT_EQ(reopened.roster().agents().size(), 1U);
-    EXPECT_TRUE(reopened.show_addressing())
+    EXPECT_EQ(reopened->roster().agents().size(), 1U);
+    EXPECT_TRUE(show_addressing(reopened->roster(), reopened->conversation()))
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
-        handle_text_input(reopened, "@Cheburashka are you there?").notice,
+        handle_text_input(*reopened, "@Cheburashka are you there?").notice,
         "Unknown agent @Cheburashka. Agents in this room: @Ismael");
 
-    (void)handle_text_input(reopened, "What did he say?");
-    run_until_idle(reopened);
+    (void)handle_text_input(*reopened, "What did he say?");
+    run_until_idle(*reopened);
     ismael_server.join();
 
     ASSERT_EQ(ismael_server.requests().size(), 2U);

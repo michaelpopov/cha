@@ -23,6 +23,6 @@ struct Command {
     std::string handle;
 };
 
-[[nodiscard]] Command parse_command(std::string_view input);
+Command parse_command(std::string_view input);
 
 } // namespace cha

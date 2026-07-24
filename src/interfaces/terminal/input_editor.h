@@ -20,14 +20,14 @@ public:
     void continue_line();
     void clear();
 
-    [[nodiscard]] bool ends_with_continuation() const;
-    [[nodiscard]] const std::wstring& text() const;
-    [[nodiscard]] std::size_t cursor() const;
-    [[nodiscard]] std::string value() const;
+    bool ends_with_continuation() const;
+    const std::wstring& text() const;
+    std::size_t cursor() const;
+    std::string value() const;
 
 private:
-    [[nodiscard]] std::size_t line_start(std::size_t position) const;
-    [[nodiscard]] std::size_t line_end(std::size_t position) const;
+    std::size_t line_start(std::size_t position) const;
+    std::size_t line_end(std::size_t position) const;
 
     std::wstring text_;
     std::size_t cursor_{};

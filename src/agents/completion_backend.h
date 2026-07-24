@@ -37,15 +37,15 @@ class CompletionBackend {
 public:
     virtual ~CompletionBackend() = default;
 
-    [[nodiscard]] virtual RequestPayload prepare(
+    virtual RequestPayload prepare(
         const CompletionRequest& request,
         const ConversationReadView& conversation) = 0;
-    [[nodiscard]] virtual CompletionResult perform(
+    virtual CompletionResult perform(
         RequestPayload payload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) = 0;
-    [[nodiscard]] virtual AgentInfo info() const = 0;
-    [[nodiscard]] virtual const std::string& agent_id() const = 0;
+    virtual AgentInfo info() const = 0;
+    virtual const std::string& agent_id() const = 0;
 };
 
 } // namespace cha

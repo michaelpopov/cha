@@ -7,6 +7,6 @@
 namespace cha {
 
 // Loads one persisted agent configuration from TOML.
-[[nodiscard]] Config load_config(const std::filesystem::path& path);
+Config load_config(const std::filesystem::path& path);
 
 } // namespace cha

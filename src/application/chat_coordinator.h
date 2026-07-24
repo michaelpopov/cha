@@ -2,8 +2,9 @@
 
 #include "agents/agent_definition.h"
 #include "agents/agent_registry.h"
-#include "conversation/conversation.h"
 #include "application/generation_status.h"
+#include "application/turn_engine.h"
+#include "conversation/conversation.h"
 #include "storage/session_database.h"
 
 #include <filesystem>
@@ -22,26 +23,36 @@ struct CoordinatorUpdate {
     std::optional<std::string> notice;
 };
 
+// UI-facing owner of one live chat session.
+//
+// Has two faces on purpose:
+// 1. Session state — read-only accessors over conversation, agents, and generation.
+// 2. Session commands — operations that mutate the session and return CoordinatorUpdate
+//    side effects for the UI (render / clear input / notice / end session).
 class ChatCoordinator {
 public:
-    ChatCoordinator(
+    [[nodiscard]] static std::unique_ptr<ChatCoordinator> from_definitions(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
         ConversationRestore restored = {});
-    ChatCoordinator(
+    [[nodiscard]] static std::unique_ptr<ChatCoordinator> from_backends_for_testing(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         std::filesystem::path database_path,
         ConversationRestore restored = {});
+
     ~ChatCoordinator();
     ChatCoordinator(const ChatCoordinator&) = delete;
     ChatCoordinator& operator=(const ChatCoordinator&) = delete;
 
-    [[nodiscard]] const Conversation& conversation() const;
-    [[nodiscard]] bool generating() const;
-    [[nodiscard]] GenerationStatus generation_status() const;
-    [[nodiscard]] bool show_addressing() const;
-    [[nodiscard]] const AgentRoster& roster() const;
-    [[nodiscard]] int notification_fd() const;
+    // --- Session state (read model) -------------------------------------------
+    const Conversation& conversation() const { return conversation_; }
+    GenerationStatus generation_status() const { return turns_.generation_status(); }
+    const AgentRoster& roster() const { return registry_.roster(); }
+    const ParticipantId& default_agent_id() const { return default_agent_id_; }
+    int notification_fd() const { return registry_.notification_fd(); }
+
+    // --- Session commands (write model → UI side effects) ---------------------
+    // Return value carries render/end/clear/notice side effects the UI must apply.
     [[nodiscard]] CoordinatorUpdate submit_prompt(
         std::string text,
         std::string handle = {});
@@ -55,40 +66,24 @@ public:
     void shutdown();
 
 private:
-    struct ActiveTurn {
-        RequestId request_id{};
-        EntryId response_entry_id{};
-        ParticipantId agent_id;
-        std::string agent_name;
-        ResponsePhase phase{ResponsePhase::waiting};
-    };
+    ChatCoordinator(
+        std::vector<AgentDefinition> definitions,
+        std::filesystem::path database_path,
+        ConversationRestore restored);
+    ChatCoordinator(
+        std::vector<std::unique_ptr<CompletionBackend>> backends,
+        std::filesystem::path database_path,
+        ConversationRestore restored);
+
     void initialize(ConversationRestore restored);
-    [[nodiscard]] CoordinatorUpdate submit(
-        std::string text,
-        std::string handle);
-    void clear();
-    [[nodiscard]] CoordinatorUpdate generation_in_progress() const;
-    [[nodiscard]] std::string handle_notice(
-        std::string_view handle,
-        const HandleResolution& resolution) const;
-    [[nodiscard]] std::string roster_notice() const;
-    void apply(const AgentDelta&, CoordinatorUpdate&);
-    void apply(const AgentCompleted&, CoordinatorUpdate&);
-    void apply(const AgentCancelled&, CoordinatorUpdate&);
-    void apply(const AgentFailed&, CoordinatorUpdate&);
-    void fail_active_turn(std::string message, ParticipantId participant_id, CoordinatorUpdate&);
-    void finish_response_entry(CompletionStatus status);
-    [[nodiscard]] ConversationEntry response_entry(CompletionStatus status) const;
-    [[nodiscard]] bool matches(RequestId request_id) const;
+    CoordinatorUpdate busy_notice() const;
+    static void merge_turn(CoordinatorUpdate& update, TurnUpdate turn);
 
     Conversation conversation_;
     ConversationJournal journal_;
     AgentRegistry registry_;
+    TurnEngine turns_;
     ParticipantId default_agent_id_;
-    RequestId next_request_id_{1};
-    EntryId next_entry_id_{1};
-    std::optional<ActiveTurn> active_;
-    bool show_addressing_{};
     bool shutdown_{};
 };
 
