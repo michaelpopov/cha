@@ -76,31 +76,33 @@ target_compile_definitions(
 )
 
 add_library(cha_core
-    src/agent_identity.cpp
-    src/agent_definition.cpp
-    src/agent_registry.cpp
-    src/agent_roster.cpp
-    src/command.cpp
-    src/chat_coordinator.cpp
-    src/completion_client.cpp
-    src/config.cpp
-    src/conversation.cpp
-    src/environment.cpp
-    src/input_editor.cpp
-    src/mention.cpp
-    src/path_name.cpp
-    src/session_database.cpp
-    src/agent_context.cpp
-    src/session_repository.cpp
-    src/startup_selector.cpp
-    src/terminal.cpp
-    src/text.cpp
-    src/transcript_renderer.cpp
-    src/tui.cpp
-    src/user.cpp
-    src/user_events.cpp
-    src/user_session.cpp
-    src/workspace.cpp
+    src/util/environment.cpp
+    src/util/path_name.cpp
+    src/util/text.cpp
+    src/conversation/conversation.cpp
+    src/agents/agent_context.cpp
+    src/agents/agent_identity.cpp
+    src/agents/agent_registry.cpp
+    src/agents/agent_roster.cpp
+    src/agents/completion_client.cpp
+    src/application/chat_coordinator.cpp
+    src/application/workspace_service.cpp
+    src/storage/agent_definition_loader.cpp
+    src/storage/config_loader.cpp
+    src/storage/session_database.cpp
+    src/storage/session_repository.cpp
+    src/storage/workspace.cpp
+    src/interfaces/text/command.cpp
+    src/interfaces/text/mention.cpp
+    src/interfaces/text/text_input.cpp
+    src/interfaces/terminal/input_editor.cpp
+    src/interfaces/terminal/startup_selector.cpp
+    src/interfaces/terminal/terminal.cpp
+    src/interfaces/terminal/transcript_renderer.cpp
+    src/interfaces/terminal/tui.cpp
+    src/interfaces/terminal/user.cpp
+    src/interfaces/terminal/user_events.cpp
+    src/interfaces/terminal/user_session.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
@@ -135,7 +137,7 @@ endfunction()
 
 cha_enable_warnings(cha_core)
 
-add_executable(cha src/main.cpp)
+add_executable(cha src/apps/tui_main.cpp)
 target_link_libraries(cha PRIVATE cha_core)
 cha_enable_warnings(cha)
 
@@ -148,32 +150,36 @@ if(BUILD_TESTING)
     FetchContent_MakeAvailable(googletest)
 
     add_executable(cha_tests
-        tests/unit_agent_definition.cpp
-        tests/unit_agent_registry.cpp
-        tests/unit_agent_roster.cpp
-        tests/unit_mention.cpp
-        tests/unit_command.cpp
-        tests/unit_config.cpp
-        tests/unit_chat_coordinator.cpp
-        tests/unit_completion_client.cpp
-        tests/unit_conversation.cpp
-        tests/unit_environment.cpp
-        tests/unit_event_channel.cpp
-        tests/unit_text.cpp
-        tests/unit_transcript_renderer.cpp
-        tests/unit_agent_context.cpp
-        tests/unit_user.cpp
-        tests/unit_user_session.cpp
-        tests/unit_workspace.cpp
+        tests/util/unit_environment.cpp
+        tests/util/unit_text.cpp
+        tests/conversation/unit_conversation.cpp
+        tests/agents/unit_agent_context.cpp
+        tests/agents/unit_agent_registry.cpp
+        tests/agents/unit_agent_roster.cpp
+        tests/agents/unit_completion_client.cpp
+        tests/agents/unit_event_channel.cpp
+        tests/application/unit_chat_coordinator.cpp
+        tests/application/unit_workspace_service.cpp
+        tests/storage/unit_agent_definition_loader.cpp
+        tests/storage/unit_config_loader.cpp
+        tests/storage/unit_workspace.cpp
+        tests/interfaces/text/unit_command.cpp
+        tests/interfaces/text/unit_mention.cpp
+        tests/interfaces/text/unit_text_input.cpp
+        tests/interfaces/terminal/unit_transcript_renderer.cpp
+        tests/interfaces/terminal/unit_user.cpp
+        tests/interfaces/terminal/unit_user_session.cpp
     )
     # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
     target_link_libraries(cha_tests PRIVATE cha_core cha_sqlite3 GTest::gtest_main)
+    target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     cha_enable_warnings(cha_tests)
 
     # The integration suite, run by "make itest": it drives the real stack against
     # the checked-in workspace, including its live endpoint.
-    add_executable(itest tests/integration_test.cpp)
+    add_executable(itest tests/integration/integration_test.cpp)
     target_link_libraries(itest PRIVATE cha_core GTest::gtest_main)
+    target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     cha_enable_warnings(itest)
     target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
 

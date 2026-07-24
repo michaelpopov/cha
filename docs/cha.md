@@ -6,6 +6,7 @@ maintenance guide; user-facing setup and command documentation lives in
 [README.md](../README.md).
 
 - [Architecture](#architecture)
+- [Source organization and dependency rules](#source-organization-and-dependency-rules)
 - [Startup and workspace loading](#startup-and-workspace-loading)
 - [Multi-agent model](#multi-agent-model)
 - [Conversation and context projection](#conversation-and-context-projection)
@@ -27,7 +28,7 @@ a time, then returns typed events through one shared channel.
 
 ```text
 Startup
-  Workspace + StartupSelector + SessionRepository + load_agent_definitions
+  WorkspaceService + PreparedRoom + StartupSelector
                                       |
                                       v
 Main/UI thread                  ChatCoordinator
@@ -49,8 +50,8 @@ Main/UI thread                  ChatCoordinator
 
 The ownership graph is:
 
-- `main()` owns the `Terminal`, selected room/session state, and
-  `ChatCoordinator`.
+- `main()` owns the `WorkspaceService`, `Terminal`, prepared room during
+  selection, and selected `ChatCoordinator`.
 - `run_user()` owns a `Tui` and `UserSession` for the chat loop.
 - `ChatCoordinator` owns the in-memory `Conversation`, SQLite
   `ConversationJournal`, `AgentRegistry`, current default agent, and optional
@@ -123,21 +124,85 @@ The registry's execution loop obtains a short-lived `ConversationReadView`
 while preparing a request. That view holds the mutex and exposes a non-owning
 span; it is destroyed before network I/O and before any delta is published.
 
+## Source organization and dependency rules
+
+The source tree is organized by responsibility while remaining one build
+target. Directories communicate intended ownership; they are not separate
+static libraries. Every non-entry-point `.cpp` is compiled independently and
+linked into `cha_core`.
+
+```text
+src/
+  util/                  shared low-level helpers
+  conversation/          transcript and turn value model
+  agents/                agent metadata, execution, and provider transport
+  storage/               workspace/config loading and session persistence
+  application/           reusable use cases and conversation coordination
+  interfaces/
+    text/                 slash-command and leading-mention protocol
+    terminal/             ncurses adapter and terminal session flow
+  apps/                   executable composition roots
+```
+
+Project includes are qualified from the `src/` include root, for example
+`"conversation/conversation.h"` and `"application/chat_coordinator.h"`.
+The intended dependency direction is below; an arrow means “depends on”:
+
+```text
+apps
+  |--> interfaces/terminal --+--> interfaces/text --> application
+  |                          +--> application
+  |                          `--> conversation
+  |
+  `--> application ----------+--> agents -------> conversation
+                             +--> storage ------> conversation
+                             |       `---------> agents
+                             `--> conversation
+
+agents, storage, interfaces/text, and apps may also depend on util.
+```
+
+More precisely:
+
+- terminal and future HTTP interfaces may call `application/` and read
+  presentation-safe values from `conversation/`;
+- interfaces do not access agent execution or storage repositories directly;
+- `application/` coordinates `agents/`, `storage/`, and `conversation/`;
+- `storage/` may construct agent value types and restore conversation values;
+- `agents/` may read conversation state but does not depend on application,
+  storage, or interfaces;
+- `conversation/` and `util/` do not depend on higher layers.
+
+When the web interface is added, an `interfaces/http/` adapter can translate
+HTTP requests and responses around the same structured application operations.
+It should not load workspace files, open repositories, or invoke completion
+backends directly.
+
+The terminal renderer consumes `ConversationSnapshot`, `ConversationEntry`,
+and `GenerationStatus` directly. Mirroring the transcript into presentation
+DTOs would add no useful isolation. Storage-specific values do not cross the
+application boundary: `PreparedRoom` converts repository `Session` records to
+`SessionSummary` before a selector or future HTTP interface sees them.
+
+The tests mirror the source organization. Cross-layer behavior belongs in
+`tests/integration/`; focused adapter behavior such as textual dispatch belongs
+under `tests/interfaces/`, while coordinator tests call its structured
+application methods directly.
+
 ## Startup and workspace loading
 
-`main()` performs these steps:
+`main()` and `WorkspaceService` perform these steps:
 
 1. Load optional `.env` values without replacing existing process variables.
-2. Construct `Workspace` and `Terminal`.
-3. Let `StartupSelector` choose a room from `rooms/rooms.list`.
-4. Parse the room's ordered `personas.list`.
-5. Resolve every listed `personas/<name>` directory and load all agent
-   definitions.
-6. Let the user choose or create a session in `<room>/sessions`.
-7. Fully restore an existing database, if selected.
-8. Construct `ChatCoordinator`; production backend construction may perform
+2. Construct `WorkspaceService` and `Terminal`.
+3. Let `StartupSelector` choose a room returned by the service.
+4. Prepare the selected room by resolving its ordered personas and loading all
+   agent definitions once.
+5. Let the selector choose or create a session through the prepared room.
+6. Fully restore an existing database, if selected.
+7. Construct `ChatCoordinator`; production backend construction may perform
    model discovery before the execution thread starts.
-9. Enter `run_user()`.
+8. Enter `run_user()`.
 
 The workspace shape is:
 
@@ -160,15 +225,26 @@ workspace/
 Blank lines and lines beginning with `#` are ignored in both list files. Names
 must be safe single path components. `personas.list` must contain at least one
 entry and cannot repeat a persona directory name. `Workspace::load_room`
-parses the room and list; persona-directory existence is checked when `main()`
-resolves each entry.
+parses the room and list; persona-directory existence is checked when
+`WorkspaceService` resolves each entry.
 
-For each persona, `load_agent_definition()` loads `config.toml`, reads
-`SYSTEM.md`, reads the selected room's `USER.md`, and joins the prompts with two
-newlines. `load_agent_definitions()` preserves list order. `AgentRoster` is the
-single boundary for a non-empty roster and for valid, unique configured agent
-IDs and ASCII-case-insensitive names, including when tests inject backends
-without workspace loading.
+`Config` and `AgentDefinition` are agent-owned value types. Their disk loaders
+live under `storage/`: `load_config()` parses `config.toml`, while
+`load_agent_definition()` reads `SYSTEM.md` and the selected room's `USER.md`
+and joins the prompts with two newlines. `load_agent_definitions()` preserves
+list order.
+
+`WorkspaceService::prepare_room()` constructs one move-only `PreparedRoom`.
+Preparation resolves and validates the room and loads its complete ordered
+agent definitions once. The prepared room retains those definitions and its
+`SessionRepository`, so listing retries and a later create/open operation do
+not reread every persona file. It exposes application `SessionSummary` values
+to `StartupSelector`; repository paths and `Session` records remain inside the
+application/storage boundary.
+
+`AgentRoster` is the single boundary for a non-empty roster and for valid,
+unique configured agent IDs and ASCII-case-insensitive names, including when
+tests inject backends without workspace loading.
 
 Agent IDs are non-empty ASCII letters, digits, underscores, or hyphens. Display
 names are non-empty, contain no whitespace, cannot begin with `@` or `/`, and
@@ -194,8 +270,8 @@ outside the coordinator.
 
 ### Prompt addressing
 
-`parse_addressed_prompt()` recognizes an optional leading mention after leading
-whitespace:
+The shared text interface's `parse_addressed_prompt()` recognizes an optional
+leading mention after leading whitespace:
 
 - `@Name prompt` addresses `Name` and stores only `prompt`.
 - No mention uses the current default agent.
@@ -208,9 +284,12 @@ Handle resolution tries, in order:
 2. exact name after removing trailing `,.;:!?`;
 3. a unique ASCII-case-insensitive prefix.
 
-Unknown and ambiguous handles are rejected with a roster-aware notice. The
-input is not cleared, so the user can correct it. A mention with an empty body
-is also rejected without clearing the input.
+The text adapter passes structured prompt text and the optional handle to
+`ChatCoordinator::submit_prompt()`. A future HTTP adapter can provide those
+fields directly without parsing terminal syntax. Unknown and ambiguous handles
+are rejected with a roster-aware notice. The input is not cleared, so the user
+can correct it. A mention with an empty body is also rejected without clearing
+the input.
 
 The resolved target is stored on the human transcript entry as both:
 
@@ -321,8 +400,8 @@ answers are attributed input.
 
 For an idle coordinator:
 
-1. Parse commands and addressing, resolve the target agent, and reject an empty
-   prompt.
+1. Accept structured prompt text and an optional handle from an interface,
+   resolve the target agent, and reject an empty prompt.
 2. Allocate a request ID and human entry ID.
 3. Commit the `started` turn and prompt entry in one SQLite transaction.
 4. Add the prompt to the in-memory conversation.
@@ -333,12 +412,12 @@ The database commit intentionally precedes the screen and execution request.
 Once a started turn is durable, normal error paths drive it to a terminal
 state.
 
-The coordinator is the only conversation writer and accepts no mutating command
-while a turn is active. `AgentRegistry` routes the request by its already
-resolved target, so the execution thread does not revalidate coordinator-owned
-request and conversation invariants. It prepares an owning `RequestPayload`
-under `ConversationReadView`, releases the lock, and calls the synchronous
-backend.
+The coordinator is the only conversation writer and rejects new structured
+mutations while a turn is active. `AgentRegistry` routes the request by its
+already resolved target, so the execution thread does not revalidate
+coordinator-owned request and conversation invariants. It prepares an owning
+`RequestPayload` under `ConversationReadView`, releases the lock, and calls the
+synchronous backend.
 
 ### Streaming success
 
@@ -403,7 +482,7 @@ needs a stable turn correlation key.
 
 ## Commands and terminal behavior
 
-When idle, the coordinator accepts:
+When idle, the shared text-input adapter translates:
 
 - `/clear`: advance the durable history epoch, empty visible history, and reset
   addressing labels based on current roster size.
@@ -419,7 +498,17 @@ Command output is never added to the conversation or session database. Unknown
 commands and commands with unexpected arguments likewise produce transient
 status notices. While a turn is active, only bare `/stop` is accepted; other
 submitted text remains in the editor and produces a “Generation in progress”
-notice.
+notice. This ordering intentionally preserves `/stop value` as a draft during
+generation, while the same input when idle is rejected as an unexpected
+argument and cleared.
+
+`handle_text_input()` owns this textual dispatch policy. It combines
+`parse_command()` and `parse_addressed_prompt()`, then calls structured
+`ChatCoordinator` operations. `/exit` belongs entirely to the interface; it
+never reaches the coordinator. The coordinator does not depend on terminal or
+text-interface headers, so a future HTTP interface can invoke the same
+operations directly. The shared generation-in-progress notice is defined with
+`GenerationStatus` so application and adapter responses cannot drift.
 
 `UserSession` is the UI state machine. It owns the `InputEditor`, applies
 `CoordinatorUpdate` values, and coalesces rendering behind `render_needed`.
@@ -515,9 +604,10 @@ that per-candidate error boundary, so even a malformed `.sqlite3` filename
 cannot abort the whole listing.
 
 Transcript-sized validation is deferred until selection. `main()` calls
-`open_database_path()` for metadata identity and immediately calls
-`load_conversation_state()`, which validates durable state, the turn/prompt
-invariant, and each restored entry. Before accepting writes,
+`PreparedRoom::open_session()`, which calls `open_database_path()` for metadata
+identity and immediately calls `load_conversation_state()`. Loading validates
+durable state, the turn/prompt invariant, and each restored entry. Before
+accepting writes,
 `ConversationJournal` validates database identity and structure; SQLite
 constraints enforce entry semantics.
 
@@ -535,7 +625,9 @@ Creation writes a hidden temporary sibling, initializes schema and metadata in
 one transaction, then publishes the final path with a hard link that cannot
 replace an existing destination. The temporary path is removed whether
 publication succeeds, collides, or throws. An empty user-supplied label falls
-back to the generated ID.
+back to the generated ID. `PreparedRoom::create_session()` creates the
+database, then constructs a coordinator from the definitions loaded during room
+preparation.
 
 ### Transactions and IDs
 
@@ -710,33 +802,18 @@ database, so a mistaken path cannot silently become an empty session.
 
 | Component | Responsibility |
 | --- | --- |
-| `main.cpp` | Composition root and startup/session-selection workflow. |
-| `environment.*` | Optional `.env` loading. |
-| `workspace.*` | Room/persona list parsing and safe path resolution. |
-| `startup_selector.*` | Temporary ncurses room/session/name selection screens. |
-| `agent_definition.*` | Config/prompt loading for an ordered room roster. |
-| `agent_identity.*` | Stable ID and display-name validation. |
-| `agent_roster.*` | Non-empty immutable agent metadata and handle resolution. |
-| `session_repository.*` | Session enumeration, metadata checks, creation, and path resolution. |
-| `session_database.*` | SQLite schema, restoration, journal transactions, and crash repair data. |
-| `conversation.*` | Typed, thread-safe transcript and streaming-entry state. |
-| `agent_context.*` | Per-agent projection from transcript semantics to model roles. |
-| `agent_protocol.h` | Request and typed event values plus the shared event channel alias. |
-| `response_content.h` | Transport-neutral reasoning/answer delta kinds and fragments. |
-| `agent_registry.*` | Ordered backend ownership, serial request execution, routing, shared events, cancellation, and shutdown. |
-| `completion_backend.h` | Injectable two-phase completion boundary. |
-| `completion_client.*` | Test echo mode, request serialization, libcurl, SSE/JSON parsing. |
-| `chat_coordinator.*` | Commands, addressing, active turn, transcript/database lifecycle. |
-| `user.*` / `user_events.*` | Main `poll` loop and descriptor readiness. |
-| `user_session.*` | Testable UI state machine and render coalescing. |
-| `session_view.h` / `tui.*` | View seam and ncurses implementation. |
-| `input_editor.*` | Wide-character editing and UTF-8 submission. |
-| `transcript_renderer.*` | Styled entry/suffix writing seam, incremental render planning, layout, and viewport. |
-| `terminal.*` | Process-wide ncurses lifecycle and mode changes. |
-| `command.*` / `mention.*` | Slash-command and leading-address parsing. |
-| `text.*` / `path_name.*` | Shared text and path utilities. |
+| `src/util/` | Shared text, path, and environment utilities. |
+| `src/conversation/` | Typed transcript, turn identifiers, and response-content values. |
+| `src/agents/` | Agent definitions, roster, context projection, execution, provider communication, and the runtime event channel. |
+| `src/storage/` | Workspace/config/persona loaders, session repositories, and SQLite journaling. |
+| `src/application/` | Structured chat coordination, prepared-room/session use cases, interface-safe summaries, and generation status. |
+| `src/interfaces/text/` | Shared slash-command and leading-mention parsing and dispatch. |
+| `src/interfaces/terminal/` | Ncurses selection, input, rendering, polling, and terminal session flow. |
+| `src/apps/` | Executable composition roots. |
+| `tests/` | Tests mirroring the source layout, plus integration and shared test support. |
 
-Everything except `main.cpp` is compiled into `cha_core`.
+Every production `.cpp` except `src/apps/tui_main.cpp` is compiled into
+`cha_core`.
 
 ## Key invariants
 
@@ -794,7 +871,7 @@ Everything except `main.cpp` is compiled into `cha_core`.
 CMake builds:
 
 - `cha_sqlite3`: pinned SQLite amalgamation;
-- `cha_core`: all application logic except the composition root;
+- `cha_core`: all non-entry-point sources across the logical directories;
 - `cha`: terminal application;
 - `cha_tests`: discovered unit tests;
 - `itest`: separately invoked integration executable.
@@ -805,10 +882,12 @@ available, otherwise fetches pinned curl 8.14.1. It also fetches nlohmann/json
 bundled curl enables OpenSSL when it is available.
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
-configuration, identity, roster/mention routing, registry execution behavior,
-conversation/context semantics, coordinator lifecycle, SQLite constraints and
-recovery, workspace/session handling, structured reasoning parsing and safe
-diagnostics, event channels, input/UI state, and styled incremental rendering.
+configuration, identity, roster/mention routing, textual command parsing and
+dispatch, registry execution behavior, conversation/context semantics,
+structured coordinator lifecycle operations, prepared-room caching and
+session-summary mapping, SQLite constraints and recovery, structured reasoning
+parsing and safe diagnostics, event channels, input/UI state, and styled
+incremental rendering.
 
 `make itest` runs the separate integration binary from the checked-in
 `workspace/`. Its tests cover live configured streaming, non-streaming, and
