@@ -1,4 +1,4 @@
-#include "agents/event_channel.h"
+#include "util/event_channel.h"
 
 #include <gtest/gtest.h>
 

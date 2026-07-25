@@ -10,19 +10,14 @@ HTTP client used by production agents.
 
 | Source | Responsibility |
 | --- | --- |
-| `config.h` | Connection, model, streaming, authentication, and reasoning settings. |
-| `agent_definition.h` | A complete agent configuration paired with its effective system prompt. |
-| `agent_info.h` | The public identity and descriptive information exposed by a backend. |
-| `agent_identity.*` | Validation of stable agent IDs and display names. |
-| `agent_roster.*` | Ordered roster validation, lookup, and handle resolution. |
+| `config.*` | Connection, model, streaming, authentication, and reasoning settings, plus TOML loading into `Config`. |
+| `agent.*` | Agent configuration with system prompt (loaded from persona/room files), public `AgentInfo`, ID/name validation, transcript projection, and typed completion request/event protocol. |
 
 ### Execution and protocol
 
 | Source | Responsibility |
 | --- | --- |
-| `agent_protocol.h` | Typed completion requests and correlated delta, completion, cancellation, and failure events. |
-| `agent_registry.*` | The single execution thread, backend routing, cancellation, and request/event channels. |
-| `event_channel.h` | A typed thread-safe queue with a pollable Linux notification descriptor. |
+| `agent_registry.*` | Ordered roster validation/lookup/handle resolution, the single execution thread, backend routing, cancellation, and request/event channels. |
 
 ### Completion backends
 
@@ -30,7 +25,6 @@ HTTP client used by production agents.
 | --- | --- |
 | `completion_backend.h` | Synchronous backend interface and prepared request/result types. |
 | `completion_client.*` | HTTP completion transport, model discovery, JSON/SSE parsing, and protocol diagnostics. |
-| `agent_context.*` | Projection of typed transcript entries into provider-facing system, user, and assistant messages. |
 
 ## Runtime behavior
 
@@ -55,10 +49,10 @@ and non-streaming responses. Provider fragments remain uncorrelated
 The agent runtime may depend on:
 
 - `conversation/` for transcript views, request IDs, and completion content;
-- `util/` for shared text and identity rules;
+- `util/` for shared text helpers and the pollable event channel;
 - libcurl and nlohmann/json in the concrete HTTP client;
-- Linux `eventfd` and `poll` in `EventChannel`.
+- toml++ in the persona configuration loader.
 
-It must not depend on `storage/`, `application/`, or `interfaces/`. In
-particular, agent value types live here, but reading those values from disk is
-the responsibility of `storage/`.
+It must not depend on `storage/`, `application/`, or `interfaces/`. Workspace
+path discovery stays in `storage/`; once persona and room directories are known,
+agents own loading `Config` and `AgentDefinition` from those paths.

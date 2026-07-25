@@ -1,4 +1,4 @@
-#include "agents/agent_roster.h"
+#include "agents/agent_registry.h"
 
 #include <gtest/gtest.h>
 

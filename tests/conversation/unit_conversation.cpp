@@ -1,4 +1,4 @@
-#include "agents/agent_context.h"
+#include "agents/agent.h"
 #include "conversation/conversation.h"
 #include "storage/session_database.h"
 

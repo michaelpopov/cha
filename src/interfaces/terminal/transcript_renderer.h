@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent_roster.h"
+#include "agents/agent_registry.h"
 #include "conversation/conversation.h"
 
 #include <cstddef>

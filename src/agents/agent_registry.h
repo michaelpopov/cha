@@ -1,19 +1,41 @@
 #pragma once
 
-#include "agents/agent_definition.h"
-#include "agents/agent_protocol.h"
-#include "agents/agent_roster.h"
+#include "agents/agent.h"
 #include "agents/completion_backend.h"
 #include "conversation/conversation.h"
-#include "agents/event_channel.h"
+#include "util/event_channel.h"
 
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
 namespace cha {
+
+enum class HandleMatch { resolved, unknown, ambiguous };
+
+struct HandleResolution {
+    HandleMatch match{HandleMatch::unknown};
+    const AgentInfo* agent{};
+    std::vector<const AgentInfo*> candidates;
+};
+
+class AgentRoster {
+public:
+    explicit AgentRoster(std::vector<AgentInfo> agents);
+
+    const std::vector<AgentInfo>& agents() const noexcept;
+    const AgentInfo& first() const;
+    const AgentInfo* find(std::string_view id) const;
+    HandleResolution resolve_handle(std::string_view handle) const;
+    std::string handle_list() const;
+
+private:
+    std::vector<AgentInfo> agents_;
+};
 
 class AgentRegistry {
 public:

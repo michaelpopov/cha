@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent_definition.h"
+#include "agents/agent.h"
 #include "agents/agent_registry.h"
 #include "application/generation_status.h"
 #include "application/response_controller.h"

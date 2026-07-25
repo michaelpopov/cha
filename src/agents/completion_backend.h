@@ -1,7 +1,6 @@
 #pragma once
 
-#include "agents/agent_info.h"
-#include "agents/agent_protocol.h"
+#include "agents/agent.h"
 
 #include <atomic>
 #include <functional>

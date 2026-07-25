@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent_definition.h"
+#include "agents/agent.h"
 #include "agents/completion_backend.h"
 
 #include <atomic>

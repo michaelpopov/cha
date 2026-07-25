@@ -1,7 +1,7 @@
 #include "application/workspace_service.h"
 
 #include "application/chat_coordinator.h"
-#include "storage/agent_definition_loader.h"
+#include "agents/agent.h"
 #include "storage/session_database.h"
 #include "storage/session_repository.h"
 #include "storage/workspace.h"

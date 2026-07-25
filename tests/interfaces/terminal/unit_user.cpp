@@ -1,5 +1,5 @@
 #include "interfaces/terminal/input_editor.h"
-#include "interfaces/terminal/user_events.h"
+#include "interfaces/terminal/user.h"
 
 #include <gtest/gtest.h>
 

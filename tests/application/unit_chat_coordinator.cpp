@@ -1,5 +1,5 @@
 #include "application/chat_coordinator.h"
-#include "agents/agent_context.h"
+#include "agents/agent.h"
 #include "agents/completion_backend.h"
 #include "storage/session_database.h"
 #include "support/test_backends.h"

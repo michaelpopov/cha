@@ -1,6 +1,6 @@
 #include "agents/completion_client.h"
 
-#include "agents/agent_context.h"
+#include "agents/agent.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>

@@ -1,5 +1,4 @@
 #include "agents/config.h"
-#include "storage/config_loader.h"
 
 #include <gtest/gtest.h>
 

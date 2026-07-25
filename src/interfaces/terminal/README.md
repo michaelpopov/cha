@@ -20,8 +20,7 @@ polling, and the interactive session state machine.
 | `input_editor.*` | Maintain wide-character multiline input, cursor movement, editing, continuation lines, and UTF-8 submission. |
 | `session_view.h` | Define typed input events and the `UserSession` rendering seam. |
 | `user_session.*` | Apply terminal input and coordinator updates to one testable interactive session. |
-| `user_events.*` | Poll standard input and the agent event descriptor and classify readiness or terminal failure. |
-| `user.*` | Run the top-level terminal event loop and guarantee orderly shutdown/restoration behavior. |
+| `user.*` | Poll stdin/agent readiness and run the top-level terminal event loop with orderly shutdown. |
 
 ### Rendering
 

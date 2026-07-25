@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -33,5 +34,8 @@ struct Config {
     ReasoningFormat reasoning_format{ReasoningFormat::automatic};
     bool https{};
 };
+
+// Loads one persisted agent configuration from TOML.
+Config load_config(const std::filesystem::path& path);
 
 } // namespace cha

@@ -1,5 +1,5 @@
-#include "agents/agent_info.h"
-#include "agents/agent_roster.h"
+#include "agents/agent.h"
+#include "agents/agent_registry.h"
 #include "conversation/conversation.h"
 #include "interfaces/terminal/transcript_renderer.h"
 

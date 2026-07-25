@@ -80,17 +80,14 @@ add_library(cha_core
     src/util/path_name.cpp
     src/util/text.cpp
     src/conversation/conversation.cpp
-    src/agents/agent_context.cpp
-    src/agents/agent_identity.cpp
-    src/agents/agent_registry.cpp
-    src/agents/agent_roster.cpp
-    src/agents/completion_client.cpp
+            src/agents/agent_registry.cpp
+        src/agents/completion_client.cpp
     src/application/chat_coordinator.cpp
     src/application/session_notices.cpp
     src/application/response_controller.cpp
     src/application/workspace_service.cpp
-    src/storage/agent_definition_loader.cpp
-    src/storage/config_loader.cpp
+    src/agents/agent.cpp
+    src/agents/config.cpp
     src/storage/session_database.cpp
     src/storage/session_repository.cpp
     src/storage/workspace.cpp
@@ -103,8 +100,7 @@ add_library(cha_core
     src/interfaces/terminal/transcript_renderer.cpp
     src/interfaces/terminal/tui.cpp
     src/interfaces/terminal/user.cpp
-    src/interfaces/terminal/user_events.cpp
-    src/interfaces/terminal/user_session.cpp
+        src/interfaces/terminal/user_session.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
@@ -159,11 +155,11 @@ if(BUILD_TESTING)
         tests/agents/unit_agent_registry.cpp
         tests/agents/unit_agent_roster.cpp
         tests/agents/unit_completion_client.cpp
-        tests/agents/unit_event_channel.cpp
+        tests/util/unit_event_channel.cpp
         tests/application/unit_chat_coordinator.cpp
         tests/application/unit_workspace_service.cpp
-        tests/storage/unit_agent_definition_loader.cpp
-        tests/storage/unit_config_loader.cpp
+        tests/agents/unit_agent_definition_loader.cpp
+        tests/agents/unit_config_loader.cpp
         tests/storage/unit_workspace.cpp
         tests/interfaces/text/unit_command.cpp
         tests/interfaces/text/unit_mention.cpp

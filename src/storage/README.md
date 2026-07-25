@@ -1,18 +1,17 @@
 # Storage and workspace infrastructure
 
-`storage/` owns all filesystem and SQLite access. It discovers rooms and
-personas, loads persisted agent definitions, manages session files, and
-implements the durable conversation journal.
+`storage/` owns workspace discovery and SQLite session persistence. It
+resolves rooms and persona directories, manages session files, and implements
+the durable conversation journal. Loading agent configuration from those
+paths belongs to `agents/`.
 
 ## Structure
 
-### Workspace and configuration loading
+### Workspace layout
 
 | Source | Responsibility |
 | --- | --- |
 | `workspace.*` | Resolve the workspace layout, enumerate rooms, and load an ordered room/persona definition. |
-| `config_loader.*` | Parse one persona's TOML configuration into an agent-owned `Config`. |
-| `agent_definition_loader.*` | Build `AgentDefinition` values from persona and room files. |
 
 ### Session persistence
 
@@ -45,19 +44,17 @@ interface contracts. `application/` converts repository `Session` records into
 `SessionSummary` values before returning them to a selector or future HTTP
 adapter.
 
-`Config` and `AgentDefinition` intentionally remain agent-owned value types.
-Storage constructs them because it reads their persisted representation; it
-does not own their runtime meaning.
+`Config` and `AgentDefinition` remain agent-owned, including the loaders that
+materialize them from persona and room files.
 
 ## Dependencies
 
 Storage may depend on:
 
-- `agents/` for configuration and agent-definition value types;
 - `conversation/` for durable entries, identifiers, and restore state;
 - `util/` for safe path components and shared text parsing;
-- SQLite and toml++ for concrete persistence formats.
+- SQLite for concrete session persistence.
 
-It must not depend on `application/` or `interfaces/`. Storage exposes
-mechanisms and storage-shaped data; application services decide when and why
-those mechanisms are used.
+It must not depend on `agents/`, `application/`, or `interfaces/`. Storage
+exposes workspace paths and journal mechanisms; application services decide
+when and why those mechanisms are used and call agents to load definitions.

@@ -11,6 +11,7 @@ where practical, and independent of the higher-level Cha modules.
 | `text.*` | Byte-oriented whitespace detection, trimming, and ASCII case folding. |
 | `path_name.*` | Validation that a configured name is one safe filesystem path component. |
 | `environment.*` | Optional `.env` loading without replacing variables already present in the process environment. |
+| `event_channel.h` | A typed thread-safe queue with a pollable Linux notification descriptor. |
 
 ## Functionality
 
@@ -30,7 +31,8 @@ existing files are errors. Existing environment variables always win.
 
 This is a leaf module:
 
-- it depends only on the C++ standard library and the process environment;
+- it depends only on the C++ standard library, the process environment, and
+  POSIX primitives used by `event_channel.h`;
 - it must not depend on `conversation/`, `agents/`, `storage/`,
   `application/`, or `interfaces/`;
 - callers currently include agent identity and roster code, storage loaders,

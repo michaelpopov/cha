@@ -1,8 +1,7 @@
 #pragma once
 
-#include "agents/agent_protocol.h"
+#include "agents/agent.h"
 #include "agents/agent_registry.h"
-#include "agents/agent_roster.h"
 #include "application/generation_status.h"
 #include "conversation/conversation.h"
 #include "storage/session_database.h"

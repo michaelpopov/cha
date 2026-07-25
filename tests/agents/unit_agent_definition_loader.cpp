@@ -1,5 +1,4 @@
-#include "agents/agent_definition.h"
-#include "storage/agent_definition_loader.h"
+#include "agents/agent.h"
 
 #include <gtest/gtest.h>
 

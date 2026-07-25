@@ -1,4 +1,4 @@
-#include "agents/agent_context.h"
+#include "agents/agent.h"
 
 #include <gtest/gtest.h>
 
