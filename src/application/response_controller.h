@@ -4,7 +4,7 @@
 #include "agents/agent_registry.h"
 #include "application/generation_status.h"
 #include "conversation/conversation.h"
-#include "storage/session_database.h"
+#include "application/session_database.h"
 
 #include <optional>
 #include <string>

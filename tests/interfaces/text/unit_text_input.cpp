@@ -1,7 +1,7 @@
 #include "agents/completion_backend.h"
 #include "application/chat_coordinator.h"
 #include "interfaces/text/text_input.h"
-#include "storage/session_database.h"
+#include "application/session_database.h"
 #include "support/test_backends.h"
 
 #include <gtest/gtest.h>

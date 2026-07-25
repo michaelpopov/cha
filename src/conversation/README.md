@@ -12,11 +12,11 @@ knowing how entries are rendered, persisted, or sent to a completion provider.
 
 ## Functionality
 
-`ConversationEntry` is the common semantic record used by the application,
-storage, rendering, and model-context projection. It records participant
-identity separately from display labels and distinguishes human, agent, notice,
-and error entries. Completion status distinguishes live streaming output from
-complete, cancelled, and failed records.
+`ConversationEntry` is the common semantic record used by application
+persistence, terminal rendering, and model-context projection. It records
+participant identity separately from display labels and distinguishes human,
+agent, notice, and error entries. Completion status distinguishes live
+streaming output from complete, cancelled, and failed records.
 
 `Conversation` has a single-writer design with synchronized readers. It
 supports atomic snapshots for interfaces and a short-lived
@@ -35,9 +35,9 @@ The validation helpers enforce the model at its boundaries:
 This is a domain leaf:
 
 - it depends only on the C++ standard library;
-- it does not depend on agents, storage, application services, or interfaces;
-- `agents/`, `storage/`, `application/`, and terminal rendering may depend on
-  its public values.
+- it does not depend on agents, application services, or interfaces;
+- `agents/`, `application/`, and terminal rendering may depend on its public
+  values.
 
 Persistence rules and presentation choices must stay outside this directory.
 The model may expose the information those consumers need, but it must not

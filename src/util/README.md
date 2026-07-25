@@ -20,8 +20,8 @@ parsing, agent-handle matching, list-file parsing, and environment loading.
 They deliberately do not attempt locale-sensitive Unicode normalization.
 
 `require_path_component()` rejects empty names, absolute paths, parent paths,
-`.` and `..`. Storage code uses it before turning workspace-controlled names
-into filesystem paths.
+`.` and `..`. Workspace and session code use it before turning
+workspace-controlled names into filesystem paths.
 
 `load_dotenv()` accepts blank lines, comments, and simple quoted or unquoted
 assignments. A missing file is harmless; malformed entries and unreadable
@@ -33,10 +33,10 @@ This is a leaf module:
 
 - it depends only on the C++ standard library, the process environment, and
   POSIX primitives used by `event_channel.h`;
-- it must not depend on `conversation/`, `agents/`, `storage/`,
-  `application/`, or `interfaces/`;
-- callers currently include agent identity and roster code, storage loaders,
-  text interfaces, and the TUI composition root.
+- it must not depend on `conversation/`, `agents/`, `application/`, or
+  `interfaces/`;
+- callers currently include agent code, workspace/session code, text
+  interfaces, and the TUI composition root.
 
 If a helper begins to encode conversation, agent, persistence, or interface
 policy, it belongs in that owning directory rather than here.

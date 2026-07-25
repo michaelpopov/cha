@@ -33,6 +33,7 @@ enum class TranscriptAttributes {
     bold_dim,
 };
 
+// Receives attributed transcript text so adapters and tests can render or record output without curses.
 class TranscriptSurface {
 public:
     virtual ~TranscriptSurface() = default;

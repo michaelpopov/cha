@@ -5,7 +5,7 @@
 #include "application/generation_status.h"
 #include "application/response_controller.h"
 #include "conversation/conversation.h"
-#include "storage/session_database.h"
+#include "application/session_database.h"
 
 #include <filesystem>
 #include <memory>

@@ -23,6 +23,7 @@ struct HandleResolution {
     std::vector<const AgentInfo*> candidates;
 };
 
+// Owns one non-empty ordered roster with unique IDs, unique case-folded names, and handle resolution.
 class AgentRoster {
 public:
     explicit AgentRoster(std::vector<AgentInfo> agents);
@@ -37,6 +38,7 @@ private:
     std::vector<AgentInfo> agents_;
 };
 
+// Runs one execution thread that routes completion work to backends and publishes correlated agent events.
 class AgentRegistry {
 public:
     AgentRegistry(const Conversation& conversation, std::vector<AgentDefinition> definitions);

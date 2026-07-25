@@ -1,36 +1,24 @@
 # Agent runtime
 
-`agents/` owns the definition, identity, selection, and execution of configured
-chat agents. It also contains the completion-provider boundary and the concrete
-HTTP client used by production agents.
+`agents/` owns configured chat agents: configuration loading, public identity,
+roster selection, completion backends, and the single execution thread that
+talks to providers.
 
 ## Structure
-
-### Agent metadata and identity
 
 | Source | Responsibility |
 | --- | --- |
 | `config.*` | Connection, model, streaming, authentication, and reasoning settings, plus TOML loading into `Config`. |
-| `agent.*` | Agent configuration with system prompt (loaded from persona/room files), public `AgentInfo`, ID/name validation, transcript projection, and typed completion request/event protocol. |
-
-### Execution and protocol
-
-| Source | Responsibility |
-| --- | --- |
-| `agent_registry.*` | Ordered roster validation/lookup/handle resolution, the single execution thread, backend routing, cancellation, and request/event channels. |
-
-### Completion backends
-
-| Source | Responsibility |
-| --- | --- |
+| `agent.*` | `AgentDefinition` / `AgentInfo` / context projection, ID and name validation, and typed completion request/event protocol. |
+| `agent_registry.*` | `AgentRoster` (ordered validation, lookup, handle resolution) and `AgentRegistry` (execution thread, backend routing, cancellation, request/event channels). |
 | `completion_backend.h` | Synchronous backend interface and prepared request/result types. |
 | `completion_client.*` | HTTP completion transport, model discovery, JSON/SSE parsing, and protocol diagnostics. |
 
 ## Runtime behavior
 
 `AgentRoster` is the authority for a non-empty roster, unique IDs, unique
-case-folded names, and user handle resolution. `AgentRegistry` maintains the
-same ordering between roster entries and completion backends.
+case-folded names, and user handle resolution. `AgentRegistry` keeps the same
+ordering between roster entries and completion backends.
 
 The registry accepts at most one outstanding request. Its worker thread
 prepares a request from a short-lived conversation read view, performs one
@@ -44,6 +32,9 @@ implements it for OpenAI-compatible HTTP endpoints, including streaming SSE
 and non-streaming responses. Provider fragments remain uncorrelated
 `CompletionDelta` values until the registry attaches the active request ID.
 
+`project_agent_context()` turns typed transcript entries into provider-facing
+system, user, and assistant messages for one agent participant.
+
 ## Dependencies
 
 The agent runtime may depend on:
@@ -53,6 +44,6 @@ The agent runtime may depend on:
 - libcurl and nlohmann/json in the concrete HTTP client;
 - toml++ in the persona configuration loader.
 
-It must not depend on `storage/`, `application/`, or `interfaces/`. Workspace
-path discovery stays in `storage/`; once persona and room directories are known,
+It must not depend on `application/` or `interfaces/`. Workspace path
+discovery stays in `application/`; once persona and room directories are known,
 agents own loading `Config` and `AgentDefinition` from those paths.

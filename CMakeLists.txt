@@ -83,15 +83,13 @@ add_library(cha_core
             src/agents/agent_registry.cpp
         src/agents/completion_client.cpp
     src/application/chat_coordinator.cpp
-    src/application/session_notices.cpp
-    src/application/response_controller.cpp
-    src/application/workspace_service.cpp
+        src/application/response_controller.cpp
+    src/application/workspace.cpp
     src/agents/agent.cpp
     src/agents/config.cpp
-    src/storage/session_database.cpp
-    src/storage/session_repository.cpp
-    src/storage/workspace.cpp
-    src/interfaces/text/command.cpp
+    src/application/session_database.cpp
+    src/application/sessions_repository.cpp
+        src/interfaces/text/command.cpp
     src/interfaces/text/mention.cpp
     src/interfaces/text/text_input.cpp
     src/interfaces/terminal/input_editor.cpp
@@ -157,10 +155,10 @@ if(BUILD_TESTING)
         tests/agents/unit_completion_client.cpp
         tests/util/unit_event_channel.cpp
         tests/application/unit_chat_coordinator.cpp
-        tests/application/unit_workspace_service.cpp
+        tests/application/unit_workspace.cpp
         tests/agents/unit_agent_definition_loader.cpp
         tests/agents/unit_config_loader.cpp
-        tests/storage/unit_workspace.cpp
+        tests/application/unit_sessions_repository.cpp
         tests/interfaces/text/unit_command.cpp
         tests/interfaces/text/unit_mention.cpp
         tests/interfaces/text/unit_text_input.cpp

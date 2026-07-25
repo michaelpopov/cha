@@ -1,6 +1,6 @@
 #include "agents/agent.h"
 #include "conversation/conversation.h"
-#include "storage/session_database.h"
+#include "application/session_database.h"
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>

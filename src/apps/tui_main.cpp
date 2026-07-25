@@ -1,5 +1,5 @@
 #include "application/chat_coordinator.h"
-#include "application/workspace_service.h"
+#include "application/workspace.h"
 #include "interfaces/terminal/startup_selector.h"
 #include "interfaces/terminal/terminal.h"
 #include "interfaces/terminal/user.h"
@@ -25,7 +25,7 @@ int main() {
 int main_internal() {
     cha::load_dotenv();
 
-    cha::WorkspaceService workspace;
+    cha::Workspace workspace;
     cha::Terminal terminal;
     cha::StartupSelector selector(terminal);
 

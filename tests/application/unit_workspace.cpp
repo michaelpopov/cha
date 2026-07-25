@@ -1,5 +1,5 @@
 #include "application/chat_coordinator.h"
-#include "application/workspace_service.h"
+#include "application/workspace.h"
 
 #include <gtest/gtest.h>
 
@@ -13,11 +13,11 @@
 namespace cha {
 namespace {
 
-class WorkspaceServiceTest : public testing::Test {
+class ApplicationWorkspaceTest : public testing::Test {
 protected:
     void SetUp() override {
         root_ = std::filesystem::temp_directory_path()
-            / ("cha_workspace_service_"
+            / ("cha_workspace_"
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root_ / "personas" / "guide");
@@ -58,15 +58,15 @@ protected:
     std::filesystem::path root_;
 };
 
-TEST_F(WorkspaceServiceTest, ListsRoomsAndSessionsAsApplicationValues) {
-    WorkspaceService workspace(root_);
+TEST_F(ApplicationWorkspaceTest, ListsRoomsAndSessionsAsApplicationValues) {
+    Workspace workspace(root_);
 
     EXPECT_EQ(workspace.rooms(), (std::vector<std::string>{"lobby"}));
     EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
-TEST_F(WorkspaceServiceTest, CreatesAndReopensAChatSession) {
-    WorkspaceService workspace(root_);
+TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
+    Workspace workspace(root_);
 
     std::unique_ptr<ChatCoordinator> created =
         workspace.create_session("lobby", "Browser-ready session");
@@ -86,8 +86,8 @@ TEST_F(WorkspaceServiceTest, CreatesAndReopensAChatSession) {
     reopened->shutdown();
 }
 
-TEST_F(WorkspaceServiceTest, MapsInvalidStoredSessionDetails) {
-    WorkspaceService workspace(root_);
+TEST_F(ApplicationWorkspaceTest, MapsInvalidStoredSessionDetails) {
+    Workspace workspace(root_);
     std::unique_ptr<ChatCoordinator> created =
         workspace.create_session("lobby", "Broken later");
     created->shutdown();

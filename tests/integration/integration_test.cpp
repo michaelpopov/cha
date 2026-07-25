@@ -6,8 +6,8 @@
 #include "interfaces/text/text_input.h"
 #include "util/environment.h"
 #include "support/mock_http_server.h"
-#include "storage/session_database.h"
-#include "storage/workspace.h"
+#include "application/session_database.h"
+#include "application/workspace.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>

@@ -18,11 +18,11 @@ struct Session {
 };
 
 // Lists, creates, and resolves self-contained SQLite sessions for one room.
-class SessionRepository {
+class SessionsRepository {
 public:
     using Clock = std::function<std::time_t()>;
 
-    SessionRepository(
+    SessionsRepository(
         std::filesystem::path directory,
         std::string room_name,
         Clock clock = {});

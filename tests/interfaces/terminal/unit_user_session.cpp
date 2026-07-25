@@ -1,6 +1,6 @@
 #include "application/chat_coordinator.h"
 #include "agents/completion_backend.h"
-#include "storage/session_database.h"
+#include "application/session_database.h"
 #include "interfaces/terminal/input_editor.h"
 #include "interfaces/terminal/session_view.h"
 #include "support/test_backends.h"

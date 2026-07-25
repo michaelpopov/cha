@@ -35,7 +35,7 @@ This adapter depends on:
   generation-in-progress notice;
 - `util/` for byte-oriented whitespace handling.
 
-It does not depend on terminal widgets, curses, storage, or agent backends.
-Keeping the adapter terminal-independent allows another text box to reuse the
-same command language. A structured HTTP API may bypass it when routes and
-request fields already express the intended operation.
+It does not depend on terminal widgets, curses, session repositories, or agent
+backends. Keeping the adapter terminal-independent allows another text box to
+reuse the same command language. A structured HTTP API may bypass it when
+routes and request fields already express the intended operation.

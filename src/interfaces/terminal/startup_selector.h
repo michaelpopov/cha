@@ -1,6 +1,6 @@
 #pragma once
 
-#include "application/workspace_service.h"
+#include "application/workspace.h"
 
 #include <optional>
 #include <string>

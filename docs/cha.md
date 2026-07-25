@@ -28,7 +28,7 @@ a time, then returns typed events through one shared channel.
 
 ```text
 Startup
-  WorkspaceService + PreparedRoom + StartupSelector
+  Workspace + PreparedRoom + StartupSelector
                                       |
                                       v
 Main/UI thread                  ChatCoordinator
@@ -50,7 +50,7 @@ Main/UI thread                  ChatCoordinator
 
 The ownership graph is:
 
-- `main()` owns the `WorkspaceService`, `Terminal`, prepared room during
+- `main()` owns the `Workspace`, `Terminal`, prepared room during
   selection, and selected `ChatCoordinator`.
 - `run_user()` owns a `Tui` and `UserSession` for the chat loop.
 - `ChatCoordinator` owns the in-memory `Conversation`, SQLite
@@ -136,8 +136,7 @@ src/
   util/                  shared low-level helpers
   conversation/          transcript and turn value model
   agents/                agent metadata, execution, and provider transport
-  storage/               workspace/config loading and session persistence
-  application/           reusable use cases and conversation coordination
+  application/           reusable use cases, conversation coordination, and session persistence
   interfaces/
     text/                 slash-command and leading-mention protocol
     terminal/             ncurses adapter and terminal session flow
@@ -155,22 +154,18 @@ apps
   |                          `--> conversation
   |
   `--> application ----------+--> agents -------> conversation
-                             +--> storage ------> conversation
-                             |       `---------> agents
                              `--> conversation
 
-agents, storage, interfaces/text, and apps may also depend on util.
+agents, interfaces/text, application, and apps may also depend on util.
 ```
 
 More precisely:
 
 - terminal and future HTTP interfaces may call `application/` and read
   presentation-safe values from `conversation/`;
-- interfaces do not access agent execution or storage repositories directly;
-- `application/` coordinates `agents/`, `storage/`, and `conversation/`;
-- `storage/` may construct agent value types and restore conversation values;
-- `agents/` may read conversation state but does not depend on application,
-  storage, or interfaces;
+- interfaces do not access agent execution or session repositories directly;
+- `application/` coordinates `agents/` and `conversation/`, and owns session persistence;
+- `agents/` may read conversation state but does not depend on application or interfaces;
 - `conversation/` and `util/` do not depend on higher layers.
 
 When the web interface is added, an `interfaces/http/` adapter can translate
@@ -191,10 +186,10 @@ application methods directly.
 
 ## Startup and workspace loading
 
-`main()` and `WorkspaceService` perform these steps:
+`main()` and `Workspace` perform these steps:
 
 1. Load optional `.env` values without replacing existing process variables.
-2. Construct `WorkspaceService` and `Terminal`.
+2. Construct `Workspace` and `Terminal`.
 3. Let `StartupSelector` choose a room returned by the service.
 4. Prepare the selected room by resolving its ordered personas and loading all
    agent definitions once.
@@ -226,21 +221,21 @@ Blank lines and lines beginning with `#` are ignored in both list files. Names
 must be safe single path components. `personas.list` must contain at least one
 entry and cannot repeat a persona directory name. `Workspace::load_room`
 parses the room and list; persona-directory existence is checked when
-`WorkspaceService` resolves each entry.
+`Workspace` resolves each entry.
 
 `Config` and `AgentDefinition` are agent-owned value types. Their disk loaders
-live under `storage/`: `load_config()` parses `config.toml`, while
+live under `agents/`: `load_config()` parses `config.toml`, while
 `load_agent_definition()` reads `SYSTEM.md` and the selected room's `USER.md`
 and joins the prompts with two newlines. `load_agent_definitions()` preserves
 list order.
 
-`WorkspaceService::prepare_room()` constructs one move-only `PreparedRoom`.
+`Workspace::prepare_room()` constructs one move-only `PreparedRoom`.
 Preparation resolves and validates the room and loads its complete ordered
 agent definitions once. The prepared room retains those definitions and its
-`SessionRepository`, so listing retries and a later create/open operation do
+`SessionsRepository`, so listing retries and a later create/open operation do
 not reread every persona file. It exposes application `SessionSummary` values
 to `StartupSelector`; repository paths and `Session` records remain inside the
-application/storage boundary.
+application boundary.
 
 `AgentRoster` is the single boundary for a non-empty roster and for valid,
 unique configured agent IDs and ASCII-case-insensitive names, including when
@@ -595,7 +590,7 @@ entry restores only its answer. Errors are terminal `error` entries.
 
 ### Session listing and opening
 
-`SessionRepository::list()` examines regular `.sqlite3` files, opens them
+`SessionsRepository::list()` examines regular `.sqlite3` files, opens them
 read-only, and performs lightweight identity/metadata validation: application
 ID, schema version, embedded session ID versus filename, and embedded room
 versus selected room. Broken candidates remain visible with an error so one bad
@@ -805,8 +800,7 @@ database, so a mistaken path cannot silently become an empty session.
 | `src/util/` | Shared text, path, and environment utilities. |
 | `src/conversation/` | Typed transcript, turn identifiers, and response-content values. |
 | `src/agents/` | Agent definitions, roster, context projection, execution, provider communication, and the runtime event channel. |
-| `src/storage/` | Workspace/config/persona loaders, session repositories, and SQLite journaling. |
-| `src/application/` | Structured chat coordination, prepared-room/session use cases, interface-safe summaries, and generation status. |
+| `src/application/` | Structured chat coordination, workspace/session use cases, session repositories, SQLite journaling, interface-safe summaries, and generation status. |
 | `src/interfaces/text/` | Shared slash-command and leading-mention parsing and dispatch. |
 | `src/interfaces/terminal/` | Ncurses selection, input, rendering, polling, and terminal session flow. |
 | `src/apps/` | Executable composition roots. |

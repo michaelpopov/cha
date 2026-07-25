@@ -26,13 +26,13 @@ polling, and the interactive session state machine.
 
 | Source | Responsibility |
 | --- | --- |
-| `transcript_renderer.*` | Style entries, plan incremental updates, and maintain layout and scrolling. |
+| `transcript_renderer.*` | Style entries, plan incremental updates, maintain layout/scrolling, and optional roster-aware addressing labels. |
 | `tui.*` | Implement `SessionView` with curses pads for the transcript, status line, and editor. |
 
 ## Runtime behavior
 
-`StartupSelector` receives room names and `SessionSummary` values from the
-application layer; it does not inspect workspace directories or repositories.
+`StartupSelector` receives room names and `SessionSummary` values from
+`Workspace`; it does not inspect workspace directories or session repositories.
 
 During a chat, `UserSession` translates typed terminal actions into editor,
 scrolling, cancellation, submission, or shutdown behavior. Submitted text is
@@ -41,9 +41,8 @@ respond to keyboard input and agent notifications without polling either
 source continuously.
 
 The renderer reads `Conversation` snapshots and `GenerationStatus` directly.
-Those values are already presentation-safe, so duplicating the full transcript
-as terminal DTOs would add ceremony without strengthening the storage or agent
-boundaries.
+Those values are already presentation-safe. Multi-agent rooms may also consult
+an `AgentRoster` when deciding whether to show addressing labels.
 
 `SessionView` and `TranscriptSurface` isolate state-machine and rendering tests
 from curses. Terminal resource ownership remains in `Terminal` and `Tui`.
@@ -56,8 +55,9 @@ The terminal adapter may depend on:
   generation status;
 - `conversation/` for transcript snapshots and entries;
 - `interfaces/text/` for shared command and mention dispatch;
+- `agents/` for roster values used in addressed transcript rendering;
 - wide ncurses and POSIX polling for the concrete terminal implementation.
 
-It must not use storage repositories, workspace loaders, or agent backends
-directly. Reusable chat policy belongs in `application/`; reusable textual
-syntax belongs in `interfaces/text/`.
+It must not load workspace layout files, open session repositories, or call
+completion backends. Reusable chat policy belongs in `application/`; reusable
+textual syntax belongs in `interfaces/text/`.
