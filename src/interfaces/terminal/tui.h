@@ -15,7 +15,10 @@ namespace cha {
 
 class Terminal;
 
-// Owns curses resources and renders the chat transcript, status line, and input editor.
+// The curses implementation of SessionView. It owns the transcript and input pads drawn on a
+// borrowed Terminal, decodes key presses into SessionInput values, and paints the transcript,
+// status line, and editor, leaning on TranscriptRenderPlanner and TranscriptViewport to redraw
+// incrementally and to keep scrolling stable while output streams in.
 class Tui : public SessionView {
 public:
     explicit Tui(Terminal& terminal);

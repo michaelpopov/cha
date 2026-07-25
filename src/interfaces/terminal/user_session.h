@@ -10,7 +10,11 @@ namespace cha {
 class ChatCoordinator;
 struct CoordinatorUpdate;
 
-// Coordinates testable session state, typed input, rendering, and agent notifications for one run.
+// The state machine of one interactive run. It turns typed input into editing, scrolling,
+// submission, cancellation, or shutdown, sends submitted text on to the coordinator, and applies
+// the CoordinatorUpdate that comes back by redrawing, clearing the editor, or showing a notice. It
+// owns the InputEditor and the pending notice, and reaches the screen only through SessionView,
+// which is what makes the whole session testable without a terminal.
 class UserSession {
 public:
     UserSession(

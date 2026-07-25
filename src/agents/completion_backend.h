@@ -16,13 +16,16 @@ enum class CompletionOutcome {
     transport_error,
 };
 
-// Carries a completion outcome and an explanatory failure message when applicable.
+// How one call to CompletionBackend::perform() ended. The message explains the failure outcomes
+// and is meant to reach the user unchanged.
 struct CompletionResult {
     CompletionOutcome outcome{CompletionOutcome::completed};
     std::string message;
 };
 
-// Owns all backend-defined data needed after conversation request preparation.
+// The request a backend built for itself, opaque to its caller. It exists so that reading the
+// conversation and performing the slow call can be separate steps: prepare() runs under the
+// conversation lock, perform() runs without it.
 struct RequestPayload {
     std::string bytes;
 };
@@ -30,7 +33,11 @@ struct RequestPayload {
 // Receives one semantic transport fragment without attaching request identity.
 using CompletionDeltaSink = std::function<void(CompletionDelta)>;
 
-// Defines the synchronous completion operations consumed by the agent execution thread.
+// The provider boundary of the agent runtime: all AgentRegistry needs to answer one request,
+// with no knowledge of HTTP, JSON, or any particular vendor. An implementation builds a payload
+// from a ConversationReadView, then performs a single synchronous completion, reporting output
+// through the delta sink and stopping when the cancellation flag is set. Tests supply their own
+// implementation instead of reaching the network.
 class CompletionBackend {
 public:
     virtual ~CompletionBackend() = default;

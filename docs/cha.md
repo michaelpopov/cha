@@ -1,9 +1,13 @@
 # cha — Internal design
 
 This document describes the current implementation of `cha`, a C++20 terminal
-client for OpenAI-compatible chat-completion servers. It is an architecture and
-maintenance guide; user-facing setup and command documentation lives in
-[README.md](../README.md).
+client for OpenAI-compatible chat-completion servers. It is the exhaustive
+rule-by-rule maintenance reference.
+
+- For a diagrammed overview of the layers, threads, and the life of a turn,
+  start with [`src/README.md`](../src/README.md); each source directory has its
+  own README beneath it.
+- For user-facing setup and commands, see [README.md](../README.md).
 
 - [Architecture](#architecture)
 - [Source organization and dependency rules](#source-organization-and-dependency-rules)
@@ -28,34 +32,40 @@ a time, then returns typed events through one shared channel.
 
 ```text
 Startup
-  Workspace + PreparedRoom + StartupSelector
+  Workspace + StartupSelector
                                       |
                                       v
 Main/UI thread                  ChatCoordinator
   run_user                   +-- Conversation
   UserSession -------------->+-- ConversationJournal (SQLite)
   Tui                         +-- AgentRegistry
-       ^                              |
-       | CoordinatorUpdate            +-- AgentRoster
-       |                              +-- WorkItem request queue
-       |                              +-- shared AgentEventChannel
-       |                              +-- agent-execution thread
-       |                                      |
-       |                                      +-- CompletionClient[0]
-       |                                      +-- CompletionClient[1]
-       |                                      +-- ...
+       ^                      |       |
+       | CoordinatorUpdate    |       +-- AgentRoster
+       |                      |       +-- WorkItem request queue
+       |                      |       +-- shared AgentEventChannel
+       |                      |       +-- agent-execution thread
+       |                      |               |
+       |                      |               +-- CompletionClient[0]
+       |                      |               +-- CompletionClient[1]
+       |                      |               +-- ...
+       |                      |
+       |                      +-- ResponseController
+       |                            (active response, ID counters)
        |
        +---- poll(stdin, shared agent-event eventfd)
 ```
 
 The ownership graph is:
 
-- `main()` owns the `Workspace`, `Terminal`, prepared room during
-  selection, and selected `ChatCoordinator`.
+- `main()` owns the `Workspace`, `Terminal`, `StartupSelector`, and the selected
+  `ChatCoordinator`.
 - `run_user()` owns a `Tui` and `UserSession` for the chat loop.
 - `ChatCoordinator` owns the in-memory `Conversation`, SQLite
-  `ConversationJournal`, `AgentRegistry`, current default agent, and optional
-  active turn.
+  `ConversationJournal`, `AgentRegistry`, `ResponseController`, and the current
+  default agent ID.
+- `ResponseController` holds non-owning references to the conversation, journal,
+  and registry, plus the next entry and request IDs seeded from durable state
+  and the optional `ActiveResponse` describing the turn in flight.
 - `AgentRegistry` owns a non-empty ordered `AgentRoster`, every backend, one
   request channel, one shared `AgentEventChannel`, one execution thread, and
   shared cancellation/outstanding-request atomics.
@@ -151,7 +161,8 @@ The intended dependency direction is below; an arrow means “depends on”:
 apps
   |--> interfaces/terminal --+--> interfaces/text --> application
   |                          +--> application
-  |                          `--> conversation
+  |                          +--> conversation
+  |                          `--> agents   (roster values for addressed rendering)
   |
   `--> application ----------+--> agents -------> conversation
                              `--> conversation
@@ -175,9 +186,11 @@ backends directly.
 
 The terminal renderer consumes `ConversationSnapshot`, `ConversationEntry`,
 and `GenerationStatus` directly. Mirroring the transcript into presentation
-DTOs would add no useful isolation. Storage-specific values do not cross the
-application boundary: `PreparedRoom` converts repository `Session` records to
-`SessionSummary` before a selector or future HTTP interface sees them.
+DTOs would add no useful isolation. It also reads `AgentRoster` values from
+`agents/` when deciding whether transcript labels should name the addressed
+agent. Storage-specific values do not cross the application boundary:
+`Workspace` converts repository `Session` records to `SessionSummary` before a
+selector or future HTTP interface sees them.
 
 The tests mirror the source organization. Cross-layer behavior belongs in
 `tests/integration/`; focused adapter behavior such as textual dispatch belongs
@@ -189,15 +202,24 @@ application methods directly.
 `main()` and `Workspace` perform these steps:
 
 1. Load optional `.env` values without replacing existing process variables.
-2. Construct `Workspace` and `Terminal`.
-3. Let `StartupSelector` choose a room returned by the service.
-4. Prepare the selected room by resolving its ordered personas and loading all
-   agent definitions once.
-5. Let the selector choose or create a session through the prepared room.
-6. Fully restore an existing database, if selected.
-7. Construct `ChatCoordinator`; production backend construction may perform
-   model discovery before the execution thread starts.
+2. Construct `Workspace`, which requires `personas/` and `rooms/` to exist, and
+   `Terminal`.
+3. Let `StartupSelector` choose a room from `Workspace::rooms()`.
+4. Let the selector choose an existing session or **New session** from
+   `Workspace::sessions(room)`; a chosen row carrying a validation error aborts.
+5. Call `Workspace::create_session()` with a prompted label, or
+   `Workspace::open_session()` with the chosen ID. Either call resolves the
+   room, loads its ordered agent definitions, and resolves the database path
+   through `SessionsRepository`.
+6. `open_session()` additionally calls `load_conversation_state()` to fully
+   restore the database before construction.
+7. Construct `ChatCoordinator` from the definitions, database path, and restore
+   result; production backend construction may perform model discovery before
+   the execution thread starts.
 8. Enter `run_user()`.
+
+Cancelling either selector is an error rather than a silent exit: `main()`
+throws, and the failure is reported after terminal restoration.
 
 The workspace shape is:
 
@@ -229,13 +251,21 @@ live under `agents/`: `load_config()` parses `config.toml`, while
 and joins the prompts with two newlines. `load_agent_definitions()` preserves
 list order.
 
-`Workspace::prepare_room()` constructs one move-only `PreparedRoom`.
-Preparation resolves and validates the room and loads its complete ordered
-agent definitions once. The prepared room retains those definitions and its
-`SessionsRepository`, so listing retries and a later create/open operation do
-not reread every persona file. It exposes application `SessionSummary` values
-to `StartupSelector`; repository paths and `Session` records remain inside the
-application boundary.
+`Workspace` is the only entry point into workspace layout. It is a thin value
+over the root path and holds no cached room or persona state, so every use case
+resolves what it needs when it is called:
+
+- `rooms()` reads and validates `rooms.list`;
+- `load_room()` resolves one room directory and its ordered `personas.list`;
+- `sessions()` builds a `SessionsRepository` for the room and maps its `Session`
+  records to `SessionSummary` values;
+- `create_session()` and `open_session()` load the room's complete ordered agent
+  definitions, resolve the database path, and construct the `ChatCoordinator`.
+
+Persona files are therefore read once per session create/open rather than once
+per selection, and repository paths and `Session` records never leave the
+application boundary — `StartupSelector` sees only room names and
+`SessionSummary` values.
 
 `AgentRoster` is the single boundary for a non-empty roster and for valid,
 unique configured agent IDs and ASCII-case-insensitive names, including when
@@ -393,26 +423,28 @@ answers are attributed input.
 
 ### Submission
 
-For an idle coordinator:
+For an idle coordinator, `ChatCoordinator::submit_prompt()` accepts structured
+prompt text and an optional handle from an interface, resolves the target agent
+against the roster, and rejects an empty prompt. It then delegates to
+`ResponseController::start()`, which:
 
-1. Accept structured prompt text and an optional handle from an interface,
-   resolve the target agent, and reject an empty prompt.
-2. Allocate a request ID and human entry ID.
-3. Commit the `started` turn and prompt entry in one SQLite transaction.
-4. Add the prompt to the in-memory conversation.
-5. Reserve the response entry ID and create `ActiveTurn`.
-6. Route the request to the target backend through the shared request queue.
+1. allocates a request ID and human entry ID;
+2. commits the `started` turn and prompt entry in one SQLite transaction;
+3. adds the prompt to the in-memory conversation;
+4. reserves the response entry ID and creates `ActiveResponse`;
+5. routes the request to the target backend through the shared request queue.
 
 The database commit intentionally precedes the screen and execution request.
 Once a started turn is durable, normal error paths drive it to a terminal
-state.
+state. If the conversation rejects the prompt, or the registry refuses the
+request, the controller fails that durable turn before reporting the problem.
 
-The coordinator is the only conversation writer and rejects new structured
-mutations while a turn is active. `AgentRegistry` routes the request by its
-already resolved target, so the execution thread does not revalidate
-coordinator-owned request and conversation invariants. It prepares an owning
-`RequestPayload` under `ConversationReadView`, releases the lock, and calls the
-synchronous backend.
+`ChatCoordinator` and its `ResponseController` are the only conversation
+writers, and the coordinator rejects new structured mutations while a turn is
+active. `AgentRegistry` routes the request by its already resolved target, so
+the execution thread does not revalidate coordinator-owned request and
+conversation invariants. It prepares an owning `RequestPayload` under
+`ConversationReadView`, releases the lock, and calls the synchronous backend.
 
 ### Streaming success
 
@@ -420,14 +452,14 @@ Each transport fragment becomes a typed `AgentDelta`. The first non-empty
 delta opens the reserved agent entry as `streaming`; reasoning appends to
 `reasoning_text` and answers append to `text`. Deltas are in-memory only.
 
-`ActiveTurn` and `GenerationStatus` share one monotonic `ResponsePhase`:
+`ActiveResponse` and `GenerationStatus` share one monotonic `ResponsePhase`:
 `waiting`, `reasoning`, or `answering`. An answer advances the phase to
 `answering`; late reasoning remains visible without moving it backward.
 
-On `AgentCompleted`, the coordinator requires the `answering` phase. It
+On `AgentCompleted`, the response controller requires the `answering` phase. It
 constructs a fresh answer-only entry, commits that response and turn
 transition, marks the live entry complete without clearing its reasoning,
-clears `ActiveTurn`, and requests a render.
+clears `ActiveResponse`, and requests a render.
 
 For non-streaming HTTP, the backend uses the same event lifecycle: it publishes
 one reasoning delta when selected and present, then one answer delta, followed
@@ -448,7 +480,7 @@ same atomic flag.
 
 On `AgentCancelled`:
 
-- while waiting, the coordinator commits only the cancelled turn transition;
+- while waiting, the controller commits only the cancelled turn transition;
 - after reasoning only, it finishes the live reasoning entry as cancelled but
   stores no response row;
 - after answer output, it stores a fresh answer-only cancelled response and
@@ -465,12 +497,12 @@ reasoning field with the wrong JSON type is a protocol error even if the same
 response also supplied valid answer text. This strict contract is intentional;
 `auto` mode ignores malformed optional reasoning extensions.
 
-The coordinator commits a typed error entry, discards any open partial agent
-entry, adds the error to the transcript, and clears the active turn. Context
-projection excludes both the error and the matching human prompt, so a failed
-turn remains visible and durable without being replayed to a model.
+The response controller commits a typed error entry, discards any open partial
+agent entry, adds the error to the transcript, and clears the active response.
+Context projection excludes both the error and the matching human prompt, so a
+failed turn remains visible and durable without being replayed to a model.
 
-Events with a request ID that does not match `ActiveTurn` are ignored. Request
+Events with a request ID that does not match `ActiveResponse` are ignored. Request
 IDs are therefore still required despite the single-active-turn policy:
 asynchronous cancellation can leave late events in flight, and persistence
 needs a stable turn correlation key.
@@ -550,8 +582,8 @@ scrolls and clamps its position when content shrinks.
 ## Persistence
 
 Each session is one self-contained
-`rooms/<room>/sessions/<id>.sqlite3` database. Old `.data` and `.meta` files are
-ignored.
+`rooms/<room>/sessions/<id>.sqlite3` database. Listing considers only regular
+files with that extension.
 
 The database uses:
 
@@ -599,7 +631,7 @@ that per-candidate error boundary, so even a malformed `.sqlite3` filename
 cannot abort the whole listing.
 
 Transcript-sized validation is deferred until selection. `main()` calls
-`PreparedRoom::open_session()`, which calls `open_database_path()` for metadata
+`Workspace::open_session()`, which calls `open_database_path()` for metadata
 identity and immediately calls `load_conversation_state()`. Loading validates
 durable state, the turn/prompt invariant, and each restored entry. Before
 accepting writes,
@@ -620,9 +652,9 @@ Creation writes a hidden temporary sibling, initializes schema and metadata in
 one transaction, then publishes the final path with a hard link that cannot
 replace an existing destination. The temporary path is removed whether
 publication succeeds, collides, or throws. An empty user-supplied label falls
-back to the generated ID. `PreparedRoom::create_session()` creates the
-database, then constructs a coordinator from the definitions loaded during room
-preparation.
+back to the generated ID. `Workspace::create_session()` loads the room's agent
+definitions, creates the database through `SessionsRepository::create()`, and
+constructs a coordinator over the fresh file.
 
 ### Transactions and IDs
 
@@ -653,8 +685,10 @@ transaction, SQLite retains a `started` row and its prompt. On restore:
    started turns by joining them to their human prompts.
 3. It reserves an `InterruptedTurn` error attributed to the prompt's target:
    “Response interrupted before completion”.
-4. `ChatCoordinator::initialize()` persists each repair with `fail_turn` before
-   accepting another journal mutation, then adds the error to memory.
+4. `ChatCoordinator::initialize()` hands the restore result to
+   `ResponseController::restore()`, which installs the entries, adopts the
+   durable ID counters, and persists each repair with `fail_turn` before any
+   other journal mutation is accepted, adding each error to memory as it goes.
 
 No streamed partial response is durable before its terminal transaction, so a
 crash during streaming restores the prompt plus the interruption error.
@@ -668,9 +702,10 @@ leave the coordinator active with no event left to complete it. The application
 therefore does not convert database failures into ordinary transcript errors,
 because writing such an error depends on the same unavailable journal.
 
-Every coordinator journal mutation adds operation context before propagating
-the failure. Turn-related messages identify the request and agent, while a
-failed `/clear` identifies that operation. The chat loop preserves that
+Every journal mutation adds operation context before propagating the failure.
+Turn-related messages from `ResponseController` identify the request and agent
+— for example “Failed to persist completion of request 7 for @Name” — while a
+failed `/clear` in `ChatCoordinator` identifies that operation. The chat loop preserves that
 original exception, destroys its curses view, explicitly restores the terminal,
 stops the execution thread, and then lets `main()` report the contextual
 failure.
@@ -800,7 +835,7 @@ database, so a mistaken path cannot silently become an empty session.
 | `src/util/` | Shared text, path, and environment utilities. |
 | `src/conversation/` | Typed transcript, turn identifiers, and response-content values. |
 | `src/agents/` | Agent definitions, roster, context projection, execution, provider communication, and the runtime event channel. |
-| `src/application/` | Structured chat coordination, workspace/session use cases, session repositories, SQLite journaling, interface-safe summaries, and generation status. |
+| `src/application/` | Structured chat coordination (`ChatCoordinator`), the in-flight turn (`ResponseController`), workspace/session use cases, session repositories, SQLite journaling, interface-safe summaries, and generation status. |
 | `src/interfaces/text/` | Shared slash-command and leading-mention parsing and dispatch. |
 | `src/interfaces/terminal/` | Ncurses selection, input, rendering, polling, and terminal session flow. |
 | `src/apps/` | Executable composition roots. |
@@ -878,7 +913,7 @@ bundled curl enables OpenSSL when it is available.
 `make test` builds and runs the unit suite through CTest. Unit tests cover
 configuration, identity, roster/mention routing, textual command parsing and
 dispatch, registry execution behavior, conversation/context semantics,
-structured coordinator lifecycle operations, prepared-room caching and
+structured coordinator lifecycle operations, workspace layout resolution and
 session-summary mapping, SQLite constraints and recovery, structured reasoning
 parsing and safe diagnostics, event channels, input/UI state, and styled
 incremental rendering.

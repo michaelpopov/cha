@@ -111,3 +111,18 @@ Live integration tests are built as the `itest` application but are not included
 ```bash
 make itest
 ```
+
+## Architecture
+
+The source tree is documented from the inside out, with diagrams:
+
+| Document | Covers |
+| --- | --- |
+| [`src/README.md`](src/README.md) | High-level architecture: layers, threading, the life of a turn, persistence, and the invariants that hold everywhere. Start here. |
+| [`src/conversation/README.md`](src/conversation/README.md) | The transcript model shared by every layer. |
+| [`src/agents/README.md`](src/agents/README.md) | Persona loading, rosters, the execution thread, and the HTTP transport. |
+| [`src/application/README.md`](src/application/README.md) | Workspace and session use cases, SQLite persistence, chat coordination. |
+| [`src/interfaces/README.md`](src/interfaces/README.md) | The adapter contract, with [`text/`](src/interfaces/text/README.md) and [`terminal/`](src/interfaces/terminal/README.md) beneath it. |
+| [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |
+| [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including the pollable event channel. |
+| [`docs/cha.md`](docs/cha.md) | The exhaustive rule-by-rule design reference. |

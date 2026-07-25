@@ -5,7 +5,10 @@ namespace cha {
 class ChatCoordinator;
 class Terminal;
 
-// Represents terminal and agent-event readiness returned by the user-event polling boundary.
+// The outcome of one wait in the terminal event loop: whether the wait was interrupted or failed,
+// and which sources are ready — keyboard input, a closed terminal, or a pending agent event. It
+// exists so file-descriptor handling stays inside wait_for_user_events(), its only producer, and
+// the loop above reads semantic conditions instead of poll flags.
 class UserEvents {
 public:
     bool interrupted() const;

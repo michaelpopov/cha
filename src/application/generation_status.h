@@ -14,6 +14,8 @@ enum class ResponsePhase {
     answering,
 };
 
+// What an interface needs to show about the turn in progress: whether one is running, which agent
+// is answering, and how far it has got. Reported by ResponseController through ChatCoordinator.
 struct GenerationStatus {
     bool active{};
     std::string agent_name;

@@ -17,7 +17,8 @@ enum class TranscriptRenderAction {
     append,
 };
 
-// Identifies the content an adapter must replay for one transcript update.
+// What a renderer must do to catch up with the newest snapshot: nothing, append the new messages
+// and the text streamed onto the last one, or rebuild the transcript from scratch.
 struct TranscriptRenderPlan {
     TranscriptRenderAction action{TranscriptRenderAction::none};
     bool resumes_last_message{};
@@ -33,7 +34,8 @@ enum class TranscriptAttributes {
     bold_dim,
 };
 
-// Receives attributed transcript text so adapters and tests can render or record output without curses.
+// A sink for attributed transcript text. It keeps entry formatting independent of curses, so the
+// writers below serve both Tui and tests that simply record what would have been drawn.
 class TranscriptSurface {
 public:
     virtual ~TranscriptSurface() = default;
@@ -52,7 +54,10 @@ void write_transcript_suffix(
     std::string_view text);
 void initialize_transcript_surface(TranscriptSurface& surface);
 
-// Tracks rendered conversation state and computes safe incremental update plans.
+// Remembers what has already been drawn and turns each new ConversationSnapshot into a
+// TranscriptRenderPlan, so streamed output can be appended instead of repainting everything. A
+// width change, a history reset, or any change that cannot be expressed as appended text forces a
+// rebuild. A plan holds until commit() records the snapshot the renderer actually drew.
 class TranscriptRenderPlanner {
 public:
     TranscriptRenderPlan plan(const ConversationSnapshot& snapshot, int columns) const;
@@ -67,7 +72,9 @@ private:
     std::optional<ConversationEntry> last_entry_;
 };
 
-// Maintains transcript scrolling independently of terminal rendering calls.
+// The scroll position of the transcript window, kept apart from drawing so scrolling is testable.
+// It tracks the top row and whether the view still follows new output, so a user who scrolls back
+// is not dragged forward by arriving text.
 class TranscriptViewport {
 public:
     void update(int transcript_lines, int output_height);

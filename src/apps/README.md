@@ -1,38 +1,64 @@
-# Application entry points
+# Entry points
 
-`apps/` contains executable composition roots. Files here assemble concrete
-services and interfaces, define process-level error handling, and control
-top-level object lifetime. They should contain wiring and workflow, not
-reusable business logic.
+`apps/` holds composition roots: the files that assemble concrete services into
+a runnable program, decide top-level object lifetime, and define process-level
+error handling. They contain wiring and workflow — never reusable policy.
 
-## Current entry point
+Only files in this directory are excluded from the `cha_core` library, which is
+what keeps every other layer testable and linkable without a `main()`.
 
-`tui_main.cpp` builds the terminal application:
+## `tui_main.cpp`
 
-1. load optional `.env` settings;
-2. construct `Workspace` and the process-wide `Terminal`;
-3. let `StartupSelector` choose a room from `Workspace::rooms()`;
-4. let the selector choose a new or existing session from
-   `Workspace::sessions(room)`;
-5. create or open that session through `Workspace`, which returns a
-   `ChatCoordinator`;
-6. run the coordinator through `run_user()`;
-7. report uncaught failures after terminal resources have been restored.
+The terminal application. It owns four things — the workspace, the terminal, the
+selector, and the chosen coordinator — in that order, and hands the last one to
+the chat loop.
 
-Room selection, session listing, definition loading, and database open/create
-all go through `Workspace`. The entry point does not touch session repositories
-or agent loaders directly.
+```mermaid
+flowchart TD
+    a["main<br/>catch and report any exception"] --> b["load_dotenv"]
+    b --> c["construct Workspace<br/>requires personas/ and rooms/"]
+    c --> d["construct Terminal<br/>process-wide curses"]
+    d --> e["StartupSelector.select_room"]
+    e -->|"cancelled"| x["throw, exit 1"]
+    e --> f["Workspace.sessions of room"]
+    f --> g["StartupSelector.select_session"]
+    g -->|"cancelled"| x
+    g -->|"row carries an error"| x
+    g -->|"empty id, meaning New session"| h["prompt_session_name"]
+    h --> i["Workspace.create_session"]
+    g -->|"existing id"| j["Workspace.open_session"]
+    i --> k["ChatCoordinator"]
+    j --> k
+    k --> l["run_user with terminal and coordinator"]
+    l --> m["return 0"]
+```
+
+Two properties matter more than the sequence:
+
+- **Everything file-related goes through `Workspace`.** The entry point never
+  constructs a `SessionsRepository`, never reads a persona directory, and never
+  opens a database. That is what lets a second front end reuse the same startup
+  without copying logic.
+- **Failures are reported after the terminal is restored.** `Terminal`'s
+  destructor leaves curses mode during unwinding, and `run_user()` restores it
+  explicitly before rethrowing, so the message printed by `main()` reaches a
+  normal screen.
+
+Cancelling either selector is an error, not a silent exit: the process reports
+why it stopped.
 
 ## Dependencies
 
-Composition roots may depend on any concrete component required to assemble an
-executable. The TUI entry point currently uses:
+A composition root may depend on any concrete component it needs to assemble a
+program. `tui_main.cpp` currently uses `application/` for the workspace and chat
+use cases, `interfaces/terminal/` for selection, terminal ownership, and the
+chat loop, and `util/` for `.env` loading.
 
-- `application/` for workspace and chat use cases;
-- `interfaces/terminal/` for selection, terminal ownership, and the chat loop;
-- `util/` for `.env` loading.
+Nothing depends on `apps/`.
 
-Future executables, such as an HTTP server, should receive their own source file
-in this directory and reuse the application layer. Shared server or browser
-protocol code belongs under a corresponding `interfaces/` directory rather
-than in the entry point.
+## Adding an entry point
+
+A second executable — an HTTP server, a scripted client, a benchmark — gets its
+own source file here and its own `add_executable` in `CMakeLists.txt`, linking
+`cha_core`. Its protocol code belongs in a matching `interfaces/` directory, not
+in this file; this file should stay short enough to read in one sitting.

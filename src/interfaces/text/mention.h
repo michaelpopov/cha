@@ -5,6 +5,8 @@
 
 namespace cha {
 
+// A prompt split at its leading mention: the handle it addresses, empty when the prompt names no
+// agent, and the message text that remains after removing it.
 struct AddressedPrompt {
     std::string handle;
     std::string text;

@@ -8,7 +8,8 @@
 
 namespace cha {
 
-// Identifies a persisted session by its ID, display label, and optional validation error.
+// One stored session as offered for selection: its ID, the label shown to the user, and an error
+// message when the file exists but failed its identity check.
 struct Session {
     std::string id;
     std::string label;
@@ -17,7 +18,10 @@ struct Session {
     bool operator==(const Session&) const = default;
 };
 
-// Lists, creates, and resolves self-contained SQLite sessions for one room.
+// Owns the session files of one room, so no other component has to know how sessions are laid out
+// on disk. It lists them, checking the identity embedded in each against the file it came from,
+// creates new ones without ever overwriting an existing destination, and resolves a session ID to
+// the database path used to open it. The clock is injectable to keep generated names testable.
 class SessionsRepository {
 public:
     using Clock = std::function<std::time_t()>;

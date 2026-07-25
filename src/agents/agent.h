@@ -14,13 +14,15 @@
 
 namespace cha {
 
-// Holds the complete startup configuration and effective prompt for one agent.
+// A persona loaded and ready to run: its Config plus the effective system prompt, which combines
+// the persona's own prompt with the instructions of the room it was loaded for.
 struct AgentDefinition {
     Config config;
     std::string system_prompt;
 };
 
-// Exposes immutable agent details for local UI commands without granting access to agent internals.
+// The public face of an agent, safe to hand to interfaces and notices. It carries the identity and
+// capability fields needed for display and @handle resolution, and never any connection secret.
 struct AgentInfo {
     std::string id;
     std::string name;
@@ -36,7 +38,8 @@ enum class AgentRole {
     assistant,
 };
 
-// One materialized message in the model-visible context.
+// One model-visible message, produced from transcript entries by project_agent_context(). Roles
+// stay semantic here so that only the transport layer knows their wire spelling.
 struct AgentMessage {
     AgentRole role{};
     std::string content;
@@ -63,30 +66,34 @@ std::vector<AgentMessage> project_agent_context(
     std::string_view system_prompt,
     std::string_view agent_id);
 
-// Carries the new prompt and correlation data for one completion request.
+// One unit of work for AgentRegistry: the human ConversationEntry to answer, plus the request ID
+// that correlates every event of that run back to it.
 struct CompletionRequest {
     RequestId request_id{};
     ConversationEntry prompt;
 };
 
-// Carries one streamed response fragment for an identified request.
+// The four AgentEvent alternatives below report the progress of one accepted request. A request
+// emits any number of deltas and then exactly one terminal event.
+
+// A streamed output fragment, now correlated with the request that produced it.
 struct AgentDelta {
     RequestId request_id{};
     CompletionDeltaKind kind{CompletionDeltaKind::answer};
     std::string text;
 };
 
-// Marks successful completion of an identified request.
+// Terminal event: the request produced its full response.
 struct AgentCompleted {
     RequestId request_id{};
 };
 
-// Marks cancellation of an identified request, possibly after response fragments were emitted.
+// Terminal event: the request stopped on request, possibly after emitting fragments.
 struct AgentCancelled {
     RequestId request_id{};
 };
 
-// Reports a terminal inference failure for an identified request.
+// Terminal event: the request ended in a transport or protocol error, with a message for the user.
 struct AgentFailed {
     RequestId request_id{};
     std::string message;

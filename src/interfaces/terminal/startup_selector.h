@@ -11,7 +11,9 @@ namespace cha {
 
 class Terminal;
 
-// Owns the temporary ncurses screens used to choose a room and session before chat starts.
+// The screens shown before a chat begins: choose a room, then choose or name a session. It draws
+// temporary selection lists on a borrowed Terminal and works only from the room names and
+// SessionSummary values it is handed by Workspace, so selection never reaches into session storage.
 class StartupSelector {
 public:
     explicit StartupSelector(Terminal& terminal);

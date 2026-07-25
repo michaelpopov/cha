@@ -20,7 +20,11 @@ enum class ChannelReadStatus {
     closed,
 };
 
-// Provides a typed, thread-safe queue whose descriptor can participate in the terminal event loop.
+// A thread-safe queue for passing typed values from a worker thread to an event loop. It exists
+// because that loop must wait on several sources at once, so besides blocking and non-blocking
+// reads it exposes a notification descriptor that can be polled alongside other descriptors.
+// Closing it stops further writes and wakes blocked readers, but already queued values are still
+// delivered before readers see the end.
 template <typename T>
 class EventChannel {
 public:

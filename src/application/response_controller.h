@@ -12,12 +12,18 @@
 
 namespace cha {
 
+// What the caller must do after a ResponseController call: redraw when the transcript changed,
+// and show the notice when one is set.
 struct ResponseUpdate {
     bool render_needed{};
     std::optional<std::string> notice;
 };
 
-// Owns the single in-flight agent response: conversation/journal mutations and event application.
+// Owns the single in-flight response, keeping turn mechanics out of ChatCoordinator. It starts a
+// turn by making the prompt durable and submitting it, then applies each AgentEvent to the live
+// Conversation and the ConversationJournal until exactly one terminal state is reached. It drives
+// AgentRegistry for submission and cancellation, holds the entry and request ID counters restored
+// with a session, and reports the current GenerationStatus.
 class ResponseController {
 public:
     ResponseController(

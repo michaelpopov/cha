@@ -17,13 +17,18 @@ namespace cha {
 
 enum class HandleMatch { resolved, unknown, ambiguous };
 
+// The outcome of resolving a handle the user typed: the agent when the match is unique, or the
+// candidates that made it ambiguous, so the caller can explain the choice back to the user.
 struct HandleResolution {
     HandleMatch match{HandleMatch::unknown};
     const AgentInfo* agent{};
     std::vector<const AgentInfo*> candidates;
 };
 
-// Owns one non-empty ordered roster with unique IDs, unique case-folded names, and handle resolution.
+// The ordered set of agents taking part in one room. It exists so the rest of the system can rely
+// on a roster being non-empty and free of duplicate IDs or case-folded names: it validates that
+// once at construction, then serves lookups by ID and resolution of user-typed handles over the
+// AgentInfo values it holds.
 class AgentRoster {
 public:
     explicit AgentRoster(std::vector<AgentInfo> agents);
@@ -38,7 +43,12 @@ private:
     std::vector<AgentInfo> agents_;
 };
 
-// Runs one execution thread that routes completion work to backends and publishes correlated agent events.
+// Runs agent completions off the caller's thread so the interface never blocks on a provider.
+// It owns one CompletionBackend per roster entry and one worker thread, accepts a single
+// outstanding CompletionRequest, prepares that request from a short-lived Conversation read view,
+// and publishes correlated AgentEvent values on a channel whose descriptor callers can poll.
+// Cancellation is cooperative, and every accepted request receives a terminal event, including
+// across shutdown.
 class AgentRegistry {
 public:
     AgentRegistry(const Conversation& conversation, std::vector<AgentDefinition> definitions);

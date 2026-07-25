@@ -2,7 +2,10 @@
 
 namespace cha {
 
-// Owns the process-wide ncurses lifecycle and switches modes for each UI phase.
+// Owns the process-wide terminal lifecycle, which only one component may. It sets the screen up on
+// construction, switches input and cursor modes as the program moves between startup selection and
+// chat, redraws after a resize, and restores the terminal on exit or destruction. StartupSelector
+// and Tui borrow it rather than configuring the screen themselves.
 class Terminal {
 public:
     Terminal();

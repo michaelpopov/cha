@@ -18,7 +18,9 @@ enum class ReasoningFormat {
     reasoning,
 };
 
-// Holds the identity, connection, and generation settings for one chat agent.
+// Everything needed to reach one persona's provider and shape its replies: identity, endpoint and
+// credentials, model, streaming, and reasoning settings. Loaded from a persona's TOML file by
+// load_config(); every field has a usable default, so a partial file stays valid.
 struct Config {
     std::string id{"assistant"};
     std::string name{"Assistant"};

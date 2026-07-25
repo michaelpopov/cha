@@ -30,13 +30,16 @@ enum class SessionInputKind {
     backspace,
 };
 
-// Carries one typed terminal action and its character payload when applicable.
+// One decoded input action for UserSession, carrying the character when the action is a keystroke.
 struct SessionInput {
     SessionInputKind kind{SessionInputKind::ignored};
     wchar_t character{};
 };
 
-// Abstracts terminal input and rendering so session behavior can be tested without curses.
+// The seam between a session and the screen. It declares everything UserSession needs — read one
+// input action, paint the conversation, editor, generation status and notice, scroll, resize — so
+// session behavior can be exercised without curses. Tui is the curses implementation; tests
+// substitute a recording one.
 class SessionView {
 public:
     virtual ~SessionView() = default;

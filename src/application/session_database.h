@@ -11,23 +11,24 @@
 
 namespace cha {
 
-// Describes the identity and display metadata stored inside one session database.
+// The identity a session database carries inside itself, so a file can be checked against the
+// session and room it claims to belong to before anything is read from it.
 struct SessionDatabaseMetadata {
     std::string id;
     std::string room;
     std::string label;
 };
 
-// Describes a pending repair for a turn that lacked a terminal state.
-// error_entry is not durable until ConversationJournal::fail_turn succeeds.
+// A turn found without a terminal state on restore, left behind when a run ended mid-generation.
+// error_entry is the record that closes it, and becomes durable only once fail_turn() succeeds.
 struct InterruptedTurn {
     RequestId request_id{};
     ConversationEntry error_entry;
 };
 
-// Contains the persisted transcript and identifiers reserved past pending repairs.
-// A caller opening a live session must finalize every interrupted_turn before
-// making any other journal write.
+// Everything needed to resume a stored session: the durable transcript, the ID counters to carry
+// on from, and any turns left unfinished. A caller opening a live session must finalize every
+// interrupted turn before it makes any other journal write.
 struct ConversationRestore {
     std::vector<ConversationEntry> entries;
     RequestId next_request_id{1};
@@ -48,7 +49,10 @@ ConversationRestore load_conversation_state(
 std::vector<ConversationEntry> load_conversation_entries(
     const std::filesystem::path& path);
 
-// Persists typed transcript and turn-lifecycle changes as SQLite transactions.
+// The durable half of one session. It writes transcript entries and turn transitions — start,
+// complete, cancel, fail — to a single SQLite file as transactions, so a run that dies mid-turn
+// can be restored and repaired afterwards. It accepts only storable ConversationEntry values:
+// streaming state and reasoning text never reach disk.
 class ConversationJournal {
 public:
     explicit ConversationJournal(std::filesystem::path path);

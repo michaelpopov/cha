@@ -42,13 +42,17 @@ enum class CompletionDeltaKind {
     answer,
 };
 
-// Carries one semantic transport fragment without attaching request identity.
+// One fragment of streamed provider output, tagged as reasoning or answer text.
+// It carries no request identity; the agent runtime attaches that when it publishes the fragment.
 struct CompletionDelta {
     CompletionDeltaKind kind{CompletionDeltaKind::answer};
     std::string text;
 };
 
-// Stores one typed transcript record for rendering, persistence, and context projection.
+// The one transcript record every layer agrees on: rendering, persistence, and model-context
+// projection all read this type. It keeps semantic kind and participant identity separate from
+// the display label, records who a message was addressed to, and tracks whether the record is
+// final or still being streamed.
 struct ConversationEntry {
     EntryId id{};
     EntryKind kind{EntryKind::notice};
@@ -64,12 +68,15 @@ struct ConversationEntry {
     bool operator==(const ConversationEntry&) const = default;
 };
 
+// Agent output split into ephemeral reasoning and durable answer text, so an entry can be built
+// without its author deciding how each part is shown or stored.
 struct AgentResponseText {
     std::string reasoning;
     std::string answer;
 };
 
-// Provides a consistent read-only copy of conversation state for concurrent consumers.
+// A point-in-time copy of a Conversation for readers that must not hold its lock while they work.
+// The revision and history epoch let a renderer decide what changed since the frame it drew last.
 struct ConversationSnapshot {
     std::vector<ConversationEntry> entries;
     std::size_t revision{};
@@ -79,8 +86,10 @@ struct ConversationSnapshot {
 
 class Conversation;
 
-// Holds the conversation mutex while exposing a non-owning, consistent read view.
-// Spans and references obtained from this object are valid only while it is alive.
+// Borrowed read access to a Conversation for callers that need its entries without copying them,
+// such as preparing a completion request. The view holds the conversation lock for its whole
+// lifetime, so the spans and references it hands out stay valid only while it lives; keep it
+// short and never block the writer behind it.
 class ConversationReadView {
 public:
     ~ConversationReadView() = default;
@@ -142,7 +151,10 @@ void require_terminal_conversation_entry(const ConversationEntry& entry);
 // Validates that an entry is terminal and contains no ephemeral reasoning.
 void require_storable_conversation_entry(const ConversationEntry& entry);
 
-// Keeps a thread-safe typed transcript with at most one coordinator-owned streaming entry.
+// The live transcript of one session, and the only mutable conversation state shared between the
+// interface and the agent runtime. It serializes appends, streaming updates, and history resets
+// behind a mutex, allows at most one open streaming entry, and offers readers either a snapshot
+// copy or a locked read view. It depends on nothing beyond the entry model declared above.
 class Conversation {
 public:
     Conversation() = default;

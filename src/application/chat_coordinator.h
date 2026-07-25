@@ -16,6 +16,8 @@
 
 namespace cha {
 
+// The side effects one coordinator command leaves for the interface to apply: redraw, clear the
+// input, show a notice, end the session. Returning them keeps every UI type out of the coordinator.
 struct CoordinatorUpdate {
     bool render_needed{};
     bool end_session{};
@@ -23,12 +25,12 @@ struct CoordinatorUpdate {
     std::optional<std::string> notice;
 };
 
-// UI-facing owner of one live chat session.
-//
-// Has two faces on purpose:
-// 1. Session state — read-only accessors over conversation, agents, and generation.
-// 2. Session commands — operations that mutate the session and return CoordinatorUpdate
-//    side effects for the UI (render / clear input / notice / end session).
+// One live chat session, and the only object an interface needs in order to run a chat. It has two
+// faces: read-only session state (conversation, roster, default agent, generation status) and
+// structured commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
+// each returning a CoordinatorUpdate instead of touching the UI. It composes Conversation,
+// ConversationJournal, AgentRegistry, and ResponseController, and allows only one turn at a time.
+// Command syntax, mentions, and transport formats belong to interfaces, not here.
 class ChatCoordinator {
 public:
     [[nodiscard]] static std::unique_ptr<ChatCoordinator> from_definitions(

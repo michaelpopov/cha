@@ -10,7 +10,11 @@
 
 namespace cha {
 
-// Performs one synchronous HTTP completion at a time and parses provider responses.
+// The CompletionBackend for OpenAI-compatible HTTP endpoints, configured from one AgentDefinition.
+// It projects the conversation into agent messages, performs the request over libcurl as either a
+// streaming or a single-response call, parses reasoning and answer content out of the provider
+// format, and discovers a model when the configuration names none. It owns one connection handle,
+// so a single client serves one request at a time.
 class CompletionClient final : public CompletionBackend {
 public:
     explicit CompletionClient(AgentDefinition definition);

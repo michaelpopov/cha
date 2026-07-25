@@ -10,14 +10,16 @@ namespace cha {
 
 class ChatCoordinator;
 
-// Describes a resolved room, including its ordered persona roster and storage directory.
+// A room resolved from the workspace: its name, the ordered personas that form its roster, and the
+// directory holding its instructions and sessions.
 struct Room {
     std::string name;
     std::vector<std::string> persona_names;
     std::filesystem::path directory;
 };
 
-// Describes one selectable session without exposing its storage representation.
+// A session as presented to an interface for selection: identity, label, and an optional error.
+// It deliberately mirrors Session without exposing where or how the session is stored.
 struct SessionSummary {
     std::string id;
     std::string label;
@@ -26,7 +28,11 @@ struct SessionSummary {
     bool operator==(const SessionSummary&) const = default;
 };
 
-// Exposes workspace layout, room/session use cases, and coordinator construction.
+// The way into a workspace directory and the place where a chat session is assembled. It resolves
+// the layout (personas, rooms), lists rooms and their sessions, and on create or open loads the
+// room's AgentDefinition values, resolves the session file through SessionsRepository, restores the
+// stored transcript, and returns a ChatCoordinator ready to use. Interfaces call it instead of
+// touching persona files or session storage themselves.
 class Workspace {
 public:
     explicit Workspace(std::filesystem::path root = ".");

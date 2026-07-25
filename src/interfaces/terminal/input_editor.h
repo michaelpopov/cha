@@ -5,7 +5,9 @@
 
 namespace cha {
 
-// Maintains editable multiline terminal input and converts it to submitted UTF-8 text.
+// The message the user is composing. It holds wide-character multiline text with a cursor, offers
+// editing and movement, tracks explicit continuation lines, and converts the result to UTF-8 when
+// the message is submitted. It knows nothing of curses, the conversation, or command syntax.
 class InputEditor {
 public:
     void insert(wchar_t character);

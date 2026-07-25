@@ -1,71 +1,250 @@
 # Application services
 
-`application/` is the reusable use-case layer. It owns workspace discovery,
-session persistence, and live chat coordination while presenting structured
-operations that do not depend on terminal command syntax or UI widgets.
+`application/` is the reusable use-case layer: it finds the workspace, manages
+session files, persists the transcript, and coordinates one live chat. Every
+operation it exposes is structured — no command syntax, no widgets, no HTTP —
+so the terminal interface, a future HTTP interface, and the tests all drive the
+same code.
 
 ## Contents
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve workspace layout, list rooms/sessions, load room agent definitions, and construct a `ChatCoordinator`. |
-| `sessions_repository.*` | List, create, identify, and safely resolve SQLite session files for one room. |
-| `session_database.*` | Initialize databases, restore transcripts, and journal turn transitions (`ConversationJournal`). |
-| `chat_coordinator.*` | Own one live session: prompts, agent events, default agent, notices, persistence, and shutdown. |
-| `response_controller.*` | Own the single in-flight response: start a turn, apply agent events, update conversation and journal. |
-| `generation_status.h` | Describe active generation state and provide the shared in-progress notice. |
+| `workspace.*` | Resolve the workspace layout, list rooms and sessions, load a room's agent definitions, and build a `ChatCoordinator`. |
+| `sessions_repository.*` | List, create, and safely resolve the SQLite session files of one room. |
+| `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `ConversationJournal`. |
+| `chat_coordinator.*` | Own one live session: commands, agent events, default agent, notices, and shutdown. |
+| `response_controller.*` | Own the single in-flight turn: start it, apply agent events, keep conversation and journal in step. |
+| `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
-## Workspace and sessions
+## Workspace layout
 
-`Workspace` resolves the on-disk workspace root (`personas/`, `rooms/`), lists
-rooms, loads a room’s ordered persona roster, and exposes session use cases.
-Creating or opening a session loads `AgentDefinition` values through `agents/`,
-opens or creates a SQLite file through `SessionsRepository`, and returns a
-`ChatCoordinator`.
+```mermaid
+flowchart TD
+    root["workspace root"] --> personas["personas/"]
+    root --> rooms["rooms/"]
+    root --> env[".env — optional"]
+    personas --> p1["Name/config.toml<br/>Name/SYSTEM.md"]
+    rooms --> list["rooms.list — ordered room names"]
+    rooms --> room["room-name/"]
+    room --> plist["personas.list — ordered persona names"]
+    room --> user["USER.md — room instructions"]
+    room --> sessions["sessions/&lt;id&gt;.sqlite3"]
+```
 
-`SessionsRepository` treats each session as a self-contained SQLite file and
-validates embedded session identity when listing or opening. Creation
-initializes a hidden temporary sibling and publishes it without replacing an
-existing destination.
+`Workspace` refuses to construct unless `personas/` and `rooms/` both exist.
+List files ignore blank lines and `#` comments, must name at least one entry,
+and every name is checked with `require_path_component()` before it becomes a
+path — so a workspace file can never reach outside its directory. A room's
+persona list additionally rejects duplicates.
 
-`ConversationJournal` persists transcript and request-lifecycle changes
-transactionally. Restore validates durable entries and reports interrupted
-turns for application-level repair. Streaming entries and reasoning text are
-not durable session content.
+## Session use cases
 
-Application-owned persistence types include `Room`, `Session`,
-`SessionSummary`, `SessionDatabaseMetadata`, `InterruptedTurn`, and
-`ConversationRestore`. Selectors and adapters see room names and
-`SessionSummary` values, not repository paths.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Caller
+    participant WS as Workspace
+    participant AG as agents/
+    participant RP as SessionsRepository
+    participant DB as Session database
+    participant CC as ChatCoordinator
+
+    Note over UI,CC: Creating a session
+    UI->>WS: create_session room, label
+    WS->>WS: load_room, read personas.list
+    WS->>AG: load_agent_definitions
+    WS->>RP: create label
+    RP->>RP: timestamp id, numeric suffix on collision
+    RP->>DB: build hidden temporary sibling, then link into place
+    WS->>CC: from_definitions with fresh database
+    CC-->>UI: coordinator
+
+    Note over UI,CC: Opening a session
+    UI->>WS: open_session room, id
+    WS->>AG: load_agent_definitions
+    WS->>RP: open_database_path id
+    RP->>DB: read metadata, check id and room match
+    WS->>DB: load_conversation_state
+    DB-->>WS: ConversationRestore
+    WS->>CC: from_definitions with restore
+    CC->>CC: repair interrupted turns, then install entries
+    CC-->>UI: coordinator
+```
+
+Creation publishes with `link(2)`, which fails rather than overwriting, so a
+half-written database is never visible under a real session name and a collision
+simply retries with the next numeric suffix. Listing is tolerant: a file that
+fails validation still appears, with its error attached, so the selector can
+show it instead of hiding a broken session.
+
+## Persistence
+
+One session is one self-contained SQLite file. Its `application_id` and
+`user_version` are checked before anything else is read.
+
+```mermaid
+erDiagram
+    session {
+        int singleton PK
+        text id
+        text room
+        text label
+    }
+    state {
+        int singleton PK
+        int history_epoch
+        int next_entry_id
+        int next_request_id
+    }
+    turns {
+        int request_id PK
+        int epoch
+        int state "0 started, 1 completed, 2 cancelled, 3 failed"
+    }
+    entries {
+        int entry_id PK
+        int epoch
+        int request_id FK
+        int kind "0 human, 1 agent, 2 notice, 3 error"
+        text participant_id
+        text display_name
+        text addressed_to
+        text addressed_to_name
+        text text
+        int status
+    }
+    turns ||--o{ entries : "prompt and response"
+```
+
+What the schema enforces on its own, independently of the C++ code:
+
+- `session` and `state` are single-row tables, guarded by a `CHECK` on the
+  primary key.
+- A partial unique index on `turns` allows **one** `started` turn at a time.
+- A partial unique index on `entries` allows **one** prompt per turn.
+- `CHECK` constraints restate the entry model: participant identity where it is
+  required, addressing only on human entries, `failed` status only for error
+  entries, `complete` status only for human and notice entries, non-empty text
+  for completed agent entries, and `streaming` status excluded entirely.
+- `entries.request_id` references `turns.request_id`, with foreign keys on.
+
+### Epochs
+
+`/clear` does not delete anything. It increments `state.history_epoch`, and
+restore only reads entries of the current epoch. Older rows stay in the file.
+
+### Transactions
+
+Each of `start_turn`, `complete_turn`, `cancel_turn`, `fail_turn`, `append`, and
+`clear` is one transaction. `start_turn` writes the turn row, the prompt entry,
+and the advanced `next_request_id` together; a terminal call writes the state
+change and the response or error entry together. So the durable turn state and
+the entry that explains it can never disagree.
+
+### Turn states and recovery
+
+```mermaid
+stateDiagram-v2
+    [*] --> started: start_turn
+    started --> completed: complete_turn, response required
+    started --> cancelled: cancel_turn, response optional
+    started --> failed: fail_turn, error entry required
+    completed --> [*]
+    cancelled --> [*]
+    failed --> [*]
+    started --> restored: session reopened while started
+    restored --> failed: fail_turn during restore
+```
+
+A turn still in `started` when a session is opened is reported as an
+`InterruptedTurn`. `ResponseController::restore()` must finish every one of them
+through `fail_turn()` before any other journal write; only then does the
+transcript become live. That is why `ConversationRestore` documents the
+requirement as part of its contract.
+
+### What is never stored
+
+Streaming status and reasoning text. `require_storable_conversation_entry()`
+rejects them before SQL sees them, and the `CHECK` constraints reject them
+again. A cancelled agent answer is stored only if it has answer text — a
+cancellation that produced only reasoning leaves no response entry at all.
 
 ## Chat coordination
 
-`ChatCoordinator` is the UI-facing owner of one live session. It composes
-`Conversation`, `ConversationJournal`, `AgentRegistry`, and
-`ResponseController`. Public methods are structured operations such as
-`submit_prompt()`, `clear_conversation()`, `set_default_agent()`,
-`request_stop()`, `receive()`, and `shutdown()`, returning `CoordinatorUpdate`
-side effects for the interface.
+`ChatCoordinator` is the whole session behind one object. It has two faces: a
+read model and a command set that returns `CoordinatorUpdate` side effects.
 
-Only one turn may be active. A prompt is made durable before it is added to
-memory and submitted for execution. Agent events are correlated with the
-active request, persisted at terminal transitions, and then reflected in the
-live transcript. Session notices (unknown/ambiguous handles, roster and
-`/info` text) are formatted inside the coordinator.
+| Command | Behavior | Update |
+| --- | --- | --- |
+| `submit_prompt(text, handle)` | Resolves the handle, or falls back to the default agent, and starts a turn. | On success `clear_input` + `render_needed`; on an unknown or ambiguous handle, or an empty prompt, only a notice — the draft text is left in the editor. |
+| `clear_conversation()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
+| `session_information()` | Entry count plus the roster. | `render_needed`, `clear_input`, notice. |
+| `agent_information()` | The roster, marking the default. | `render_needed`, `clear_input`, notice. |
+| `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
+| `request_stop()` | Cancels the active turn, or says there is none. | Notice. |
+| `receive()` | Drains the event channel, applying each event through `handle_agent_event()`. | Merged updates; `end_session` when the channel is closed. |
+| `shutdown()` | Stops the registry and drains what remains. | — |
 
-The coordinator does not parse `/commands`, leading mentions, HTTP routes, or
-JSON request bodies. Interface adapters translate those protocols into its
-structured methods.
+Every command except `request_stop()` and `receive()` is refused while a turn is
+active, with the shared in-progress notice. The coordinator formats session
+notices itself — handle errors, roster text, `/info` — because their wording
+belongs to the session, not to a UI.
+
+The coordinator does **not** parse `/commands`, mentions, HTTP routes, or JSON.
+Adapters translate those into these calls.
+
+## The in-flight turn
+
+`ResponseController` holds the mechanics of one turn so the coordinator can stay
+declarative.
+
+Starting a turn, in order: allocate a request ID and entry ID, build the human
+entry, `start_turn()` it to disk, add it to the conversation, reserve the
+response entry ID, then submit. If the conversation refuses the prompt, the turn
+is failed on disk before the exception propagates. If the registry refuses the
+request, the turn is failed immediately and the caller is told it could not be
+dispatched.
+
+Applying events:
+
+| Event | Effect |
+| --- | --- |
+| `AgentDelta`, first one | Opens the streaming entry, then appends; phase becomes `reasoning` or `answering`. |
+| `AgentDelta`, later | Appends text; answer text always promotes the phase to `answering`. |
+| `AgentCompleted` while answering | `complete_turn()`, then finish the entry as `complete`. |
+| `AgentCompleted` before any answer | Treated as failure: "completed without answer content". |
+| `AgentCancelled` while answering | `cancel_turn()` with the partial answer, entry finished as `cancelled`. |
+| `AgentCancelled` earlier | `cancel_turn()` with no response; a reasoning-only entry is closed as `cancelled`. |
+| `AgentFailed` | `fail_turn()` with an error entry, the open streaming entry is discarded, the error is added to the transcript. |
+
+Events whose request ID does not match the active turn are ignored, which is
+what makes a cancelled turn's late fragments harmless.
+
+## Failure policy
+
+Persistence failures are not recoverable at this level. Every journal call is
+wrapped with the operation it was attempting — "Failed to persist completion of
+request 7 for @Name" — and rethrown. The session ends rather than continuing
+with a transcript the database does not agree with. Provider failures, by
+contrast, are ordinary events: they become error entries and notices, and the
+session continues.
 
 ## Dependencies
 
-Application services may depend on:
+- **Depends on:** `conversation/` for transcript values, `agents/` for
+  definitions, rosters, execution, and events, `util/` for path and text
+  helpers, and SQLite for storage.
+- **Must not depend on:** `interfaces/` or `apps/`.
 
-- `conversation/` for live and restored transcript values;
-- `agents/` for definitions, rosters, execution, and agent events;
-- `util/` for path and text helpers;
-- SQLite for concrete session persistence.
+## Tests
 
-They must not depend on `interfaces/` or `apps/`. This keeps the same use
-cases available to the terminal interface, a future HTTP interface, tests, and
-other composition roots.
+| Test | Covers |
+| --- | --- |
+| `tests/application/unit_workspace.cpp` | Layout resolution, list-file rules, room loading, session create/open. |
+| `tests/application/unit_sessions_repository.cpp` | Listing, identity validation, collision handling, publish semantics. |
+| `tests/application/unit_chat_coordinator.cpp` | Command behavior, event application, persistence ordering, restore and repair. |
+| `tests/conversation/unit_conversation.cpp` | `ConversationJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
+
+Those database tests link `cha_sqlite3` directly, so they can assert on the
+stored schema and rows rather than only on what the C++ API reports.
