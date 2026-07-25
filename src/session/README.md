@@ -13,8 +13,7 @@ code.
 | `workspace.*` | Resolve the workspace layout, list rooms and sessions, load a room's agent definitions, and build a `SessionController`. |
 | `sessions_repository.*` | List, create, and safely resolve the SQLite session files of one room. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
-| `session_controller.*` | Own one live session: commands, agent events, default agent, notices, and shutdown. |
-| `response_controller.*` | Own the single in-flight turn: start it, apply agent events, keep transcript and journal in step. |
+| `session_controller.*` | Own one live session: commands, the in-flight turn, agent events, default agent, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
 ## Workspace layout
@@ -158,10 +157,10 @@ stateDiagram-v2
 ```
 
 A turn still in `started` when a session is opened is reported as an
-`InterruptedTurn`. `ResponseController::restore()` must finish every one of them
-through `fail_turn()` before any other journal write; only then does the
-transcript become live. That is why `SessionRestore` documents the
-requirement as part of its contract.
+`InterruptedTurn`. `SessionController::initialize()` must finish every one of
+them through `fail_turn()` before any other journal write; only then does the
+transcript become live. That is why `SessionRestore` documents the requirement
+as part of its contract.
 
 ### What is never stored
 
@@ -197,8 +196,7 @@ Front ends translate those into these calls.
 
 ## The in-flight turn
 
-`ResponseController` holds the mechanics of one turn so `SessionController` can
-stay declarative.
+`SessionController` holds the mechanics and state of its single in-flight turn.
 
 Starting a turn, in order: allocate a request ID and entry ID, build the human
 entry, `start_turn()` it to disk, add it to the transcript, reserve the

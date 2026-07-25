@@ -49,8 +49,7 @@ Main/UI thread                  SessionController
        |                      |               +-- CompletionClient[1]
        |                      |               +-- ...
        |                      |
-       |                      +-- ResponseController
-       |                            (active response, ID counters)
+       |                      +-- ActiveResponse (optional)
        |
        +---- poll(stdin, shared agent-event eventfd)
 ```
@@ -61,11 +60,9 @@ The ownership graph is:
   `SessionController`.
 - `run_user()` owns a `Tui` and `UserSession` for the chat loop.
 - `SessionController` owns the in-memory `Transcript`, SQLite
-  `SessionJournal`, `AgentRegistry`, `ResponseController`, and the current
-  default agent ID.
-- `ResponseController` holds non-owning references to the transcript, journal,
-  and registry, plus the next entry and request IDs seeded from durable state
-  and the optional `ActiveResponse` describing the turn in flight.
+  `SessionJournal`, `AgentRegistry`, the current default agent ID, the next
+  entry and request IDs seeded from durable state, and the optional
+  `ActiveResponse` describing the turn in flight.
 - `AgentRegistry` owns a non-empty ordered `AgentRoster`, every backend, one
   request channel, one shared `AgentEventChannel`, one execution thread, and
   shared cancellation/outstanding-request atomics.
@@ -423,8 +420,7 @@ answers are attributed input.
 
 For an idle controller, `SessionController::submit_prompt()` accepts prompt text
 and an optional handle from a front end, resolves the target agent
-against the roster, and rejects an empty prompt. It then delegates to
-`ResponseController::start()`, which:
+against the roster, and rejects an empty prompt. It then starts the turn:
 
 1. allocates a request ID and human entry ID;
 2. commits the `started` turn and prompt entry in one SQLite transaction;
@@ -437,9 +433,9 @@ Once a started turn is durable, normal error paths drive it to a terminal
 state. If the transcript rejects the prompt, or the registry refuses the
 request, the controller fails that durable turn before reporting the problem.
 
-`SessionController` and its `ResponseController` are the only transcript
-writers, and `SessionController` rejects new mutations while a turn
-is active. `AgentRegistry` routes the request by its already resolved target, so
+`SessionController` is the only transcript writer and rejects new mutations
+while a turn is active. `AgentRegistry` routes the request by its already
+resolved target, so
 the execution thread does not revalidate session-controller-owned request and
 transcript invariants. It prepares an owning `RequestPayload` under
 `TranscriptReadView`, releases the lock, and calls the synchronous backend.
@@ -687,10 +683,9 @@ transaction, SQLite retains a `started` row and its prompt. On restore:
    started turns by joining them to their human prompts.
 3. It reserves an `InterruptedTurn` error attributed to the prompt's target:
    “Response interrupted before completion”.
-4. `SessionController::initialize()` hands the restore result to
-   `ResponseController::restore()`, which installs the entries, adopts the
-   durable ID counters, and persists each repair with `fail_turn` before any
-   other journal mutation is accepted, adding each error to memory as it goes.
+4. `SessionController::initialize()` installs the entries, adopts the durable
+   ID counters, and persists each repair with `fail_turn` before any other
+   journal mutation is accepted, adding each error to memory as it goes.
 
 No streamed partial response is durable before its terminal transaction, so a
 crash during streaming restores the prompt plus the interruption error.
@@ -705,12 +700,11 @@ therefore does not convert database failures into ordinary transcript errors,
 because writing such an error depends on the same unavailable journal.
 
 Every journal mutation adds operation context before propagating the failure.
-Turn-related messages from `ResponseController` identify the request and agent
-— for example “Failed to persist completion of request 7 for @Name” — while a
-failed `/clear` in `SessionController` identifies that operation. The chat loop preserves that
-original exception, destroys its curses view, explicitly restores the terminal,
-stops the execution thread, and then lets `main()` report the contextual
-failure.
+Turn-related messages identify the request and agent—for example, “Failed to
+persist completion of request 7 for @Name”—while a failed `/clear` identifies
+that operation. The chat loop preserves that original exception, destroys its
+curses view, explicitly restores the terminal, stops the execution thread, and
+then lets `main()` report the contextual failure.
 
 SQLite transaction unwinding attempts a rollback. Since journal writes precede
 their corresponding in-memory mutations, the database remains the authority:
@@ -837,7 +831,7 @@ database, so a mistaken path cannot silently become an empty session.
 | `src/util/` | Shared text, path, and environment utilities. |
 | `src/transcript/` | Typed transcript, turn identifiers, and response-content values. |
 | `src/agents/` | Agent definitions, roster, context projection, execution, provider communication, and the runtime event channel. |
-| `src/session/` | Chat coordination (`SessionController`), the in-flight turn (`ResponseController`), workspace and session operations, session repositories, SQLite journaling, presentation-safe summaries, and generation status. |
+| `src/session/` | Chat coordination and in-flight turn state (`SessionController`), workspace and session operations, session repositories, SQLite journaling, presentation-safe summaries, and generation status. |
 | `src/ui/text/` | Shared slash-command and leading-mention parsing and dispatch. |
 | `src/ui/terminal/` | Ncurses selection, input, rendering, polling, and terminal session flow. |
 | `src/apps/` | Executable composition roots. |

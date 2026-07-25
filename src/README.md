@@ -87,7 +87,6 @@ flowchart LR
         usession["UserSession<br/>+ InputEditor"]
         tui["Tui — curses"]
         controller["SessionController"]
-        resp["ResponseController"]
         conv["Transcript"]
         journal["SessionJournal<br/>SQLite"]
         registry["AgentRegistry<br/>main-thread handle"]
@@ -103,10 +102,9 @@ flowchart LR
     loop --> usession
     usession --> tui
     usession --> controller
-    controller --> resp
-    resp --> conv
-    resp --> journal
-    resp --> registry
+    controller --> conv
+    controller --> journal
+    controller --> registry
     registry -->|"WorkItem queue"| dialog
     dialog --> backend
     backend <-->|"HTTP or SSE"| provider
@@ -120,9 +118,9 @@ Ownership is a strict tree, and destruction order matters:
   `SessionController`.
 - `run_user()` owns the `Tui` and the `UserSession` for the chat loop.
 - `SessionController` owns the `Transcript`, the `SessionJournal`, the
-  `AgentRegistry`, the `ResponseController`, and the current default agent. The
-  transcript is declared *before* the registry so it outlives the thread that
-  reads it.
+  `AgentRegistry`, the current default agent, and the state of the in-flight
+  turn. The transcript is declared *before* the registry so it outlives the
+  thread that reads it.
 - `AgentRegistry` owns the roster, every backend, the request channel, the event
   channel, the worker thread, and the cancellation and outstanding-request
   atomics.
@@ -201,7 +199,6 @@ sequenceDiagram
     participant U as UserSession
     participant T as handle_text_input
     participant C as SessionController
-    participant R as ResponseController
     participant J as SessionJournal
     participant V as Transcript
     participant G as AgentRegistry
@@ -213,10 +210,9 @@ sequenceDiagram
     T->>C: submit_prompt text and handle
     C->>C: reject if a turn is active
     C->>C: resolve handle against AgentRoster
-    C->>R: start with text and target agent
-    R->>J: start_turn, SQLite transaction
-    R->>V: add human entry
-    R->>G: submit CompletionRequest
+    C->>J: start_turn, SQLite transaction
+    C->>V: add human entry
+    C->>G: submit CompletionRequest
     G->>W: WorkItem via request channel
     C-->>U: SessionUpdate, render and clear input
 
@@ -228,16 +224,14 @@ sequenceDiagram
         W->>G: AgentDelta on event channel
         G-->>U: eventfd wakes poll
         U->>C: receive
-        C->>R: apply AgentDelta
-        R->>V: begin or append streaming entry
+        C->>V: begin or append streaming entry
         U->>U: render
     end
     P-->>W: DONE marker
     W->>G: AgentCompleted
     U->>C: receive
-    C->>R: apply AgentCompleted
-    R->>J: complete_turn, SQLite transaction
-    R->>V: finish entry as complete
+    C->>J: complete_turn, SQLite transaction
+    C->>V: finish entry as complete
     C-->>U: SessionUpdate, render
 ```
 
@@ -360,10 +354,10 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | A roster is non-empty, with unique IDs and unique case-folded names. | `AgentRoster` constructor |
 | At most one turn is in flight, process-wide. | `AgentRegistry` outstanding-request gate |
 | Every accepted request yields exactly one terminal `AgentEvent`. | `AgentRegistry::dialog` and shutdown order |
-| Only the main thread mutates `Transcript` or the journal. | `SessionController` / `ResponseController` |
+| Only the main thread mutates `Transcript` or the journal. | `SessionController` |
 | At most one streaming entry is open at a time. | `Transcript` |
 | Entry and request IDs are positive and strictly increasing. | `Transcript::require_next_id`, `state` table |
-| Durable writes precede visible ones. | `ResponseController` |
+| Durable writes precede visible ones. | `SessionController` |
 | Reasoning exists only while a response is active; it never enters the transcript, persistence, or projection. | `ActiveResponse`, `GenerationStatus`, `TranscriptEntry` shape |
 | Front ends never open storage or call backends. | Include rules above |
 

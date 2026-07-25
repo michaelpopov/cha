@@ -3,9 +3,8 @@
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
 #include "session/generation_status.h"
-#include "session/response_controller.h"
-#include "transcript/transcript.h"
 #include "session/session_database.h"
+#include "transcript/transcript.h"
 
 #include <filesystem>
 #include <memory>
@@ -28,9 +27,9 @@ struct SessionUpdate {
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, roster, default agent, generation status) and
 // commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
-// each returning a SessionUpdate instead of touching the UI. It composes Transcript,
-// SessionJournal, AgentRegistry, and ResponseController, and allows only one turn at a time.
-// Command syntax, mentions, and transport formats belong to front ends, not here.
+// each returning a SessionUpdate instead of touching the UI. It owns the Transcript,
+// SessionJournal, AgentRegistry, and the state of the single in-flight turn. Command syntax,
+// mentions, and transport formats belong to front ends, not here.
 class SessionController {
 public:
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions(
@@ -48,7 +47,7 @@ public:
 
     // --- Session state (read-only) --------------------------------------------
     const Transcript& transcript() const { return transcript_; }
-    GenerationStatus generation_status() const { return response_.generation_status(); }
+    GenerationStatus generation_status() const;
     const AgentRoster& roster() const { return registry_.roster(); }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
     int notification_fd() const { return registry_.notification_fd(); }
@@ -68,6 +67,15 @@ public:
     void shutdown();
 
 private:
+    struct ActiveResponse {
+        RequestId request_id{};
+        EntryId response_entry_id{};
+        ParticipantId agent_id;
+        std::string agent_name;
+        ResponsePhase phase{ResponsePhase::waiting};
+        std::string reasoning_text;
+    };
+
     SessionController(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
@@ -79,13 +87,26 @@ private:
 
     void initialize(SessionRestore restored);
     SessionUpdate busy_notice() const;
-    static void merge_response(SessionUpdate& update, ResponseUpdate response);
+    SessionUpdate start_response(std::string text, const AgentInfo& target);
+    void apply(const AgentDelta& event, SessionUpdate& update);
+    void apply(const AgentCompleted& event, SessionUpdate& update);
+    void apply(const AgentCancelled& event, SessionUpdate& update);
+    void apply(const AgentFailed& event, SessionUpdate& update);
+    void fail_active_response(
+        std::string message,
+        ParticipantId participant_id,
+        SessionUpdate& update);
+    void finish_response_entry(EntryStatus status);
+    TranscriptEntry response_entry(EntryStatus status) const;
+    bool matches(RequestId request_id) const;
 
     Transcript transcript_;
     SessionJournal journal_;
     AgentRegistry registry_;
-    ResponseController response_;
     ParticipantId default_agent_id_;
+    RequestId next_request_id_{1};
+    EntryId next_entry_id_{1};
+    std::optional<ActiveResponse> active_;
     bool shutdown_{};
 };
 

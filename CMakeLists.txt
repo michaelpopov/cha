@@ -80,16 +80,15 @@ add_library(cha_core
     src/util/path_name.cpp
     src/util/text.cpp
     src/transcript/transcript.cpp
-            src/agents/agent_registry.cpp
-        src/agents/completion_client.cpp
+    src/agents/agent_registry.cpp
+    src/agents/completion_client.cpp
     src/session/session_controller.cpp
-        src/session/response_controller.cpp
     src/session/workspace.cpp
     src/agents/agent.cpp
     src/agents/config.cpp
     src/session/session_database.cpp
     src/session/sessions_repository.cpp
-        src/ui/text/command.cpp
+    src/ui/text/command.cpp
     src/ui/text/mention.cpp
     src/ui/text/text_input.cpp
     src/ui/terminal/input_editor.cpp
@@ -98,7 +97,7 @@ add_library(cha_core
     src/ui/terminal/transcript_renderer.cpp
     src/ui/terminal/tui.cpp
     src/ui/terminal/user.cpp
-        src/ui/terminal/user_session.cpp
+    src/ui/terminal/user_session.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
