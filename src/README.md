@@ -40,35 +40,20 @@ architectural, enforced by review and by the include rules below.
 
 ## Dependency direction
 
-An arrow means "may include headers from".
+Dependencies run one way, from the top of this table to the bottom. A directory
+may include headers only from those listed beside it.
 
-```mermaid
-flowchart TD
-    apps["apps/<br/>composition roots"]
-    terminal["ui/terminal/<br/>ncurses front end"]
-    text["ui/text/<br/>command and mention grammar"]
-    session["session/<br/>workspace, sessions, chat coordination"]
-    agents["agents/<br/>roster, execution, transport"]
-    conversation["conversation/<br/>transcript model"]
-    util["util/<br/>leaf helpers"]
+| Directory | May include |
+| --- | --- |
+| `apps/` | `ui/terminal/`, `session/`, `util/` |
+| `ui/terminal/` | `ui/text/`, `session/`, `conversation/`, and roster values from `agents/` |
+| `ui/text/` | `session/`, `util/` |
+| `session/` | `agents/`, `conversation/`, `util/` |
+| `agents/` | `conversation/`, `util/` |
+| `conversation/` | Nothing in the project. |
+| `util/` | Nothing in the project. |
 
-    apps --> terminal
-    apps --> session
-    terminal --> text
-    terminal --> session
-    terminal --> conversation
-    terminal -->|"roster values only"| agents
-    text --> session
-    session --> agents
-    session --> conversation
-    agents --> conversation
-    apps --> util
-    text --> util
-    session --> util
-    agents --> util
-```
-
-Three rules keep this graph honest:
+Three rules keep this direction honest:
 
 1. **`ui/` calls `SessionController` and `Workspace`, never storage or
    transport.** A front end may render `ConversationEntry` values and call
