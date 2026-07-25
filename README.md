@@ -83,9 +83,9 @@ Before loading server configuration, the application optionally reads `.env` fro
 - `/stop` cancels the active model response.
 - `/exit` exits the application.
 
-## Terminal interface
+## Terminal UI
 
-The interface has a scrollable conversation transcript, a generation-status line, and a persistent multiline input pane. Input remains available while a response is streaming.
+The UI has a scrollable conversation transcript, a generation-status line, and a persistent multiline input pane. Input remains available while a response is streaming.
 
 The status changes from `generating` to `reasoning` when structured reasoning
 arrives, then to `responding` when answer text begins.
@@ -121,8 +121,8 @@ The source tree is documented from the inside out, with diagrams:
 | [`src/README.md`](src/README.md) | High-level architecture: layers, threading, the life of a turn, persistence, and the invariants that hold everywhere. Start here. |
 | [`src/conversation/README.md`](src/conversation/README.md) | The transcript model shared by every layer. |
 | [`src/agents/README.md`](src/agents/README.md) | Persona loading, rosters, the execution thread, and the HTTP transport. |
-| [`src/application/README.md`](src/application/README.md) | Workspace and session use cases, SQLite persistence, chat coordination. |
-| [`src/interfaces/README.md`](src/interfaces/README.md) | The adapter contract, with [`text/`](src/interfaces/text/README.md) and [`terminal/`](src/interfaces/terminal/README.md) beneath it. |
+| [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
+| [`src/ui/README.md`](src/ui/README.md) | The UI contract, with [`text/`](src/ui/text/README.md) and [`terminal/`](src/ui/terminal/README.md) beneath it. |
 | [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |
 | [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including the pollable event channel. |
 | [`docs/cha.md`](docs/cha.md) | The exhaustive rule-by-rule design reference. |

@@ -1,12 +1,12 @@
 # Conversation model
 
-`conversation/` owns the interface-neutral transcript model: what a conversation
-entry means, and how live transcript state changes. It is the vocabulary the
-rest of the system shares, and it knows nothing about how entries are rendered,
-stored, or sent to a provider.
+`conversation/` owns the presentation-neutral transcript model: what a
+conversation entry means, and how live transcript state changes. It is the
+vocabulary the rest of the system shares, and it knows nothing about how entries
+are rendered, stored, or sent to a provider.
 
-This is a domain leaf. Everything else may depend on it; it depends on nothing
-in the project.
+This is a leaf. Everything else may depend on it; it depends on nothing in the
+project.
 
 ## Contents
 
@@ -122,7 +122,7 @@ inside one blocks the writer.
 
 - **Depends on:** nothing in the project.
 - **Depended on by:** `agents/` (projection and request preparation),
-  `application/` (coordination and persistence), `interfaces/` (rendering).
+  `session/` (coordination and persistence), `ui/` (rendering).
 
 Persistence and presentation choices stay outside this directory. The model may
 expose what those consumers need, but it must never import SQLite, provider

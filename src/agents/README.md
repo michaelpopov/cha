@@ -41,7 +41,7 @@ flowchart LR
 
 The effective system prompt is the persona's `SYSTEM.md` followed by the room's
 `USER.md`, so the same persona behaves differently in different rooms. Loading
-happens on the main thread during session construction: `application/` decides
+happens on the main thread during session construction: `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
 Identity rules, enforced by `validate_agent_id` and `validate_agent_name`:
@@ -70,13 +70,13 @@ flowchart TD
     count -->|"several"| ambiguous["ambiguous, with candidates"]
 ```
 
-The roster only reports the outcome. `ChatCoordinator` turns `unknown` and
+The roster only reports the outcome. `SessionController` turns `unknown` and
 `ambiguous` into the notices the user sees, because the wording is a session
 concern, not a roster one.
 
 ## Execution: one thread, one request
 
-`AgentRegistry` exists so a slow provider can never block the interface. It owns
+`AgentRegistry` exists so a slow provider can never block the UI. It owns
 one worker thread, one backend per roster entry, and two channels.
 
 ```mermaid
@@ -218,7 +218,7 @@ reasoning text is never included.
 - **Depends on:** `conversation/` for entries, read views, and IDs; `util/` for
   text helpers and `EventChannel`; libcurl and nlohmann/json in the HTTP client;
   toml++ in the config loader.
-- **Must not depend on:** `application/` or `interfaces/`. Workspace discovery
+- **Must not depend on:** `session/` or `ui/`. Workspace discovery
   stays above; once the persona and room directories are known, this layer owns
   the loading.
 

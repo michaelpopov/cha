@@ -1,13 +1,13 @@
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
-#include "application/chat_coordinator.h"
+#include "session/session_controller.h"
 #include "agents/config.h"
-#include "interfaces/terminal/transcript_renderer.h"
-#include "interfaces/text/text_input.h"
+#include "ui/terminal/transcript_renderer.h"
+#include "ui/text/text_input.h"
 #include "util/environment.h"
 #include "support/mock_http_server.h"
-#include "application/session_database.h"
-#include "application/workspace.h"
+#include "session/session_database.h"
+#include "session/workspace.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -195,13 +195,13 @@ std::string answer(std::string_view text) {
             .dump());
 }
 
-void run_until_idle(ChatCoordinator& coordinator) {
-    while (coordinator.generation_status().active) {
-        pollfd descriptor{coordinator.notification_fd(), POLLIN, 0};
+void run_until_idle(SessionController& controller) {
+    while (controller.generation_status().active) {
+        pollfd descriptor{controller.notification_fd(), POLLIN, 0};
         if (::poll(&descriptor, 1, 5000) != 1) {
             throw std::runtime_error("Timed out waiting for an integration turn");
         }
-        (void)coordinator.receive();
+        (void)controller.receive();
     }
 }
 
@@ -249,17 +249,17 @@ TEST(ReasoningIntegration, StreamsLiveReasoningButPersistsAndReplaysOnlyAnswer) 
 
     TemporarySession session;
     {
-        auto coordinator = ChatCoordinator::from_definitions(std::move(definitions), session.path);
-        (void)handle_text_input(*coordinator, "First question");
-        run_until_idle(*coordinator);
+        auto controller = SessionController::from_definitions(std::move(definitions), session.path);
+        (void)handle_text_input(*controller, "First question");
+        run_until_idle(*controller);
         const std::vector<ConversationEntry> live =
-            coordinator->conversation().entries();
+            controller->conversation().entries();
         ASSERT_EQ(live.size(), 2U);
         EXPECT_EQ(live.back().reasoning_text, reasoning_marker);
         EXPECT_EQ(live.back().text, "First answer");
 
-        (void)handle_text_input(*coordinator, "Second question");
-        run_until_idle(*coordinator);
+        (void)handle_text_input(*controller, "Second question");
+        run_until_idle(*controller);
     }
     server.join();
 
@@ -292,13 +292,13 @@ TEST(ReasoningIntegration, ParsesNonStreamingStructuredReasoning) {
         ReasoningFormat::reasoning;
 
     TemporarySession session;
-    auto coordinator = ChatCoordinator::from_definitions(std::move(definitions), session.path);
-    (void)handle_text_input(*coordinator, "Question");
-    run_until_idle(*coordinator);
+    auto controller = SessionController::from_definitions(std::move(definitions), session.path);
+    (void)handle_text_input(*controller, "Question");
+    run_until_idle(*controller);
     server.join();
 
     const std::vector<ConversationEntry> live =
-        coordinator->conversation().entries();
+        controller->conversation().entries();
     ASSERT_EQ(live.size(), 2U);
     EXPECT_EQ(live.back().reasoning_text, "Non-stream thought");
     EXPECT_EQ(live.back().text, "Non-stream answer");
@@ -326,19 +326,19 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
 
     TemporarySession session;
     {
-        auto coordinator = ChatCoordinator::from_definitions(std::move(definitions), session.path);
-        ASSERT_EQ(coordinator->roster().first().id, "cheburashka");
-        EXPECT_TRUE(show_addressing(coordinator->roster(), coordinator->conversation()));
+        auto controller = SessionController::from_definitions(std::move(definitions), session.path);
+        ASSERT_EQ(controller->roster().first().id, "cheburashka");
+        EXPECT_TRUE(show_addressing(controller->roster(), controller->conversation()));
 
         // No mention: the first persona in personas.list answers.
-        CoordinatorUpdate update = handle_text_input(*coordinator, "Who are you?");
+        SessionUpdate update = handle_text_input(*controller, "Who are you?");
         ASSERT_TRUE(update.clear_input);
-        run_until_idle(*coordinator);
+        run_until_idle(*controller);
 
         // An addressed prompt reaches the mentioned agent instead.
-        update = handle_text_input(*coordinator, "@Ismael, and you?");
+        update = handle_text_input(*controller, "@Ismael, and you?");
         ASSERT_TRUE(update.clear_input);
-        run_until_idle(*coordinator);
+        run_until_idle(*controller);
     }
     cheburashka_server.join();
     ismael_server.join();
@@ -393,11 +393,11 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
 
     TemporarySession session;
     {
-        auto coordinator = ChatCoordinator::from_definitions(std::move(definitions), session.path);
-        (void)handle_text_input(*coordinator, "Who are you?");
-        run_until_idle(*coordinator);
-        (void)handle_text_input(*coordinator, "@Ismael and you?");
-        run_until_idle(*coordinator);
+        auto controller = SessionController::from_definitions(std::move(definitions), session.path);
+        (void)handle_text_input(*controller, "Who are you?");
+        run_until_idle(*controller);
+        (void)handle_text_input(*controller, "@Ismael and you?");
+        run_until_idle(*controller);
     }
     cheburashka_server.join();
 
@@ -406,7 +406,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
     ASSERT_EQ(restored.entries.size(), 4U);
     ASSERT_TRUE(restored.interrupted_turns.empty());
 
-    auto reopened = ChatCoordinator::from_definitions(
+    auto reopened = SessionController::from_definitions(
         std::vector<AgentDefinition>{std::move(ismael_only)},
         session.path,
         std::move(restored));

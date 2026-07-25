@@ -21,7 +21,7 @@ struct AgentDefinition {
     std::string system_prompt;
 };
 
-// The public face of an agent, safe to hand to interfaces and notices. It carries the identity and
+// The public view of an agent, safe to hand to front ends and notices. It carries the identity and
 // capability fields needed for display and @handle resolution, and never any connection secret.
 struct AgentInfo {
     std::string id;

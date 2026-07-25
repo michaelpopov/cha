@@ -152,7 +152,7 @@ void require_terminal_conversation_entry(const ConversationEntry& entry);
 void require_storable_conversation_entry(const ConversationEntry& entry);
 
 // The live transcript of one session, and the only mutable conversation state shared between the
-// interface and the agent runtime. It serializes appends, streaming updates, and history resets
+// UI and the agent runtime. It serializes appends, streaming updates, and history resets
 // behind a mutex, allows at most one open streaming entry, and offers readers either a snapshot
 // copy or a locked read view. It depends on nothing beyond the entry model declared above.
 class Conversation {

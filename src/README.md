@@ -15,9 +15,9 @@ It runs from a *workspace* directory of personas and rooms. A room names an
 ordered roster of personas, each with its own model connection and system
 prompt, and all of them share one conversation. A *session* is one
 self-contained SQLite file holding that conversation. At runtime the user types
-into an ncurses interface, the text is parsed into a command or an addressed
-prompt, the application layer makes the prompt durable and hands it to an agent
-thread, and that thread streams the model's answer back as typed events that are
+into the terminal UI, the text is parsed into a command or an addressed prompt,
+the session layer makes the prompt durable and hands it to an agent thread, and
+that thread streams the model's answer back as typed events that are
 applied to the live transcript and committed to the database at terminal
 transitions.
 
@@ -32,10 +32,10 @@ architectural, enforced by review and by the include rules below.
 | --- | --- | --- |
 | `util/` | Leaf helpers: text and path rules, `.env` loading, the pollable `EventChannel`. | Anything above it. |
 | `conversation/` | The transcript model: entry types, validation, and the thread-safe live `Conversation`. | Storage, providers, terminals. |
-| `agents/` | Persona config, the room roster, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, interfaces. |
-| `application/` | Workspace and session use cases, SQLite persistence, and live chat coordination. | Terminals, command syntax, transports. |
-| `interfaces/text/` | The textual protocol: slash commands and `@mention` addressing. | Curses, storage, backends. |
-| `interfaces/terminal/` | Terminal lifecycle, startup selection, input editing, rendering, and the event loop. | Workspace files, session repositories, backends. |
+| `agents/` | Persona config, the room roster, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, front ends. |
+| `session/` | Workspace and session operations, SQLite persistence, and live chat coordination. | Terminals, command syntax, transports. |
+| `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Curses, storage, backends. |
+| `ui/terminal/` | Terminal lifecycle, startup selection, input editing, rendering, and the event loop. | Workspace files, session repositories, backends. |
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
 
 ## Dependency direction
@@ -45,40 +45,40 @@ An arrow means "may include headers from".
 ```mermaid
 flowchart TD
     apps["apps/<br/>composition roots"]
-    terminal["interfaces/terminal/<br/>ncurses adapter"]
-    text["interfaces/text/<br/>command and mention grammar"]
-    application["application/<br/>workspace, sessions, chat coordination"]
+    terminal["ui/terminal/<br/>ncurses front end"]
+    text["ui/text/<br/>command and mention grammar"]
+    session["session/<br/>workspace, sessions, chat coordination"]
     agents["agents/<br/>roster, execution, transport"]
     conversation["conversation/<br/>transcript model"]
     util["util/<br/>leaf helpers"]
 
     apps --> terminal
-    apps --> application
+    apps --> session
     terminal --> text
-    terminal --> application
+    terminal --> session
     terminal --> conversation
     terminal -->|"roster values only"| agents
-    text --> application
-    application --> agents
-    application --> conversation
+    text --> session
+    session --> agents
+    session --> conversation
     agents --> conversation
     apps --> util
     text --> util
-    application --> util
+    session --> util
     agents --> util
 ```
 
 Three rules keep this graph honest:
 
-1. **Interfaces consume use cases, never storage or transport.** An adapter may
-   render `ConversationEntry` values and call `ChatCoordinator`, but it must not
-   open a session repository, read workspace files, or call a completion
-   backend. If an adapter needs something new, add an operation to
-   `application/`.
-2. **`conversation/` is a domain leaf.** It may not import SQLite, provider
+1. **`ui/` calls `SessionController` and `Workspace`, never storage or
+   transport.** A front end may render `ConversationEntry` values and call
+   `SessionController`, but it must not open a session repository, read
+   workspace files, or call a completion backend. If a front end needs something
+   new, add an operation to `session/`.
+2. **`conversation/` depends on nothing.** It may not import SQLite, provider
    protocol, or terminal concepts. Everything else may depend on it.
 3. **`agents/` owns persona loading but not workspace discovery.** Once
-   `application/` has resolved which directories a room uses, `agents/` loads
+   `session/` has resolved which directories a room uses, `agents/` loads
    `Config` and `AgentDefinition` from them.
 
 ## Runtime structure
@@ -91,13 +91,13 @@ and reports back through a channel.
 flowchart LR
     subgraph mainthread["Main thread — UI, state, persistence"]
         loop["run_user<br/>poll on stdin + eventfd"]
-        session["UserSession<br/>+ InputEditor"]
+        usession["UserSession<br/>+ InputEditor"]
         tui["Tui — curses"]
-        coord["ChatCoordinator"]
+        controller["SessionController"]
         resp["ResponseController"]
         conv["Conversation"]
         journal["ConversationJournal<br/>SQLite"]
-        registry["AgentRegistry<br/>main-thread face"]
+        registry["AgentRegistry<br/>main-thread handle"]
     end
 
     subgraph agentthread["Agent thread — one request at a time"]
@@ -107,10 +107,10 @@ flowchart LR
 
     provider[("Model server<br/>/v1/chat/completions")]
 
-    loop --> session
-    session --> tui
-    session --> coord
-    coord --> resp
+    loop --> usession
+    usession --> tui
+    usession --> controller
+    controller --> resp
     resp --> conv
     resp --> journal
     resp --> registry
@@ -124,9 +124,9 @@ flowchart LR
 Ownership is a strict tree, and destruction order matters:
 
 - `main()` owns the `Workspace`, the process-wide `Terminal`, and the selected
-  `ChatCoordinator`.
+  `SessionController`.
 - `run_user()` owns the `Tui` and the `UserSession` for the chat loop.
-- `ChatCoordinator` owns the `Conversation`, the `ConversationJournal`, the
+- `SessionController` owns the `Conversation`, the `ConversationJournal`, the
   `AgentRegistry`, the `ResponseController`, and the current default agent. The
   conversation is declared *before* the registry so it outlives the thread that
   reads it.
@@ -162,7 +162,7 @@ sequenceDiagram
     participant sel as StartupSelector
     participant repo as SessionsRepository
     participant db as Session database
-    participant coord as ChatCoordinator
+    participant controller as SessionController
 
     main->>main: load_dotenv
     main->>ws: construct, require personas/ and rooms/
@@ -187,10 +187,10 @@ sequenceDiagram
         ws->>db: load_conversation_state
         db-->>ws: ConversationRestore
     end
-    ws->>coord: build with AgentDefinitions and database path
-    coord->>coord: restore entries, repair interrupted turns
-    ws-->>main: ChatCoordinator
-    main->>coord: run_user
+    ws->>controller: build with AgentDefinitions and database path
+    controller->>controller: restore entries, repair interrupted turns
+    ws-->>main: SessionController
+    main->>controller: run_user
 ```
 
 Persona loading happens here, on the main thread: each `CompletionClient` is
@@ -207,7 +207,7 @@ sequenceDiagram
     autonumber
     participant U as UserSession
     participant T as handle_text_input
-    participant C as ChatCoordinator
+    participant C as SessionController
     participant R as ResponseController
     participant J as ConversationJournal
     participant V as Conversation
@@ -225,7 +225,7 @@ sequenceDiagram
     R->>V: add human entry
     R->>G: submit CompletionRequest
     G->>W: WorkItem via request channel
-    C-->>U: CoordinatorUpdate, render and clear input
+    C-->>U: SessionUpdate, render and clear input
 
     W->>V: short-lived read view
     W->>W: backend.prepare, project context and build body
@@ -245,7 +245,7 @@ sequenceDiagram
     C->>R: apply AgentCompleted
     R->>J: complete_turn, SQLite transaction
     R->>V: finish entry as complete
-    C-->>U: CoordinatorUpdate, render
+    C-->>U: SessionUpdate, render
 ```
 
 Two ordering rules are load-bearing:
@@ -350,7 +350,7 @@ erDiagram
 Schema `CHECK` constraints re-state the entry-model rules in SQL, a partial
 unique index allows only one `started` turn at a time, and another allows only
 one prompt per turn. Streaming status and reasoning text are rejected by
-construction. See [`application/README.md`](application/README.md) for the full
+construction. See [`session/README.md`](session/README.md) for the full
 persistence contract.
 
 ## Invariants
@@ -362,12 +362,12 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | A roster is non-empty, with unique IDs and unique case-folded names. | `AgentRoster` constructor |
 | At most one turn is in flight, process-wide. | `AgentRegistry` outstanding-request gate |
 | Every accepted request yields exactly one terminal `AgentEvent`. | `AgentRegistry::dialog` and shutdown order |
-| Only the main thread mutates `Conversation` or the journal. | `ChatCoordinator` / `ResponseController` |
+| Only the main thread mutates `Conversation` or the journal. | `SessionController` / `ResponseController` |
 | At most one streaming entry is open at a time. | `Conversation` |
 | Entry and request IDs are positive and strictly increasing. | `Conversation::require_next_id`, `state` table |
 | Durable writes precede visible ones. | `ResponseController` |
 | Reasoning text is never persisted or projected. | `require_storable_conversation_entry`, projection |
-| Interfaces never open storage or call backends. | Include rules above |
+| Front ends never open storage or call backends. | Include rules above |
 
 ## Failure policy
 
@@ -388,10 +388,10 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | Goal | Where the work goes |
 | --- | --- |
 | New provider or protocol | A new `CompletionBackend` in `agents/`; nothing above it changes. |
-| New slash command | `interfaces/text/command.*` for the grammar, plus a structured operation on `ChatCoordinator` if it touches session state. |
-| New interface, e.g. HTTP | A new `interfaces/http/` adapter plus a new `apps/` entry point, reusing `Workspace` and `ChatCoordinator` unchanged. |
+| New slash command | `ui/text/command.*` for the grammar, plus an operation on `SessionController` if it touches session state. |
+| New front end, e.g. HTTP | A new `ui/http/` front end plus a new `apps/` entry point, reusing `Workspace` and `SessionController` unchanged. |
 | New persisted field | `conversation/` entry model, its validators, the SQLite schema and its `CHECK` constraints, and the restore path — in that order. |
-| New rendering behavior | `interfaces/terminal/transcript_renderer.*`, testable through `TranscriptSurface` without curses. |
+| New rendering behavior | `ui/terminal/transcript_renderer.*`, testable through `TranscriptSurface` without curses. |
 
 ## Build and test map
 
@@ -409,14 +409,14 @@ Third-party dependencies are libcurl, nlohmann/json, toml++, SQLite
 ## Source conventions
 
 - Project headers are included from the `src/` include root, for example
-  `"application/chat_coordinator.h"`.
+  `"session/session_controller.h"`.
 - Headers include what their own declarations need; no reliance on transitive
   includes.
 - Every class and struct carries a comment saying why it exists, what it does,
   and which project types it collaborates with.
 - Public data types live with the behavior that owns their meaning: agent
   protocol and roster types in `agents/`, session and journal types in
-  `application/`, transcript semantics in `conversation/`.
+  `session/`, transcript semantics in `conversation/`.
 - Tests mirror this tree under `tests/`; cross-layer scenarios go in
   `tests/integration/`.
 
@@ -426,10 +426,10 @@ Third-party dependencies are libcurl, nlohmann/json, toml++, SQLite
 | --- | --- |
 | Transcript model | [`conversation/README.md`](conversation/README.md) |
 | Agent runtime and transport | [`agents/README.md`](agents/README.md) |
-| Use cases and persistence | [`application/README.md`](application/README.md) |
-| Adapter contract | [`interfaces/README.md`](interfaces/README.md) |
-| Command and mention grammar | [`interfaces/text/README.md`](interfaces/text/README.md) |
-| Terminal interface | [`interfaces/terminal/README.md`](interfaces/terminal/README.md) |
+| Operations and persistence | [`session/README.md`](session/README.md) |
+| UI contract | [`ui/README.md`](ui/README.md) |
+| Command and mention grammar | [`ui/text/README.md`](ui/text/README.md) |
+| Terminal front end | [`ui/terminal/README.md`](ui/terminal/README.md) |
 | Entry points | [`apps/README.md`](apps/README.md) |
 | Shared helpers | [`util/README.md`](util/README.md) |
 | Exhaustive design rules | [`../docs/cha.md`](../docs/cha.md) |

@@ -82,23 +82,23 @@ add_library(cha_core
     src/conversation/conversation.cpp
             src/agents/agent_registry.cpp
         src/agents/completion_client.cpp
-    src/application/chat_coordinator.cpp
-        src/application/response_controller.cpp
-    src/application/workspace.cpp
+    src/session/session_controller.cpp
+        src/session/response_controller.cpp
+    src/session/workspace.cpp
     src/agents/agent.cpp
     src/agents/config.cpp
-    src/application/session_database.cpp
-    src/application/sessions_repository.cpp
-        src/interfaces/text/command.cpp
-    src/interfaces/text/mention.cpp
-    src/interfaces/text/text_input.cpp
-    src/interfaces/terminal/input_editor.cpp
-    src/interfaces/terminal/startup_selector.cpp
-    src/interfaces/terminal/terminal.cpp
-    src/interfaces/terminal/transcript_renderer.cpp
-    src/interfaces/terminal/tui.cpp
-    src/interfaces/terminal/user.cpp
-        src/interfaces/terminal/user_session.cpp
+    src/session/session_database.cpp
+    src/session/sessions_repository.cpp
+        src/ui/text/command.cpp
+    src/ui/text/mention.cpp
+    src/ui/text/text_input.cpp
+    src/ui/terminal/input_editor.cpp
+    src/ui/terminal/startup_selector.cpp
+    src/ui/terminal/terminal.cpp
+    src/ui/terminal/transcript_renderer.cpp
+    src/ui/terminal/tui.cpp
+    src/ui/terminal/user.cpp
+        src/ui/terminal/user_session.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
@@ -154,17 +154,17 @@ if(BUILD_TESTING)
         tests/agents/unit_agent_roster.cpp
         tests/agents/unit_completion_client.cpp
         tests/util/unit_event_channel.cpp
-        tests/application/unit_chat_coordinator.cpp
-        tests/application/unit_workspace.cpp
+        tests/session/unit_session_controller.cpp
+        tests/session/unit_workspace.cpp
         tests/agents/unit_agent_definition_loader.cpp
         tests/agents/unit_config_loader.cpp
-        tests/application/unit_sessions_repository.cpp
-        tests/interfaces/text/unit_command.cpp
-        tests/interfaces/text/unit_mention.cpp
-        tests/interfaces/text/unit_text_input.cpp
-        tests/interfaces/terminal/unit_transcript_renderer.cpp
-        tests/interfaces/terminal/unit_user.cpp
-        tests/interfaces/terminal/unit_user_session.cpp
+        tests/session/unit_sessions_repository.cpp
+        tests/ui/text/unit_command.cpp
+        tests/ui/text/unit_mention.cpp
+        tests/ui/text/unit_text_input.cpp
+        tests/ui/terminal/unit_transcript_renderer.cpp
+        tests/ui/terminal/unit_user.cpp
+        tests/ui/terminal/unit_user_session.cpp
     )
     # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
     target_link_libraries(cha_tests PRIVATE cha_core cha_sqlite3 GTest::gtest_main)

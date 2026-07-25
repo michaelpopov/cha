@@ -1,8 +1,8 @@
-#include "application/chat_coordinator.h"
-#include "application/workspace.h"
-#include "interfaces/terminal/startup_selector.h"
-#include "interfaces/terminal/terminal.h"
-#include "interfaces/terminal/user.h"
+#include "session/session_controller.h"
+#include "session/workspace.h"
+#include "ui/terminal/startup_selector.h"
+#include "ui/terminal/terminal.h"
+#include "ui/terminal/user.h"
 #include "util/environment.h"
 
 #include <exception>
@@ -43,17 +43,17 @@ int main_internal() {
         throw std::runtime_error(selected_session->error);
     }
 
-    std::unique_ptr<cha::ChatCoordinator> coordinator;
+    std::unique_ptr<cha::SessionController> controller;
     if (selected_session->id.empty()) {
         const auto session_label = selector.prompt_session_name();
         if (!session_label) {
             throw std::runtime_error("Session name prompt cancelled");
         }
-        coordinator = workspace.create_session(*room_name, *session_label);
+        controller = workspace.create_session(*room_name, *session_label);
     } else {
-        coordinator = workspace.open_session(*room_name, selected_session->id);
+        controller = workspace.open_session(*room_name, selected_session->id);
     }
 
-    cha::run_user(terminal, *coordinator);
+    cha::run_user(terminal, *controller);
     return 0;
 }

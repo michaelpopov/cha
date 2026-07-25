@@ -1,8 +1,9 @@
 # Entry points
 
-`apps/` holds composition roots: the files that assemble concrete services into
-a runnable program, decide top-level object lifetime, and define process-level
-error handling. They contain wiring and workflow — never reusable policy.
+`apps/` holds composition roots: the files that assemble concrete components
+into a runnable program, decide top-level object lifetime, and define
+process-level error handling. They contain wiring and workflow — never reusable
+policy.
 
 Only files in this directory are excluded from the `cha_core` library, which is
 what keeps every other layer testable and linkable without a `main()`.
@@ -10,7 +11,7 @@ what keeps every other layer testable and linkable without a `main()`.
 ## `tui_main.cpp`
 
 The terminal application. It owns four things — the workspace, the terminal, the
-selector, and the chosen coordinator — in that order, and hands the last one to
+selector, and the chosen controller — in that order, and hands the last one to
 the chat loop.
 
 ```mermaid
@@ -27,9 +28,9 @@ flowchart TD
     g -->|"empty id, meaning New session"| h["prompt_session_name"]
     h --> i["Workspace.create_session"]
     g -->|"existing id"| j["Workspace.open_session"]
-    i --> k["ChatCoordinator"]
+    i --> k["SessionController"]
     j --> k
-    k --> l["run_user with terminal and coordinator"]
+    k --> l["run_user with terminal and controller"]
     l --> m["return 0"]
 ```
 
@@ -50,8 +51,8 @@ why it stopped.
 ## Dependencies
 
 A composition root may depend on any concrete component it needs to assemble a
-program. `tui_main.cpp` currently uses `application/` for the workspace and chat
-use cases, `interfaces/terminal/` for selection, terminal ownership, and the
+program. `tui_main.cpp` currently uses `session/` for the workspace and chat
+operations, `ui/terminal/` for selection, terminal ownership, and the
 chat loop, and `util/` for `.env` loading.
 
 Nothing depends on `apps/`.
@@ -60,5 +61,5 @@ Nothing depends on `apps/`.
 
 A second executable — an HTTP server, a scripted client, a benchmark — gets its
 own source file here and its own `add_executable` in `CMakeLists.txt`, linking
-`cha_core`. Its protocol code belongs in a matching `interfaces/` directory, not
+`cha_core`. Its protocol code belongs in a matching `ui/` directory, not
 in this file; this file should stay short enough to read in one sitting.

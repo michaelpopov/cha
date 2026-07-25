@@ -2,7 +2,7 @@
 
 `util/` holds small, broadly reusable helpers that belong to no single domain.
 It is a leaf: nothing here may know about conversations, agents, sessions, or
-interfaces. If a helper starts encoding policy from one of those areas, it
+front ends. If a helper starts encoding policy from one of those areas, it
 belongs in that directory instead.
 
 ## Contents
@@ -80,15 +80,15 @@ treated as "already signalled" rather than an error, because the reader is
 guaranteed to wake anyway.
 
 Two channels of this type carry all cross-thread traffic in `cha`: work items to
-the agent thread, and `AgentEvent` values back to the interface.
+the agent thread, and `AgentEvent` values back to the UI.
 
 ## Dependencies
 
 - **Depends on:** the standard library, the process environment, and POSIX
   primitives (`eventfd`, `poll`) in `event_channel.h`.
-- **Must not depend on:** `conversation/`, `agents/`, `application/`, or
-  `interfaces/`.
-- **Used by:** agent code, workspace and session code, the text interface, and
+- **Must not depend on:** `conversation/`, `agents/`, `session/`, or
+  `ui/`.
+- **Used by:** agent code, workspace and session code, the text grammar, and
   the composition root.
 
 ## Tests

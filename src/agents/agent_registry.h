@@ -43,7 +43,7 @@ private:
     std::vector<AgentInfo> agents_;
 };
 
-// Runs agent completions off the caller's thread so the interface never blocks on a provider.
+// Runs agent completions off the caller's thread so the UI never blocks on a provider.
 // It owns one CompletionBackend per roster entry and one worker thread, accepts a single
 // outstanding CompletionRequest, prepares that request from a short-lived Conversation read view,
 // and publishes correlated AgentEvent values on a channel whose descriptor callers can poll.

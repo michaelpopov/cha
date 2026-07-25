@@ -35,12 +35,12 @@ Startup
   Workspace + StartupSelector
                                       |
                                       v
-Main/UI thread                  ChatCoordinator
+Main/UI thread                  SessionController
   run_user                   +-- Conversation
   UserSession -------------->+-- ConversationJournal (SQLite)
   Tui                         +-- AgentRegistry
        ^                      |       |
-       | CoordinatorUpdate    |       +-- AgentRoster
+       | SessionUpdate        |       +-- AgentRoster
        |                      |       +-- WorkItem request queue
        |                      |       +-- shared AgentEventChannel
        |                      |       +-- agent-execution thread
@@ -58,9 +58,9 @@ Main/UI thread                  ChatCoordinator
 The ownership graph is:
 
 - `main()` owns the `Workspace`, `Terminal`, `StartupSelector`, and the selected
-  `ChatCoordinator`.
+  `SessionController`.
 - `run_user()` owns a `Tui` and `UserSession` for the chat loop.
-- `ChatCoordinator` owns the in-memory `Conversation`, SQLite
+- `SessionController` owns the in-memory `Conversation`, SQLite
   `ConversationJournal`, `AgentRegistry`, `ResponseController`, and the current
   default agent ID.
 - `ResponseController` holds non-owning references to the conversation, journal,
@@ -73,7 +73,7 @@ The ownership graph is:
   handle and one agent-specific system prompt and configuration.
 
 The registry holds a non-owning reference to `Conversation`. The conversation
-must outlive the registry and its joined execution thread. `ChatCoordinator`
+must outlive the registry and its joined execution thread. `SessionController`
 satisfies this through member declaration order: its conversation is declared
 before its registry and therefore destroyed afterward.
 
@@ -146,56 +146,56 @@ src/
   util/                  shared low-level helpers
   conversation/          transcript and turn value model
   agents/                agent metadata, execution, and provider transport
-  application/           reusable use cases, conversation coordination, and session persistence
-  interfaces/
-    text/                 slash-command and leading-mention protocol
-    terminal/             ncurses adapter and terminal session flow
+  session/               reusable operations, conversation coordination, and session persistence
+  ui/
+    text/                 slash-command and leading-mention grammar
+    terminal/             ncurses front end and terminal session flow
   apps/                   executable composition roots
 ```
 
 Project includes are qualified from the `src/` include root, for example
-`"conversation/conversation.h"` and `"application/chat_coordinator.h"`.
+`"conversation/conversation.h"` and `"session/session_controller.h"`.
 The intended dependency direction is below; an arrow means “depends on”:
 
 ```text
 apps
-  |--> interfaces/terminal --+--> interfaces/text --> application
-  |                          +--> application
-  |                          +--> conversation
-  |                          `--> agents   (roster values for addressed rendering)
+  |--> ui/terminal --+--> ui/text --> session
+  |                  +--> session
+  |                  +--> conversation
+  |                  `--> agents   (roster values for addressed rendering)
   |
-  `--> application ----------+--> agents -------> conversation
-                             `--> conversation
+  `--> session ------+--> agents -------> conversation
+                     `--> conversation
 
-agents, interfaces/text, application, and apps may also depend on util.
+agents, ui/text, session, and apps may also depend on util.
 ```
 
 More precisely:
 
-- terminal and future HTTP interfaces may call `application/` and read
-  presentation-safe values from `conversation/`;
-- interfaces do not access agent execution or session repositories directly;
-- `application/` coordinates `agents/` and `conversation/`, and owns session persistence;
-- `agents/` may read conversation state but does not depend on application or interfaces;
+- the terminal front end, and any future HTTP front end, may call `session/` and
+  read presentation-safe values from `conversation/`;
+- a front end does not access agent execution or session repositories directly;
+- `session/` coordinates `agents/` and `conversation/`, and owns session persistence;
+- `agents/` may read conversation state but does not depend on `session/` or `ui/`;
 - `conversation/` and `util/` do not depend on higher layers.
 
-When the web interface is added, an `interfaces/http/` adapter can translate
-HTTP requests and responses around the same structured application operations.
+When the web front end is added, a `ui/http/` front end can translate
+HTTP requests and responses around the same session-layer operations.
 It should not load workspace files, open repositories, or invoke completion
 backends directly.
 
 The terminal renderer consumes `ConversationSnapshot`, `ConversationEntry`,
 and `GenerationStatus` directly. Mirroring the transcript into presentation
-DTOs would add no useful isolation. It also reads `AgentRoster` values from
+types would add no useful isolation. It also reads `AgentRoster` values from
 `agents/` when deciding whether transcript labels should name the addressed
-agent. Storage-specific values do not cross the application boundary:
+agent. Storage-specific values do not cross the session-layer boundary:
 `Workspace` converts repository `Session` records to `SessionSummary` before a
-selector or future HTTP interface sees them.
+selector or future HTTP front end sees them.
 
 The tests mirror the source organization. Cross-layer behavior belongs in
-`tests/integration/`; focused adapter behavior such as textual dispatch belongs
-under `tests/interfaces/`, while coordinator tests call its structured
-application methods directly.
+`tests/integration/`; focused front-end behavior such as textual dispatch
+belongs under `tests/ui/`, while controller tests call its session-layer methods
+directly.
 
 ## Startup and workspace loading
 
@@ -213,9 +213,9 @@ application methods directly.
    through `SessionsRepository`.
 6. `open_session()` additionally calls `load_conversation_state()` to fully
    restore the database before construction.
-7. Construct `ChatCoordinator` from the definitions, database path, and restore
-   result; production backend construction may perform model discovery before
-   the execution thread starts.
+7. Construct `SessionController` from the definitions, database path, and
+   restore result; production backend construction may perform model discovery
+   before the execution thread starts.
 8. Enter `run_user()`.
 
 Cancelling either selector is an error rather than a silent exit: `main()`
@@ -252,7 +252,7 @@ and joins the prompts with two newlines. `load_agent_definitions()` preserves
 list order.
 
 `Workspace` is the only entry point into workspace layout. It is a thin value
-over the root path and holds no cached room or persona state, so every use case
+over the root path and holds no cached room or persona state, so every operation
 resolves what it needs when it is called:
 
 - `rooms()` reads and validates `rooms.list`;
@@ -260,11 +260,11 @@ resolves what it needs when it is called:
 - `sessions()` builds a `SessionsRepository` for the room and maps its `Session`
   records to `SessionSummary` values;
 - `create_session()` and `open_session()` load the room's complete ordered agent
-  definitions, resolve the database path, and construct the `ChatCoordinator`.
+  definitions, resolve the database path, and construct the `SessionController`.
 
 Persona files are therefore read once per session create/open rather than once
 per selection, and repository paths and `Session` records never leave the
-application boundary — `StartupSelector` sees only room names and
+session-layer boundary — `StartupSelector` sees only room names and
 `SessionSummary` values.
 
 `AgentRoster` is the single boundary for a non-empty roster and for valid,
@@ -291,11 +291,11 @@ Only one turn may be active across the entire roster. The application does not
 run simultaneous answers. This preserves one linear transcript, one streaming
 entry, and one unambiguous cancellation target. A global registry gate also
 rejects a second outstanding request when the registry is tested or used
-outside the coordinator.
+outside the controller.
 
 ### Prompt addressing
 
-The shared text interface's `parse_addressed_prompt()` recognizes an optional
+The shared text grammar's `parse_addressed_prompt()` recognizes an optional
 leading mention after leading whitespace:
 
 - `@Name prompt` addresses `Name` and stores only `prompt`.
@@ -309,8 +309,8 @@ Handle resolution tries, in order:
 2. exact name after removing trailing `,.;:!?`;
 3. a unique ASCII-case-insensitive prefix.
 
-The text adapter passes structured prompt text and the optional handle to
-`ChatCoordinator::submit_prompt()`. A future HTTP adapter can provide those
+The text grammar passes prompt text and the optional handle to
+`SessionController::submit_prompt()`. A future HTTP front end can provide those
 fields directly without parsing terminal syntax. Unknown and ambiguous handles
 are rejected with a roster-aware notice. The input is not cleared, so the user
 can correct it. A mention with an empty body is also rejected without clearing
@@ -423,8 +423,8 @@ answers are attributed input.
 
 ### Submission
 
-For an idle coordinator, `ChatCoordinator::submit_prompt()` accepts structured
-prompt text and an optional handle from an interface, resolves the target agent
+For an idle controller, `SessionController::submit_prompt()` accepts prompt text
+and an optional handle from a front end, resolves the target agent
 against the roster, and rejects an empty prompt. It then delegates to
 `ResponseController::start()`, which:
 
@@ -439,10 +439,10 @@ Once a started turn is durable, normal error paths drive it to a terminal
 state. If the conversation rejects the prompt, or the registry refuses the
 request, the controller fails that durable turn before reporting the problem.
 
-`ChatCoordinator` and its `ResponseController` are the only conversation
-writers, and the coordinator rejects new structured mutations while a turn is
-active. `AgentRegistry` routes the request by its already resolved target, so
-the execution thread does not revalidate coordinator-owned request and
+`SessionController` and its `ResponseController` are the only conversation
+writers, and `SessionController` rejects new mutations while a turn
+is active. `AgentRegistry` routes the request by its already resolved target, so
+the execution thread does not revalidate session-controller-owned request and
 conversation invariants. It prepares an owning `RequestPayload` under
 `ConversationReadView`, releases the lock, and calls the synchronous backend.
 
@@ -509,7 +509,7 @@ needs a stable turn correlation key.
 
 ## Commands and terminal behavior
 
-When idle, the shared text-input adapter translates:
+When idle, the shared text grammar translates:
 
 - `/clear`: advance the durable history epoch, empty visible history, and reset
   addressing labels based on current roster size.
@@ -530,15 +530,15 @@ generation, while the same input when idle is rejected as an unexpected
 argument and cleared.
 
 `handle_text_input()` owns this textual dispatch policy. It combines
-`parse_command()` and `parse_addressed_prompt()`, then calls structured
-`ChatCoordinator` operations. `/exit` belongs entirely to the interface; it
-never reaches the coordinator. The coordinator does not depend on terminal or
-text-interface headers, so a future HTTP interface can invoke the same
-operations directly. The shared generation-in-progress notice is defined with
-`GenerationStatus` so application and adapter responses cannot drift.
+`parse_command()` and `parse_addressed_prompt()`, then calls `SessionController`
+operations. `/exit` belongs entirely to the front end; it never reaches the
+controller. The controller does not depend on terminal or text-grammar headers,
+so a future HTTP front end can invoke the same operations directly. The shared
+generation-in-progress notice is defined with `GenerationStatus` so the session
+layer and front-end responses cannot drift.
 
 `UserSession` is the UI state machine. It owns the `InputEditor`, applies
-`CoordinatorUpdate` values, and coalesces rendering behind `render_needed`.
+`SessionUpdate` values, and coalesces rendering behind `render_needed`.
 `SessionView` is its test seam; `Tui` is the ncurses implementation.
 
 The input editor stores wide characters, supports cursor movement and editing,
@@ -654,7 +654,7 @@ replace an existing destination. The temporary path is removed whether
 publication succeeds, collides, or throws. An empty user-supplied label falls
 back to the generated ID. `Workspace::create_session()` loads the room's agent
 definitions, creates the database through `SessionsRepository::create()`, and
-constructs a coordinator over the fresh file.
+constructs a controller over the fresh file.
 
 ### Transactions and IDs
 
@@ -685,7 +685,7 @@ transaction, SQLite retains a `started` row and its prompt. On restore:
    started turns by joining them to their human prompts.
 3. It reserves an `InterruptedTurn` error attributed to the prompt's target:
    “Response interrupted before completion”.
-4. `ChatCoordinator::initialize()` hands the restore result to
+4. `SessionController::initialize()` hands the restore result to
    `ResponseController::restore()`, which installs the entries, adopts the
    durable ID counters, and persists each repair with `fail_turn` before any
    other journal mutation is accepted, adding each error to memory as it goes.
@@ -698,14 +698,14 @@ crash during streaming restores the prompt plus the interruption error.
 Persistence errors are fatal for the current run. This is deliberate: after a
 turn's terminal execution event has been consumed, continuing without its SQLite
 transition would either diverge the visible transcript from durable state or
-leave the coordinator active with no event left to complete it. The application
+leave the controller active with no event left to complete it. The application
 therefore does not convert database failures into ordinary transcript errors,
 because writing such an error depends on the same unavailable journal.
 
 Every journal mutation adds operation context before propagating the failure.
 Turn-related messages from `ResponseController` identify the request and agent
 — for example “Failed to persist completion of request 7 for @Name” — while a
-failed `/clear` in `ChatCoordinator` identifies that operation. The chat loop preserves that
+failed `/clear` in `SessionController` identifies that operation. The chat loop preserves that
 original exception, destroys its curses view, explicitly restores the terminal,
 stops the execution thread, and then lets `main()` report the contextual
 failure.
@@ -807,9 +807,9 @@ can still supply its error message. libcurl failures are transport errors.
 
 After a normal loop exit, `run_user()` calls `UserSession::shutdown()`. On an
 exceptional exit it first preserves the original exception and destroys the
-`Tui`, then restores the terminal and calls `ChatCoordinator::shutdown()`
+`Tui`, then restores the terminal and calls `SessionController::shutdown()`
 directly. A shutdown exception does not replace the operation failure that
-caused the exceptional exit. `ChatCoordinator::shutdown()` is idempotent:
+caused the exceptional exit. `SessionController::shutdown()` is idempotent:
 
 1. `AgentRegistry::stop()` sets the shared cancellation flag.
 2. The registry closes its request channel, preserving any accepted work, and
@@ -817,7 +817,7 @@ caused the exceptional exit. `ChatCoordinator::shutdown()` is idempotent:
    publishes its terminal event before the thread exits.
 3. After the execution thread stops, the registry closes the shared event
    channel and becomes permanently stopped.
-4. The coordinator drains remaining queued events so a final cancellation or
+4. The controller drains remaining queued events so a final cancellation or
    completion receives its durable terminal transition.
 
 Destructors call their shutdown paths defensively. `AgentRegistry` makes a
@@ -835,9 +835,9 @@ database, so a mistaken path cannot silently become an empty session.
 | `src/util/` | Shared text, path, and environment utilities. |
 | `src/conversation/` | Typed transcript, turn identifiers, and response-content values. |
 | `src/agents/` | Agent definitions, roster, context projection, execution, provider communication, and the runtime event channel. |
-| `src/application/` | Structured chat coordination (`ChatCoordinator`), the in-flight turn (`ResponseController`), workspace/session use cases, session repositories, SQLite journaling, interface-safe summaries, and generation status. |
-| `src/interfaces/text/` | Shared slash-command and leading-mention parsing and dispatch. |
-| `src/interfaces/terminal/` | Ncurses selection, input, rendering, polling, and terminal session flow. |
+| `src/session/` | Chat coordination (`SessionController`), the in-flight turn (`ResponseController`), workspace and session operations, session repositories, SQLite journaling, presentation-safe summaries, and generation status. |
+| `src/ui/text/` | Shared slash-command and leading-mention parsing and dispatch. |
+| `src/ui/terminal/` | Ncurses selection, input, rendering, polling, and terminal session flow. |
 | `src/apps/` | Executable composition roots. |
 | `tests/` | Tests mirroring the source layout, plus integration and shared test support. |
 
@@ -913,7 +913,7 @@ bundled curl enables OpenSSL when it is available.
 `make test` builds and runs the unit suite through CTest. Unit tests cover
 configuration, identity, roster/mention routing, textual command parsing and
 dispatch, registry execution behavior, conversation/context semantics,
-structured coordinator lifecycle operations, workspace layout resolution and
+controller lifecycle operations, workspace layout resolution and
 session-summary mapping, SQLite constraints and recovery, structured reasoning
 parsing and safe diagnostics, event channels, input/UI state, and styled
 incremental rendering.
@@ -926,7 +926,7 @@ persistence/context replay, and reopening after a roster change.
 
 The principal test seams are:
 
-- `CompletionBackend`, for registry/coordinator tests without a network;
+- `CompletionBackend`, for registry/controller tests without a network;
 - `SessionView`, for `UserSession` tests without curses;
 - `TranscriptSurface`, for complete and incremental attribute-state recording
   without curses;
