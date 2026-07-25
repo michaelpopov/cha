@@ -572,7 +572,7 @@ personas, or when restored single-agent history contains another participant
 or target. `/clear` forgets historical addressing evidence but keeps
 addressing enabled for a currently multi-agent room.
 
-Transcript entries use the compact `[Agent: Name] Answer` form. While a turn is
+Transcript entries use the compact `[Name] Answer` form. While a turn is
 active and reasoning is present, the TUI combines the ephemeral reasoning
 buffer with any open answer entry for presentation: agent label, bold/dim
 `[Reasoning]` label, dim reasoning text, then normal answer text. When the turn

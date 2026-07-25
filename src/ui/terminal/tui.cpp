@@ -102,7 +102,7 @@ bool active_answer_has_reasoning(
 std::string active_response_layout_text(
     const GenerationStatus& status,
     std::string_view answer_text) {
-    std::string text = "[Agent: " + status.agent_name + "]\n[Reasoning]\n"
+    std::string text = "[" + status.agent_name + "]\n[Reasoning]\n"
         + status.reasoning_text;
     if (!answer_text.empty()) {
         text += "\n\n";

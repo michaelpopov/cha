@@ -45,7 +45,7 @@ std::string transcript_entry_label(const TranscriptEntry& entry, bool show_addre
     case EntryKind::human:
         return show_addressing ? "[You → " + entry.addressed_to_name + "] " : "[You] ";
     case EntryKind::agent:
-        return "[Agent: " + entry.display_name + "] ";
+        return "[" + entry.display_name + "] ";
     case EntryKind::notice:
         return "[System] ";
     case EntryKind::error:
@@ -71,7 +71,7 @@ void write_active_response(
     std::string_view reasoning_text,
     std::string_view answer_text) {
     surface.attributes(TranscriptAttributes::bold);
-    surface.write("[Agent: ");
+    surface.write("[");
     surface.write(agent_name);
     surface.write("]\n");
     surface.attributes(TranscriptAttributes::bold_dim);

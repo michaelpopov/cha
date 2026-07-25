@@ -77,14 +77,14 @@ TEST(ShowAddressing, DependsOnRoomPersonasAndForeignHistory) {
     EXPECT_FALSE(show_addressing(single, foreign));
 }
 
-TEST(TranscriptLabel, DistinguishesKindsEvenWhenDisplayNamesCollide) {
+TEST(TranscriptLabel, FormatsEveryEntryKind) {
     EXPECT_EQ(
         transcript_entry_label(human(1, "Question"), false),
         "[You] ");
     EXPECT_EQ(
         transcript_entry_label(
-            make_agent_entry(2, "agent-id", "You", "Answer", EntryStatus::complete), false),
-        "[Agent: You] ");
+            make_agent_entry(2, "agent-id", "Guide", "Answer", EntryStatus::complete), false),
+        "[Guide] ");
     EXPECT_EQ(transcript_entry_label(make_notice_entry(3, "Notice"), false), "[System] ");
     EXPECT_EQ(transcript_entry_label(make_error_entry(4, "Failure"), false), "[Error] ");
 }
@@ -215,7 +215,7 @@ TEST(TranscriptRendering, LabelsEphemeralReasoningAndRestoresNormalAttributes) {
 
     EXPECT_EQ(
         surface.output,
-        "[Agent: Guide]\n[Reasoning]\nCompare constraints\n\n"
+        "[Guide]\n[Reasoning]\nCompare constraints\n\n"
         "Use the second option");
     EXPECT_EQ(surface.current, TranscriptAttributes::normal);
 

@@ -115,7 +115,7 @@ only "Terminal is too small".
 - **`TranscriptViewport`** owns the scroll offset and whether the view is still
   following new output, so a user who has scrolled back is not dragged forward.
 - **`TranscriptSurface`** is the styling sink. `write_transcript_entry()` writes
-  a bold label — `[You]`, `[You → Name]`, `[Agent: Name]`, `[System]`,
+  a bold label — `[You]`, `[You → Name]`, `[Name]`, `[System]`,
   `[Error]`. While a turn is active, `write_active_response()` adds the
   ephemeral dim `[Reasoning]` block above any streamed answer. Tests implement
   this interface and assert on recorded output instead of driving curses.
