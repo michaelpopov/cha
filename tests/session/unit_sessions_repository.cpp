@@ -1,4 +1,4 @@
-#include "conversation/conversation.h"
+#include "transcript/transcript.h"
 #include "session/session_database.h"
 #include "session/sessions_repository.h"
 #include "session/workspace.h"
@@ -81,7 +81,7 @@ protected:
     std::filesystem::path root;
 };
 
-ConversationEntry human(EntryId id, std::string text) {
+TranscriptEntry human(EntryId id, std::string text) {
     return make_human_entry(id, "guide-id", "Guide", std::move(text));
 }
 
@@ -100,7 +100,7 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
     const std::filesystem::path saved =
         create_database("saved", "Saved session");
     {
-        ConversationJournal journal(saved);
+        SessionJournal journal(saved);
         journal.append(human(1, "Hello"));
         std::ofstream unrelated(
             root / "rooms" / "lobby" / "sessions" / "ignored.data");
@@ -114,8 +114,8 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
         sessions.list(),
         (std::vector<Session>{{"saved", "Saved session"}}));
     EXPECT_EQ(
-        load_conversation_entries(sessions.open_database_path("saved")),
-        (std::vector<ConversationEntry>{human(1, "Hello")}));
+        load_transcript_entries(sessions.open_database_path("saved")),
+        (std::vector<TranscriptEntry>{human(1, "Hello")}));
 }
 
 TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
@@ -129,13 +129,13 @@ TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
 
     {
-        ConversationJournal journal(sessions.database_path(session.id));
+        SessionJournal journal(sessions.database_path(session.id));
         journal.append(human(1, "Persist me"));
     }
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
     EXPECT_EQ(
-        load_conversation_entries(sessions.open_database_path(session.id)),
-        (std::vector<ConversationEntry>{human(1, "Persist me")}));
+        load_transcript_entries(sessions.open_database_path(session.id)),
+        (std::vector<TranscriptEntry>{human(1, "Persist me")}));
 }
 
 TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) {
@@ -340,10 +340,10 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentRosterIs) {
         workspace.load_room("lobby").directory / "sessions", "lobby");
     const Session session = sessions.create("Two agents");
     {
-        ConversationJournal journal(sessions.database_path(session.id));
+        SessionJournal journal(sessions.database_path(session.id));
         journal.append(make_human_entry(1, "other-id", "Other", "Question"));
         journal.append(make_agent_entry(
-            2, "other-id", "Other", "Answer", CompletionStatus::complete));
+            2, "other-id", "Other", "Answer", EntryStatus::complete));
     }
 
     // The room now hosts a completely different roster; the session is unaffected.
@@ -357,7 +357,7 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentRosterIs) {
     ASSERT_EQ(reopened.list().size(), 1U);
     EXPECT_TRUE(reopened.list().front().error.empty());
     EXPECT_EQ(
-        load_conversation_entries(reopened.open_database_path(session.id)).size(),
+        load_transcript_entries(reopened.open_database_path(session.id)).size(),
         2U);
     EXPECT_EQ(read_session_database_metadata(
                   reopened.open_database_path(session.id)).room,

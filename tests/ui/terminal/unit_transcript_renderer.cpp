@@ -1,6 +1,6 @@
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
-#include "conversation/conversation.h"
+#include "transcript/transcript.h"
 #include "ui/terminal/transcript_renderer.h"
 
 #include <gtest/gtest.h>
@@ -12,29 +12,13 @@
 namespace cha {
 namespace {
 
-ConversationEntry human(EntryId id, std::string text) {
+TranscriptEntry human(EntryId id, std::string text) {
     return make_human_entry(id, "guide-id", "Guide", std::move(text));
 }
 
-ConversationEntry agent(EntryId id, std::string text) {
+TranscriptEntry agent(EntryId id, std::string text) {
     return make_agent_entry(
-        id, "guide-id", "Guide", std::move(text), CompletionStatus::complete);
-}
-
-ConversationEntry reasoning_agent(
-    EntryId id,
-    std::string reasoning,
-    std::string answer,
-    CompletionStatus status = CompletionStatus::streaming) {
-    return make_agent_entry(
-        id,
-        "guide-id",
-        "Guide",
-        {
-            .reasoning = std::move(reasoning),
-            .answer = std::move(answer),
-        },
-        status);
+        id, "guide-id", "Guide", std::move(text), EntryStatus::complete);
 }
 
 class RecordingSurface final : public TranscriptSurface {
@@ -86,15 +70,15 @@ TEST(ShowAddressing, DependsOnRosterAndForeignHistory) {
         },
     });
 
-    Conversation empty;
+    Transcript empty;
     EXPECT_FALSE(show_addressing(single, empty));
     EXPECT_TRUE(show_addressing(multi, empty));
 
-    Conversation foreign;
+    Transcript foreign;
     foreign.replace_entries({
         make_human_entry(1, "guide-id", "Guide", "Question", 1),
         make_agent_entry(
-            2, "former-id", "Former", "Answer", CompletionStatus::complete, 1),
+            2, "former-id", "Former", "Answer", EntryStatus::complete, 1),
     });
     EXPECT_TRUE(show_addressing(single, foreign));
 
@@ -108,7 +92,7 @@ TEST(TranscriptLabel, DistinguishesKindsEvenWhenDisplayNamesCollide) {
         "[You] ");
     EXPECT_EQ(
         transcript_entry_label(
-            make_agent_entry(2, "agent-id", "You", "Answer", CompletionStatus::complete), false),
+            make_agent_entry(2, "agent-id", "You", "Answer", EntryStatus::complete), false),
         "[Agent: You] ");
     EXPECT_EQ(transcript_entry_label(make_notice_entry(3, "Notice"), false), "[System] ");
     EXPECT_EQ(transcript_entry_label(make_error_entry(4, "Failure"), false), "[Error] ");
@@ -116,7 +100,7 @@ TEST(TranscriptLabel, DistinguishesKindsEvenWhenDisplayNamesCollide) {
 
 TEST(TranscriptRenderPlanner, RebuildsInitiallyAndAfterWidthChanges) {
     TranscriptRenderPlanner planner;
-    const ConversationSnapshot snapshot{
+    const TranscriptSnapshot snapshot{
         .entries = {human(1, "Hello")},
         .revision = 1,
     };
@@ -130,22 +114,22 @@ TEST(TranscriptRenderPlanner, RebuildsInitiallyAndAfterWidthChanges) {
 
 TEST(TranscriptRenderPlanner, AppendsAStreamingSuffixAndNewMessages) {
     TranscriptRenderPlanner planner;
-    const ConversationSnapshot initial{
+    const TranscriptSnapshot initial{
         .entries = {
             human(1, "Question"),
             make_agent_entry(
-                2, "guide-id", "Guide", "Partial", CompletionStatus::streaming),
+                2, "guide-id", "Guide", "Partial", EntryStatus::streaming),
         },
         .revision = 2,
         .open_entry_id = 2,
     };
     planner.commit(initial, 80);
 
-    const ConversationSnapshot streamed{
+    const TranscriptSnapshot streamed{
         .entries = {
             human(1, "Question"),
             make_agent_entry(
-                2, "guide-id", "Guide", "Partial answer", CompletionStatus::streaming),
+                2, "guide-id", "Guide", "Partial answer", EntryStatus::streaming),
         },
         .revision = 3,
         .open_entry_id = 2,
@@ -157,7 +141,7 @@ TEST(TranscriptRenderPlanner, AppendsAStreamingSuffixAndNewMessages) {
     EXPECT_EQ(stream_plan.first_new_message, 2U);
     planner.commit(streamed, 80);
 
-    const ConversationSnapshot with_new_message{
+    const TranscriptSnapshot with_new_message{
         .entries = {
             human(1, "Question"),
             agent(2, "Partial answer"),
@@ -176,7 +160,7 @@ TEST(TranscriptRenderPlanner, AppendsFromAnEmptyRenderedTranscript) {
     TranscriptRenderPlanner planner;
     planner.commit({.revision = 1}, 80);
 
-    const ConversationSnapshot snapshot{
+    const TranscriptSnapshot snapshot{
         .entries = {human(1, "First")},
         .revision = 2,
     };
@@ -189,26 +173,26 @@ TEST(TranscriptRenderPlanner, AppendsFromAnEmptyRenderedTranscript) {
 
 TEST(TranscriptRenderPlanner, RebuildsWhenRenderedContentIsNotAnAppend) {
     TranscriptRenderPlanner planner;
-    const ConversationSnapshot initial{
+    const TranscriptSnapshot initial{
         .entries = {human(1, "First"), agent(2, "Second")},
         .revision = 1,
     };
     planner.commit(initial, 80);
 
-    const ConversationSnapshot changed_prefix{
+    const TranscriptSnapshot changed_prefix{
         .entries = {human(1, "Changed"), agent(2, "Second")},
         .revision = 2,
         .history_epoch = 1,
     };
     EXPECT_EQ(planner.plan(changed_prefix, 80).action, TranscriptRenderAction::rebuild);
 
-    const ConversationSnapshot shortened_last{
+    const TranscriptSnapshot shortened_last{
         .entries = {human(1, "First"), agent(2, "Sec")},
         .revision = 3,
     };
     EXPECT_EQ(planner.plan(shortened_last, 80).action, TranscriptRenderAction::rebuild);
 
-    const ConversationSnapshot fewer_messages{
+    const TranscriptSnapshot fewer_messages{
         .entries = {human(1, "First")},
         .revision = 4,
     };
@@ -217,80 +201,26 @@ TEST(TranscriptRenderPlanner, RebuildsWhenRenderedContentIsNotAnAppend) {
 
 TEST(TranscriptRenderPlanner, IgnoresARevisionOnlyChange) {
     TranscriptRenderPlanner planner;
-    const ConversationSnapshot initial{
+    const TranscriptSnapshot initial{
         .entries = {human(1, "Same")},
         .revision = 1,
     };
     planner.commit(initial, 80);
 
-    const ConversationSnapshot unchanged{
+    const TranscriptSnapshot unchanged{
         .entries = {human(1, "Same")},
         .revision = 2,
     };
     EXPECT_EQ(planner.plan(unchanged, 80).action, TranscriptRenderAction::none);
 }
 
-TEST(TranscriptRenderPlanner, HandlesReasoningAndAnswerPhaseBoundaries) {
-    TranscriptRenderPlanner planner;
-    const ConversationSnapshot initial{
-        .entries = {reasoning_agent(1, "Think", "")},
-        .revision = 1,
-        .open_entry_id = 1,
-    };
-    planner.commit(initial, 80);
-
-    ConversationSnapshot reasoning_growth{
-        .entries = {reasoning_agent(1, "Thinking", "")},
-        .revision = 2,
-        .open_entry_id = 1,
-    };
-    TranscriptRenderPlan plan = planner.plan(reasoning_growth, 80);
-    EXPECT_EQ(plan.action, TranscriptRenderAction::append);
-    EXPECT_EQ(plan.suffix_kind, CompletionDeltaKind::reasoning);
-    EXPECT_EQ(plan.last_message_suffix, "ing");
-    planner.commit(reasoning_growth, 80);
-
-    ConversationSnapshot first_answer{
-        .entries = {reasoning_agent(1, "Thinking", "Answer")},
-        .revision = 3,
-        .open_entry_id = 1,
-    };
-    EXPECT_EQ(
-        planner.plan(first_answer, 80).action,
-        TranscriptRenderAction::rebuild);
-    planner.commit(first_answer, 80);
-
-    ConversationSnapshot answer_growth{
-        .entries = {reasoning_agent(1, "Thinking", "Answer grows")},
-        .revision = 4,
-        .open_entry_id = 1,
-    };
-    plan = planner.plan(answer_growth, 80);
-    EXPECT_EQ(plan.action, TranscriptRenderAction::append);
-    EXPECT_EQ(plan.suffix_kind, CompletionDeltaKind::answer);
-    EXPECT_EQ(plan.last_message_suffix, " grows");
-    planner.commit(answer_growth, 80);
-
-    ConversationSnapshot late_reasoning{
-        .entries = {reasoning_agent(1, "Thinking again", "Answer grows")},
-        .revision = 5,
-        .open_entry_id = 1,
-    };
-    EXPECT_EQ(
-        planner.plan(late_reasoning, 80).action,
-        TranscriptRenderAction::rebuild);
-}
-
-TEST(TranscriptRendering, LabelsReasoningAndRestoresNormalAttributes) {
+TEST(TranscriptRendering, LabelsEphemeralReasoningAndRestoresNormalAttributes) {
     RecordingSurface surface;
-    write_transcript_entry(
+    write_active_response(
         surface,
-        reasoning_agent(
-            1,
-            "Compare constraints",
-            "Use the second option",
-            CompletionStatus::complete),
-        false);
+        "Guide",
+        "Compare constraints",
+        "Use the second option");
 
     EXPECT_EQ(
         surface.output,
@@ -318,25 +248,15 @@ TEST(TranscriptRendering, LabelsReasoningAndRestoresNormalAttributes) {
     EXPECT_EQ(surface.operations.back().attributes, TranscriptAttributes::normal);
 }
 
-TEST(TranscriptRendering, IncrementalAndInputInitializationRestoreNormalAttributes) {
+TEST(TranscriptRendering, AnswerSuffixAndInputInitializationRestoreNormalAttributes) {
     RecordingSurface surface;
     surface.current = TranscriptAttributes::bold_dim;
-    write_transcript_suffix(
-        surface,
-        CompletionDeltaKind::reasoning,
-        " more thought");
+    write_transcript_suffix(surface, " more answer");
     EXPECT_EQ(surface.current, TranscriptAttributes::normal);
     ASSERT_GE(surface.operations.size(), 3U);
     EXPECT_EQ(
         surface.operations[surface.operations.size() - 2].attributes,
-        TranscriptAttributes::dim);
-
-    surface.current = TranscriptAttributes::dim;
-    write_transcript_suffix(
-        surface,
-        CompletionDeltaKind::answer,
-        " more answer");
-    EXPECT_EQ(surface.current, TranscriptAttributes::normal);
+        TranscriptAttributes::normal);
 
     surface.current = TranscriptAttributes::dim;
     initialize_transcript_surface(surface);

@@ -82,7 +82,7 @@ TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
 
     std::unique_ptr<SessionController> reopened =
         workspace.open_session("lobby", sessions.front().id);
-    EXPECT_TRUE(reopened->conversation().entries().empty());
+    EXPECT_TRUE(reopened->transcript().entries().empty());
     reopened->shutdown();
 }
 

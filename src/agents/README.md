@@ -96,7 +96,7 @@ sequenceDiagram
     R->>R: clear cancellation flag
     R->>Q: push WorkItem
     W->>Q: blocking get
-    W->>W: take Conversation read view
+    W->>W: take Transcript read view
     alt cancelled before preparation
         W->>E: AgentCancelled
     else
@@ -135,11 +135,11 @@ Rules that fall out of this design:
 
 | Step | Runs | Purpose |
 | --- | --- | --- |
-| `prepare(request, view)` | Under the conversation lock | Read the transcript and build a `RequestPayload`. Must be fast. |
+| `prepare(request, view)` | Under the transcript lock | Read the transcript and build a `RequestPayload`. Must be fast. |
 | `perform(payload, sink, cancellation)` | Without the lock | One synchronous completion, streaming fragments to the sink. |
 | `info()` / `agent_id()` | Any time | Roster identity for the registry. |
 
-Splitting them is what lets the main thread keep writing to the conversation
+Splitting them is what lets the main thread keep writing to the transcript
 while a generation runs. Tests supply their own backend and never touch the
 network; `tests/support/test_backends.h` has the helpers.
 
@@ -189,7 +189,7 @@ Details worth knowing before changing this file:
 
 ## Context projection
 
-`project_agent_context()` decides what one agent sees of a shared conversation.
+`project_agent_context()` decides what one agent sees of a shared chat transcript.
 It is pure, and it is tested directly.
 
 ```mermaid
@@ -209,13 +209,13 @@ flowchart TD
 ```
 
 Attribution prefixes appear only when the projected history actually involves
-someone other than the requesting agent; a plain single-agent conversation is
+someone other than the requesting agent; a plain single-agent chat transcript is
 sent unadorned. The agent's system prompt is always the first message, and
 reasoning text is never included.
 
 ## Dependencies
 
-- **Depends on:** `conversation/` for entries, read views, and IDs; `util/` for
+- **Depends on:** `transcript/` for entries, read views, and IDs; `util/` for
   text helpers and `EventChannel`; libcurl and nlohmann/json in the HTTP client;
   toml++ in the config loader.
 - **Must not depend on:** `session/` or `ui/`. Workspace discovery

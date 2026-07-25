@@ -8,9 +8,9 @@ Run `cha` from a workspace containing `personas/` and `rooms/`. `rooms/rooms.lis
 
 Each room contains `personas.list`, an ordered list of one or more personas, and `USER.md`. Every listed persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (`SYSTEM.md` followed by the room `USER.md`). The first persona is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
-Each persona's immutable `id` identifies transcript entries; its `name` is the visible `@mention` handle. Names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A room cannot contain duplicate IDs or names. All agents share one conversation: other agents' prior answers are attributed when sent as context. A session stores only its room and transcript, so it can be reopened even if the room's roster changed.
+Each persona's immutable `id` identifies transcript entries; its `name` is the visible `@mention` handle. Names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A room cannot contain duplicate IDs or names. All agents use the session's shared chat transcript: other agents' prior answers are attributed when sent as context. A session stores only its room and transcript, so it can be reopened even if the room's roster changed.
 
-Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and room must match the selected room before the conversation can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored. The following top-level persona configuration fields are supported:
+Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and room must match the selected room before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored. The following top-level persona configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
@@ -49,11 +49,10 @@ corresponding non-streaming `message` fields), preferring
 the two named formats strictly select one field. Ordinary `content` always
 remains answer text.
 
-Reasoning is labeled and dimmed while the current process is running, but it
-is never stored in SQLite or sent in later model context. Reopening a session
-therefore restores answers without reasoning blocks. A cancellation containing
-only reasoning has no restored response entry; a cancellation with reasoning
-and a partial answer restores only that answer.
+Reasoning is labeled and dimmed only while its turn is active. It never enters
+the chat transcript, SQLite, or later model context, and is cleared when the
+turn ends. A cancellation containing only reasoning has no response entry; a
+cancellation with reasoning and a partial answer retains only that answer.
 
 Reasoning embedded inside ordinary `content`, including `<think>` tags, is not
 parsed. Such content is displayed, stored, and replayed as answer text because
@@ -85,7 +84,7 @@ Before loading server configuration, the application optionally reads `.env` fro
 
 ## Terminal UI
 
-The UI has a scrollable conversation transcript, a generation-status line, and a persistent multiline input pane. Input remains available while a response is streaming.
+The UI has a scrollable chat transcript, a generation-status line, and a persistent multiline input pane. Input remains available while a response is streaming.
 
 The status changes from `generating` to `reasoning` when structured reasoning
 arrives, then to `responding` when answer text begins.
@@ -119,7 +118,7 @@ The source tree is documented from the inside out, with diagrams:
 | Document | Covers |
 | --- | --- |
 | [`src/README.md`](src/README.md) | High-level architecture: layers, threading, the life of a turn, persistence, and the invariants that hold everywhere. Start here. |
-| [`src/conversation/README.md`](src/conversation/README.md) | The transcript model shared by every layer. |
+| [`src/transcript/README.md`](src/transcript/README.md) | The transcript model shared by every layer. |
 | [`src/agents/README.md`](src/agents/README.md) | Persona loading, rosters, the execution thread, and the HTTP transport. |
 | [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
 | [`src/ui/README.md`](src/ui/README.md) | The UI contract, with [`text/`](src/ui/text/README.md) and [`terminal/`](src/ui/terminal/README.md) beneath it. |

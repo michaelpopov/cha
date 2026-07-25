@@ -24,12 +24,12 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 
 bool show_addressing(
     const AgentRoster& roster,
-    const Conversation& conversation) {
+    const Transcript& transcript) {
     if (roster.agents().size() > 1) {
         return true;
     }
     const std::string_view sole = roster.first().id;
-    for (const ConversationEntry& entry : conversation.entries()) {
+    for (const TranscriptEntry& entry : transcript.entries()) {
         const bool foreign =
             (entry.kind == EntryKind::agent && entry.participant_id != sole)
             || (entry.kind == EntryKind::human && entry.addressed_to != sole);
@@ -40,7 +40,7 @@ bool show_addressing(
     return false;
 }
 
-std::string transcript_entry_label(const ConversationEntry& entry, bool show_addressing) {
+std::string transcript_entry_label(const TranscriptEntry& entry, bool show_addressing) {
     switch (entry.kind) {
     case EntryKind::human:
         return show_addressing ? "[You → " + entry.addressed_to_name + "] " : "[You] ";
@@ -56,46 +56,42 @@ std::string transcript_entry_label(const ConversationEntry& entry, bool show_add
 
 void write_transcript_entry(
     TranscriptSurface& surface,
-    const ConversationEntry& entry,
+    const TranscriptEntry& entry,
     bool show_addressing) {
-    std::string label = transcript_entry_label(entry, show_addressing);
-    if (entry.kind == EntryKind::agent && !entry.reasoning_text.empty()) {
-        if (label.ends_with(' ')) {
-            label.pop_back();
-        }
-        surface.attributes(TranscriptAttributes::bold);
-        surface.write(label);
-        surface.attributes(TranscriptAttributes::normal);
-        surface.write("\n");
-        surface.attributes(TranscriptAttributes::bold_dim);
-        surface.write("[Reasoning]");
-        surface.attributes(TranscriptAttributes::normal);
-        surface.write("\n");
-        surface.attributes(TranscriptAttributes::dim);
-        surface.write(entry.reasoning_text);
-        surface.attributes(TranscriptAttributes::normal);
-        if (!entry.text.empty()) {
-            surface.write("\n\n");
-            surface.attributes(TranscriptAttributes::normal);
-            surface.write(entry.text);
-        }
-    } else {
-        surface.attributes(TranscriptAttributes::bold);
-        surface.write(label);
-        surface.attributes(TranscriptAttributes::normal);
-        surface.write(entry.text);
+    surface.attributes(TranscriptAttributes::bold);
+    surface.write(transcript_entry_label(entry, show_addressing));
+    surface.attributes(TranscriptAttributes::normal);
+    surface.write(entry.text);
+    surface.attributes(TranscriptAttributes::normal);
+}
+
+void write_active_response(
+    TranscriptSurface& surface,
+    std::string_view agent_name,
+    std::string_view reasoning_text,
+    std::string_view answer_text) {
+    surface.attributes(TranscriptAttributes::bold);
+    surface.write("[Agent: ");
+    surface.write(agent_name);
+    surface.write("]\n");
+    surface.attributes(TranscriptAttributes::bold_dim);
+    surface.write("[Reasoning]");
+    surface.attributes(TranscriptAttributes::normal);
+    surface.write("\n");
+    surface.attributes(TranscriptAttributes::dim);
+    surface.write(reasoning_text);
+    surface.attributes(TranscriptAttributes::normal);
+    if (!answer_text.empty()) {
+        surface.write("\n\n");
+        surface.write(answer_text);
     }
     surface.attributes(TranscriptAttributes::normal);
 }
 
 void write_transcript_suffix(
     TranscriptSurface& surface,
-    CompletionDeltaKind kind,
     std::string_view text) {
-    surface.attributes(
-        kind == CompletionDeltaKind::reasoning
-            ? TranscriptAttributes::dim
-            : TranscriptAttributes::normal);
+    surface.attributes(TranscriptAttributes::normal);
     surface.write(text);
     surface.attributes(TranscriptAttributes::normal);
 }
@@ -105,7 +101,7 @@ void initialize_transcript_surface(TranscriptSurface& surface) {
 }
 
 TranscriptRenderPlan TranscriptRenderPlanner::plan(
-    const ConversationSnapshot& snapshot,
+    const TranscriptSnapshot& snapshot,
     int columns
 ) const {
     if (!initialized_ || columns != columns_ || snapshot.history_epoch != history_epoch_
@@ -118,8 +114,8 @@ TranscriptRenderPlan TranscriptRenderPlanner::plan(
     }
 
     if (last_entry_) {
-        const ConversationEntry& old_last = *last_entry_;
-        const ConversationEntry& new_last = snapshot.entries[entry_count_ - 1];
+        const TranscriptEntry& old_last = *last_entry_;
+        const TranscriptEntry& new_last = snapshot.entries[entry_count_ - 1];
         if (snapshot.entries.size() == entry_count_ && new_last == old_last) {
             return {};
         }
@@ -130,38 +126,15 @@ TranscriptRenderPlan TranscriptRenderPlanner::plan(
             || new_last.addressed_to != old_last.addressed_to
             || new_last.addressed_to_name != old_last.addressed_to_name
             || new_last.request_id != old_last.request_id
-            || !starts_with(new_last.reasoning_text, old_last.reasoning_text)
             || !starts_with(new_last.text, old_last.text)) {
             return {.action = TranscriptRenderAction::rebuild};
         }
 
-        const bool reasoning_grew =
-            new_last.reasoning_text.size() != old_last.reasoning_text.size();
-        const bool answer_grew =
-            new_last.text.size() != old_last.text.size();
-        if (reasoning_grew && answer_grew) {
-            return {.action = TranscriptRenderAction::rebuild};
-        }
-        if (reasoning_grew && !new_last.text.empty()) {
-            return {.action = TranscriptRenderAction::rebuild};
-        }
-        if (answer_grew
-            && !old_last.reasoning_text.empty()
-            && old_last.text.empty()) {
-            return {.action = TranscriptRenderAction::rebuild};
-        }
-
-        const CompletionDeltaKind suffix_kind = reasoning_grew
-            ? CompletionDeltaKind::reasoning
-            : CompletionDeltaKind::answer;
-        const std::string suffix = reasoning_grew
-            ? new_last.reasoning_text.substr(old_last.reasoning_text.size())
-            : new_last.text.substr(old_last.text.size());
         return {
             .action = TranscriptRenderAction::append,
             .resumes_last_message = true,
-            .suffix_kind = suffix_kind,
-            .last_message_suffix = suffix,
+            .last_message_suffix =
+                new_last.text.substr(old_last.text.size()),
             .first_new_message = entry_count_,
         };
     }
@@ -172,7 +145,7 @@ TranscriptRenderPlan TranscriptRenderPlanner::plan(
     };
 }
 
-void TranscriptRenderPlanner::commit(const ConversationSnapshot& snapshot, int columns) {
+void TranscriptRenderPlanner::commit(const TranscriptSnapshot& snapshot, int columns) {
     initialized_ = true;
     columns_ = columns;
     revision_ = snapshot.revision;

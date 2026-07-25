@@ -1,7 +1,7 @@
 # Utilities
 
 `util/` holds small, broadly reusable helpers that belong to no single domain.
-It is a leaf: nothing here may know about conversations, agents, sessions, or
+It is a leaf: nothing here may know about transcripts, agents, sessions, or
 front ends. If a helper starts encoding policy from one of those areas, it
 belongs in that directory instead.
 
@@ -86,7 +86,7 @@ the agent thread, and `AgentEvent` values back to the UI.
 
 - **Depends on:** the standard library, the process environment, and POSIX
   primitives (`eventfd`, `poll`) in `event_channel.h`.
-- **Must not depend on:** `conversation/`, `agents/`, `session/`, or
+- **Must not depend on:** `transcript/`, `agents/`, `session/`, or
   `ui/`.
 - **Used by:** agent code, workspace and session code, the text grammar, and
   the composition root.

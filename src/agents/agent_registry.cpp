@@ -162,15 +162,15 @@ std::string AgentRoster::handle_list() const {
 }
 
 AgentRegistry::AgentRegistry(
-    const Conversation& conversation,
+    const Transcript& transcript,
     std::vector<AgentDefinition> definitions)
-    : AgentRegistry(conversation, build_backends(std::move(definitions))) {
+    : AgentRegistry(transcript, build_backends(std::move(definitions))) {
 }
 
 AgentRegistry::AgentRegistry(
-    const Conversation& conversation,
+    const Transcript& transcript,
     std::vector<std::unique_ptr<CompletionBackend>> backends)
-    : conversation_(conversation),
+    : transcript_(transcript),
       backends_(std::move(backends)),
       roster_(build_roster(backends_)),
       thread_(&AgentRegistry::dialog, this) {
@@ -266,9 +266,9 @@ void AgentRegistry::dialog() {
         try {
             std::optional<RequestPayload> payload;
             {
-                ConversationReadView conversation = conversation_.read();
+                TranscriptReadView transcript = transcript_.read();
                 if (!cancellation_.load(std::memory_order_acquire)) {
-                    payload = backend.prepare(work->request, conversation);
+                    payload = backend.prepare(work->request, transcript);
                 }
             }
             if (!payload) {

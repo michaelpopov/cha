@@ -29,15 +29,15 @@ std::string request_action(
 } // namespace
 
 ResponseController::ResponseController(
-    Conversation& conversation,
-    ConversationJournal& journal,
+    Transcript& transcript,
+    SessionJournal& journal,
     AgentRegistry& registry)
-    : conversation_(conversation),
+    : transcript_(transcript),
       journal_(journal),
       registry_(registry) {}
 
-void ResponseController::restore(ConversationRestore restored) {
-    conversation_.replace_entries(std::move(restored.entries));
+void ResponseController::restore(SessionRestore restored) {
+    transcript_.replace_entries(std::move(restored.entries));
     next_request_id_ = restored.next_request_id;
     next_entry_id_ = restored.next_entry_id;
     for (const InterruptedTurn& turn : restored.interrupted_turns) {
@@ -49,15 +49,16 @@ void ResponseController::restore(ConversationRestore restored) {
             [this, &turn] {
                 journal_.fail_turn(turn.request_id, turn.error_entry);
             });
-        conversation_.add_entry(turn.error_entry);
+        transcript_.add_entry(turn.error_entry);
     }
 }
 
 GenerationStatus ResponseController::generation_status() const {
     return {
-        active_.has_value(),
-        active_ ? active_->agent_name : "",
-        active_ ? active_->phase : ResponsePhase::waiting,
+        .active = active_.has_value(),
+        .agent_name = active_ ? active_->agent_name : "",
+        .phase = active_ ? active_->phase : ResponsePhase::waiting,
+        .reasoning_text = active_ ? active_->reasoning_text : "",
     };
 }
 
@@ -80,11 +81,11 @@ ResponseUpdate ResponseController::start(
             journal_.start_turn(request.request_id, request.prompt);
         });
     try {
-        conversation_.add_entry(request.prompt);
+        transcript_.add_entry(request.prompt);
     } catch (...) {
-        ConversationEntry error = make_error_entry(
+        TranscriptEntry error = make_error_entry(
             next_entry_id_++,
-            "Failed to add the submitted prompt to the conversation",
+            "Failed to add the submitted prompt to the transcript",
             request.request_id,
             target.id);
         persist(
@@ -126,15 +127,17 @@ void ResponseController::apply(const AgentDelta& event, ResponseUpdate& update) 
     if (!matches(event.request_id) || event.text.empty()) {
         return;
     }
-    if (active_->phase == ResponsePhase::waiting) {
-        conversation_.begin_entry(response_entry(CompletionStatus::streaming));
-    }
-    conversation_.append_to_entry(
-        active_->response_entry_id, event.kind, event.text);
     if (event.kind == CompletionDeltaKind::answer) {
+        if (active_->phase != ResponsePhase::answering) {
+            transcript_.begin_entry(response_entry(EntryStatus::streaming));
+        }
+        transcript_.append_answer(active_->response_entry_id, event.text);
         active_->phase = ResponsePhase::answering;
-    } else if (active_->phase == ResponsePhase::waiting) {
-        active_->phase = ResponsePhase::reasoning;
+    } else {
+        active_->reasoning_text.append(event.text);
+        if (active_->phase == ResponsePhase::waiting) {
+            active_->phase = ResponsePhase::reasoning;
+        }
     }
     update.render_needed = true;
 }
@@ -148,8 +151,8 @@ void ResponseController::apply(const AgentCompleted& event, ResponseUpdate& upda
             "Agent completed without answer content", active_->agent_id, update);
         return;
     }
-    const ConversationEntry response =
-        response_entry(CompletionStatus::complete);
+    const TranscriptEntry response =
+        response_entry(EntryStatus::complete);
     persist(
         request_action(
             "persist completion of",
@@ -158,7 +161,7 @@ void ResponseController::apply(const AgentCompleted& event, ResponseUpdate& upda
         [this, &event, &response] {
             journal_.complete_turn(event.request_id, response);
         });
-    finish_response_entry(CompletionStatus::complete);
+    finish_response_entry(EntryStatus::complete);
     active_.reset();
     update.render_needed = true;
     update.notice = "";
@@ -169,8 +172,8 @@ void ResponseController::apply(const AgentCancelled& event, ResponseUpdate& upda
         return;
     }
     if (active_->phase == ResponsePhase::answering) {
-        const ConversationEntry response =
-            response_entry(CompletionStatus::cancelled);
+        const TranscriptEntry response =
+            response_entry(EntryStatus::cancelled);
         persist(
             request_action(
                 "persist cancellation of",
@@ -179,7 +182,7 @@ void ResponseController::apply(const AgentCancelled& event, ResponseUpdate& upda
             [this, &event, &response] {
                 journal_.cancel_turn(event.request_id, response);
             });
-        finish_response_entry(CompletionStatus::cancelled);
+        finish_response_entry(EntryStatus::cancelled);
     } else {
         persist(
             request_action(
@@ -189,9 +192,6 @@ void ResponseController::apply(const AgentCancelled& event, ResponseUpdate& upda
             [this, &event] {
                 journal_.cancel_turn(event.request_id, std::nullopt);
             });
-        if (active_->phase == ResponsePhase::reasoning) {
-            finish_response_entry(CompletionStatus::cancelled);
-        }
     }
     active_.reset();
     update.render_needed = true;
@@ -208,7 +208,7 @@ void ResponseController::fail_active_response(
     std::string message,
     ParticipantId participant_id,
     ResponseUpdate& update) {
-    ConversationEntry error = make_error_entry(
+    TranscriptEntry error = make_error_entry(
         next_entry_id_++,
         std::move(message),
         active_->request_id,
@@ -221,30 +221,30 @@ void ResponseController::fail_active_response(
         [this, &error] {
             journal_.fail_turn(active_->request_id, error);
         });
-    if (active_->phase != ResponsePhase::waiting) {
-        conversation_.discard_entry(active_->response_entry_id);
+    if (active_->phase == ResponsePhase::answering) {
+        transcript_.discard_entry(active_->response_entry_id);
     }
-    conversation_.add_entry(std::move(error));
+    transcript_.add_entry(std::move(error));
     active_.reset();
     update.render_needed = true;
     update.notice = "Generation failed";
 }
 
-void ResponseController::finish_response_entry(CompletionStatus status) {
-    conversation_.finish_entry(active_->response_entry_id, status);
+void ResponseController::finish_response_entry(EntryStatus status) {
+    transcript_.finish_entry(active_->response_entry_id, status);
 }
 
-ConversationEntry ResponseController::response_entry(CompletionStatus status) const {
+TranscriptEntry ResponseController::response_entry(EntryStatus status) const {
     std::string text;
-    if (active_->phase != ResponsePhase::waiting) {
-        const ConversationReadView view = conversation_.read();
-        const std::span<const ConversationEntry> entries = view.entries();
+    if (active_->phase == ResponsePhase::answering) {
+        const TranscriptReadView view = transcript_.read();
+        const std::span<const TranscriptEntry> entries = view.entries();
         if (!view.open_entry_id()
             || *view.open_entry_id() != active_->response_entry_id
             || entries.empty()
             || entries.back().id != active_->response_entry_id) {
             throw std::logic_error(
-                "Active response does not match the open conversation entry");
+                "Active response does not match the open transcript entry");
         }
         text = entries.back().text;
     }

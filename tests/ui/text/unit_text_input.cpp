@@ -67,7 +67,7 @@ class BlockingBackend final : public CompletionBackend {
 public:
     RequestPayload prepare(
         const CompletionRequest& request,
-        const ConversationReadView&) override {
+        const TranscriptReadView&) override {
         return {.bytes = request.prompt.text};
     }
 
@@ -126,7 +126,7 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
 
     EXPECT_EQ(
         handle_text_input(*controller, "/clear").notice,
-        "Conversation cleared");
+        "Transcript cleared");
     const SessionUpdate information =
         handle_text_input(*controller, "/info");
     ASSERT_TRUE(information.notice);
@@ -164,8 +164,8 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
     const SessionUpdate submitted =
         handle_text_input(*controller, "  @Ism hello");
     EXPECT_TRUE(submitted.clear_input);
-    const std::vector<ConversationEntry> entries =
-        controller->conversation().entries();
+    const std::vector<TranscriptEntry> entries =
+        controller->transcript().entries();
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().addressed_to, "ismael-id");
     EXPECT_EQ(entries.front().text, "hello");

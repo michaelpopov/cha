@@ -11,7 +11,7 @@
 namespace cha {
 
 // The CompletionBackend for OpenAI-compatible HTTP endpoints, configured from one AgentDefinition.
-// It projects the conversation into agent messages, performs the request over libcurl as either a
+// It projects the transcript into agent messages, performs the request over libcurl as either a
 // streaming or a single-response call, parses reasoning and answer content out of the provider
 // format, and discovers a model when the configuration names none. It owns one connection handle,
 // so a single client serves one request at a time.
@@ -25,7 +25,7 @@ public:
 
     RequestPayload prepare(
         const CompletionRequest& request,
-        const ConversationReadView& conversation) override;
+        const TranscriptReadView& transcript) override;
     CompletionResult perform(
         RequestPayload payload,
         const CompletionDeltaSink& on_delta,

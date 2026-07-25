@@ -79,7 +79,7 @@ add_library(cha_core
     src/util/environment.cpp
     src/util/path_name.cpp
     src/util/text.cpp
-    src/conversation/conversation.cpp
+    src/transcript/transcript.cpp
             src/agents/agent_registry.cpp
         src/agents/completion_client.cpp
     src/session/session_controller.cpp
@@ -148,7 +148,7 @@ if(BUILD_TESTING)
     add_executable(cha_tests
         tests/util/unit_environment.cpp
         tests/util/unit_text.cpp
-        tests/conversation/unit_conversation.cpp
+        tests/transcript/unit_transcript.cpp
         tests/agents/unit_agent_context.cpp
         tests/agents/unit_agent_registry.cpp
         tests/agents/unit_agent_roster.cpp

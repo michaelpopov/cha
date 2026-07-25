@@ -14,12 +14,15 @@ enum class ResponsePhase {
     answering,
 };
 
-// What a front end needs to show about the turn in progress: whether one is running, which agent
-// is answering, and how far it has got. Reported by ResponseController through SessionController.
+// What a front end needs to show about the turn in progress. Reasoning is ephemeral presentation
+// state: it is cleared at the terminal event and never enters the Transcript or session database.
 struct GenerationStatus {
     bool active{};
     std::string agent_name;
     ResponsePhase phase{ResponsePhase::waiting};
+    std::string reasoning_text;
+
+    bool operator==(const GenerationStatus&) const = default;
 };
 
 } // namespace cha

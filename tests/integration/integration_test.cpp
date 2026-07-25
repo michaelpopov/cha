@@ -61,17 +61,17 @@ AgentEvent wait_for_agent_event(AgentRegistry& registry) {
 
 ChatResult run_chat(bool stream) {
     const Config config = integration_config(stream);
-    Conversation conversation;
+    Transcript transcript;
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
-    AgentRegistry registry(conversation, std::move(definitions));
+    AgentRegistry registry(transcript, std::move(definitions));
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     CompletionRequest request{
         .request_id = 1,
         .prompt = make_human_entry(1, config.id, config.name, input, 1),
     };
-    conversation.add_entry(request.prompt);
+    transcript.add_entry(request.prompt);
     EXPECT_TRUE(registry.submit(std::move(request)));
 
     ChatResult result;
@@ -92,17 +92,17 @@ ChatResult run_chat(bool stream) {
 
 ChatResult run_cancelled_chat() {
     const Config config = integration_config(true);
-    Conversation conversation;
+    Transcript transcript;
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
-    AgentRegistry registry(conversation, std::move(definitions));
+    AgentRegistry registry(transcript, std::move(definitions));
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     CompletionRequest request{
         .request_id = 2,
         .prompt = make_human_entry(1, config.id, config.name, input, 2),
     };
-    conversation.add_entry(request.prompt);
+    transcript.add_entry(request.prompt);
     EXPECT_TRUE(registry.submit(std::move(request)));
 
     ChatResult result;
@@ -232,7 +232,7 @@ std::string streamed_answer(
     return http_response("text/event-stream", body);
 }
 
-TEST(ReasoningIntegration, StreamsLiveReasoningButPersistsAndReplaysOnlyAnswer) {
+TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContext) {
     std::vector<AgentDefinition> definitions = lobby_definitions();
     definitions.resize(1);
     constexpr std::string_view reasoning_marker =
@@ -252,10 +252,9 @@ TEST(ReasoningIntegration, StreamsLiveReasoningButPersistsAndReplaysOnlyAnswer) 
         auto controller = SessionController::from_definitions(std::move(definitions), session.path);
         (void)handle_text_input(*controller, "First question");
         run_until_idle(*controller);
-        const std::vector<ConversationEntry> live =
-            controller->conversation().entries();
+        const std::vector<TranscriptEntry> live =
+            controller->transcript().entries();
         ASSERT_EQ(live.size(), 2U);
-        EXPECT_EQ(live.back().reasoning_text, reasoning_marker);
         EXPECT_EQ(live.back().text, "First answer");
 
         (void)handle_text_input(*controller, "Second question");
@@ -270,17 +269,14 @@ TEST(ReasoningIntegration, StreamsLiveReasoningButPersistsAndReplaysOnlyAnswer) 
     EXPECT_EQ(serialized.find(reasoning_marker), std::string::npos);
     EXPECT_NE(serialized.find("First answer"), std::string::npos);
 
-    const std::vector<ConversationEntry> restored =
-        load_conversation_entries(session.path);
+    const std::vector<TranscriptEntry> restored =
+        load_transcript_entries(session.path);
     ASSERT_EQ(restored.size(), 4U);
-    for (const ConversationEntry& entry : restored) {
-        EXPECT_TRUE(entry.reasoning_text.empty());
-    }
     EXPECT_EQ(restored[1].text, "First answer");
     EXPECT_EQ(restored[3].text, "Second answer");
 }
 
-TEST(ReasoningIntegration, ParsesNonStreamingStructuredReasoning) {
+TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
     std::vector<AgentDefinition> definitions = lobby_definitions();
     definitions.resize(1);
     MockHttpServer server({http_response(
@@ -297,14 +293,12 @@ TEST(ReasoningIntegration, ParsesNonStreamingStructuredReasoning) {
     run_until_idle(*controller);
     server.join();
 
-    const std::vector<ConversationEntry> live =
-        controller->conversation().entries();
+    const std::vector<TranscriptEntry> live =
+        controller->transcript().entries();
     ASSERT_EQ(live.size(), 2U);
-    EXPECT_EQ(live.back().reasoning_text, "Non-stream thought");
     EXPECT_EQ(live.back().text, "Non-stream answer");
-    const std::vector<ConversationEntry> restored =
-        load_conversation_entries(session.path);
-    EXPECT_TRUE(restored.back().reasoning_text.empty());
+    const std::vector<TranscriptEntry> restored =
+        load_transcript_entries(session.path);
     EXPECT_EQ(restored.back().text, "Non-stream answer");
 }
 
@@ -328,7 +322,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     {
         auto controller = SessionController::from_definitions(std::move(definitions), session.path);
         ASSERT_EQ(controller->roster().first().id, "cheburashka");
-        EXPECT_TRUE(show_addressing(controller->roster(), controller->conversation()));
+        EXPECT_TRUE(show_addressing(controller->roster(), controller->transcript()));
 
         // No mention: the first persona in personas.list answers.
         SessionUpdate update = handle_text_input(*controller, "Who are you?");
@@ -364,8 +358,8 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
               "\n\nUser: and you?"}},
     }));
 
-    const std::vector<ConversationEntry> restored =
-        load_conversation_entries(session.path);
+    const std::vector<TranscriptEntry> restored =
+        load_transcript_entries(session.path);
     ASSERT_EQ(restored.size(), 4U);
     EXPECT_EQ(restored[0].addressed_to, "cheburashka");
     EXPECT_EQ(restored[0].text, "Who are you?");
@@ -402,7 +396,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
     cheburashka_server.join();
 
     // Cheburashka has left personas.list; the stored session still opens.
-    ConversationRestore restored = load_conversation_state(session.path);
+    SessionRestore restored = load_session_state(session.path);
     ASSERT_EQ(restored.entries.size(), 4U);
     ASSERT_TRUE(restored.interrupted_turns.empty());
 
@@ -411,7 +405,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
         session.path,
         std::move(restored));
     EXPECT_EQ(reopened->roster().agents().size(), 1U);
-    EXPECT_TRUE(show_addressing(reopened->roster(), reopened->conversation()))
+    EXPECT_TRUE(show_addressing(reopened->roster(), reopened->transcript()))
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
         handle_text_input(*reopened, "@Cheburashka are you there?").notice,

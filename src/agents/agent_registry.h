@@ -2,7 +2,7 @@
 
 #include "agents/agent.h"
 #include "agents/completion_backend.h"
-#include "conversation/conversation.h"
+#include "transcript/transcript.h"
 #include "util/event_channel.h"
 
 #include <atomic>
@@ -45,14 +45,14 @@ private:
 
 // Runs agent completions off the caller's thread so the UI never blocks on a provider.
 // It owns one CompletionBackend per roster entry and one worker thread, accepts a single
-// outstanding CompletionRequest, prepares that request from a short-lived Conversation read view,
+// outstanding CompletionRequest, prepares that request from a short-lived Transcript read view,
 // and publishes correlated AgentEvent values on a channel whose descriptor callers can poll.
 // Cancellation is cooperative, and every accepted request receives a terminal event, including
 // across shutdown.
 class AgentRegistry {
 public:
-    AgentRegistry(const Conversation& conversation, std::vector<AgentDefinition> definitions);
-    AgentRegistry(const Conversation& conversation, std::vector<std::unique_ptr<CompletionBackend>> backends);
+    AgentRegistry(const Transcript& transcript, std::vector<AgentDefinition> definitions);
+    AgentRegistry(const Transcript& transcript, std::vector<std::unique_ptr<CompletionBackend>> backends);
     ~AgentRegistry() noexcept;
 
     AgentRegistry(const AgentRegistry&) = delete;
@@ -76,7 +76,7 @@ private:
     void publish_event(AgentEvent event);
     void publish_terminal(AgentEvent event);
 
-    const Conversation& conversation_;
+    const Transcript& transcript_;
     std::vector<std::unique_ptr<CompletionBackend>> backends_;
     AgentRoster roster_;
     EventChannel<WorkItem> requests_;

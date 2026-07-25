@@ -1,7 +1,7 @@
-# Conversation model
+# Transcript model
 
-`conversation/` owns the presentation-neutral transcript model: what a
-conversation entry means, and how live transcript state changes. It is the
+`transcript/` owns the presentation-neutral transcript model: what a
+transcript entry means, and how live transcript state changes. It is the
 vocabulary the rest of the system shares, and it knows nothing about how entries
 are rendered, stored, or sent to a provider.
 
@@ -12,12 +12,12 @@ project.
 
 | Source | Responsibility |
 | --- | --- |
-| `conversation.h` | IDs, entry kinds and status, `CompletionDelta`, `ConversationEntry`, factories, validators, `ConversationSnapshot`, `ConversationReadView`, and the `Conversation` container. |
-| `conversation.cpp` | Factory construction, the validation rules, and the synchronized mutation and read operations. |
+| `transcript.h` | IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, factories, validators, `TranscriptSnapshot`, `TranscriptReadView`, and the `Transcript` container. |
+| `transcript.cpp` | Factory construction, the validation rules, and the synchronized mutation and read operations. |
 
 ## The entry model
 
-`ConversationEntry` is the one record every layer agrees on. It deliberately
+`TranscriptEntry` is the one record every layer agrees on. It deliberately
 separates four things that are easy to conflate:
 
 | Field group | Purpose |
@@ -26,18 +26,19 @@ separates four things that are easy to conflate:
 | `kind`, `status` | What the entry *is* and how its content ended. |
 | `participant_id`, `display_name` | Who produced it — stable identity versus the label shown. |
 | `addressed_to`, `addressed_to_name` | Who a human prompt was sent to. Only human entries carry this. |
-| `reasoning_text`, `text` | Ephemeral reasoning versus durable answer content. |
+| `text` | User text, agent answer text, or system/error text. |
 
 Four kinds and four statuses combine only in these ways:
 
 | Kind | Allowed status | Notes |
 | --- | --- | --- |
 | `human` | `complete` | Must name the agent it addresses. |
-| `agent` | `streaming`, `complete`, `cancelled` | Never `failed` — a failed turn produces an `error` entry instead. `complete` requires non-empty `text`; `cancelled` requires reasoning or answer text. |
+| `agent` | `streaming`, `complete`, `cancelled` | Never `failed` — a failed turn produces an `error` entry instead. Terminal agent entries require non-empty answer `text`. |
 | `notice` | `complete` | Session messages; no participant identity. |
 | `error` | `failed` | May carry the participant it concerns and the request it ends. |
 
-Only agent entries may carry `reasoning_text`.
+Provider reasoning is not transcript content. The session layer holds it only
+while a response is active and clears it when the turn ends.
 
 Entries are built through factories — `make_human_entry`, `make_agent_entry`,
 `make_notice_entry`, `make_error_entry` — so the fixed fields of each kind
@@ -51,20 +52,20 @@ exactly what it needs:
 
 ```mermaid
 flowchart LR
-    A["validate_conversation_entry<br/>field and kind/status rules"]
-    B["require_terminal_conversation_entry<br/>also rejects streaming status"]
-    C["require_storable_conversation_entry<br/>also rejects reasoning text<br/>and empty cancelled answers"]
+    A["validate_transcript_entry<br/>field and kind/status rules"]
+    B["require_terminal_transcript_entry<br/>also rejects streaming status"]
+    C["require_storable_transcript_entry<br/>persistence-boundary contract"]
     A --> B --> C
-    B -.->|"used by"| L["Conversation::add_entry<br/>replace_entries"]
-    C -.->|"used by"| J["ConversationJournal writes"]
+    B -.->|"used by"| L["Transcript::add_entry<br/>replace_entries"]
+    C -.->|"used by"| J["SessionJournal writes"]
 ```
 
-The third level is why reopening a session never shows reasoning: it cannot
-reach the database in the first place.
+The named storage guard keeps persistence policy explicit even though every
+terminal transcript entry is currently storable.
 
 ## The live transcript
 
-`Conversation` is the only mutable conversation state shared between threads.
+`Transcript` is the only mutable transcript state shared between threads.
 It has a single-writer design: the main thread mutates, any thread may read
 under the lock.
 
@@ -72,7 +73,7 @@ under the lock.
 | --- | --- |
 | `add_entry` | Terminal entries only; refused while an entry is streaming. |
 | `begin_entry` | Opens the one streaming entry; must be an agent entry with `streaming` status. |
-| `append_to_entry` | Appends reasoning or answer text to the open entry only. |
+| `append_answer` | Appends answer text to the open entry only. |
 | `finish_entry` | Closes it as `complete` or `cancelled`, re-checking the content rules. |
 | `discard_entry` | Drops the open entry entirely — used when a turn fails mid-stream. |
 | `clear` | Empties the visible history and bumps `history_epoch`. |
@@ -88,7 +89,7 @@ detect that everything they had drawn is now invalid.
 stateDiagram-v2
     [*] --> Closed
     Closed --> Open: begin_entry, agent + streaming
-    Open --> Open: append_to_entry, reasoning or answer
+    Open --> Open: append_answer
     Open --> Closed: finish_entry, complete or cancelled
     Open --> Closed: discard_entry, entry removed
     note right of Open
@@ -101,9 +102,9 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-    C["Conversation<br/>entries + revision + epoch"]
-    S["ConversationSnapshot<br/>owned copy"]
-    V["ConversationReadView<br/>borrowed, holds the lock"]
+    C["Transcript<br/>entries + revision + epoch"]
+    S["TranscriptSnapshot<br/>owned copy"]
+    V["TranscriptReadView<br/>borrowed, holds the lock"]
     R["Renderers, status, tests"]
     B["Backend request preparation"]
 
@@ -115,7 +116,7 @@ Use a **snapshot** when the reader will hold the data across work of its own —
 that is what the terminal renderer does. Use a **read view** when the reader
 needs the entries without copying them and can finish quickly: the agent thread
 takes one to project the model context, then releases it before any network I/O.
-A read view holds the conversation mutex for its whole lifetime, so blocking
+A read view holds the transcript mutex for its whole lifetime, so blocking
 inside one blocks the writer.
 
 ## Dependencies
@@ -130,10 +131,10 @@ protocol, or terminal concepts.
 
 ## Tests
 
-`tests/conversation/unit_conversation.cpp` covers the factories, every
+`tests/transcript/unit_transcript.cpp` covers the factories, every
 validation rule, the streaming lifecycle, ID ordering, and snapshot/read-view
 consistency — including that a read view really does block the writer.
 
-The same file also tests `ConversationJournal` and the session database, on
+The same file also tests `SessionJournal` and the session database, on
 purpose: the SQL `CHECK` constraints are a second encoding of the rules above,
 and the tests assert both encodings agree.

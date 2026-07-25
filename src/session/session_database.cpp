@@ -25,10 +25,10 @@ static_assert(static_cast<std::int64_t>(EntryKind::human) == 0);
 static_assert(static_cast<std::int64_t>(EntryKind::agent) == 1);
 static_assert(static_cast<std::int64_t>(EntryKind::notice) == 2);
 static_assert(static_cast<std::int64_t>(EntryKind::error) == 3);
-static_assert(static_cast<std::int64_t>(CompletionStatus::complete) == 0);
-static_assert(static_cast<std::int64_t>(CompletionStatus::streaming) == 1);
-static_assert(static_cast<std::int64_t>(CompletionStatus::cancelled) == 2);
-static_assert(static_cast<std::int64_t>(CompletionStatus::failed) == 3);
+static_assert(static_cast<std::int64_t>(EntryStatus::complete) == 0);
+static_assert(static_cast<std::int64_t>(EntryStatus::streaming) == 1);
+static_assert(static_cast<std::int64_t>(EntryStatus::cancelled) == 2);
+static_assert(static_cast<std::int64_t>(EntryStatus::failed) == 3);
 
 enum class TurnState : std::int64_t {
     started = 0,
@@ -389,7 +389,7 @@ DurableState read_state(Database& database) {
     }
     return {
         state.integer(0),
-        unsigned_id(state.integer(1), "next conversation entry ID"),
+        unsigned_id(state.integer(1), "next transcript entry ID"),
         unsigned_id(state.integer(2), "next request ID"),
     };
 }
@@ -421,11 +421,11 @@ EntryKind parse_kind(std::int64_t value) {
     return static_cast<EntryKind>(value);
 }
 
-CompletionStatus parse_status(std::int64_t value) {
+EntryStatus parse_status(std::int64_t value) {
     if (value != 0 && value != 2 && value != 3) {
         throw std::runtime_error("Session database contains an unknown entry status");
     }
-    return static_cast<CompletionStatus>(value);
+    return static_cast<EntryStatus>(value);
 }
 
 enum class TurnRecordKind {
@@ -438,10 +438,10 @@ enum class TurnRecordKind {
 void validate_turn_entry(
     TurnRecordKind record_kind,
     RequestId request_id,
-    const ConversationEntry& entry) {
+    const TranscriptEntry& entry) {
 
     EntryKind expected_kind = EntryKind::human;
-    CompletionStatus expected_status = CompletionStatus::complete;
+    EntryStatus expected_status = EntryStatus::complete;
     switch (record_kind) {
     case TurnRecordKind::started:
         break;
@@ -450,11 +450,11 @@ void validate_turn_entry(
         break;
     case TurnRecordKind::cancelled:
         expected_kind = EntryKind::agent;
-        expected_status = CompletionStatus::cancelled;
+        expected_status = EntryStatus::cancelled;
         break;
     case TurnRecordKind::failed:
         expected_kind = EntryKind::error;
-        expected_status = CompletionStatus::failed;
+        expected_status = EntryStatus::failed;
         break;
     }
 
@@ -470,7 +470,7 @@ std::int64_t current_epoch(Database& database) {
 }
 
 void advance_entry_id(Database& database, EntryId entry_id) {
-    const std::int64_t value = sqlite_id(entry_id, "Conversation entry ID");
+    const std::int64_t value = sqlite_id(entry_id, "Transcript entry ID");
     Statement statement = database.prepare(
         "UPDATE state SET next_entry_id = ?1 + 1 "
         "WHERE singleton = 1 AND next_entry_id <= ?1",
@@ -478,7 +478,7 @@ void advance_entry_id(Database& database, EntryId entry_id) {
     statement.run();
     if (database.changes() != 1) {
         throw std::invalid_argument(
-            "Conversation entry IDs must be strictly increasing");
+            "Transcript entry IDs must be strictly increasing");
     }
 }
 
@@ -497,13 +497,13 @@ void advance_request_id(Database& database, RequestId request_id) {
 void insert_entry(
     Database& database,
     std::int64_t epoch,
-    const ConversationEntry& entry) {
+    const TranscriptEntry& entry) {
 
     try {
-        require_storable_conversation_entry(entry);
+        require_storable_transcript_entry(entry);
     } catch (const std::invalid_argument& error) {
         throw std::runtime_error(
-            "Cannot store invalid conversation entry: "
+            "Cannot store invalid transcript entry: "
             + std::string(error.what()));
     }
     advance_entry_id(database, entry.id);
@@ -515,7 +515,7 @@ void insert_entry(
         "INSERT INTO entries ("
         "entry_id, epoch, request_id, kind, participant_id, display_name, addressed_to, addressed_to_name, text, status"
         ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        sqlite_id(entry.id, "Conversation entry ID"),
+        sqlite_id(entry.id, "Transcript entry ID"),
         epoch,
         request_id,
         static_cast<std::int64_t>(entry.kind),
@@ -528,9 +528,9 @@ void insert_entry(
     statement.run();
 }
 
-ConversationEntry read_entry(Statement& statement) {
-    ConversationEntry entry{
-        .id = unsigned_id(statement.integer(0), "conversation entry ID"),
+TranscriptEntry read_entry(Statement& statement) {
+    TranscriptEntry entry{
+        .id = unsigned_id(statement.integer(0), "transcript entry ID"),
         .kind = parse_kind(statement.integer(2)),
         .participant_id = statement.text(3),
         .display_name = statement.text(4),
@@ -543,10 +543,10 @@ ConversationEntry read_entry(Statement& statement) {
         entry.request_id = unsigned_id(statement.integer(1), "request ID");
     }
     try {
-        require_storable_conversation_entry(entry);
+        require_storable_transcript_entry(entry);
     } catch (const std::invalid_argument& error) {
         throw std::runtime_error(
-            "Session database contains an invalid conversation entry: "
+            "Session database contains an invalid transcript entry: "
             + std::string(error.what()));
     }
     return entry;
@@ -572,7 +572,7 @@ void finish_turn(
     Database& database,
     RequestId request_id,
     TurnState state,
-    const ConversationEntry* entry) {
+    const TranscriptEntry* entry) {
 
     Transaction transaction(database);
     transition_turn(database, request_id, state);
@@ -692,14 +692,14 @@ SessionDatabaseMetadata read_session_database_metadata(
     };
 }
 
-ConversationRestore load_conversation_state(
+SessionRestore load_session_state(
     const std::filesystem::path& path) {
 
     Database database(path, Database::Mode::read_only);
     validate_database(database);
 
     const DurableState state = read_state(database);
-    ConversationRestore result{
+    SessionRestore result{
         .next_request_id = state.next_request_id,
         .next_entry_id = state.next_entry_id,
     };
@@ -719,7 +719,7 @@ ConversationRestore load_conversation_state(
     while (interrupted.step()) {
         const RequestId request_id =
             unsigned_id(interrupted.integer(0), "interrupted request ID");
-        ConversationEntry error = make_error_entry(
+        TranscriptEntry error = make_error_entry(
             result.next_entry_id++,
             "Response interrupted before completion",
             request_id,
@@ -729,12 +729,12 @@ ConversationRestore load_conversation_state(
     return result;
 }
 
-std::vector<ConversationEntry> load_conversation_entries(
+std::vector<TranscriptEntry> load_transcript_entries(
     const std::filesystem::path& path) {
-    return load_conversation_state(path).entries;
+    return load_session_state(path).entries;
 }
 
-class ConversationJournal::Impl {
+class SessionJournal::Impl {
 public:
     explicit Impl(const std::filesystem::path& path)
         : database(path, Database::Mode::read_write) {
@@ -744,21 +744,21 @@ public:
     Database database;
 };
 
-ConversationJournal::ConversationJournal(std::filesystem::path path)
+SessionJournal::SessionJournal(std::filesystem::path path)
     : impl_(std::make_unique<Impl>(path)) {
 }
 
-ConversationJournal::~ConversationJournal() = default;
+SessionJournal::~SessionJournal() = default;
 
-void ConversationJournal::append(const ConversationEntry& entry) {
+void SessionJournal::append(const TranscriptEntry& entry) {
     Transaction transaction(impl_->database);
     insert_entry(impl_->database, current_epoch(impl_->database), entry);
     transaction.commit();
 }
 
-void ConversationJournal::start_turn(
+void SessionJournal::start_turn(
     RequestId request_id,
-    const ConversationEntry& prompt) {
+    const TranscriptEntry& prompt) {
     validate_turn_entry(TurnRecordKind::started, request_id, prompt);
 
     Transaction transaction(impl_->database);
@@ -774,9 +774,9 @@ void ConversationJournal::start_turn(
     transaction.commit();
 }
 
-void ConversationJournal::complete_turn(
+void SessionJournal::complete_turn(
     RequestId request_id,
-    const ConversationEntry& response) {
+    const TranscriptEntry& response) {
 
     validate_turn_entry(TurnRecordKind::completed, request_id, response);
     finish_turn(
@@ -786,9 +786,9 @@ void ConversationJournal::complete_turn(
         &response);
 }
 
-void ConversationJournal::cancel_turn(
+void SessionJournal::cancel_turn(
     RequestId request_id,
-    std::optional<ConversationEntry> response) {
+    std::optional<TranscriptEntry> response) {
 
     if (request_id == 0) {
         throw std::invalid_argument(
@@ -805,9 +805,9 @@ void ConversationJournal::cancel_turn(
         response ? &*response : nullptr);
 }
 
-void ConversationJournal::fail_turn(
+void SessionJournal::fail_turn(
     RequestId request_id,
-    const ConversationEntry& error) {
+    const TranscriptEntry& error) {
 
     validate_turn_entry(TurnRecordKind::failed, request_id, error);
     finish_turn(
@@ -817,7 +817,7 @@ void ConversationJournal::fail_turn(
         &error);
 }
 
-void ConversationJournal::clear() {
+void SessionJournal::clear() {
     Transaction transaction(impl_->database);
     Statement active = impl_->database.prepare(
         "SELECT EXISTS(SELECT 1 FROM turns WHERE state = 0)");

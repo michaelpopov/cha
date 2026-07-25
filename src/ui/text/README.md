@@ -48,7 +48,7 @@ flowchart TD
     kind -->|"text"| mention["parse_addressed_prompt"]
     mention --> submit["controller.submit_prompt"]
     kind -->|"has an argument"| argerr["notice: takes no arguments"]
-    kind -->|"clear"| c1["controller.clear_conversation"]
+    kind -->|"clear"| c1["controller.clear_transcript"]
     kind -->|"info"| c2["controller.session_information"]
     kind -->|"agents"| c3["controller.agent_information"]
     kind -->|"set_default"| c4["controller.set_default_agent"]

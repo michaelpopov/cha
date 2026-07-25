@@ -32,10 +32,10 @@ flowchart TD
     term -->|"submitted line"| txt
     txt -->|"calls"| controller["SessionController"]
     controller -->|"SessionUpdate"| term
-    term -->|"reads"| convo["Conversation snapshots<br/>GenerationStatus"]
+    term -->|"reads"| convo["Transcript snapshots<br/>GenerationStatus"]
     term -->|"reads"| roster["AgentRoster<br/>names for labels"]
 
-    controller -.->|"never called from ui/"| store["SessionsRepository<br/>ConversationJournal<br/>CompletionBackend"]
+    controller -.->|"never called from ui/"| store["SessionsRepository<br/>SessionJournal<br/>CompletionBackend"]
 ```
 
 The dashed edge is the rule: a front end never opens a session repository, reads
@@ -49,7 +49,7 @@ Code under `ui/` may depend on:
 
 - `session/` for controller operations, generation status, and presentation-safe
   summaries such as `SessionSummary`;
-- `conversation/` for presentation-ready transcript values;
+- `transcript/` for presentation-ready transcript values;
 - the shared grammar, as `terminal/` uses `text/`;
 - narrowly scoped `util/` helpers where protocol parsing needs them;
 - roster values from `agents/` when a presentation needs agent names — for
@@ -72,7 +72,7 @@ bodies, and response framing around the same session-layer operations:
 | Command grammar | Reuse `text/`, or skip it if routes already say what to do. |
 | Process wiring and lifetime | A new file in `apps/`. |
 
-`ConversationEntry` and `GenerationStatus` may be serialized directly when their
+`TranscriptEntry` and `GenerationStatus` may be serialized directly when their
 shape already suits the transport. Session-persistence and agent-runtime types
 must not become transport contracts — they are internal, and freezing them into
 a public API would pin down layers that need to stay free to change.

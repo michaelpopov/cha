@@ -37,7 +37,7 @@ SessionUpdate handle_text_input(
     }
     switch (command.kind) {
     case CommandKind::clear:
-        return controller.clear_conversation();
+        return controller.clear_transcript();
     case CommandKind::info:
         return controller.session_information();
     case CommandKind::stop:

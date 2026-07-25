@@ -177,7 +177,7 @@ std::unique_ptr<SessionController> Workspace::open_session(
 
     const std::filesystem::path database_path =
         repository.open_database_path(session_id);
-    ConversationRestore restored = load_conversation_state(database_path);
+    SessionRestore restored = load_session_state(database_path);
     return SessionController::from_definitions(
         std::move(definitions),
         database_path,

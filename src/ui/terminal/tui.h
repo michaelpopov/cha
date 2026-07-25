@@ -1,6 +1,6 @@
 #pragma once
 
-#include "conversation/conversation.h"
+#include "transcript/transcript.h"
 #include "ui/terminal/input_editor.h"
 #include "ui/terminal/session_view.h"
 #include "ui/terminal/transcript_renderer.h"
@@ -29,7 +29,7 @@ public:
 
     std::optional<SessionInput> read_input() override;
     void render(
-        const Conversation& conversation,
+        const Transcript& transcript,
         const InputEditor& editor,
         const GenerationStatus& status,
         bool show_addressing,
@@ -42,9 +42,22 @@ private:
     void replace_pad(WINDOW*& pad, int rows, int columns);
     void ensure_transcript_capacity(int required_rows);
     void ensure_input_pad(int required_rows, int columns);
-    void rebuild_transcript(const ConversationSnapshot& snapshot, int output_height, int columns, bool show_addressing);
-    void write_transcript_entry(const ConversationEntry& entry, bool show_addressing);
-    void render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns, bool show_addressing);
+    void rebuild_transcript(
+        const TranscriptSnapshot& snapshot,
+        const GenerationStatus& status,
+        int output_height,
+        int columns,
+        bool show_addressing);
+    void write_transcript_entry(const TranscriptEntry& entry, bool show_addressing);
+    void write_active_response(
+        const GenerationStatus& status,
+        std::string_view answer_text);
+    void render_transcript(
+        const TranscriptSnapshot& snapshot,
+        const GenerationStatus& status,
+        int output_height,
+        int columns,
+        bool show_addressing);
     void render_input(const InputEditor& editor, int input_y, int input_height, int columns);
 
     WINDOW* transcript_pad_{};
@@ -57,6 +70,7 @@ private:
     int input_columns_{};
     TranscriptRenderPlanner transcript_planner_;
     TranscriptViewport transcript_viewport_;
+    GenerationStatus rendered_generation_;
     Terminal& terminal_;
 };
 

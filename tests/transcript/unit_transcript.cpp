@@ -1,5 +1,5 @@
 #include "agents/agent.h"
-#include "conversation/conversation.h"
+#include "transcript/transcript.h"
 #include "session/session_database.h"
 
 #include <gtest/gtest.h>
@@ -76,7 +76,7 @@ void create_test_database(const std::filesystem::path& path) {
     }
 }
 
-ConversationEntry human(
+TranscriptEntry human(
     EntryId id,
     std::string text,
     std::optional<RequestId> request_id = std::nullopt) {
@@ -84,141 +84,99 @@ ConversationEntry human(
         id, "reviewer-id", "Reviewer", std::move(text), request_id);
 }
 
-TEST(Conversation, StoresTypedCompleteAndStreamingEntries) {
-    Conversation conversation;
-    conversation.add_entry(human(1, "Review this code", 10));
-    conversation.begin_entry(make_agent_entry(
-        2, "reviewer-id", "Reviewer", std::string{}, CompletionStatus::streaming, 10));
-    conversation.append_to_entry(2, CompletionDeltaKind::answer, "Two ");
-    conversation.append_to_entry(2, CompletionDeltaKind::answer, "issues found");
+TEST(Transcript, StoresTypedCompleteAndStreamingEntries) {
+    Transcript transcript;
+    transcript.add_entry(human(1, "Review this code", 10));
+    transcript.begin_entry(make_agent_entry(
+        2, "reviewer-id", "Reviewer", std::string{}, EntryStatus::streaming, 10));
+    transcript.append_answer(2, "Two ");
+    transcript.append_answer(2, "issues found");
 
-    EXPECT_EQ(conversation.open_entry_id(), 2U);
-    conversation.finish_entry(2, CompletionStatus::complete);
-    EXPECT_FALSE(conversation.open_entry_id());
+    EXPECT_EQ(transcript.open_entry_id(), 2U);
+    transcript.finish_entry(2, EntryStatus::complete);
+    EXPECT_FALSE(transcript.open_entry_id());
     EXPECT_EQ(
-        conversation.entries(),
-        (std::vector<ConversationEntry>{
+        transcript.entries(),
+        (std::vector<TranscriptEntry>{
             human(1, "Review this code", 10),
             make_agent_entry(
-                2, "reviewer-id", "Reviewer", "Two issues found", CompletionStatus::complete, 10),
+                2, "reviewer-id", "Reviewer", "Two issues found", EntryStatus::complete, 10),
         }));
 }
 
-TEST(Conversation, RequiresTheStreamingEntryHandleForMutation) {
-    Conversation conversation;
-    conversation.begin_entry(make_agent_entry(
-        4, "reviewer-id", "Reviewer", std::string{}, CompletionStatus::streaming, 2));
+TEST(Transcript, RequiresTheStreamingEntryHandleForMutation) {
+    Transcript transcript;
+    transcript.begin_entry(make_agent_entry(
+        4, "reviewer-id", "Reviewer", std::string{}, EntryStatus::streaming, 2));
 
     EXPECT_THROW(
-        conversation.append_to_entry(
-            5, CompletionDeltaKind::answer, "wrong"),
+        transcript.append_answer(5, "wrong"),
         std::logic_error);
-    EXPECT_THROW(conversation.discard_entry(5), std::logic_error);
-    EXPECT_EQ(conversation.open_entry_id(), 4U);
+    EXPECT_THROW(transcript.discard_entry(5), std::logic_error);
+    EXPECT_EQ(transcript.open_entry_id(), 4U);
 }
 
-TEST(Conversation, SeparatesReasoningFromAnswerAndValidatesTerminalContent) {
-    Conversation conversation;
-    conversation.begin_entry(make_agent_entry(
+TEST(Transcript, RequiresAnswerTextForTerminalAgentEntries) {
+    Transcript transcript;
+    transcript.begin_entry(make_agent_entry(
         1,
         "reviewer-id",
         "Reviewer",
         std::string{},
-        CompletionStatus::streaming,
+        EntryStatus::streaming,
         1));
-    conversation.append_to_entry(
-        1, CompletionDeltaKind::reasoning, "PRIVATE_REASONING");
-    EXPECT_EQ(conversation.entries().back().reasoning_text, "PRIVATE_REASONING");
-    EXPECT_TRUE(conversation.entries().back().text.empty());
     EXPECT_THROW(
-        conversation.finish_entry(1, CompletionStatus::complete),
+        transcript.finish_entry(1, EntryStatus::complete),
         std::invalid_argument);
+    EXPECT_THROW(
+        transcript.finish_entry(1, EntryStatus::cancelled),
+        std::invalid_argument);
+    transcript.append_answer(1, "Partial answer");
+    EXPECT_NO_THROW(transcript.finish_entry(1, EntryStatus::cancelled));
     EXPECT_NO_THROW(
-        conversation.finish_entry(1, CompletionStatus::cancelled));
-
-    ConversationEntry non_agent = make_notice_entry(2, "Notice");
-    non_agent.reasoning_text = "invalid";
-    EXPECT_THROW(
-        validate_conversation_entry(non_agent),
-        std::invalid_argument);
-    EXPECT_THROW(
-        require_storable_conversation_entry(conversation.entries().back()),
-        std::invalid_argument);
+        require_storable_transcript_entry(transcript.entries().back()));
 }
 
-TEST(ConversationJournal, RejectsReasoningAndRollsBackTheTurn) {
-    const std::filesystem::path path =
-        temporary_path("cha_reasoning_guard_");
-    create_test_database(path);
-    ConversationJournal journal(path);
-    const ConversationEntry prompt =
-        make_human_entry(1, "reviewer-id", "Reviewer", "Question", 1);
-    journal.start_turn(1, prompt);
-    const ConversationEntry response = make_agent_entry(
-        2,
-        "reviewer-id",
-        "Reviewer",
-        {
-            .reasoning = "UNIQUE_REASONING_MARKER_42",
-            .answer = "Answer",
-        },
-        CompletionStatus::complete,
-        1);
+TEST(Transcript, ReturnsAnIndependentEntrySnapshot) {
+    Transcript transcript;
+    transcript.add_entry(make_notice_entry(1, "Original"));
 
-    EXPECT_THROW(journal.complete_turn(1, response), std::runtime_error);
-    const ConversationRestore restored = load_conversation_state(path);
-    ASSERT_EQ(restored.entries.size(), 1U);
-    EXPECT_EQ(restored.entries.front(), prompt);
-    ASSERT_EQ(restored.interrupted_turns.size(), 1U);
-
-    std::ifstream database(path, std::ios::binary);
-    const std::string bytes{
-        std::istreambuf_iterator<char>(database),
-        std::istreambuf_iterator<char>()};
-    EXPECT_EQ(bytes.find("UNIQUE_REASONING_MARKER_42"), std::string::npos);
-    std::filesystem::remove(path);
-}
-
-TEST(Conversation, ReturnsAnIndependentEntrySnapshot) {
-    Conversation conversation;
-    conversation.add_entry(make_notice_entry(1, "Original"));
-
-    auto snapshot = conversation.entries();
+    auto snapshot = transcript.entries();
     snapshot.front().text = "Changed";
 
-    EXPECT_EQ(conversation.entries().front().text, "Original");
+    EXPECT_EQ(transcript.entries().front().text, "Original");
 }
 
-TEST(Conversation, ReadViewIsLockedNonOwningAndNeitherCopyableNorMovable) {
-    static_assert(!std::is_copy_constructible_v<ConversationReadView>);
-    static_assert(!std::is_move_constructible_v<ConversationReadView>);
+TEST(Transcript, ReadViewIsLockedNonOwningAndNeitherCopyableNorMovable) {
+    static_assert(!std::is_copy_constructible_v<TranscriptReadView>);
+    static_assert(!std::is_move_constructible_v<TranscriptReadView>);
 
-    Conversation conversation;
-    conversation.add_entry(make_notice_entry(1, "Original"));
-    ConversationReadView view = conversation.read();
+    Transcript transcript;
+    transcript.add_entry(make_notice_entry(1, "Original"));
+    TranscriptReadView view = transcript.read();
 
     EXPECT_EQ(view.entries().size(), 1U);
     EXPECT_EQ(view.entries().front().text, "Original");
     EXPECT_FALSE(view.open_entry_id());
 }
 
-TEST(Conversation, MutationWaitsUntilTheReadViewIsDestroyed) {
-    Conversation conversation;
-    conversation.add_entry(make_notice_entry(1, "Original"));
+TEST(Transcript, MutationWaitsUntilTheReadViewIsDestroyed) {
+    Transcript transcript;
+    transcript.add_entry(make_notice_entry(1, "Original"));
     std::promise<void> view_ready;
     std::future<void> ready = view_ready.get_future();
     std::promise<void> release_view;
     std::shared_future<void> release = release_view.get_future().share();
 
     std::thread reader([&] {
-        ConversationReadView view = conversation.read();
+        TranscriptReadView view = transcript.read();
         view_ready.set_value();
         release.wait();
     });
     ASSERT_EQ(ready.wait_for(std::chrono::seconds(1)), std::future_status::ready);
 
     std::future<void> mutation = std::async(std::launch::async, [&] {
-        conversation.add_entry(make_notice_entry(2, "Later"));
+        transcript.add_entry(make_notice_entry(2, "Later"));
     });
     EXPECT_EQ(mutation.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
 
@@ -228,85 +186,85 @@ TEST(Conversation, MutationWaitsUntilTheReadViewIsDestroyed) {
     mutation.get();
 }
 
-TEST(Conversation, ReplacesAndClearsEntries) {
-    Conversation conversation;
-    conversation.add_entry(make_notice_entry(1, "Old"));
-    const std::size_t initial_epoch = conversation.snapshot().history_epoch;
-    conversation.replace_entries({
+TEST(Transcript, ReplacesAndClearsEntries) {
+    Transcript transcript;
+    transcript.add_entry(make_notice_entry(1, "Old"));
+    const std::size_t initial_epoch = transcript.snapshot().history_epoch;
+    transcript.replace_entries({
         human(2, "Restored"),
-        make_agent_entry(3, "guide-id", "Guide", "Welcome", CompletionStatus::complete),
+        make_agent_entry(3, "guide-id", "Guide", "Welcome", EntryStatus::complete),
     });
 
-    EXPECT_EQ(conversation.entries().size(), 2U);
-    EXPECT_EQ(conversation.snapshot().history_epoch, initial_epoch + 1);
-    conversation.clear();
-    EXPECT_TRUE(conversation.entries().empty());
-    EXPECT_EQ(conversation.snapshot().history_epoch, initial_epoch + 2);
+    EXPECT_EQ(transcript.entries().size(), 2U);
+    EXPECT_EQ(transcript.snapshot().history_epoch, initial_epoch + 1);
+    transcript.clear();
+    EXPECT_TRUE(transcript.entries().empty());
+    EXPECT_EQ(transcript.snapshot().history_epoch, initial_epoch + 2);
 }
 
-TEST(Conversation, RequiresStrictlyIncreasingEntryIds) {
-    Conversation conversation;
-    conversation.add_entry(make_notice_entry(2, "First"));
+TEST(Transcript, RequiresStrictlyIncreasingEntryIds) {
+    Transcript transcript;
+    transcript.add_entry(make_notice_entry(2, "First"));
 
-    EXPECT_THROW(conversation.add_entry(make_notice_entry(2, "Duplicate")), std::invalid_argument);
-    EXPECT_THROW(conversation.add_entry(make_notice_entry(1, "Out of order")), std::invalid_argument);
-    EXPECT_NO_THROW(conversation.add_entry(make_notice_entry(5, "Gap is allowed")));
+    EXPECT_THROW(transcript.add_entry(make_notice_entry(2, "Duplicate")), std::invalid_argument);
+    EXPECT_THROW(transcript.add_entry(make_notice_entry(1, "Out of order")), std::invalid_argument);
+    EXPECT_NO_THROW(transcript.add_entry(make_notice_entry(5, "Gap is allowed")));
 
     EXPECT_THROW(
-        conversation.replace_entries({
+        transcript.replace_entries({
             make_notice_entry(10, "Later"),
             make_notice_entry(9, "Earlier"),
         }),
         std::invalid_argument);
 }
 
-TEST(ConversationValidation, IsEnforcedByMemoryAndDatabase) {
-    ConversationEntry invalid = make_error_entry(1, "Failure");
-    invalid.status = CompletionStatus::complete;
-    EXPECT_THROW(validate_conversation_entry(invalid), std::invalid_argument);
+TEST(TranscriptValidation, IsEnforcedByMemoryAndDatabase) {
+    TranscriptEntry invalid = make_error_entry(1, "Failure");
+    invalid.status = EntryStatus::complete;
+    EXPECT_THROW(validate_transcript_entry(invalid), std::invalid_argument);
 
-    Conversation conversation;
-    EXPECT_THROW(conversation.add_entry(invalid), std::invalid_argument);
+    Transcript transcript;
+    EXPECT_THROW(transcript.add_entry(invalid), std::invalid_argument);
 
     const auto path = temporary_path("cha_invalid_entry_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
     EXPECT_THROW(journal.append(invalid), std::runtime_error);
 
-    const ConversationEntry empty_completion = make_agent_entry(
-        2, "reviewer-id", "Reviewer", std::string{}, CompletionStatus::complete, 1);
-    EXPECT_THROW(validate_conversation_entry(empty_completion), std::invalid_argument);
-    EXPECT_THROW(conversation.add_entry(empty_completion), std::invalid_argument);
+    const TranscriptEntry empty_completion = make_agent_entry(
+        2, "reviewer-id", "Reviewer", std::string{}, EntryStatus::complete, 1);
+    EXPECT_THROW(validate_transcript_entry(empty_completion), std::invalid_argument);
+    EXPECT_THROW(transcript.add_entry(empty_completion), std::invalid_argument);
     EXPECT_THROW(journal.append(empty_completion), std::runtime_error);
 
-    Conversation streaming;
+    Transcript streaming;
     streaming.begin_entry(make_agent_entry(
-        1, "reviewer-id", "Reviewer", std::string{}, CompletionStatus::streaming, 1));
+        1, "reviewer-id", "Reviewer", std::string{}, EntryStatus::streaming, 1));
     EXPECT_THROW(
-        streaming.finish_entry(1, CompletionStatus::complete),
+        streaming.finish_entry(1, EntryStatus::complete),
         std::invalid_argument);
     std::filesystem::remove(path);
 }
 
 TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
-    const auto path = temporary_path("cha_conversation_");
+    const auto path = temporary_path("cha_transcript_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
     journal.start_turn(1, human(1, "Hello", 1));
     journal.complete_turn(1, make_agent_entry(
-        2, "reviewer-id", "Reviewer", "Hello back", CompletionStatus::complete, 1));
+        2, "reviewer-id", "Reviewer", "Hello back", EntryStatus::complete, 1));
     journal.append(make_notice_entry(3, "Information"));
 
     EXPECT_EQ(
-        load_conversation_entries(path),
-        (std::vector<ConversationEntry>{
+        load_transcript_entries(path),
+        (std::vector<TranscriptEntry>{
             human(1, "Hello", 1),
             make_agent_entry(
                 2,
                 "reviewer-id",
                 "Reviewer",
                 "Hello back",
-                CompletionStatus::complete,
+                EntryStatus::complete,
                 1),
             make_notice_entry(3, "Information"),
         }));
@@ -318,55 +276,55 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
 }
 
 TEST(SessionDatabase, RejectsAStreamingEntry) {
-    const auto path = temporary_path("cha_open_conversation_");
+    const auto path = temporary_path("cha_open_transcript_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
     EXPECT_THROW(
         journal.append(make_agent_entry(
             1,
             "reviewer-id",
             "Reviewer",
             std::string{},
-            CompletionStatus::streaming,
+            EntryStatus::streaming,
             1)),
         std::runtime_error);
-    EXPECT_TRUE(load_conversation_entries(path).empty());
+    EXPECT_TRUE(load_transcript_entries(path).empty());
     std::filesystem::remove(path);
 }
 
-TEST(ConversationJournal, ReplaysStandaloneEntriesAndClearEvents) {
+TEST(SessionJournal, ReplaysStandaloneEntriesAndClearEvents) {
     const auto path = temporary_path("cha_journal_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
     journal.append(make_notice_entry(1, "Old"));
     journal.clear();
     journal.append(make_notice_entry(2, "Current"));
 
     EXPECT_EQ(
-        load_conversation_entries(path),
-        (std::vector<ConversationEntry>{make_notice_entry(2, "Current")}));
+        load_transcript_entries(path),
+        (std::vector<TranscriptEntry>{make_notice_entry(2, "Current")}));
     std::filesystem::remove(path);
 }
 
-TEST(ConversationJournal, RejectsOutOfOrderEntryIdsWithoutChangingStoredState) {
+TEST(SessionJournal, RejectsOutOfOrderEntryIdsWithoutChangingStoredState) {
     const auto path = temporary_path("cha_out_of_order_journal_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
     journal.append(make_notice_entry(2, "Later ID"));
 
     EXPECT_THROW(
         journal.append(make_notice_entry(1, "Earlier ID")),
         std::invalid_argument);
     EXPECT_EQ(
-        load_conversation_entries(path),
-        (std::vector<ConversationEntry>{make_notice_entry(2, "Later ID")}));
+        load_transcript_entries(path),
+        (std::vector<TranscriptEntry>{make_notice_entry(2, "Later ID")}));
     std::filesystem::remove(path);
 }
 
-TEST(ConversationJournal, RollsBackAnInvalidTerminalTransition) {
+TEST(SessionJournal, RollsBackAnInvalidTerminalTransition) {
     const auto path = temporary_path("cha_rollback_journal_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
     journal.start_turn(1, human(1, "Question", 1));
     EXPECT_THROW(
         journal.complete_turn(
@@ -376,56 +334,56 @@ TEST(ConversationJournal, RollsBackAnInvalidTerminalTransition) {
                 "guide-id",
                 "Guide",
                 "Answer",
-                CompletionStatus::complete,
+                EntryStatus::complete,
                 1)),
         std::invalid_argument);
 
-    const ConversationRestore restored = load_conversation_state(path);
+    const SessionRestore restored = load_session_state(path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
     EXPECT_EQ(restored.entries.front(), human(1, "Question", 1));
     std::filesystem::remove(path);
 }
 
-TEST(ConversationJournal, ReplaysIdentifiedTypedTurnOutcomes) {
+TEST(SessionJournal, ReplaysIdentifiedTypedTurnOutcomes) {
     const auto path = temporary_path("cha_identified_journal_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
     journal.start_turn(7, human(1, "First", 7));
     journal.complete_turn(7, make_agent_entry(
-        2, "guide-id", "Guide", "Answer", CompletionStatus::complete, 7));
+        2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7));
     journal.start_turn(8, human(3, "Second", 8));
     journal.fail_turn(8, make_error_entry(4, "Unavailable", 8, "guide-id"));
 
-    const ConversationRestore restored = load_conversation_state(path);
+    const SessionRestore restored = load_session_state(path);
     EXPECT_EQ(restored.next_request_id, 9U);
     EXPECT_EQ(restored.next_entry_id, 5U);
     EXPECT_TRUE(restored.interrupted_turns.empty());
     EXPECT_EQ(
         restored.entries,
-        (std::vector<ConversationEntry>{
+        (std::vector<TranscriptEntry>{
             human(1, "First", 7),
-            make_agent_entry(2, "guide-id", "Guide", "Answer", CompletionStatus::complete, 7),
+            make_agent_entry(2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7),
             human(3, "Second", 8),
             make_error_entry(4, "Unavailable", 8, "guide-id"),
         }));
     std::filesystem::remove(path);
 }
 
-TEST(ConversationJournal, RejectsEntriesThatDoNotMatchTheirTurnRecords) {
+TEST(SessionJournal, RejectsEntriesThatDoNotMatchTheirTurnRecords) {
     const auto path = temporary_path("cha_invalid_turn_entry_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
 
     EXPECT_THROW(
         journal.start_turn(7, human(1, "Prompt", 8)),
         std::invalid_argument);
     EXPECT_THROW(
         journal.complete_turn(7, make_agent_entry(
-            2, "guide-id", "Guide", "Answer", CompletionStatus::cancelled, 7)),
+            2, "guide-id", "Guide", "Answer", EntryStatus::cancelled, 7)),
         std::invalid_argument);
     EXPECT_THROW(
         journal.cancel_turn(7, make_agent_entry(
-            2, "guide-id", "Guide", "Answer", CompletionStatus::complete, 7)),
+            2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7)),
         std::invalid_argument);
     EXPECT_THROW(
         journal.fail_turn(7, make_error_entry(2, "Failure", 8, "guide-id")),
@@ -434,22 +392,22 @@ TEST(ConversationJournal, RejectsEntriesThatDoNotMatchTheirTurnRecords) {
     std::filesystem::remove(path);
 }
 
-TEST(ConversationJournal, RecognizesAnInterruptedTypedTurn) {
+TEST(SessionJournal, RecognizesAnInterruptedTypedTurn) {
     const auto path = temporary_path("cha_interrupted_journal_");
     create_test_database(path);
-    ConversationJournal journal(path);
-    const ConversationEntry prompt =
+    SessionJournal journal(path);
+    const TranscriptEntry prompt =
         make_human_entry(5, "guide-id", "Guide", "Pending", 12);
     journal.start_turn(12, prompt);
 
-    const ConversationRestore restored = load_conversation_state(path);
+    const SessionRestore restored = load_session_state(path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
     EXPECT_EQ(
         restored.entries,
-        (std::vector<ConversationEntry>{prompt}));
+        (std::vector<TranscriptEntry>{prompt}));
     EXPECT_EQ(
-        load_conversation_entries(path),
-        (std::vector<ConversationEntry>{prompt}));
+        load_transcript_entries(path),
+        (std::vector<TranscriptEntry>{prompt}));
     EXPECT_EQ(restored.interrupted_turns.front().request_id, 12U);
     EXPECT_EQ(restored.interrupted_turns.front().error_entry.kind, EntryKind::error);
     EXPECT_EQ(restored.interrupted_turns.front().error_entry.participant_id, "guide-id");
@@ -462,72 +420,72 @@ TEST(SessionDatabase, RejectsANonDatabaseFile) {
     const auto path = temporary_path("cha_old_journal_");
     {
         std::ofstream file(path, std::ios::binary);
-        file << R"({"type":"conversation","version":4})" << '\n';
+        file << R"({"type":"transcript","version":4})" << '\n';
     }
 
-    EXPECT_THROW(ConversationJournal journal(path), std::runtime_error);
-    EXPECT_THROW((void)load_conversation_state(path), std::runtime_error);
+    EXPECT_THROW(SessionJournal journal(path), std::runtime_error);
+    EXPECT_THROW((void)load_session_state(path), std::runtime_error);
     std::filesystem::remove(path);
 }
 
 TEST(SessionDatabase, JournalDoesNotCreateAMissingDatabase) {
     const auto path = temporary_path("cha_missing_database_");
 
-    EXPECT_THROW(ConversationJournal journal(path), std::runtime_error);
+    EXPECT_THROW(SessionJournal journal(path), std::runtime_error);
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
-TEST(ConversationValidation, RequiresATargetOnHumanEntriesAndForbidsItElsewhere) {
-    ConversationEntry untargeted = human(1, "No target");
+TEST(TranscriptValidation, RequiresATargetOnHumanEntriesAndForbidsItElsewhere) {
+    TranscriptEntry untargeted = human(1, "No target");
     untargeted.addressed_to.clear();
-    EXPECT_THROW(validate_conversation_entry(untargeted), std::invalid_argument);
+    EXPECT_THROW(validate_transcript_entry(untargeted), std::invalid_argument);
 
-    ConversationEntry unnamed = human(1, "No target name");
+    TranscriptEntry unnamed = human(1, "No target name");
     unnamed.addressed_to_name.clear();
-    EXPECT_THROW(validate_conversation_entry(unnamed), std::invalid_argument);
+    EXPECT_THROW(validate_transcript_entry(unnamed), std::invalid_argument);
 
-    ConversationEntry addressed_agent = make_agent_entry(
-        2, "guide-id", "Guide", "Answer", CompletionStatus::complete);
+    TranscriptEntry addressed_agent = make_agent_entry(
+        2, "guide-id", "Guide", "Answer", EntryStatus::complete);
     addressed_agent.addressed_to = "reviewer-id";
     addressed_agent.addressed_to_name = "Reviewer";
-    EXPECT_THROW(validate_conversation_entry(addressed_agent), std::invalid_argument);
+    EXPECT_THROW(validate_transcript_entry(addressed_agent), std::invalid_argument);
 
-    ConversationEntry addressed_notice = make_notice_entry(3, "Notice");
+    TranscriptEntry addressed_notice = make_notice_entry(3, "Notice");
     addressed_notice.addressed_to_name = "Reviewer";
-    EXPECT_THROW(validate_conversation_entry(addressed_notice), std::invalid_argument);
+    EXPECT_THROW(validate_transcript_entry(addressed_notice), std::invalid_argument);
 
-    ConversationEntry addressed_error = make_error_entry(4, "Failure");
+    TranscriptEntry addressed_error = make_error_entry(4, "Failure");
     addressed_error.addressed_to = "reviewer-id";
-    EXPECT_THROW(validate_conversation_entry(addressed_error), std::invalid_argument);
+    EXPECT_THROW(validate_transcript_entry(addressed_error), std::invalid_argument);
 
-    EXPECT_NO_THROW(validate_conversation_entry(human(1, "Targeted")));
+    EXPECT_NO_THROW(validate_transcript_entry(human(1, "Targeted")));
 }
 
-TEST(ConversationValidation, RejectsAddressingViolationsInMemoryAndInSqlite) {
-    ConversationEntry untargeted = human(1, "No target");
+TEST(TranscriptValidation, RejectsAddressingViolationsInMemoryAndInSqlite) {
+    TranscriptEntry untargeted = human(1, "No target");
     untargeted.addressed_to.clear();
     untargeted.addressed_to_name.clear();
 
-    Conversation conversation;
-    EXPECT_THROW(conversation.add_entry(untargeted), std::invalid_argument);
+    Transcript transcript;
+    EXPECT_THROW(transcript.add_entry(untargeted), std::invalid_argument);
 
     const auto path = temporary_path("cha_addressing_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
     EXPECT_THROW(journal.append(untargeted), std::runtime_error);
-    EXPECT_TRUE(load_conversation_entries(path).empty());
+    EXPECT_TRUE(load_transcript_entries(path).empty());
     std::filesystem::remove(path);
 }
 
 TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
     const auto path = temporary_path("cha_addressed_round_trip_");
     create_test_database(path);
-    ConversationJournal journal(path);
+    SessionJournal journal(path);
     journal.start_turn(1, make_human_entry(1, "ismael", "Ismael", "And you?", 1));
     journal.complete_turn(1, make_agent_entry(
-        2, "ismael", "Ismael", "Call me Ismael.", CompletionStatus::complete, 1));
+        2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1));
 
-    const std::vector<ConversationEntry> restored = load_conversation_entries(path);
+    const std::vector<TranscriptEntry> restored = load_transcript_entries(path);
     ASSERT_EQ(restored.size(), 2U);
     EXPECT_EQ(restored.front().addressed_to, "ismael");
     EXPECT_EQ(restored.front().addressed_to_name, "Ismael");
@@ -542,14 +500,14 @@ TEST(SessionDatabase, RefusesAVersionOneDatabase) {
     ASSERT_EQ(raw_execute(path, "PRAGMA user_version = 1"), SQLITE_OK);
 
     try {
-        (void)load_conversation_state(path);
+        (void)load_session_state(path);
         FAIL() << "expected the older schema version to be refused";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("Unsupported session database"),
                   std::string::npos)
             << error.what();
     }
-    EXPECT_THROW(ConversationJournal journal(path), std::runtime_error);
+    EXPECT_THROW(SessionJournal journal(path), std::runtime_error);
     EXPECT_THROW((void)read_session_database_metadata(path), std::runtime_error);
     std::filesystem::remove(path);
 }
@@ -632,14 +590,14 @@ TEST(SessionDatabase, RejectsATurnThatHasNoPrompt) {
         SQLITE_OK);
 
     try {
-        (void)load_conversation_state(path);
+        (void)load_session_state(path);
         FAIL() << "expected a turn without a prompt to be rejected";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("turn without exactly one prompt"),
                   std::string::npos)
             << error.what();
     }
-    EXPECT_THROW(ConversationJournal journal(path), std::runtime_error);
+    EXPECT_THROW(SessionJournal journal(path), std::runtime_error);
     std::filesystem::remove(path);
 }
 
@@ -647,15 +605,15 @@ TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
     const auto path = temporary_path("cha_interrupted_target_");
     create_test_database(path);
     {
-        ConversationJournal journal(path);
+        SessionJournal journal(path);
         journal.start_turn(1, make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1));
         journal.complete_turn(1, make_agent_entry(
             2, "cheburashka", "Cheburashka", "I am Cheburashka.",
-            CompletionStatus::complete, 1));
+            EntryStatus::complete, 1));
         journal.start_turn(2, make_human_entry(3, "ismael", "Ismael", "And you?", 2));
     }
 
-    const ConversationRestore restored = load_conversation_state(path);
+    const SessionRestore restored = load_session_state(path);
 
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
     const InterruptedTurn& interrupted = restored.interrupted_turns.front();
@@ -671,25 +629,25 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseRoomLostAnAgent) {
     const auto path = temporary_path("cha_roster_drift_");
     create_test_database(path);
     {
-        ConversationJournal journal(path);
+        SessionJournal journal(path);
         journal.start_turn(1, make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1));
         journal.complete_turn(1, make_agent_entry(
             2, "cheburashka", "Cheburashka", "I am Cheburashka.",
-            CompletionStatus::complete, 1));
+            EntryStatus::complete, 1));
         journal.start_turn(2, make_human_entry(3, "ismael", "Ismael", "And you?", 2));
         journal.complete_turn(2, make_agent_entry(
-            4, "ismael", "Ismael", "Call me Ismael.", CompletionStatus::complete, 2));
+            4, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 2));
     }
 
     // Cheburashka has left the room; only Ismael remains on the roster.
-    const ConversationRestore restored = load_conversation_state(path);
+    const SessionRestore restored = load_session_state(path);
 
     EXPECT_TRUE(restored.interrupted_turns.empty());
     ASSERT_EQ(restored.entries.size(), 4U);
     EXPECT_EQ(restored.entries.front().addressed_to, "cheburashka");
     EXPECT_EQ(restored.entries[1].display_name, "Cheburashka");
 
-    ConversationSnapshot snapshot{.entries = restored.entries};
+    TranscriptSnapshot snapshot{.entries = restored.entries};
     EXPECT_EQ(
         project_agent_context(
             snapshot.entries,

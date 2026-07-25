@@ -25,7 +25,7 @@ public:
 
     RequestPayload prepare(
         const CompletionRequest& request,
-        const ConversationReadView&) override {
+        const TranscriptReadView&) override {
         prepared_requests.push_back(request.request_id);
         return {.bytes = request.prompt.text};
     }
@@ -64,7 +64,7 @@ public:
 
     RequestPayload prepare(
         const CompletionRequest& request,
-        const ConversationReadView&) override {
+        const TranscriptReadView&) override {
         prepared.store(true, std::memory_order_release);
         return {.bytes = request.prompt.text};
     }
@@ -117,9 +117,9 @@ public:
 
     RequestPayload prepare(
         const CompletionRequest& completion_request,
-        const ConversationReadView& conversation) override {
+        const TranscriptReadView& transcript) override {
         requests.push_back(completion_request);
-        latest_prompts.push_back(conversation.entries().back());
+        latest_prompts.push_back(transcript.entries().back());
         return {.bytes = completion_request.prompt.text};
     }
 
@@ -157,7 +157,7 @@ public:
     const std::string& agent_id() const override { return id_; }
 
     std::vector<CompletionRequest> requests;
-    std::vector<ConversationEntry> latest_prompts;
+    std::vector<TranscriptEntry> latest_prompts;
     CompletionDeltaKind delta_kind{CompletionDeltaKind::answer};
 
 private:
@@ -172,8 +172,8 @@ class BoundaryBackend final : public CompletionBackend {
 public:
     RequestPayload prepare(
         const CompletionRequest& request,
-        const ConversationReadView& conversation) override {
-        if (conversation.entries().back() != request.prompt) {
+        const TranscriptReadView& transcript) override {
+        if (transcript.entries().back() != request.prompt) {
             throw std::logic_error("prompt was not latest");
         }
         prepared.set_value();
@@ -213,7 +213,7 @@ class ThrowingPrepareBackend final : public CompletionBackend {
 public:
     RequestPayload prepare(
         const CompletionRequest&,
-        const ConversationReadView&) override {
+        const TranscriptReadView&) override {
         throw std::runtime_error("preparation failed");
     }
 
@@ -256,7 +256,7 @@ AgentEvent next_event(AgentRegistry& registry) {
 }
 
 CompletionRequest request(
-    Conversation& conversation,
+    Transcript& transcript,
     RequestId id,
     std::string target,
     std::string name,
@@ -265,12 +265,12 @@ CompletionRequest request(
         .request_id = id,
         .prompt = make_human_entry(id, std::move(target), std::move(name), std::move(text), id),
     };
-    conversation.add_entry(result.prompt);
+    transcript.add_entry(result.prompt);
     return result;
 }
 
 TEST(AgentRegistry, RoutesPromptTargetsToTheMatchingBackendAndSharesOneChannel) {
-    Conversation conversation;
+    Transcript transcript;
     auto alpha = std::make_unique<RegistryBackend>("alpha-id", "Alpha");
     auto beta = std::make_unique<RegistryBackend>("beta-id", "Beta");
     RegistryBackend* alpha_view = alpha.get();
@@ -278,15 +278,15 @@ TEST(AgentRegistry, RoutesPromptTargetsToTheMatchingBackendAndSharesOneChannel) 
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(alpha));
     backends.push_back(std::move(beta));
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
 
-    ASSERT_TRUE(registry.submit(request(conversation, 1, "beta-id", "Beta", "hello")));
+    ASSERT_TRUE(registry.submit(request(transcript, 1, "beta-id", "Beta", "hello")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Beta:hello");
     EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 1U);
     EXPECT_TRUE(alpha_view->prepared_requests.empty());
     EXPECT_EQ(beta_view->prepared_requests, (std::vector<RequestId>{1}));
 
-    CompletionRequest unknown = request(conversation, 2, "missing-id", "Missing", "nope");
+    CompletionRequest unknown = request(transcript, 2, "missing-id", "Missing", "nope");
     EXPECT_FALSE(registry.submit(std::move(unknown)));
     registry.stop();
     AgentEvent event = AgentCompleted{};
@@ -294,14 +294,14 @@ TEST(AgentRegistry, RoutesPromptTargetsToTheMatchingBackendAndSharesOneChannel) 
 }
 
 TEST(AgentRegistry, RejectsInvalidBackendMetadataAtTheRegistryBoundary) {
-    Conversation conversation;
+    Transcript transcript;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::make_unique<RegistryBackend>("bad-id", "Bad name"));
-    EXPECT_THROW(AgentRegistry registry(conversation, std::move(backends)), std::invalid_argument);
+    EXPECT_THROW(AgentRegistry registry(transcript, std::move(backends)), std::invalid_argument);
 }
 
 TEST(AgentRegistry, SerializesRequestsAcrossDifferentBackends) {
-    Conversation conversation;
+    Transcript transcript;
     auto alpha = std::make_unique<BlockingRegistryBackend>("alpha-id", "Alpha");
     auto beta = std::make_unique<BlockingRegistryBackend>("beta-id", "Beta");
     BlockingRegistryBackend* alpha_view = alpha.get();
@@ -309,20 +309,20 @@ TEST(AgentRegistry, SerializesRequestsAcrossDifferentBackends) {
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(alpha));
     backends.push_back(std::move(beta));
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
 
-    ASSERT_TRUE(registry.submit(request(conversation, 1, "alpha-id", "Alpha", "one")));
+    ASSERT_TRUE(registry.submit(request(transcript, 1, "alpha-id", "Alpha", "one")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Alpha:one");
     ASSERT_TRUE(alpha_view->entered_perform.load(std::memory_order_acquire));
 
-    EXPECT_FALSE(registry.submit(request(conversation, 2, "beta-id", "Beta", "two")));
+    EXPECT_FALSE(registry.submit(request(transcript, 2, "beta-id", "Beta", "two")));
     EXPECT_FALSE(beta_view->prepared.load(std::memory_order_acquire));
     EXPECT_FALSE(beta_view->entered_perform.load(std::memory_order_acquire));
 
     alpha_view->release.store(true, std::memory_order_release);
     EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 1U);
 
-    ASSERT_TRUE(registry.submit(request(conversation, 3, "beta-id", "Beta", "three")));
+    ASSERT_TRUE(registry.submit(request(transcript, 3, "beta-id", "Beta", "three")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Beta:three");
     ASSERT_TRUE(beta_view->entered_perform.load(std::memory_order_acquire));
     beta_view->release.store(true, std::memory_order_release);
@@ -334,24 +334,24 @@ TEST(AgentRegistry, SerializesRequestsAcrossDifferentBackends) {
 }
 
 TEST(AgentRegistry, RejectsEmptyConstruction) {
-    Conversation conversation;
+    Transcript transcript;
     EXPECT_THROW(
         AgentRegistry registry(
-            conversation, std::vector<std::unique_ptr<CompletionBackend>>{}),
+            transcript, std::vector<std::unique_ptr<CompletionBackend>>{}),
         std::invalid_argument);
 }
 
 TEST(AgentRegistry, RejectsNullBackend) {
-    Conversation conversation;
+    Transcript transcript;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(nullptr);
     EXPECT_THROW(
-        AgentRegistry registry(conversation, std::move(backends)),
+        AgentRegistry registry(transcript, std::move(backends)),
         std::invalid_argument);
 }
 
 TEST(AgentRegistry, IdentifiesThePersonaWhoseStartupFails) {
-    Conversation conversation;
+    Transcript transcript;
     AgentDefinition definition{
         .config = {
             .id = "alpha-id",
@@ -363,7 +363,7 @@ TEST(AgentRegistry, IdentifiesThePersonaWhoseStartupFails) {
 
     try {
         AgentRegistry registry(
-            conversation, std::vector<AgentDefinition>{std::move(definition)});
+            transcript, std::vector<AgentDefinition>{std::move(definition)});
         FAIL() << "Expected startup failure";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("Persona 'Alpha'"), std::string::npos);
@@ -372,19 +372,19 @@ TEST(AgentRegistry, IdentifiesThePersonaWhoseStartupFails) {
 }
 
 TEST(AgentRegistry, StartsOnConstructionAndStopsIdempotently) {
-    Conversation conversation;
+    Transcript transcript;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::make_unique<ConfigurableBackend>());
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
 
     ASSERT_TRUE(registry.submit(
-        request(conversation, 1, "assistant", "Fake", "Question")));
+        request(transcript, 1, "assistant", "Fake", "Question")));
     EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 1U);
     registry.stop();
     EXPECT_NO_THROW(registry.stop());
     EXPECT_FALSE(registry.submit(
         request(
-            conversation,
+            transcript,
             2,
             "assistant",
             "Fake",
@@ -394,8 +394,8 @@ TEST(AgentRegistry, StartsOnConstructionAndStopsIdempotently) {
 }
 
 TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
-    Conversation conversation;
-    conversation.add_entry(
+    Transcript transcript;
+    transcript.add_entry(
         make_human_entry(
             1, "assistant", "Fake assistant", "Earlier question", 3));
     auto backend = std::make_unique<ConfigurableBackend>(
@@ -404,11 +404,11 @@ TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
     backend_view->delta_kind = CompletionDeltaKind::reasoning;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
 
     ASSERT_TRUE(registry.submit(
         request(
-            conversation,
+            transcript,
             10,
             "assistant",
             "Fake",
@@ -433,48 +433,48 @@ TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
 }
 
 TEST(AgentRegistry, MapsCompletionFailureToAgentFailed) {
-    Conversation conversation;
+    Transcript transcript;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::make_unique<ConfigurableBackend>(
         CompletionResult{
             CompletionOutcome::protocol_error, "malformed response"}));
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
 
     ASSERT_TRUE(registry.submit(
-        request(conversation, 12, "assistant", "Fake", "Question")));
+        request(transcript, 12, "assistant", "Fake", "Question")));
     const AgentFailed failed = std::get<AgentFailed>(next_event(registry));
     EXPECT_EQ(failed.request_id, 12U);
     EXPECT_EQ(failed.message, "malformed response");
 }
 
 TEST(AgentRegistry, CancelsTheActiveRequestWithTheSharedToken) {
-    Conversation conversation;
+    Transcript transcript;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::make_unique<ConfigurableBackend>(
         CompletionResult{},
         std::vector<std::string>{"Partial"},
         true));
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
 
     ASSERT_TRUE(registry.submit(
-        request(conversation, 13, "assistant", "Fake", "Question")));
+        request(transcript, 13, "assistant", "Fake", "Question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Partial");
     registry.cancel();
     EXPECT_EQ(std::get<AgentCancelled>(next_event(registry)).request_id, 13U);
 }
 
 TEST(AgentRegistry, CancelsBeforePrepareWithoutCallingTheBackend) {
-    Conversation conversation;
+    Transcript transcript;
     auto backend = std::make_unique<RegistryBackend>("assistant", "Fake");
     RegistryBackend* backend_view = backend.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
     CompletionRequest pending =
-        request(conversation, 14, "assistant", "Fake", "Question");
+        request(transcript, 14, "assistant", "Fake", "Question");
 
     {
-        ConversationReadView queue_barrier = conversation.read();
+        TranscriptReadView queue_barrier = transcript.read();
         (void)queue_barrier;
         ASSERT_TRUE(registry.submit(std::move(pending)));
         registry.cancel();
@@ -486,7 +486,7 @@ TEST(AgentRegistry, CancelsBeforePrepareWithoutCallingTheBackend) {
 }
 
 TEST(AgentRegistry, StopCancelsJoinsAndLeavesTheTerminalEventDrainable) {
-    Conversation conversation;
+    Transcript transcript;
     std::atomic_bool release_after_cancellation{false};
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::make_unique<ConfigurableBackend>(
@@ -494,10 +494,10 @@ TEST(AgentRegistry, StopCancelsJoinsAndLeavesTheTerminalEventDrainable) {
         std::vector<std::string>{"Partial"},
         true,
         &release_after_cancellation));
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
 
     ASSERT_TRUE(registry.submit(
-        request(conversation, 15, "assistant", "Fake", "Question")));
+        request(transcript, 15, "assistant", "Fake", "Question")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Partial");
     // Use another thread only to prove stop() waits for the active backend.
     // No registry control operation runs concurrently with this call.
@@ -515,22 +515,22 @@ TEST(AgentRegistry, StopCancelsJoinsAndLeavesTheTerminalEventDrainable) {
     EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
 }
 
-TEST(AgentRegistry, ReleasesTheConversationViewBeforePerforming) {
-    Conversation conversation;
+TEST(AgentRegistry, ReleasesTheTranscriptViewBeforePerforming) {
+    Transcript transcript;
     auto backend = std::make_unique<BoundaryBackend>();
     BoundaryBackend* backend_view = backend.get();
     std::future<void> prepared = backend_view->prepared.get_future();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
 
     ASSERT_TRUE(registry.submit(
-        request(conversation, 21, "assistant", "Boundary", "Question")));
+        request(transcript, 21, "assistant", "Boundary", "Question")));
     ASSERT_EQ(
         prepared.wait_for(std::chrono::seconds(1)),
         std::future_status::ready);
     std::future<void> mutation = std::async(
-        std::launch::async, [&conversation] { conversation.clear(); });
+        std::launch::async, [&transcript] { transcript.clear(); });
     EXPECT_EQ(
         mutation.wait_for(std::chrono::milliseconds(100)),
         std::future_status::ready);
@@ -541,22 +541,22 @@ TEST(AgentRegistry, ReleasesTheConversationViewBeforePerforming) {
 }
 
 TEST(AgentRegistry, FailingPreparationReleasesTheViewAndDoesNotPerform) {
-    Conversation conversation;
+    Transcript transcript;
     auto backend = std::make_unique<ThrowingPrepareBackend>();
     ThrowingPrepareBackend* backend_view = backend.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(conversation, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends));
 
     ASSERT_TRUE(registry.submit(
-        request(conversation, 22, "assistant", "Throwing", "Question")));
+        request(transcript, 22, "assistant", "Throwing", "Question")));
     const AgentFailed failed = std::get<AgentFailed>(next_event(registry));
     EXPECT_EQ(failed.request_id, 22U);
     EXPECT_NE(
         failed.message.find("preparation failed"), std::string::npos);
     EXPECT_FALSE(backend_view->performed.load(std::memory_order_acquire));
 
-    EXPECT_NO_THROW(conversation.clear());
+    EXPECT_NO_THROW(transcript.clear());
     AgentEvent no_second_event = AgentCompleted{};
     EXPECT_EQ(
         registry.try_receive(no_second_event), ChannelReadStatus::empty);

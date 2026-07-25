@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agents/config.h"
-#include "conversation/conversation.h"
+#include "transcript/transcript.h"
 #include "util/event_channel.h"
 
 #include <filesystem>
@@ -61,16 +61,29 @@ void validate_agent_name(std::string_view name);
 
 // Projects typed transcript entries into protocol roles for one stable agent participant ID.
 std::vector<AgentMessage> project_agent_context(
-    std::span<const ConversationEntry> entries,
+    std::span<const TranscriptEntry> entries,
     std::optional<EntryId> open_entry_id,
     std::string_view system_prompt,
     std::string_view agent_id);
 
-// One unit of work for AgentRegistry: the human ConversationEntry to answer, plus the request ID
+// One unit of work for AgentRegistry: the human TranscriptEntry to answer, plus the request ID
 // that correlates every event of that run back to it.
 struct CompletionRequest {
     RequestId request_id{};
-    ConversationEntry prompt;
+    TranscriptEntry prompt;
+};
+
+// One fragment of streamed provider output, classified as private reasoning or answer text.
+// CompletionBackend emits this without request identity; AgentRegistry attaches that identity
+// when it publishes an AgentDelta.
+enum class CompletionDeltaKind {
+    reasoning,
+    answer,
+};
+
+struct CompletionDelta {
+    CompletionDeltaKind kind{CompletionDeltaKind::answer};
+    std::string text;
 };
 
 // The four AgentEvent alternatives below report the progress of one accepted request. A request

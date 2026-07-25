@@ -91,7 +91,7 @@ the notice, request a repaint, end the session — whichever fields it sets.
 
 ```mermaid
 flowchart LR
-    conv["Conversation"] -->|"snapshot"| plan["TranscriptRenderPlanner"]
+    conv["Transcript"] -->|"snapshot"| plan["TranscriptRenderPlanner"]
     plan -->|"TranscriptRenderPlan"| tui["Tui"]
     tui -->|"rebuild or append"| pad["transcript pad"]
     tui --> port["TranscriptViewport<br/>top row, follow state"]
@@ -116,9 +116,9 @@ only "Terminal is too small".
   following new output, so a user who has scrolled back is not dragged forward.
 - **`TranscriptSurface`** is the styling sink. `write_transcript_entry()` writes
   a bold label — `[You]`, `[You → Name]`, `[Agent: Name]`, `[System]`,
-  `[Error]` — and, for an agent entry with reasoning, a dim `[Reasoning]` block
-  above the answer. Tests implement this interface and assert on recorded output
-  instead of driving curses.
+  `[Error]`. While a turn is active, `write_active_response()` adds the
+  ephemeral dim `[Reasoning]` block above any streamed answer. Tests implement
+  this interface and assert on recorded output instead of driving curses.
 - **`show_addressing()`** decides whether labels name the addressee at all: it is
   true in any multi-agent room, and also in a single-agent room whose transcript
   contains entries from or to somebody else — which is what a session reopened
@@ -141,7 +141,7 @@ message never lands on a screen still in curses mode.
 ## Dependencies
 
 - **Depends on:** `session/` for controller operations, generation status,
-  and session summaries; `conversation/` for snapshots and entries;
+  and session summaries; `transcript/` for snapshots and entries;
   `ui/text/` for command dispatch; `agents/` for roster values used in
   labels; wide ncurses and POSIX polling.
 - **Must not:** load workspace files, open session repositories, or call

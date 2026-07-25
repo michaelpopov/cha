@@ -9,30 +9,30 @@ namespace cha {
 namespace {
 
 std::vector<AgentMessage> context(
-    const ConversationSnapshot& conversation,
+    const TranscriptSnapshot& transcript,
     std::string_view system_prompt,
     std::string_view agent_id) {
     return project_agent_context(
-        conversation.entries,
-        conversation.open_entry_id,
+        transcript.entries,
+        transcript.open_entry_id,
         system_prompt,
         agent_id);
 }
 
 TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
-    const ConversationSnapshot conversation{
+    const TranscriptSnapshot transcript{
         .entries = {
             make_human_entry(1, "reviewer-id", "Reviewer", "Draft an answer", 1),
             make_agent_entry(
-                2, "writer-id", "You", "Initial draft", CompletionStatus::complete, 1),
+                2, "writer-id", "You", "Initial draft", EntryStatus::complete, 1),
             make_human_entry(3, "reviewer-id", "Reviewer", "Review it", 2),
             make_agent_entry(
-                4, "reviewer-id", "System", "Looks good", CompletionStatus::complete, 2),
+                4, "reviewer-id", "System", "Looks good", EntryStatus::complete, 2),
         },
     };
 
     EXPECT_EQ(
-        context(conversation, "Be concise.", "reviewer-id"),
+        context(transcript, "Be concise.", "reviewer-id"),
         (std::vector<AgentMessage>{
             {AgentRole::system, "Be concise."},
             {AgentRole::user, "User: Draft an answer\n\nYou: Initial draft\n\nUser: Review it"},
@@ -41,33 +41,33 @@ TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
 }
 
 TEST(AgentContext, OmitsNoticesErrorsFailedPromptsAndIncompleteAgentEntries) {
-    const ConversationSnapshot conversation{
+    const TranscriptSnapshot transcript{
         .entries = {
             make_human_entry(1, "reviewer-id", "Reviewer", "Failed request", 7),
             make_error_entry(2, "unavailable", 7, "reviewer-id"),
             make_notice_entry(3, "Model information"),
             make_human_entry(4, "reviewer-id", "Reviewer", "Current request", 8),
             make_agent_entry(
-                5, "reviewer-id", "Reviewer", "Stopped", CompletionStatus::cancelled, 8),
+                5, "reviewer-id", "Reviewer", "Stopped", EntryStatus::cancelled, 8),
             make_agent_entry(
-                6, "reviewer-id", "Reviewer", "Partial", CompletionStatus::streaming, 8),
+                6, "reviewer-id", "Reviewer", "Partial", EntryStatus::streaming, 8),
         },
         .open_entry_id = 6,
     };
 
     EXPECT_EQ(
-        context(conversation, {}, "reviewer-id"),
+        context(transcript, {}, "reviewer-id"),
         (std::vector<AgentMessage>{{AgentRole::user, "Current request"}}));
 }
 
 TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {
-    ConversationSnapshot before{
+    TranscriptSnapshot before{
         .entries = {
             make_agent_entry(
-                1, "stable-id", "Old name", "Answer", CompletionStatus::complete, 1),
+                1, "stable-id", "Old name", "Answer", EntryStatus::complete, 1),
         },
     };
-    ConversationSnapshot after = before;
+    TranscriptSnapshot after = before;
     after.entries.front().display_name = "New name";
 
     EXPECT_EQ(
@@ -78,49 +78,17 @@ TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {
         (std::vector<AgentMessage>{{AgentRole::assistant, "Answer"}}));
 }
 
-TEST(AgentContext, ExcludesOwnAndForeignAgentReasoning) {
-    const ConversationSnapshot conversation{
-        .entries = {
-            make_agent_entry(
-                1,
-                "reviewer-id",
-                "Reviewer",
-                {.reasoning = "PRIVATE_OWN_REASONING", .answer = "Own answer"},
-                CompletionStatus::complete,
-                1),
-            make_agent_entry(
-                2,
-                "writer-id",
-                "Writer",
-                {.reasoning = "PRIVATE_FOREIGN_REASONING", .answer = "Foreign answer"},
-                CompletionStatus::complete,
-                2),
-        },
-    };
-
-    const std::vector<AgentMessage> projected =
-        context(conversation, {}, "reviewer-id");
-    ASSERT_EQ(projected.size(), 2U);
-    EXPECT_EQ(projected[0], (AgentMessage{AgentRole::assistant, "Own answer"}));
-    EXPECT_EQ(
-        projected[1],
-        (AgentMessage{AgentRole::user, "Writer: Foreign answer"}));
-    for (const AgentMessage& message : projected) {
-        EXPECT_EQ(message.content.find("PRIVATE_"), std::string::npos);
-    }
-}
-
 TEST(AgentContext, PreservesTheSingleAgentWireShapeByteForByte) {
-    const ConversationSnapshot conversation{
+    const TranscriptSnapshot transcript{
         .entries = {
             make_human_entry(1, "assistant", "Assistant", "First", 1),
-            make_agent_entry(2, "assistant", "Assistant", "Answer", CompletionStatus::complete, 1),
+            make_agent_entry(2, "assistant", "Assistant", "Answer", EntryStatus::complete, 1),
             make_human_entry(3, "assistant", "Assistant", "Second", 2),
         },
     };
 
     EXPECT_EQ(
-        context(conversation, {}, "assistant"),
+        context(transcript, {}, "assistant"),
         (std::vector<AgentMessage>{
             {AgentRole::user, "First"},
             {AgentRole::assistant, "Answer"},
@@ -129,16 +97,16 @@ TEST(AgentContext, PreservesTheSingleAgentWireShapeByteForByte) {
 }
 
 TEST(AgentContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
-    const ConversationSnapshot conversation{
+    const TranscriptSnapshot transcript{
         .entries = {
             make_human_entry(1, "assistant", "Assistant", "First", 1),
-            make_agent_entry(2, "assistant", "Assistant", "Partial", CompletionStatus::cancelled, 1),
+            make_agent_entry(2, "assistant", "Assistant", "Partial", EntryStatus::cancelled, 1),
             make_human_entry(3, "assistant", "Assistant", "Second", 2),
         },
     };
 
     EXPECT_EQ(
-        context(conversation, {}, "assistant"),
+        context(transcript, {}, "assistant"),
         (std::vector<AgentMessage>{
             {AgentRole::user, "First"},
             {AgentRole::user, "Second"},
@@ -146,24 +114,24 @@ TEST(AgentContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
 }
 
 // Reproduces the two-agent transcript of the design proposal's worked example.
-ConversationSnapshot lobby_conversation() {
+TranscriptSnapshot lobby_transcript() {
     return {
         .entries = {
             make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1),
             make_agent_entry(
                 2, "cheburashka", "Cheburashka", "I am Cheburashka.",
-                CompletionStatus::complete, 1),
+                EntryStatus::complete, 1),
             make_human_entry(3, "ismael", "Ismael", "And you?", 2),
             make_agent_entry(
-                4, "ismael", "Ismael", "Call me Ismael.", CompletionStatus::complete, 2),
+                4, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 2),
             make_human_entry(5, "cheburashka", "Cheburashka", "What did he say?", 3),
         },
     };
 }
 
-TEST(AgentContext, ProjectsTheSharedConversationForTheAddressedAgent) {
+TEST(AgentContext, ProjectsTheSharedTranscriptForTheAddressedAgent) {
     EXPECT_EQ(
-        context(lobby_conversation(), "Cheburashka system", "cheburashka"),
+        context(lobby_transcript(), "Cheburashka system", "cheburashka"),
         (std::vector<AgentMessage>{
             {AgentRole::system, "Cheburashka system"},
             {AgentRole::user, "User: Who are you?"},
@@ -175,9 +143,9 @@ TEST(AgentContext, ProjectsTheSharedConversationForTheAddressedAgent) {
         }));
 }
 
-TEST(AgentContext, ProjectsTheSameConversationFromTheOtherAgentsPointOfView) {
+TEST(AgentContext, ProjectsTheSameTranscriptFromTheOtherAgentsPointOfView) {
     EXPECT_EQ(
-        context(lobby_conversation(), "Ismael system", "ismael"),
+        context(lobby_transcript(), "Ismael system", "ismael"),
         (std::vector<AgentMessage>{
             {AgentRole::system, "Ismael system"},
             {AgentRole::user,
@@ -191,7 +159,7 @@ TEST(AgentContext, ProjectsTheSameConversationFromTheOtherAgentsPointOfView) {
 
 TEST(AgentContext, MarksOnlyPromptsAddressedToSomebodyElse) {
     const std::vector<AgentMessage> projected =
-        context(lobby_conversation(), {}, "cheburashka");
+        context(lobby_transcript(), {}, "cheburashka");
 
     ASSERT_EQ(projected.size(), 3U);
     // Rule 2 of the projection: "User: " always, "[to X] " only for foreign targets.
@@ -203,16 +171,16 @@ TEST(AgentContext, MarksOnlyPromptsAddressedToSomebodyElse) {
 }
 
 TEST(AgentContext, OmitsTheAddressingMarkerEntirelyWithOneParticipant) {
-    const ConversationSnapshot conversation{
+    const TranscriptSnapshot transcript{
         .entries = {
             make_human_entry(1, "ismael", "Ismael", "Who are you?", 1),
             make_agent_entry(
-                2, "ismael", "Ismael", "Call me Ismael.", CompletionStatus::complete, 1),
+                2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1),
         },
     };
 
     EXPECT_EQ(
-        context(conversation, {}, "ismael"),
+        context(transcript, {}, "ismael"),
         (std::vector<AgentMessage>{
             {AgentRole::user, "Who are you?"},
             {AgentRole::assistant, "Call me Ismael."},
@@ -220,17 +188,17 @@ TEST(AgentContext, OmitsTheAddressingMarkerEntirelyWithOneParticipant) {
 }
 
 TEST(AgentContext, AttributesAgentsThatNoRosterStillContains) {
-    const ConversationSnapshot conversation{
+    const TranscriptSnapshot transcript{
         .entries = {
             make_human_entry(1, "departed", "Departed", "Say something", 1),
             make_agent_entry(
-                2, "departed", "Departed", "Farewell", CompletionStatus::complete, 1),
+                2, "departed", "Departed", "Farewell", EntryStatus::complete, 1),
             make_human_entry(3, "ismael", "Ismael", "Your turn", 2),
         },
     };
 
     EXPECT_EQ(
-        context(conversation, {}, "ismael"),
+        context(transcript, {}, "ismael"),
         (std::vector<AgentMessage>{
             {AgentRole::user,
              "User: [to Departed] Say something"

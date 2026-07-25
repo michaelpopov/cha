@@ -104,7 +104,7 @@ void validate_agent_name(std::string_view name) {
 }
 
 std::vector<AgentMessage> project_agent_context(
-    std::span<const ConversationEntry> entries,
+    std::span<const TranscriptEntry> entries,
     std::optional<EntryId> open_entry_id,
     std::string_view system_prompt,
     std::string_view agent_id) {
@@ -114,28 +114,28 @@ std::vector<AgentMessage> project_agent_context(
     }
 
     std::unordered_set<RequestId> failed_requests;
-    for (const ConversationEntry& entry : entries) {
+    for (const TranscriptEntry& entry : entries) {
         if (entry.kind == EntryKind::error && entry.request_id) {
             failed_requests.insert(*entry.request_id);
         }
     }
 
-    const auto projectable = [&failed_requests, open_entry_id](const ConversationEntry& entry) {
+    const auto projectable = [&failed_requests, open_entry_id](const TranscriptEntry& entry) {
         if (open_entry_id && *open_entry_id == entry.id) return false;
         if (entry.kind == EntryKind::notice || entry.kind == EntryKind::error) return false;
         if (entry.kind == EntryKind::human) return !entry.request_id || !failed_requests.contains(*entry.request_id);
-        return entry.status == CompletionStatus::complete && !entry.text.empty();
+        return entry.status == EntryStatus::complete && !entry.text.empty();
     };
 
     bool attributed = false;
-    for (const ConversationEntry& entry : entries) {
+    for (const TranscriptEntry& entry : entries) {
         if (!projectable(entry)) continue;
         attributed = attributed || (entry.kind == EntryKind::agent && entry.participant_id != agent_id)
             || (entry.kind == EntryKind::human && entry.addressed_to != agent_id);
     }
 
     bool previous_foreign = false;
-    for (const ConversationEntry& entry : entries) {
+    for (const TranscriptEntry& entry : entries) {
         if (!projectable(entry)) continue;
         const bool foreign = entry.kind == EntryKind::agent && entry.participant_id != agent_id;
         const AgentRole role = entry.kind == EntryKind::human || foreign

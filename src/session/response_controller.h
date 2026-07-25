@@ -3,7 +3,7 @@
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
 #include "session/generation_status.h"
-#include "conversation/conversation.h"
+#include "transcript/transcript.h"
 #include "session/session_database.h"
 
 #include <optional>
@@ -21,17 +21,17 @@ struct ResponseUpdate {
 
 // Owns the single in-flight response, keeping turn mechanics out of SessionController. It starts a
 // turn by making the prompt durable and submitting it, then applies each AgentEvent to the live
-// Conversation and the ConversationJournal until exactly one terminal state is reached. It drives
+// Transcript and the SessionJournal until exactly one terminal state is reached. It drives
 // AgentRegistry for submission and cancellation, holds the entry and request ID counters restored
 // with a session, and reports the current GenerationStatus.
 class ResponseController {
 public:
     ResponseController(
-        Conversation& conversation,
-        ConversationJournal& journal,
+        Transcript& transcript,
+        SessionJournal& journal,
         AgentRegistry& registry);
 
-    void restore(ConversationRestore restored);
+    void restore(SessionRestore restored);
 
     GenerationStatus generation_status() const;
     RequestId next_request_id() const { return next_request_id_; }
@@ -51,6 +51,7 @@ private:
         ParticipantId agent_id;
         std::string agent_name;
         ResponsePhase phase{ResponsePhase::waiting};
+        std::string reasoning_text;
     };
 
     void apply(const AgentDelta& event, ResponseUpdate& update);
@@ -61,12 +62,12 @@ private:
         std::string message,
         ParticipantId participant_id,
         ResponseUpdate& update);
-    void finish_response_entry(CompletionStatus status);
-    ConversationEntry response_entry(CompletionStatus status) const;
+    void finish_response_entry(EntryStatus status);
+    TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
-    Conversation& conversation_;
-    ConversationJournal& journal_;
+    Transcript& transcript_;
+    SessionJournal& journal_;
     AgentRegistry& registry_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};

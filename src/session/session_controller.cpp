@@ -52,11 +52,11 @@ std::string format_roster_notice(
 }
 
 std::string format_session_information(
-    const Conversation& conversation,
+    const Transcript& transcript,
     const AgentRoster& roster,
     const ParticipantId& default_agent_id) {
     std::ostringstream text;
-    text << "Transcript entries: " << conversation.snapshot().entries.size()
+    text << "Transcript entries: " << transcript.snapshot().entries.size()
          << " | " << format_roster_notice(roster, default_agent_id);
     return text.str();
 }
@@ -66,7 +66,7 @@ std::string format_session_information(
 std::unique_ptr<SessionController> SessionController::from_definitions(
     std::vector<AgentDefinition> definitions,
     std::filesystem::path database_path,
-    ConversationRestore restored) {
+    SessionRestore restored) {
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
         std::move(database_path),
@@ -76,7 +76,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     std::filesystem::path database_path,
-    ConversationRestore restored) {
+    SessionRestore restored) {
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(backends),
         std::move(database_path),
@@ -86,10 +86,10 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
 SessionController::SessionController(
     std::vector<AgentDefinition> definitions,
     std::filesystem::path path,
-    ConversationRestore restored)
+    SessionRestore restored)
     : journal_(std::move(path)),
-      registry_(conversation_, std::move(definitions)),
-      response_(conversation_, journal_, registry_),
+      registry_(transcript_, std::move(definitions)),
+      response_(transcript_, journal_, registry_),
       default_agent_id_(registry_.roster().first().id) {
     initialize(std::move(restored));
 }
@@ -97,10 +97,10 @@ SessionController::SessionController(
 SessionController::SessionController(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     std::filesystem::path path,
-    ConversationRestore restored)
+    SessionRestore restored)
     : journal_(std::move(path)),
-      registry_(conversation_, std::move(backends)),
-      response_(conversation_, journal_, registry_),
+      registry_(transcript_, std::move(backends)),
+      response_(transcript_, journal_, registry_),
       default_agent_id_(registry_.roster().first().id) {
     initialize(std::move(restored));
 }
@@ -112,7 +112,7 @@ SessionController::~SessionController() {
     }
 }
 
-void SessionController::initialize(ConversationRestore restored) {
+void SessionController::initialize(SessionRestore restored) {
     response_.restore(std::move(restored));
 }
 
@@ -162,7 +162,7 @@ SessionUpdate SessionController::submit_prompt(
     return update;
 }
 
-SessionUpdate SessionController::clear_conversation() {
+SessionUpdate SessionController::clear_transcript() {
     if (response_.generation_status().active) {
         return busy_notice();
     }
@@ -172,11 +172,11 @@ SessionUpdate SessionController::clear_conversation() {
         throw std::runtime_error(
             std::string("Failed to persist /clear: ") + error.what());
     }
-    conversation_.clear();
+    transcript_.clear();
     return {
         .render_needed = true,
         .clear_input = true,
-        .notice = "Conversation cleared",
+        .notice = "Transcript cleared",
     };
 }
 
@@ -188,7 +188,7 @@ SessionUpdate SessionController::session_information() {
         .render_needed = true,
         .clear_input = true,
         .notice = format_session_information(
-            conversation_, roster(), default_agent_id_),
+            transcript_, roster(), default_agent_id_),
     };
 }
 

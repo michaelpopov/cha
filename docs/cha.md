@@ -13,7 +13,7 @@ rule-by-rule maintenance reference.
 - [Source organization and dependency rules](#source-organization-and-dependency-rules)
 - [Startup and workspace loading](#startup-and-workspace-loading)
 - [Multi-agent model](#multi-agent-model)
-- [Conversation and context projection](#conversation-and-context-projection)
+- [Transcript and context projection](#transcript-and-context-projection)
 - [Turn lifecycle](#turn-lifecycle)
 - [Commands and terminal behavior](#commands-and-terminal-behavior)
 - [Persistence](#persistence)
@@ -36,8 +36,8 @@ Startup
                                       |
                                       v
 Main/UI thread                  SessionController
-  run_user                   +-- Conversation
-  UserSession -------------->+-- ConversationJournal (SQLite)
+  run_user                   +-- Transcript
+  UserSession -------------->+-- SessionJournal (SQLite)
   Tui                         +-- AgentRegistry
        ^                      |       |
        | SessionUpdate        |       +-- AgentRoster
@@ -60,10 +60,10 @@ The ownership graph is:
 - `main()` owns the `Workspace`, `Terminal`, `StartupSelector`, and the selected
   `SessionController`.
 - `run_user()` owns a `Tui` and `UserSession` for the chat loop.
-- `SessionController` owns the in-memory `Conversation`, SQLite
-  `ConversationJournal`, `AgentRegistry`, `ResponseController`, and the current
+- `SessionController` owns the in-memory `Transcript`, SQLite
+  `SessionJournal`, `AgentRegistry`, `ResponseController`, and the current
   default agent ID.
-- `ResponseController` holds non-owning references to the conversation, journal,
+- `ResponseController` holds non-owning references to the transcript, journal,
   and registry, plus the next entry and request IDs seeded from durable state
   and the optional `ActiveResponse` describing the turn in flight.
 - `AgentRegistry` owns a non-empty ordered `AgentRoster`, every backend, one
@@ -72,9 +72,9 @@ The ownership graph is:
 - Each production backend is a `CompletionClient` with one reusable libcurl easy
   handle and one agent-specific system prompt and configuration.
 
-The registry holds a non-owning reference to `Conversation`. The conversation
+The registry holds a non-owning reference to `Transcript`. The transcript
 must outlive the registry and its joined execution thread. `SessionController`
-satisfies this through member declaration order: its conversation is declared
+satisfies this through member declaration order: its transcript is declared
 before its registry and therefore destroyed afterward.
 
 Backend construction and optional model discovery happen on the main thread
@@ -129,8 +129,8 @@ contains:
 - `AgentCancelled { request_id }`
 - `AgentFailed { request_id, message }`
 
-`Conversation` is mutex-protected. The main thread is its sole writer.
-The registry's execution loop obtains a short-lived `ConversationReadView`
+`Transcript` is mutex-protected. The main thread is its sole writer.
+The registry's execution loop obtains a short-lived `TranscriptReadView`
 while preparing a request. That view holds the mutex and exposes a non-owning
 span; it is destroyed before network I/O and before any delta is published.
 
@@ -144,9 +144,9 @@ linked into `cha_core`.
 ```text
 src/
   util/                  shared low-level helpers
-  conversation/          transcript and turn value model
+  transcript/            transcript and turn value model
   agents/                agent metadata, execution, and provider transport
-  session/               reusable operations, conversation coordination, and session persistence
+  session/               reusable operations, transcript coordination, and session persistence
   ui/
     text/                 slash-command and leading-mention grammar
     terminal/             ncurses front end and terminal session flow
@@ -154,18 +154,18 @@ src/
 ```
 
 Project includes are qualified from the `src/` include root, for example
-`"conversation/conversation.h"` and `"session/session_controller.h"`.
+`"transcript/transcript.h"` and `"session/session_controller.h"`.
 The intended dependency direction is below; an arrow means “depends on”:
 
 ```text
 apps
   |--> ui/terminal --+--> ui/text --> session
   |                  +--> session
-  |                  +--> conversation
+  |                  +--> transcript
   |                  `--> agents   (roster values for addressed rendering)
   |
-  `--> session ------+--> agents -------> conversation
-                     `--> conversation
+  `--> session ------+--> agents -------> transcript
+                     `--> transcript
 
 agents, ui/text, session, and apps may also depend on util.
 ```
@@ -173,18 +173,18 @@ agents, ui/text, session, and apps may also depend on util.
 More precisely:
 
 - the terminal front end, and any future HTTP front end, may call `session/` and
-  read presentation-safe values from `conversation/`;
+  read presentation-safe values from `transcript/`;
 - a front end does not access agent execution or session repositories directly;
-- `session/` coordinates `agents/` and `conversation/`, and owns session persistence;
-- `agents/` may read conversation state but does not depend on `session/` or `ui/`;
-- `conversation/` and `util/` do not depend on higher layers.
+- `session/` coordinates `agents/` and `transcript/`, and owns session persistence;
+- `agents/` may read transcript state but does not depend on `session/` or `ui/`;
+- `transcript/` and `util/` do not depend on higher layers.
 
 When the web front end is added, a `ui/http/` front end can translate
 HTTP requests and responses around the same session-layer operations.
 It should not load workspace files, open repositories, or invoke completion
 backends directly.
 
-The terminal renderer consumes `ConversationSnapshot`, `ConversationEntry`,
+The terminal renderer consumes `TranscriptSnapshot`, `TranscriptEntry`,
 and `GenerationStatus` directly. Mirroring the transcript into presentation
 types would add no useful isolation. It also reads `AgentRoster` values from
 `agents/` when deciding whether transcript labels should name the addressed
@@ -211,7 +211,7 @@ directly.
    `Workspace::open_session()` with the chosen ID. Either call resolves the
    room, loads its ordered agent definitions, and resolves the database path
    through `SessionsRepository`.
-6. `open_session()` additionally calls `load_conversation_state()` to fully
+6. `open_session()` additionally calls `load_session_state()` to fully
    restore the database before construction.
 7. Construct `SessionController` from the definitions, database path, and
    restore result; production backend construction may perform model discovery
@@ -328,11 +328,11 @@ is no parallel index structure. Cancellation needs no target because only one
 request can be queued or executing, and the cancellation flag cannot be reset
 until that request releases the global gate.
 
-## Conversation and context projection
+## Transcript and context projection
 
 ### Typed transcript
 
-`ConversationEntry` is the common record used by rendering, persistence, and
+`TranscriptEntry` is the common record used by rendering, persistence, and
 model-context projection:
 
 ```text
@@ -342,7 +342,6 @@ participant_id
 display_name
 addressed_to          human entries only
 addressed_to_name     human entries only
-reasoning_text         agent entries only; live and ephemeral
 text                   answer text for agents
 status                complete | streaming | cancelled | failed
 request_id            optional correlation with a turn
@@ -353,12 +352,12 @@ The fixed human identity is `participant_id = "human"` and display name
 carry the producing agent's stable ID and the display name used during that
 turn.
 
-`Conversation` supports terminal insertion and a single open streaming agent
+`Transcript` supports terminal insertion and a single open streaming agent
 entry:
 
 - `add_entry`
 - `begin_entry`
-- `append_to_entry`
+- `append_answer`
 - `finish_entry`
 - `discard_entry`
 - `clear`
@@ -368,12 +367,12 @@ Every mutation increments a revision. `clear()` and `replace_entries()` also
 advance an in-memory history epoch so incremental renderers know to rebuild.
 Entry IDs must be positive and strictly increasing, but need not be contiguous.
 
-Snapshots are owning copies used by rendering and tests. `ConversationReadView`
+Snapshots are owning copies used by rendering and tests. `TranscriptReadView`
 is the locked non-owning API used during backend preparation.
 
 ### Validation
 
-`validate_conversation_entry()` enforces the semantic combinations:
+`validate_transcript_entry()` enforces the semantic combinations:
 
 - human and agent entries require participant IDs;
 - human entries require a target ID and target display name;
@@ -382,13 +381,12 @@ is the locked non-owning API used during backend preparation.
 - error entries must be failed;
 - agent entries may be streaming, complete, or cancelled, but never failed;
 - a complete agent entry must contain answer text;
-- a cancelled live agent entry must contain reasoning or answer text;
-- non-agent entries cannot contain reasoning.
+- a cancelled agent entry must contain answer text.
 
-`require_terminal_conversation_entry()` additionally rejects streaming state
-before persistence. `require_storable_conversation_entry()` also rejects
-reasoning and requires answer text on a stored cancelled response. The journal
-calls this guard before binding any entry fields.
+`require_terminal_transcript_entry()` additionally rejects streaming state
+before persistence. `require_storable_transcript_entry()` names the same
+terminal-entry contract at the database boundary. The journal calls this guard
+before binding any entry fields.
 
 ### Per-agent model context
 
@@ -405,8 +403,8 @@ the new prompt:
 6. Emit the target agent's own completed responses as `assistant`.
 7. Emit human prompts and other agents' completed responses as `user`.
 
-Projection always uses agent `text` and never `reasoning_text`, including for
-the same agent that produced the reasoning.
+Reasoning never enters `TranscriptEntry`, so projection can observe only agent
+answer text.
 
 When the projected history contains cross-agent evidence, human messages are
 attributed as `User: ...`; a prompt addressed elsewhere becomes
@@ -415,7 +413,7 @@ Contiguous human/foreign-agent material may be coalesced into one `user`
 message with blank-line separators, while adjacent ordinary human prompts
 remain separate when no foreign response joins them.
 
-This makes every agent see the same shared conversation from its own point of
+This makes every agent see the same shared chat transcript from its own point of
 view: its own prior answers are assistant messages, while other agents'
 answers are attributed input.
 
@@ -430,36 +428,37 @@ against the roster, and rejects an empty prompt. It then delegates to
 
 1. allocates a request ID and human entry ID;
 2. commits the `started` turn and prompt entry in one SQLite transaction;
-3. adds the prompt to the in-memory conversation;
+3. adds the prompt to the in-memory transcript;
 4. reserves the response entry ID and creates `ActiveResponse`;
 5. routes the request to the target backend through the shared request queue.
 
 The database commit intentionally precedes the screen and execution request.
 Once a started turn is durable, normal error paths drive it to a terminal
-state. If the conversation rejects the prompt, or the registry refuses the
+state. If the transcript rejects the prompt, or the registry refuses the
 request, the controller fails that durable turn before reporting the problem.
 
-`SessionController` and its `ResponseController` are the only conversation
+`SessionController` and its `ResponseController` are the only transcript
 writers, and `SessionController` rejects new mutations while a turn
 is active. `AgentRegistry` routes the request by its already resolved target, so
 the execution thread does not revalidate session-controller-owned request and
-conversation invariants. It prepares an owning `RequestPayload` under
-`ConversationReadView`, releases the lock, and calls the synchronous backend.
+transcript invariants. It prepares an owning `RequestPayload` under
+`TranscriptReadView`, releases the lock, and calls the synchronous backend.
 
 ### Streaming success
 
-Each transport fragment becomes a typed `AgentDelta`. The first non-empty
-delta opens the reserved agent entry as `streaming`; reasoning appends to
-`reasoning_text` and answers append to `text`. Deltas are in-memory only.
+Each transport fragment becomes a typed `AgentDelta`. Reasoning appends to the
+ephemeral buffer in `ActiveResponse` and never opens or modifies a transcript
+entry. The first answer delta opens the reserved agent entry as `streaming`;
+later answer deltas call `Transcript::append_answer()`.
 
 `ActiveResponse` and `GenerationStatus` share one monotonic `ResponsePhase`:
 `waiting`, `reasoning`, or `answering`. An answer advances the phase to
 `answering`; late reasoning remains visible without moving it backward.
 
 On `AgentCompleted`, the response controller requires the `answering` phase. It
-constructs a fresh answer-only entry, commits that response and turn
-transition, marks the live entry complete without clearing its reasoning,
-clears `ActiveResponse`, and requests a render.
+constructs a fresh answer entry, commits that response and turn transition,
+marks the live entry complete, clears `ActiveResponse` and its reasoning, and
+requests a render.
 
 For non-streaming HTTP, the backend uses the same event lifecycle: it publishes
 one reasoning delta when selected and present, then one answer delta, followed
@@ -481,10 +480,10 @@ same atomic flag.
 On `AgentCancelled`:
 
 - while waiting, the controller commits only the cancelled turn transition;
-- after reasoning only, it finishes the live reasoning entry as cancelled but
-  stores no response row;
+- after reasoning only, it commits the cancelled transition and clears the
+  ephemeral reasoning without creating a response entry;
 - after answer output, it stores a fresh answer-only cancelled response and
-  retains any reasoning in the live entry.
+  finishes the live transcript entry as cancelled.
 
 The prompt remains in model context, but cancelled agent output does not.
 
@@ -521,7 +520,7 @@ When idle, the shared text grammar translates:
 - `/stop`: report that no generation is active.
 - `/exit`: request session termination.
 
-Command output is never added to the conversation or session database. Unknown
+Command output is never added to the transcript or session database. Unknown
 commands and commands with unexpected arguments likewise produce transient
 status notices. While a turn is active, only bare `/stop` is accepted; other
 submitted text remains in the editor and produces a “Generation in progress”
@@ -555,8 +554,9 @@ Key behavior:
 - Closed stdin ends the session.
 
 `Tui` renders a transcript pad, reverse-video status line, and persistent input
-pad. `GenerationStatus` includes the active agent's display name and shared
-response phase. Status text is `generating`, `reasoning`, or `responding`.
+pad. `GenerationStatus` includes the active agent's display name, shared
+response phase, and ephemeral reasoning buffer. Status text is `generating`,
+`reasoning`, or `responding`.
 Human labels are `[You]` or `[You → Name]`; agent labels always include the
 display name.
 Addressed human labels are enabled whenever the current roster has multiple
@@ -564,20 +564,22 @@ agents, or when restored single-agent history contains another participant or
 target. `/clear` forgets historical addressing evidence but keeps addressing
 enabled for a currently multi-agent room.
 
-An agent entry without reasoning retains the compact
-`[Agent: Name] Answer` form. When reasoning is present, the TUI places the
-agent label, a bold/dim `[Reasoning]` label, dim reasoning text, and normal
-answer text on distinct lines. Every complete-entry, incremental-suffix, and
-input-pane path explicitly restores normal attributes.
+Transcript entries use the compact `[Agent: Name] Answer` form. While a turn is
+active and reasoning is present, the TUI combines the ephemeral reasoning
+buffer with any open answer entry for presentation: agent label, bold/dim
+`[Reasoning]` label, dim reasoning text, then normal answer text. When the turn
+ends, a rebuild removes the reasoning block. Every complete-entry,
+incremental-suffix, and input-pane path explicitly restores normal attributes.
 
 `TranscriptRenderPlanner` compares snapshot revision, history epoch, width,
 entry count, and the former last entry. It chooses no work, suffix append, or
-full rebuild. Reasoning-only and established answer suffixes append with
-homogeneous styling. The first answer after reasoning, late reasoning, or
-simultaneous growth requires a rebuild. A recording `TranscriptSurface` test
-seam verifies the `[Reasoning]` label, dim reasoning, normal answers, and
-attribute restoration. `TranscriptViewport` follows output until the user
-scrolls and clamps its position when content shrinks.
+full rebuild. Answer suffixes append incrementally. A change to
+`GenerationStatus`, including streamed reasoning or a phase transition, forces
+a rebuild of the presentation so ephemeral reasoning never becomes transcript
+state. A recording `TranscriptSurface` test seam verifies the `[Reasoning]`
+label, dim reasoning, normal answers, and attribute restoration.
+`TranscriptViewport` follows output until the user scrolls and clamps its
+position when content shrinks.
 
 ## Persistence
 
@@ -605,9 +607,9 @@ The build pins SQLite 3.46.1. The schema contains:
 | `entries` | Typed transcript fields, target attribution, text, and terminal status. |
 
 The schema remains version 2 and contains no reasoning column. Reasoning exists
-only in live `ConversationEntry` objects. Completed responses and
-answer-bearing cancellations are persisted through freshly constructed
-answer-only entries; the journal rejects any entry with non-empty reasoning.
+only in `ActiveResponse` and `GenerationStatus`, never in `TranscriptEntry`.
+Completed responses and answer-bearing cancellations are persisted through
+answer-only entries.
 
 Turn states are `started`, `completed`, `cancelled`, and `failed`. A partial
 unique index permits only one started turn in the entire session. Another
@@ -615,10 +617,10 @@ partial unique index permits only one human prompt per request. Full validation
 also verifies that every turn has exactly one prompt in the same epoch.
 
 Streaming status is never stored. A response row exists only after completion
-with a non-empty answer or after cancellation with partial answer text. A
-reasoning-only cancelled entry remains visible during the current run but has
-no durable response row; after reopening it disappears. A mixed cancelled
-entry restores only its answer. Errors are terminal `error` entries.
+with a non-empty answer or after cancellation with partial answer text.
+Reasoning-only cancellation creates no transcript or database response entry.
+A mixed cancelled response retains only its answer. Errors are terminal
+`error` entries.
 
 ### Session listing and opening
 
@@ -632,10 +634,10 @@ cannot abort the whole listing.
 
 Transcript-sized validation is deferred until selection. `main()` calls
 `Workspace::open_session()`, which calls `open_database_path()` for metadata
-identity and immediately calls `load_conversation_state()`. Loading validates
+identity and immediately calls `load_session_state()`. Loading validates
 durable state, the turn/prompt invariant, and each restored entry. Before
 accepting writes,
-`ConversationJournal` validates database identity and structure; SQLite
+`SessionJournal` validates database identity and structure; SQLite
 constraints enforce entry semantics.
 
 ### Creation
@@ -681,7 +683,7 @@ If the process exits after `start_turn` commits but before a terminal
 transaction, SQLite retains a `started` row and its prompt. On restore:
 
 1. SQLite rolls back any incomplete transaction.
-2. `load_conversation_state()` loads current-epoch terminal entries and finds
+2. `load_session_state()` loads current-epoch terminal entries and finds
    started turns by joining them to their human prompts.
 3. It reserves an `InterruptedTurn` error attributed to the prompt's target:
    “Response interrupted before completion”.
@@ -723,11 +725,11 @@ durability invariant.
 `CompletionBackend` is a synchronous two-phase interface:
 
 ```text
-prepare(request, locked conversation view) -> owning RequestPayload
+prepare(request, locked transcript view) -> owning RequestPayload
 perform(payload, delta callback, cancellation atomic) -> CompletionResult
 ```
 
-This boundary lets tests inject backends while ensuring the conversation lock
+This boundary lets tests inject backends while ensuring the transcript lock
 cannot extend into transport work.
 
 `CompletionClient` has two modes:
@@ -833,7 +835,7 @@ database, so a mistaken path cannot silently become an empty session.
 | Component | Responsibility |
 | --- | --- |
 | `src/util/` | Shared text, path, and environment utilities. |
-| `src/conversation/` | Typed transcript, turn identifiers, and response-content values. |
+| `src/transcript/` | Typed transcript, turn identifiers, and response-content values. |
 | `src/agents/` | Agent definitions, roster, context projection, execution, provider communication, and the runtime event channel. |
 | `src/session/` | Chat coordination (`SessionController`), the in-flight turn (`ResponseController`), workspace and session operations, session repositories, SQLite journaling, presentation-safe summaries, and generation status. |
 | `src/ui/text/` | Shared slash-command and leading-mention parsing and dispatch. |
@@ -857,42 +859,39 @@ Every production `.cpp` except `src/apps/tui_main.cpp` is compiled into
    is queued or executing.
 8. Exactly one backend may perform at a time.
 9. Registry control operations are externally serialized on the main thread.
-10. At most one streaming conversation entry exists, and it is the last entry.
-11. The main thread is the only conversation and database writer.
+10. At most one streaming transcript entry exists, and it is the last entry.
+11. The main thread is the only transcript and database writer.
 12. Backend preparation holds a read view; backend performance never does.
-13. The conversation outlives the registry and its joined execution thread.
+13. The transcript outlives the registry and its joined execution thread.
 14. Registry routing sends a request to exactly one backend while the
-    active-turn state prevents intervening conversation mutations.
+    active-turn state prevents intervening transcript mutations.
 15. The outstanding gate clears before a terminal event becomes observable.
 16. Request IDs are positive, strictly increasing, and durable. Entry IDs are
     positive and strictly increasing within the live or restored transcript;
-    gaps are valid, and an ephemeral reasoning-only response ID may be
-    allocated again after reopening if no later durable entry advanced the
-    database counter.
+    gaps are valid, including the reserved response ID of a reasoning-only
+    cancelled turn.
 17. A durable started turn has exactly one human prompt in its originating
     epoch.
 18. Streaming entries are never persisted.
-19. Reasoning is live-only: it is never stored in SQLite or projected into
-    later model context.
+19. Reasoning belongs only to `ActiveResponse`: it never enters the transcript,
+    SQLite, or later model context and is cleared at the terminal event.
 20. Complete responses require non-empty answer content; reasoning alone
     cannot complete a turn.
-21. The journal rejects every entry with non-empty `reasoning_text`; it never
-    silently strips reasoning.
-22. `ResponsePhase` is monotonic from `waiting` through optional `reasoning` to
+21. `ResponsePhase` is monotonic from `waiting` through optional `reasoning` to
     `answering`; late reasoning never moves it backward.
-23. Completion, cancellation, and failure transition only the currently
+22. Completion, cancellation, and failure transition only the currently
     started turn.
-24. Database state is committed before the corresponding in-memory terminal
+23. Database state is committed before the corresponding in-memory terminal
     mutation.
-25. Failed turns and cancelled output are excluded from model context according
+24. Failed turns and cancelled output are excluded from model context according
     to their distinct rules.
-26. Successful-HTTP streaming protocol errors never contain response-body
+25. Successful-HTTP streaming protocol errors never contain response-body
     bytes.
-27. Every styled transcript and input-rendering path restores normal
+26. Every styled transcript and input-rendering path restores normal
     attributes.
-28. Sessions bind to a room, not to the room's current roster.
-29. The shared event channel closes only after the execution thread stops.
-30. A journal mutation failure ends the current run; the application never
+27. Sessions bind to a room, not to the room's current roster.
+28. The shared event channel closes only after the execution thread stops.
+29. A journal mutation failure ends the current run; the application never
     continues with transcript state it could not persist.
 
 ## Build and testing
@@ -912,7 +911,7 @@ bundled curl enables OpenSSL when it is available.
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
 configuration, identity, roster/mention routing, textual command parsing and
-dispatch, registry execution behavior, conversation/context semantics,
+dispatch, registry execution behavior, transcript/context semantics,
 controller lifecycle operations, workspace layout resolution and
 session-summary mapping, SQLite constraints and recovery, structured reasoning
 parsing and safe diagnostics, event channels, input/UI state, and styled
@@ -933,5 +932,5 @@ The principal test seams are:
 - `project_agent_context()`, whose materialized messages expose projected
   boundaries, roles, and content directly.
 
-Persistence, conversation logic, parsing, rendering plans, and other local
+Persistence, transcript logic, parsing, rendering plans, and other local
 components are concrete and tested directly.

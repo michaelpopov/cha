@@ -22,10 +22,10 @@ bool UserSession::running() const {
 
 void UserSession::render() {
     view_.render(
-        controller_.conversation(),
+        controller_.transcript(),
         editor_,
         controller_.generation_status(),
-        show_addressing(controller_.roster(), controller_.conversation()),
+        show_addressing(controller_.roster(), controller_.transcript()),
         notice_);
     render_needed_ = false;
 }

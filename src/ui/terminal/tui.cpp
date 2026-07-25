@@ -88,6 +88,29 @@ void write_status(std::string_view text, int row, int columns) {
     }
 }
 
+bool active_answer_has_reasoning(
+    const TranscriptSnapshot& snapshot,
+    const GenerationStatus& status) {
+    return status.active
+        && status.phase == ResponsePhase::answering
+        && !status.reasoning_text.empty()
+        && snapshot.open_entry_id
+        && !snapshot.entries.empty()
+        && snapshot.entries.back().id == *snapshot.open_entry_id;
+}
+
+std::string active_response_layout_text(
+    const GenerationStatus& status,
+    std::string_view answer_text) {
+    std::string text = "[Agent: " + status.agent_name + "]\n[Reasoning]\n"
+        + status.reasoning_text;
+    if (!answer_text.empty()) {
+        text += "\n\n";
+        text += answer_text;
+    }
+    return text + "\n\n";
+}
+
 } // namespace
 
 Tui::Tui(Terminal& terminal) : terminal_(terminal) {
@@ -161,7 +184,7 @@ std::optional<SessionInput> Tui::read_input() {
 }
 
 void Tui::render(
-    const Conversation& conversation,
+    const Transcript& transcript,
     const InputEditor& editor,
     const GenerationStatus& status,
     bool show_addressing,
@@ -212,7 +235,8 @@ void Tui::render(
     mvaddch(input_y + input_height - 1, columns - 1, ACS_LRCORNER);
 
     wnoutrefresh(stdscr);
-    render_transcript(conversation.snapshot(), output_height, columns, show_addressing);
+    render_transcript(
+        transcript.snapshot(), status, output_height, columns, show_addressing);
     render_input(editor, input_y, input_height, columns);
     doupdate();
 }
@@ -278,7 +302,7 @@ void Tui::ensure_input_pad(int required_rows, int columns) {
     input_columns_ = columns;
 }
 
-void Tui::write_transcript_entry(const ConversationEntry& entry, bool show_addressing) {
+void Tui::write_transcript_entry(const TranscriptEntry& entry, bool show_addressing) {
     CursesTranscriptSurface surface(transcript_pad_);
     cha::write_transcript_entry(surface, entry, show_addressing);
     getyx(transcript_pad_, rendered_last_content_y_, rendered_last_content_x_);
@@ -286,42 +310,74 @@ void Tui::write_transcript_entry(const ConversationEntry& entry, bool show_addre
     wattrset(transcript_pad_, A_NORMAL);
 }
 
-void Tui::rebuild_transcript(const ConversationSnapshot& snapshot, int output_height, int columns, bool show_addressing) {
+void Tui::write_active_response(
+    const GenerationStatus& status,
+    std::string_view answer_text) {
+    CursesTranscriptSurface surface(transcript_pad_);
+    cha::write_active_response(
+        surface, status.agent_name, status.reasoning_text, answer_text);
+    getyx(transcript_pad_, rendered_last_content_y_, rendered_last_content_x_);
+    waddstr(transcript_pad_, "\n\n");
+    wattrset(transcript_pad_, A_NORMAL);
+}
+
+void Tui::rebuild_transcript(
+    const TranscriptSnapshot& snapshot,
+    const GenerationStatus& status,
+    int output_height,
+    int columns,
+    bool show_addressing) {
     int estimated_rows = output_height + 4;
-    for (const ConversationEntry& entry : snapshot.entries) {
-        std::string rendered_entry;
-        if (entry.kind == EntryKind::agent && !entry.reasoning_text.empty()) {
-            std::string label = transcript_entry_label(entry, show_addressing);
-            if (label.ends_with(' ')) {
-                label.pop_back();
-            }
-            rendered_entry = label + "\n[Reasoning]\n"
-                + entry.reasoning_text;
-            if (!entry.text.empty()) {
-                rendered_entry += "\n\n" + entry.text;
-            }
-            rendered_entry += "\n\n";
-        } else {
-            rendered_entry =
-                transcript_entry_label(entry, show_addressing)
+    const bool decorate_active_answer =
+        active_answer_has_reasoning(snapshot, status);
+    for (std::size_t index = 0; index < snapshot.entries.size(); ++index) {
+        const TranscriptEntry& entry = snapshot.entries[index];
+        const bool active_answer =
+            decorate_active_answer && index + 1 == snapshot.entries.size();
+        const std::string rendered_entry = active_answer
+            ? active_response_layout_text(status, entry.text)
+            : transcript_entry_label(entry, show_addressing)
                 + entry.text + "\n\n";
-        }
         estimated_rows += layout_rows(rendered_entry, columns);
+    }
+    if (status.active
+        && status.phase == ResponsePhase::reasoning
+        && !status.reasoning_text.empty()) {
+        estimated_rows +=
+            layout_rows(active_response_layout_text(status, {}), columns);
     }
     replace_pad(transcript_pad_, estimated_rows, columns);
     transcript_capacity_ = estimated_rows;
     transcript_columns_ = columns;
 
-    for (const ConversationEntry& entry : snapshot.entries) {
-        write_transcript_entry(entry, show_addressing);
+    for (std::size_t index = 0; index < snapshot.entries.size(); ++index) {
+        const TranscriptEntry& entry = snapshot.entries[index];
+        if (decorate_active_answer && index + 1 == snapshot.entries.size()) {
+            write_active_response(status, entry.text);
+        } else {
+            write_transcript_entry(entry, show_addressing);
+        }
+    }
+    if (status.active
+        && status.phase == ResponsePhase::reasoning
+        && !status.reasoning_text.empty()) {
+        write_active_response(status, {});
     }
 }
 
-void Tui::render_transcript(const ConversationSnapshot& snapshot, int output_height, int columns, bool show_addressing) {
-    const TranscriptRenderPlan plan = transcript_planner_.plan(snapshot, columns);
+void Tui::render_transcript(
+    const TranscriptSnapshot& snapshot,
+    const GenerationStatus& status,
+    int output_height,
+    int columns,
+    bool show_addressing) {
+    const TranscriptRenderPlan plan = status == rendered_generation_
+        ? transcript_planner_.plan(snapshot, columns)
+        : TranscriptRenderPlan{.action = TranscriptRenderAction::rebuild};
     const auto& entries = snapshot.entries;
     if (plan.action == TranscriptRenderAction::rebuild) {
-        rebuild_transcript(snapshot, output_height, columns, show_addressing);
+        rebuild_transcript(
+            snapshot, status, output_height, columns, show_addressing);
     } else if (plan.action == TranscriptRenderAction::append) {
         const int tail_y = plan.resumes_last_message ? rendered_last_content_y_ : 0;
         const int tail_x = plan.resumes_last_message ? rendered_last_content_x_ : 0;
@@ -342,10 +398,7 @@ void Tui::render_transcript(const ConversationSnapshot& snapshot, int output_hei
 
         if (plan.resumes_last_message) {
             CursesTranscriptSurface surface(transcript_pad_);
-            write_transcript_suffix(
-                surface,
-                plan.suffix_kind,
-                plan.last_message_suffix);
+            write_transcript_suffix(surface, plan.last_message_suffix);
             getyx(transcript_pad_, rendered_last_content_y_, rendered_last_content_x_);
             waddstr(transcript_pad_, "\n\n");
         }
@@ -356,6 +409,7 @@ void Tui::render_transcript(const ConversationSnapshot& snapshot, int output_hei
         ensure_transcript_capacity(output_height + 4);
     }
     transcript_planner_.commit(snapshot, columns);
+    rendered_generation_ = status;
 
     int transcript_lines = 0;
     int cursor_x = 0;

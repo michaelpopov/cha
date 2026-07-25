@@ -12,9 +12,9 @@ code.
 | --- | --- |
 | `workspace.*` | Resolve the workspace layout, list rooms and sessions, load a room's agent definitions, and build a `SessionController`. |
 | `sessions_repository.*` | List, create, and safely resolve the SQLite session files of one room. |
-| `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `ConversationJournal`. |
+| `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
 | `session_controller.*` | Own one live session: commands, agent events, default agent, notices, and shutdown. |
-| `response_controller.*` | Own the single in-flight turn: start it, apply agent events, keep conversation and journal in step. |
+| `response_controller.*` | Own the single in-flight turn: start it, apply agent events, keep transcript and journal in step. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
 ## Workspace layout
@@ -65,8 +65,8 @@ sequenceDiagram
     WS->>AG: load_agent_definitions
     WS->>RP: open_database_path id
     RP->>DB: read metadata, check id and room match
-    WS->>DB: load_conversation_state
-    DB-->>WS: ConversationRestore
+    WS->>DB: load_session_state
+    DB-->>WS: SessionRestore
     WS->>CC: from_definitions with restore
     CC->>CC: repair interrupted turns, then install entries
     CC-->>UI: controller
@@ -160,15 +160,16 @@ stateDiagram-v2
 A turn still in `started` when a session is opened is reported as an
 `InterruptedTurn`. `ResponseController::restore()` must finish every one of them
 through `fail_turn()` before any other journal write; only then does the
-transcript become live. That is why `ConversationRestore` documents the
+transcript become live. That is why `SessionRestore` documents the
 requirement as part of its contract.
 
 ### What is never stored
 
-Streaming status and reasoning text. `require_storable_conversation_entry()`
-rejects them before SQL sees them, and the `CHECK` constraints reject them
-again. A cancelled agent answer is stored only if it has answer text — a
-cancellation that produced only reasoning leaves no response entry at all.
+Streaming status never reaches SQL: `require_storable_transcript_entry()` and
+the schema constraints reject it. Reasoning is even further outside
+persistence—it lives only in the active response and never enters a
+`TranscriptEntry`. A cancelled agent response is stored only if it has answer
+text.
 
 ## Session control
 
@@ -178,7 +179,7 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | Command | Behavior | Update |
 | --- | --- | --- |
 | `submit_prompt(text, handle)` | Resolves the handle, or falls back to the default agent, and starts a turn. | On success `clear_input` + `render_needed`; on an unknown or ambiguous handle, or an empty prompt, only a notice — the draft text is left in the editor. |
-| `clear_conversation()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
+| `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
 | `session_information()` | Entry count plus the roster. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | The roster, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
@@ -200,8 +201,8 @@ Front ends translate those into these calls.
 stay declarative.
 
 Starting a turn, in order: allocate a request ID and entry ID, build the human
-entry, `start_turn()` it to disk, add it to the conversation, reserve the
-response entry ID, then submit. If the conversation refuses the prompt, the turn
+entry, `start_turn()` it to disk, add it to the transcript, reserve the
+response entry ID, then submit. If the transcript refuses the prompt, the turn
 is failed on disk before the exception propagates. If the registry refuses the
 request, the turn is failed immediately and the caller is told it could not be
 dispatched.
@@ -210,12 +211,13 @@ Applying events:
 
 | Event | Effect |
 | --- | --- |
-| `AgentDelta`, first one | Opens the streaming entry, then appends; phase becomes `reasoning` or `answering`. |
-| `AgentDelta`, later | Appends text; answer text always promotes the phase to `answering`. |
+| Reasoning `AgentDelta` | Appends to ephemeral active-response state; the first sets phase to `reasoning`. |
+| Answer `AgentDelta`, first one | Opens the streaming transcript entry, appends the answer, and sets phase to `answering`. |
+| Answer `AgentDelta`, later | Appends answer text to the open transcript entry. |
 | `AgentCompleted` while answering | `complete_turn()`, then finish the entry as `complete`. |
 | `AgentCompleted` before any answer | Treated as failure: "completed without answer content". |
 | `AgentCancelled` while answering | `cancel_turn()` with the partial answer, entry finished as `cancelled`. |
-| `AgentCancelled` earlier | `cancel_turn()` with no response; a reasoning-only entry is closed as `cancelled`. |
+| `AgentCancelled` earlier | `cancel_turn()` with no response; ephemeral reasoning is cleared. |
 | `AgentFailed` | `fail_turn()` with an error entry, the open streaming entry is discarded, the error is added to the transcript. |
 
 Events whose request ID does not match the active turn are ignored, which is
@@ -232,7 +234,7 @@ session continues.
 
 ## Dependencies
 
-- **Depends on:** `conversation/` for transcript values, `agents/` for
+- **Depends on:** `transcript/` for transcript values, `agents/` for
   definitions, rosters, execution, and events, `util/` for path and text
   helpers, and SQLite for storage.
 - **Must not depend on:** `ui/` or `apps/`.
@@ -244,7 +246,7 @@ session continues.
 | `tests/session/unit_workspace.cpp` | Layout resolution, list-file rules, room loading, session create/open. |
 | `tests/session/unit_sessions_repository.cpp` | Listing, identity validation, collision handling, publish semantics. |
 | `tests/session/unit_session_controller.cpp` | Command behavior, event application, persistence ordering, restore and repair. |
-| `tests/conversation/unit_conversation.cpp` | `ConversationJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
+| `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
 
 Those database tests link `cha_sqlite3` directly, so they can assert on the
 stored schema and rows rather than only on what the C++ API reports.

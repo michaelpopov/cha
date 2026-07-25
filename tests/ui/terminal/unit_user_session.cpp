@@ -69,13 +69,13 @@ public:
     }
 
     void render(
-        const Conversation& conversation,
+        const Transcript& transcript,
         const InputEditor& editor,
         const GenerationStatus& status,
         bool show_addressing,
         std::string_view notice) override {
         ++render_count;
-        rendered_entries = conversation.entries();
+        rendered_entries = transcript.entries();
         rendered_input = editor.value();
         rendered_generating = status.active;
         rendered_agent_name = std::move(status.agent_name);
@@ -110,7 +110,7 @@ public:
     }
 
     std::deque<SessionInput> inputs;
-    std::vector<ConversationEntry> rendered_entries;
+    std::vector<TranscriptEntry> rendered_entries;
     std::string rendered_input;
     std::string rendered_notice;
     bool rendered_generating{};
@@ -137,7 +137,7 @@ public:
 
     RequestPayload prepare(
         const CompletionRequest& request,
-        const ConversationReadView&) override {
+        const TranscriptReadView&) override {
         return {.bytes = request.prompt.text};
     }
 
@@ -217,11 +217,11 @@ TEST(UserSession, SubmitsEditedInputThroughTheController) {
     session.receive_terminal_input();
     receive_when_ready(*controller, session);
 
-    const auto entries = controller->conversation().entries();
+    const auto entries = controller->transcript().entries();
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.front().text, "Question");
     EXPECT_EQ(entries.back().text, "Answer to Question");
-    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
 TEST(UserSession, DelegatesClearAndInfoCommandsToTheController) {
@@ -235,8 +235,8 @@ TEST(UserSession, DelegatesClearAndInfoCommandsToTheController) {
     enter(view, "/info");
     session.receive_terminal_input();
     session.render_if_needed();
-    EXPECT_TRUE(controller->conversation().entries().empty());
-    EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
+    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
     EXPECT_NE(
         view.rendered_notice.find("Transcript entries: 0"),
         std::string::npos);
@@ -245,9 +245,9 @@ TEST(UserSession, DelegatesClearAndInfoCommandsToTheController) {
     session.receive_terminal_input();
     session.render_if_needed();
 
-    EXPECT_TRUE(controller->conversation().entries().empty());
-    EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
-    EXPECT_EQ(view.rendered_notice, "Conversation cleared");
+    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
+    EXPECT_EQ(view.rendered_notice, "Transcript cleared");
 }
 
 TEST(UserSession, StopInputDrivesControllerCancellation) {
@@ -268,8 +268,8 @@ TEST(UserSession, StopInputDrivesControllerCancellation) {
     receive_when_ready(*controller, session);
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_EQ(
-        load_conversation_entries(temporary.path),
-        controller->conversation().entries());
+        load_transcript_entries(temporary.path),
+        controller->transcript().entries());
 }
 
 TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
@@ -429,7 +429,7 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
     }
 
     // Reopening with history from an agent that has since left the room.
-    ConversationRestore restored = load_conversation_state(temporary.path);
+    SessionRestore restored = load_session_state(temporary.path);
     restored.entries.front().addressed_to = "departed";
     restored.entries.front().addressed_to_name = "Departed";
     auto reopened = SessionController::from_backends_for_testing(
@@ -462,8 +462,8 @@ TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {
 
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_EQ(
-        load_conversation_entries(temporary.path),
-        controller->conversation().entries());
+        load_transcript_entries(temporary.path),
+        controller->transcript().entries());
 }
 
 } // namespace

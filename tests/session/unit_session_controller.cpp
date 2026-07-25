@@ -87,12 +87,12 @@ public:
 
     RequestPayload prepare(
         const CompletionRequest& request,
-        const ConversationReadView& conversation) override {
+        const TranscriptReadView& transcript) override {
         requests.push_back(request);
-        latest_prompt = conversation.entries().back();
+        latest_prompt = transcript.entries().back();
         model_contexts.push_back(project_agent_context(
-            conversation.entries(),
-            conversation.open_entry_id(),
+            transcript.entries(),
+            transcript.open_entry_id(),
             {},
             id_));
         return {.bytes = request.prompt.text};
@@ -130,7 +130,7 @@ public:
 
     std::vector<CompletionRequest> requests;
     std::vector<std::vector<AgentMessage>> model_contexts;
-    ConversationEntry latest_prompt;
+    TranscriptEntry latest_prompt;
 
 private:
     std::string id_{"guide-id"};
@@ -166,8 +166,8 @@ SessionUpdate receive_until_idle(SessionController& controller) {
     return combined;
 }
 
-ConversationRestore restore_with(
-    std::vector<ConversationEntry> entries,
+SessionRestore restore_with(
+    std::vector<TranscriptEntry> entries,
     RequestId next_request_id,
     EntryId next_entry_id) {
     return {
@@ -179,10 +179,10 @@ ConversationRestore restore_with(
 
 TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     TemporaryJournal temporary;
-    const ConversationEntry earlier =
+    const TranscriptEntry earlier =
         make_human_entry(10, "guide-id", "Guide", "Earlier");
     {
-        ConversationJournal journal(temporary.path);
+        SessionJournal journal(temporary.path);
         journal.append(earlier);
     }
     auto backend = std::make_unique<ScriptedBackend>(
@@ -216,18 +216,18 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
         }));
     EXPECT_TRUE(completed.render_needed);
 
-    const auto entries = controller->conversation().entries();
+    const auto entries = controller->transcript().entries();
     ASSERT_EQ(entries.size(), 3U);
-    const ConversationEntry& response = entries.back();
+    const TranscriptEntry& response = entries.back();
     EXPECT_EQ(response.kind, EntryKind::agent);
     EXPECT_EQ(response.participant_id, "guide-id");
     EXPECT_EQ(response.display_name, "Guide");
     EXPECT_EQ(response.text, "Hello there");
-    EXPECT_EQ(response.status, CompletionStatus::complete);
-    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
+    EXPECT_EQ(response.status, EntryStatus::complete);
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
-TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedConversation) {
+TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedTranscript) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"Answer"});
@@ -258,7 +258,7 @@ TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
 
     (void)controller->submit_prompt("First");
     receive_until_idle(*controller);
-    (void)controller->clear_conversation();
+    (void)controller->clear_transcript();
     (void)controller->submit_prompt("Second");
     receive_until_idle(*controller);
 
@@ -323,12 +323,12 @@ TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
     ASSERT_TRUE(update.notice);
     EXPECT_EQ(*update.notice, "Generation stopped");
     const auto restored =
-        load_conversation_entries(temporary.path);
+        load_transcript_entries(temporary.path);
     ASSERT_EQ(restored.size(), 2U);
     EXPECT_EQ(restored.back().kind, EntryKind::agent);
     EXPECT_EQ(
         restored.back().status,
-        CompletionStatus::cancelled);
+        EntryStatus::cancelled);
     EXPECT_EQ(restored.back().text, "Partial");
 }
 
@@ -342,13 +342,13 @@ TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     (void)controller->submit_prompt("Question");
     receive_until_idle(*controller);
 
-    const auto entries = controller->conversation().entries();
+    const auto entries = controller->transcript().entries();
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().kind, EntryKind::human);
-    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
-TEST(SessionController, TracksReasoningAnswerAndLateReasoningMonotonically) {
+TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
     TemporaryJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
@@ -370,10 +370,10 @@ TEST(SessionController, TracksReasoningAnswerAndLateReasoningMonotonically) {
     EXPECT_EQ(
         controller->generation_status().phase,
         ResponsePhase::reasoning);
-    ASSERT_EQ(controller->conversation().entries().size(), 2U);
     EXPECT_EQ(
-        controller->conversation().entries().back().reasoning_text,
+        controller->generation_status().reasoning_text,
         "PRIVATE_REASONING");
+    ASSERT_EQ(controller->transcript().entries().size(), 1U);
 
     (void)controller->handle_agent_event(AgentDelta{
         1,
@@ -383,6 +383,8 @@ TEST(SessionController, TracksReasoningAnswerAndLateReasoningMonotonically) {
     EXPECT_EQ(
         controller->generation_status().phase,
         ResponsePhase::answering);
+    ASSERT_EQ(controller->transcript().entries().size(), 2U);
+    EXPECT_EQ(controller->transcript().entries().back().text, "Answer");
     (void)controller->handle_agent_event(AgentDelta{
         1,
         CompletionDeltaKind::reasoning,
@@ -391,24 +393,25 @@ TEST(SessionController, TracksReasoningAnswerAndLateReasoningMonotonically) {
     EXPECT_EQ(
         controller->generation_status().phase,
         ResponsePhase::answering);
+    EXPECT_EQ(
+        controller->generation_status().reasoning_text,
+        "PRIVATE_REASONING late");
 
     (void)controller->handle_agent_event(AgentCompleted{1});
     EXPECT_FALSE(controller->generation_status().active);
-    const std::vector<ConversationEntry> live =
-        controller->conversation().entries();
+    EXPECT_TRUE(controller->generation_status().reasoning_text.empty());
+    const std::vector<TranscriptEntry> live =
+        controller->transcript().entries();
     ASSERT_EQ(live.size(), 2U);
-    EXPECT_EQ(live.back().reasoning_text, "PRIVATE_REASONING late");
     EXPECT_EQ(live.back().text, "Answer");
-    EXPECT_EQ(live.back().status, CompletionStatus::complete);
+    EXPECT_EQ(live.back().status, EntryStatus::complete);
 
-    const std::vector<ConversationEntry> restored =
-        load_conversation_entries(temporary.path);
-    ASSERT_EQ(restored.size(), 2U);
-    EXPECT_TRUE(restored.back().reasoning_text.empty());
-    EXPECT_EQ(restored.back().text, "Answer");
+    const std::vector<TranscriptEntry> restored =
+        load_transcript_entries(temporary.path);
+    EXPECT_EQ(restored, live);
 }
 
-TEST(SessionController, ReasoningOnlyCancellationIsLiveButNotDurable) {
+TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
     TemporaryJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
@@ -423,20 +426,22 @@ TEST(SessionController, ReasoningOnlyCancellationIsLiveButNotDurable) {
         CompletionDeltaKind::reasoning,
         "EPHEMERAL_REASONING_ONLY",
     });
+    EXPECT_EQ(
+        controller->generation_status().reasoning_text,
+        "EPHEMERAL_REASONING_ONLY");
+    ASSERT_EQ(controller->transcript().entries().size(), 1U);
     (void)controller->request_stop();
     receive_until_idle(*controller);
+    EXPECT_TRUE(controller->generation_status().reasoning_text.empty());
 
-    const std::vector<ConversationEntry> live =
-        controller->conversation().entries();
-    ASSERT_EQ(live.size(), 2U);
-    EXPECT_EQ(live.back().status, CompletionStatus::cancelled);
-    EXPECT_EQ(live.back().reasoning_text, "EPHEMERAL_REASONING_ONLY");
-    EXPECT_TRUE(live.back().text.empty());
+    const std::vector<TranscriptEntry> live =
+        controller->transcript().entries();
+    ASSERT_EQ(live.size(), 1U);
+    EXPECT_EQ(live.front().kind, EntryKind::human);
 
-    const std::vector<ConversationEntry> restored =
-        load_conversation_entries(temporary.path);
-    ASSERT_EQ(restored.size(), 1U);
-    EXPECT_EQ(restored.front().kind, EntryKind::human);
+    const std::vector<TranscriptEntry> restored =
+        load_transcript_entries(temporary.path);
+    EXPECT_EQ(restored, live);
 }
 
 TEST(SessionController, RejectsCompletionWithoutResponseContent) {
@@ -451,13 +456,13 @@ TEST(SessionController, RejectsCompletionWithoutResponseContent) {
 
     ASSERT_TRUE(update.notice);
     EXPECT_EQ(*update.notice, "Generation failed");
-    const auto entries = controller->conversation().entries();
+    const auto entries = controller->transcript().entries();
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.back().kind, EntryKind::error);
     EXPECT_EQ(
         entries.back().text,
         "Agent completed without answer content");
-    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
 TEST(SessionController, ReplacesPartialOutputWithATypedError) {
@@ -474,22 +479,22 @@ TEST(SessionController, ReplacesPartialOutputWithATypedError) {
     (void)controller->submit_prompt("Question");
     receive_until_idle(*controller);
 
-    const auto entries = controller->conversation().entries();
+    const auto entries = controller->transcript().entries();
     ASSERT_EQ(entries.size(), 2U);
-    const ConversationEntry& error = entries.back();
+    const TranscriptEntry& error = entries.back();
     EXPECT_EQ(error.kind, EntryKind::error);
     EXPECT_EQ(error.display_name, "Error");
     EXPECT_EQ(error.participant_id, "guide-id");
     EXPECT_EQ(error.text, "network unavailable");
-    EXPECT_EQ(load_conversation_entries(temporary.path), entries);
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
 TEST(SessionController, OwnsClearAndInformationSemantics) {
     TemporaryJournal temporary;
-    const ConversationEntry existing =
+    const TranscriptEntry existing =
         make_notice_entry(1, "Existing");
     {
-        ConversationJournal journal(temporary.path);
+        SessionJournal journal(temporary.path);
         journal.append(existing);
     }
     auto controller = SessionController::from_backends_for_testing(
@@ -498,10 +503,10 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
         restore_with({existing}, 1, 2));
 
     const SessionUpdate cleared =
-        controller->clear_conversation();
-    EXPECT_EQ(cleared.notice, "Conversation cleared");
-    EXPECT_TRUE(controller->conversation().entries().empty());
-    EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
+        controller->clear_transcript();
+    EXPECT_EQ(cleared.notice, "Transcript cleared");
+    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
 
     const SessionUpdate info = controller->session_information();
     ASSERT_TRUE(info.notice);
@@ -512,8 +517,8 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
         info.notice->find("* @Guide  test-model  test://completion  streaming"),
         std::string::npos);
     EXPECT_EQ(info.notice->find("Model:"), std::string::npos);
-    EXPECT_TRUE(controller->conversation().entries().empty());
-    EXPECT_TRUE(load_conversation_entries(temporary.path).empty());
+    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
 
 }
 
@@ -590,7 +595,7 @@ TEST(SessionController, IgnoresEventsForAnotherRequest) {
     EXPECT_FALSE(delta.render_needed);
     EXPECT_FALSE(completed.render_needed);
     EXPECT_TRUE(controller->generation_status().active);
-    const auto entries = controller->conversation().entries();
+    const auto entries = controller->transcript().entries();
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().kind, EntryKind::human);
 
@@ -610,7 +615,7 @@ TEST(SessionController, AttributesDispatchFailuresToTheTargetAgent) {
 
     EXPECT_EQ(update.notice, "Request could not be dispatched");
     const auto restored =
-        load_conversation_entries(temporary.path);
+        load_transcript_entries(temporary.path);
     ASSERT_EQ(restored.size(), 2U);
     EXPECT_EQ(restored.back().kind, EntryKind::error);
     EXPECT_EQ(restored.back().participant_id, "guide-id");
@@ -620,13 +625,13 @@ TEST(SessionController, AttributesDispatchFailuresToTheTargetAgent) {
 TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
     TemporaryJournal temporary;
     {
-        ConversationJournal journal(temporary.path);
-        const ConversationEntry prompt =
+        SessionJournal journal(temporary.path);
+        const TranscriptEntry prompt =
             make_human_entry(1, "guide-id", "Guide", "Interrupted", 5);
         journal.start_turn(5, prompt);
     }
-    ConversationRestore restored =
-        load_conversation_state(temporary.path);
+    SessionRestore restored =
+        load_session_state(temporary.path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
 
     auto controller = SessionController::from_backends_for_testing(
@@ -634,8 +639,8 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
         temporary.path,
         std::move(restored));
 
-    const ConversationRestore repaired =
-        load_conversation_state(temporary.path);
+    const SessionRestore repaired =
+        load_session_state(temporary.path);
     EXPECT_TRUE(repaired.interrupted_turns.empty());
     ASSERT_EQ(repaired.entries.size(), 2U);
     EXPECT_EQ(repaired.entries.back().kind, EntryKind::error);
@@ -675,15 +680,15 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossTheRoster)
     ASSERT_EQ(guide_view->requests.size(), 1U);
     EXPECT_EQ(guide_view->requests.front().prompt.addressed_to, "guide-id");
 
-    const std::size_t entries_before_rejection = controller->conversation().entries().size();
+    const std::size_t entries_before_rejection = controller->transcript().entries().size();
     const SessionUpdate rejected =
         controller->submit_prompt("text", "nobody");
     EXPECT_FALSE(rejected.clear_input);
     EXPECT_NE(rejected.notice->find("@nobody"), std::string::npos);
-    EXPECT_EQ(controller->conversation().entries().size(), entries_before_rejection);
+    EXPECT_EQ(controller->transcript().entries().size(), entries_before_rejection);
 
-    const std::vector<ConversationEntry> entries_before_agents =
-        controller->conversation().entries();
+    const std::vector<TranscriptEntry> entries_before_agents =
+        controller->transcript().entries();
     const SessionUpdate agents = controller->agent_information();
     EXPECT_TRUE(agents.clear_input);
     ASSERT_TRUE(agents.notice);
@@ -692,9 +697,9 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossTheRoster)
         std::string::npos);
     EXPECT_EQ(agents.notice->find("Cheburashka"), std::string::npos);
     EXPECT_NE(agents.notice->find("@Ismael"), std::string::npos);
-    EXPECT_EQ(controller->conversation().entries(), entries_before_agents);
+    EXPECT_EQ(controller->transcript().entries(), entries_before_agents);
     EXPECT_EQ(
-        load_conversation_entries(temporary.path),
+        load_transcript_entries(temporary.path),
         entries_before_agents);
 }
 
@@ -723,11 +728,11 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
 
     EXPECT_FALSE(controller->generation_status().active);
     const auto entries =
-        load_conversation_entries(temporary.path);
+        load_transcript_entries(temporary.path);
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(
         entries.back().status,
-        CompletionStatus::cancelled);
+        EntryStatus::cancelled);
     EXPECT_EQ(entries.back().text, "Partial");
 }
 

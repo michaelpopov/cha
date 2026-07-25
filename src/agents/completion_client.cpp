@@ -379,13 +379,13 @@ std::string_view role_name(AgentRole role) {
 }
 
 std::string build_request_body(
-    const ConversationReadView& conversation,
+    const TranscriptReadView& transcript,
     const Config& config,
     std::string_view system_prompt) {
     Json messages = Json::array();
     for (const AgentMessage& message : project_agent_context(
-             conversation.entries(),
-             conversation.open_entry_id(),
+             transcript.entries(),
+             transcript.open_entry_id(),
              system_prompt,
              config.id)) {
         messages.push_back({
@@ -511,13 +511,13 @@ void CompletionClient::discover_model() {
 
 RequestPayload CompletionClient::prepare(
     const CompletionRequest& request,
-    const ConversationReadView& conversation) {
+    const TranscriptReadView& transcript) {
     if (config_.mode == Mode::test) {
         return {.bytes = request.prompt.text};
     }
     return {
         .bytes = build_request_body(
-            conversation,
+            transcript,
             config_,
             system_prompt_),
     };
