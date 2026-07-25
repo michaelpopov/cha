@@ -22,11 +22,11 @@ struct Session {
 // on disk. It lists them, checking the identity embedded in each against the file it came from,
 // creates new ones without ever overwriting an existing destination, and resolves a session ID to
 // the database path used to open it. The clock is injectable to keep generated names testable.
-class SessionsRepository {
+class SessionCatalog {
 public:
     using Clock = std::function<std::time_t()>;
 
-    SessionsRepository(
+    SessionCatalog(
         std::filesystem::path directory,
         std::string room_name,
         Clock clock = {});

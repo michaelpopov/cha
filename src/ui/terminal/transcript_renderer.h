@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent_registry.h"
+#include "session/room_personas.h"
 #include "transcript/transcript.h"
 
 #include <cstddef>
@@ -100,7 +100,7 @@ private:
 
 // Whether transcript labels should include routing (multi-agent room or foreign history).
 bool show_addressing(
-    const AgentRoster& roster,
+    const RoomPersonas& personas,
     const Transcript& transcript);
 
 // Produces an unambiguous display label from an entry's semantic kind.

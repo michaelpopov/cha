@@ -321,8 +321,9 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     TemporarySession session;
     {
         auto controller = SessionController::from_definitions(std::move(definitions), session.path);
-        ASSERT_EQ(controller->roster().first().id, "cheburashka");
-        EXPECT_TRUE(show_addressing(controller->roster(), controller->transcript()));
+        ASSERT_EQ(controller->personas().first().id, "cheburashka");
+        EXPECT_TRUE(show_addressing(
+            controller->personas(), controller->transcript()));
 
         // No mention: the first persona in personas.list answers.
         SessionUpdate update = handle_text_input(*controller, "Who are you?");
@@ -404,8 +405,9 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
         std::vector<AgentDefinition>{std::move(ismael_only)},
         session.path,
         std::move(restored));
-    EXPECT_EQ(reopened->roster().agents().size(), 1U);
-    EXPECT_TRUE(show_addressing(reopened->roster(), reopened->transcript()))
+    EXPECT_EQ(reopened->personas().all().size(), 1U);
+    EXPECT_TRUE(show_addressing(
+        reopened->personas(), reopened->transcript()))
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
         handle_text_input(*reopened, "@Cheburashka are you there?").notice,

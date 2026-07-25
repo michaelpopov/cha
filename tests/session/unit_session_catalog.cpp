@@ -1,6 +1,6 @@
 #include "transcript/transcript.h"
 #include "session/session_database.h"
-#include "session/sessions_repository.h"
+#include "session/session_catalog.h"
 #include "session/workspace.h"
 
 #include <gtest/gtest.h>
@@ -109,7 +109,7 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
 
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
-    SessionsRepository sessions(room.directory / "sessions", room.name);
+    SessionCatalog sessions(room.directory / "sessions", room.name);
     EXPECT_EQ(
         sessions.list(),
         (std::vector<Session>{{"saved", "Saved session"}}));
@@ -121,7 +121,7 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
 TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
-    SessionsRepository sessions(room.directory / "sessions", room.name);
+    SessionCatalog sessions(room.directory / "sessions", room.name);
 
     const Session session = sessions.create("A named session");
     EXPECT_TRUE(std::filesystem::is_regular_file(
@@ -141,7 +141,7 @@ TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
 TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
-    SessionsRepository sessions(room.directory / "sessions", room.name);
+    SessionCatalog sessions(room.directory / "sessions", room.name);
     const Session session = sessions.create("");
 
     EXPECT_EQ(session.label, session.id);
@@ -151,7 +151,7 @@ TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) 
 TEST_F(WorkspaceTest, ReportsAnInvalidDatabaseWithoutHidingHealthySessions) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
-    SessionsRepository sessions(room.directory / "sessions", room.name);
+    SessionCatalog sessions(room.directory / "sessions", room.name);
     const Session healthy = sessions.create("Healthy");
     const Session broken = sessions.create("Broken database");
     const std::filesystem::path malformed_name =
@@ -190,7 +190,7 @@ TEST_F(WorkspaceTest, ReportsAnInvalidDatabaseWithoutHidingHealthySessions) {
 TEST_F(WorkspaceTest, RejectsMismatchedSessionMetadataWhenOpening) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
-    SessionsRepository sessions(room.directory / "sessions", room.name);
+    SessionCatalog sessions(room.directory / "sessions", room.name);
     create_database("wrong-room", "Wrong room", "hall");
 
     const std::vector<Session> listed = sessions.list();
@@ -204,7 +204,7 @@ TEST_F(WorkspaceTest, RejectsMismatchedSessionMetadataWhenOpening) {
 TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
-    SessionsRepository sessions(room.directory / "sessions", room.name);
+    SessionCatalog sessions(room.directory / "sessions", room.name);
 
     create_database("wrong-filename", "Wrong filename");
     std::filesystem::rename(
@@ -229,7 +229,7 @@ TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
 TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
-    SessionsRepository sessions(
+    SessionCatalog sessions(
         room.directory / "sessions",
         room.name,
         [] { return std::time_t{1'700'000'000}; });
@@ -267,7 +267,7 @@ TEST_F(WorkspaceTest, LoadsRoomsWithMultiplePersonasInDeclaredOrder) {
 TEST_F(WorkspaceTest, IgnoresBlankLinesAndCommentsInThePersonaList) {
     {
         std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
-        file << "# the roster\n\n  other  \n\n# guide moved down\nguide\n";
+        file << "# room personas\n\n  other  \n\n# guide moved down\nguide\n";
     }
     Workspace workspace(root);
     EXPECT_EQ(
@@ -334,9 +334,9 @@ TEST_F(WorkspaceTest, RejectsAPersonaNameThatEscapesThePersonaDirectory) {
     EXPECT_THROW((void)workspace.load_room("lobby"), std::runtime_error);
 }
 
-TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentRosterIs) {
+TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentRoomPersonasAre) {
     Workspace workspace(root);
-    SessionsRepository sessions(
+    SessionCatalog sessions(
         workspace.load_room("lobby").directory / "sessions", "lobby");
     const Session session = sessions.create("Two agents");
     {
@@ -346,13 +346,13 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentRosterIs) {
             2, "other-id", "Other", "Answer", EntryStatus::complete));
     }
 
-    // The room now hosts a completely different roster; the session is unaffected.
+    // The room now contains completely different personas; the session is unaffected.
     {
         std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
         file << "guide\n";
     }
     const Room reduced = workspace.load_room("lobby");
-    SessionsRepository reopened(reduced.directory / "sessions", reduced.name);
+    SessionCatalog reopened(reduced.directory / "sessions", reduced.name);
 
     ASSERT_EQ(reopened.list().size(), 1U);
     EXPECT_TRUE(reopened.list().front().error.empty());

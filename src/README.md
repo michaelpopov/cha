@@ -40,10 +40,10 @@ architectural, enforced by review and by the include rules below.
 | --- | --- | --- |
 | `util/` | Leaf helpers: text and path rules, `.env` loading, the pollable `EventChannel`. | Anything above it. |
 | `transcript/` | The transcript model: entry types, validation, and the thread-safe live `Transcript`. | Storage, providers, terminals. |
-| `agents/` | Persona config, the room roster, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, front ends. |
-| `session/` | Workspace and session operations, SQLite persistence, and live chat coordination. | Terminals, command syntax, transports. |
+| `agents/` | Persona config, agent runtime metadata, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, front ends. |
+| `session/` | Workspace and session operations, `RoomPersonas`, SQLite persistence, and live chat coordination. | Terminals, command syntax, transports. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Curses, storage, backends. |
-| `ui/terminal/` | Terminal lifecycle, startup selection, input editing, rendering, and the event loop. | Workspace files, session repositories, backends. |
+| `ui/terminal/` | Terminal lifecycle, startup selection, input editing, rendering, and the event loop. | Workspace files, session catalogs, backends. |
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
 
 ## Dependency direction
@@ -54,7 +54,7 @@ may include headers only from those listed beside it.
 | Directory | May include |
 | --- | --- |
 | `apps/` | `ui/terminal/`, `session/`, `util/` |
-| `ui/terminal/` | `ui/text/`, `session/`, `transcript/`, and roster values from `agents/` |
+| `ui/terminal/` | `ui/text/`, `session/`, and `transcript/` |
 | `ui/text/` | `session/`, `util/` |
 | `session/` | `agents/`, `transcript/`, `util/` |
 | `agents/` | `transcript/`, `util/` |
@@ -65,7 +65,7 @@ Three rules keep this direction honest:
 
 1. **`ui/` calls `SessionController` and `Workspace`, never storage or
    transport.** A front end may render `TranscriptEntry` values and call
-   `SessionController`, but it must not open a session repository, read
+   `SessionController`, but it must not open a session catalog, read
    workspace files, or call a completion backend. If a front end needs something
    new, add an operation to `session/`.
 2. **`transcript/` depends on nothing.** It may not import SQLite, provider
@@ -83,33 +83,33 @@ and reports back through a channel.
 ```mermaid
 flowchart LR
     subgraph mainthread["Main thread — UI, state, persistence"]
-        loop["run_user<br/>poll on stdin + eventfd"]
-        usession["UserSession<br/>+ InputEditor"]
+        usession["UserSession"]
         tui["Tui — curses"]
         controller["SessionController"]
         conv["Transcript"]
+        personas["RoomPersonas"]
         journal["SessionJournal<br/>SQLite"]
         registry["AgentRegistry<br/>main-thread handle"]
     end
 
     subgraph agentthread["Agent thread — one request at a time"]
-        dialog["AgentRegistry::dialog"]
+        execution["Agent execution"]
         backend["CompletionBackend<br/>CompletionClient + libcurl"]
     end
 
     provider[("Model server<br/>/v1/chat/completions")]
 
-    loop --> usession
     usession --> tui
     usession --> controller
     controller --> conv
+    controller --> personas
     controller --> journal
     controller --> registry
-    registry -->|"WorkItem queue"| dialog
-    dialog --> backend
+    registry -->|"WorkItem queue"| execution
+    execution --> backend
     backend <-->|"HTTP or SSE"| provider
-    dialog -->|"AgentEvent channel"| loop
-    dialog -.->|"short-lived read view"| conv
+    execution -->|"AgentEvent channel"| usession
+    execution -.->|"short-lived read view"| conv
 ```
 
 Ownership is a strict tree, and destruction order matters:
@@ -117,13 +117,13 @@ Ownership is a strict tree, and destruction order matters:
 - `main()` owns the `Workspace`, the process-wide `Terminal`, and the selected
   `SessionController`.
 - `run_user()` owns the `Tui` and the `UserSession` for the chat loop.
-- `SessionController` owns the `Transcript`, the `SessionJournal`, the
-  `AgentRegistry`, the current default agent, and the state of the in-flight
-  turn. The transcript is declared *before* the registry so it outlives the
-  thread that reads it.
-- `AgentRegistry` owns the roster, every backend, the request channel, the event
-  channel, the worker thread, and the cancellation and outstanding-request
-  atomics.
+- `SessionController` owns the `Transcript`, `RoomPersonas`, the
+  `SessionJournal`, the `AgentRegistry`, the current default agent, and the
+  state of the in-flight turn. The transcript is declared *before* the registry
+  so it outlives the thread that reads it.
+- `AgentRegistry` owns runtime information and a backend for each room persona,
+  the request channel, the event channel, the worker thread, and the
+  cancellation and outstanding-request atomics.
 
 ### How the two threads talk
 
@@ -137,8 +137,8 @@ paired with a Linux `eventfd`. There are two channels:
   keystrokes wake the same loop with no timers and no busy-waiting.
 
 Submission claims a single atomic gate, so at most one request is outstanding
-across the whole roster; a second submission is refused even for a different
-agent. The agent thread clears the gate immediately *before* publishing a
+across all agents; a second submission is refused even for a different agent.
+The agent thread clears the gate immediately *before* publishing a
 terminal event, so the main thread can start the next turn as soon as it sees
 one. Cancellation is a shared atomic flag checked before `prepare()`, and by the
 libcurl progress callback during transfer.
@@ -151,7 +151,7 @@ sequenceDiagram
     participant main as tui_main
     participant ws as Workspace
     participant sel as StartupSelector
-    participant repo as SessionsRepository
+    participant cat as SessionCatalog
     participant db as Session database
     participant controller as SessionController
 
@@ -162,16 +162,16 @@ sequenceDiagram
     main->>sel: select_room
     sel-->>main: chosen room
     main->>ws: sessions of room
-    ws->>repo: list
-    repo->>db: read metadata, validate id and room
-    repo-->>ws: Session rows
+    ws->>cat: list
+    cat->>db: read metadata, validate id and room
+    cat-->>ws: Session rows
     ws-->>main: SessionSummary rows
     main->>sel: select_session
     alt New session
         sel-->>main: empty id
         main->>sel: prompt_session_name
         main->>ws: create_session
-        ws->>repo: create, temp file then link
+        ws->>cat: create, temp file then link
     else Existing session
         sel-->>main: session id
         main->>ws: open_session
@@ -209,7 +209,7 @@ sequenceDiagram
     T->>T: parse_command, then parse_addressed_prompt
     T->>C: submit_prompt text and handle
     C->>C: reject if a turn is active
-    C->>C: resolve handle against AgentRoster
+    C->>C: resolve handle against RoomPersonas
     C->>J: start_turn, SQLite transaction
     C->>V: add human entry
     C->>G: submit CompletionRequest
@@ -351,7 +351,7 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 
 | Invariant | Enforced by |
 | --- | --- |
-| A roster is non-empty, with unique IDs and unique case-folded names. | `AgentRoster` constructor |
+| `RoomPersonas` is non-empty, with unique IDs and unique case-folded names. | `RoomPersonas` constructor |
 | At most one turn is in flight, process-wide. | `AgentRegistry` outstanding-request gate |
 | Every accepted request yields exactly one terminal `AgentEvent`. | `AgentRegistry::dialog` and shutdown order |
 | Only the main thread mutates `Transcript` or the journal. | `SessionController` |
@@ -407,7 +407,7 @@ Third-party dependencies are libcurl, nlohmann/json, toml++, SQLite
 - Every class and struct carries a comment saying why it exists, what it does,
   and which project types it collaborates with.
 - Public data types live with the behavior that owns their meaning: agent
-  protocol and roster types in `agents/`, session and journal types in
+  protocol and runtime types in `agents/`, room-persona and journal types in
   `session/`, transcript semantics in `transcript/`.
 - Tests mirror this tree under `tests/`; cross-layer scenarios go in
   `tests/integration/`.

@@ -43,30 +43,21 @@ public:
     std::string output;
 };
 
-TEST(ShowAddressing, DependsOnRosterAndForeignHistory) {
-    const AgentRoster single({
-        AgentInfo{
+TEST(ShowAddressing, DependsOnRoomPersonasAndForeignHistory) {
+    const RoomPersonas single({
+        PersonaInfo{
             .id = "guide-id",
             .name = "Guide",
-            .model = "m",
-            .api = "a",
-            .streaming = true,
-        },
+        }
     });
-    const AgentRoster multi({
-        AgentInfo{
+    const RoomPersonas multi({
+        PersonaInfo{
             .id = "guide-id",
             .name = "Guide",
-            .model = "m",
-            .api = "a",
-            .streaming = true,
         },
-        AgentInfo{
+        PersonaInfo{
             .id = "ismael-id",
             .name = "Ismael",
-            .model = "m",
-            .api = "a",
-            .streaming = true,
         },
     });
 

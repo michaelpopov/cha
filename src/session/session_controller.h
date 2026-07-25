@@ -3,6 +3,7 @@
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
 #include "session/generation_status.h"
+#include "session/room_personas.h"
 #include "session/session_database.h"
 #include "transcript/transcript.h"
 
@@ -25,7 +26,7 @@ struct SessionUpdate {
 };
 
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
-// halves: read-only session state (transcript, roster, default agent, generation status) and
+// halves: read-only session state (transcript, room personas, default agent, generation status) and
 // commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
 // each returning a SessionUpdate instead of touching the UI. It owns the Transcript,
 // SessionJournal, AgentRegistry, and the state of the single in-flight turn. Command syntax,
@@ -48,7 +49,7 @@ public:
     // --- Session state (read-only) --------------------------------------------
     const Transcript& transcript() const { return transcript_; }
     GenerationStatus generation_status() const;
-    const AgentRoster& roster() const { return registry_.roster(); }
+    const RoomPersonas& personas() const { return personas_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
     int notification_fd() const { return registry_.notification_fd(); }
 
@@ -87,7 +88,7 @@ private:
 
     void initialize(SessionRestore restored);
     SessionUpdate busy_notice() const;
-    SessionUpdate start_response(std::string text, const AgentInfo& target);
+    SessionUpdate start_response(std::string text, const PersonaInfo& target);
     void apply(const AgentDelta& event, SessionUpdate& update);
     void apply(const AgentCompleted& event, SessionUpdate& update);
     void apply(const AgentCancelled& event, SessionUpdate& update);
@@ -103,6 +104,7 @@ private:
     Transcript transcript_;
     SessionJournal journal_;
     AgentRegistry registry_;
+    RoomPersonas personas_;
     ParticipantId default_agent_id_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};

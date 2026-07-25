@@ -37,7 +37,7 @@ flowchart TD
 Two properties matter more than the sequence:
 
 - **Everything file-related goes through `Workspace`.** The entry point never
-  constructs a `SessionsRepository`, never reads a persona directory, and never
+  constructs a `SessionCatalog`, never reads a persona directory, and never
   opens a database. That is what lets a second front end reuse the same startup
   without copying logic.
 - **Failures are reported after the terminal is restored.** `Terminal`'s

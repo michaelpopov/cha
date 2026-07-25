@@ -21,11 +21,16 @@ struct AgentDefinition {
     std::string system_prompt;
 };
 
-// The public view of an agent, safe to hand to front ends and notices. It carries the identity and
-// capability fields needed for display and @handle resolution, and never any connection secret.
-struct AgentInfo {
+// The stable identity of one configured persona.
+struct PersonaInfo {
     std::string id;
     std::string name;
+};
+
+// Public operational information about one initialized agent backend. It is safe to show in
+// diagnostics and never carries connection secrets.
+struct AgentRuntimeInfo {
+    PersonaInfo persona;
     std::string model;
     std::string api;
     bool streaming{};
@@ -56,8 +61,8 @@ std::vector<AgentDefinition> load_agent_definitions(
     const std::vector<std::filesystem::path>& persona_directories,
     const std::filesystem::path& room_directory);
 
-void validate_agent_id(std::string_view id);
-void validate_agent_name(std::string_view name);
+void validate_persona_id(std::string_view id);
+void validate_persona_name(std::string_view name);
 
 // Projects typed transcript entries into protocol roles for one stable agent participant ID.
 std::vector<AgentMessage> project_agent_context(

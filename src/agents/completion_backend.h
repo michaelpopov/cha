@@ -49,8 +49,7 @@ public:
         RequestPayload payload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) = 0;
-    virtual AgentInfo info() const = 0;
-    virtual const std::string& agent_id() const = 0;
+    virtual AgentRuntimeInfo info() const = 0;
 };
 
 } // namespace cha

@@ -23,12 +23,12 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 } // namespace
 
 bool show_addressing(
-    const AgentRoster& roster,
+    const RoomPersonas& personas,
     const Transcript& transcript) {
-    if (roster.agents().size() > 1) {
+    if (personas.all().size() > 1) {
         return true;
     }
-    const std::string_view sole = roster.first().id;
+    const std::string_view sole = personas.first().id;
     for (const TranscriptEntry& entry : transcript.entries()) {
         const bool foreign =
             (entry.kind == EntryKind::agent && entry.participant_id != sole)

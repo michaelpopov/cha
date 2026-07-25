@@ -158,18 +158,16 @@ public:
         return {};
     }
 
-    AgentInfo info() const override {
+    AgentRuntimeInfo info() const override {
         return {
-            .id = id_,
-            .name = name_,
+            .persona = {
+                .id = id_,
+                .name = name_,
+            },
             .model = "test-model",
             .api = "test://completion",
             .streaming = true,
         };
-    }
-
-    const std::string& agent_id() const override {
-        return id_;
     }
 
 private:
@@ -407,7 +405,7 @@ TEST(UserSession, RendersAddressingWheneverTheRoomHostsSeveralAgents) {
     session.receive_terminal_input();
     session.render_if_needed();
     EXPECT_TRUE(view.rendered_show_addressing)
-        << "a multi-agent roster keeps showing every prompt's target";
+        << "a room with multiple personas keeps showing every prompt's target";
 }
 
 TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOtherwise) {

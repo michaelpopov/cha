@@ -42,11 +42,9 @@ public:
         return {};
     }
 
-    AgentInfo info() const override {
-        return {id_, name_, "model", "test://completion", true};
+    AgentRuntimeInfo info() const override {
+        return {{id_, name_}, "model", "test://completion", true};
     }
-
-    const std::string& agent_id() const override { return id_; }
 
     std::vector<RequestId> prepared_requests;
     bool performed{};
@@ -73,11 +71,11 @@ public:
         RequestPayload payload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
+        entered_perform.store(true, std::memory_order_release);
         on_delta({
             CompletionDeltaKind::answer,
             name_ + ":" + payload.bytes,
         });
-        entered_perform.store(true, std::memory_order_release);
         while (!release.load(std::memory_order_acquire)
                && !cancellation.load(std::memory_order_acquire)) {
             std::this_thread::yield();
@@ -87,11 +85,9 @@ public:
             : CompletionResult{};
     }
 
-    AgentInfo info() const override {
-        return {id_, name_, "model", "test://completion", true};
+    AgentRuntimeInfo info() const override {
+        return {{id_, name_}, "model", "test://completion", true};
     }
-
-    const std::string& agent_id() const override { return id_; }
 
     std::atomic_bool entered_perform{false};
     std::atomic_bool prepared{false};
@@ -144,17 +140,17 @@ public:
         return result_;
     }
 
-    AgentInfo info() const override {
+    AgentRuntimeInfo info() const override {
         return {
-            .id = id_,
-            .name = "Fake",
+            .persona = {
+                .id = id_,
+                .name = "Fake",
+            },
             .model = "fake-model",
             .api = "fake://completion",
             .streaming = true,
         };
     }
-
-    const std::string& agent_id() const override { return id_; }
 
     std::vector<CompletionRequest> requests;
     std::vector<TranscriptEntry> latest_prompts;
@@ -190,17 +186,17 @@ public:
         return {};
     }
 
-    AgentInfo info() const override {
+    AgentRuntimeInfo info() const override {
         return {
-            .id = id_,
-            .name = "Boundary",
+            .persona = {
+                .id = id_,
+                .name = "Boundary",
+            },
             .model = "fake",
             .api = "fake://",
             .streaming = true,
         };
     }
-
-    const std::string& agent_id() const override { return id_; }
 
     std::promise<void> prepared;
     std::atomic_bool release{false};
@@ -225,17 +221,17 @@ public:
         return {};
     }
 
-    AgentInfo info() const override {
+    AgentRuntimeInfo info() const override {
         return {
-            .id = id_,
-            .name = "Throwing",
+            .persona = {
+                .id = id_,
+                .name = "Throwing",
+            },
             .model = "fake",
             .api = "fake://",
             .streaming = true,
         };
     }
-
-    const std::string& agent_id() const override { return id_; }
 
     std::atomic_bool performed{false};
 
@@ -429,7 +425,7 @@ TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
     EXPECT_EQ(
         backend_view->latest_prompts.front(),
         backend_view->requests.front().prompt);
-    EXPECT_EQ(registry.roster().first().model, "fake-model");
+    EXPECT_EQ(registry.runtime_info().front().model, "fake-model");
 }
 
 TEST(AgentRegistry, MapsCompletionFailureToAgentFailed) {

@@ -30,8 +30,7 @@ public:
         RequestPayload payload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override;
-    AgentInfo info() const override;
-    const std::string& agent_id() const override;
+    AgentRuntimeInfo info() const override;
 
 private:
     class CurlEasyHandle;

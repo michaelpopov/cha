@@ -528,7 +528,7 @@ TEST(SessionDatabase, StoresTheTargetOnlyOnThePromptItself) {
     EXPECT_EQ(
         table_columns(path, "session"),
         (std::vector<std::string>{"singleton", "id", "room", "label"}))
-        << "a session belongs to a room, not to a roster";
+        << "a session belongs to a room, not to its current personas";
     std::filesystem::remove(path);
 }
 
@@ -626,7 +626,7 @@ TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
 }
 
 TEST(SessionDatabase, RestoresAndProjectsASessionWhoseRoomLostAnAgent) {
-    const auto path = temporary_path("cha_roster_drift_");
+    const auto path = temporary_path("cha_room_personas_drift_");
     create_test_database(path);
     {
         SessionJournal journal(path);
@@ -639,7 +639,7 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseRoomLostAnAgent) {
             4, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 2));
     }
 
-    // Cheburashka has left the room; only Ismael remains on the roster.
+    // Cheburashka has left the room; only Ismael remains.
     const SessionRestore restored = load_session_state(path);
 
     EXPECT_TRUE(restored.interrupted_turns.empty());

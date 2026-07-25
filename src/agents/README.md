@@ -1,9 +1,9 @@
 # Agent runtime
 
 `agents/` owns everything about configured chat agents: loading a persona,
-validating a room's roster, resolving `@handles`, projecting the transcript into
-model context, running completions on a dedicated thread, and speaking the
-provider's HTTP protocol.
+projecting the transcript into model context, running completions on a
+dedicated thread, and speaking the provider's HTTP protocol. The ordered
+personas in a room and `@handle` resolution belong to `session/`.
 
 It is the only layer that talks to a model server, and the only one that owns a
 thread.
@@ -13,8 +13,8 @@ thread.
 | Source | Responsibility |
 | --- | --- |
 | `config.*` | `Config` — identity, connection, model, streaming, auth, and reasoning settings — plus TOML loading and field validation. |
-| `agent.*` | `AgentDefinition` and `AgentInfo`, ID/name validation, the request and event protocol types, and `project_agent_context()`. |
-| `agent_registry.*` | `AgentRoster` (validation, lookup, handle resolution) and `AgentRegistry` (execution thread, request routing, cancellation, channels). |
+| `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, the request and event protocol types, and `project_agent_context()`. |
+| `agent_registry.*` | Runtime metadata, the execution thread, request routing, cancellation, and channels. |
 | `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
 | `completion_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
 
@@ -33,10 +33,10 @@ flowchart LR
     usr --> def
     conf --> def
     def -->|"one per persona"| client["CompletionClient"]
-    client -->|"info"| card["AgentInfo"]
-    card --> roster["AgentRoster<br/>ordered, validated"]
     client --> registry["AgentRegistry"]
-    roster --> registry
+    client -->|"info"| runtime["AgentRuntimeInfo"]
+    runtime --> registry
+    runtime -->|"identity only"| personas["session/RoomPersonas"]
 ```
 
 The effective system prompt is the persona's `SYSTEM.md` followed by the room's
@@ -44,40 +44,22 @@ The effective system prompt is the persona's `SYSTEM.md` followed by the room's
 happens on the main thread during session construction: `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
-Identity rules, enforced by `validate_agent_id` and `validate_agent_name`:
+Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
 
 - an **ID** is ASCII letters, digits, underscores, and hyphens. It is stable and
   is what transcript entries record — never change it when renaming a persona.
 - a **name** is the visible `@handle`. It may not be empty, contain whitespace,
   start with `@` or `/`, or be `User` in any casing.
-- within a roster, IDs are unique and names are unique case-insensitively.
+- within one room, IDs are unique and names are unique case-insensitively.
 
-## Handle resolution
-
-`AgentRoster::resolve_handle()` implements what a user may type after `@`:
-
-```mermaid
-flowchart TD
-    start["handle text"] --> exact{"exact name,<br/>case-insensitive?"}
-    exact -->|"yes"| resolved["resolved"]
-    exact -->|"no"| trim["strip trailing punctuation"]
-    trim --> exact2{"exact match now?"}
-    exact2 -->|"yes"| resolved
-    exact2 -->|"no"| prefix["collect case-folded<br/>prefix matches"]
-    prefix --> count{"how many?"}
-    count -->|"exactly one"| resolved
-    count -->|"none"| unknown["unknown"]
-    count -->|"several"| ambiguous["ambiguous, with candidates"]
-```
-
-The roster only reports the outcome. `SessionController` turns `unknown` and
-`ambiguous` into the notices the user sees, because the wording is a session
-concern, not a roster one.
+`AgentRegistry` validates these rules when it accepts backend metadata.
+`RoomPersonas` in `session/` separately owns the ordered identity-only view used
+for lookup and handle resolution.
 
 ## Execution: one thread, one request
 
 `AgentRegistry` exists so a slow provider can never block the UI. It owns
-one worker thread, one backend per roster entry, and two channels.
+one worker thread, one backend per room persona, and two channels.
 
 ```mermaid
 sequenceDiagram
@@ -137,7 +119,7 @@ Rules that fall out of this design:
 | --- | --- | --- |
 | `prepare(request, view)` | Under the transcript lock | Read the transcript and build a `RequestPayload`. Must be fast. |
 | `perform(payload, sink, cancellation)` | Without the lock | One synchronous completion, streaming fragments to the sink. |
-| `info()` / `agent_id()` | Any time | Roster identity for the registry. |
+| `info()` | Any time | Persona identity and public runtime details for the registry. |
 
 Splitting them is what lets the main thread keep writing to the transcript
 while a generation runs. Tests supply their own backend and never touch the
@@ -228,7 +210,7 @@ reasoning text is never included.
 | --- | --- |
 | `tests/agents/unit_config_loader.cpp` | TOML fields, defaults, and rejection of malformed values. |
 | `tests/agents/unit_agent_definition_loader.cpp` | Persona and room prompt composition, and load errors. |
-| `tests/agents/unit_agent_roster.cpp` | Roster validation and every handle-resolution branch. |
+| `tests/session/unit_room_personas.cpp` | Room-persona validation and every handle-resolution branch. |
 | `tests/agents/unit_agent_registry.cpp` | Single-flight gating, event correlation, cancellation, shutdown ordering. |
 | `tests/agents/unit_agent_context.cpp` | Projection rules, attribution, and coalescing. |
 | `tests/agents/unit_completion_client.cpp` | Request bodies, SSE and JSON parsing, reasoning formats, and the error taxonomy, driven by `tests/support/mock_http_server.h`. |

@@ -9,42 +9,13 @@
 #include <cstddef>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <vector>
 
 namespace cha {
 
-enum class HandleMatch { resolved, unknown, ambiguous };
-
-// The outcome of resolving a handle the user typed: the agent when the match is unique, or the
-// candidates that made it ambiguous, so the caller can explain the choice back to the user.
-struct HandleResolution {
-    HandleMatch match{HandleMatch::unknown};
-    const AgentInfo* agent{};
-    std::vector<const AgentInfo*> candidates;
-};
-
-// The ordered set of agents taking part in one room. It exists so the rest of the system can rely
-// on a roster being non-empty and free of duplicate IDs or case-folded names: it validates that
-// once at construction, then serves lookups by ID and resolution of user-typed handles over the
-// AgentInfo values it holds.
-class AgentRoster {
-public:
-    explicit AgentRoster(std::vector<AgentInfo> agents);
-
-    const std::vector<AgentInfo>& agents() const noexcept;
-    const AgentInfo& first() const;
-    const AgentInfo* find(std::string_view id) const;
-    HandleResolution resolve_handle(std::string_view handle) const;
-    std::string handle_list() const;
-
-private:
-    std::vector<AgentInfo> agents_;
-};
-
 // Runs agent completions off the caller's thread so the UI never blocks on a provider.
-// It owns one CompletionBackend per roster entry and one worker thread, accepts a single
+// It owns one CompletionBackend per room persona and one worker thread, accepts a single
 // outstanding CompletionRequest, prepares that request from a short-lived Transcript read view,
 // and publishes correlated AgentEvent values on a channel whose descriptor callers can poll.
 // Cancellation is cooperative, and every accepted request receives a terminal event, including
@@ -58,7 +29,7 @@ public:
     AgentRegistry(const AgentRegistry&) = delete;
     AgentRegistry& operator=(const AgentRegistry&) = delete;
 
-    const AgentRoster& roster() const noexcept;
+    const std::vector<AgentRuntimeInfo>& runtime_info() const noexcept;
     // False means the request was not accepted (busy/stopped).
     [[nodiscard]] bool submit(CompletionRequest request);
     void cancel();
@@ -78,7 +49,7 @@ private:
 
     const Transcript& transcript_;
     std::vector<std::unique_ptr<CompletionBackend>> backends_;
-    AgentRoster roster_;
+    std::vector<AgentRuntimeInfo> runtime_info_;
     EventChannel<WorkItem> requests_;
     AgentEventChannel events_;
     std::atomic_bool cancellation_{false};

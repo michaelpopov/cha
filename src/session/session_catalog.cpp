@@ -1,4 +1,4 @@
-#include "session/sessions_repository.h"
+#include "session/session_catalog.h"
 
 #include "util/path_name.h"
 #include "session/session_database.h"
@@ -45,7 +45,7 @@ void validate_metadata(
 
 } // namespace
 
-SessionsRepository::SessionsRepository(
+SessionCatalog::SessionCatalog(
     std::filesystem::path directory,
     std::string room_name,
     Clock clock)
@@ -57,7 +57,7 @@ SessionsRepository::SessionsRepository(
     }
 }
 
-std::vector<Session> SessionsRepository::list() const {
+std::vector<Session> SessionCatalog::list() const {
     if (!std::filesystem::exists(directory_)) {
         return {};
     }
@@ -97,7 +97,7 @@ std::vector<Session> SessionsRepository::list() const {
     return result;
 }
 
-Session SessionsRepository::create(std::string label) const {
+Session SessionCatalog::create(std::string label) const {
     std::filesystem::create_directories(directory_);
 
     const std::string base_id = timestamp_name(clock_());
@@ -117,13 +117,13 @@ Session SessionsRepository::create(std::string label) const {
     }
 }
 
-std::filesystem::path SessionsRepository::database_path(
+std::filesystem::path SessionCatalog::database_path(
     const std::string& session_id) const {
     require_path_component(session_id, directory_);
     return directory_ / (session_id + ".sqlite3");
 }
 
-std::filesystem::path SessionsRepository::open_database_path(
+std::filesystem::path SessionCatalog::open_database_path(
     const std::string& session_id) const {
 
     const std::filesystem::path path = database_path(session_id);

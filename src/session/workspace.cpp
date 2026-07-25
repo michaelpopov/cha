@@ -3,7 +3,7 @@
 #include "agents/agent.h"
 #include "session/session_controller.h"
 #include "session/session_database.h"
-#include "session/sessions_repository.h"
+#include "session/session_catalog.h"
 #include "util/path_name.h"
 #include "util/text.h"
 
@@ -26,11 +26,11 @@ std::vector<AgentDefinition> load_definitions(
     return load_agent_definitions(persona_directories, room.directory);
 }
 
-SessionsRepository sessions_repository(
+SessionCatalog session_catalog(
     const Workspace& workspace,
     const std::string& room_name) {
     const Room room = workspace.load_room(room_name);
-    return SessionsRepository(room.directory / "sessions", room.name);
+    return SessionCatalog(room.directory / "sessions", room.name);
 }
 
 SessionSummary summarize(const Session& stored) {
@@ -144,8 +144,8 @@ std::vector<std::string> Workspace::read_name_list(
 
 std::vector<SessionSummary> Workspace::sessions(
     const std::string& room_name) const {
-    const SessionsRepository repository = sessions_repository(*this, room_name);
-    const std::vector<Session> stored = repository.list();
+    const SessionCatalog catalog = session_catalog(*this, room_name);
+    const std::vector<Session> stored = catalog.list();
 
     std::vector<SessionSummary> result;
     result.reserve(stored.size());
@@ -160,12 +160,12 @@ std::unique_ptr<SessionController> Workspace::create_session(
     std::string label) const {
     const Room room = load_room(room_name);
     std::vector<AgentDefinition> definitions = load_definitions(*this, room);
-    const SessionsRepository repository(room.directory / "sessions", room.name);
+    const SessionCatalog catalog(room.directory / "sessions", room.name);
 
-    const Session session = repository.create(std::move(label));
+    const Session session = catalog.create(std::move(label));
     return SessionController::from_definitions(
         std::move(definitions),
-        repository.database_path(session.id));
+        catalog.database_path(session.id));
 }
 
 std::unique_ptr<SessionController> Workspace::open_session(
@@ -173,10 +173,10 @@ std::unique_ptr<SessionController> Workspace::open_session(
     const std::string& session_id) const {
     const Room room = load_room(room_name);
     std::vector<AgentDefinition> definitions = load_definitions(*this, room);
-    const SessionsRepository repository(room.directory / "sessions", room.name);
+    const SessionCatalog catalog(room.directory / "sessions", room.name);
 
     const std::filesystem::path database_path =
-        repository.open_database_path(session_id);
+        catalog.open_database_path(session_id);
     SessionRestore restored = load_session_state(database_path);
     return SessionController::from_definitions(
         std::move(definitions),

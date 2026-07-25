@@ -96,7 +96,7 @@ flowchart LR
     tui -->|"rebuild or append"| pad["transcript pad"]
     tui --> port["TranscriptViewport<br/>top row, follow state"]
     port --> pad
-    roster["AgentRoster"] --> addr["show_addressing"]
+    personas["RoomPersonas"] --> addr["show_addressing"]
     conv --> addr
     addr --> tui
     status["GenerationStatus"] --> line["status line"]
@@ -122,7 +122,7 @@ only "Terminal is too small".
 - **`show_addressing()`** decides whether labels name the addressee at all: it is
   true in any multi-agent room, and also in a single-agent room whose transcript
   contains entries from or to somebody else — which is what a session reopened
-  after a roster change looks like.
+  after the personas in a room change.
 
 The status line shows `[Idle]`, or `[Name generating|reasoning|responding]` with
 the cancel hint, and appends the current notice when there is one.
@@ -142,9 +142,9 @@ message never lands on a screen still in curses mode.
 
 - **Depends on:** `session/` for controller operations, generation status,
   and session summaries; `transcript/` for snapshots and entries;
-  `ui/text/` for command dispatch; `agents/` for roster values used in
+  `ui/text/` for command dispatch; `session/` for room-persona values used in
   labels; wide ncurses and POSIX polling.
-- **Must not:** load workspace files, open session repositories, or call
+- **Must not:** load workspace files, open session catalogs, or call
   completion backends.
 
 ## Tests

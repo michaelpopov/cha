@@ -38,9 +38,10 @@ Startup
 Main/UI thread                  SessionController
   run_user                   +-- Transcript
   UserSession -------------->+-- SessionJournal (SQLite)
-  Tui                         +-- AgentRegistry
-       ^                      |       |
-       | SessionUpdate        |       +-- AgentRoster
+  Tui                         +-- RoomPersonas
+       ^                      +-- AgentRegistry
+       | SessionUpdate        |       |
+       |                      |       +-- AgentRuntimeInfo
        |                      |       +-- WorkItem request queue
        |                      |       +-- shared AgentEventChannel
        |                      |       +-- agent-execution thread
@@ -60,12 +61,12 @@ The ownership graph is:
   `SessionController`.
 - `run_user()` owns a `Tui` and `UserSession` for the chat loop.
 - `SessionController` owns the in-memory `Transcript`, SQLite
-  `SessionJournal`, `AgentRegistry`, the current default agent ID, the next
-  entry and request IDs seeded from durable state, and the optional
-  `ActiveResponse` describing the turn in flight.
-- `AgentRegistry` owns a non-empty ordered `AgentRoster`, every backend, one
-  request channel, one shared `AgentEventChannel`, one execution thread, and
-  shared cancellation/outstanding-request atomics.
+  `SessionJournal`, `AgentRegistry`, `RoomPersonas`, the current default agent
+  ID, the next entry and request IDs seeded from durable state, and the
+  optional `ActiveResponse` describing the turn in flight.
+- `AgentRegistry` owns public runtime information and a backend for each room
+  persona, one request channel, one shared `AgentEventChannel`, one execution
+  thread, and shared cancellation/outstanding-request atomics.
 - Each production backend is a `CompletionClient` with one reusable libcurl easy
   handle and one agent-specific system prompt and configuration.
 
@@ -91,7 +92,7 @@ directions are:
   shared `AgentEventChannel`.
 
 `submit()`, `cancel()`, and `stop()` are externally serialized main-thread
-control operations. Submission resolves a roster slot before atomically
+control operations. Submission resolves a backend slot before atomically
 claiming one global outstanding-request gate, resets the shared cancellation
 flag, and enqueues an owning `WorkItem {backend_index, request}`. A second
 submission is rejected while that gate remains claimed, even when it targets a
@@ -159,7 +160,6 @@ apps
   |--> ui/terminal --+--> ui/text --> session
   |                  +--> session
   |                  +--> transcript
-  |                  `--> agents   (roster values for addressed rendering)
   |
   `--> session ------+--> agents -------> transcript
                      `--> transcript
@@ -171,22 +171,22 @@ More precisely:
 
 - the terminal front end, and any future HTTP front end, may call `session/` and
   read presentation-safe values from `transcript/`;
-- a front end does not access agent execution or session repositories directly;
+- a front end does not access agent execution or session catalogs directly;
 - `session/` coordinates `agents/` and `transcript/`, and owns session persistence;
 - `agents/` may read transcript state but does not depend on `session/` or `ui/`;
 - `transcript/` and `util/` do not depend on higher layers.
 
 When the web front end is added, a `ui/http/` front end can translate
 HTTP requests and responses around the same session-layer operations.
-It should not load workspace files, open repositories, or invoke completion
+It should not load workspace files, open catalogs, or invoke completion
 backends directly.
 
 The terminal renderer consumes `TranscriptSnapshot`, `TranscriptEntry`,
-and `GenerationStatus` directly. Mirroring the transcript into presentation
-types would add no useful isolation. It also reads `AgentRoster` values from
-`agents/` when deciding whether transcript labels should name the addressed
-agent. Storage-specific values do not cross the session-layer boundary:
-`Workspace` converts repository `Session` records to `SessionSummary` before a
+`GenerationStatus`, and `RoomPersonas` directly. Mirroring these into
+presentation types would add no useful isolation. `RoomPersonas` tells it when
+transcript labels should name the addressed agent. Storage-specific values do
+not cross the session-layer boundary:
+`Workspace` converts catalog `Session` records to `SessionSummary` before a
 selector or future HTTP front end sees them.
 
 The tests mirror the source organization. Cross-layer behavior belongs in
@@ -207,7 +207,7 @@ directly.
 5. Call `Workspace::create_session()` with a prompted label, or
    `Workspace::open_session()` with the chosen ID. Either call resolves the
    room, loads its ordered agent definitions, and resolves the database path
-   through `SessionsRepository`.
+   through `SessionCatalog`.
 6. `open_session()` additionally calls `load_session_state()` to fully
    restore the database before construction.
 7. Construct `SessionController` from the definitions, database path, and
@@ -254,37 +254,38 @@ resolves what it needs when it is called:
 
 - `rooms()` reads and validates `rooms.list`;
 - `load_room()` resolves one room directory and its ordered `personas.list`;
-- `sessions()` builds a `SessionsRepository` for the room and maps its `Session`
+- `sessions()` builds a `SessionCatalog` for the room and maps its `Session`
   records to `SessionSummary` values;
 - `create_session()` and `open_session()` load the room's complete ordered agent
   definitions, resolve the database path, and construct the `SessionController`.
 
 Persona files are therefore read once per session create/open rather than once
-per selection, and repository paths and `Session` records never leave the
+per selection, and catalog paths and `Session` records never leave the
 session-layer boundary — `StartupSelector` sees only room names and
 `SessionSummary` values.
 
-`AgentRoster` is the single boundary for a non-empty roster and for valid,
-unique configured agent IDs and ASCII-case-insensitive names, including when
-tests inject backends without workspace loading.
+`RoomPersonas` is the session-layer boundary for a non-empty ordered group and
+for lookup and handle resolution. `AgentRegistry` separately validates the
+identity in backend-provided `AgentRuntimeInfo`, including when tests inject
+backends without workspace loading.
 
 Agent IDs are non-empty ASCII letters, digits, underscores, or hyphens. Display
 names are non-empty, contain no whitespace, cannot begin with `@` or `/`, and
 cannot equal `User` under ASCII case folding.
 
-Sessions are room-scoped, not roster-scoped. Session metadata contains the
-session ID, room, and display label, but no persona or roster. A session can be
-reopened after agents have been renamed, removed, or added; persisted
-participant IDs, display names, and prompt targets preserve historical
-attribution.
+Sessions are room-scoped and do not capture the room's current personas.
+Session metadata contains the session ID, room, and display label, but no
+persona collection. A session can be reopened after personas have been renamed,
+removed, or added; persisted participant IDs, display names, and prompt targets
+preserve historical attribution.
 
 ## Multi-agent model
 
-The room's roster is ordered and fixed for one run. The first agent is the
-initial default. `/@Name` changes the default in memory for the current run
-only.
+`RoomPersonas` is ordered and fixed for one run. Its first persona supplies the
+initial default agent. `/@Name` changes the default in memory for the current
+run only.
 
-Only one turn may be active across the entire roster. The application does not
+Only one turn may be active across all room personas. The application does not
 run simultaneous answers. This preserves one linear transcript, one streaming
 entry, and one unambiguous cancellation target. A global registry gate also
 rejects a second outstanding request when the registry is tested or used
@@ -309,9 +310,9 @@ Handle resolution tries, in order:
 The text grammar passes prompt text and the optional handle to
 `SessionController::submit_prompt()`. A future HTTP front end can provide those
 fields directly without parsing terminal syntax. Unknown and ambiguous handles
-are rejected with a roster-aware notice. The input is not cleared, so the user
-can correct it. A mention with an empty body is also rejected without clearing
-the input.
+are rejected with a notice that lists the room's personas. The input is not
+cleared, so the user can correct it. A mention with an empty body is also
+rejected without clearing the input.
 
 The resolved target is stored on the human transcript entry as both:
 
@@ -319,11 +320,12 @@ The resolved target is stored on the human transcript entry as both:
 - `addressed_to_name`: display name at submission time, used for restored UI
   labels and target attribution.
 
-`AgentRegistry` keeps backends and roster entries in the same order. Submission
-linearly scans the small roster to select the corresponding backend slot; there
-is no parallel index structure. Cancellation needs no target because only one
-request can be queued or executing, and the cancellation flag cannot be reset
-until that request releases the global gate.
+`AgentRegistry` keeps backends and their `AgentRuntimeInfo` values in the same
+order. Submission linearly scans the small runtime-information collection to
+select the corresponding backend slot; there is no parallel index structure.
+Cancellation needs no target because only one request can be queued or
+executing, and the cancellation flag cannot be reset until that request
+releases the global gate.
 
 ## Transcript and context projection
 
@@ -420,7 +422,7 @@ answers are attributed input.
 
 For an idle controller, `SessionController::submit_prompt()` accepts prompt text
 and an optional handle from a front end, resolves the target agent
-against the roster, and rejects an empty prompt. It then starts the turn:
+through `RoomPersonas`, and rejects an empty prompt. It then starts the turn:
 
 1. allocates a request ID and human entry ID;
 2. commits the `started` turn and prompt entry in one SQLite transaction;
@@ -507,11 +509,11 @@ needs a stable turn correlation key.
 When idle, the shared text grammar translates:
 
 - `/clear`: advance the durable history epoch, empty visible history, and reset
-  addressing labels based on current roster size.
-- `/agents`: show a transient status notice containing the current roster; `*`
-  marks the run-local default.
+  addressing labels based on the number of room personas.
+- `/agents`: show a transient status notice containing the room personas and
+  their runtime details; `*` marks the run-local default.
 - `/info`: show a transient status notice containing the current transcript
-  entry count followed by the same roster information.
+  entry count followed by the same persona and runtime information.
 - `/@Name`: change the run-local default agent.
 - `/stop`: report that no generation is active.
 - `/exit`: request session termination.
@@ -555,10 +557,10 @@ response phase, and ephemeral reasoning buffer. Status text is `generating`,
 `reasoning`, or `responding`.
 Human labels are `[You]` or `[You → Name]`; agent labels always include the
 display name.
-Addressed human labels are enabled whenever the current roster has multiple
-agents, or when restored single-agent history contains another participant or
-target. `/clear` forgets historical addressing evidence but keeps addressing
-enabled for a currently multi-agent room.
+Addressed human labels are enabled whenever `RoomPersonas` contains multiple
+personas, or when restored single-agent history contains another participant
+or target. `/clear` forgets historical addressing evidence but keeps
+addressing enabled for a currently multi-agent room.
 
 Transcript entries use the compact `[Agent: Name] Answer` form. While a turn is
 active and reasoning is present, the TUI combines the ephemeral reasoning
@@ -620,7 +622,7 @@ A mixed cancelled response retains only its answer. Errors are terminal
 
 ### Session listing and opening
 
-`SessionsRepository::list()` examines regular `.sqlite3` files, opens them
+`SessionCatalog::list()` examines regular `.sqlite3` files, opens them
 read-only, and performs lightweight identity/metadata validation: application
 ID, schema version, embedded session ID versus filename, and embedded room
 versus selected room. Broken candidates remain visible with an error so one bad
@@ -651,7 +653,7 @@ one transaction, then publishes the final path with a hard link that cannot
 replace an existing destination. The temporary path is removed whether
 publication succeeds, collides, or throws. An empty user-supplied label falls
 back to the generated ID. `Workspace::create_session()` loads the room's agent
-definitions, creates the database through `SessionsRepository::create()`, and
+definitions, creates the database through `SessionCatalog::create()`, and
 constructs a controller over the fresh file.
 
 ### Transactions and IDs
@@ -830,8 +832,8 @@ database, so a mistaken path cannot silently become an empty session.
 | --- | --- |
 | `src/util/` | Shared text, path, and environment utilities. |
 | `src/transcript/` | Typed transcript, turn identifiers, and response-content values. |
-| `src/agents/` | Agent definitions, roster, context projection, execution, provider communication, and the runtime event channel. |
-| `src/session/` | Chat coordination and in-flight turn state (`SessionController`), workspace and session operations, session repositories, SQLite journaling, presentation-safe summaries, and generation status. |
+| `src/agents/` | Agent definitions, runtime metadata, context projection, execution, provider communication, and the runtime event channel. |
+| `src/session/` | Room personas, chat coordination and in-flight turn state (`SessionController`), workspace and session operations, session catalogs, SQLite journaling, presentation-safe summaries, and generation status. |
 | `src/ui/text/` | Shared slash-command and leading-mention parsing and dispatch. |
 | `src/ui/terminal/` | Ncurses selection, input, rendering, polling, and terminal session flow. |
 | `src/apps/` | Executable composition roots. |
@@ -842,11 +844,11 @@ Every production `.cpp` except `src/apps/tui_main.cpp` is compiled into
 
 ## Key invariants
 
-1. A roster is non-empty, ordered, and fixed for one run.
+1. `RoomPersonas` is non-empty, ordered, and fixed for one run.
 2. Agent IDs and ASCII-folded display names are unique.
-3. Roster slot `i` and backend slot `i` describe the same agent.
-4. Exactly one application-owned execution thread exists regardless of roster
-   size.
+3. Runtime-information slot `i` and backend slot `i` describe the same agent.
+4. Exactly one application-owned execution thread exists regardless of the
+   number of room personas.
 5. Only the execution thread calls backend request methods after startup.
 6. At most one turn is active across the session.
 7. The request channel contains at most one work item, and at most one request
@@ -883,7 +885,7 @@ Every production `.cpp` except `src/apps/tui_main.cpp` is compiled into
     bytes.
 26. Every styled transcript and input-rendering path restores normal
     attributes.
-27. Sessions bind to a room, not to the room's current roster.
+27. Sessions bind to a room, not to the room's current personas.
 28. The shared event channel closes only after the execution thread stops.
 29. A journal mutation failure ends the current run; the application never
     continues with transcript state it could not persist.
@@ -904,7 +906,7 @@ available, otherwise fetches pinned curl 8.14.1. It also fetches nlohmann/json
 bundled curl enables OpenSSL when it is available.
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
-configuration, identity, roster/mention routing, textual command parsing and
+configuration, identity, room-persona/mention routing, textual command parsing and
 dispatch, registry execution behavior, transcript/context semantics,
 controller lifecycle operations, workspace layout resolution and
 session-summary mapping, SQLite constraints and recovery, structured reasoning
@@ -915,7 +917,7 @@ incremental rendering.
 `workspace/`. Its tests cover live configured streaming, non-streaming, and
 cancellation paths plus local mock-server multi-agent routing, per-agent
 context, structured streaming and non-streaming reasoning, answer-only
-persistence/context replay, and reopening after a roster change.
+persistence/context replay, and reopening after the personas in a room change.
 
 The principal test seams are:
 

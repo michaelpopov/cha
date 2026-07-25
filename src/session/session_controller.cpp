@@ -27,6 +27,16 @@ std::string request_action(
         + " for @" + std::string(agent_name);
 }
 
+RoomPersonas make_room_personas(
+    const std::vector<AgentRuntimeInfo>& runtime_info) {
+    std::vector<PersonaInfo> personas;
+    personas.reserve(runtime_info.size());
+    for (const AgentRuntimeInfo& agent : runtime_info) {
+        personas.push_back(agent.persona);
+    }
+    return RoomPersonas(std::move(personas));
+}
+
 void merge_update(SessionUpdate& all, SessionUpdate one) {
     all.render_needed = all.render_needed || one.render_needed;
     all.end_session = all.end_session || one.end_session;
@@ -39,10 +49,10 @@ void merge_update(SessionUpdate& all, SessionUpdate one) {
 std::string format_handle_notice(
     std::string_view handle,
     const HandleResolution& resolution,
-    const AgentRoster& roster) {
+    const RoomPersonas& personas) {
     if (resolution.match == HandleMatch::unknown) {
         return "Unknown agent @" + std::string(handle)
-            + ". Agents in this room: " + roster.handle_list();
+            + ". Personas in this room: " + personas.handle_list();
     }
     std::string result =
         "Ambiguous agent @" + std::string(handle) + ": matches ";
@@ -55,16 +65,17 @@ std::string format_handle_notice(
     return result + ". Type more of the name.";
 }
 
-std::string format_roster_notice(
-    const AgentRoster& roster,
+std::string format_personas_notice(
+    const RoomPersonas& personas,
+    const std::vector<AgentRuntimeInfo>& runtime_info,
     const ParticipantId& default_agent_id) {
     std::ostringstream result;
-    result << "Agents in this room (" << roster.agents().size()
+    result << "Personas in this room (" << personas.all().size()
            << "), * marks the default.";
     result << " Any unambiguous prefix works.";
-    for (const AgentInfo& agent : roster.agents()) {
-        result << " | " << (agent.id == default_agent_id ? "* " : "")
-               << "@" << agent.name << "  " << agent.model << "  "
+    for (const AgentRuntimeInfo& agent : runtime_info) {
+        result << " | " << (agent.persona.id == default_agent_id ? "* " : "")
+               << "@" << agent.persona.name << "  " << agent.model << "  "
                << agent.api << "  "
                << (agent.streaming ? "streaming" : "non-streaming");
     }
@@ -73,11 +84,13 @@ std::string format_roster_notice(
 
 std::string format_session_information(
     const Transcript& transcript,
-    const AgentRoster& roster,
+    const RoomPersonas& personas,
+    const std::vector<AgentRuntimeInfo>& runtime_info,
     const ParticipantId& default_agent_id) {
     std::ostringstream text;
     text << "Transcript entries: " << transcript.snapshot().entries.size()
-         << " | " << format_roster_notice(roster, default_agent_id);
+         << " | " << format_personas_notice(
+             personas, runtime_info, default_agent_id);
     return text.str();
 }
 
@@ -109,7 +122,8 @@ SessionController::SessionController(
     SessionRestore restored)
     : journal_(std::move(path)),
       registry_(transcript_, std::move(definitions)),
-      default_agent_id_(registry_.roster().first().id) {
+      personas_(make_room_personas(registry_.runtime_info())),
+      default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
 }
 
@@ -119,7 +133,8 @@ SessionController::SessionController(
     SessionRestore restored)
     : journal_(std::move(path)),
       registry_(transcript_, std::move(backends)),
-      default_agent_id_(registry_.roster().first().id) {
+      personas_(make_room_personas(registry_.runtime_info())),
+      default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
 }
 
@@ -171,19 +186,20 @@ SessionUpdate SessionController::submit_prompt(
     }
 
     SessionUpdate update;
-    const AgentInfo* target = nullptr;
+    const PersonaInfo* target = nullptr;
     if (handle.empty()) {
-        target = roster().find(default_agent_id_);
+        target = personas_.find(default_agent_id_);
     } else {
-        const HandleResolution resolution = roster().resolve_handle(handle);
+        const HandleResolution resolution = personas_.resolve_handle(handle);
         if (resolution.match != HandleMatch::resolved) {
-            update.notice = format_handle_notice(handle, resolution, roster());
+            update.notice = format_handle_notice(
+                handle, resolution, personas_);
             return update;
         }
-        target = resolution.agent;
+        target = resolution.persona;
     }
     if (!target) {
-        throw std::logic_error("Default agent is not in the current roster");
+        throw std::logic_error("Default agent is not among the room personas");
     }
     if (text.empty()) {
         update.notice = "Prompt for @" + target->name + " is empty";
@@ -197,7 +213,7 @@ SessionUpdate SessionController::submit_prompt(
 
 SessionUpdate SessionController::start_response(
     std::string text,
-    const AgentInfo& target) {
+    const PersonaInfo& target) {
     SessionUpdate update;
     const RequestId request_id = next_request_id_++;
     CompletionRequest request{
@@ -274,7 +290,10 @@ SessionUpdate SessionController::session_information() {
         .render_needed = true,
         .clear_input = true,
         .notice = format_session_information(
-            transcript_, roster(), default_agent_id_),
+            transcript_,
+            personas_,
+            registry_.runtime_info(),
+            default_agent_id_),
     };
 }
 
@@ -285,7 +304,8 @@ SessionUpdate SessionController::agent_information() {
     return {
         .render_needed = true,
         .clear_input = true,
-        .notice = format_roster_notice(roster(), default_agent_id_),
+        .notice = format_personas_notice(
+            personas_, registry_.runtime_info(), default_agent_id_),
     };
 }
 
@@ -298,13 +318,13 @@ SessionUpdate SessionController::set_default_agent(std::string_view handle) {
         update.notice = "Usage: /@AgentName";
         return update;
     }
-    const HandleResolution result = roster().resolve_handle(handle);
+    const HandleResolution result = personas_.resolve_handle(handle);
     if (result.match != HandleMatch::resolved) {
-        update.notice = format_handle_notice(handle, result, roster());
+        update.notice = format_handle_notice(handle, result, personas_);
         return update;
     }
-    default_agent_id_ = result.agent->id;
-    update.notice = "Default agent is now " + result.agent->name;
+    default_agent_id_ = result.persona->id;
+    update.notice = "Default agent is now " + result.persona->name;
     return update;
 }
 

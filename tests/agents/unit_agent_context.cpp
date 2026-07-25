@@ -187,7 +187,7 @@ TEST(AgentContext, OmitsTheAddressingMarkerEntirelyWithOneParticipant) {
         }));
 }
 
-TEST(AgentContext, AttributesAgentsThatNoRosterStillContains) {
+TEST(AgentContext, AttributesAgentsWhosePersonasAreNoLongerInTheRoom) {
     const TranscriptSnapshot transcript{
         .entries = {
             make_human_entry(1, "departed", "Departed", "Say something", 1),

@@ -11,8 +11,9 @@ code.
 | Source | Responsibility |
 | --- | --- |
 | `workspace.*` | Resolve the workspace layout, list rooms and sessions, load a room's agent definitions, and build a `SessionController`. |
-| `sessions_repository.*` | List, create, and safely resolve the SQLite session files of one room. |
+| `session_catalog.*` | List, create, and safely resolve the SQLite session files of one room. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
+| `room_personas.*` | The ordered persona identities in a room, including validation, lookup, and handle resolution. |
 | `session_controller.*` | Own one live session: commands, the in-flight turn, agent events, default agent, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
@@ -37,6 +38,22 @@ and every name is checked with `require_path_component()` before it becomes a
 path — so a workspace file can never reach outside its directory. A room's
 persona list additionally rejects duplicates.
 
+## Room personas
+
+`RoomPersonas` is the identity-only view of the personas participating in one
+room. It is ordered, non-empty, and rejects duplicate IDs and
+ASCII-case-insensitive names. The first persona supplies the initial default
+agent.
+
+`resolve_handle()` tries an exact case-insensitive name, retries after removing
+trailing `,.;:!?`, and finally accepts a unique case-insensitive prefix. It
+returns resolved, unknown, or ambiguous; `SessionController` owns the wording
+of the corresponding user notices.
+
+Model, API, and streaming details do not belong to `RoomPersonas`.
+`AgentRegistry` exposes those separately as `AgentRuntimeInfo`, and
+`SessionController` combines the two only for `/agents` and `/info`.
+
 ## Session operations
 
 ```mermaid
@@ -45,7 +62,7 @@ sequenceDiagram
     participant UI as Caller
     participant WS as Workspace
     participant AG as agents/
-    participant RP as SessionsRepository
+    participant SC as SessionCatalog
     participant DB as Session database
     participant CC as SessionController
 
@@ -53,17 +70,17 @@ sequenceDiagram
     UI->>WS: create_session room, label
     WS->>WS: load_room, read personas.list
     WS->>AG: load_agent_definitions
-    WS->>RP: create label
-    RP->>RP: timestamp id, numeric suffix on collision
-    RP->>DB: build hidden temporary sibling, then link into place
+    WS->>SC: create label
+    SC->>SC: timestamp id, numeric suffix on collision
+    SC->>DB: build hidden temporary sibling, then link into place
     WS->>CC: from_definitions with fresh database
     CC-->>UI: controller
 
     Note over UI,CC: Opening a session
     UI->>WS: open_session room, id
     WS->>AG: load_agent_definitions
-    WS->>RP: open_database_path id
-    RP->>DB: read metadata, check id and room match
+    WS->>SC: open_database_path id
+    SC->>DB: read metadata, check id and room match
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
     WS->>CC: from_definitions with restore
@@ -179,8 +196,8 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | --- | --- | --- |
 | `submit_prompt(text, handle)` | Resolves the handle, or falls back to the default agent, and starts a turn. | On success `clear_input` + `render_needed`; on an unknown or ambiguous handle, or an empty prompt, only a notice — the draft text is left in the editor. |
 | `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
-| `session_information()` | Entry count plus the roster. | `render_needed`, `clear_input`, notice. |
-| `agent_information()` | The roster, marking the default. | `render_needed`, `clear_input`, notice. |
+| `session_information()` | Entry count plus the room personas and their runtime details. | `render_needed`, `clear_input`, notice. |
+| `agent_information()` | Room personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
 | `request_stop()` | Cancels the active turn, or says there is none. | Notice. |
 | `receive()` | Drains the event channel, applying each event through `handle_agent_event()`. | Merged updates; `end_session` when the channel is closed. |
@@ -188,7 +205,7 @@ read-only state, and commands that return `SessionUpdate` side effects.
 
 Every command except `request_stop()` and `receive()` is refused while a turn is
 active, with the shared in-progress notice. The controller formats session
-notices itself — handle errors, roster text, `/info` — because their wording
+notices itself — handle errors, room-persona text, `/info` — because their wording
 belongs to the session, not to a UI.
 
 The controller does **not** parse `/commands`, mentions, HTTP routes, or JSON.
@@ -233,7 +250,7 @@ session continues.
 ## Dependencies
 
 - **Depends on:** `transcript/` for transcript values, `agents/` for
-  definitions, rosters, execution, and events, `util/` for path and text
+  definitions, runtime information, execution, and events, `util/` for path and text
   helpers, and SQLite for storage.
 - **Must not depend on:** `ui/` or `apps/`.
 
@@ -242,7 +259,7 @@ session continues.
 | Test | Covers |
 | --- | --- |
 | `tests/session/unit_workspace.cpp` | Layout resolution, list-file rules, room loading, session create/open. |
-| `tests/session/unit_sessions_repository.cpp` | Listing, identity validation, collision handling, publish semantics. |
+| `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics. |
 | `tests/session/unit_session_controller.cpp` | Command behavior, event application, persistence ordering, restore and repair. |
 | `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
 

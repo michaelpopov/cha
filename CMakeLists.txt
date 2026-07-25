@@ -82,12 +82,13 @@ add_library(cha_core
     src/transcript/transcript.cpp
     src/agents/agent_registry.cpp
     src/agents/completion_client.cpp
+    src/session/room_personas.cpp
     src/session/session_controller.cpp
     src/session/workspace.cpp
     src/agents/agent.cpp
     src/agents/config.cpp
     src/session/session_database.cpp
-    src/session/sessions_repository.cpp
+    src/session/session_catalog.cpp
     src/ui/text/command.cpp
     src/ui/text/mention.cpp
     src/ui/text/text_input.cpp
@@ -150,14 +151,14 @@ if(BUILD_TESTING)
         tests/transcript/unit_transcript.cpp
         tests/agents/unit_agent_context.cpp
         tests/agents/unit_agent_registry.cpp
-        tests/agents/unit_agent_roster.cpp
+        tests/session/unit_room_personas.cpp
         tests/agents/unit_completion_client.cpp
         tests/util/unit_event_channel.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_workspace.cpp
         tests/agents/unit_agent_definition_loader.cpp
         tests/agents/unit_config_loader.cpp
-        tests/session/unit_sessions_repository.cpp
+        tests/session/unit_session_catalog.cpp
         tests/ui/text/unit_command.cpp
         tests/ui/text/unit_mention.cpp
         tests/ui/text/unit_text_input.cpp

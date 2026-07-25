@@ -686,18 +686,16 @@ CompletionResult CompletionClient::perform(
     return {CompletionOutcome::completed, {}};
 }
 
-AgentInfo CompletionClient::info() const {
+AgentRuntimeInfo CompletionClient::info() const {
     return {
-        .id = config_.id,
-        .name = config_.name,
+        .persona = {
+            .id = config_.id,
+            .name = config_.name,
+        },
         .model = config_.model,
         .api = endpoint(),
         .streaming = config_.stream,
     };
-}
-
-const std::string& CompletionClient::agent_id() const {
-    return config_.id;
 }
 
 std::string CompletionClient::base_url() const {

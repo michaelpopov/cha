@@ -27,11 +27,11 @@ curses, storage, or providers.
 
 Mentions are recognized only at the start of a line, after leading whitespace.
 Trailing punctuation on a handle (`@Ada, hello`) is tolerated during resolution
-in `AgentRoster`, not here.
+in `RoomPersonas`, not here.
 
 The parser never resolves a handle. It hands the text through and lets
-`SessionController` match it against the live roster, so the grammar cannot go
-stale when a room's roster changes.
+`SessionController` match it against `RoomPersonas`, so the grammar cannot go
+stale when the personas in a room change.
 
 ## Dispatch
 
@@ -70,7 +70,7 @@ Two policies live in this file and nowhere else:
 - **Depends on:** `session/` for `SessionController`, `SessionUpdate`, and
   the shared generation-in-progress notice; `util/` for byte-oriented whitespace
   handling.
-- **Must not depend on:** terminal widgets, curses, session repositories, or
+- **Must not depend on:** terminal widgets, curses, session catalogs, or
   agent backends.
 
 ## Tests

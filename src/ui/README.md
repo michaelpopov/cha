@@ -33,12 +33,12 @@ flowchart TD
     txt -->|"calls"| controller["SessionController"]
     controller -->|"SessionUpdate"| term
     term -->|"reads"| convo["Transcript snapshots<br/>GenerationStatus"]
-    term -->|"reads"| roster["AgentRoster<br/>names for labels"]
+    term -->|"reads"| personas["RoomPersonas<br/>names for labels"]
 
-    controller -.->|"never called from ui/"| store["SessionsRepository<br/>SessionJournal<br/>CompletionBackend"]
+    controller -.->|"never called from ui/"| store["SessionCatalog<br/>SessionJournal<br/>CompletionBackend"]
 ```
 
-The dashed edge is the rule: a front end never opens a session repository, reads
+The dashed edge is the rule: a front end never opens a session catalog, reads
 workspace layout files, or calls a completion backend. If a front end needs
 something it cannot express through `SessionController` or `Workspace`, the fix
 is a new operation there — not a shortcut here.
@@ -52,7 +52,7 @@ Code under `ui/` may depend on:
 - `transcript/` for presentation-ready transcript values;
 - the shared grammar, as `terminal/` uses `text/`;
 - narrowly scoped `util/` helpers where protocol parsing needs them;
-- roster values from `agents/` when a presentation needs agent names — for
+- `RoomPersonas` from `session/` when a presentation needs persona names — for
   example deciding whether to label who a message was addressed to.
 
 It may not depend on `apps/`, on another front end's widgets, or on anything the

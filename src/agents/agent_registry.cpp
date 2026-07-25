@@ -3,7 +3,6 @@
 #include "agents/completion_client.h"
 #include "util/text.h"
 
-#include <algorithm>
 #include <exception>
 #include <optional>
 #include <stdexcept>
@@ -13,54 +12,35 @@
 namespace cha {
 namespace {
 
-bool ascii_iequals(std::string_view left, std::string_view right) {
-    if (left.size() != right.size()) {
-        return false;
-    }
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        char left_character = left[index];
-        char right_character = right[index];
-        if (left_character >= 'A' && left_character <= 'Z') {
-            left_character = static_cast<char>(left_character - 'A' + 'a');
-        }
-        if (right_character >= 'A' && right_character <= 'Z') {
-            right_character = static_cast<char>(right_character - 'A' + 'a');
-        }
-        if (left_character != right_character) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool starts_with_folded(std::string_view value, std::string_view prefix) {
-    return value.size() >= prefix.size()
-        && ascii_iequals(value.substr(0, prefix.size()), prefix);
-}
-
-std::string_view trim_punctuation(std::string_view handle) {
-    while (!handle.empty()
-           && std::string_view(",.;:!?").find(handle.back())
-               != std::string_view::npos) {
-        handle.remove_suffix(1);
-    }
-    return handle;
-}
-
-AgentRoster build_roster(
+std::vector<AgentRuntimeInfo> build_runtime_info(
     const std::vector<std::unique_ptr<CompletionBackend>>& backends) {
     if (backends.empty()) {
         throw std::invalid_argument("Agent registry requires at least one agent");
     }
-    std::vector<AgentInfo> infos;
+    std::vector<AgentRuntimeInfo> infos;
     infos.reserve(backends.size());
+    std::unordered_set<std::string> ids;
+    std::unordered_set<std::string> names;
     for (const auto& backend : backends) {
         if (!backend) {
             throw std::invalid_argument("Agent registry requires completion backends");
         }
-        infos.push_back(backend->info());
+        AgentRuntimeInfo info = backend->info();
+        validate_persona_id(info.persona.id);
+        validate_persona_name(info.persona.name);
+        if (!ids.insert(info.persona.id).second) {
+            throw std::invalid_argument(
+                "Agent registry has duplicate persona ID '"
+                + info.persona.id + "'");
+        }
+        if (!names.insert(fold_ascii(info.persona.name)).second) {
+            throw std::invalid_argument(
+                "Agent registry has duplicate persona name '"
+                + info.persona.name + "'");
+        }
+        infos.push_back(std::move(info));
     }
-    return AgentRoster(std::move(infos));
+    return infos;
 }
 
 std::vector<std::unique_ptr<CompletionBackend>> build_backends(
@@ -84,83 +64,6 @@ std::vector<std::unique_ptr<CompletionBackend>> build_backends(
 
 } // namespace
 
-AgentRoster::AgentRoster(std::vector<AgentInfo> agents)
-    : agents_(std::move(agents)) {
-    if (agents_.empty()) {
-        throw std::invalid_argument("Agent roster cannot be empty");
-    }
-    std::unordered_set<std::string> ids;
-    std::unordered_set<std::string> names;
-    for (const AgentInfo& agent : agents_) {
-        validate_agent_id(agent.id);
-        validate_agent_name(agent.name);
-        if (!ids.insert(agent.id).second) {
-            throw std::invalid_argument(
-                "Agent roster has duplicate agent ID '" + agent.id + "'");
-        }
-        if (!names.insert(fold_ascii(agent.name)).second) {
-            throw std::invalid_argument(
-                "Agent roster has duplicate agent name '" + agent.name + "'");
-        }
-    }
-}
-
-const std::vector<AgentInfo>& AgentRoster::agents() const noexcept { return agents_; }
-const AgentInfo& AgentRoster::first() const { return agents_.front(); }
-
-const AgentInfo* AgentRoster::find(std::string_view id) const {
-    const auto found = std::find_if(
-        agents_.begin(), agents_.end(),
-        [id](const AgentInfo& agent) { return agent.id == id; });
-    return found == agents_.end() ? nullptr : &*found;
-}
-
-HandleResolution AgentRoster::resolve_handle(std::string_view handle) const {
-    if (handle.empty()) {
-        return {};
-    }
-    const auto named = [this](std::string_view value) -> const AgentInfo* {
-        const auto found = std::find_if(agents_.begin(), agents_.end(), [value](const AgentInfo& agent) {
-            return ascii_iequals(agent.name, value);
-        });
-        return found == agents_.end() ? nullptr : &*found;
-    };
-    if (const AgentInfo* agent = named(handle)) {
-        return {HandleMatch::resolved, agent, {}};
-    }
-    const std::string_view trimmed = trim_punctuation(handle);
-    if (trimmed != handle) {
-        if (const AgentInfo* agent = named(trimmed)) {
-            return {HandleMatch::resolved, agent, {}};
-        }
-    }
-    if (trimmed.empty()) {
-        return {};
-    }
-    std::vector<const AgentInfo*> candidates;
-    for (const AgentInfo& agent : agents_) {
-        if (starts_with_folded(agent.name, trimmed)) {
-            candidates.push_back(&agent);
-        }
-    }
-    if (candidates.size() == 1) {
-        return {HandleMatch::resolved, candidates.front(), {}};
-    }
-    if (candidates.empty()) {
-        return {};
-    }
-    return {HandleMatch::ambiguous, nullptr, std::move(candidates)};
-}
-
-std::string AgentRoster::handle_list() const {
-    std::string result;
-    for (const AgentInfo& agent : agents_) {
-        if (!result.empty()) result += ", ";
-        result += "@" + agent.name;
-    }
-    return result;
-}
-
 AgentRegistry::AgentRegistry(
     const Transcript& transcript,
     std::vector<AgentDefinition> definitions)
@@ -172,7 +75,7 @@ AgentRegistry::AgentRegistry(
     std::vector<std::unique_ptr<CompletionBackend>> backends)
     : transcript_(transcript),
       backends_(std::move(backends)),
-      roster_(build_roster(backends_)),
+      runtime_info_(build_runtime_info(backends_)),
       thread_(&AgentRegistry::dialog, this) {
 }
 
@@ -190,22 +93,23 @@ AgentRegistry::~AgentRegistry() noexcept {
     }
 }
 
-const AgentRoster& AgentRegistry::roster() const noexcept { return roster_; }
+const std::vector<AgentRuntimeInfo>& AgentRegistry::runtime_info() const noexcept {
+    return runtime_info_;
+}
 
 bool AgentRegistry::submit(CompletionRequest request) {
     if (stopped_) {
         return false;
     }
 
-    const std::vector<AgentInfo>& agents = roster_.agents();
-    std::size_t backend_index = agents.size();
-    for (std::size_t index = 0; index < agents.size(); ++index) {
-        if (agents[index].id == request.prompt.addressed_to) {
+    std::size_t backend_index = runtime_info_.size();
+    for (std::size_t index = 0; index < runtime_info_.size(); ++index) {
+        if (runtime_info_[index].persona.id == request.prompt.addressed_to) {
             backend_index = index;
             break;
         }
     }
-    if (backend_index == agents.size()) {
+    if (backend_index == runtime_info_.size()) {
         return false;
     }
 

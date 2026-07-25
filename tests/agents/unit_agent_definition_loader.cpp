@@ -118,7 +118,7 @@ TEST(AgentDefinitions, LoadsEveryPersonaInTheDeclaredOrder) {
     std::filesystem::remove_all(root);
 }
 
-TEST(AgentDefinitions, RefusesToOpenARoomWithAPartialRoster) {
+TEST(AgentDefinitions, RefusesToOpenARoomWithMissingPersonaDefinitions) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path room = make_room(root);
     const std::filesystem::path healthy = make_persona(root, "healthy", "healthy", "Healthy");

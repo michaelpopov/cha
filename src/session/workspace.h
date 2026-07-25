@@ -10,7 +10,7 @@ namespace cha {
 
 class SessionController;
 
-// A room resolved from the workspace: its name, the ordered personas that form its roster, and the
+// A room resolved from the workspace: its name, its ordered personas, and the
 // directory holding its instructions and sessions.
 struct Room {
     std::string name;
@@ -30,7 +30,7 @@ struct SessionSummary {
 
 // The way into a workspace directory and the place where a chat session is assembled. It resolves
 // the layout (personas, rooms), lists rooms and their sessions, and on create or open loads the
-// room's AgentDefinition values, resolves the session file through SessionsRepository, restores the
+// room's AgentDefinition values, resolves the session file through SessionCatalog, restores the
 // stored transcript, and returns a SessionController ready to use. Front ends call it instead of
 // touching persona files or session storage themselves.
 class Workspace {

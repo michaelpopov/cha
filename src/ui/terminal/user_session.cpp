@@ -25,7 +25,7 @@ void UserSession::render() {
         controller_.transcript(),
         editor_,
         controller_.generation_status(),
-        show_addressing(controller_.roster(), controller_.transcript()),
+        show_addressing(controller_.personas(), controller_.transcript()),
         notice_);
     render_needed_ = false;
 }

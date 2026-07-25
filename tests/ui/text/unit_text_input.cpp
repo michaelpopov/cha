@@ -81,18 +81,16 @@ public:
         return {CompletionOutcome::cancelled, {}};
     }
 
-    AgentInfo info() const override {
+    AgentRuntimeInfo info() const override {
         return {
-            .id = id_,
-            .name = "Guide",
+            .persona = {
+                .id = id_,
+                .name = "Guide",
+            },
             .model = "test-model",
             .api = "test://blocking",
             .streaming = true,
         };
-    }
-
-    const std::string& agent_id() const override {
-        return id_;
     }
 
 private:

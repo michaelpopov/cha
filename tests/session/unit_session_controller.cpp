@@ -114,18 +114,16 @@ public:
         return result_;
     }
 
-    AgentInfo info() const override {
+    AgentRuntimeInfo info() const override {
         return {
-            .id = id_,
-            .name = name_,
+            .persona = {
+                .id = id_,
+                .name = name_,
+            },
             .model = "test-model",
             .api = "test://completion",
             .streaming = true,
         };
-    }
-
-    const std::string& agent_id() const override {
-        return id_;
     }
 
     std::vector<CompletionRequest> requests;
@@ -649,7 +647,7 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
         std::string::npos);
 }
 
-TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossTheRoster) {
+TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossRoomPersonas) {
     TemporaryJournal temporary;
     auto guide = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"Guide answer"});
