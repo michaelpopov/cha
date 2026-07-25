@@ -13,6 +13,7 @@ CPack*.cmake
 *~
 
 .env
+*.sqlite3
 
 # Local backups
 *.bac
