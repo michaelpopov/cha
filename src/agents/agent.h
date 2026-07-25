@@ -15,7 +15,7 @@
 namespace cha {
 
 // A persona loaded and ready to run: its Config plus the effective system prompt, which combines
-// the persona's own prompt with the instructions of the room it was loaded for.
+// the persona prompt, the room's prompt extension, and generated room context.
 struct AgentDefinition {
     Config config;
     std::string system_prompt;
@@ -52,12 +52,7 @@ struct AgentMessage {
     bool operator==(const AgentMessage&) const = default;
 };
 
-// Loads persona configuration and combines its system prompt with room instructions.
-AgentDefinition load_agent_definition(
-    const std::filesystem::path& persona_directory,
-    const std::filesystem::path& room_directory,
-    std::optional<std::filesystem::path> base_config_path = std::nullopt);
-
+// Loads the room's persona configurations in order and assembles each effective system prompt.
 std::vector<AgentDefinition> load_agent_definitions(
     const std::vector<std::filesystem::path>& persona_directories,
     const std::filesystem::path& room_directory,

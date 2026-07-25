@@ -657,9 +657,11 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseRoomLostAnAgent) {
         (std::vector<AgentMessage>{
             {AgentRole::system, "Ismael system"},
             {AgentRole::user,
-             "User: [to Cheburashka] Who are you?"
-             "\n\nCheburashka: I am Cheburashka."
-             "\n\nUser: And you?"},
+             "Shared chat history (JSONL):\n"
+             R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"Who are you?"})"
+             "\n"
+             R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"},
+            {AgentRole::user, "And you?"},
             {AgentRole::assistant, "Call me Ismael."},
         }));
     std::filesystem::remove(path);

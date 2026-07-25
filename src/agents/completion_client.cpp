@@ -1,6 +1,7 @@
 #include "agents/completion_client.h"
 
 #include "agents/agent.h"
+#include "agents/json_serialization.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -406,15 +407,7 @@ std::string build_request_body(
         body["reasoning_effort"] = config.reasoning_effort;
     }
 
-    try {
-        return body.dump();
-    } catch (const Json::type_error& error) {
-        if (error.id == 316) {
-            throw std::runtime_error(
-                "Completion request contains invalid UTF-8");
-        }
-        throw;
-    }
+    return dump_json(body, JsonPurpose::completion_request);
 }
 
 } // namespace

@@ -14,6 +14,7 @@ thread.
 | --- | --- |
 | `config.*` | `Config` — identity, connection, model, streaming, auth, and reasoning settings — plus typed TOML overlays and field validation. |
 | `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, the request and event protocol types, and `project_agent_context()`. |
+| `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
 | `agent_registry.*` | Runtime metadata, the execution thread, request routing, cancellation, and channels. |
 | `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
 | `completion_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
@@ -42,8 +43,11 @@ flowchart LR
     runtime -->|"identity only"| personas["session/RoomPersonas"]
 ```
 
-The effective system prompt is the persona's `SYSTEM.md` followed by the room's
-`USER.md`, so the same persona behaves differently in different rooms. Loading
+The effective system prompt is the persona's `SYSTEM.md`, followed by the
+room's `USER.md`, followed by generated room context. The generated section
+names the current agent, lists the other current personas, and defines how
+quoted shared history is encoded. It is added even for a single-agent room,
+because restored history can still mention a persona that has left. Loading
 happens on the main thread during session construction: `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
@@ -194,22 +198,25 @@ flowchart TD
     F -->|"otherwise"| K["keep"]
     K --> W{"whose entry?"}
     W -->|"this agent"| A["assistant message"]
-    W -->|"another agent"| U1["user message prefixed with that name"]
-    W -->|"human"| U2["user message, attributed only<br/>when others are involved"]
-    U1 --> C["coalesce adjacent user messages"]
-    U2 --> C
+    W -->|"human to this agent"| U["ordinary user message"]
+    W -->|"human to another agent"| J["shared-history JSON object"]
+    W -->|"another agent"| J
+    J --> B["contiguous JSON Lines block<br/>in a separate user message"]
 ```
 
-Attribution prefixes appear only when the projected history actually involves
-someone other than the requesting agent; a plain single-agent chat transcript is
-sent unadorned. The agent's system prompt is always the first message, and
-reasoning text is never included.
+The generated system section explains that shared-history objects are quoted
+statements whose first-person claims belong to their named speakers. JSON
+escaping prevents embedded newlines, quotes, or label-like text from creating
+false entry boundaries. A human prompt addressed to the requesting agent is
+always emitted outside the preceding shared-history block. Plain single-agent
+history retains its ordinary user/assistant wire shape, and reasoning text is
+never included.
 
 ## Dependencies
 
 - **Depends on:** `transcript/` for entries, read views, and IDs; `util/` for
-  text helpers and `EventChannel`; libcurl and nlohmann/json in the HTTP client;
-  toml++ in the config loader.
+  text helpers and `EventChannel`; nlohmann/json for shared-history and HTTP
+  JSON; libcurl in the HTTP client; toml++ in the config loader.
 - **Must not depend on:** `session/` or `ui/`. Workspace discovery
   stays above; once the persona and room directories are known, this layer owns
   the loading.
@@ -222,5 +229,6 @@ reasoning text is never included.
 | `tests/agents/unit_agent_definition_loader.cpp` | Persona and room prompt composition, and load errors. |
 | `tests/session/unit_room_personas.cpp` | Room-persona validation and every handle-resolution branch. |
 | `tests/agents/unit_agent_registry.cpp` | Single-flight gating, event correlation, cancellation, shutdown ordering. |
-| `tests/agents/unit_agent_context.cpp` | Projection rules, attribution, and coalescing. |
+| `tests/agents/unit_agent_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
+| `tests/agents/unit_json_serialization.cpp` | Context-specific invalid-UTF-8 diagnostics for JSON serialization. |
 | `tests/agents/unit_completion_client.cpp` | Request bodies, SSE and JSON parsing, reasoning formats, and the error taxonomy, driven by `tests/support/mock_http_server.h`. |

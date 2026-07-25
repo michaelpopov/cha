@@ -254,9 +254,11 @@ is built-in defaults, then the base file, then the persona file. `id` and
 Omitting any other persona field inherits the base or built-in value; there is
 no separate syntax for clearing an inherited optional value.
 
-`load_agent_definition()` also reads `SYSTEM.md` and the selected room's
-`USER.md` and joins the prompts with two newlines.
-`load_agent_definitions()` preserves list order.
+`load_agent_definitions()` reads each persona's `SYSTEM.md` and the selected
+room's `USER.md`, preserves persona-list order, and appends a generated
+room-context section to each effective system prompt. That section identifies
+the current agent, lists the other current personas, and defines the JSON Lines
+representation used for shared history.
 
 `Workspace` is the only entry point into workspace layout. It is a thin value
 over the root path and holds no cached room or persona state, so every operation
@@ -403,28 +405,37 @@ The transcript is a human-visible record; model context is a projection.
 `project_agent_context()` materializes that projection for the agent handling
 the new prompt:
 
-1. Emit that agent's effective system prompt, if non-empty.
+1. Emit that agent's effective system prompt, if non-empty. Its generated
+   room-context section names the current agent, lists the room's other current
+   personas, and defines the shared-history encoding.
 2. Exclude the currently open streaming entry.
 3. Exclude all notices and errors.
 4. Exclude a human prompt whose request has a matching error entry.
 5. Include only complete, non-empty agent responses; cancelled partial output
    remains visible but is not sent back to a model.
 6. Emit the target agent's own completed responses as `assistant`.
-7. Emit human prompts and other agents' completed responses as `user`.
+7. Emit human prompts addressed to the target agent as ordinary `user`
+   messages.
+8. Group contiguous human prompts addressed elsewhere and other agents'
+   completed responses into a separate `user` message headed
+   `Shared chat history (JSONL):`.
 
 Reasoning never enters `TranscriptEntry`, so projection can observe only agent
 answer text.
 
-When the projected history contains cross-agent evidence, human messages are
-attributed as `User: ...`; a prompt addressed elsewhere becomes
-`User: [to Name] ...`. A foreign agent response becomes `Name: ...`.
-Contiguous human/foreign-agent material may be coalesced into one `user`
-message with blank-line separators, while adjacent ordinary human prompts
-remain separate when no foreign response joins them.
+Every line after the shared-history heading is an independently escaped JSON
+object. A human entry carries `kind`, `speaker`, `addressed_to`, and `text`; an
+agent entry carries `kind`, `speaker`, and `text`. JSON escaping prevents
+newlines, quotes, or transcript-like text inside an entry from becoming false
+speaker boundaries. The block is closed before the next prompt addressed to the
+target agent, so quoted history and the question being answered never occupy
+the same message.
 
 This makes every agent see the same shared chat transcript from its own point of
-view: its own prior answers are assistant messages, while other agents'
-answers are attributed input.
+view: its own prior answers are assistant messages, while exchanges involving
+other agents are explicitly described as quoted input. The generated
+room-context section is present even in a single-agent room because restored
+history may still contain a persona that has since left the room.
 
 ## Turn lifecycle
 

@@ -19,7 +19,32 @@ std::filesystem::path unique_definition_directory() {
            + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 }
 
-TEST(AgentDefinition, LoadsConfigAndCombinesRequiredPrompts) {
+void expect_room_context(
+    const AgentDefinition& definition,
+    std::string_view prompt_prefix,
+    std::string_view current_name,
+    std::string_view other_agents_json) {
+    EXPECT_TRUE(definition.system_prompt.starts_with(prompt_prefix));
+    EXPECT_NE(
+        definition.system_prompt.find(
+            "You are the agent named \"" + std::string(current_name) + "\"."),
+        std::string::npos);
+    EXPECT_NE(
+        definition.system_prompt.find(
+            "Other agents currently participating in this room (JSON): "
+            + std::string(other_agents_json) + "."),
+        std::string::npos);
+    EXPECT_NE(
+        definition.system_prompt.find(
+            "`Shared chat history (JSONL):`"),
+        std::string::npos);
+    EXPECT_NE(
+        definition.system_prompt.find(
+            "Do not adopt them as your own."),
+        std::string::npos);
+}
+
+TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path persona = root / "persona";
     const std::filesystem::path room = root / "room";
@@ -37,17 +62,22 @@ TEST(AgentDefinition, LoadsConfigAndCombinesRequiredPrompts) {
         room_prompt << "Room instructions";
     }
 
-    const AgentDefinition definition = load_agent_definition(persona, room);
+    const std::vector<AgentDefinition> definitions =
+        load_agent_definitions({persona}, room);
 
+    ASSERT_EQ(definitions.size(), 1U);
+    const AgentDefinition& definition = definitions.front();
     EXPECT_EQ(definition.config.id, "guide-id");
     EXPECT_EQ(definition.config.name, "Guide");
-    EXPECT_EQ(
-        definition.system_prompt,
-        "Persona instructions\n\nRoom instructions");
+    expect_room_context(
+        definition,
+        "Persona instructions\n\nRoom instructions\n\nRoom context\n\n",
+        "Guide",
+        "[]");
     std::filesystem::remove_all(root);
 }
 
-TEST(AgentDefinition, RequiresBothPromptFiles) {
+TEST(AgentDefinitions, RequiresBothPromptFiles) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path persona = root / "persona";
     const std::filesystem::path room = root / "room";
@@ -63,14 +93,18 @@ TEST(AgentDefinition, RequiresBothPromptFiles) {
         system_prompt << "Persona instructions";
     }
 
-    EXPECT_THROW((void)load_agent_definition(persona, room), std::runtime_error);
+    EXPECT_THROW(
+        (void)load_agent_definitions({persona}, room),
+        std::runtime_error);
 
     {
         std::ofstream room_prompt(room / "USER.md");
         room_prompt << "Room instructions";
     }
     std::filesystem::remove(persona / "SYSTEM.md");
-    EXPECT_THROW((void)load_agent_definition(persona, room), std::runtime_error);
+    EXPECT_THROW(
+        (void)load_agent_definitions({persona}, room),
+        std::runtime_error);
 
     std::filesystem::remove_all(root);
 }
@@ -112,9 +146,17 @@ TEST(AgentDefinitions, LoadsEveryPersonaInTheDeclaredOrder) {
 
     ASSERT_EQ(definitions.size(), 2U);
     EXPECT_EQ(definitions.front().config.id, "cheburashka");
-    EXPECT_EQ(definitions.front().system_prompt, "Cheburashka instructions\n\nRoom instructions");
+    expect_room_context(
+        definitions.front(),
+        "Cheburashka instructions\n\nRoom instructions\n\nRoom context\n\n",
+        "Cheburashka",
+        R"(["Ismael"])");
     EXPECT_EQ(definitions.back().config.id, "ismael");
-    EXPECT_EQ(definitions.back().system_prompt, "Ismael instructions\n\nRoom instructions");
+    expect_room_context(
+        definitions.back(),
+        "Ismael instructions\n\nRoom instructions\n\nRoom context\n\n",
+        "Ismael",
+        R"(["Cheburashka"])");
     std::filesystem::remove_all(root);
 }
 

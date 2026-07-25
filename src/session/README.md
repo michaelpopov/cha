@@ -29,7 +29,7 @@ flowchart TD
     rooms --> list["rooms.list — ordered room names"]
     rooms --> room["room-name/"]
     room --> plist["personas.list — ordered persona names"]
-    room --> user["USER.md — room instructions"]
+    room --> user["USER.md — room system-prompt extension"]
     room --> sessions["sessions/&lt;id&gt;.sqlite3"]
 ```
 

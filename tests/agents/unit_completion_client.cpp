@@ -158,9 +158,13 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
     EXPECT_EQ(body["reasoning_effort"], "medium");
     EXPECT_EQ(body["messages"], Json::array({
         {{"role", "system"}, {"content", "Be concise."}},
-        {{"role", "user"}, {"content", "User: Earlier question"}},
+        {{"role", "user"}, {"content", "Earlier question"}},
         {{"role", "assistant"}, {"content", "Earlier answer"}},
-        {{"role", "user"}, {"content", "Other: Other answer\n\nUser: Question"}},
+        {{"role", "user"},
+         {"content",
+          "Shared chat history (JSONL):\n"
+          R"({"kind":"agent","speaker":"Other","text":"Other answer"})"}},
+        {{"role", "user"}, {"content", "Question"}},
     }));
 }
 

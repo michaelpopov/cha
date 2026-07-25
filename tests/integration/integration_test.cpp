@@ -359,9 +359,11 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
         Json{{"role", "system"}, {"content", ismael_prompt}},
         Json{{"role", "user"},
              {"content",
-              "User: [to Cheburashka] Who are you?"
-              "\n\nCheburashka: I am Cheburashka."
-              "\n\nUser: and you?"}},
+              "Shared chat history (JSONL):\n"
+              R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"Who are you?"})"
+              "\n"
+              R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
+        Json{{"role", "user"}, {"content", "and you?"}},
     }));
 
     const std::vector<TranscriptEntry> restored =
@@ -428,11 +430,13 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
         Json{{"role", "system"}, {"content", ismael_prompt}},
         Json{{"role", "user"},
              {"content",
-              "User: [to Cheburashka] Who are you?"
-              "\n\nCheburashka: I am Cheburashka."
-              "\n\nUser: and you?"}},
+              "Shared chat history (JSONL):\n"
+              R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"Who are you?"})"
+              "\n"
+              R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
+        Json{{"role", "user"}, {"content", "and you?"}},
         Json{{"role", "assistant"}, {"content", "Call me Ismael."}},
-        Json{{"role", "user"}, {"content", "User: What did he say?"}},
+        Json{{"role", "user"}, {"content", "What did he say?"}},
     }));
 }
 

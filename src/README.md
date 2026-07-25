@@ -18,7 +18,8 @@ workspace's optional `personas/base_config.toml`; persona-specific values
 override them. A room contains an ordered list of the personas participating in
 chats in that room, together with a room-specific system-prompt extension.
 When the room is loaded, that extension is appended to each participating
-persona's base system prompt.
+persona's base system prompt, followed by generated room context identifying
+the current agent, the room's other personas, and the shared-history encoding.
 
 During a run, the participating personas are represented as agents. Each agent
 has its own identity, effective system prompt, and model connection, while all
@@ -287,16 +288,21 @@ context.
 The transcript is not sent verbatim. `project_agent_context()` in `agents/`
 rebuilds a per-agent view of it for each request:
 
-- the agent's own effective system prompt comes first;
+- the agent's effective system prompt comes first; its generated room-context
+  section identifies the current agent and other current personas and explains
+  the shared-history encoding;
 - notices, errors, and any still-open streaming entry are dropped;
 - human prompts belonging to a failed turn are dropped with it;
 - only `complete` agent entries with non-empty text survive; cancelled and
   failed answers stay on screen but never become history;
-- the requesting agent's own answers become `assistant` messages; another
-  agent's answers become `user` messages prefixed with that agent's name;
-- when the transcript involves more than the requesting agent, human turns are
-  prefixed `User:` and marked `[to Name]` when they were addressed elsewhere;
-- consecutive `user` messages produced by this attribution are coalesced.
+- human prompts addressed to the requesting agent become ordinary `user`
+  messages, and that agent's own answers become `assistant` messages;
+- contiguous entries involving another agent become a separate `user` message
+  headed `Shared chat history (JSONL):`; every following line is an escaped
+  JSON object carrying `kind`, `speaker`, `text`, and, for human entries,
+  `addressed_to`;
+- a prompt addressed to the requesting agent is never merged into the preceding
+  shared-history block.
 
 Reasoning text is never projected and never stored. It exists only in the
 active response while its turn is running and never enters the transcript.

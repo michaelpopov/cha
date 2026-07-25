@@ -150,6 +150,7 @@ if(BUILD_TESTING)
         tests/util/unit_text.cpp
         tests/transcript/unit_transcript.cpp
         tests/agents/unit_agent_context.cpp
+        tests/agents/unit_json_serialization.cpp
         tests/agents/unit_agent_registry.cpp
         tests/session/unit_room_personas.cpp
         tests/agents/unit_completion_client.cpp
