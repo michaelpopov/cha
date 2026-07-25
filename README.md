@@ -8,9 +8,17 @@ Run `cha` from a workspace containing `personas/` and `rooms/`. `rooms/rooms.lis
 
 Each room contains `personas.list`, an ordered list of one or more personas, and `USER.md`. Every listed persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (`SYSTEM.md` followed by the room `USER.md`). The first persona is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
-Each persona's immutable `id` identifies transcript entries; its `name` is the visible `@mention` handle. Names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A room cannot contain duplicate IDs or names. All agents use the session's shared chat transcript: other agents' prior answers are attributed when sent as context. A session stores only its room and transcript, so it can be reopened even if the room's roster changed.
+Each persona's immutable `id` identifies transcript entries; its `name` is the visible `@mention` handle. Names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A room cannot contain duplicate IDs or names. All agents use the session's shared chat transcript: other agents' prior answers are attributed when sent as context. A session stores only its room and transcript, so it can be reopened even if the room's personas changed.
 
-Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and room must match the selected room before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored. The following top-level persona configuration fields are supported:
+Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and room must match the selected room before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
+
+`personas/base_config.toml` may define configuration shared by every persona in
+the workspace. A persona's own `config.toml` overrides it field by field. The
+precedence is built-in defaults, then `base_config.toml`, then the persona
+file. The base file is optional. `id` and `name` are never inherited: they must
+appear in every persona file and are not allowed in the base file.
+
+The following top-level configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
@@ -29,16 +37,21 @@ Each session is stored in one self-contained `sessions/<id>.sqlite3` database. I
 Example:
 
 ```toml
-id = "local-assistant"
-name = "Local assistant"
+# personas/base_config.toml
 host = "127.0.0.1"
 port = 8080
 mode = "net"
 model = "local-model"
 stream = true
-temperature = 0.7
 api_key = ""
 reasoning_format = "auto"
+```
+
+```toml
+# personas/local-assistant/config.toml
+id = "local-assistant"
+name = "Local assistant"
+temperature = 0.7
 ```
 
 `reasoning_effort` requests a generation policy; `reasoning_format` describes
@@ -76,8 +89,8 @@ Before loading server configuration, the application optionally reads `.env` fro
 
 - `/clear` starts a new visible history while retaining the system prompt.
   Earlier transcript rows remain in the session database.
-- `/info` displays the transcript entry count followed by the current room roster.
-- `/agents` displays the current room roster and marks the default agent.
+- `/info` displays the transcript entry count followed by the current room's personas.
+- `/agents` displays the current room's personas and marks the default agent.
 - `/@Name` changes the default agent for this run only.
 - `/stop` cancels the active model response.
 - `/exit` exits the application.
@@ -119,7 +132,7 @@ The source tree is documented from the inside out, with diagrams:
 | --- | --- |
 | [`src/README.md`](src/README.md) | High-level architecture: layers, threading, the life of a turn, persistence, and the invariants that hold everywhere. Start here. |
 | [`src/transcript/README.md`](src/transcript/README.md) | The transcript model shared by every layer. |
-| [`src/agents/README.md`](src/agents/README.md) | Persona loading, rosters, the execution thread, and the HTTP transport. |
+| [`src/agents/README.md`](src/agents/README.md) | Persona loading, the execution thread, and the HTTP transport. |
 | [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
 | [`src/ui/README.md`](src/ui/README.md) | The UI contract, with [`text/`](src/ui/text/README.md) and [`terminal/`](src/ui/terminal/README.md) beneath it. |
 | [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |

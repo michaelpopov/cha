@@ -8,6 +8,7 @@
 #include "util/text.h"
 
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -17,13 +18,19 @@ namespace {
 
 std::vector<AgentDefinition> load_definitions(
     const Workspace& workspace,
-    const Room& room) {
+    const Room& room,
+    const std::filesystem::path& base_config_candidate) {
     std::vector<std::filesystem::path> persona_directories;
     persona_directories.reserve(room.persona_names.size());
     for (const std::string& persona : room.persona_names) {
         persona_directories.push_back(workspace.persona_directory(persona));
     }
-    return load_agent_definitions(persona_directories, room.directory);
+    const std::optional<std::filesystem::path> base_config =
+        std::filesystem::exists(base_config_candidate)
+        ? std::optional<std::filesystem::path>(base_config_candidate)
+        : std::nullopt;
+    return load_agent_definitions(
+        persona_directories, room.directory, base_config);
 }
 
 SessionCatalog session_catalog(
@@ -159,7 +166,8 @@ std::unique_ptr<SessionController> Workspace::create_session(
     const std::string& room_name,
     std::string label) const {
     const Room room = load_room(room_name);
-    std::vector<AgentDefinition> definitions = load_definitions(*this, room);
+    std::vector<AgentDefinition> definitions = load_definitions(
+        *this, room, root_ / "personas" / "base_config.toml");
     const SessionCatalog catalog(room.directory / "sessions", room.name);
 
     const Session session = catalog.create(std::move(label));
@@ -172,7 +180,8 @@ std::unique_ptr<SessionController> Workspace::open_session(
     const std::string& room_name,
     const std::string& session_id) const {
     const Room room = load_room(room_name);
-    std::vector<AgentDefinition> definitions = load_definitions(*this, room);
+    std::vector<AgentDefinition> definitions = load_definitions(
+        *this, room, root_ / "personas" / "base_config.toml");
     const SessionCatalog catalog(room.directory / "sessions", room.name);
 
     const std::filesystem::path database_path =

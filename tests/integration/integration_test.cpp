@@ -40,7 +40,8 @@ Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
     Config config = load_config(
-        workspace_directory / "personas" / "Ismael" / "config.toml");
+        workspace_directory / "personas" / "Ismael" / "config.toml",
+        workspace_directory / "personas" / "base_config.toml");
     config.stream = stream;
     return config;
 }
@@ -174,7 +175,11 @@ std::vector<AgentDefinition> lobby_definitions() {
     for (const std::string& persona_name : room.persona_names) {
         directories.push_back(workspace.persona_directory(persona_name));
     }
-    return load_agent_definitions(directories, room.directory);
+    return load_agent_definitions(
+        directories,
+        room.directory,
+        std::filesystem::path{CHA_WORKSPACE_DIRECTORY}
+            / "personas" / "base_config.toml");
 }
 
 // Redirects one agent's backend at a local mock server without touching its prompt.

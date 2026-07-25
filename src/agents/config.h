@@ -19,8 +19,8 @@ enum class ReasoningFormat {
 };
 
 // Everything needed to reach one persona's provider and shape its replies: identity, endpoint and
-// credentials, model, streaming, and reasoning settings. Loaded from a persona's TOML file by
-// load_config(); every field has a usable default, so a partial file stays valid.
+// credentials, model, streaming, and reasoning settings. load_config() overlays the persona file
+// on optional workspace defaults, then applies the built-in defaults below.
 struct Config {
     std::string id{"assistant"};
     std::string name{"Assistant"};
@@ -37,7 +37,10 @@ struct Config {
     bool https{};
 };
 
-// Loads one persisted agent configuration from TOML.
-Config load_config(const std::filesystem::path& path);
+// Loads one persona configuration. id and name must come from persona_path. When base_path is
+// present, its other values become defaults that the persona file may override.
+Config load_config(
+    const std::filesystem::path& persona_path,
+    std::optional<std::filesystem::path> base_path = std::nullopt);
 
 } // namespace cha

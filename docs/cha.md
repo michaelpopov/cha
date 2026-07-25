@@ -224,6 +224,7 @@ The workspace shape is:
 workspace/
   .env                         optional
   personas/
+    base_config.toml           optional shared persona configuration
     <persona>/
       config.toml
       SYSTEM.md
@@ -243,10 +244,19 @@ parses the room and list; persona-directory existence is checked when
 `Workspace` resolves each entry.
 
 `Config` and `AgentDefinition` are agent-owned value types. Their disk loaders
-live under `agents/`: `load_config()` parses `config.toml`, while
-`load_agent_definition()` reads `SYSTEM.md` and the selected room's `USER.md`
-and joins the prompts with two newlines. `load_agent_definitions()` preserves
-list order.
+live under `agents/`. `Workspace` resolves the optional
+`personas/base_config.toml` and passes it explicitly to
+`load_agent_definitions()`; the agent layer does not infer the workspace
+layout. `load_config()` parses the base and persona files as typed partial
+configurations, overlays them, and validates the effective result. Precedence
+is built-in defaults, then the base file, then the persona file. `id` and
+`name` are required in the persona file and forbidden in the base file.
+Omitting any other persona field inherits the base or built-in value; there is
+no separate syntax for clearing an inherited optional value.
+
+`load_agent_definition()` also reads `SYSTEM.md` and the selected room's
+`USER.md` and joins the prompts with two newlines.
+`load_agent_definitions()` preserves list order.
 
 `Workspace` is the only entry point into workspace layout. It is a thin value
 over the root path and holds no cached room or persona state, so every operation

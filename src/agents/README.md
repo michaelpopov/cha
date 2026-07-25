@@ -12,7 +12,7 @@ thread.
 
 | Source | Responsibility |
 | --- | --- |
-| `config.*` | `Config` — identity, connection, model, streaming, auth, and reasoning settings — plus TOML loading and field validation. |
+| `config.*` | `Config` — identity, connection, model, streaming, auth, and reasoning settings — plus typed TOML overlays and field validation. |
 | `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, the request and event protocol types, and `project_agent_context()`. |
 | `agent_registry.*` | Runtime metadata, the execution thread, request routing, cancellation, and channels. |
 | `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
@@ -23,12 +23,15 @@ thread.
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
+        base["personas/base_config.toml<br/>optional shared defaults"]
         cfg["personas/X/config.toml"]
         sys["personas/X/SYSTEM.md"]
         usr["rooms/R/USER.md"]
     end
 
-    cfg -->|"load_config"| conf["Config"]
+    base --> load["load_config<br/>typed overlay"]
+    cfg --> load
+    load --> conf["Config"]
     sys --> def["AgentDefinition<br/>config + effective system prompt"]
     usr --> def
     conf --> def
@@ -43,6 +46,13 @@ The effective system prompt is the persona's `SYSTEM.md` followed by the room's
 `USER.md`, so the same persona behaves differently in different rooms. Loading
 happens on the main thread during session construction: `session/` decides
 *which* directories to load, `agents/` decides *how*.
+
+Configuration is a one-level overlay, not general inheritance. Built-in
+defaults are applied first, then the optional workspace
+`personas/base_config.toml`, then the persona's own `config.toml`. An omitted
+field inherits the value below it. `id` and `name` are the exception: each
+persona file must define them, and the base file must not. Parsing and
+validation errors identify the file that supplied the invalid value.
 
 Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
 

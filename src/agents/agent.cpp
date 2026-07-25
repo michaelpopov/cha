@@ -26,11 +26,14 @@ std::string read_prompt(const std::filesystem::path& path) {
 
 AgentDefinition load_agent_definition(
     const std::filesystem::path& persona_directory,
-    const std::filesystem::path& room_directory) {
+    const std::filesystem::path& room_directory,
+    std::optional<std::filesystem::path> base_config_path) {
     const std::string persona_name = persona_directory.filename().string();
     Config config;
     try {
-        config = load_config(persona_directory / "config.toml");
+        config = load_config(
+            persona_directory / "config.toml",
+            std::move(base_config_path));
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Persona '" + persona_name
@@ -61,12 +64,14 @@ AgentDefinition load_agent_definition(
 
 std::vector<AgentDefinition> load_agent_definitions(
     const std::vector<std::filesystem::path>& persona_directories,
-    const std::filesystem::path& room_directory) {
+    const std::filesystem::path& room_directory,
+    std::optional<std::filesystem::path> base_config_path) {
     std::vector<AgentDefinition> definitions;
     definitions.reserve(persona_directories.size());
     for (const auto& directory : persona_directories) {
         definitions.push_back(
-            load_agent_definition(directory, room_directory));
+            load_agent_definition(
+                directory, room_directory, base_config_path));
     }
     return definitions;
 }

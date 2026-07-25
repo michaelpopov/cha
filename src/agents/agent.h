@@ -55,11 +55,13 @@ struct AgentMessage {
 // Loads persona configuration and combines its system prompt with room instructions.
 AgentDefinition load_agent_definition(
     const std::filesystem::path& persona_directory,
-    const std::filesystem::path& room_directory);
+    const std::filesystem::path& room_directory,
+    std::optional<std::filesystem::path> base_config_path = std::nullopt);
 
 std::vector<AgentDefinition> load_agent_definitions(
     const std::vector<std::filesystem::path>& persona_directories,
-    const std::filesystem::path& room_directory);
+    const std::filesystem::path& room_directory,
+    std::optional<std::filesystem::path> base_config_path = std::nullopt);
 
 void validate_persona_id(std::string_view id);
 void validate_persona_name(std::string_view name);

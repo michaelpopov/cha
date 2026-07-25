@@ -12,11 +12,13 @@ manual is the [top-level `README.md`](../README.md).
 
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
 It runs inside a workspace containing persona definitions and rooms. A persona
-definition contains an identity, model configuration, and base system prompt. A
-room contains an ordered list of the personas participating in chats in that
-room, together with a room-specific system-prompt extension. When the room is
-loaded, that extension is appended to each participating persona's base system
-prompt.
+definition contains an identity, effective model configuration, and base
+system prompt. Its model configuration may inherit shared values from the
+workspace's optional `personas/base_config.toml`; persona-specific values
+override them. A room contains an ordered list of the personas participating in
+chats in that room, together with a room-specific system-prompt extension.
+When the room is loaded, that extension is appended to each participating
+persona's base system prompt.
 
 During a run, the participating personas are represented as agents. Each agent
 has its own identity, effective system prompt, and model connection, while all

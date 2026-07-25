@@ -37,12 +37,16 @@ protected:
             room_prompt << "Room instructions";
         }
         {
+            std::ofstream base_config(
+                root_ / "personas" / "base_config.toml");
+            base_config << "host = \"127.0.0.1\"\n"
+                        << "port = 8080\n";
+        }
+        {
             std::ofstream config(
                 root_ / "personas" / "guide" / "config.toml");
             config << "id = \"guide-id\"\n"
-                   << "name = \"Guide\"\n"
-                   << "host = \"127.0.0.1\"\n"
-                   << "port = 8080\n";
+                   << "name = \"Guide\"\n";
         }
         {
             std::ofstream system_prompt(
@@ -84,6 +88,24 @@ TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
         workspace.open_session("lobby", sessions.front().id);
     EXPECT_TRUE(reopened->transcript().entries().empty());
     reopened->shutdown();
+}
+
+TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedPersonaConfig) {
+    std::filesystem::remove(root_ / "personas" / "base_config.toml");
+    {
+        std::ofstream config(
+            root_ / "personas" / "guide" / "config.toml");
+        config << "id = \"guide-id\"\n"
+               << "name = \"Guide\"\n"
+               << "host = \"127.0.0.1\"\n"
+               << "port = 8080\n";
+    }
+    Workspace workspace(root_);
+
+    std::unique_ptr<SessionController> session =
+        workspace.create_session("lobby", "No shared config");
+
+    session->shutdown();
 }
 
 TEST_F(ApplicationWorkspaceTest, MapsInvalidStoredSessionDetails) {

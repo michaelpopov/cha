@@ -144,5 +144,116 @@ TEST(Config, RequiresStableIdentityAndDisplayName) {
     std::filesystem::remove(path);
 }
 
+TEST(Config, OverlaysPersonaValuesOnWorkspaceDefaults) {
+    const auto directory = std::filesystem::temp_directory_path()
+        / ("cha_config_overlay_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(directory);
+    const auto base_path = directory / "base_config.toml";
+    const auto persona_path = directory / "config.toml";
+    {
+        std::ofstream base(base_path);
+        base << "host = \"shared.example\"\n"
+             << "port = 443\n"
+             << "https = true\n"
+             << "mode = \"net\"\n"
+             << "model = \"shared-model\"\n"
+             << "stream = true\n"
+             << "temperature = 0.5\n"
+             << "api_key_env = \"SHARED_API_KEY\"\n"
+             << "reasoning_effort = \"medium\"\n"
+             << "reasoning_format = \"reasoning\"\n";
+        std::ofstream persona(persona_path);
+        persona << "id = \"example-id\"\n"
+                << "name = \"Example\"\n"
+                << "model = \"persona-model\"\n"
+                << "stream = false\n";
+    }
+
+    const Config config = load_config(persona_path, base_path);
+
+    EXPECT_EQ(config.id, "example-id");
+    EXPECT_EQ(config.name, "Example");
+    EXPECT_EQ(config.host, "shared.example");
+    EXPECT_EQ(config.port, 443);
+    EXPECT_TRUE(config.https);
+    EXPECT_EQ(config.mode, Mode::net);
+    EXPECT_EQ(config.model, "persona-model");
+    EXPECT_FALSE(config.stream);
+    ASSERT_TRUE(config.temperature);
+    EXPECT_DOUBLE_EQ(*config.temperature, 0.5);
+    EXPECT_EQ(config.api_key_env, "SHARED_API_KEY");
+    EXPECT_EQ(config.reasoning_effort, "medium");
+    EXPECT_EQ(config.reasoning_format, ReasoningFormat::reasoning);
+
+    std::filesystem::remove_all(directory);
+}
+
+TEST(Config, RejectsPersonaIdentityInWorkspaceDefaults) {
+    const auto directory = std::filesystem::temp_directory_path()
+        / ("cha_config_base_identity_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(directory);
+    const auto base_path = directory / "base_config.toml";
+    const auto persona_path = directory / "config.toml";
+    {
+        std::ofstream base(base_path);
+        base << "id = \"shared\"\n"
+             << "host = \"shared.example\"\n"
+             << "port = 443\n";
+        std::ofstream persona(persona_path);
+        persona << "id = \"example-id\"\n"
+                << "name = \"Example\"\n";
+    }
+
+    try {
+        (void)load_config(persona_path, base_path);
+        FAIL() << "Expected shared identity to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(
+            std::string(error.what()).find(base_path.string()),
+            std::string::npos);
+        EXPECT_NE(
+            std::string(error.what()).find("id"),
+            std::string::npos);
+    }
+
+    std::filesystem::remove_all(directory);
+}
+
+TEST(Config, IdentifiesInvalidWorkspaceDefaultSource) {
+    const auto directory = std::filesystem::temp_directory_path()
+        / ("cha_config_base_value_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(directory);
+    const auto base_path = directory / "base_config.toml";
+    const auto persona_path = directory / "config.toml";
+    {
+        std::ofstream base(base_path);
+        base << "host = \"shared.example\"\n"
+             << "port = 65536\n";
+        std::ofstream persona(persona_path);
+        persona << "id = \"example-id\"\n"
+                << "name = \"Example\"\n";
+    }
+
+    try {
+        (void)load_config(persona_path, base_path);
+        FAIL() << "Expected invalid shared port to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(
+            std::string(error.what()).find(base_path.string()),
+            std::string::npos);
+        EXPECT_NE(
+            std::string(error.what()).find("port"),
+            std::string::npos);
+    }
+
+    std::filesystem::remove_all(directory);
+}
+
 } // namespace
 } // namespace cha

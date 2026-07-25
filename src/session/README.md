@@ -24,6 +24,7 @@ flowchart TD
     root["workspace root"] --> personas["personas/"]
     root --> rooms["rooms/"]
     root --> env[".env — optional"]
+    personas --> base["base_config.toml<br/>optional shared defaults"]
     personas --> p1["Name/config.toml<br/>Name/SYSTEM.md"]
     rooms --> list["rooms.list — ordered room names"]
     rooms --> room["room-name/"]
@@ -37,6 +38,12 @@ List files ignore blank lines and `#` comments, must name at least one entry,
 and every name is checked with `require_path_component()` before it becomes a
 path — so a workspace file can never reach outside its directory. A room's
 persona list additionally rejects duplicates.
+
+When a session is created or opened, `Workspace` checks for
+`personas/base_config.toml` and explicitly passes that optional path to the
+agent loaders along with each persona directory. The agent layer therefore
+applies shared configuration without knowing or inferring the workspace
+layout.
 
 ## Room personas
 
