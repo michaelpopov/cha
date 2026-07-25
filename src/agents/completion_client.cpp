@@ -400,9 +400,7 @@ std::string build_request_body(
         {"stream", config.stream},
         {"messages", std::move(messages)},
     };
-    if (config.temperature) {
-        body["temperature"] = *config.temperature;
-    }
+    body["temperature"] = config.temperature;
     if (!config.reasoning_effort.empty()) {
         body["reasoning_effort"] = config.reasoning_effort;
     }

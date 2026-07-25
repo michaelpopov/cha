@@ -755,7 +755,7 @@ cannot extend into transport work.
 - `net`: use libcurl against an OpenAI-compatible API.
 
 For each agent, configuration includes stable ID/name, host, port, mode, model,
-streaming flag, optional temperature, API key or environment-based key,
+streaming flag, sampling temperature, API key or environment-based key,
 optional reasoning effort, reasoning format, and HTTP/HTTPS selection.
 `api_key_env` overrides `api_key` and must resolve to a non-empty environment
 value. `reasoning_effort` controls the requested generation policy;

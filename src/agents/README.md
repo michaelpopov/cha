@@ -146,7 +146,7 @@ network; `tests/support/test_backends.h` has the helpers.
 ```mermaid
 flowchart TD
     prep["prepare"] --> proj["project_agent_context"]
-    proj --> body["JSON body: model, stream, messages,<br/>optional temperature and reasoning_effort"]
+    proj --> body["JSON body: model, stream, messages,<br/>temperature and optional reasoning_effort"]
     body --> post["POST to /v1/chat/completions"]
     post --> mode{"streaming?"}
     mode -->|"yes"| sse["parse text/event-stream data lines"]

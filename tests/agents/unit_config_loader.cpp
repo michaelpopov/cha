@@ -43,8 +43,7 @@ TEST(Config, LoadsHostAndPortFromToml) {
     EXPECT_EQ(config.mode, Mode::net);
     EXPECT_EQ(config.model, "example-model");
     EXPECT_FALSE(config.stream);
-    ASSERT_TRUE(config.temperature);
-    EXPECT_DOUBLE_EQ(*config.temperature, 0.25);
+    EXPECT_DOUBLE_EQ(config.temperature, 0.25);
     EXPECT_EQ(config.api_key, "secret");
     EXPECT_EQ(config.api_key_env, "OPENAI_API_KEY");
     EXPECT_EQ(config.reasoning_effort, "medium");
@@ -105,6 +104,7 @@ TEST(Config, AllowsMissingModel) {
     const Config config = load_config(path);
 
     EXPECT_TRUE(config.model.empty());
+    EXPECT_DOUBLE_EQ(config.temperature, 1.0);
     std::filesystem::remove(path);
 }
 
@@ -127,6 +127,36 @@ TEST(Config, RejectsOutOfRangePort) {
             (void)config;
         },
         std::runtime_error);
+    std::filesystem::remove(path);
+}
+
+TEST(Config, RejectsOutOfRangeTemperature) {
+    const auto path = std::filesystem::temp_directory_path()
+        / ("cha_invalid_temperature_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count())
+           + ".toml");
+    {
+        std::ofstream config_file(path);
+        config_file
+            << "id = \"example-id\"\n"
+            << "name = \"Example\"\n"
+            << "host = \"example.com\"\n"
+            << "port = 8080\n"
+            << "temperature = 2.1\n";
+    }
+
+    try {
+        (void)load_config(path);
+        FAIL() << "Expected invalid temperature to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(
+            std::string(error.what()).find(path.string()),
+            std::string::npos);
+        EXPECT_NE(
+            std::string(error.what()).find("temperature"),
+            std::string::npos);
+    }
     std::filesystem::remove(path);
 }
 
@@ -181,8 +211,7 @@ TEST(Config, OverlaysPersonaValuesOnWorkspaceDefaults) {
     EXPECT_EQ(config.mode, Mode::net);
     EXPECT_EQ(config.model, "persona-model");
     EXPECT_FALSE(config.stream);
-    ASSERT_TRUE(config.temperature);
-    EXPECT_DOUBLE_EQ(*config.temperature, 0.5);
+    EXPECT_DOUBLE_EQ(config.temperature, 0.5);
     EXPECT_EQ(config.api_key_env, "SHARED_API_KEY");
     EXPECT_EQ(config.reasoning_effort, "medium");
     EXPECT_EQ(config.reasoning_format, ReasoningFormat::reasoning);

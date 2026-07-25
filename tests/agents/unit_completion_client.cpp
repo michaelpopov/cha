@@ -184,6 +184,7 @@ TEST(CompletionClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     mock.join();
     const Json body = Json::parse(request_body(mock.requests().front()));
+    EXPECT_DOUBLE_EQ(body["temperature"], 1.0);
     ASSERT_EQ(body["messages"].size(), 1U);
     EXPECT_EQ(body["messages"][0]["role"], "user");
     EXPECT_EQ(body["messages"][0]["content"], prompt);

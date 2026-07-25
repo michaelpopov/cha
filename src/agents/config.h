@@ -29,7 +29,7 @@ struct Config {
     Mode mode{Mode::test};
     std::string model;
     bool stream{true};
-    std::optional<double> temperature;
+    double temperature{1.0};
     std::string api_key;
     std::string api_key_env;
     std::string reasoning_effort;

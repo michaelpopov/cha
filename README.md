@@ -27,7 +27,8 @@ The following top-level configuration fields are supported:
 - `mode`: `net` for llama.cpp or `test` for the built-in echo server; defaults to `test`.
 - `model`: optional model name sent in chat-completions requests. If omitted, the first model returned by the endpoint's `/v1/models` API is used.
 - `stream`: whether to request streamed SSE responses; defaults to `true`.
-- `temperature`: optional numeric sampling temperature. It is omitted from requests when unset.
+- `temperature`: numeric sampling temperature from `0` to `2`; defaults to
+  `1.0` and is included in every completion request.
 - `api_key`: optional bearer token. An empty string disables authentication.
 - `api_key_env`: optional environment-variable name containing a bearer token. It takes precedence over `api_key`.
 - `reasoning_effort`: optional reasoning level sent with chat-completions requests, such as `medium`.

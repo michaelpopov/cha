@@ -2,6 +2,7 @@
 
 #include <toml++/toml.hpp>
 
+#include <cmath>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -168,6 +169,16 @@ Config build_config(
         throw std::runtime_error(
             "Config file '" + source.string()
             + "' requires 'port' between 1 and 65535");
+    }
+    if (effective.temperature
+        && (!std::isfinite(*effective.temperature)
+            || *effective.temperature < 0.0
+            || *effective.temperature > 2.0)) {
+        const std::filesystem::path& source =
+            persona.temperature || !base_path ? persona_path : *base_path;
+        throw std::runtime_error(
+            "Config file '" + source.string()
+            + "' requires 'temperature' between 0 and 2");
     }
 
     Config config;
