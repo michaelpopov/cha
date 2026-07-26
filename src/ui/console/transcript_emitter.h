@@ -13,7 +13,12 @@ namespace cha {
 // acknowledging bytes as delivered.
 class TranscriptEmitter {
 public:
-    TranscriptEmitter(TranscriptSurface& surface, bool show_addressing);
+    // When echo_human_entries is false, only restored history still prints human
+    // prompts; later interactive submissions are already visible via TTY echo.
+    TranscriptEmitter(
+        TranscriptSurface& surface,
+        bool show_addressing,
+        bool echo_human_entries = true);
 
     void write(const TranscriptSnapshot& snapshot);
     void commit();
@@ -31,6 +36,7 @@ private:
 
     TranscriptSurface& surface_;
     bool show_addressing_{};
+    bool echo_human_entries_{true};
     Position committed_;
     Position staged_;
 };

@@ -50,6 +50,16 @@ void ConsoleSurface::write(std::string_view text) {
     output_ << sanitize_console_chunk(text, held_lead_);
 }
 
+void write_console_prompt(
+    TranscriptSurface& surface,
+    std::string_view agent_name) {
+    surface.attributes(TranscriptAttributes::bold);
+    surface.write("@");
+    surface.write(agent_name);
+    surface.write("> ");
+    surface.attributes(TranscriptAttributes::normal);
+}
+
 std::string sanitize_console_text(std::string_view text) {
     bool held_lead = false;
     std::string result = sanitize_console_chunk(text, held_lead);

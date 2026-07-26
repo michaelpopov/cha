@@ -34,6 +34,11 @@ private:
     bool held_lead_{};
 };
 
+// Writes the interactive target marker and restores normal attributes.
+void write_console_prompt(
+    TranscriptSurface& surface,
+    std::string_view agent_name);
+
 // Produces terminal-safe text for startup listings and any other whole string.
 std::string sanitize_console_text(std::string_view text);
 

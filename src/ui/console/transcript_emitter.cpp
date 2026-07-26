@@ -19,9 +19,11 @@ const TranscriptEntry* find_entry(
 
 TranscriptEmitter::TranscriptEmitter(
     TranscriptSurface& surface,
-    bool show_addressing)
+    bool show_addressing,
+    bool echo_human_entries)
     : surface_(surface),
-      show_addressing_(show_addressing) {
+      show_addressing_(show_addressing),
+      echo_human_entries_(echo_human_entries) {
 }
 
 void TranscriptEmitter::write(const TranscriptSnapshot& snapshot) {
@@ -61,6 +63,18 @@ void TranscriptEmitter::write(const TranscriptSnapshot& snapshot) {
     for (const TranscriptEntry& entry : snapshot.entries) {
         if (entry.id <= staged_.last_emitted_id
             || (staged_.open_id && entry.id == *staged_.open_id)) {
+            continue;
+        }
+        // Interactive terminals already echo typed input. After the first
+        // emission (restored history), suppress live human prompts so they do
+        // not appear a second time beneath "> ".
+        if (!echo_human_entries_
+            && entry.kind == EntryKind::human
+            && committed_.initialized) {
+            // Keep the blank line that used to follow the echoed prompt so the
+            // next agent/notice block is not jammed against the typed input.
+            surface_.write("\n");
+            staged_.last_emitted_id = entry.id;
             continue;
         }
         write_transcript_entry(surface_, entry, show_addressing_);

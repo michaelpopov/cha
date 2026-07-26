@@ -53,11 +53,12 @@ why it stopped.
 The line-oriented application parses room/session selection, creates a
 `signalfd` for SIGINT, opens the controller through `Workspace`, and assembles
 `SystemConsole`, `TranscriptEmitter`, and `ConsoleSession`. It also decides
-TTY-dependent behavior: prompts and the ready banner appear only for
-interactive stdin, pipe input receives queue backpressure, and automatic color
-is enabled only for a terminal stdout. `Workspace::create_session()` returns
-the generated session ID with the controller; the ready banner prints that
-resolved ID rather than a placeholder for newly created sessions.
+TTY-dependent behavior: the named `@DefaultAgentName> ` prompt and ready banner
+appear only for interactive stdin, pipe input receives queue backpressure, and
+automatic attributes are enabled independently for terminal stdout and stderr.
+`Workspace::create_session()` returns the generated session ID with the
+controller; the ready banner prints that resolved ID rather than a placeholder
+for newly created sessions.
 
 SIGINT is blocked before the controller creates its agent thread so every
 thread inherits the mask and the main loop can consume interrupts reliably.

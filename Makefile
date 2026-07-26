@@ -14,4 +14,4 @@ run: build
 	cd workspace && ../build/ninja/cha
 
 run-console: build
-	cd workspace && ../build/ninja/chacon --room hall --new dev
+	cd workspace && ../build/ninja/chacon --room lobby --new dev

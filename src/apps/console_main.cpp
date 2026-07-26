@@ -61,14 +61,14 @@ sigset_t block_interrupt() {
     return signals;
 }
 
-bool use_color(cha::ColorMode mode, bool stdout_is_tty) {
+bool use_color(cha::ColorMode mode, bool stream_is_tty) {
     if (mode == cha::ColorMode::always) {
         return true;
     }
     if (mode == cha::ColorMode::never) {
         return false;
     }
-    return stdout_is_tty;
+    return stream_is_tty;
 }
 
 int main_internal(int argc, const char* const* argv) {
@@ -109,6 +109,7 @@ int main_internal(int argc, const char* const* argv) {
     cha::SessionController& controller = *selection.controller;
     const bool input_is_tty = ::isatty(STDIN_FILENO) != 0;
     const bool output_is_tty = ::isatty(STDOUT_FILENO) != 0;
+    const bool error_is_tty = ::isatty(STDERR_FILENO) != 0;
     if (input_is_tty) {
         // The resolved ID, not the requested one: a session created by --new or
         // by default has no ID on the command line, so reporting it here avoids
@@ -119,13 +120,17 @@ int main_internal(int argc, const char* const* argv) {
 
     cha::SystemConsole console(
         signal_descriptor.get(),
-        use_color(options.color, output_is_tty));
+        use_color(options.color, output_is_tty),
+        use_color(options.color, error_is_tty));
     (void)signal_descriptor.release();
     cha::TranscriptEmitter emitter(
         console.transcript(),
         cha::show_addressing(
             controller.personas(),
-            controller.transcript()));
+            controller.transcript()),
+        // TTY input is already visible when typed; only pipes need a second
+        // copy of the human prompt in the transcript stream.
+        !input_is_tty);
     cha::ConsoleSession session(
         console,
         controller,

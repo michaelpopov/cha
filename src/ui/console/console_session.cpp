@@ -1,9 +1,11 @@
 #include "ui/console/console_session.h"
 
+#include "ui/console/console_writer.h"
 #include "ui/text/command.h"
 #include "ui/text/text_input.h"
 
 #include <ostream>
+#include <stdexcept>
 #include <utility>
 
 namespace cha {
@@ -31,8 +33,23 @@ int ConsoleSession::run() {
             return finish(0);
         }
 
-        if (options_.show_prompt && prompt_needed_) {
-            port_.notices() << "> ";
+        // Only arm the prompt while the session can accept a new submission.
+        // Printing it as soon as stdin wakes leaves a stray ">" in front of the
+        // next agent line, and never restores one after the turn goes idle.
+        if (options_.show_prompt && prompt_needed_
+            && !controller_.generation_status().active
+            && queue_.empty()
+            && !input_done_
+            && !end_session_) {
+            const PersonaInfo* default_agent =
+                controller_.personas().find(
+                    controller_.default_agent_id());
+            if (!default_agent) {
+                throw std::logic_error(
+                    "Default agent is not a room persona");
+            }
+            write_console_prompt(port_.prompt(), default_agent->name);
+            port_.notices() << std::flush;
             prompt_needed_ = false;
         }
 
@@ -63,7 +80,14 @@ int ConsoleSession::run() {
         }
 
         if (ready.notification_ready()) {
+            const bool was_generating =
+                controller_.generation_status().active;
             apply(controller_.receive());
+            // A finished turn must offer a fresh prompt even when no further
+            // stdin activity re-armed it (for example after Ctrl-C cancel).
+            if (was_generating && !controller_.generation_status().active) {
+                prompt_needed_ = true;
+            }
         }
 
         if (ready.input_ready() || ready.input_closed()) {

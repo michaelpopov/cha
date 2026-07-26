@@ -81,6 +81,10 @@ public:
         return surface_;
     }
 
+    TranscriptSurface& prompt() override {
+        return prompt_surface_;
+    }
+
     std::ostream& notices() override {
         return notices_;
     }
@@ -131,6 +135,20 @@ private:
         std::string output;
     };
 
+    class PromptSurface final : public TranscriptSurface {
+    public:
+        explicit PromptSurface(std::ostream& output)
+            : output_(output) {
+        }
+        void attributes(TranscriptAttributes) override {
+        }
+        void write(std::string_view text) override {
+            output_ << text;
+        }
+    private:
+        std::ostream& output_;
+    };
+
     std::deque<ScriptedWait> script_;
     std::vector<std::string> pending_lines_;
     bool interrupt_{};
@@ -139,6 +157,7 @@ private:
     bool fail_finish_{};
     RecordingSurface surface_;
     std::ostringstream notices_;
+    PromptSurface prompt_surface_{notices_};
 };
 
 } // namespace cha::test

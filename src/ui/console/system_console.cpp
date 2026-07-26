@@ -23,9 +23,13 @@ void append_all(
 
 } // namespace
 
-SystemConsole::SystemConsole(int signal_fd, bool color)
+SystemConsole::SystemConsole(
+    int signal_fd,
+    bool transcript_color,
+    bool prompt_color)
     : signal_fd_(signal_fd),
-      surface_(std::cout, color) {
+      transcript_surface_(std::cout, transcript_color),
+      prompt_surface_(std::cerr, prompt_color) {
     original_input_flags_ = ::fcntl(STDIN_FILENO, F_GETFL);
     if (original_input_flags_ == -1
         || ::fcntl(
@@ -122,7 +126,11 @@ bool SystemConsole::take_interrupt() {
 }
 
 TranscriptSurface& SystemConsole::transcript() {
-    return surface_;
+    return transcript_surface_;
+}
+
+TranscriptSurface& SystemConsole::prompt() {
+    return prompt_surface_;
 }
 
 std::ostream& SystemConsole::notices() {
@@ -135,7 +143,7 @@ bool SystemConsole::flush() {
 }
 
 bool SystemConsole::finish_transcript() {
-    surface_.finish();
+    transcript_surface_.finish();
     return flush();
 }
 

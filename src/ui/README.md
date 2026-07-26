@@ -64,7 +64,8 @@ Code under `ui/` may depend on:
 - the shared grammar and transcript writer;
 - narrowly scoped `util/` helpers where protocol parsing needs them;
 - `RoomPersonas` from `session/` when a presentation needs persona names — for
-  example deciding whether to label who a message was addressed to.
+  example deciding whether to label who a message was addressed to or naming
+  the console's current-default-agent prompt.
 
 It may not depend on `apps/`, on another front end's widgets, or on anything the
 two lists above exclude. In particular, `ui/tui/` and `ui/console/` must never

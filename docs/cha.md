@@ -620,16 +620,25 @@ or target. `/clear` forgets historical addressing evidence but keeps
 addressing enabled for a currently multi-agent room.
 
 The console writes an append-only transcript log to stdout and notices to
-stderr. `TranscriptEmitter` tracks entries by ID and streaming suffix length,
-and advances its watermark only after stdout flushes successfully. A history
-clear produces a marker rather than retracting bytes. If a failed turn discards
-a partial answer from the stored transcript, already-written partial text
-remains in the log and the error follows it. `ConsoleSurface` neutralizes C0,
-DEL, and C1 terminal controls in model and transcript text. Its sanitizer
-carries a possible UTF-8 C1 lead byte across non-empty writes; an empty write
-does not resolve that state. At session end, `ConsolePort::finish_transcript()`
-emits an incomplete trailing lead byte and performs a checked final flush before
-the process chooses its exit status. Destructors never emit transcript bytes.
+stderr. While idle with interactive stdin, stderr also carries a bold
+`@DefaultAgentName> ` prompt. `ConsoleSession` resolves the name from
+`SessionController::default_agent_id()` each time it arms the prompt, so a
+successful `/@Name` command changes the next marker as well as routing later
+unaddressed submissions. No prompt is printed while a response is active.
+
+`TranscriptEmitter` tracks entries by ID and streaming suffix length, and
+advances its watermark only after stdout flushes successfully. A history clear
+produces a marker rather than retracting bytes. If a failed turn discards a
+partial answer from the stored transcript, already-written partial text remains
+in the log and the error follows it. `SystemConsole` owns separate attributed
+`ConsoleSurface` instances for transcript stdout and prompt stderr. Automatic
+styling follows each stream's own TTY status; forced color mode applies to
+both. `ConsoleSurface` neutralizes C0, DEL, and C1 terminal controls in model,
+transcript, and prompt text. Its sanitizer carries a possible UTF-8 C1 lead
+byte across non-empty writes; an empty write does not resolve that state. At
+session end, `ConsolePort::finish_transcript()` emits an incomplete trailing
+lead byte and performs a checked final stdout flush before the process chooses
+its exit status. Destructors never emit transcript bytes.
 
 Transcript entries use the compact `[Name] Answer` form. While a turn is
 active and reasoning is present, the TUI combines the ephemeral reasoning

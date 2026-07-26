@@ -121,6 +121,40 @@ TEST(TranscriptEmitter, KeepsDiscardedPartialTextAndAppendsTheError) {
     EXPECT_EQ(surface.output, "[Guide] Partial\n\n[Error] Failed\n\n");
 }
 
+TEST(TranscriptEmitter, PrintsRestoredHumansThenSkipsLiveOnesWhenEchoOff) {
+    RecordingSurface surface;
+    TranscriptEmitter emitter(surface, false, false);
+
+    emitter.write({
+        .entries = {
+            make_human_entry(1, "guide", "Guide", "Earlier"),
+            complete(2, "Earlier answer"),
+        },
+        .revision = 2,
+        .history_epoch = 1,
+    });
+    emitter.commit();
+    EXPECT_EQ(
+        surface.output,
+        "[You] Earlier\n\n[Guide] Earlier answer\n\n");
+
+    emitter.write({
+        .entries = {
+            make_human_entry(1, "guide", "Guide", "Earlier"),
+            complete(2, "Earlier answer"),
+            make_human_entry(3, "guide", "Guide", "Live prompt"),
+            complete(4, "Live answer"),
+        },
+        .revision = 4,
+        .history_epoch = 1,
+    });
+    emitter.commit();
+    EXPECT_EQ(
+        surface.output,
+        "[You] Earlier\n\n[Guide] Earlier answer\n\n"
+        "\n[Guide] Live answer\n\n");
+}
+
 TEST(TranscriptEmitter, DoesNotAdvanceWithoutCommit) {
     RecordingSurface surface;
     TranscriptEmitter emitter(surface, false);

@@ -129,8 +129,11 @@ chacon --room ROOM [--session ID | --new LABEL] [--color=auto|always|never]
 If neither `--session` nor `--new` is supplied, `chacon` creates a new session
 with the default timestamp label. On an interactive terminal it reports the room
 and the resolved session ID before the first prompt, so a session created by
-`--new` or by default can be reopened later with `--session`. Room listings
-contain one name per line. Session listings contain exactly three tab-separated
+`--new` or by default can be reopened later with `--session`. The interactive
+prompt is a bold `@DefaultAgentName> ` marker, for example `@Ismael> `, so it
+always identifies the agent that will receive an unaddressed submission.
+Running `/@Name` changes both the run-local default and the next prompt marker.
+Room listings contain one name per line. Session listings contain exactly three tab-separated
 fields—ID, label, and error—with no header, padding, or color. Invalid sessions
 remain visible in the listing. Listing modes ignore session-selection flags;
 selection validation applies only when opening or creating a session.
@@ -145,11 +148,13 @@ waiting for it. EOF stops input but lets the active response and queued prompts
 finish. Ctrl-C cancels an active response and exits when idle.
 
 Transcript text is an append-only log on stdout; prompts, responses, and
-restored history are never rewritten. Notices and the interactive prompt go to
-stderr, keeping stdout suitable for redirection. Model text is sanitized so it
-cannot inject terminal control sequences, including a C1 sequence split across
-streaming chunks. Final sanitizer state is emitted before a checked stdout
-flush, so a late output failure still produces exit code 1.
+restored history are never rewritten. Notices and the named interactive prompt
+go to stderr, keeping stdout suitable for redirection. With `--color=auto`, the
+prompt uses stderr's terminal status for bold styling independently of stdout;
+`always` and `never` force styling for both streams. Model text is sanitized so
+it cannot inject terminal control sequences, including a C1 sequence split
+across streaming chunks. Final sanitizer state is emitted before a checked
+stdout flush, so a late output failure still produces exit code 1.
 
 ## Build and test
 

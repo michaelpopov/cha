@@ -26,6 +26,8 @@ public:
     virtual bool take_interrupt() = 0;
 
     virtual TranscriptSurface& transcript() = 0;
+    // A separate attributed surface for the interactive prompt on stderr.
+    virtual TranscriptSurface& prompt() = 0;
     virtual std::ostream& notices() = 0;
     [[nodiscard]] virtual bool flush() = 0;
     // Ends the transcript byte stream and checks delivery of any sanitizer

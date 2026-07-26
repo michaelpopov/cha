@@ -53,8 +53,13 @@ public:
 
 class EchoBackend final : public CompletionBackend {
 public:
-    explicit EchoBackend(bool wait_for_cancel = false)
-        : wait_for_cancel_(wait_for_cancel) {
+    explicit EchoBackend(
+        bool wait_for_cancel = false,
+        std::string id = "guide",
+        std::string name = "Guide")
+        : wait_for_cancel_(wait_for_cancel),
+          id_(std::move(id)),
+          name_(std::move(name)) {
     }
 
     RequestPayload prepare(
@@ -82,7 +87,7 @@ public:
 
     AgentRuntimeInfo info() const override {
         return {
-            .persona = {.id = "guide", .name = "Guide"},
+            .persona = {.id = id_, .name = name_},
             .model = "test",
             .api = "test://console",
             .streaming = true,
@@ -91,6 +96,8 @@ public:
 
 private:
     bool wait_for_cancel_{};
+    std::string id_;
+    std::string name_;
 };
 
 std::unique_ptr<SessionController> controller(
@@ -128,6 +135,62 @@ TEST(ConsoleSession, DrainsSeveralPipedPromptsInOrderAfterEof) {
         port.notice_output().find(generation_in_progress_notice),
         std::string::npos);
     EXPECT_FALSE(port.under_scripted);
+}
+
+TEST(ConsoleSession, ShowsPromptWhenIdleNotWhileGenerating) {
+    TemporaryJournal journal;
+    auto session_controller = controller(journal);
+    test::ScriptedConsole port({
+        {
+            .input = true,
+            .lines = {"question"},
+        },
+        {.notification = true},
+        {.signal = true},
+    });
+    TranscriptEmitter emitter(port.transcript(), false);
+    ConsoleSession session(
+        port,
+        *session_controller,
+        emitter,
+        {.show_prompt = true});
+
+    EXPECT_EQ(session.run(), 0);
+    EXPECT_EQ(port.notice_output(), "@Guide> @Guide> ");
+    EXPECT_EQ(
+        port.transcript_output(),
+        "[You] question\n\n[Guide] Answer to question\n\n")
+        << "default emitter still records human prompts for pipes/tests";
+}
+
+TEST(ConsoleSession, PromptTracksTheCurrentDefaultAgent) {
+    TemporaryJournal journal;
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::make_unique<EchoBackend>());
+    backends.push_back(std::make_unique<EchoBackend>(
+        false, "ismael", "Ismael"));
+    auto session_controller =
+        SessionController::from_backends_for_testing(
+            std::move(backends),
+            journal.path);
+    test::ScriptedConsole port({
+        {
+            .input = true,
+            .lines = {"/@Ismael"},
+        },
+        {.signal = true},
+    });
+    TranscriptEmitter emitter(port.transcript(), true);
+    ConsoleSession session(
+        port,
+        *session_controller,
+        emitter,
+        {.show_prompt = true});
+
+    EXPECT_EQ(session.run(), 0);
+    EXPECT_EQ(
+        port.notice_output(),
+        "@Guide> Default agent is now Ismael\n@Ismael> ");
 }
 
 TEST(ConsoleSession, EmitsRestoredHistoryBeforeWaiting) {

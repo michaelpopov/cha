@@ -26,6 +26,15 @@ TEST(ConsoleSurface, EmitsAttributesOnlyWhenColourIsEnabled) {
     EXPECT_TRUE(plain.str().empty());
 }
 
+TEST(ConsoleSurface, WritesBoldAgentPromptAndRestoresAttributes) {
+    std::ostringstream output;
+    ConsoleSurface surface(output, true);
+
+    write_console_prompt(surface, "Ismael");
+
+    EXPECT_EQ(output.str(), "\x1b[1m@Ismael> \x1b[0m");
+}
+
 TEST(ConsoleSurface, NeutralizesTerminalControlsInBothColourModes) {
     const std::string hostile =
         "\x1b]0;title\x07 \x1b[31m \x1b]52;c;data\x07\r\n\t";

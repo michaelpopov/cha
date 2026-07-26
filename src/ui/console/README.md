@@ -73,11 +73,21 @@ signal.
 
 ## Append-only output
 
-Transcript data goes to stdout; notices and the interactive prompt go to
-stderr. `TranscriptEmitter` treats stdout as an append-only event log, not a
-repaintable view. Restored history is emitted before the first wait, completed
-entries appear once, and streamed entries append only their new suffix.
-`/clear` emits a marker because previously delivered bytes cannot be removed.
+Transcript data goes to stdout; notices and the bold interactive prompt
+(`@DefaultAgentName> `) go to stderr. The prompt follows `/@Name` default-agent
+changes and is shown only while the controller is idle and able to accept
+input. `--color=auto` decides transcript and prompt attributes independently
+from the TTY status of stdout and stderr; `always` and `never` override both.
+`TranscriptEmitter` treats stdout as an append-only event log, not a repaintable
+view. Restored history is emitted before the first wait, completed entries
+appear once, and streamed entries append only their new suffix. `/clear` emits
+a marker because previously delivered bytes cannot be removed.
+
+On an interactive TTY, live human prompts are not rewritten as transcript
+lines: the terminal already echoed the typed input, so a second `[You] ...`
+line would only repeat it. Restored history still prints human turns so a
+reopened session is readable. Piped stdin keeps echoing human prompts because
+there is no interactive display of the input body.
 
 Writing and committing the emitter watermark are separate operations:
 `ConsoleSession` writes, flushes stdout, and only then commits. A failed flush
@@ -89,10 +99,10 @@ controller discards that open entry and stores an error entry. The console
 keeps the already-written partial text, closes it, and appends the error. This
 is intentional append-only behavior, not a persistence leak.
 
-`ConsoleSurface` sanitizes untrusted transcript bytes in both color modes:
-newlines and tabs pass, carriage returns are dropped, C0 and DEL controls become
-caret notation, and UTF-8 C1 controls are replaced. ANSI styling is generated
-only by `attributes()`.
+`ConsoleSurface` sanitizes text written through both attributed console
+surfaces in both color modes: newlines and tabs pass, carriage returns are
+dropped, C0 and DEL controls become caret notation, and UTF-8 C1 controls are
+replaced. ANSI styling is generated only by `attributes()`.
 
 Sanitizing is a property of the whole stream, not of one call. C1 is the only
 rule spanning two bytes, and `U+009B` is an alternative CSI introducer, so
@@ -109,13 +119,13 @@ performs no output.
 
 | Source | Responsibility |
 | --- | --- |
-| `console_port.h` | Test seam for waiting, input, signals, transcript output, notices, ordinary flushing, and checked finalization. |
+| `console_port.h` | Test seam for waiting, input, signals, attributed transcript and prompt output, notices, ordinary flushing, and checked finalization. |
 | `line_reader.*` | Pure byte-to-submission parser. |
 | `transcript_emitter.*` | Append-only entry-ID and streaming-suffix watermarks. |
-| `console_writer.*` | Sanitizing stdout `TranscriptSurface`. |
+| `console_writer.*` | Sanitizing attributed surfaces and the bold `@Name> ` prompt writer. |
 | `console_session.*` | Queue, EOF, signal, event, emission, and shutdown state machine. |
 | `console_startup.*` | CLI parsing, stable listings, and workspace session selection. |
-| `system_console.*` | Real non-blocking descriptors and process streams. |
+| `system_console.*` | Real non-blocking descriptors plus stdout transcript and stderr prompt surfaces. |
 
 ## Regression traps
 
@@ -136,3 +146,5 @@ performs no output.
 Unit tests live in `tests/ui/console/`. The process tests in
 `tests/integration/console_process_test.cpp` cover actual EOF, signals, closed
 stdout, sanitization, queue order, and the absence of an ncurses dependency.
+The session and writer tests additionally cover default-agent prompt changes
+and the prompt's bold/normal attribute boundary.
