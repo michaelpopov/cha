@@ -7,6 +7,13 @@ namespace cha {
 // a pending signal.
 class InputEvents {
 public:
+    static InputEvents ready(
+        bool input = false,
+        bool input_closed = false,
+        bool notification = false,
+        bool signal = false);
+    static InputEvents failure();
+
     bool interrupted() const;
     bool failed() const;
     bool input_ready() const;
@@ -36,11 +43,15 @@ private:
 
     friend InputEvents wait_for_input_events(
         int notification_fd,
-        int signal_fd);
+        int signal_fd,
+        bool include_input);
 };
 
 // Waits for standard input, a notification descriptor, and, when non-negative,
 // a signal descriptor.
-InputEvents wait_for_input_events(int notification_fd, int signal_fd = -1);
+InputEvents wait_for_input_events(
+    int notification_fd,
+    int signal_fd = -1,
+    bool include_input = true);
 
 } // namespace cha

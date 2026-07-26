@@ -19,6 +19,23 @@ InputEvents::InputEvents(
       signal_(signal) {
 }
 
+InputEvents InputEvents::ready(
+    bool input,
+    bool input_closed,
+    bool notification,
+    bool signal) {
+    return InputEvents(
+        Status::ready,
+        input,
+        input_closed,
+        notification,
+        signal);
+}
+
+InputEvents InputEvents::failure() {
+    return InputEvents(Status::failed);
+}
+
 bool InputEvents::interrupted() const {
     return status_ == Status::interrupted;
 }
@@ -43,9 +60,12 @@ bool InputEvents::signal_ready() const {
     return signal_;
 }
 
-InputEvents wait_for_input_events(int notification_fd, int signal_fd) {
+InputEvents wait_for_input_events(
+    int notification_fd,
+    int signal_fd,
+    bool include_input) {
     pollfd descriptors[] = {
-        {STDIN_FILENO, POLLIN, 0},
+        {include_input ? STDIN_FILENO : -1, POLLIN, 0},
         {notification_fd, POLLIN, 0},
         {signal_fd, POLLIN, 0},
     };

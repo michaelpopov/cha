@@ -1,4 +1,4 @@
-.PHONY: build test itest run
+.PHONY: build test itest run run-console
 
 build:
 	cmake --preset ninja
@@ -12,3 +12,6 @@ itest: build
 
 run: build
 	cd workspace && ../build/ninja/cha
+
+run-console: build
+	cd workspace && ../build/ninja/chacon --room hall --new dev

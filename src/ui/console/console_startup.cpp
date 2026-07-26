@@ -1,0 +1,132 @@
+#include "ui/console/console_startup.h"
+
+#include "session/session_controller.h"
+#include "ui/console/console_writer.h"
+
+#include <algorithm>
+#include <ostream>
+#include <stdexcept>
+#include <string_view>
+
+namespace cha {
+namespace {
+
+ArgumentError argument_error(std::string message) {
+    return {std::move(message), 2};
+}
+
+std::string listing_field(std::string_view value) {
+    std::string normalized(value);
+    std::replace(normalized.begin(), normalized.end(), '\t', ' ');
+    std::replace(normalized.begin(), normalized.end(), '\n', ' ');
+    std::replace(normalized.begin(), normalized.end(), '\r', ' ');
+    return sanitize_console_text(normalized);
+}
+
+} // namespace
+
+std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
+    int argc,
+    const char* const* argv) {
+    ConsoleOptions options;
+    for (int index = 1; index < argc; ++index) {
+        const std::string_view argument(argv[index]);
+        if (argument == "--list-rooms") {
+            options.list_rooms = true;
+        } else if (argument == "--list-sessions") {
+            options.list_sessions = true;
+        } else if (argument == "--room"
+            || argument == "--session"
+            || argument == "--new") {
+            if (index + 1 >= argc) {
+                return argument_error(
+                    "Missing value for " + std::string(argument));
+            }
+            const std::string value(argv[++index]);
+            if (argument == "--room") {
+                options.room = value;
+            } else if (argument == "--session") {
+                options.session_id = value;
+            } else {
+                options.new_label = value;
+            }
+        } else if (argument.starts_with("--color=")) {
+            const std::string_view value =
+                argument.substr(std::string_view("--color=").size());
+            if (value == "always") {
+                options.color = ColorMode::always;
+            } else if (value == "never") {
+                options.color = ColorMode::never;
+            } else if (value == "auto") {
+                options.color = ColorMode::automatic;
+            } else {
+                return argument_error(
+                    "Unknown color mode '" + std::string(value) + "'");
+            }
+        } else {
+            return argument_error(
+                "Unknown option or argument '" + std::string(argument) + "'");
+        }
+    }
+
+    if (options.list_rooms) {
+        return options;
+    }
+    if (options.room.empty()) {
+        return argument_error("--room is required");
+    }
+    if (options.list_sessions) {
+        return options;
+    }
+    if (!options.session_id.empty() && options.new_label) {
+        return argument_error("--session and --new cannot be used together");
+    }
+    if (options.session_id.empty() && !options.new_label) {
+        options.new_label = "";
+    }
+    return options;
+}
+
+void write_room_listing(const Workspace& workspace, std::ostream& out) {
+    for (const std::string& room : workspace.rooms()) {
+        out << listing_field(room) << '\n';
+    }
+}
+
+void write_session_listing(
+    const Workspace& workspace,
+    const std::string& room,
+    std::ostream& out) {
+    for (const SessionSummary& session : workspace.sessions(room)) {
+        out << listing_field(session.id) << '\t'
+            << listing_field(session.label) << '\t'
+            << listing_field(session.error) << '\n';
+    }
+}
+
+std::unique_ptr<SessionController> open_console_session(
+    const Workspace& workspace,
+    const ConsoleOptions& options) {
+    if (options.new_label) {
+        return workspace.create_session(options.room, *options.new_label);
+    }
+
+    const std::vector<SessionSummary> sessions =
+        workspace.sessions(options.room);
+    const auto found = std::find_if(
+        sessions.begin(),
+        sessions.end(),
+        [&options](const SessionSummary& session) {
+            return session.id == options.session_id;
+        });
+    if (found == sessions.end()) {
+        throw std::runtime_error(
+            "Session '" + options.session_id + "' does not exist");
+    }
+    if (!found->error.empty()) {
+        throw std::runtime_error(found->error);
+    }
+    return workspace.open_session(options.room, options.session_id);
+}
+
+} // namespace cha

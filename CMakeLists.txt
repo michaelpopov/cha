@@ -112,6 +112,12 @@ add_library(cha_core STATIC
     src/ui/text/command.cpp
     src/ui/text/mention.cpp
     src/ui/text/text_input.cpp
+    src/ui/console/console_writer.cpp
+    src/ui/console/console_startup.cpp
+    src/ui/console/console_session.cpp
+    src/ui/console/line_reader.cpp
+    src/ui/console/system_console.cpp
+    src/ui/console/transcript_emitter.cpp
     src/ui/render/transcript_writer.cpp
 )
 
@@ -179,6 +185,11 @@ if(BUILD_TESTING)
         tests/ui/text/unit_mention.cpp
         tests/ui/text/unit_text_input.cpp
         tests/ui/render/unit_transcript_writer.cpp
+        tests/ui/console/unit_console_writer.cpp
+        tests/ui/console/unit_console_session.cpp
+        tests/ui/console/unit_console_startup.cpp
+        tests/ui/console/unit_line_reader.cpp
+        tests/ui/console/unit_transcript_emitter.cpp
     )
     if(CHA_BUILD_TUI)
         list(APPEND CHA_TEST_SOURCES
@@ -209,3 +220,8 @@ if(BUILD_TESTING)
     include(GoogleTest)
     gtest_discover_tests(cha_tests)
 endif()
+
+add_executable(chacon_app src/apps/console_main.cpp)
+target_link_libraries(chacon_app PRIVATE cha_core)
+set_target_properties(chacon_app PROPERTIES OUTPUT_NAME chacon)
+cha_enable_warnings(chacon_app)
