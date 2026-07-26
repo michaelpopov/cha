@@ -15,9 +15,17 @@
 namespace cha {
 namespace {
 
+bool local_time(std::time_t now, std::tm& result) noexcept {
+#ifdef _WIN32
+    return ::localtime_s(&result, &now) == 0;
+#else
+    return ::localtime_r(&now, &result) != nullptr;
+#endif
+}
+
 std::string timestamp_name(std::time_t now) {
     std::tm local{};
-    if (::localtime_r(&now, &local) == nullptr) {
+    if (!local_time(now, local)) {
         throw std::runtime_error("Failed to read local time for session name");
     }
     std::ostringstream result;

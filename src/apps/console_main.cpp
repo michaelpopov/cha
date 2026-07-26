@@ -6,75 +6,31 @@
 #include "ui/console/transcript_emitter.h"
 #include "ui/render/transcript_writer.h"
 #include "util/environment.h"
-#include "util/event_fd_notifier.h"
 
-#include <cerrno>
 #include <csignal>
 #include <exception>
 #include <iostream>
 #include <memory>
-#include <pthread.h>
 #include <stdexcept>
 #include <string>
-#include <system_error>
-#include <sys/signalfd.h>
-#include <unistd.h>
-#include <utility>
 #include <variant>
 
 namespace {
 
-class OwnedDescriptor {
-public:
-    explicit OwnedDescriptor(int value) : value_(value) {
-    }
-    ~OwnedDescriptor() {
-        if (value_ != -1) {
-            ::close(value_);
-        }
-    }
-    int get() const {
-        return value_;
-    }
-    int release() {
-        return std::exchange(value_, -1);
-    }
-private:
-    int value_{-1};
-};
-
-sigset_t block_interrupt() {
-    sigset_t signals{};
-    if (::sigemptyset(&signals) != 0
-        || ::sigaddset(&signals, SIGINT) != 0) {
-        throw std::system_error(
-            errno,
-            std::generic_category(),
-            "Failed to prepare console signal mask");
-    }
-    const int result = ::pthread_sigmask(SIG_BLOCK, &signals, nullptr);
-    if (result != 0) {
-        throw std::system_error(
-            result,
-            std::generic_category(),
-            "Failed to block console interrupt");
-    }
-    return signals;
-}
-
-bool use_color(cha::ColorMode mode, bool stream_is_tty) {
+bool use_color(cha::ColorMode mode, bool stream_color_enabled) {
     if (mode == cha::ColorMode::always) {
         return true;
     }
     if (mode == cha::ColorMode::never) {
         return false;
     }
-    return stream_is_tty;
+    return stream_color_enabled;
 }
 
 int main_internal(int argc, const char* const* argv) {
+#ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
-    const sigset_t interrupt_mask = block_interrupt();
+#endif
 
     cha::load_dotenv();
     cha::Workspace workspace;
@@ -93,25 +49,23 @@ int main_internal(int argc, const char* const* argv) {
         return 0;
     }
 
-    OwnedDescriptor signal_descriptor(
-        ::signalfd(
-            -1,
-            &interrupt_mask,
-            SFD_CLOEXEC | SFD_NONBLOCK));
-    if (signal_descriptor.get() == -1) {
-        throw std::system_error(
-            errno,
-            std::generic_category(),
-            "Failed to create console signal descriptor");
-    }
-
-    cha::EventFdNotifier notifier;
+    const bool input_is_tty =
+        cha::standard_stream_is_terminal(
+            cha::StandardStream::input);
+    const bool output_color_enabled =
+        options.color != cha::ColorMode::never
+        && cha::enable_standard_stream_color(
+            cha::StandardStream::output);
+    const bool error_color_enabled =
+        options.color != cha::ColorMode::never
+        && cha::enable_standard_stream_color(
+            cha::StandardStream::error);
+    cha::SystemConsole console(
+        use_color(options.color, output_color_enabled),
+        use_color(options.color, error_color_enabled));
     cha::ConsoleSelection selection =
-        cha::open_console_session(workspace, options, notifier);
+        cha::open_console_session(workspace, options, console);
     cha::SessionController& controller = *selection.controller;
-    const bool input_is_tty = ::isatty(STDIN_FILENO) != 0;
-    const bool output_is_tty = ::isatty(STDOUT_FILENO) != 0;
-    const bool error_is_tty = ::isatty(STDERR_FILENO) != 0;
     if (input_is_tty) {
         // The resolved ID, not the requested one: a session created by --new or
         // by default has no ID on the command line, so reporting it here avoids
@@ -120,11 +74,6 @@ int main_internal(int argc, const char* const* argv) {
                   << " ready\n";
     }
 
-    cha::SystemConsole console(
-        signal_descriptor.get(),
-        use_color(options.color, output_is_tty),
-        use_color(options.color, error_is_tty));
-    (void)signal_descriptor.release();
     cha::TranscriptEmitter emitter(
         console.transcript(),
         cha::show_addressing(
@@ -136,7 +85,6 @@ int main_internal(int argc, const char* const* argv) {
     cha::ConsoleSession session(
         console,
         controller,
-        notifier,
         emitter,
         {
             .show_prompt = input_is_tty,

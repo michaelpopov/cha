@@ -1,8 +1,8 @@
 #include "session/session_database.h"
 
 #include <sqlite3.h>
+#include <uv.h>
 
-#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -12,7 +12,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <unistd.h>
 #include <vector>
 
 namespace cha {
@@ -592,24 +591,32 @@ std::filesystem::path create_temporary_database_path(
     std::vector<char> writable_pattern(pattern.begin(), pattern.end());
     writable_pattern.push_back('\0');
 
-    const int descriptor = ::mkstemp(writable_pattern.data());
-    if (descriptor == -1) {
-        throw std::system_error(
-            errno,
-            std::generic_category(),
+    uv_fs_t create_request{};
+    const int descriptor = uv_fs_mkstemp(
+        nullptr,
+        &create_request,
+        writable_pattern.data(),
+        nullptr);
+    if (descriptor < 0) {
+        uv_fs_req_cleanup(&create_request);
+        throw std::runtime_error(
             "Failed to create a temporary session database for '"
-                + path.string() + "'");
+            + path.string() + "': " + uv_strerror(descriptor));
     }
-    const std::filesystem::path temporary_path(writable_pattern.data());
-    if (::close(descriptor) == -1) {
-        const int error = errno;
+    const std::filesystem::path temporary_path(create_request.path);
+    uv_fs_req_cleanup(&create_request);
+
+    uv_fs_t close_request{};
+    const int close_status =
+        uv_fs_close(nullptr, &close_request, descriptor, nullptr);
+    uv_fs_req_cleanup(&close_request);
+    if (close_status < 0) {
         std::error_code ignored;
         std::filesystem::remove(temporary_path, ignored);
-        throw std::system_error(
-            error,
-            std::generic_category(),
+        throw std::runtime_error(
             "Failed to close temporary session database '"
-                + temporary_path.string() + "'");
+            + temporary_path.string() + "': "
+            + uv_strerror(close_status));
     }
     return temporary_path;
 }
@@ -618,16 +625,22 @@ bool publish_database_path(
     const std::filesystem::path& temporary_path,
     const std::filesystem::path& path) {
 
-    if (::link(temporary_path.c_str(), path.c_str()) == 0) {
+    std::error_code error;
+    std::filesystem::create_hard_link(
+        temporary_path,
+        path,
+        error);
+    if (!error) {
         return true;
     }
-    if (errno == EEXIST) {
+    if (error == std::errc::file_exists) {
         return false;
     }
-    throw std::system_error(
-        errno,
-        std::generic_category(),
-        "Failed to publish session database '" + path.string() + "'");
+    throw std::filesystem::filesystem_error(
+        "Failed to publish session database",
+        temporary_path,
+        path,
+        error);
 }
 
 } // namespace

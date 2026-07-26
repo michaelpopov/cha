@@ -52,14 +52,14 @@ Main/UI thread                  SessionController
        |                      |
        |                      +-- ActiveResponse (optional)
        |
-       +---- poll(stdin, frontend-owned EventFdNotifier)
+       +---- libuv loop (stdin, signals, async agent wake)
 ```
 
 The ownership graph is:
 
 - Each entry point owns the `Workspace` and selected `SessionController`. The
   TUI owns `Terminal` and `StartupSelector`; the console owns `SystemConsole`,
-  `TranscriptEmitter`, and its signal descriptor.
+  and `TranscriptEmitter`.
 - `run_user()` owns a `Tui` and `UserSession`; `ConsoleSession::run()` owns the
   line queue and console lifecycle.
 - `SessionController` owns the in-memory `Transcript`, SQLite
@@ -107,11 +107,10 @@ main thread observes completion it can submit the next request without racing
 the previous turn's cleanup.
 
 After each successful event push, the registry calls an injected
-`WakeNotifier`. Both terminal frontends own an `EventFdNotifier` and block in
-`poll(2)` over stdin and its descriptor, so input and streamed output wake the
-same event loop without timers or busy polling. They acknowledge a wake before
-draining the queue. The console also polls a `signalfd` and may temporarily
-omit pipe input for queue backpressure.
+`WakeNotifier`. Both terminal frontends own a `UvEventLoop`; the registry wakes
+its `uv_async_t` while frontend-owned stdin and signal handles share the same
+loop. Input and streamed output therefore wake one event loop without timers or
+busy polling. The console may pause pipe input for queue backpressure.
 
 The transport maps output into
 `CompletionDelta { kind = reasoning | answer, text }`. The registry attaches
@@ -228,9 +227,9 @@ for `--new LABEL` (and creates one with a default label when neither selection
 option is present). Listing modes return before selection validation. For an
 interactive run, the ready banner reports the resolved ID from
 `CreatedSession`, so a new session can be reopened later. The entry point then
-creates a `signalfd`, `SystemConsole`, `TranscriptEmitter`, and
-`ConsoleSession`. Usage failures return 2; workspace and runtime failures return
-1.
+creates a `SystemConsole` with its libuv loop, a `TranscriptEmitter`, and a
+`ConsoleSession`. Usage failures return 2; workspace and runtime failures
+return 1.
 
 The workspace shape is:
 
@@ -582,9 +581,9 @@ forms with arguments remain in FIFO order and are later rejected by
 `handle_text_input()` under the shared command rules. Immediate `/exit` shuts
 down the controller and cancels an active turn rather than draining its answer.
 Piped stdin receives backpressure at the queue limit. EOF means “no more
-submissions”; stdin is then omitted from `poll()` so its persistent `POLLHUP`
-cannot spin the loop, while the active turn and queue continue to drain. SIGINT
-cancels an active turn and exits while idle.
+submissions”; its libuv watcher is then stopped so a closed source cannot spin
+the loop, while the active turn and queue continue to drain. SIGINT cancels an
+active turn and exits while idle.
 
 The input editor stores wide characters, supports cursor movement and editing,
 and converts to UTF-8 on submission. A trailing backslash enters a visual
@@ -988,9 +987,12 @@ CMake builds:
 
 The build requires threads; wide ncurses is required only when
 `CHA_BUILD_TUI=ON`. It uses an installed libcurl when available, otherwise
-fetches pinned curl 8.14.1. It also fetches nlohmann/json 3.11.3, toml++ 3.4.0,
-SQLite 3.46.1, and GoogleTest 1.15.2 for tests. The bundled curl enables OpenSSL
-when it is available.
+fetches pinned curl 8.14.1. It also fetches libuv 1.52.1,
+nlohmann/json 3.11.3, toml++ 3.4.0, SQLite 3.46.1, and GoogleTest 1.15.2 for
+tests. The bundled curl uses Schannel on Windows, Secure Transport on macOS,
+and OpenSSL when available elsewhere. The TUI defaults on only for Linux;
+macOS and Windows default to the console-only build. The POSIX socket and
+process integration harnesses are omitted from Windows builds.
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
 configuration, identity, room-persona/mention routing, textual command parsing and

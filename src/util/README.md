@@ -14,8 +14,7 @@ belongs in that directory instead.
 | `environment.*` | `load_dotenv()` — optional `.env` loading that never overrides the real environment. |
 | `concurrent_queue.h` | `ConcurrentQueue<T>` — a portable typed thread-safe queue. |
 | `wake_notifier.h` | `WakeNotifier` — the event-loop wake interface used by producers. |
-| `event_fd_notifier.*` | `EventFdNotifier` — the Linux `eventfd` adapter used by the terminal frontends. |
-| `input_wait.*` | `InputEvents` and `wait_for_input_events()` — semantic readiness for stdin, agent notification, and an optional signal descriptor. |
+| `uv_event_loop.*` | `UvEventLoop` — the portable libuv loop and cross-thread wake adapter used by the terminal frontends. |
 
 ## Text helpers
 
@@ -54,19 +53,19 @@ flowchart LR
     end
     q["ConcurrentQueue<br/>mutex + deque"]
     notifier["WakeNotifier"]
-    fd["EventFdNotifier<br/>eventfd, NONBLOCK"]
+    async["UvEventLoop<br/>uv_async_t"]
     subgraph consumer["Consumer thread"]
-        poll["poll on this fd<br/>alongside stdin"]
-        ack["acknowledge"]
+        loop["run libuv loop<br/>with frontend handles"]
+        observe["take notification"]
         take["drain with try_get"]
     end
 
     push --> q
     push --> notifier
-    notifier --> fd
-    fd -->|"readable"| poll
-    poll --> ack
-    ack --> take
+    notifier --> async
+    async -->|"callback"| loop
+    loop --> observe
+    observe --> take
     take --> q
 ```
 
@@ -79,24 +78,21 @@ Semantics worth knowing:
 | `try_get` | Never blocks; distinguishes *empty* from *closed* so a caller can tell "nothing yet" from "no more". |
 | `close` | Stops new writes and wakes blocked readers. Already queued values are still delivered. |
 
-`EventFdNotifier` uses a coalescing non-blocking `eventfd`. The terminal loop
-acknowledges the wake before draining the event queue, which avoids losing a
-wake that races with the drain. The request queue needs no notifier because the
-agent thread blocks directly in `get()`.
+`UvEventLoop` uses libuv's coalescing, thread-safe `uv_async_send()`. The
+frontend observes the async callback before draining the event queue. The
+request queue needs no notifier because the agent thread blocks directly in
+`get()`.
 
-## Input waiting
+## Event-loop ownership
 
-`wait_for_input_events()` wraps `poll(2)` and returns semantic flags rather than
-leaking descriptor bits into either frontend. It reports readable or closed
-stdin, pending agent notification, pending signal, interruption, and failure.
-The console may temporarily omit stdin to apply pipe backpressure while still
-waiting for agent and signal events. The TUI uses the same helper without a
-signal descriptor.
+`UvEventLoop` owns only the loop and its async wake handle. Each frontend owns
+the input and signal handles it adds to that loop. This keeps queue producers
+independent of frontend policy and keeps native handle details out of the
+session layer.
 
 ## Dependencies
 
-- **Depends on:** the standard library and the process environment. Linux-only
-  adapters use `eventfd` and `poll`.
+- **Depends on:** the standard library, the process environment, and libuv.
 - **Must not depend on:** `transcript/`, `agents/`, `session/`, or
   `ui/`.
 - **Used by:** agent code, workspace and session code, the text grammar, and
@@ -105,5 +101,5 @@ signal descriptor.
 ## Tests
 
 `tests/util/unit_text.cpp`, `tests/util/unit_environment.cpp`,
-`tests/util/unit_input_wait.cpp`, `tests/util/unit_concurrent_queue.cpp`, and
-`tests/util/unit_event_fd_notifier.cpp`.
+`tests/util/unit_concurrent_queue.cpp`, and
+`tests/util/unit_uv_event_loop.cpp`.

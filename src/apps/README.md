@@ -50,9 +50,9 @@ why it stopped.
 
 ## `console_main.cpp`
 
-The line-oriented application parses room/session selection, creates a
-`signalfd` for SIGINT, opens the controller through `Workspace`, and assembles
-`SystemConsole`, `TranscriptEmitter`, and `ConsoleSession`. It also decides
+The line-oriented application parses room/session selection, constructs a
+`SystemConsole` whose libuv loop handles SIGINT and stdin, opens the controller
+through `Workspace`, and assembles `TranscriptEmitter` and `ConsoleSession`. It also decides
 TTY-dependent behavior: the named `@DefaultAgentName> ` prompt and ready banner
 appear only for interactive stdin, pipe input receives queue backpressure, and
 automatic attributes are enabled independently for terminal stdout and stderr.
@@ -60,10 +60,9 @@ automatic attributes are enabled independently for terminal stdout and stderr.
 controller; the ready banner prints that resolved ID rather than a placeholder
 for newly created sessions.
 
-SIGINT is blocked before the controller creates its agent thread so every
-thread inherits the mask and the main loop can consume interrupts reliably.
-SIGPIPE is ignored so `ConsoleSession` can turn a closed stdout into exit code
-1 with an error on stderr.
+The libuv signal watcher is started before the controller creates its agent
+thread. On POSIX, SIGPIPE is ignored so `ConsoleSession` can turn a closed
+stdout into exit code 1 with an error on stderr.
 
 Listings return before any session or console object is constructed and take
 precedence over session-selection validation. Usage errors return 2, runtime

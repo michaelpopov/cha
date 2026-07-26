@@ -3,7 +3,6 @@
 #include "session/session_controller.h"
 #include "ui/console/console_port.h"
 #include "ui/console/transcript_emitter.h"
-#include "util/event_fd_notifier.h"
 
 #include <cstddef>
 #include <deque>
@@ -31,7 +30,6 @@ public:
     ConsoleSession(
         ConsolePort& port,
         SessionController& controller,
-        EventFdNotifier& notifier,
         TranscriptEmitter& emitter,
         ConsoleSessionOptions options = {});
 
@@ -46,7 +44,6 @@ private:
 
     ConsolePort& port_;
     SessionController& controller_;
-    EventFdNotifier& notifier_;
     TranscriptEmitter& emitter_;
     ConsoleSessionOptions options_;
     std::deque<std::string> queue_;

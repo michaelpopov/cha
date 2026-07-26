@@ -88,7 +88,9 @@ http://HOST:PORT/v1/chat/completions
 
 Chat requests deliberately have no overall or low-speed timeout so long generations can complete. Use `/stop`, Escape, or Ctrl-C to cancel an active request.
 
-HTTPS servers require a libcurl build with a TLS backend. When the bundled libcurl is used, CMake enables OpenSSL automatically when its development files are available.
+HTTPS servers require a libcurl build with a TLS backend. The bundled libcurl
+uses Schannel on Windows, Secure Transport on macOS, and OpenSSL when available
+on other platforms.
 
 Before loading server configuration, the application optionally reads `.env` from the working directory. It accepts `NAME=value` entries, ignores blank lines and `#` comments, and does not replace variables already set in the process environment.
 
@@ -151,14 +153,19 @@ Transcript text is an append-only log on stdout; prompts, responses, and
 restored history are never rewritten. Notices and the named interactive prompt
 go to stderr, keeping stdout suitable for redirection. With `--color=auto`, the
 prompt uses stderr's terminal status for bold styling independently of stdout;
-`always` and `never` force styling for both streams. Model text is sanitized so
-it cannot inject terminal control sequences, including a C1 sequence split
-across streaming chunks. Final sanitizer state is emitted before a checked
+`always` and `never` force styling for both streams. On Windows, automatic
+color enables virtual-terminal processing and stays off if the console host
+does not support it. Model text is sanitized so it cannot inject terminal
+control sequences, including a C1 sequence split across streaming chunks.
+Final sanitizer state is emitted before a checked
 stdout flush, so a late output failure still produces exit code 1.
 
 ## Build and test
 
-The build uses an installed libcurl development package when available. Otherwise CMake downloads and builds a pinned libcurl automatically.
+The build uses an installed libcurl development package when available.
+Otherwise CMake downloads and builds a pinned libcurl automatically. It also
+downloads a pinned libuv for portable console input, signal handling, and
+cross-thread wakeups.
 
 ```bash
 make
@@ -180,6 +187,9 @@ cmake -S . -B build/notui -DCHA_BUILD_TUI=OFF
 cmake --build build/notui
 ctest --test-dir build/notui
 ```
+
+On macOS and Windows the TUI option defaults to off, so the default build
+produces the console frontend only. The ncurses TUI remains Linux-only.
 
 ## Architecture
 

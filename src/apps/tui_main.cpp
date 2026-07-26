@@ -4,7 +4,7 @@
 #include "ui/tui/terminal.h"
 #include "ui/tui/user.h"
 #include "util/environment.h"
-#include "util/event_fd_notifier.h"
+#include "util/uv_event_loop.h"
 
 #include <exception>
 #include <iostream>
@@ -45,7 +45,7 @@ int main_internal() {
         throw std::runtime_error(selected_session->error);
     }
 
-    cha::EventFdNotifier notifier;
+    cha::UvEventLoop event_loop;
     std::unique_ptr<cha::SessionController> controller;
     if (selected_session->id.empty()) {
         const auto session_label = selector.prompt_session_name();
@@ -56,15 +56,15 @@ int main_internal() {
             std::move(workspace.create_session(
                 *room_name,
                 *session_label,
-                notifier)
+                event_loop)
                 .controller);
     } else {
         controller = workspace.open_session(
             *room_name,
             selected_session->id,
-            notifier);
+            event_loop);
     }
 
-    cha::run_user(terminal, *controller, notifier);
+    cha::run_user(terminal, *controller, event_loop);
     return 0;
 }

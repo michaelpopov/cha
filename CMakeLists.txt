@@ -6,9 +6,22 @@ project(cha LANGUAGES C CXX)
 
 include(CTest)
 
-option(CHA_BUILD_TUI "Build the ncurses front end" ON)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(CHA_BUILD_TUI_DEFAULT ON)
+else()
+    set(CHA_BUILD_TUI_DEFAULT OFF)
+endif()
+option(
+    CHA_BUILD_TUI
+    "Build the Linux ncurses front end"
+    ${CHA_BUILD_TUI_DEFAULT})
 
 if(CHA_BUILD_TUI)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(FATAL_ERROR
+            "CHA_BUILD_TUI is supported only on Linux; "
+            "configure with -DCHA_BUILD_TUI=OFF to build chacon")
+    endif()
     set(CURSES_NEED_WIDE TRUE)
     find_package(Curses REQUIRED)
     find_library(CURSES_WIDE_LIBRARY NAMES ncursesw REQUIRED)
@@ -20,6 +33,10 @@ find_package(OpenSSL QUIET)
 
 include(FetchContent)
 
+# Keep fetched runtime dependencies inside the executables. In particular,
+# Windows console builds must not require a separately copied libcurl DLL.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
 if(NOT CURL_FOUND)
     set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
     set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -28,7 +45,11 @@ if(NOT CURL_FOUND)
     set(ENABLE_CURL_MANUAL OFF CACHE BOOL "" FORCE)
     set(HTTP_ONLY ON CACHE BOOL "" FORCE)
     set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
-    if(OpenSSL_FOUND)
+    if(WIN32)
+        set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+    elseif(APPLE)
+        set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
+    elseif(OpenSSL_FOUND)
         set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
     endif()
     set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
@@ -54,6 +75,17 @@ FetchContent_Declare(
     URL https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.zip
 )
 FetchContent_MakeAvailable(tomlplusplus)
+
+set(LIBUV_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(LIBUV_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LIBUV_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+set(ENABLE_CLANG_TIDY OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    libuv
+    URL https://github.com/libuv/libuv/archive/refs/tags/v1.52.1.zip
+    URL_HASH SHA256=d56767702c5b383a78ee9124dd7bdf684f14c681f725117c3f865637a7152cba
+)
+FetchContent_MakeAvailable(libuv)
 
 FetchContent_Declare(
     sqlite_amalgamation
@@ -96,10 +128,9 @@ target_compile_definitions(
 
 add_library(cha_core STATIC
     src/util/environment.cpp
-    src/util/event_fd_notifier.cpp
-    src/util/input_wait.cpp
     src/util/path_name.cpp
     src/util/text.cpp
+    src/util/uv_event_loop.cpp
     src/transcript/transcript.cpp
     src/agents/agent.cpp
     src/agents/agent_registry.cpp
@@ -124,11 +155,19 @@ add_library(cha_core STATIC
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
 target_include_directories(cha_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+if(WIN32)
+    target_compile_definitions(
+        cha_core
+        PUBLIC
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN)
+endif()
 target_link_libraries(
     cha_core
     PUBLIC
         CURL::libcurl
         Threads::Threads
+        uv_a
         nlohmann_json::nlohmann_json
         tomlplusplus::tomlplusplus
     PRIVATE
@@ -169,14 +208,12 @@ if(BUILD_TESTING)
     set(CHA_TEST_SOURCES
         tests/util/unit_environment.cpp
         tests/util/unit_concurrent_queue.cpp
-        tests/util/unit_event_fd_notifier.cpp
-        tests/util/unit_input_wait.cpp
         tests/util/unit_text.cpp
+        tests/util/unit_uv_event_loop.cpp
         tests/transcript/unit_transcript.cpp
         tests/agents/unit_agent_context.cpp
         tests/agents/unit_agent_definition_loader.cpp
         tests/agents/unit_agent_registry.cpp
-        tests/agents/unit_completion_client.cpp
         tests/agents/unit_config_loader.cpp
         tests/agents/unit_json_serialization.cpp
         tests/session/unit_room_personas.cpp
@@ -201,6 +238,11 @@ if(BUILD_TESTING)
             tests/ui/tui/unit_user_session.cpp
         )
     endif()
+    if(NOT WIN32)
+        # The socket fixture used by these transport tests is POSIX-only.
+        list(APPEND CHA_TEST_SOURCES
+            tests/agents/unit_completion_client.cpp)
+    endif()
 
     add_executable(cha_tests ${CHA_TEST_SOURCES})
     # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
@@ -211,26 +253,31 @@ if(BUILD_TESTING)
     target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     cha_enable_warnings(cha_tests)
 
-    # The integration suite, run by "make itest": it drives the real stack against
-    # the checked-in workspace, including its live endpoint.
-    add_executable(itest tests/integration/integration_test.cpp)
-    target_link_libraries(itest PRIVATE cha_core GTest::gtest_main)
-    target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-    cha_enable_warnings(itest)
-    target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
+    if(NOT WIN32)
+        # These integration harnesses currently use POSIX sockets and
+        # fork/exec. They test the portable console implementation on Linux
+        # and macOS but are not part of the Windows build.
+        add_executable(itest tests/integration/integration_test.cpp)
+        target_link_libraries(itest PRIVATE cha_core GTest::gtest_main)
+        target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        cha_enable_warnings(itest)
+        target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
 
-    add_executable(console_tests tests/integration/console_process_test.cpp)
-    target_link_libraries(console_tests PRIVATE cha_core GTest::gtest_main)
-    target_include_directories(console_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-    target_compile_definitions(
-        console_tests
-        PRIVATE CHA_CONSOLE_BINARY="$<TARGET_FILE:chacon_app>")
-    add_dependencies(console_tests chacon_app)
-    cha_enable_warnings(console_tests)
+        add_executable(console_tests tests/integration/console_process_test.cpp)
+        target_link_libraries(console_tests PRIVATE cha_core GTest::gtest_main)
+        target_include_directories(console_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        target_compile_definitions(
+            console_tests
+            PRIVATE CHA_CONSOLE_BINARY="$<TARGET_FILE:chacon_app>")
+        add_dependencies(console_tests chacon_app)
+        cha_enable_warnings(console_tests)
+    endif()
 
     include(GoogleTest)
     gtest_discover_tests(cha_tests)
-    gtest_discover_tests(console_tests)
+    if(TARGET console_tests)
+        gtest_discover_tests(console_tests)
+    endif()
 endif()
 
 add_executable(chacon_app src/apps/console_main.cpp)

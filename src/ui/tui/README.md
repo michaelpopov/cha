@@ -36,15 +36,16 @@ directory decides only how it looks and how input reaches it.
 
 ## The event loop
 
-The whole chat runs on one thread, blocked in a single `poll(2)` over stdin and
-the agent event descriptor. There are no timers and no polling intervals.
+The whole chat runs on one thread, blocked in one libuv loop containing a Linux
+stdin poll handle, a resize-signal handle, and the agent async wake handle.
+There are no timers and no polling intervals.
 
 ```mermaid
 flowchart TD
     start["run_user"] --> mk["construct Tui and UserSession<br/>render once"]
-    mk --> wait["wait_for_input_events<br/>poll stdin + agent eventfd"]
+    mk --> wait["run libuv loop<br/>stdin + resize + agent wake"]
     wait --> res{"result"}
-    res -->|"interrupted, EINTR"| resize["treat as resize,<br/>redraw if needed"] --> wait
+    res -->|"resize"| resize["resize terminal,<br/>redraw if needed"] --> wait
     res -->|"failed"| fail["report terminal failure,<br/>leave the loop"]
     res -->|"ready"| closed{"terminal closed?"}
     closed -->|"yes"| stoploop["stop the session"]

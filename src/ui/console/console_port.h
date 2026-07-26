@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ui/render/transcript_writer.h"
-#include "util/input_wait.h"
+#include "util/wake_notifier.h"
 
 #include <cstddef>
 #include <iosfwd>
@@ -10,17 +10,67 @@
 
 namespace cha {
 
+// The semantic events returned by one frontend wait. Platform-specific handle,
+// signal, and stream details stay inside the ConsolePort implementation.
+class InputEvents {
+public:
+    static InputEvents ready(
+        bool input = false,
+        bool input_closed = false,
+        bool notification = false,
+        bool signal = false) {
+        return InputEvents(
+            false,
+            input,
+            input_closed,
+            notification,
+            signal);
+    }
+
+    static InputEvents failure() {
+        return InputEvents(true, false, false, false, false);
+    }
+
+    bool failed() const { return failed_; }
+    bool input_ready() const { return input_; }
+    bool input_closed() const { return input_closed_; }
+    bool notification_ready() const { return notification_; }
+    bool signal_ready() const { return signal_; }
+
+private:
+    InputEvents(
+        bool failed,
+        bool input,
+        bool input_closed,
+        bool notification,
+        bool signal)
+        : failed_(failed),
+          input_(input),
+          input_closed_(input_closed),
+          notification_(notification),
+          signal_(signal) {
+    }
+
+    bool failed_{};
+    bool input_{};
+    bool input_closed_{};
+    bool notification_{};
+    bool signal_{};
+};
+
 // Everything the console loop needs from the outside world. wait() reports
-// non-sticky poll bits; input_closed() is sticky after take_lines() observes
-// EOF. The include_input flag lets a non-interactive producer receive
-// backpressure while agent and signal descriptors remain pollable.
-class ConsolePort {
+// non-sticky semantic events; input_closed() is sticky after EOF. The port is
+// also the agent thread's wake target, so its concrete event loop never leaks
+// into ConsoleSession. When include_input is false, wait() must suppress both
+// input-ready and input-closed delivery, and input_closed() must not become
+// sticky for an EOF whose buffered input is still deferred. This lets a
+// non-interactive producer receive backpressure while agent and signal events
+// remain enabled.
+class ConsolePort : public WakeNotifier {
 public:
     virtual ~ConsolePort() = default;
 
-    virtual InputEvents wait(
-        int notification_fd,
-        bool include_input = true) = 0;
+    virtual InputEvents wait(bool include_input = true) = 0;
     virtual std::vector<std::string> take_lines() = 0;
     virtual bool input_closed() const = 0;
     virtual bool take_interrupt() = 0;

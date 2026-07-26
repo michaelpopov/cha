@@ -49,7 +49,7 @@ they need.
 | `session/` | Workspace and session operations, `RoomPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
 | `agents/` | Persona config, agent runtime metadata, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the thread-safe live `Transcript`. | Storage, providers, frontends. |
-| `util/` | Leaf helpers: text and path rules, `.env`, input waiting, a portable concurrent queue, and platform wake adapters. | Anything above it. |
+| `util/` | Leaf helpers: text and path rules, `.env`, a portable concurrent queue, and the libuv wake loop. | Anything above it. |
 
 ## Dependency direction
 
@@ -125,7 +125,7 @@ Ownership is a strict tree, and destruction order matters:
 
 - Each entry point owns a `Workspace` and selected `SessionController`. The TUI
   additionally owns its process-wide `Terminal`; the console owns a
-  `SystemConsole`, `TranscriptEmitter`, and `signalfd`.
+  `SystemConsole` and `TranscriptEmitter`.
 - `run_user()` owns the TUI chat state. `ConsoleSession::run()` owns the
   console queue and EOF lifecycle.
 - `SessionController` owns the `Transcript`, `RoomPersonas`, the
@@ -146,9 +146,10 @@ directions:
 - a shared `ConcurrentQueue<AgentEvent>` carries events **back**. After each
   successful push, the registry calls an injected `WakeNotifier`.
 
-The terminal frontends own an `EventFdNotifier`, poll its descriptor next to
-stdin, acknowledge a wake, and then drain the event queue. This keeps Linux
-descriptor details out of the agent and session layers.
+The terminal frontends own a `UvEventLoop`. Agent threads wake it through
+`uv_async_send()`; frontend-owned libuv input and signal handles share the same
+loop. The frontend then drains the event queue. This keeps platform handle
+details out of the agent and session layers.
 
 Submission claims a single atomic gate, so at most one request is outstanding
 across all agents; a second submission is refused even for a different agent.
@@ -240,7 +241,7 @@ sequenceDiagram
     loop streamed fragments
         P-->>W: SSE delta
         W->>G: AgentDelta on event queue
-        G-->>U: eventfd wakes poll
+        G-->>U: uv_async_send wakes loop
         U->>C: receive
         C->>V: begin or append streaming entry
         U->>U: render
@@ -422,7 +423,7 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | `console_tests` | Registered fork/exec tests for pipes, signals, output failures, and link dependencies. |
 | `itest` | Live integration tests driving the real stack against the checked-in `workspace/`. Run with `make itest`; not part of `make test`. |
 
-Third-party dependencies are libcurl, nlohmann/json, toml++, SQLite
+Third-party dependencies are libcurl, libuv, nlohmann/json, toml++, SQLite
 (amalgamation), and GoogleTest, plus wide ncurses when the TUI is enabled.
 Dependencies are vendored through CMake `FetchContent` when not already
 installed.

@@ -35,6 +35,16 @@ std::string parse_value(std::string_view value) {
     return std::string(value);
 }
 
+bool set_environment_if_absent(
+    const std::string& name,
+    const std::string& value) {
+#ifdef _WIN32
+    return ::_putenv_s(name.c_str(), value.c_str()) == 0;
+#else
+    return ::setenv(name.c_str(), value.c_str(), 0) == 0;
+#endif
+}
+
 } // namespace
 
 void load_dotenv(const std::filesystem::path& path) {
@@ -63,8 +73,10 @@ void load_dotenv(const std::filesystem::path& path) {
         }
 
         const std::string name_string(name);
+        const std::string value =
+            parse_value(entry.substr(separator + 1));
         if (std::getenv(name_string.c_str()) == nullptr
-            && ::setenv(name_string.c_str(), parse_value(entry.substr(separator + 1)).c_str(), 0) != 0) {
+            && !set_environment_if_absent(name_string, value)) {
             throw std::runtime_error(
                 "Failed to set environment variable '" + name_string + "' from '" + path.string() + "'");
         }

@@ -142,11 +142,13 @@ void make_nonblocking(int descriptor) {
     }
 }
 
-ChildProcess launch_console(const TemporaryWorkspace& workspace) {
-    int input_pipe[2]{};
+ChildProcess launch_console(
+    const TemporaryWorkspace& workspace,
+    const std::filesystem::path& input_path = {}) {
+    int input_pipe[2]{-1, -1};
     int output_pipe[2]{};
     int error_pipe[2]{};
-    if (::pipe(input_pipe) == -1
+    if ((input_path.empty() && ::pipe(input_pipe) == -1)
         || ::pipe(output_pipe) == -1
         || ::pipe(error_pipe) == -1) {
         throw std::runtime_error("Failed to create process-test pipes");
@@ -157,11 +159,21 @@ ChildProcess launch_console(const TemporaryWorkspace& workspace) {
         throw std::runtime_error("Failed to fork console process");
     }
     if (child == 0) {
-        (void)::dup2(input_pipe[0], STDIN_FILENO);
+        if (input_path.empty()) {
+            (void)::dup2(input_pipe[0], STDIN_FILENO);
+        } else {
+            const int input_file =
+                ::open(input_path.c_str(), O_RDONLY);
+            if (input_file == -1
+                || ::dup2(input_file, STDIN_FILENO) == -1) {
+                _exit(125);
+            }
+            ::close(input_file);
+        }
         (void)::dup2(output_pipe[1], STDOUT_FILENO);
         (void)::dup2(error_pipe[1], STDERR_FILENO);
-        ::close(input_pipe[0]);
-        ::close(input_pipe[1]);
+        close_descriptor(input_pipe[0]);
+        close_descriptor(input_pipe[1]);
         ::close(output_pipe[0]);
         ::close(output_pipe[1]);
         ::close(error_pipe[0]);
@@ -186,7 +198,7 @@ ChildProcess launch_console(const TemporaryWorkspace& workspace) {
         _exit(127);
     }
 
-    ::close(input_pipe[0]);
+    close_descriptor(input_pipe[0]);
     ::close(output_pipe[1]);
     ::close(error_pipe[1]);
     make_nonblocking(output_pipe[0]);
@@ -441,6 +453,24 @@ TEST(ConsoleProcess, PromptThenImmediateEofCompletes) {
     EXPECT_FALSE(result.timed_out);
     EXPECT_EQ(result.exit_code, 0) << result.errors;
     EXPECT_NE(result.output.find("Complete answer"), std::string::npos);
+}
+
+TEST(ConsoleProcess, RedirectedRegularFileCompletes) {
+    MockHttpServer server({streamed_answer("File answer")});
+    TemporaryWorkspace workspace;
+    workspace.point_at(server.port());
+    const std::filesystem::path input_path =
+        workspace.path() / "input.txt";
+    write_file(input_path, "hello from file\n");
+    server.start();
+    ChildProcess process =
+        launch_console(workspace, input_path);
+
+    const ProcessResult result = run_to_completion(process);
+    server.join();
+    EXPECT_FALSE(result.timed_out);
+    EXPECT_EQ(result.exit_code, 0) << result.errors;
+    EXPECT_NE(result.output.find("File answer"), std::string::npos);
 }
 
 TEST(ConsoleProcess, SeveralPromptsInOneWriteRunInOrder) {

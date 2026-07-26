@@ -104,23 +104,25 @@ class TestController {
 public:
     TestController(
         TemporaryJournal& journal,
+        WakeNotifier& notifier,
         bool wait_for_cancel,
         SessionRestore restored)
         : controller_(SessionController::from_backends_for_testing(
             test::one_backend(
                 std::make_unique<EchoBackend>(wait_for_cancel)),
             journal.path,
-            notifier_,
+            notifier,
             std::move(restored))) {
     }
 
     TestController(
         TemporaryJournal& journal,
+        WakeNotifier& notifier,
         std::vector<std::unique_ptr<CompletionBackend>> backends)
         : controller_(SessionController::from_backends_for_testing(
             std::move(backends),
             journal.path,
-            notifier_)) {
+            notifier)) {
     }
 
     SessionController& operator*() const {
@@ -131,28 +133,24 @@ public:
         return controller_.get();
     }
 
-    EventFdNotifier& notifier() {
-        return notifier_;
-    }
-
 private:
-    EventFdNotifier notifier_;
     std::unique_ptr<SessionController> controller_;
 };
 
 TestController controller(
     TemporaryJournal& journal,
+    WakeNotifier& notifier,
     bool wait_for_cancel = false,
     SessionRestore restored = {}) {
     return TestController(
         journal,
+        notifier,
         wait_for_cancel,
         std::move(restored));
 }
 
 TEST(ConsoleSession, DrainsSeveralPipedPromptsInOrderAfterEof) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {
             .input = true,
@@ -161,11 +159,11 @@ TEST(ConsoleSession, DrainsSeveralPipedPromptsInOrderAfterEof) {
         },
         {.notification = true, .repeat = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -181,7 +179,6 @@ TEST(ConsoleSession, DrainsSeveralPipedPromptsInOrderAfterEof) {
 
 TEST(ConsoleSession, ShowsPromptWhenIdleNotWhileGenerating) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {
             .input = true,
@@ -190,11 +187,11 @@ TEST(ConsoleSession, ShowsPromptWhenIdleNotWhileGenerating) {
         {.notification = true},
         {.signal = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter,
         {.show_prompt = true});
 
@@ -212,7 +209,6 @@ TEST(ConsoleSession, PromptTracksTheCurrentDefaultAgent) {
     backends.push_back(std::make_unique<EchoBackend>());
     backends.push_back(std::make_unique<EchoBackend>(
         false, "ismael", "Ismael"));
-    TestController session_controller(journal, std::move(backends));
     test::ScriptedConsole port({
         {
             .input = true,
@@ -220,11 +216,14 @@ TEST(ConsoleSession, PromptTracksTheCurrentDefaultAgent) {
         },
         {.signal = true},
     });
+    TestController session_controller(
+        journal,
+        port,
+        std::move(backends));
     TranscriptEmitter emitter(port.transcript(), true);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter,
         {.show_prompt = true});
 
@@ -248,16 +247,15 @@ TEST(ConsoleSession, EmitsRestoredHistoryBeforeWaiting) {
         },
         .next_entry_id = 3,
     };
-    auto session_controller =
-        controller(journal, false, std::move(restored));
     test::ScriptedConsole port({
         {.signal = true},
     });
+    auto session_controller =
+        controller(journal, port, false, std::move(restored));
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -269,7 +267,6 @@ TEST(ConsoleSession, EmitsRestoredHistoryBeforeWaiting) {
 
 TEST(ConsoleSession, EofWaitsForTheActiveTurnToComplete) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {
             .input = true,
@@ -278,11 +275,11 @@ TEST(ConsoleSession, EofWaitsForTheActiveTurnToComplete) {
         },
         {.notification = true, .repeat = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -293,7 +290,6 @@ TEST(ConsoleSession, EofWaitsForTheActiveTurnToComplete) {
 
 TEST(ConsoleSession, StopWithAnArgumentWaitsInTheQueue) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {
             .input = true,
@@ -302,11 +298,11 @@ TEST(ConsoleSession, StopWithAnArgumentWaitsInTheQueue) {
         },
         {.notification = true, .repeat = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -321,18 +317,17 @@ TEST(ConsoleSession, StopWithAnArgumentWaitsInTheQueue) {
 
 TEST(ConsoleSession, ExitDropsTheRemainingQueue) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {
             .input = true,
             .lines = {"/exit", "never"},
         },
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -341,7 +336,6 @@ TEST(ConsoleSession, ExitDropsTheRemainingQueue) {
 
 TEST(ConsoleSession, ExitWithAnArgumentUsesSharedCommandRules) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {
             .input = true,
@@ -350,11 +344,11 @@ TEST(ConsoleSession, ExitWithAnArgumentUsesSharedCommandRules) {
         },
         {.notification = true, .repeat = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -368,17 +362,16 @@ TEST(ConsoleSession, ExitWithAnArgumentUsesSharedCommandRules) {
 
 TEST(ConsoleSession, StopActsImmediatelyDuringGeneration) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal, true);
     test::ScriptedConsole port({
         {.input = true, .lines = {"question"}},
         {.input = true, .closed = true, .lines = {"/stop "}},
         {.notification = true},
     });
+    auto session_controller = controller(journal, port, true);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -390,18 +383,17 @@ TEST(ConsoleSession, StopActsImmediatelyDuringGeneration) {
 
 TEST(ConsoleSession, InterruptWhileGeneratingCancelsWithoutExiting) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal, true);
     test::ScriptedConsole port({
         {.input = true, .lines = {"question"}},
         {.signal = true},
         {.notification = true},
         {.closed = true},
     });
+    auto session_controller = controller(journal, port, true);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -413,15 +405,14 @@ TEST(ConsoleSession, InterruptWhileGeneratingCancelsWithoutExiting) {
 
 TEST(ConsoleSession, InterruptWhileIdleExitsImmediately) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {.signal = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -429,17 +420,16 @@ TEST(ConsoleSession, InterruptWhileIdleExitsImmediately) {
 
 TEST(ConsoleSession, HandlesSignalAndNotificationFromTheSameWait) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {.input = true, .lines = {"question"}},
         {.notification = true, .signal = true},
         {.closed = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -450,16 +440,15 @@ TEST(ConsoleSession, HandlesSignalAndNotificationFromTheSameWait) {
 
 TEST(ConsoleSession, ClosedControllerChannelEndsTheSession) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
-    session_controller->shutdown();
     test::ScriptedConsole port({
         {.notification = true},
     });
+    auto session_controller = controller(journal, port);
+    session_controller->shutdown();
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -468,18 +457,17 @@ TEST(ConsoleSession, ClosedControllerChannelEndsTheSession) {
 
 TEST(ConsoleSession, PipeBackpressureSuppressesInputOnlyWhileQueueIsFull) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
-    // Standard input stays open until the last step so a suppressed poll can
+    // Standard input stays open until the last step so a suppressed read can
     // only be attributed to the full queue, never to end of input.
     test::ScriptedConsole port({
         {.input = true, .lines = {"one", "two", "three"}},
         {.notification = true, .repeat = true, .closed = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter,
         {
             .backpressure_stdin = true,
@@ -497,18 +485,55 @@ TEST(ConsoleSession, PipeBackpressureSuppressesInputOnlyWhileQueueIsFull) {
         port.include_input_history.end());
 }
 
-TEST(ConsoleSession, InteractiveInputRemainsEnabledWhenQueueIsFull) {
+TEST(ConsoleSession, DoesNotConsumeAFileReadCompletedDuringBackpressure) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {.input = true, .lines = {"one", "two"}},
-        {.notification = true, .repeat = true, .closed = true},
+        {
+            .input = true,
+            .notification = true,
+            .closed = true,
+            .bypass_input_suppression = true,
+            .lines = {"deferred"},
+        },
+        {
+            .input = true,
+            .closed = true,
+            .lines = {"deferred"},
+        },
+        {.notification = true, .repeat = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
+        emitter,
+        {
+            .backpressure_stdin = true,
+            .queue_limit = 1,
+        });
+
+    EXPECT_EQ(session.run(), 0);
+    EXPECT_EQ(port.suppressed_take_lines, 0U);
+    EXPECT_EQ(
+        port.transcript_output(),
+        "[You] one\n\n[Guide] Answer to one\n\n"
+        "[You] two\n\n[Guide] Answer to two\n\n"
+        "[You] deferred\n\n[Guide] Answer to deferred\n\n");
+}
+
+TEST(ConsoleSession, InteractiveInputRemainsEnabledWhenQueueIsFull) {
+    TemporaryJournal journal;
+    test::ScriptedConsole port({
+        {.input = true, .lines = {"one", "two"}},
+        {.notification = true, .repeat = true, .closed = true},
+    });
+    auto session_controller = controller(journal, port);
+    TranscriptEmitter emitter(port.transcript(), false);
+    ConsoleSession session(
+        port,
+        *session_controller,
         emitter,
         {
             .backpressure_stdin = false,
@@ -522,21 +547,19 @@ TEST(ConsoleSession, InteractiveInputRemainsEnabledWhenQueueIsFull) {
         << "interactive input remains armed while the prompt queue is full";
 }
 
-// POLLHUP survives the zero-length read, so a closed standard input left in the
-// poll set makes every wait return at once and spins the loop for the rest of
-// the turn.
-TEST(ConsoleSession, StopsPollingStandardInputOnceItIsExhausted) {
+// A closed standard input watcher must remain disabled; otherwise every wait
+// can return immediately and spin the loop for the rest of the turn.
+TEST(ConsoleSession, StopsReadingStandardInputOnceItIsExhausted) {
     TemporaryJournal journal;
-    auto session_controller = controller(journal);
     test::ScriptedConsole port({
         {.input = true, .closed = true, .lines = {"one"}},
         {.notification = true, .repeat = true},
     });
+    auto session_controller = controller(journal, port);
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
         port,
         *session_controller,
-        session_controller.notifier(),
         emitter);
 
     EXPECT_EQ(session.run(), 0);
@@ -550,13 +573,12 @@ TEST(ConsoleSession, StopsPollingStandardInputOnceItIsExhausted) {
 
 TEST(ConsoleSession, ReportsWaitAndFlushFailures) {
     TemporaryJournal wait_journal;
-    auto wait_controller = controller(wait_journal);
     test::ScriptedConsole wait_port({{.failed = true}});
+    auto wait_controller = controller(wait_journal, wait_port);
     TranscriptEmitter wait_emitter(wait_port.transcript(), false);
     ConsoleSession wait_session(
         wait_port,
         *wait_controller,
-        wait_controller.notifier(),
         wait_emitter);
     EXPECT_EQ(wait_session.run(), 1);
     EXPECT_NE(wait_port.notice_output().find("wait failed"), std::string::npos);
@@ -568,15 +590,18 @@ TEST(ConsoleSession, ReportsWaitAndFlushFailures) {
         },
         .next_entry_id = 2,
     };
-    auto flush_controller =
-        controller(flush_journal, false, std::move(restored));
     test::ScriptedConsole flush_port;
+    auto flush_controller =
+        controller(
+            flush_journal,
+            flush_port,
+            false,
+            std::move(restored));
     flush_port.fail_next_flush();
     TranscriptEmitter flush_emitter(flush_port.transcript(), false);
     ConsoleSession flush_session(
         flush_port,
         *flush_controller,
-        flush_controller.notifier(),
         flush_emitter);
     EXPECT_EQ(flush_session.run(), 1);
     EXPECT_NE(
@@ -589,14 +614,14 @@ TEST(ConsoleSession, ReportsWaitAndFlushFailures) {
         first_write + first_write);
 
     TemporaryJournal finish_journal;
-    auto finish_controller = controller(finish_journal);
     test::ScriptedConsole finish_port({{.closed = true}});
+    auto finish_controller =
+        controller(finish_journal, finish_port);
     finish_port.fail_next_finish();
     TranscriptEmitter finish_emitter(finish_port.transcript(), false);
     ConsoleSession finish_session(
         finish_port,
         *finish_controller,
-        finish_controller.notifier(),
         finish_emitter);
     EXPECT_EQ(finish_session.run(), 1);
     EXPECT_NE(

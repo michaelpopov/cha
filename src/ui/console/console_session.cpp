@@ -13,12 +13,10 @@ namespace cha {
 ConsoleSession::ConsoleSession(
     ConsolePort& port,
     SessionController& controller,
-    EventFdNotifier& notifier,
     TranscriptEmitter& emitter,
     ConsoleSessionOptions options)
     : port_(port),
       controller_(controller),
-      notifier_(notifier),
       emitter_(emitter),
       options_(options) {
 }
@@ -58,15 +56,13 @@ int ConsoleSession::run() {
         const bool queue_full =
             options_.queue_limit > 0
             && queue_.size() >= options_.queue_limit;
-        // Drop stdin from the poll set once it is exhausted. POLLHUP is level
-        // triggered and survives the zero-length read, so polling a closed
-        // standard input returns immediately forever and spins the loop for the
-        // rest of the turn.
+        // Stop the frontend's stdin reader once it is exhausted. A sticky EOF
+        // source would otherwise wake the loop forever and spin the rest of
+        // the turn.
         const bool include_input =
             !input_done_
             && !(options_.backpressure_stdin && queue_full);
-        const InputEvents ready =
-            port_.wait(notifier_.descriptor(), include_input);
+        const InputEvents ready = port_.wait(include_input);
 
         if (ready.failed()) {
             port_.notices() << "Console input wait failed.\n";
@@ -82,7 +78,6 @@ int ConsoleSession::run() {
         }
 
         if (ready.notification_ready()) {
-            notifier_.acknowledge();
             const bool was_generating =
                 controller_.generation_status().active;
             apply(controller_.receive());
@@ -93,11 +88,16 @@ int ConsoleSession::run() {
             }
         }
 
-        if (ready.input_ready() || ready.input_closed()) {
+        // Ports should suppress input events while include_input is false.
+        // Keep the boundary defensive as an already-issued asynchronous file
+        // read can complete after backpressure is applied.
+        if (include_input
+            && (ready.input_ready() || ready.input_closed())) {
             enqueue(port_.take_lines());
             prompt_needed_ = true;
         }
-        if (ready.input_closed() || port_.input_closed()) {
+        if (include_input
+            && (ready.input_closed() || port_.input_closed())) {
             input_done_ = true;
         }
 

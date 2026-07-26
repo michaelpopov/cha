@@ -31,14 +31,13 @@ output failures return 1.
 
 ## Event loop and queue
 
-`ConsoleSession` waits on stdin, its event notifier descriptor, and a
-`signalfd` for SIGINT. Readiness flags are independent: in particular, a pipe
-commonly reports input and hangup together, so input is drained before EOF is
-recorded. EOF stops future reads but does not shut down the controller; the
-active turn and the complete queued input are allowed to finish.
+`SystemConsole` puts stdin, the agent wake handle, and a SIGINT watcher on one
+libuv loop. It returns only semantic readiness flags to `ConsoleSession`.
+EOF stops future reads but does not shut down the controller; the active turn
+and the complete queued input are allowed to finish.
 
 Submissions are single-flight FIFO. Piped input is bounded by a 64-line queue;
-once full, stdin is left out of `poll()` until work drains, applying
+once full, libuv input reads are paused until work drains, applying
 backpressure in the pipe. Interactive stdin is never suppressed, so `/stop`,
 `/exit`, and Ctrl-C remain reachable.
 
@@ -52,24 +51,20 @@ cancels that turn; it does not wait for the response to finish.
 
 ## Input
 
-`SystemConsole` makes stdin non-blocking and restores its original flags on
-destruction. It reads bytes only after readiness and feeds them to
-`LineReader`. Each newline completes a submission, and one trailing carriage
-return is removed from every physical line so CRLF files and pipes do not send
-`\r` to the model. A trailing backslash joins the next physical line with no
-separator, matching `InputEditor`; a final unterminated submission is flushed
-at EOF under the same carriage-return and continuation rules.
+`SystemConsole` uses a libuv TTY or pipe stream for interactive and piped
+stdin, and asynchronous libuv filesystem reads for redirected regular files.
+It feeds bytes to `LineReader`. Each newline completes a submission, and one
+trailing carriage return is removed from every physical line so CRLF files and
+pipes do not send `\r` to the model. A trailing backslash joins the next
+physical line with no separator, matching `InputEditor`; a final unterminated
+submission is flushed at EOF under the same carriage-return and continuation
+rules.
 
-Once stdin is exhausted the loop drops it from the poll set. `POLLHUP` is level
-triggered and survives the zero-length read, so a closed stdin left in the set
-makes every wait return immediately and spins the loop at full CPU for the rest
-of the turn — the common `printf 'prompt\n' | chacon` shape.
-
-Ctrl-C is blocked before the agent thread starts and consumed through
-`signalfd`. During generation it requests cancellation and keeps the process
-alive. While idle it exits successfully. SIGPIPE is ignored so a closed stdout
-is reported as a normal write failure rather than terminating the process by
-signal.
+Once stdin is exhausted its watcher remains stopped, preventing a closed input
+source from spinning the loop. Ctrl-C is delivered by libuv. During generation
+it requests cancellation and keeps the process alive; while idle it exits
+successfully. On POSIX, SIGPIPE is ignored so a closed stdout is reported as a
+normal write failure rather than terminating the process by signal.
 
 ## Append-only output
 
@@ -103,6 +98,9 @@ is intentional append-only behavior, not a persistence leak.
 surfaces in both color modes: newlines and tabs pass, carriage returns are
 dropped, C0 and DEL controls become caret notation, and UTF-8 C1 controls are
 replaced. ANSI styling is generated only by `attributes()`.
+On Windows, automatic color first enables virtual-terminal processing on each
+console output handle; if the host does not support it, automatic color stays
+off.
 
 Sanitizing is a property of the whole stream, not of one call. C1 is the only
 rule spanning two bytes, and `U+009B` is an alternative CSI introducer, so
@@ -125,7 +123,7 @@ performs no output.
 | `console_writer.*` | Sanitizing attributed surfaces and the bold `@Name> ` prompt writer. |
 | `console_session.*` | Queue, EOF, signal, event, emission, and shutdown state machine. |
 | `console_startup.*` | CLI parsing, stable listings, and workspace session selection. |
-| `system_console.*` | Real non-blocking descriptors plus stdout transcript and stderr prompt surfaces. |
+| `system_console.*` | Libuv input, signal, and wake handles plus stdout transcript and stderr prompt surfaces. |
 
 ## Regression traps
 
@@ -134,10 +132,10 @@ performs no output.
 | Shutting down at EOF | `printf 'hello\n' \| chacon` cancels its own prompt |
 | Dispatching every queued line at once | Every prompt after the first becomes a busy notice |
 | Reusing `TranscriptRenderPlanner` | No rebuild information, and streamed text lands after the separator |
-| `signal()` plus an `EINTR` flag | Ctrl-C is silently lost when it arrives outside `poll()` |
+| An ad-hoc process signal flag | Ctrl-C delivery races with the blocking input wait |
 | Writing transcript text unsanitized | Model output controls the user's terminal |
 | Joining continued lines with a newline | `handle_text_input()` sees input the TUI can never produce |
-| Polling a closed stdin | `POLLHUP` never clears, so the loop spins at 100% CPU for the rest of the turn |
+| Leaving a closed stdin watcher active | The loop can spin at 100% CPU for the rest of the turn |
 | Emitting a zero-length streamed suffix | Each spin writes two SGR resets; measured 26 MB of escapes for 48 bytes of transcript |
 | Deciding the C1 rule one `write()` at a time | A `U+009B` split across two chunks reaches the terminal intact |
 | Treating an empty write as a byte-stream boundary | A held C1 lead byte is released and the next chunk reconstructs the control |
