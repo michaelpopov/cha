@@ -6,9 +6,14 @@ project(cha LANGUAGES C CXX)
 
 include(CTest)
 
-set(CURSES_NEED_WIDE TRUE)
-find_package(Curses REQUIRED)
-find_library(CURSES_WIDE_LIBRARY NAMES ncursesw REQUIRED)
+option(CHA_BUILD_TUI "Build the ncurses front end" ON)
+
+if(CHA_BUILD_TUI)
+    set(CURSES_NEED_WIDE TRUE)
+    find_package(Curses REQUIRED)
+    find_library(CURSES_WIDE_LIBRARY NAMES ncursesw REQUIRED)
+endif()
+
 find_package(Threads REQUIRED)
 find_package(CURL QUIET)
 find_package(OpenSSL QUIET)
@@ -57,6 +62,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(sqlite_amalgamation)
 
+function(cha_enable_warnings target)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        target_compile_options(
+            ${target}
+            PRIVATE
+                -Wall
+                -Wextra
+                -Wpedantic
+                -Wno-missing-field-initializers)
+    elseif(MSVC)
+        target_compile_options(${target} PRIVATE /W4)
+    endif()
+endfunction()
+
 add_library(cha_sqlite3 STATIC
     "${sqlite_amalgamation_SOURCE_DIR}/sqlite3.c"
 )
@@ -75,43 +94,32 @@ target_compile_definitions(
         SQLITE_THREADSAFE=1
 )
 
-add_library(cha_core
+add_library(cha_core STATIC
     src/util/environment.cpp
     src/util/input_wait.cpp
     src/util/path_name.cpp
     src/util/text.cpp
     src/transcript/transcript.cpp
+    src/agents/agent.cpp
     src/agents/agent_registry.cpp
     src/agents/completion_client.cpp
-    src/session/room_personas.cpp
-    src/session/session_controller.cpp
-    src/session/workspace.cpp
-    src/agents/agent.cpp
     src/agents/config.cpp
-    src/session/session_database.cpp
+    src/session/room_personas.cpp
     src/session/session_catalog.cpp
+    src/session/session_controller.cpp
+    src/session/session_database.cpp
+    src/session/workspace.cpp
     src/ui/text/command.cpp
     src/ui/text/mention.cpp
     src/ui/text/text_input.cpp
     src/ui/render/transcript_writer.cpp
-    src/ui/tui/input_editor.cpp
-    src/ui/tui/render_plan.cpp
-    src/ui/tui/screen_layout.cpp
-    src/ui/tui/startup_selector.cpp
-    src/ui/tui/terminal.cpp
-    src/ui/tui/tui.cpp
-    src/ui/tui/user.cpp
-    src/ui/tui/user_session.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
-target_compile_definitions(cha_core PUBLIC _XOPEN_SOURCE_EXTENDED)
 target_include_directories(cha_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_include_directories(cha_core SYSTEM PUBLIC ${CURSES_INCLUDE_DIRS})
 target_link_libraries(
     cha_core
     PUBLIC
-        ${CURSES_WIDE_LIBRARY}
         CURL::libcurl
         Threads::Threads
         nlohmann_json::nlohmann_json
@@ -119,26 +127,29 @@ target_link_libraries(
     PRIVATE
         cha_sqlite3
 )
-
-function(cha_enable_warnings target)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
-        target_compile_options(
-            ${target}
-            PRIVATE
-                -Wall
-                -Wextra
-                -Wpedantic
-                -Wno-missing-field-initializers)
-    elseif(MSVC)
-        target_compile_options(${target} PRIVATE /W4)
-    endif()
-endfunction()
-
 cha_enable_warnings(cha_core)
 
-add_executable(cha src/apps/tui_main.cpp)
-target_link_libraries(cha PRIVATE cha_core)
-cha_enable_warnings(cha)
+if(CHA_BUILD_TUI)
+    add_library(cha_tui STATIC
+        src/ui/tui/input_editor.cpp
+        src/ui/tui/render_plan.cpp
+        src/ui/tui/screen_layout.cpp
+        src/ui/tui/startup_selector.cpp
+        src/ui/tui/terminal.cpp
+        src/ui/tui/tui.cpp
+        src/ui/tui/user.cpp
+        src/ui/tui/user_session.cpp
+    )
+    target_link_libraries(cha_tui PUBLIC cha_core ${CURSES_WIDE_LIBRARY})
+    target_include_directories(cha_tui SYSTEM PUBLIC ${CURSES_INCLUDE_DIRS})
+    target_compile_definitions(cha_tui PUBLIC _XOPEN_SOURCE_EXTENDED)
+    cha_enable_warnings(cha_tui)
+
+    add_executable(cha_tui_app src/apps/tui_main.cpp)
+    target_link_libraries(cha_tui_app PRIVATE cha_tui)
+    set_target_properties(cha_tui_app PROPERTIES OUTPUT_NAME cha)
+    cha_enable_warnings(cha_tui_app)
+endif()
 
 if(BUILD_TESTING)
     FetchContent_Declare(
@@ -148,33 +159,42 @@ if(BUILD_TESTING)
     set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
 
-    add_executable(cha_tests
+    set(CHA_TEST_SOURCES
         tests/util/unit_environment.cpp
+        tests/util/unit_event_channel.cpp
         tests/util/unit_input_wait.cpp
         tests/util/unit_text.cpp
         tests/transcript/unit_transcript.cpp
         tests/agents/unit_agent_context.cpp
-        tests/agents/unit_json_serialization.cpp
+        tests/agents/unit_agent_definition_loader.cpp
         tests/agents/unit_agent_registry.cpp
-        tests/session/unit_room_personas.cpp
         tests/agents/unit_completion_client.cpp
-        tests/util/unit_event_channel.cpp
+        tests/agents/unit_config_loader.cpp
+        tests/agents/unit_json_serialization.cpp
+        tests/session/unit_room_personas.cpp
+        tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_workspace.cpp
-        tests/agents/unit_agent_definition_loader.cpp
-        tests/agents/unit_config_loader.cpp
-        tests/session/unit_session_catalog.cpp
         tests/ui/text/unit_command.cpp
         tests/ui/text/unit_mention.cpp
         tests/ui/text/unit_text_input.cpp
         tests/ui/render/unit_transcript_writer.cpp
-        tests/ui/tui/unit_render_plan.cpp
-        tests/ui/tui/unit_screen_layout.cpp
-        tests/ui/tui/unit_input_editor.cpp
-        tests/ui/tui/unit_user_session.cpp
     )
+    if(CHA_BUILD_TUI)
+        list(APPEND CHA_TEST_SOURCES
+            tests/ui/tui/unit_render_plan.cpp
+            tests/ui/tui/unit_screen_layout.cpp
+            tests/ui/tui/unit_input_editor.cpp
+            tests/ui/tui/unit_user_session.cpp
+        )
+    endif()
+
+    add_executable(cha_tests ${CHA_TEST_SOURCES})
     # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
     target_link_libraries(cha_tests PRIVATE cha_core cha_sqlite3 GTest::gtest_main)
+    if(CHA_BUILD_TUI)
+        target_link_libraries(cha_tests PRIVATE cha_tui)
+    endif()
     target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     cha_enable_warnings(cha_tests)
 
