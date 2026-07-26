@@ -9,7 +9,7 @@ select `normal`, `bold`, `dim`, or `bold_dim` attributes and write text.
 `write_transcript_entry()`, `write_active_response()`, and
 `write_transcript_suffix()` then produce the same labels and styling in either
 frontend. `show_addressing()` enables `[You → Name]` labels for multi-agent
-rooms and for restored history involving agents no longer in the room.
+forums and for restored history involving agents no longer in the forum.
 
 This directory deliberately excludes layout and redraw policy. Curses-specific
 incremental planning, viewport state, wrapping, and `wcwidth` calculations live

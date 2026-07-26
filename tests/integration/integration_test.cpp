@@ -171,7 +171,7 @@ public:
                 + ".sqlite3")) {
         if (!create_session_database(
                 path,
-                {.id = "multi-agent", .room = "lobby", .label = "Multi-agent"})) {
+                {.id = "multi-agent", .forum = "lobby", .label = "Multi-agent"})) {
             throw std::runtime_error("Failed to create the integration session database");
         }
     }
@@ -184,17 +184,17 @@ public:
     std::filesystem::path path;
 };
 
-// Loads the checked-in two-persona lobby room exactly as main() does.
+// Loads the checked-in two-persona lobby forum exactly as main() does.
 std::vector<AgentDefinition> lobby_definitions() {
     const Workspace workspace{std::filesystem::path{CHA_WORKSPACE_DIRECTORY}};
-    const Room room = workspace.load_room("lobby");
+    const Forum forum = workspace.load_forum("lobby");
     std::vector<std::filesystem::path> directories;
-    for (const std::string& persona_name : room.persona_names) {
+    for (const std::string& persona_name : forum.persona_names) {
         directories.push_back(workspace.persona_directory(persona_name));
     }
     return load_agent_definitions(
         directories,
-        room.directory,
+        forum.directory,
         std::filesystem::path{CHA_WORKSPACE_DIRECTORY}
             / "personas" / "base_config.toml");
 }
@@ -410,7 +410,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     EXPECT_EQ(restored[3].display_name, "Ismael");
 }
 
-TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
+TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
     std::vector<AgentDefinition> definitions = lobby_definitions();
     const std::string ismael_prompt = definitions.back().system_prompt;
 
@@ -451,7 +451,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
         handle_text_input(*reopened, "@Cheburashka are you there?").notice,
-        "Unknown agent @Cheburashka. Personas in this room: @Ismael");
+        "Unknown agent @Cheburashka. Personas in this forum: @Ismael");
 
     (void)handle_text_input(*reopened, "What did he say?");
     run_until_idle(*reopened);

@@ -309,7 +309,7 @@ void create_schema(Database& database) {
         CREATE TABLE session (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             id TEXT NOT NULL UNIQUE CHECK (id <> ''),
-            room TEXT NOT NULL CHECK (room <> ''),
+            forum TEXT NOT NULL CHECK (forum <> ''),
             label TEXT NOT NULL CHECK (label <> '')
         ) STRICT;
 
@@ -653,7 +653,7 @@ bool create_session_database(
     const std::filesystem::path& path,
     const SessionDatabaseMetadata& metadata) {
 
-    if (metadata.id.empty() || metadata.room.empty()
+    if (metadata.id.empty() || metadata.forum.empty()
         || metadata.label.empty()) {
         throw std::invalid_argument(
             "Session database metadata fields cannot be empty");
@@ -669,10 +669,10 @@ bool create_session_database(
             Transaction transaction(database);
             create_schema(database);
             Statement statement = database.prepare(
-                "INSERT INTO session (singleton, id, room, label) "
+                "INSERT INTO session (singleton, id, forum, label) "
                 "VALUES (1, ?1, ?2, ?3)",
                 std::string_view(metadata.id),
-                std::string_view(metadata.room),
+                std::string_view(metadata.forum),
                 std::string_view(metadata.label));
             statement.run();
             transaction.commit();
@@ -697,14 +697,14 @@ SessionDatabaseMetadata read_session_database_metadata(
     // performs the full transcript validation below.
     validate_database_identity(database);
     Statement statement = database.prepare(
-        "SELECT id, room, label FROM session WHERE singleton = 1");
+        "SELECT id, forum, label FROM session WHERE singleton = 1");
     if (!statement.step()) {
         throw std::runtime_error(
             "Session database '" + utf8_path(path) + "' has no metadata");
     }
     return {
         .id = statement.text(0),
-        .room = statement.text(1),
+        .forum = statement.text(1),
         .label = statement.text(2),
     };
 }

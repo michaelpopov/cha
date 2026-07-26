@@ -11,22 +11,22 @@ manual is the [top-level `README.md`](../README.md).
 ## System overview
 
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
-It runs inside a workspace containing persona definitions and rooms. A persona
+It runs inside a workspace containing persona definitions and forums. A persona
 definition contains an identity, effective model configuration, and base
 system prompt. Its model configuration may inherit shared values from the
 workspace's optional `personas/base_config.toml`; persona-specific values
-override them. A room contains an ordered list of the personas participating in
-chats in that room, together with a room-specific system-prompt extension.
-When the room is loaded, that extension is appended to each participating
-persona's base system prompt, followed by generated room context identifying
-the current agent, the room's other personas, and the shared-history encoding.
+override them. A forum contains an ordered list of the personas participating in
+chats in that forum, together with a forum-specific system-prompt extension.
+When the forum is loaded, that extension is appended to each participating
+persona's base system prompt, followed by generated forum context identifying
+the current agent, the forum's other personas, and the shared-history encoding.
 
 During a run, the participating personas are represented as agents. Each agent
 has its own identity, effective system prompt, and model connection, while all
-agents use the session's shared chat transcript. The first agent in the room's
+agents use the session's shared chat transcript. The first agent in the forum's
 list is the default; a prompt beginning with `@Name` is sent to another agent.
 
-A session is a persistent chat within a room, stored in a single SQLite
+A session is a persistent chat within a forum, stored in a single SQLite
 database. For each turn, `cha` records the user's prompt before sending it to
 the chosen agent on a worker thread. Model output is streamed into the chat
 transcript, and the outcome of the turn—completion, cancellation, or failure—is
@@ -46,7 +46,7 @@ they need.
 | `ui/console/` | CLI selection, line input, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
-| `session/` | Workspace and session operations, `RoomPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
+| `session/` | Workspace and session operations, `ForumPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
 | `agents/` | Persona config, agent runtime metadata, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the thread-safe live `Transcript`. | Storage, providers, frontends. |
 | `util/` | Leaf helpers: text and path rules, `.env`, a portable concurrent queue, and the libuv wake loop. | Anything above it. |
@@ -78,7 +78,7 @@ Three rules keep this direction honest:
 2. **`transcript/` depends on nothing.** It may not import SQLite, provider
    protocol, or terminal concepts. Everything else may depend on it.
 3. **`agents/` owns persona loading but not workspace discovery.** Once
-   `session/` has resolved which directories a room uses, `agents/` loads
+   `session/` has resolved which directories a forum uses, `agents/` loads
    `Config` and `AgentDefinition` from them.
 4. **Frontends are siblings.** `ui/tui/` and `ui/console/` may share
    `ui/render/` and `ui/text/`, but neither may include the other.
@@ -96,7 +96,7 @@ flowchart LR
         presentation["Tui screen or<br/>console stream"]
         controller["SessionController"]
         conv["Transcript"]
-        personas["RoomPersonas"]
+        personas["ForumPersonas"]
         journal["SessionJournal<br/>SQLite"]
         registry["AgentRegistry<br/>main-thread handle"]
     end
@@ -128,11 +128,11 @@ Ownership is a strict tree, and destruction order matters:
   `SystemConsole` and `TranscriptEmitter`.
 - `run_user()` owns the TUI chat state. `ConsoleSession::run()` owns the
   console queue and EOF lifecycle.
-- `SessionController` owns the `Transcript`, `RoomPersonas`, the
+- `SessionController` owns the `Transcript`, `ForumPersonas`, the
   `SessionJournal`, the `AgentRegistry`, the current default agent, and the
   state of the in-flight turn. The transcript is declared *before* the registry
   so it outlives the thread that reads it.
-- `AgentRegistry` owns runtime information and a backend for each room persona,
+- `AgentRegistry` owns runtime information and a backend for each forum persona,
   the request queue, the event queue, the worker thread, and the
   cancellation and outstanding-request atomics.
 
@@ -171,14 +171,14 @@ sequenceDiagram
     participant controller as SessionController
 
     main->>main: load_dotenv
-    main->>ws: construct, require personas/ and rooms/
-    main->>ws: rooms
-    ws-->>main: room names from rooms/rooms.list
-    main->>sel: select_room
-    sel-->>main: chosen room
-    main->>ws: sessions of room
+    main->>ws: construct, require personas/ and forums/
+    main->>ws: forums
+    ws-->>main: forum names from forums/forums.list
+    main->>sel: select_forum
+    sel-->>main: chosen forum
+    main->>ws: sessions of forum
     ws->>cat: list
-    cat->>db: read metadata, validate id and room
+    cat->>db: read metadata, validate id and forum
     cat-->>ws: Session rows
     ws-->>main: SessionSummary rows
     main->>sel: select_session
@@ -228,7 +228,7 @@ sequenceDiagram
     T->>T: parse_command, then parse_addressed_prompt
     T->>C: submit_prompt text and handle
     C->>C: reject if a turn is active
-    C->>C: resolve handle against RoomPersonas
+    C->>C: resolve handle against ForumPersonas
     C->>J: start_turn, SQLite transaction
     C->>V: add human entry
     C->>G: submit CompletionRequest
@@ -304,7 +304,7 @@ context.
 The transcript is not sent verbatim. `project_agent_context()` in `agents/`
 rebuilds a per-agent view of it for each request:
 
-- the agent's effective system prompt comes first; its generated room-context
+- the agent's effective system prompt comes first; its generated forum-context
   section identifies the current agent and other current personas and explains
   the shared-history encoding;
 - notices, errors, and any still-open streaming entry are dropped;
@@ -326,7 +326,7 @@ active response while its turn is running and never enters the transcript.
 ## What is stored
 
 One session is one self-contained SQLite file under
-`rooms/<room>/sessions/<id>.sqlite3`, carrying its own identity so it can be
+`forums/<forum>/sessions/<id>.sqlite3`, carrying its own identity so it can be
 validated before use, and a `history_epoch` so `/clear` can start a fresh
 visible history without deleting anything.
 
@@ -335,7 +335,7 @@ erDiagram
     session {
         int singleton PK
         text id
-        text room
+        text forum
         text label
     }
     state {
@@ -375,7 +375,7 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 
 | Invariant | Enforced by |
 | --- | --- |
-| `RoomPersonas` is non-empty, with unique IDs and unique case-folded names. | `RoomPersonas` constructor |
+| `ForumPersonas` is non-empty, with unique IDs and unique case-folded names. | `ForumPersonas` constructor |
 | At most one turn is in flight, process-wide. | `AgentRegistry` outstanding-request gate |
 | Every accepted request yields exactly one terminal `AgentEvent`. | `AgentRegistry::dialog` and shutdown order |
 | Only the main thread mutates `Transcript` or the journal. | `SessionController` |
@@ -392,7 +392,7 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
   transcript the database does not agree with.
 - **Provider failures are ordinary events.** A transport or protocol error
   becomes `AgentFailed`, an error entry, and a notice; the session continues.
-- **Startup failures abort.** A malformed workspace, room, persona, or session
+- **Startup failures abort.** A malformed workspace, forum, persona, or session
   database throws before any chat UI is drawn.
 - **Terminal restoration wins.** `run_user()` restores the terminal before
   rethrowing, so a stack trace never lands on a screen still in curses mode.
@@ -437,7 +437,7 @@ installed.
 - Every class and struct carries a comment saying why it exists, what it does,
   and which project types it collaborates with.
 - Public data types live with the behavior that owns their meaning: agent
-  protocol and runtime types in `agents/`, room-persona and journal types in
+  protocol and runtime types in `agents/`, forum-persona and journal types in
   `session/`, transcript semantics in `transcript/`.
 - Tests mirror this tree under `tests/`; cross-layer scenarios go in
   `tests/integration/`.

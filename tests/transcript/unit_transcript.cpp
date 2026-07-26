@@ -83,7 +83,7 @@ void create_test_database(const std::filesystem::path& path) {
             path,
             {
                 .id = utf8_path(path.stem()),
-                .room = "test-room",
+                .forum = "test-forum",
                 .label = "Test session",
             })) {
         throw std::runtime_error("Failed to create test session database");
@@ -552,8 +552,8 @@ TEST(SessionDatabase, StoresTheTargetOnlyOnThePromptItself) {
 
     EXPECT_EQ(
         table_columns(path, "session"),
-        (std::vector<std::string>{"singleton", "id", "room", "label"}))
-        << "a session belongs to a room, not to its current personas";
+        (std::vector<std::string>{"singleton", "id", "forum", "label"}))
+        << "a session belongs to a forum, not to its current personas";
     std::filesystem::remove(path);
 }
 
@@ -650,8 +650,8 @@ TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
     std::filesystem::remove(path);
 }
 
-TEST(SessionDatabase, RestoresAndProjectsASessionWhoseRoomLostAnAgent) {
-    const auto path = temporary_path("cha_room_personas_drift_");
+TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
+    const auto path = temporary_path("cha_forum_personas_drift_");
     create_test_database(path);
     {
         SessionJournal journal(path);
@@ -664,7 +664,7 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseRoomLostAnAgent) {
             4, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 2));
     }
 
-    // Cheburashka has left the room; only Ismael remains.
+    // Cheburashka has left the forum; only Ismael remains.
     const SessionRestore restored = load_session_state(path);
 
     EXPECT_TRUE(restored.interrupted_turns.empty());

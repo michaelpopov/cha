@@ -1,4 +1,4 @@
-#include "session/room_personas.h"
+#include "session/forum_personas.h"
 
 #include <gtest/gtest.h>
 
@@ -9,40 +9,40 @@ PersonaInfo persona(std::string id, std::string name) {
 }
 }
 
-TEST(RoomPersonas, ResolvesNamesPunctuationAndUniquePrefixes) {
-    RoomPersonas personas({persona("ada", "Ada"), persona("grace", "Grace")});
+TEST(ForumPersonas, ResolvesNamesPunctuationAndUniquePrefixes) {
+    ForumPersonas personas({persona("ada", "Ada"), persona("grace", "Grace")});
     EXPECT_EQ(personas.resolve_handle("ADA").persona->id, "ada");
     EXPECT_EQ(personas.resolve_handle("Ada,").persona->id, "ada");
     EXPECT_EQ(personas.resolve_handle("gr").persona->id, "grace");
     EXPECT_EQ(personas.resolve_handle("?!").match, HandleMatch::unknown);
 }
 
-TEST(RoomPersonas, RejectsAmbiguousPrefixAndUnusableNames) {
-    RoomPersonas personas({persona("ada", "Ada"), persona("adam", "Adam")});
+TEST(ForumPersonas, RejectsAmbiguousPrefixAndUnusableNames) {
+    ForumPersonas personas({persona("ada", "Ada"), persona("adam", "Adam")});
     EXPECT_EQ(personas.resolve_handle("a").match, HandleMatch::ambiguous);
     EXPECT_THROW(
-        RoomPersonas({persona("bad", "Local assistant")}),
+        ForumPersonas({persona("bad", "Local assistant")}),
         std::invalid_argument);
 }
 
-TEST(RoomPersonas, RejectsDuplicateAndInvalidPersonaIdentity) {
-    EXPECT_THROW(RoomPersonas(std::vector<PersonaInfo>{}), std::invalid_argument);
+TEST(ForumPersonas, RejectsDuplicateAndInvalidPersonaIdentity) {
+    EXPECT_THROW(ForumPersonas(std::vector<PersonaInfo>{}), std::invalid_argument);
     EXPECT_THROW(
-        RoomPersonas({persona("same", "Ada"), persona("same", "Grace")}),
+        ForumPersonas({persona("same", "Ada"), persona("same", "Grace")}),
         std::invalid_argument);
     EXPECT_THROW(
-        RoomPersonas({persona("one", "Ada"), persona("two", "ada")}),
+        ForumPersonas({persona("one", "Ada"), persona("two", "ada")}),
         std::invalid_argument);
     EXPECT_THROW(
-        RoomPersonas({persona("bad id", "Ada")}),
+        ForumPersonas({persona("bad id", "Ada")}),
         std::invalid_argument);
     EXPECT_THROW(
-        RoomPersonas({persona("good", "@Ada")}),
+        ForumPersonas({persona("good", "@Ada")}),
         std::invalid_argument);
 }
 
-TEST(RoomPersonas, PrefersExactNamesAndReportsAllAmbiguousCandidates) {
-    RoomPersonas personas({
+TEST(ForumPersonas, PrefersExactNamesAndReportsAllAmbiguousCandidates) {
+    ForumPersonas personas({
         persona("ada", "Ada"),
         persona("adam", "Adam"),
         persona("adrian", "Adrian"),
@@ -54,8 +54,8 @@ TEST(RoomPersonas, PrefersExactNamesAndReportsAllAmbiguousCandidates) {
     EXPECT_EQ(personas.handle_list(), "@Ada, @Adam, @Adrian");
 }
 
-TEST(RoomPersonas, ExposesTheFirstPersonaAndLooksUpImmutableIds) {
-    const RoomPersonas personas({
+TEST(ForumPersonas, ExposesTheFirstPersonaAndLooksUpImmutableIds) {
+    const ForumPersonas personas({
         persona("ada", "Ada"),
         persona("grace", "Grace"),
     });
@@ -72,9 +72,9 @@ TEST(RoomPersonas, ExposesTheFirstPersonaAndLooksUpImmutableIds) {
     EXPECT_EQ(personas.find(""), nullptr);
 }
 
-TEST(RoomPersonas, KeepsAPunctuatedNameReachableWhileStillRetryingTrailingPunctuation) {
+TEST(ForumPersonas, KeepsAPunctuatedNameReachableWhileStillRetryingTrailingPunctuation) {
     // The ordering that justifies the retry design: verbatim wins over trimmed.
-    const RoomPersonas personas({
+    const ForumPersonas personas({
         persona("dotted", "Ismael."),
         persona("plain", "Ismael"),
     });
@@ -85,8 +85,8 @@ TEST(RoomPersonas, KeepsAPunctuatedNameReachableWhileStillRetryingTrailingPunctu
     EXPECT_EQ(personas.resolve_handle("Ismael,").persona->id, "plain");
 }
 
-TEST(RoomPersonas, ResolvesAPunctuatedHandleThroughAUniquePrefix) {
-    const RoomPersonas personas({
+TEST(ForumPersonas, ResolvesAPunctuatedHandleThroughAUniquePrefix) {
+    const ForumPersonas personas({
         persona("cheburashka", "Cheburashka"),
         persona("ismael", "Ismael"),
     });
@@ -96,8 +96,8 @@ TEST(RoomPersonas, ResolvesAPunctuatedHandleThroughAUniquePrefix) {
     EXPECT_EQ(personas.resolve_handle("Чебу").match, HandleMatch::unknown);
 }
 
-TEST(RoomPersonas, MatchesANonAsciiPrefixByBytes) {
-    const RoomPersonas personas({
+TEST(ForumPersonas, MatchesANonAsciiPrefixByBytes) {
+    const ForumPersonas personas({
         persona("cheb", "Чебурашка"),
         persona("ismael", "Ismael"),
     });
@@ -106,8 +106,8 @@ TEST(RoomPersonas, MatchesANonAsciiPrefixByBytes) {
     EXPECT_EQ(personas.resolve_handle("Чебу").persona->id, "cheb");
 }
 
-TEST(RoomPersonas, TreatsEmptyAndUnknownHandlesAsUnresolved) {
-    const RoomPersonas personas({persona("ada", "Ada")});
+TEST(ForumPersonas, TreatsEmptyAndUnknownHandlesAsUnresolved) {
+    const ForumPersonas personas({persona("ada", "Ada")});
 
     EXPECT_EQ(personas.resolve_handle("").match, HandleMatch::unknown);
     EXPECT_EQ(personas.resolve_handle(",").match, HandleMatch::unknown);
@@ -116,13 +116,13 @@ TEST(RoomPersonas, TreatsEmptyAndUnknownHandlesAsUnresolved) {
     EXPECT_EQ(personas.handle_list(), "@Ada");
 }
 
-TEST(RoomPersonas, RejectsEveryUnusableDisplayNameForm) {
-    EXPECT_THROW(RoomPersonas({persona("good", "")}), std::invalid_argument);
-    EXPECT_THROW(RoomPersonas({persona("good", "/Ada")}), std::invalid_argument);
-    EXPECT_THROW(RoomPersonas({persona("good", "User")}), std::invalid_argument);
-    EXPECT_THROW(RoomPersonas({persona("good", "user")}), std::invalid_argument);
-    EXPECT_THROW(RoomPersonas({persona("", "Ada")}), std::invalid_argument);
-    EXPECT_NO_THROW(RoomPersonas({persona("good", "Users")}));
+TEST(ForumPersonas, RejectsEveryUnusableDisplayNameForm) {
+    EXPECT_THROW(ForumPersonas({persona("good", "")}), std::invalid_argument);
+    EXPECT_THROW(ForumPersonas({persona("good", "/Ada")}), std::invalid_argument);
+    EXPECT_THROW(ForumPersonas({persona("good", "User")}), std::invalid_argument);
+    EXPECT_THROW(ForumPersonas({persona("good", "user")}), std::invalid_argument);
+    EXPECT_THROW(ForumPersonas({persona("", "Ada")}), std::invalid_argument);
+    EXPECT_NO_THROW(ForumPersonas({persona("good", "Users")}));
 }
 
 } // namespace cha

@@ -3,7 +3,7 @@
 `agents/` owns everything about configured chat agents: loading a persona,
 projecting the transcript into model context, running completions on a
 dedicated thread, and speaking the provider's HTTP protocol. The ordered
-personas in a room and `@handle` resolution belong to `session/`.
+personas in a forum and `@handle` resolution belong to `session/`.
 
 It is the only layer that talks to a model server, and the only one that owns a
 thread.
@@ -27,7 +27,7 @@ flowchart LR
         base["personas/base_config.toml<br/>optional shared defaults"]
         cfg["personas/X/config.toml"]
         sys["personas/X/SYSTEM.md"]
-        usr["rooms/R/USER.md"]
+        usr["forums/R/USER.md"]
     end
 
     base --> load["load_config<br/>typed overlay"]
@@ -40,13 +40,13 @@ flowchart LR
     client --> registry["AgentRegistry"]
     client -->|"info"| runtime["AgentRuntimeInfo"]
     runtime --> registry
-    runtime -->|"identity only"| personas["session/RoomPersonas"]
+    runtime -->|"identity only"| personas["session/ForumPersonas"]
 ```
 
 The effective system prompt is the persona's `SYSTEM.md`, followed by the
-room's `USER.md`, followed by generated room context. The generated section
+forum's `USER.md`, followed by generated forum context. The generated section
 names the current agent, lists the other current personas, and defines how
-quoted shared history is encoded. It is added even for a single-agent room,
+quoted shared history is encoded. It is added even for a single-agent forum,
 because restored history can still mention a persona that has left. Loading
 happens on the main thread during session construction: `session/` decides
 *which* directories to load, `agents/` decides *how*.
@@ -64,16 +64,16 @@ Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
   is what transcript entries record — never change it when renaming a persona.
 - a **name** is the visible `@handle`. It may not be empty, contain whitespace,
   start with `@` or `/`, or be `User` in any casing.
-- within one room, IDs are unique and names are unique case-insensitively.
+- within one forum, IDs are unique and names are unique case-insensitively.
 
 `AgentRegistry` validates these rules when it accepts backend metadata.
-`RoomPersonas` in `session/` separately owns the ordered identity-only view used
+`ForumPersonas` in `session/` separately owns the ordered identity-only view used
 for lookup and handle resolution.
 
 ## Execution: one thread, one request
 
 `AgentRegistry` exists so a slow provider can never block the UI. It owns
-one worker thread, one backend per room persona, and two queues.
+one worker thread, one backend per forum persona, and two queues.
 
 ```mermaid
 sequenceDiagram
@@ -219,7 +219,7 @@ never included.
   text helpers, `ConcurrentQueue`, and `WakeNotifier`; nlohmann/json for shared-history and HTTP
   JSON; libcurl in the HTTP client; toml++ in the config loader.
 - **Must not depend on:** `session/` or `ui/`. Workspace discovery
-  stays above; once the persona and room directories are known, this layer owns
+  stays above; once the persona and forum directories are known, this layer owns
   the loading.
 
 ## Tests
@@ -227,8 +227,8 @@ never included.
 | Test | Covers |
 | --- | --- |
 | `tests/agents/unit_config_loader.cpp` | TOML fields, defaults, and rejection of malformed values. |
-| `tests/agents/unit_agent_definition_loader.cpp` | Persona and room prompt composition, and load errors. |
-| `tests/session/unit_room_personas.cpp` | Room-persona validation and every handle-resolution branch. |
+| `tests/agents/unit_agent_definition_loader.cpp` | Persona and forum prompt composition, and load errors. |
+| `tests/session/unit_forum_personas.cpp` | Forum-persona validation and every handle-resolution branch. |
 | `tests/agents/unit_agent_registry.cpp` | Single-flight gating, event correlation, cancellation, shutdown ordering. |
 | `tests/agents/unit_agent_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
 | `tests/agents/unit_json_serialization.cpp` | Context-specific invalid-UTF-8 diagnostics for JSON serialization. |

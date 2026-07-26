@@ -44,7 +44,7 @@ flowchart TD
     controller -->|"SessionUpdate"| console
     tui -->|"reads"| convo["Transcript snapshots<br/>GenerationStatus"]
     console -->|"reads"| convo
-    render -->|"reads"| personas["RoomPersonas<br/>names for labels"]
+    render -->|"reads"| personas["ForumPersonas<br/>names for labels"]
 
     controller -.->|"never called from ui/"| store["SessionCatalog<br/>SessionJournal<br/>CompletionBackend"]
 ```
@@ -63,7 +63,7 @@ Code under `ui/` may depend on:
 - `transcript/` for presentation-ready transcript values;
 - the shared grammar and transcript writer;
 - narrowly scoped `util/` helpers where protocol parsing needs them;
-- `RoomPersonas` from `session/` when a presentation needs persona names — for
+- `ForumPersonas` from `session/` when a presentation needs persona names — for
   example deciding whether to label who a message was addressed to or naming
   the console's current-default-agent prompt.
 

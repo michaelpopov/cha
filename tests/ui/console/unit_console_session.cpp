@@ -36,7 +36,7 @@ public:
                 path,
                 {
                     .id = "console-test",
-                    .room = "test",
+                    .forum = "test",
                     .label = "Console test",
                 })) {
             throw std::runtime_error("Failed to create temporary journal");

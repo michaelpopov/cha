@@ -42,7 +42,7 @@ public:
                 path,
                 {
                     .id = "controller-test",
-                    .room = "test-room",
+                    .forum = "test-forum",
                     .label = "Controller test",
                 })) {
             throw std::runtime_error("Failed to create controller test database");
@@ -703,7 +703,7 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
         std::string::npos);
 }
 
-TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossRoomPersonas) {
+TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumPersonas) {
     TemporaryJournal temporary;
     auto guide = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"Guide answer"});

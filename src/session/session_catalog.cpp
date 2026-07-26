@@ -44,7 +44,7 @@ std::string timestamp_name(std::time_t now) {
 void validate_metadata(
     const std::filesystem::path& path,
     std::string_view expected_id,
-    std::string_view expected_room,
+    std::string_view expected_forum,
     const SessionDatabaseMetadata& metadata) {
 
     if (metadata.id != expected_id) {
@@ -52,10 +52,10 @@ void validate_metadata(
             "Session database '" + utf8_path(path)
             + "' does not match its filename");
     }
-    if (metadata.room != expected_room) {
+    if (metadata.forum != expected_forum) {
         throw std::runtime_error(
-            "Session database '" + utf8_path(path) + "' does not belong to room '"
-            + std::string(expected_room) + "'");
+            "Session database '" + utf8_path(path) + "' does not belong to forum '"
+            + std::string(expected_forum) + "'");
     }
 }
 
@@ -63,10 +63,10 @@ void validate_metadata(
 
 SessionCatalog::SessionCatalog(
     std::filesystem::path directory,
-    std::string room_name,
+    std::string forum_name,
     Clock clock)
     : directory_(std::move(directory)),
-      room_name_(std::move(room_name)),
+      forum_name_(std::move(forum_name)),
       clock_(std::move(clock)) {
     if (!clock_) {
         clock_ = [] { return std::time(nullptr); };
@@ -98,7 +98,7 @@ std::vector<Session> SessionCatalog::list() const {
             validate_metadata(
                 entry.path(),
                 id,
-                room_name_,
+                forum_name_,
                 metadata);
             label = metadata.label;
         } catch (const std::exception& exception) {
@@ -124,7 +124,7 @@ Session SessionCatalog::create(std::string label) const {
                 database_path(id),
                 {
                     .id = id,
-                    .room = room_name_,
+                    .forum = forum_name_,
                     .label = effective_label,
                 })) {
             return {id, effective_label};
@@ -152,7 +152,7 @@ std::filesystem::path SessionCatalog::open_database_path(
     validate_metadata(
         path,
         session_id,
-        room_name_,
+        forum_name_,
         metadata);
     return path;
 }

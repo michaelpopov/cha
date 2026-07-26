@@ -38,14 +38,14 @@ public:
     std::string output;
 };
 
-TEST(ShowAddressing, DependsOnRoomPersonasAndForeignHistory) {
-    const RoomPersonas single({
+TEST(ShowAddressing, DependsOnForumPersonasAndForeignHistory) {
+    const ForumPersonas single({
         PersonaInfo{
             .id = "guide-id",
             .name = "Guide",
         }
     });
-    const RoomPersonas multi({
+    const ForumPersonas multi({
         PersonaInfo{
             .id = "guide-id",
             .name = "Guide",

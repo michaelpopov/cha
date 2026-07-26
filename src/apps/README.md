@@ -17,11 +17,11 @@ the chat loop.
 ```mermaid
 flowchart TD
     a["main<br/>catch and report any exception"] --> b["load_dotenv"]
-    b --> c["construct Workspace<br/>requires personas/ and rooms/"]
+    b --> c["construct Workspace<br/>requires personas/ and forums/"]
     c --> d["construct Terminal<br/>process-wide curses"]
-    d --> e["StartupSelector.select_room"]
+    d --> e["StartupSelector.select_forum"]
     e -->|"cancelled"| x["throw, exit 1"]
-    e --> f["Workspace.sessions of room"]
+    e --> f["Workspace.sessions of forum"]
     f --> g["StartupSelector.select_session"]
     g -->|"cancelled"| x
     g -->|"row carries an error"| x
@@ -50,7 +50,7 @@ why it stopped.
 
 ## `console_main.cpp`
 
-The line-oriented application parses room/session selection, constructs a
+The line-oriented application parses forum/session selection, constructs a
 `SystemConsole` whose libuv loop handles SIGINT and stdin, opens the controller
 through `Workspace`, and assembles `TranscriptEmitter` and `ConsoleSession`. It also decides
 TTY-dependent behavior: the named `@DefaultAgentName> ` prompt and ready banner

@@ -38,7 +38,7 @@ Startup
 Main/UI thread                  SessionController
   UserSession or             +-- Transcript
   ConsoleSession ----------->+-- SessionJournal (SQLite)
-  Tui or console stream       +-- RoomPersonas
+  Tui or console stream       +-- ForumPersonas
        ^                      +-- AgentRegistry
        | SessionUpdate        |       |
        |                      |       +-- AgentRuntimeInfo
@@ -63,10 +63,10 @@ The ownership graph is:
 - `run_user()` owns a `Tui` and `UserSession`; `ConsoleSession::run()` owns the
   line queue and console lifecycle.
 - `SessionController` owns the in-memory `Transcript`, SQLite
-  `SessionJournal`, `AgentRegistry`, `RoomPersonas`, the current default agent
+  `SessionJournal`, `AgentRegistry`, `ForumPersonas`, the current default agent
   ID, the next entry and request IDs seeded from durable state, and the
   optional `ActiveResponse` describing the turn in flight.
-- `AgentRegistry` owns public runtime information and a backend for each room
+- `AgentRegistry` owns public runtime information and a backend for each forum
   persona, one request queue, one shared agent-event queue, one execution
   thread, and shared cancellation/outstanding-request atomics.
 - Each production backend is a `CompletionClient` with one reusable libcurl easy
@@ -183,8 +183,8 @@ It should not load workspace files, open catalogs, or invoke completion
 backends directly.
 
 The renderers consume `TranscriptSnapshot`, `TranscriptEntry`,
-`GenerationStatus`, and `RoomPersonas` directly. Mirroring these into
-presentation types would add no useful isolation. `RoomPersonas` tells it when
+`GenerationStatus`, and `ForumPersonas` directly. Mirroring these into
+presentation types would add no useful isolation. `ForumPersonas` tells it when
 transcript labels should name the addressed agent. Storage-specific values do
 not cross the session-layer boundary:
 `Workspace` converts catalog `Session` records to `SessionSummary` before a
@@ -200,14 +200,14 @@ directly.
 The TUI entry point and `Workspace` perform these steps:
 
 1. Load optional `.env` values without replacing existing process variables.
-2. Construct `Workspace`, which requires `personas/` and `rooms/` to exist, and
+2. Construct `Workspace`, which requires `personas/` and `forums/` to exist, and
    `Terminal`.
-3. Let `StartupSelector` choose a room from `Workspace::rooms()`.
+3. Let `StartupSelector` choose a forum from `Workspace::forums()`.
 4. Let the selector choose an existing session or **New session** from
-   `Workspace::sessions(room)`; a chosen row carrying a validation error aborts.
+   `Workspace::sessions(forum)`; a chosen row carrying a validation error aborts.
 5. Call `Workspace::create_session()` with a prompted label, or
    `Workspace::open_session()` with the chosen ID. Either call resolves the
-   room, loads its ordered agent definitions, and resolves the database path
+   forum, loads its ordered agent definitions, and resolves the database path
    through `SessionCatalog`. Creation returns `CreatedSession`, containing the
    controller and the exact ID assigned during collision-safe publication; the
    TUI uses the controller and discards the ID.
@@ -222,7 +222,7 @@ Cancelling either selector is an error rather than a silent exit: `main()`
 throws, and the failure is reported after terminal restoration.
 
 The console entry point replaces steps 2–4 with command-line parsing. It
-supports room and session listings, opens `--session ID`, or creates a session
+supports forum and session listings, opens `--session ID`, or creates a session
 for `--new LABEL` (and creates one with a default label when neither selection
 option is present). Listing modes return before selection validation. For an
 interactive run, the ready banner reports the resolved ID from
@@ -241,9 +241,9 @@ workspace/
     <persona>/
       config.toml
       SYSTEM.md
-  rooms/
-    rooms.list
-    <room>/
+  forums/
+    forums.list
+    <forum>/
       personas.list
       USER.md
       sessions/
@@ -252,8 +252,8 @@ workspace/
 
 Blank lines and lines beginning with `#` are ignored in both list files. Names
 must be safe single path components. `personas.list` must contain at least one
-entry and cannot repeat a persona directory name. `Workspace::load_room`
-parses the room and list; persona-directory existence is checked when
+entry and cannot repeat a persona directory name. `Workspace::load_forum`
+parses the forum and list; persona-directory existence is checked when
 `Workspace` resolves each entry.
 
 `Config` and `AgentDefinition` are agent-owned value types. Their disk loaders
@@ -268,30 +268,30 @@ Omitting any other persona field inherits the base or built-in value; there is
 no separate syntax for clearing an inherited optional value.
 
 `load_agent_definitions()` reads each persona's `SYSTEM.md` and the selected
-room's `USER.md`, preserves persona-list order, and appends a generated
-room-context section to each effective system prompt. That section identifies
+forum's `USER.md`, preserves persona-list order, and appends a generated
+forum-context section to each effective system prompt. That section identifies
 the current agent, lists the other current personas, and defines the JSON Lines
 representation used for shared history.
 
 `Workspace` is the only entry point into workspace layout. It is a thin value
-over the root path and holds no cached room or persona state, so every operation
+over the root path and holds no cached forum or persona state, so every operation
 resolves what it needs when it is called:
 
-- `rooms()` reads and validates `rooms.list`;
-- `load_room()` resolves one room directory and its ordered `personas.list`;
-- `sessions()` builds a `SessionCatalog` for the room and maps its `Session`
+- `forums()` reads and validates `forums.list`;
+- `load_forum()` resolves one forum directory and its ordered `personas.list`;
+- `sessions()` builds a `SessionCatalog` for the forum and maps its `Session`
   records to `SessionSummary` values;
-- `create_session()` and `open_session()` load the room's complete ordered agent
+- `create_session()` and `open_session()` load the forum's complete ordered agent
   definitions, resolve the database path, and construct the
   `SessionController`; creation returns it with the assigned ID in
   `CreatedSession`, while opening returns the controller directly.
 
 Persona files are therefore read once per session create/open rather than once
 per selection, and catalog paths and `Session` records never leave the
-session-layer boundary — `StartupSelector` sees only room names and
+session-layer boundary — `StartupSelector` sees only forum names and
 `SessionSummary` values.
 
-`RoomPersonas` is the session-layer boundary for a non-empty ordered group and
+`ForumPersonas` is the session-layer boundary for a non-empty ordered group and
 for lookup and handle resolution. `AgentRegistry` separately validates the
 identity in backend-provided `AgentRuntimeInfo`, including when tests inject
 backends without workspace loading.
@@ -300,19 +300,19 @@ Agent IDs are non-empty ASCII letters, digits, underscores, or hyphens. Display
 names are non-empty, contain no whitespace, cannot begin with `@` or `/`, and
 cannot equal `User` under ASCII case folding.
 
-Sessions are room-scoped and do not capture the room's current personas.
-Session metadata contains the session ID, room, and display label, but no
+Sessions are forum-scoped and do not capture the forum's current personas.
+Session metadata contains the session ID, forum, and display label, but no
 persona collection. A session can be reopened after personas have been renamed,
 removed, or added; persisted participant IDs, display names, and prompt targets
 preserve historical attribution.
 
 ## Multi-agent model
 
-`RoomPersonas` is ordered and fixed for one run. Its first persona supplies the
+`ForumPersonas` is ordered and fixed for one run. Its first persona supplies the
 initial default agent. `/@Name` changes the default in memory for the current
 run only.
 
-Only one turn may be active across all room personas. The application does not
+Only one turn may be active across all forum personas. The application does not
 run simultaneous answers. This preserves one linear transcript, one streaming
 entry, and one unambiguous cancellation target. A global registry gate also
 rejects a second outstanding request when the registry is tested or used
@@ -337,7 +337,7 @@ Handle resolution tries, in order:
 The text grammar passes prompt text and the optional handle to
 `SessionController::submit_prompt()`. A future HTTP front end can provide those
 fields directly without parsing terminal syntax. Unknown and ambiguous handles
-are rejected with a notice that lists the room's personas. The input is not
+are rejected with a notice that lists the forum's personas. The input is not
 cleared, so the user can correct it. A mention with an empty body is also
 rejected without clearing the input.
 
@@ -421,7 +421,7 @@ The transcript is a human-visible record; model context is a projection.
 the new prompt:
 
 1. Emit that agent's effective system prompt, if non-empty. Its generated
-   room-context section names the current agent, lists the room's other current
+   forum-context section names the current agent, lists the forum's other current
    personas, and defines the shared-history encoding.
 2. Exclude the currently open streaming entry.
 3. Exclude all notices and errors.
@@ -449,8 +449,8 @@ the same message.
 This makes every agent see the same shared chat transcript from its own point of
 view: its own prior answers are assistant messages, while exchanges involving
 other agents are explicitly described as quoted input. The generated
-room-context section is present even in a single-agent room because restored
-history may still contain a persona that has since left the room.
+forum-context section is present even in a single-agent forum because restored
+history may still contain a persona that has since left the forum.
 
 ## Turn lifecycle
 
@@ -458,7 +458,7 @@ history may still contain a persona that has since left the room.
 
 For an idle controller, `SessionController::submit_prompt()` accepts prompt text
 and an optional handle from a front end, resolves the target agent
-through `RoomPersonas`, and rejects an empty prompt. It then starts the turn:
+through `ForumPersonas`, and rejects an empty prompt. It then starts the turn:
 
 1. allocates a request ID and human entry ID;
 2. commits the `started` turn and prompt entry in one SQLite transaction;
@@ -545,8 +545,8 @@ needs a stable turn correlation key.
 When idle, the shared text grammar translates:
 
 - `/clear`: advance the durable history epoch, empty visible history, and reset
-  addressing labels based on the number of room personas.
-- `/agents`: show a transient status notice containing the room personas and
+  addressing labels based on the number of forum personas.
+- `/agents`: show a transient status notice containing the forum personas and
   their runtime details; `*` marks the run-local default.
 - `/info`: show a transient status notice containing the current transcript
   entry count followed by the same persona and runtime information.
@@ -607,10 +607,10 @@ response phase, and ephemeral reasoning buffer. Status text is `generating`,
 `reasoning`, or `responding`.
 Human labels are `[You]` or `[You → Name]`; agent labels always include the
 display name.
-Addressed human labels are enabled whenever `RoomPersonas` contains multiple
+Addressed human labels are enabled whenever `ForumPersonas` contains multiple
 personas, or when restored single-agent history contains another participant
 or target. `/clear` forgets historical addressing evidence but keeps
-addressing enabled for a currently multi-agent room.
+addressing enabled for a currently multi-agent forum.
 
 The console writes an append-only transcript log to stdout and notices to
 stderr. While idle with interactive stdin, stderr also carries a bold
@@ -653,7 +653,7 @@ position when content shrinks.
 ## Persistence
 
 Each session is one self-contained
-`rooms/<room>/sessions/<id>.sqlite3` database. Listing considers only regular
+`forums/<forum>/sessions/<id>.sqlite3` database. Listing considers only regular
 files with that extension.
 
 The database uses:
@@ -670,7 +670,7 @@ The build pins SQLite 3.46.1. The schema contains:
 
 | Table | Purpose |
 | --- | --- |
-| `session` | Singleton session `id`, `room`, and display `label`. |
+| `session` | Singleton session `id`, `forum`, and display `label`. |
 | `state` | Singleton `history_epoch`, `next_entry_id`, and `next_request_id`. |
 | `turns` | `request_id`, originating epoch, and lifecycle state. |
 | `entries` | Typed transcript fields, target attribution, text, and terminal status. |
@@ -695,8 +695,8 @@ A mixed cancelled response retains only its answer. Errors are terminal
 
 `SessionCatalog::list()` examines regular `.sqlite3` files, opens them
 read-only, and performs lightweight identity/metadata validation: application
-ID, schema version, embedded session ID versus filename, and embedded room
-versus selected room. Broken candidates remain visible with an error so one bad
+ID, schema version, embedded session ID versus filename, and embedded forum
+versus selected forum. Broken candidates remain visible with an error so one bad
 file does not hide healthy sessions. Session-ID filename validation is part of
 that per-candidate error boundary, so even a malformed `.sqlite3` filename
 cannot abort the whole listing.
@@ -723,7 +723,7 @@ Creation writes a hidden temporary sibling, initializes schema and metadata in
 one transaction, then publishes the final path with a hard link that cannot
 replace an existing destination. The temporary path is removed whether
 publication succeeds, collides, or throws. An empty user-supplied label falls
-back to the generated ID. `Workspace::create_session()` loads the room's agent
+back to the generated ID. `Workspace::create_session()` loads the forum's agent
 definitions, creates the database through `SessionCatalog::create()`, and
 constructs a controller over the fresh file. It returns that controller together
 with the published ID as `CreatedSession`.
@@ -912,7 +912,7 @@ database, so a mistaken path cannot silently become an empty session.
 | `src/util/` | Shared text, path, environment, concurrent-queue, notifier, and input-wait utilities. |
 | `src/transcript/` | Typed transcript, turn identifiers, and response-content values. |
 | `src/agents/` | Agent definitions, runtime metadata, context projection, execution, provider communication, and the runtime event queue. |
-| `src/session/` | Room personas, chat coordination and in-flight turn state (`SessionController`), workspace and session operations, session catalogs, SQLite journaling, presentation-safe summaries, and generation status. |
+| `src/session/` | Forum personas, chat coordination and in-flight turn state (`SessionController`), workspace and session operations, session catalogs, SQLite journaling, presentation-safe summaries, and generation status. |
 | `src/ui/text/` | Shared slash-command and leading-mention parsing and dispatch. |
 | `src/ui/render/` | Frontend-independent transcript labels and writing vocabulary. |
 | `src/ui/tui/` | Ncurses selection, input, layout, redraw planning, and terminal session flow. |
@@ -926,11 +926,11 @@ libraries.
 
 ## Key invariants
 
-1. `RoomPersonas` is non-empty, ordered, and fixed for one run.
+1. `ForumPersonas` is non-empty, ordered, and fixed for one run.
 2. Agent IDs and ASCII-folded display names are unique.
 3. Runtime-information slot `i` and backend slot `i` describe the same agent.
 4. Exactly one application-owned execution thread exists regardless of the
-   number of room personas.
+   number of forum personas.
 5. Only the execution thread calls backend request methods after startup.
 6. At most one turn is active across the session.
 7. The request queue contains at most one work item, and at most one request
@@ -967,7 +967,7 @@ libraries.
     bytes.
 26. Every styled transcript and input-rendering path restores normal
     attributes.
-27. Sessions bind to a room, not to the room's current personas.
+27. Sessions bind to a forum, not to the forum's current personas.
 28. The shared event queue closes only after the execution thread stops.
 29. A journal mutation failure ends the current run; the application never
     continues with transcript state it could not persist.
@@ -1005,7 +1005,7 @@ ctest --test-dir build/console
 ```
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
-configuration, identity, room-persona/mention routing, textual command parsing and
+configuration, identity, forum-persona/mention routing, textual command parsing and
 dispatch, registry execution behavior, transcript/context semantics,
 controller lifecycle operations, workspace layout resolution and
 session-summary mapping, SQLite constraints and recovery, structured reasoning
@@ -1016,7 +1016,7 @@ incremental rendering.
 `workspace/`. Its tests cover live configured streaming, non-streaming, and
 cancellation paths plus local mock-server multi-agent routing, per-agent
 context, structured streaming and non-streaming reasoning, answer-only
-persistence/context replay, and reopening after the personas in a room change.
+persistence/context replay, and reopening after the personas in a forum change.
 
 The principal test seams are:
 

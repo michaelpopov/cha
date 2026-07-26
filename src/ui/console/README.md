@@ -9,12 +9,12 @@ transcript-writing vocabulary without depending on curses or `ui/tui/`.
 `apps/console_main.cpp` parses:
 
 ```text
-chacon --list-rooms
-chacon --room ROOM --list-sessions
-chacon --room ROOM [--session ID | --new LABEL] [--color=auto|always|never]
+chacon --list-forums
+chacon --forum FORUM --list-sessions
+chacon --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
 ```
 
-Room listings are one name per line. Session listings always contain three
+Forum listings are one name per line. Session listings always contain three
 tab-separated fields—ID, label, error—with no header, padding, or color.
 Invalid sessions are included. Tabs and line breaks inside fields are replaced
 with spaces, and terminal controls are sanitized. Listing modes take precedence

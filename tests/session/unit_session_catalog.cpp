@@ -15,7 +15,7 @@
 namespace cha {
 namespace {
 
-// Builds and cleans up a minimal workspace fixture for room and session tests.
+// Builds and cleans up a minimal workspace fixture for forum and session tests.
 class WorkspaceTest : public testing::Test {
 protected:
     void SetUp() override {
@@ -23,10 +23,10 @@ protected:
             / ("cha_workspace_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root / "personas" / "guide");
         std::filesystem::create_directories(root / "personas" / "other");
-        std::filesystem::create_directories(root / "rooms" / "lobby" / "sessions");
+        std::filesystem::create_directories(root / "forums" / "lobby" / "sessions");
         {
-            std::ofstream file(root / "rooms" / "rooms.list");
-            file << "# rooms\n\nlobby\n";
+            std::ofstream file(root / "forums" / "forums.list");
+            file << "# forums\n\nlobby\n";
         }
         {
             std::ofstream file(root / "personas" / "guide" / "config.toml");
@@ -47,12 +47,12 @@ protected:
             file << "Other instructions";
         }
         {
-            std::ofstream file(root / "rooms" / "lobby" / "personas.list");
+            std::ofstream file(root / "forums" / "lobby" / "personas.list");
             file << "guide\n";
         }
         {
-            std::ofstream file(root / "rooms" / "lobby" / "USER.md");
-            file << "Room instructions";
+            std::ofstream file(root / "forums" / "lobby" / "USER.md");
+            file << "Forum instructions";
         }
     }
 
@@ -63,15 +63,15 @@ protected:
     std::filesystem::path create_database(
         std::string id,
         std::string label,
-        std::string room = "lobby") {
+        std::string forum = "lobby") {
 
         const std::filesystem::path path =
-            root / "rooms" / "lobby" / "sessions" / (id + ".sqlite3");
+            root / "forums" / "lobby" / "sessions" / (id + ".sqlite3");
         if (!create_session_database(
                 path,
                 {
                     .id = std::move(id),
-                    .room = std::move(room),
+                    .forum = std::move(forum),
                     .label = std::move(label),
                 })) {
             throw std::runtime_error("Failed to create workspace test database");
@@ -86,14 +86,14 @@ TranscriptEntry human(EntryId id, std::string text) {
     return make_human_entry(id, "guide-id", "Guide", std::move(text));
 }
 
-TEST_F(WorkspaceTest, LoadsRoomsAndResolvesTheirPersonaDirectory) {
+TEST_F(WorkspaceTest, LoadsForumsAndResolvesTheirPersonaDirectory) {
     Workspace workspace(root);
 
-    EXPECT_EQ(workspace.rooms(), (std::vector<std::string>{"lobby"}));
-    const Room room = workspace.load_room("lobby");
+    EXPECT_EQ(workspace.forums(), (std::vector<std::string>{"lobby"}));
+    const Forum forum = workspace.load_forum("lobby");
 
-    EXPECT_EQ(room.name, "lobby");
-    EXPECT_EQ(room.persona_names, (std::vector<std::string>{"guide"}));
+    EXPECT_EQ(forum.name, "lobby");
+    EXPECT_EQ(forum.persona_names, (std::vector<std::string>{"guide"}));
     EXPECT_EQ(workspace.persona_directory("guide"), root / "personas" / "guide");
 }
 
@@ -104,13 +104,13 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
         SessionJournal journal(saved);
         journal.append(human(1, "Hello"));
         std::ofstream unrelated(
-            root / "rooms" / "lobby" / "sessions" / "ignored.data");
+            root / "forums" / "lobby" / "sessions" / "ignored.data");
         unrelated << "not a session database";
     }
 
     Workspace workspace(root);
-    const Room room = workspace.load_room("lobby");
-    SessionCatalog sessions(room.directory / "sessions", room.name);
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
     EXPECT_EQ(
         sessions.list(),
         (std::vector<Session>{{"saved", "Saved session"}}));
@@ -121,12 +121,12 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
 
 TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
     Workspace workspace(root);
-    const Room room = workspace.load_room("lobby");
-    SessionCatalog sessions(room.directory / "sessions", room.name);
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
 
     const Session session = sessions.create("A named session");
     EXPECT_TRUE(std::filesystem::is_regular_file(
-        room.directory / "sessions" / (session.id + ".sqlite3")));
+        forum.directory / "sessions" / (session.id + ".sqlite3")));
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
 
     {
@@ -155,21 +155,21 @@ TEST(SessionDatabase, CreatesAndReadsFromANonAsciiPath) {
         path,
         {
             .id = "session",
-            .room = "room",
+            .forum = "forum",
             .label = "Session",
         }));
     const SessionDatabaseMetadata metadata =
         read_session_database_metadata(path);
     EXPECT_EQ(metadata.id, "session");
-    EXPECT_EQ(metadata.room, "room");
+    EXPECT_EQ(metadata.forum, "forum");
     EXPECT_EQ(metadata.label, "Session");
     std::filesystem::remove_all(directory);
 }
 
 TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) {
     Workspace workspace(root);
-    const Room room = workspace.load_room("lobby");
-    SessionCatalog sessions(room.directory / "sessions", room.name);
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
     const Session session = sessions.create("");
 
     EXPECT_EQ(session.label, session.id);
@@ -178,12 +178,12 @@ TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) 
 
 TEST_F(WorkspaceTest, ReportsAnInvalidDatabaseWithoutHidingHealthySessions) {
     Workspace workspace(root);
-    const Room room = workspace.load_room("lobby");
-    SessionCatalog sessions(room.directory / "sessions", room.name);
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
     const Session healthy = sessions.create("Healthy");
     const Session broken = sessions.create("Broken database");
     const std::filesystem::path malformed_name =
-        room.directory / "sessions" / "..sqlite3";
+        forum.directory / "sessions" / "..sqlite3";
     {
         std::ofstream database(
             sessions.database_path(broken.id),
@@ -217,22 +217,22 @@ TEST_F(WorkspaceTest, ReportsAnInvalidDatabaseWithoutHidingHealthySessions) {
 
 TEST_F(WorkspaceTest, RejectsMismatchedSessionMetadataWhenOpening) {
     Workspace workspace(root);
-    const Room room = workspace.load_room("lobby");
-    SessionCatalog sessions(room.directory / "sessions", room.name);
-    create_database("wrong-room", "Wrong room", "hall");
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+    create_database("wrong-forum", "Wrong forum", "hall");
 
     const std::vector<Session> listed = sessions.list();
     ASSERT_EQ(listed.size(), 1U);
     EXPECT_FALSE(listed.front().error.empty());
     EXPECT_THROW(
-        (void)sessions.open_database_path("wrong-room"),
+        (void)sessions.open_database_path("wrong-forum"),
         std::runtime_error);
 }
 
 TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
     Workspace workspace(root);
-    const Room room = workspace.load_room("lobby");
-    SessionCatalog sessions(room.directory / "sessions", room.name);
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
 
     create_database("wrong-filename", "Wrong filename");
     std::filesystem::rename(
@@ -256,10 +256,10 @@ TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
 
 TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
     Workspace workspace(root);
-    const Room room = workspace.load_room("lobby");
+    const Forum forum = workspace.load_forum("lobby");
     SessionCatalog sessions(
-        room.directory / "sessions",
-        room.name,
+        forum.directory / "sessions",
+        forum.name,
         [] { return std::time_t{1'700'000'000}; });
     const Session first = sessions.create("First");
     const Session second = sessions.create("Second");
@@ -276,42 +276,42 @@ TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
         read_session_database_metadata(sessions.database_path(second.id)).label,
         "Second");
     for (const auto& entry :
-         std::filesystem::directory_iterator(room.directory / "sessions")) {
+         std::filesystem::directory_iterator(forum.directory / "sessions")) {
         EXPECT_FALSE(utf8_path(entry.path().filename()).starts_with("."));
     }
 }
 
-TEST_F(WorkspaceTest, LoadsRoomsWithMultiplePersonasInDeclaredOrder) {
+TEST_F(WorkspaceTest, LoadsForumsWithMultiplePersonasInDeclaredOrder) {
     {
-        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::app);
+        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::app);
         file << "other\n";
     }
     Workspace workspace(root);
     EXPECT_EQ(
-        workspace.load_room("lobby").persona_names,
+        workspace.load_forum("lobby").persona_names,
         (std::vector<std::string>{"guide", "other"}));
 }
 
 TEST_F(WorkspaceTest, IgnoresBlankLinesAndCommentsInThePersonaList) {
     {
-        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
-        file << "# room personas\n\n  other  \n\n# guide moved down\nguide\n";
+        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
+        file << "# forum personas\n\n  other  \n\n# guide moved down\nguide\n";
     }
     Workspace workspace(root);
     EXPECT_EQ(
-        workspace.load_room("lobby").persona_names,
+        workspace.load_forum("lobby").persona_names,
         (std::vector<std::string>{"other", "guide"}));
 }
 
 TEST_F(WorkspaceTest, RejectsAPersonaListNamingOnePersonaTwice) {
     {
-        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
         file << "guide\nother\nguide\n";
     }
     Workspace workspace(root);
 
     try {
-        (void)workspace.load_room("lobby");
+        (void)workspace.load_forum("lobby");
         FAIL() << "expected a duplicate persona diagnostic";
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
@@ -322,13 +322,13 @@ TEST_F(WorkspaceTest, RejectsAPersonaListNamingOnePersonaTwice) {
 
 TEST_F(WorkspaceTest, DefersMissingPersonaValidationUntilPersonaResolution) {
     {
-        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
         file << "guide\nabsent\n";
     }
     Workspace workspace(root);
 
     EXPECT_EQ(
-        workspace.load_room("lobby").persona_names,
+        workspace.load_forum("lobby").persona_names,
         (std::vector<std::string>{"guide", "absent"}));
     EXPECT_THROW((void)workspace.persona_directory("absent"), std::runtime_error);
 }
@@ -336,36 +336,36 @@ TEST_F(WorkspaceTest, DefersMissingPersonaValidationUntilPersonaResolution) {
 TEST_F(WorkspaceTest, RejectsAnEmptyOrAbsentPersonaList) {
     Workspace workspace(root);
     {
-        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
         file << "# nobody lives here\n\n";
     }
 
     try {
-        (void)workspace.load_room("lobby");
+        (void)workspace.load_forum("lobby");
         FAIL() << "expected an empty persona list diagnostic";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("does not name a persona"), std::string::npos)
             << error.what();
     }
 
-    std::filesystem::remove(root / "rooms" / "lobby" / "personas.list");
-    EXPECT_THROW((void)workspace.load_room("lobby"), std::runtime_error);
+    std::filesystem::remove(root / "forums" / "lobby" / "personas.list");
+    EXPECT_THROW((void)workspace.load_forum("lobby"), std::runtime_error);
 }
 
 TEST_F(WorkspaceTest, RejectsAPersonaNameThatEscapesThePersonaDirectory) {
     {
-        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
         file << "../personas/guide\n";
     }
     Workspace workspace(root);
 
-    EXPECT_THROW((void)workspace.load_room("lobby"), std::runtime_error);
+    EXPECT_THROW((void)workspace.load_forum("lobby"), std::runtime_error);
 }
 
-TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentRoomPersonasAre) {
+TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumPersonasAre) {
     Workspace workspace(root);
     SessionCatalog sessions(
-        workspace.load_room("lobby").directory / "sessions", "lobby");
+        workspace.load_forum("lobby").directory / "sessions", "lobby");
     const Session session = sessions.create("Two agents");
     {
         SessionJournal journal(sessions.database_path(session.id));
@@ -374,12 +374,12 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentRoomPersonasAre) {
             2, "other-id", "Other", "Answer", EntryStatus::complete));
     }
 
-    // The room now contains completely different personas; the session is unaffected.
+    // The forum now contains completely different personas; the session is unaffected.
     {
-        std::ofstream file(root / "rooms" / "lobby" / "personas.list", std::ios::trunc);
+        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
         file << "guide\n";
     }
-    const Room reduced = workspace.load_room("lobby");
+    const Forum reduced = workspace.load_forum("lobby");
     SessionCatalog reopened(reduced.directory / "sessions", reduced.name);
 
     ASSERT_EQ(reopened.list().size(), 1U);
@@ -388,7 +388,7 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentRoomPersonasAre) {
         load_transcript_entries(reopened.open_database_path(session.id)).size(),
         2U);
     EXPECT_EQ(read_session_database_metadata(
-                  reopened.open_database_path(session.id)).room,
+                  reopened.open_database_path(session.id)).forum,
               "lobby");
 }
 

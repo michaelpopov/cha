@@ -10,10 +10,10 @@ code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, list rooms and sessions, load a room's agent definitions, and build a controller; creation also returns the assigned session ID. |
-| `session_catalog.*` | List, create, and safely resolve the SQLite session files of one room. |
+| `workspace.*` | Resolve the workspace layout, list forums and sessions, load a forum's agent definitions, and build a controller; creation also returns the assigned session ID. |
+| `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
-| `room_personas.*` | The ordered persona identities in a room, including validation, lookup, and handle resolution. |
+| `forum_personas.*` | The ordered persona identities in a forum, including validation, lookup, and handle resolution. |
 | `session_controller.*` | Own one live session: commands, the in-flight turn, agent events, default agent, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
@@ -22,21 +22,21 @@ code.
 ```mermaid
 flowchart TD
     root["workspace root"] --> personas["personas/"]
-    root --> rooms["rooms/"]
+    root --> forums["forums/"]
     root --> env[".env — optional"]
     personas --> base["base_config.toml<br/>optional shared defaults"]
     personas --> p1["Name/config.toml<br/>Name/SYSTEM.md"]
-    rooms --> list["rooms.list — ordered room names"]
-    rooms --> room["room-name/"]
-    room --> plist["personas.list — ordered persona names"]
-    room --> user["USER.md — room system-prompt extension"]
-    room --> sessions["sessions/&lt;id&gt;.sqlite3"]
+    forums --> list["forums.list — ordered forum names"]
+    forums --> forum["forum-name/"]
+    forum --> plist["personas.list — ordered persona names"]
+    forum --> user["USER.md — forum system-prompt extension"]
+    forum --> sessions["sessions/&lt;id&gt;.sqlite3"]
 ```
 
-`Workspace` refuses to construct unless `personas/` and `rooms/` both exist.
+`Workspace` refuses to construct unless `personas/` and `forums/` both exist.
 List files ignore blank lines and `#` comments, must name at least one entry,
 and every name is checked with `require_path_component()` before it becomes a
-path — so a workspace file can never reach outside its directory. A room's
+path — so a workspace file can never reach outside its directory. A forum's
 persona list additionally rejects duplicates.
 
 When a session is created or opened, `Workspace` checks for
@@ -45,10 +45,10 @@ agent loaders along with each persona directory. The agent layer therefore
 applies shared configuration without knowing or inferring the workspace
 layout.
 
-## Room personas
+## Forum personas
 
-`RoomPersonas` is the identity-only view of the personas participating in one
-room. It is ordered, non-empty, and rejects duplicate IDs and
+`ForumPersonas` is the identity-only view of the personas participating in one
+forum. It is ordered, non-empty, and rejects duplicate IDs and
 ASCII-case-insensitive names. The first persona supplies the initial default
 agent.
 
@@ -57,7 +57,7 @@ trailing `,.;:!?`, and finally accepts a unique case-insensitive prefix. It
 returns resolved, unknown, or ambiguous; `SessionController` owns the wording
 of the corresponding user notices.
 
-Model, API, and streaming details do not belong to `RoomPersonas`.
+Model, API, and streaming details do not belong to `ForumPersonas`.
 `AgentRegistry` exposes those separately as `AgentRuntimeInfo`, and
 `SessionController` combines the two only for `/agents` and `/info`.
 
@@ -74,8 +74,8 @@ sequenceDiagram
     participant CC as SessionController
 
     Note over UI,CC: Creating a session
-    UI->>WS: create_session room, label
-    WS->>WS: load_room, read personas.list
+    UI->>WS: create_session forum, label
+    WS->>WS: load_forum, read personas.list
     WS->>AG: load_agent_definitions
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
@@ -84,10 +84,10 @@ sequenceDiagram
     WS-->>UI: CreatedSession with controller and assigned id
 
     Note over UI,CC: Opening a session
-    UI->>WS: open_session room, id
+    UI->>WS: open_session forum, id
     WS->>AG: load_agent_definitions
     WS->>SC: open_database_path id
-    SC->>DB: read metadata, check id and room match
+    SC->>DB: read metadata, check id and forum match
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
     WS->>CC: from_definitions with restore
@@ -114,7 +114,7 @@ erDiagram
     session {
         int singleton PK
         text id
-        text room
+        text forum
         text label
     }
     state {
@@ -206,8 +206,8 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | --- | --- | --- |
 | `submit_prompt(text, handle)` | Resolves the handle, or falls back to the default agent, and starts a turn. | On success `clear_input` + `render_needed`; on an unknown or ambiguous handle, or an empty prompt, only a notice — the draft text is left in the editor. |
 | `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
-| `session_information()` | Entry count plus the room personas and their runtime details. | `render_needed`, `clear_input`, notice. |
-| `agent_information()` | Room personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
+| `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
+| `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
 | `request_stop()` | Cancels the active turn, or says there is none. | Notice. |
 | `receive()` | Drains the event queue, applying each event through `handle_agent_event()`. | Merged updates; `end_session` when the queue is closed. |
@@ -215,7 +215,7 @@ read-only state, and commands that return `SessionUpdate` side effects.
 
 Every command except `request_stop()` and `receive()` is refused while a turn is
 active, with the shared in-progress notice. The controller formats session
-notices itself — handle errors, room-persona text, `/info` — because their wording
+notices itself — handle errors, forum-persona text, `/info` — because their wording
 belongs to the session, not to a UI.
 
 The controller does **not** parse `/commands`, mentions, HTTP routes, or JSON.
@@ -268,7 +268,7 @@ session continues.
 
 | Test | Covers |
 | --- | --- |
-| `tests/session/unit_workspace.cpp` | Layout resolution, list-file rules, room loading, session create/open. |
+| `tests/session/unit_workspace.cpp` | Layout resolution, list-file rules, forum loading, session create/open. |
 | `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics. |
 | `tests/session/unit_session_controller.cpp` | Command behavior, event application, persistence ordering, restore and repair. |
 | `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |

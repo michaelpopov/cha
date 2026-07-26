@@ -46,7 +46,7 @@ int ConsoleSession::run() {
                     controller_.default_agent_id());
             if (!default_agent) {
                 throw std::logic_error(
-                    "Default agent is not a room persona");
+                    "Default agent is not a forum persona");
             }
             write_console_prompt(port_.prompt(), default_agent->name);
             port_.notices() << std::flush;

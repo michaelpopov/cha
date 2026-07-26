@@ -3,7 +3,7 @@
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
 #include "session/generation_status.h"
-#include "session/room_personas.h"
+#include "session/forum_personas.h"
 #include "session/session_database.h"
 #include "transcript/transcript.h"
 #include "util/wake_notifier.h"
@@ -27,7 +27,7 @@ struct SessionUpdate {
 };
 
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
-// halves: read-only session state (transcript, room personas, default agent, generation status) and
+// halves: read-only session state (transcript, forum personas, default agent, generation status) and
 // commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
 // each returning a SessionUpdate instead of touching the UI. It owns the Transcript,
 // SessionJournal, AgentRegistry, and the state of the single in-flight turn. Command syntax,
@@ -52,7 +52,7 @@ public:
     // --- Session state (read-only) --------------------------------------------
     const Transcript& transcript() const { return transcript_; }
     GenerationStatus generation_status() const;
-    const RoomPersonas& personas() const { return personas_; }
+    const ForumPersonas& personas() const { return personas_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
 
     // --- Session commands (mutate, then report UI side effects) ---------------
@@ -108,7 +108,7 @@ private:
     Transcript transcript_;
     SessionJournal journal_;
     AgentRegistry registry_;
-    RoomPersonas personas_;
+    ForumPersonas personas_;
     ParticipantId default_agent_id_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};

@@ -45,7 +45,7 @@ public:
                 path,
                 {
                     .id = "user-session-test",
-                    .room = "test-room",
+                    .forum = "test-forum",
                     .label = "User session test",
                 })) {
             throw std::runtime_error("Failed to create user-session test database");
@@ -406,7 +406,7 @@ TEST(UserSession, RendersTheGeneratingAgentByName) {
     EXPECT_TRUE(view.rendered_agent_name.empty());
 }
 
-TEST(UserSession, RendersAddressingWheneverTheRoomHostsSeveralAgents) {
+TEST(UserSession, RendersAddressingWheneverTheForumHostsSeveralAgents) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         two_agents(),
@@ -423,10 +423,10 @@ TEST(UserSession, RendersAddressingWheneverTheRoomHostsSeveralAgents) {
     session.receive_terminal_input();
     session.render_if_needed();
     EXPECT_TRUE(view.rendered_show_addressing)
-        << "a room with multiple personas keeps showing every prompt's target";
+        << "a forum with multiple personas keeps showing every prompt's target";
 }
 
-TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOtherwise) {
+TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOtherwise) {
     TemporarySessionJournal temporary;
     {
         auto controller = SessionController::from_backends_for_testing(
@@ -446,7 +446,7 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
         EXPECT_FALSE(view.rendered_show_addressing);
     }
 
-    // Reopening with history from an agent that has since left the room.
+    // Reopening with history from an agent that has since left the forum.
     SessionRestore restored = load_session_state(temporary.path);
     restored.entries.front().addressed_to = "departed";
     restored.entries.front().addressed_to_name = "Departed";
@@ -466,7 +466,7 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
     session.receive_terminal_input();
     session.render_if_needed();
     EXPECT_FALSE(view.rendered_show_addressing)
-        << "clearing removes the only reason a one-agent room showed addressing";
+        << "clearing removes the only reason a one-agent forum showed addressing";
 }
 
 TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {

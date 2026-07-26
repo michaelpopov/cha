@@ -33,12 +33,12 @@ TEST(PathName, AcceptsOneSafePathComponent) {
 }
 
 TEST(PathName, RejectsEmptySpecialAndNestedPaths) {
-    const std::filesystem::path source = "rooms.list";
+    const std::filesystem::path source = "forums.list";
 
     EXPECT_THROW(require_path_component("", source), std::runtime_error);
     EXPECT_THROW(require_path_component(".", source), std::runtime_error);
     EXPECT_THROW(require_path_component("..", source), std::runtime_error);
-    EXPECT_THROW(require_path_component("nested/room", source), std::runtime_error);
+    EXPECT_THROW(require_path_component("nested/forum", source), std::runtime_error);
     EXPECT_THROW(require_path_component("/absolute", source), std::runtime_error);
 }
 

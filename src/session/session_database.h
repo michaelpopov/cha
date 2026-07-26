@@ -12,10 +12,10 @@
 namespace cha {
 
 // The identity a session database carries inside itself, so a file can be checked against the
-// session and room it claims to belong to before anything is read from it.
+// session and forum it claims to belong to before anything is read from it.
 struct SessionDatabaseMetadata {
     std::string id;
-    std::string room;
+    std::string forum;
     std::string label;
 };
 

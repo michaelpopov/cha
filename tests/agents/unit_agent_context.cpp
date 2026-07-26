@@ -204,7 +204,7 @@ TEST(AgentContext, LeavesSingleAgentHistoryAsPlainUserAndAssistantMessages) {
         }));
 }
 
-TEST(AgentContext, AttributesAgentsWhosePersonasAreNoLongerInTheRoom) {
+TEST(AgentContext, AttributesAgentsWhosePersonasAreNoLongerInTheForum) {
     const TranscriptSnapshot transcript{
         .entries = {
             make_human_entry(1, "departed", "Departed", "Say something", 1),

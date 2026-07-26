@@ -35,7 +35,7 @@ std::string read_prompt(const std::filesystem::path& path) {
 
 AgentDefinition load_definition_files(
     const std::filesystem::path& persona_directory,
-    const std::filesystem::path& room_directory,
+    const std::filesystem::path& forum_directory,
     std::optional<std::filesystem::path> base_config_path) {
     const std::string persona_name = utf8_path(persona_directory.filename());
     Config config;
@@ -56,22 +56,22 @@ AgentDefinition load_definition_files(
             "Persona '" + persona_name
             + "' failed to read SYSTEM.md: " + error.what());
     }
-    std::string room_prompt;
+    std::string forum_prompt;
     try {
-        room_prompt = read_prompt(room_directory / "USER.md");
+        forum_prompt = read_prompt(forum_directory / "USER.md");
     } catch (const std::exception& error) {
         throw std::runtime_error(
-            "Room '" + utf8_path(room_directory.filename())
+            "Forum '" + utf8_path(forum_directory.filename())
             + "' failed to read USER.md: " + error.what());
     }
     return {
         .config = std::move(config),
         .system_prompt = std::move(persona_prompt)
-            + "\n\n" + std::move(room_prompt),
+            + "\n\n" + std::move(forum_prompt),
     };
 }
 
-std::string room_context(
+std::string forum_context(
     const AgentDefinition& current,
     const std::vector<AgentDefinition>& definitions) {
     Json other_agents = Json::array();
@@ -82,13 +82,13 @@ std::string room_context(
     }
 
     return
-        "Room context\n\n"
+        "Forum context\n\n"
         "You are the agent named "
         + dump_json(
             Json(current.config.name),
             JsonPurpose::agent_definition)
         + ".\n"
-        "Other agents currently participating in this room (JSON): "
+        "Other agents currently participating in this forum (JSON): "
         + dump_json(other_agents, JsonPurpose::agent_definition)
         + ".\n\n"
         "Shared exchanges involving other agents are supplied in user messages "
@@ -104,11 +104,11 @@ std::string room_context(
         "message outside such a block is addressed to you.";
 }
 
-void append_room_context(std::vector<AgentDefinition>& definitions) {
+void append_forum_context(std::vector<AgentDefinition>& definitions) {
     for (AgentDefinition& definition : definitions) {
         definition.system_prompt.append("\n\n");
         definition.system_prompt.append(
-            room_context(definition, definitions));
+            forum_context(definition, definitions));
     }
 }
 
@@ -131,16 +131,16 @@ std::string encode_shared_entry(const TranscriptEntry& entry) {
 
 std::vector<AgentDefinition> load_agent_definitions(
     const std::vector<std::filesystem::path>& persona_directories,
-    const std::filesystem::path& room_directory,
+    const std::filesystem::path& forum_directory,
     std::optional<std::filesystem::path> base_config_path) {
     std::vector<AgentDefinition> definitions;
     definitions.reserve(persona_directories.size());
     for (const auto& directory : persona_directories) {
         definitions.push_back(
             load_definition_files(
-                directory, room_directory, base_config_path));
+                directory, forum_directory, base_config_path));
     }
-    append_room_context(definitions);
+    append_forum_context(definitions);
     return definitions;
 }
 

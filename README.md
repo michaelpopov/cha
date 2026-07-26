@@ -6,17 +6,17 @@ line-oriented `chacon` console frontend.
 
 ## Workspace configuration
 
-Run either executable from a workspace containing `personas/` and `rooms/`.
-`rooms/rooms.list` is an ordered list of room names (one per line; blank lines
+Run either executable from a workspace containing `personas/` and `forums/`.
+`forums/forums.list` is an ordered list of forum names (one per line; blank lines
 and `#` comments are ignored). At `cha` startup, a terminal selector lets you
-choose a room and then an existing session or **New session**. `chacon` makes
+choose a forum and then an existing session or **New session**. `chacon` makes
 the same selection through command-line options.
 
-Each room contains `personas.list`, an ordered list of one or more personas, and `USER.md`. Every listed persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (`SYSTEM.md`, followed by the room `USER.md`, followed by generated room context that identifies the agent and the room's other personas). The first persona is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
+Each forum contains `personas.list`, an ordered list of one or more personas, and `USER.md`. Every listed persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (`SYSTEM.md`, followed by the forum `USER.md`, followed by generated forum context that identifies the agent and the forum's other personas). The first persona is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
-Each persona's immutable `id` identifies transcript entries; its `name` is the visible `@mention` handle. Names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A room cannot contain duplicate IDs or names. All agents use the session's shared chat transcript. Exchanges involving another agent are supplied as escaped JSON Lines so the receiving agent can treat the other speaker's first-person statements as quoted history rather than its own identity. A session stores only its room and transcript, so it can be reopened even if the room's personas changed.
+Each persona's immutable `id` identifies transcript entries; its `name` is the visible `@mention` handle. Names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A forum cannot contain duplicate IDs or names. All agents use the session's shared chat transcript. Exchanges involving another agent are supplied as escaped JSON Lines so the receiving agent can treat the other speaker's first-person statements as quoted history rather than its own identity. A session stores only its forum and transcript, so it can be reopened even if the forum's personas changed.
 
-Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and room must match the selected room before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
+Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and forum must match the selected forum before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
 
 `personas/base_config.toml` may define configuration shared by every persona in
 the workspace. A persona's own `config.toml` overrides it field by field. The
@@ -98,8 +98,8 @@ Before loading server configuration, the application optionally reads `.env` fro
 
 - `/clear` starts a new visible history while retaining the system prompt.
   Earlier transcript rows remain in the session database.
-- `/info` displays the transcript entry count followed by the current room's personas.
-- `/agents` displays the current room's personas and marks the default agent.
+- `/info` displays the transcript entry count followed by the current forum's personas.
+- `/agents` displays the current forum's personas and marks the default agent.
 - `/@Name` changes the default agent for this run only.
 - `/stop` cancels the active model response.
 - `/exit` exits the application.
@@ -120,22 +120,22 @@ arrives, then to `responding` when answer text begins.
 ## Console frontend
 
 `chacon` is intended for pipes, logs, and simple interactive terminals. It
-requires a room except when listing all rooms:
+requires a forum except when listing all forums:
 
 ```text
-chacon --list-rooms
-chacon --room ROOM --list-sessions
-chacon --room ROOM [--session ID | --new LABEL] [--color=auto|always|never]
+chacon --list-forums
+chacon --forum FORUM --list-sessions
+chacon --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
 ```
 
 If neither `--session` nor `--new` is supplied, `chacon` creates a new session
-with the default timestamp label. On an interactive terminal it reports the room
+with the default timestamp label. On an interactive terminal it reports the forum
 and the resolved session ID before the first prompt, so a session created by
 `--new` or by default can be reopened later with `--session`. The interactive
 prompt is a bold `@DefaultAgentName> ` marker, for example `@Ismael> `, so it
 always identifies the agent that will receive an unaddressed submission.
 Running `/@Name` changes both the run-local default and the next prompt marker.
-Room listings contain one name per line. Session listings contain exactly three tab-separated
+Forum listings contain one name per line. Session listings contain exactly three tab-separated
 fields—ID, label, and error—with no header, padding, or color. Invalid sessions
 remain visible in the listing. Listing modes ignore session-selection flags;
 selection validation applies only when opening or creating a session.

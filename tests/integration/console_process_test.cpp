@@ -77,19 +77,19 @@ public:
         std::filesystem::create_directories(
             path_ / "personas" / "Ismael");
         std::filesystem::create_directories(
-            path_ / "rooms" / "hall" / "sessions");
+            path_ / "forums" / "hall" / "sessions");
         write_file(
             path_ / "personas" / "Ismael" / "config.toml",
             "id = \"ismael\"\nname = \"Ismael\"\n");
         write_file(
             path_ / "personas" / "Ismael" / "SYSTEM.md",
             "You are a process test agent.\n");
-        write_file(path_ / "rooms" / "rooms.list", "hall\n");
+        write_file(path_ / "forums" / "forums.list", "hall\n");
         write_file(
-            path_ / "rooms" / "hall" / "personas.list",
+            path_ / "forums" / "hall" / "personas.list",
             "Ismael\n");
         write_file(
-            path_ / "rooms" / "hall" / "USER.md",
+            path_ / "forums" / "hall" / "USER.md",
             "Answer the user.\n");
     }
 
@@ -117,7 +117,7 @@ public:
 
     bool has_session() const {
         const std::filesystem::path directory =
-            path_ / "rooms" / "hall" / "sessions";
+            path_ / "forums" / "hall" / "sessions";
         return std::filesystem::directory_iterator(directory)
             != std::filesystem::directory_iterator();
     }
@@ -191,7 +191,7 @@ ChildProcess launch_console(
         }
         const char* const arguments[]{
             CHA_CONSOLE_BINARY,
-            "--room",
+            "--forum",
             "hall",
             "--color=never",
             nullptr,

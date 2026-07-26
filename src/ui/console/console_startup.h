@@ -22,10 +22,10 @@ enum class ColorMode {
 // The filesystem-independent result of parsing chacon's selection, listing,
 // and color flags. The startup helpers later resolve it through Workspace.
 struct ConsoleOptions {
-    std::string room;
+    std::string forum;
     std::string session_id;
     std::optional<std::string> new_label;
-    bool list_rooms{};
+    bool list_forums{};
     bool list_sessions{};
     ColorMode color{ColorMode::automatic};
 };
@@ -44,10 +44,10 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     const char* const* argv);
 
 // Writes stable, sanitized, uncolored records for scripts.
-void write_room_listing(const Workspace& workspace, std::ostream& out);
+void write_forum_listing(const Workspace& workspace, std::ostream& out);
 void write_session_listing(
     const Workspace& workspace,
-    const std::string& room,
+    const std::string& forum,
     std::ostream& out);
 
 // The session the console is about to run: the controller it drives, and the
@@ -59,7 +59,7 @@ struct ConsoleSelection {
 };
 
 // Resolves a validated selection through Workspace. Throws std::runtime_error
-// for a missing room or session and for a session whose summary carries an
+// for a missing forum or session and for a session whose summary carries an
 // error, so console_main can report those as runtime rather than usage failures.
 [[nodiscard]] ConsoleSelection open_console_session(
     const Workspace& workspace,

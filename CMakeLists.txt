@@ -142,7 +142,7 @@ add_library(cha_core STATIC
     src/agents/agent_registry.cpp
     src/agents/completion_client.cpp
     src/agents/config.cpp
-    src/session/room_personas.cpp
+    src/session/forum_personas.cpp
     src/session/session_catalog.cpp
     src/session/session_controller.cpp
     src/session/session_database.cpp
@@ -229,7 +229,7 @@ if(BUILD_TESTING)
         tests/agents/unit_agent_registry.cpp
         tests/agents/unit_config_loader.cpp
         tests/agents/unit_json_serialization.cpp
-        tests/session/unit_room_personas.cpp
+        tests/session/unit_forum_personas.cpp
         tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_workspace.cpp

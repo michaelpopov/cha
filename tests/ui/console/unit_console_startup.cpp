@@ -24,17 +24,17 @@ public:
                     std::chrono::steady_clock::now()
                         .time_since_epoch()
                         .count()))) {
-        const auto room = root / "rooms" / "hall";
-        const auto sessions = room / "sessions";
+        const auto forum = root / "forums" / "hall";
+        const auto sessions = forum / "sessions";
         std::filesystem::create_directories(root / "personas");
         std::filesystem::create_directories(sessions);
-        write(root / "rooms" / "rooms.list", "hall\n");
-        write(room / "personas.list", "Guide\n");
+        write(root / "forums" / "forums.list", "hall\n");
+        write(forum / "personas.list", "Guide\n");
         if (!create_session_database(
                 sessions / "valid.sqlite3",
                 {
                     .id = "valid",
-                    .room = "hall",
+                    .forum = "hall",
                     .label = "Design\treview",
                 })) {
             throw std::runtime_error("Failed to create valid test session");
@@ -68,17 +68,17 @@ std::variant<ConsoleOptions, ArgumentError> parse(
 TEST(ConsoleStartup, ParsesSelectionAndColorOptions) {
     const auto parsed = parse({
         "chacon",
-        "--room", "hall",
+        "--forum", "hall",
         "--session", "saved",
         "--color=always",
     });
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(parsed));
     const ConsoleOptions& options = std::get<ConsoleOptions>(parsed);
-    EXPECT_EQ(options.room, "hall");
+    EXPECT_EQ(options.forum, "hall");
     EXPECT_EQ(options.session_id, "saved");
     EXPECT_EQ(options.color, ColorMode::always);
 
-    const auto fresh = parse({"chacon", "--room", "hall"});
+    const auto fresh = parse({"chacon", "--forum", "hall"});
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(fresh));
     ASSERT_TRUE(std::get<ConsoleOptions>(fresh).new_label.has_value());
     EXPECT_TRUE(std::get<ConsoleOptions>(fresh).new_label->empty());
@@ -88,26 +88,26 @@ TEST(ConsoleStartup, RejectsUsageErrorsWithCodeTwo) {
     for (const auto& parsed : {
         parse({"chacon"}),
         parse({"chacon", "--list-sessions"}),
-        parse({"chacon", "--room"}),
+        parse({"chacon", "--forum"}),
         parse({"chacon", "--unknown"}),
         parse({"chacon", "operand"}),
-        parse({"chacon", "--room", "hall", "--session", ""}),
+        parse({"chacon", "--forum", "hall", "--session", ""}),
         parse({
-            "chacon", "--room", "hall",
+            "chacon", "--forum", "hall",
             "--session", "x", "--new", "y",
         }),
-        parse({"chacon", "--room", "hall", "--color=sometimes"}),
+        parse({"chacon", "--forum", "hall", "--color=sometimes"}),
     }) {
         ASSERT_TRUE(std::holds_alternative<ArgumentError>(parsed));
         EXPECT_EQ(std::get<ArgumentError>(parsed).exit_code, 2);
     }
 }
 
-TEST(ConsoleStartup, RoomListingUsesWorkspaceOrder) {
+TEST(ConsoleStartup, ForumListingUsesWorkspaceOrder) {
     ListingWorkspace fixture;
     const Workspace workspace(fixture.root);
     std::ostringstream output;
-    write_room_listing(workspace, output);
+    write_forum_listing(workspace, output);
     EXPECT_EQ(output.str(), "hall\n");
 }
 
@@ -127,28 +127,28 @@ TEST(ConsoleStartup, SessionListingIsPlainStableAndIncludesErrors) {
     EXPECT_EQ(listing.find('\x1b'), std::string::npos);
 }
 
-TEST(ConsoleStartup, ListRoomsWinsOverSelectionFlags) {
+TEST(ConsoleStartup, ListForumsWinsOverSelectionFlags) {
     const auto parsed = parse({
         "chacon",
-        "--list-rooms",
-        "--room", "ignored",
+        "--list-forums",
+        "--forum", "ignored",
         "--session", "ignored",
         "--new", "ignored",
     });
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(parsed));
-    EXPECT_TRUE(std::get<ConsoleOptions>(parsed).list_rooms);
+    EXPECT_TRUE(std::get<ConsoleOptions>(parsed).list_forums);
 
     const auto empty_session = parse({
         "chacon",
-        "--list-rooms",
+        "--list-forums",
         "--session", "",
     });
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(empty_session));
-    EXPECT_TRUE(std::get<ConsoleOptions>(empty_session).list_rooms);
+    EXPECT_TRUE(std::get<ConsoleOptions>(empty_session).list_forums);
 
     const auto session_listing = parse({
         "chacon",
-        "--room", "hall",
+        "--forum", "hall",
         "--list-sessions",
         "--session", "",
     });

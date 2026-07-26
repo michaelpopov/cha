@@ -1,4 +1,4 @@
-#include "session/room_personas.h"
+#include "session/forum_personas.h"
 
 #include "util/text.h"
 
@@ -46,10 +46,10 @@ std::string_view trim_punctuation(std::string_view handle) {
 
 } // namespace
 
-RoomPersonas::RoomPersonas(std::vector<PersonaInfo> personas)
+ForumPersonas::ForumPersonas(std::vector<PersonaInfo> personas)
     : personas_(std::move(personas)) {
     if (personas_.empty()) {
-        throw std::invalid_argument("A room must contain at least one persona");
+        throw std::invalid_argument("A forum must contain at least one persona");
     }
     std::unordered_set<std::string> ids;
     std::unordered_set<std::string> names;
@@ -58,24 +58,24 @@ RoomPersonas::RoomPersonas(std::vector<PersonaInfo> personas)
         validate_persona_name(persona.name);
         if (!ids.insert(persona.id).second) {
             throw std::invalid_argument(
-                "Room has duplicate persona ID '" + persona.id + "'");
+                "Forum has duplicate persona ID '" + persona.id + "'");
         }
         if (!names.insert(fold_ascii(persona.name)).second) {
             throw std::invalid_argument(
-                "Room has duplicate persona name '" + persona.name + "'");
+                "Forum has duplicate persona name '" + persona.name + "'");
         }
     }
 }
 
-const std::vector<PersonaInfo>& RoomPersonas::all() const noexcept {
+const std::vector<PersonaInfo>& ForumPersonas::all() const noexcept {
     return personas_;
 }
 
-const PersonaInfo& RoomPersonas::first() const {
+const PersonaInfo& ForumPersonas::first() const {
     return personas_.front();
 }
 
-const PersonaInfo* RoomPersonas::find(std::string_view id) const {
+const PersonaInfo* ForumPersonas::find(std::string_view id) const {
     const auto found = std::find_if(
         personas_.begin(),
         personas_.end(),
@@ -83,7 +83,7 @@ const PersonaInfo* RoomPersonas::find(std::string_view id) const {
     return found == personas_.end() ? nullptr : &*found;
 }
 
-HandleResolution RoomPersonas::resolve_handle(std::string_view handle) const {
+HandleResolution ForumPersonas::resolve_handle(std::string_view handle) const {
     if (handle.empty()) {
         return {};
     }
@@ -123,7 +123,7 @@ HandleResolution RoomPersonas::resolve_handle(std::string_view handle) const {
     return {HandleMatch::ambiguous, nullptr, std::move(candidates)};
 }
 
-std::string RoomPersonas::handle_list() const {
+std::string ForumPersonas::handle_list() const {
     std::string result;
     for (const PersonaInfo& persona : personas_) {
         if (!result.empty()) {

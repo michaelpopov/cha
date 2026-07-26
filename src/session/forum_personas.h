@@ -17,11 +17,11 @@ struct HandleResolution {
     std::vector<const PersonaInfo*> candidates;
 };
 
-// The ordered personas participating in one room. Construction guarantees that the collection is
+// The ordered personas participating in one forum. Construction guarantees that the collection is
 // non-empty and that persona IDs and case-folded names are unique.
-class RoomPersonas {
+class ForumPersonas {
 public:
-    explicit RoomPersonas(std::vector<PersonaInfo> personas);
+    explicit ForumPersonas(std::vector<PersonaInfo> personas);
 
     const std::vector<PersonaInfo>& all() const noexcept;
     const PersonaInfo& first() const;

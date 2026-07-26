@@ -1,6 +1,6 @@
 #pragma once
 
-#include "session/room_personas.h"
+#include "session/forum_personas.h"
 #include "transcript/transcript.h"
 
 #include <string>
@@ -41,9 +41,9 @@ void write_transcript_suffix(
     std::string_view text);
 void initialize_transcript_surface(TranscriptSurface& surface);
 
-// Whether transcript labels should include routing (multi-agent room or foreign history).
+// Whether transcript labels should include routing (multi-agent forum or foreign history).
 bool show_addressing(
-    const RoomPersonas& personas,
+    const ForumPersonas& personas,
     const Transcript& transcript);
 
 // Produces an unambiguous display label from an entry's semantic kind.

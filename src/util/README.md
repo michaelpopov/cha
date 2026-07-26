@@ -27,8 +27,8 @@ the ASCII range, which is exactly what the agent-name rules allow.
 ## Path safety
 
 `require_path_component()` rejects empty names, absolute paths, anything with a
-separator, and `.` / `..`. Every workspace-controlled name — a room from
-`rooms.list`, a persona from `personas.list`, a session ID derived from a
+separator, and `.` / `..`. Every workspace-controlled name — a forum from
+`forums.list`, a persona from `personas.list`, a session ID derived from a
 filename — passes through it before it is joined onto a path. This is the single
 chokepoint that keeps workspace files from addressing anything outside the
 workspace.

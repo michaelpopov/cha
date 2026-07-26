@@ -11,9 +11,9 @@ namespace cha {
 class SessionController;
 class WakeNotifier;
 
-// A room resolved from the workspace: its name, its ordered personas, and the
+// A forum resolved from the workspace: its name, its ordered personas, and the
 // directory holding its instructions and sessions.
-struct Room {
+struct Forum {
     std::string name;
     std::vector<std::string> persona_names;
     std::filesystem::path directory;
@@ -37,31 +37,31 @@ struct CreatedSession {
 };
 
 // The way into a workspace directory and the place where a chat session is assembled. It resolves
-// the layout (personas, rooms), lists rooms and their sessions, and on create or open loads the
-// room's AgentDefinition values, resolves the session file through SessionCatalog, restores the
+// the layout (personas, forums), lists forums and their sessions, and on create or open loads the
+// forum's AgentDefinition values, resolves the session file through SessionCatalog, restores the
 // stored transcript, and returns a SessionController ready to use. Front ends call it instead of
 // touching persona files or session storage themselves.
 class Workspace {
 public:
     explicit Workspace(std::filesystem::path root = ".");
 
-    std::vector<std::string> rooms() const;
-    Room load_room(const std::string& name) const;
+    std::vector<std::string> forums() const;
+    Forum load_forum(const std::string& name) const;
     // Resolves the selected persona directory without loading its agent configuration.
     std::filesystem::path persona_directory(std::string_view persona_name) const;
 
-    std::vector<SessionSummary> sessions(const std::string& room_name) const;
+    std::vector<SessionSummary> sessions(const std::string& forum_name) const;
     [[nodiscard]] CreatedSession create_session(
-        const std::string& room_name,
+        const std::string& forum_name,
         std::string label,
         WakeNotifier& notifier) const;
     [[nodiscard]] std::unique_ptr<SessionController> open_session(
-        const std::string& room_name,
+        const std::string& forum_name,
         const std::string& session_id,
         WakeNotifier& notifier) const;
 
 private:
-    std::filesystem::path room_directory(const std::string& name) const;
+    std::filesystem::path forum_directory(const std::string& name) const;
     static std::vector<std::string> read_name_list(const std::filesystem::path& path);
 
     std::filesystem::path root_;

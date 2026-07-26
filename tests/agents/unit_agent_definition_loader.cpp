@@ -19,7 +19,7 @@ std::filesystem::path unique_definition_directory() {
            + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 }
 
-void expect_room_context(
+void expect_forum_context(
     const AgentDefinition& definition,
     std::string_view prompt_prefix,
     std::string_view current_name,
@@ -31,7 +31,7 @@ void expect_room_context(
         std::string::npos);
     EXPECT_NE(
         definition.system_prompt.find(
-            "Other agents currently participating in this room (JSON): "
+            "Other agents currently participating in this forum (JSON): "
             + std::string(other_agents_json) + "."),
         std::string::npos);
     EXPECT_NE(
@@ -47,9 +47,9 @@ void expect_room_context(
 TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path persona = root / "persona";
-    const std::filesystem::path room = root / "room";
+    const std::filesystem::path forum = root / "forum";
     std::filesystem::create_directories(persona);
-    std::filesystem::create_directories(room);
+    std::filesystem::create_directories(forum);
     {
         std::ofstream config(persona / "config.toml");
         config << "id = \"guide-id\"\n"
@@ -58,20 +58,20 @@ TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
                << "port = 8080\n";
         std::ofstream system_prompt(persona / "SYSTEM.md");
         system_prompt << "Persona instructions";
-        std::ofstream room_prompt(room / "USER.md");
-        room_prompt << "Room instructions";
+        std::ofstream forum_prompt(forum / "USER.md");
+        forum_prompt << "Forum instructions";
     }
 
     const std::vector<AgentDefinition> definitions =
-        load_agent_definitions({persona}, room);
+        load_agent_definitions({persona}, forum);
 
     ASSERT_EQ(definitions.size(), 1U);
     const AgentDefinition& definition = definitions.front();
     EXPECT_EQ(definition.config.id, "guide-id");
     EXPECT_EQ(definition.config.name, "Guide");
-    expect_room_context(
+    expect_forum_context(
         definition,
-        "Persona instructions\n\nRoom instructions\n\nRoom context\n\n",
+        "Persona instructions\n\nForum instructions\n\nForum context\n\n",
         "Guide",
         "[]");
     std::filesystem::remove_all(root);
@@ -80,9 +80,9 @@ TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
 TEST(AgentDefinitions, RequiresBothPromptFiles) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path persona = root / "persona";
-    const std::filesystem::path room = root / "room";
+    const std::filesystem::path forum = root / "forum";
     std::filesystem::create_directories(persona);
-    std::filesystem::create_directories(room);
+    std::filesystem::create_directories(forum);
     {
         std::ofstream config(persona / "config.toml");
         config << "id = \"guide-id\"\n"
@@ -94,16 +94,16 @@ TEST(AgentDefinitions, RequiresBothPromptFiles) {
     }
 
     EXPECT_THROW(
-        (void)load_agent_definitions({persona}, room),
+        (void)load_agent_definitions({persona}, forum),
         std::runtime_error);
 
     {
-        std::ofstream room_prompt(room / "USER.md");
-        room_prompt << "Room instructions";
+        std::ofstream forum_prompt(forum / "USER.md");
+        forum_prompt << "Forum instructions";
     }
     std::filesystem::remove(persona / "SYSTEM.md");
     EXPECT_THROW(
-        (void)load_agent_definitions({persona}, room),
+        (void)load_agent_definitions({persona}, forum),
         std::runtime_error);
 
     std::filesystem::remove_all(root);
@@ -127,48 +127,48 @@ std::filesystem::path make_persona(
     return persona;
 }
 
-std::filesystem::path make_room(const std::filesystem::path& root) {
-    const std::filesystem::path room = root / "room";
-    std::filesystem::create_directories(room);
-    std::ofstream room_prompt(room / "USER.md");
-    room_prompt << "Room instructions";
-    return room;
+std::filesystem::path make_forum(const std::filesystem::path& root) {
+    const std::filesystem::path forum = root / "forum";
+    std::filesystem::create_directories(forum);
+    std::ofstream forum_prompt(forum / "USER.md");
+    forum_prompt << "Forum instructions";
+    return forum;
 }
 
 TEST(AgentDefinitions, LoadsEveryPersonaInTheDeclaredOrder) {
     const std::filesystem::path root = unique_definition_directory();
-    const std::filesystem::path room = make_room(root);
+    const std::filesystem::path forum = make_forum(root);
     const std::filesystem::path first = make_persona(root, "cheburashka", "cheburashka", "Cheburashka");
     const std::filesystem::path second = make_persona(root, "ismael", "ismael", "Ismael");
 
     const std::vector<AgentDefinition> definitions =
-        load_agent_definitions({first, second}, room);
+        load_agent_definitions({first, second}, forum);
 
     ASSERT_EQ(definitions.size(), 2U);
     EXPECT_EQ(definitions.front().config.id, "cheburashka");
-    expect_room_context(
+    expect_forum_context(
         definitions.front(),
-        "Cheburashka instructions\n\nRoom instructions\n\nRoom context\n\n",
+        "Cheburashka instructions\n\nForum instructions\n\nForum context\n\n",
         "Cheburashka",
         R"(["Ismael"])");
     EXPECT_EQ(definitions.back().config.id, "ismael");
-    expect_room_context(
+    expect_forum_context(
         definitions.back(),
-        "Ismael instructions\n\nRoom instructions\n\nRoom context\n\n",
+        "Ismael instructions\n\nForum instructions\n\nForum context\n\n",
         "Ismael",
         R"(["Cheburashka"])");
     std::filesystem::remove_all(root);
 }
 
-TEST(AgentDefinitions, RefusesToOpenARoomWithMissingPersonaDefinitions) {
+TEST(AgentDefinitions, RefusesToOpenAForumWithMissingPersonaDefinitions) {
     const std::filesystem::path root = unique_definition_directory();
-    const std::filesystem::path room = make_room(root);
+    const std::filesystem::path forum = make_forum(root);
     const std::filesystem::path healthy = make_persona(root, "healthy", "healthy", "Healthy");
     const std::filesystem::path broken = make_persona(root, "broken", "broken", "Broken");
     std::filesystem::remove(broken / "SYSTEM.md");
 
     try {
-        (void)load_agent_definitions({healthy, broken}, room);
+        (void)load_agent_definitions({healthy, broken}, forum);
         FAIL() << "expected the failing persona to be named";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("broken"), std::string::npos)

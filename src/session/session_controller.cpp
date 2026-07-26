@@ -27,14 +27,14 @@ std::string request_action(
         + " for @" + std::string(agent_name);
 }
 
-RoomPersonas make_room_personas(
+ForumPersonas make_forum_personas(
     const std::vector<AgentRuntimeInfo>& runtime_info) {
     std::vector<PersonaInfo> personas;
     personas.reserve(runtime_info.size());
     for (const AgentRuntimeInfo& agent : runtime_info) {
         personas.push_back(agent.persona);
     }
-    return RoomPersonas(std::move(personas));
+    return ForumPersonas(std::move(personas));
 }
 
 void merge_update(SessionUpdate& all, SessionUpdate one) {
@@ -49,10 +49,10 @@ void merge_update(SessionUpdate& all, SessionUpdate one) {
 std::string format_handle_notice(
     std::string_view handle,
     const HandleResolution& resolution,
-    const RoomPersonas& personas) {
+    const ForumPersonas& personas) {
     if (resolution.match == HandleMatch::unknown) {
         return "Unknown agent @" + std::string(handle)
-            + ". Personas in this room: " + personas.handle_list();
+            + ". Personas in this forum: " + personas.handle_list();
     }
     std::string result =
         "Ambiguous agent @" + std::string(handle) + ": matches ";
@@ -66,11 +66,11 @@ std::string format_handle_notice(
 }
 
 std::string format_personas_notice(
-    const RoomPersonas& personas,
+    const ForumPersonas& personas,
     const std::vector<AgentRuntimeInfo>& runtime_info,
     const ParticipantId& default_agent_id) {
     std::ostringstream result;
-    result << "Personas in this room (" << personas.all().size()
+    result << "Personas in this forum (" << personas.all().size()
            << "), * marks the default.";
     result << " Any unambiguous prefix works.";
     for (const AgentRuntimeInfo& agent : runtime_info) {
@@ -84,7 +84,7 @@ std::string format_personas_notice(
 
 std::string format_session_information(
     const Transcript& transcript,
-    const RoomPersonas& personas,
+    const ForumPersonas& personas,
     const std::vector<AgentRuntimeInfo>& runtime_info,
     const ParticipantId& default_agent_id) {
     std::ostringstream text;
@@ -127,7 +127,7 @@ SessionController::SessionController(
     SessionRestore restored)
     : journal_(std::move(path)),
       registry_(transcript_, std::move(definitions), notifier),
-      personas_(make_room_personas(registry_.runtime_info())),
+      personas_(make_forum_personas(registry_.runtime_info())),
       default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
 }
@@ -139,7 +139,7 @@ SessionController::SessionController(
     SessionRestore restored)
     : journal_(std::move(path)),
       registry_(transcript_, std::move(backends), notifier),
-      personas_(make_room_personas(registry_.runtime_info())),
+      personas_(make_forum_personas(registry_.runtime_info())),
       default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
 }
@@ -205,7 +205,7 @@ SessionUpdate SessionController::submit_prompt(
         target = resolution.persona;
     }
     if (!target) {
-        throw std::logic_error("Default agent is not among the room personas");
+        throw std::logic_error("Default agent is not among the forum personas");
     }
     if (text.empty()) {
         update.notice = "Prompt for @" + target->name + " is empty";

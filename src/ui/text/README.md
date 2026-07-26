@@ -27,11 +27,11 @@ curses, storage, or providers.
 
 Mentions are recognized only at the start of a line, after leading whitespace.
 Trailing punctuation on a handle (`@Ada, hello`) is tolerated during resolution
-in `RoomPersonas`, not here.
+in `ForumPersonas`, not here.
 
 The parser never resolves a handle. It hands the text through and lets
-`SessionController` match it against `RoomPersonas`, so the grammar cannot go
-stale when the personas in a room change.
+`SessionController` match it against `ForumPersonas`, so the grammar cannot go
+stale when the personas in a forum change.
 
 ## Dispatch
 

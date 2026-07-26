@@ -31,13 +31,13 @@ int main_internal() {
     cha::Terminal terminal;
     cha::StartupSelector selector(terminal);
 
-    const auto room_name = selector.select_room(workspace.rooms());
-    if (!room_name) {
-        throw std::runtime_error("Room selection cancelled");
+    const auto forum_name = selector.select_forum(workspace.forums());
+    if (!forum_name) {
+        throw std::runtime_error("Forum selection cancelled");
     }
 
     const auto selected_session = selector.select_session(
-        workspace.sessions(*room_name));
+        workspace.sessions(*forum_name));
     if (!selected_session) {
         throw std::runtime_error("Session selection cancelled");
     }
@@ -54,13 +54,13 @@ int main_internal() {
         }
         controller =
             std::move(workspace.create_session(
-                *room_name,
+                *forum_name,
                 *session_label,
                 event_loop)
                 .controller);
     } else {
         controller = workspace.open_session(
-            *room_name,
+            *forum_name,
             selected_session->id,
             event_loop);
     }

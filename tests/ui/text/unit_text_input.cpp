@@ -39,7 +39,7 @@ public:
                 path,
                 {
                     .id = "text-input-test",
-                    .room = "test-room",
+                    .forum = "test-forum",
                     .label = "Text input test",
                 })) {
             throw std::runtime_error(

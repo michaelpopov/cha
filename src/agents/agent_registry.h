@@ -16,7 +16,7 @@
 namespace cha {
 
 // Runs agent completions off the caller's thread so the UI never blocks on a provider.
-// It owns one CompletionBackend per room persona and one worker thread, accepts a single
+// It owns one CompletionBackend per forum persona and one worker thread, accepts a single
 // outstanding CompletionRequest, prepares that request from a short-lived Transcript read view,
 // and publishes correlated AgentEvent values on a portable queue. A front-end notifier wakes the
 // event loop after event queue state changes.

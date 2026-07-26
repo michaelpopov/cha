@@ -18,7 +18,7 @@ struct Session {
     bool operator==(const Session&) const = default;
 };
 
-// Owns the session files of one room, so no other component has to know how sessions are laid out
+// Owns the session files of one forum, so no other component has to know how sessions are laid out
 // on disk. It lists them, checking the identity embedded in each against the file it came from,
 // creates new ones without ever overwriting an existing destination, and resolves a session ID to
 // the database path used to open it. The clock is injectable to keep generated names testable.
@@ -28,7 +28,7 @@ public:
 
     SessionCatalog(
         std::filesystem::path directory,
-        std::string room_name,
+        std::string forum_name,
         Clock clock = {});
 
     std::vector<Session> list() const;
@@ -39,7 +39,7 @@ public:
 
 private:
     std::filesystem::path directory_;
-    std::string room_name_;
+    std::string forum_name_;
     Clock clock_;
 };
 

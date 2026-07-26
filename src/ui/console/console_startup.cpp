@@ -33,11 +33,11 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     bool session_selected = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
-        if (argument == "--list-rooms") {
-            options.list_rooms = true;
+        if (argument == "--list-forums") {
+            options.list_forums = true;
         } else if (argument == "--list-sessions") {
             options.list_sessions = true;
-        } else if (argument == "--room"
+        } else if (argument == "--forum"
             || argument == "--session"
             || argument == "--new") {
             if (index + 1 >= argc) {
@@ -45,8 +45,8 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
                     "Missing value for " + std::string(argument));
             }
             const std::string value(argv[++index]);
-            if (argument == "--room") {
-                options.room = value;
+            if (argument == "--forum") {
+                options.forum = value;
             } else if (argument == "--session") {
                 session_selected = true;
                 options.session_id = value;
@@ -72,11 +72,11 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
         }
     }
 
-    if (options.list_rooms) {
+    if (options.list_forums) {
         return options;
     }
-    if (options.room.empty()) {
-        return argument_error("--room is required");
+    if (options.forum.empty()) {
+        return argument_error("--forum is required");
     }
     if (options.list_sessions) {
         return options;
@@ -95,17 +95,17 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     return options;
 }
 
-void write_room_listing(const Workspace& workspace, std::ostream& out) {
-    for (const std::string& room : workspace.rooms()) {
-        out << listing_field(room) << '\n';
+void write_forum_listing(const Workspace& workspace, std::ostream& out) {
+    for (const std::string& forum : workspace.forums()) {
+        out << listing_field(forum) << '\n';
     }
 }
 
 void write_session_listing(
     const Workspace& workspace,
-    const std::string& room,
+    const std::string& forum,
     std::ostream& out) {
-    for (const SessionSummary& session : workspace.sessions(room)) {
+    for (const SessionSummary& session : workspace.sessions(forum)) {
         out << listing_field(session.id) << '\t'
             << listing_field(session.label) << '\t'
             << listing_field(session.error) << '\n';
@@ -119,7 +119,7 @@ ConsoleSelection open_console_session(
     if (options.new_label) {
         CreatedSession created =
             workspace.create_session(
-                options.room,
+                options.forum,
                 *options.new_label,
                 notifier);
         return {
@@ -129,7 +129,7 @@ ConsoleSelection open_console_session(
     }
 
     const std::vector<SessionSummary> sessions =
-        workspace.sessions(options.room);
+        workspace.sessions(options.forum);
     const auto found = std::find_if(
         sessions.begin(),
         sessions.end(),
@@ -146,7 +146,7 @@ ConsoleSelection open_console_session(
     return {
         .controller =
             workspace.open_session(
-                options.room,
+                options.forum,
                 options.session_id,
                 notifier),
         .session_id = options.session_id,

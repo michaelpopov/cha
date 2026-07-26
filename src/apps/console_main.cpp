@@ -47,12 +47,12 @@ int main_internal(int argc, const char* const* argv) {
         return error->exit_code;
     }
     const cha::ConsoleOptions& options = std::get<cha::ConsoleOptions>(parsed);
-    if (options.list_rooms) {
-        cha::write_room_listing(workspace, std::cout);
+    if (options.list_forums) {
+        cha::write_forum_listing(workspace, std::cout);
         return 0;
     }
     if (options.list_sessions) {
-        cha::write_session_listing(workspace, options.room, std::cout);
+        cha::write_session_listing(workspace, options.forum, std::cout);
         return 0;
     }
 
@@ -77,7 +77,7 @@ int main_internal(int argc, const char* const* argv) {
         // The resolved ID, not the requested one: a session created by --new or
         // by default has no ID on the command line, so reporting it here avoids
         // making the user run a separate listing before reopening it.
-        std::cerr << options.room << " / " << selection.session_id
+        std::cerr << options.forum << " / " << selection.session_id
                   << " ready\n";
     }
 

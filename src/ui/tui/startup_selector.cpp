@@ -34,9 +34,9 @@ StartupSelector::StartupSelector(Terminal& terminal) : terminal_(terminal) {
     terminal_.configure_selector();
 }
 
-std::optional<std::string> StartupSelector::select_room(const std::vector<std::string>& rooms) {
-    const auto selected = select("Select a room", rooms);
-    return selected ? std::optional<std::string>(rooms[*selected]) : std::nullopt;
+std::optional<std::string> StartupSelector::select_forum(const std::vector<std::string>& forums) {
+    const auto selected = select("Select a forum", forums);
+    return selected ? std::optional<std::string>(forums[*selected]) : std::nullopt;
 }
 
 std::optional<SessionSummary> StartupSelector::select_session(

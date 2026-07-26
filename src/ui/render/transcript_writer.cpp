@@ -3,7 +3,7 @@
 namespace cha {
 
 bool show_addressing(
-    const RoomPersonas& personas,
+    const ForumPersonas& personas,
     const Transcript& transcript) {
     if (personas.all().size() > 1) {
         return true;

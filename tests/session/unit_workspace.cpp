@@ -27,20 +27,20 @@ protected:
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root_ / "personas" / "guide");
-        std::filesystem::create_directories(root_ / "rooms" / "lobby");
+        std::filesystem::create_directories(root_ / "forums" / "lobby");
         {
-            std::ofstream rooms(root_ / "rooms" / "rooms.list");
-            rooms << "lobby\n";
+            std::ofstream forums(root_ / "forums" / "forums.list");
+            forums << "lobby\n";
         }
         {
             std::ofstream personas(
-                root_ / "rooms" / "lobby" / "personas.list");
+                root_ / "forums" / "lobby" / "personas.list");
             personas << "guide\n";
         }
         {
-            std::ofstream room_prompt(
-                root_ / "rooms" / "lobby" / "USER.md");
-            room_prompt << "Room instructions";
+            std::ofstream forum_prompt(
+                root_ / "forums" / "lobby" / "USER.md");
+            forum_prompt << "Forum instructions";
         }
         {
             std::ofstream base_config(
@@ -68,10 +68,10 @@ protected:
     std::filesystem::path root_;
 };
 
-TEST_F(ApplicationWorkspaceTest, ListsRoomsAndSessionsAsApplicationValues) {
+TEST_F(ApplicationWorkspaceTest, ListsForumsAndSessionsAsApplicationValues) {
     Workspace workspace(root_);
 
-    EXPECT_EQ(workspace.rooms(), (std::vector<std::string>{"lobby"}));
+    EXPECT_EQ(workspace.forums(), (std::vector<std::string>{"lobby"}));
     EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
@@ -141,7 +141,7 @@ TEST_F(ApplicationWorkspaceTest, MapsInvalidStoredSessionDetails) {
     const std::string id = healthy.front().id;
     {
         std::ofstream database(
-            root_ / "rooms" / "lobby" / "sessions" / (id + ".sqlite3"),
+            root_ / "forums" / "lobby" / "sessions" / (id + ".sqlite3"),
             std::ios::binary | std::ios::trunc);
         database << "not SQLite";
     }
