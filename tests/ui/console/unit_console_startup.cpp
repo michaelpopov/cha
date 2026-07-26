@@ -91,6 +91,7 @@ TEST(ConsoleStartup, RejectsUsageErrorsWithCodeTwo) {
         parse({"chacon", "--room"}),
         parse({"chacon", "--unknown"}),
         parse({"chacon", "operand"}),
+        parse({"chacon", "--room", "hall", "--session", ""}),
         parse({
             "chacon", "--room", "hall",
             "--session", "x", "--new", "y",
@@ -136,6 +137,23 @@ TEST(ConsoleStartup, ListRoomsWinsOverSelectionFlags) {
     });
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(parsed));
     EXPECT_TRUE(std::get<ConsoleOptions>(parsed).list_rooms);
+
+    const auto empty_session = parse({
+        "chacon",
+        "--list-rooms",
+        "--session", "",
+    });
+    ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(empty_session));
+    EXPECT_TRUE(std::get<ConsoleOptions>(empty_session).list_rooms);
+
+    const auto session_listing = parse({
+        "chacon",
+        "--room", "hall",
+        "--list-sessions",
+        "--session", "",
+    });
+    ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(session_listing));
+    EXPECT_TRUE(std::get<ConsoleOptions>(session_listing).list_sessions);
 }
 
 } // namespace

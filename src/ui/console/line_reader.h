@@ -6,6 +6,9 @@
 
 namespace cha {
 
+// Converts arbitrary byte chunks from non-blocking stdin into complete console
+// submissions. It owns partial and continued-line state but no descriptors, so
+// SystemConsole can separate byte parsing from process I/O.
 class LineReader {
 public:
     std::vector<std::string> append(std::string_view bytes);

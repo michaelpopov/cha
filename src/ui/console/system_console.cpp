@@ -134,4 +134,9 @@ bool SystemConsole::flush() {
     return !std::cout.fail();
 }
 
+bool SystemConsole::finish_transcript() {
+    surface_.finish();
+    return flush();
+}
+
 } // namespace cha

@@ -215,7 +215,9 @@ The TUI entry point and `Workspace` perform these steps:
 5. Call `Workspace::create_session()` with a prompted label, or
    `Workspace::open_session()` with the chosen ID. Either call resolves the
    room, loads its ordered agent definitions, and resolves the database path
-   through `SessionCatalog`.
+   through `SessionCatalog`. Creation returns `CreatedSession`, containing the
+   controller and the exact ID assigned during collision-safe publication; the
+   TUI uses the controller and discards the ID.
 6. `open_session()` additionally calls `load_session_state()` to fully
    restore the database before construction.
 7. Construct `SessionController` from the definitions, database path, and
@@ -229,9 +231,12 @@ throws, and the failure is reported after terminal restoration.
 The console entry point replaces steps 2–4 with command-line parsing. It
 supports room and session listings, opens `--session ID`, or creates a session
 for `--new LABEL` (and creates one with a default label when neither selection
-option is present). It then creates a `signalfd`, `SystemConsole`,
-`TranscriptEmitter`, and `ConsoleSession`. Usage failures return 2; workspace
-and runtime failures return 1.
+option is present). Listing modes return before selection validation. For an
+interactive run, the ready banner reports the resolved ID from
+`CreatedSession`, so a new session can be reopened later. The entry point then
+creates a `signalfd`, `SystemConsole`, `TranscriptEmitter`, and
+`ConsoleSession`. Usage failures return 2; workspace and runtime failures return
+1.
 
 The workspace shape is:
 
@@ -284,7 +289,9 @@ resolves what it needs when it is called:
 - `sessions()` builds a `SessionCatalog` for the room and maps its `Session`
   records to `SessionSummary` values;
 - `create_session()` and `open_session()` load the room's complete ordered agent
-  definitions, resolve the database path, and construct the `SessionController`.
+  definitions, resolve the database path, and construct the
+  `SessionController`; creation returns it with the assigned ID in
+  `CreatedSession`, while opening returns the controller directly.
 
 Persona files are therefore read once per session create/open rather than once
 per selection, and catalog paths and `Session` records never leave the
@@ -576,14 +583,21 @@ layer and front-end responses cannot drift.
 
 `ConsoleSession` reuses the same grammar but has different arrival semantics:
 complete lines received during generation are queued and dispatched one at a
-time rather than refused. Bare `/stop` and `/exit` act while enqueueing.
+time rather than refused. Bare `/stop` and `/exit` act while enqueueing; the
+forms with arguments remain in FIFO order and are later rejected by
+`handle_text_input()` under the shared command rules. Immediate `/exit` shuts
+down the controller and cancels an active turn rather than draining its answer.
 Piped stdin receives backpressure at the queue limit. EOF means “no more
-submissions”; the loop continues until the active turn and queue are drained.
-SIGINT cancels an active turn and exits while idle.
+submissions”; stdin is then omitted from `poll()` so its persistent `POLLHUP`
+cannot spin the loop, while the active turn and queue continue to drain. SIGINT
+cancels an active turn and exits while idle.
 
 The input editor stores wide characters, supports cursor movement and editing,
 and converts to UTF-8 on submission. A trailing backslash enters a visual
 continuation line; visual newlines are removed from the submitted value.
+Console `LineReader` applies the same continuation rule to byte input and
+removes one trailing carriage return from each physical line, including the
+final unterminated line, normalizing CRLF sources.
 
 Key behavior:
 
@@ -611,7 +625,11 @@ and advances its watermark only after stdout flushes successfully. A history
 clear produces a marker rather than retracting bytes. If a failed turn discards
 a partial answer from the stored transcript, already-written partial text
 remains in the log and the error follows it. `ConsoleSurface` neutralizes C0,
-DEL, and C1 terminal controls in model and transcript text.
+DEL, and C1 terminal controls in model and transcript text. Its sanitizer
+carries a possible UTF-8 C1 lead byte across non-empty writes; an empty write
+does not resolve that state. At session end, `ConsolePort::finish_transcript()`
+emits an incomplete trailing lead byte and performs a checked final flush before
+the process chooses its exit status. Destructors never emit transcript bytes.
 
 Transcript entries use the compact `[Name] Answer` form. While a turn is
 active and reasoning is present, the TUI combines the ephemeral reasoning
@@ -705,7 +723,8 @@ replace an existing destination. The temporary path is removed whether
 publication succeeds, collides, or throws. An empty user-supplied label falls
 back to the generated ID. `Workspace::create_session()` loads the room's agent
 definitions, creates the database through `SessionCatalog::create()`, and
-constructs a controller over the fresh file.
+constructs a controller over the fresh file. It returns that controller together
+with the published ID as `CreatedSession`.
 
 ### Transactions and IDs
 
@@ -863,7 +882,9 @@ caused the exceptional exit. `SessionController::shutdown()` is idempotent:
 `ConsoleSession` likewise calls the controller shutdown path on every exit.
 EOF is not itself an exit: queued prompts and an active turn drain first. An
 idle interrupt, `/exit`, a closed event channel, or a fatal wait/write error
-ends the loop immediately.
+ends the loop immediately. Before shutdown, the console finalizes sanitizer
+state; a failed final flush changes an otherwise successful result to exit code
+1.
 
 1. `AgentRegistry::stop()` sets the shared cancellation flag.
 2. The registry closes its request channel, preserving any accepted work, and

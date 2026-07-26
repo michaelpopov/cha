@@ -39,8 +39,13 @@ int ConsoleSession::run() {
         const bool queue_full =
             options_.queue_limit > 0
             && queue_.size() >= options_.queue_limit;
+        // Drop stdin from the poll set once it is exhausted. POLLHUP is level
+        // triggered and survives the zero-length read, so polling a closed
+        // standard input returns immediately forever and spins the loop for the
+        // rest of the turn.
         const bool include_input =
-            !(options_.backpressure_stdin && queue_full);
+            !input_done_
+            && !(options_.backpressure_stdin && queue_full);
         const InputEvents ready =
             port_.wait(controller_.notification_fd(), include_input);
 
@@ -90,7 +95,8 @@ void ConsoleSession::enqueue(std::vector<std::string> lines) {
             apply(controller_.request_stop());
             continue;
         }
-        if (command.kind == CommandKind::exit) {
+        if (command.kind == CommandKind::exit
+            && command.argument.empty()) {
             end_session_ = true;
             queue_.clear();
             return;
@@ -123,6 +129,10 @@ bool ConsoleSession::emit() {
 }
 
 int ConsoleSession::finish(int exit_code) {
+    if (!port_.finish_transcript() && exit_code == 0) {
+        port_.notices() << "Failed to write console transcript.\n";
+        exit_code = 1;
+    }
     try {
         controller_.shutdown();
     } catch (...) {

@@ -28,7 +28,7 @@ flowchart TD
     g -->|"empty id, meaning New session"| h["prompt_session_name"]
     h --> i["Workspace.create_session"]
     g -->|"existing id"| j["Workspace.open_session"]
-    i --> k["SessionController"]
+    i -->|"CreatedSession.controller"| k["SessionController"]
     j --> k
     k --> l["run_user with terminal and controller"]
     l --> m["return 0"]
@@ -55,16 +55,20 @@ The line-oriented application parses room/session selection, creates a
 `SystemConsole`, `TranscriptEmitter`, and `ConsoleSession`. It also decides
 TTY-dependent behavior: prompts and the ready banner appear only for
 interactive stdin, pipe input receives queue backpressure, and automatic color
-is enabled only for a terminal stdout.
+is enabled only for a terminal stdout. `Workspace::create_session()` returns
+the generated session ID with the controller; the ready banner prints that
+resolved ID rather than a placeholder for newly created sessions.
 
 SIGINT is blocked before the controller creates its agent thread so every
 thread inherits the mask and the main loop can consume interrupts reliably.
 SIGPIPE is ignored so `ConsoleSession` can turn a closed stdout into exit code
 1 with an error on stderr.
 
-Listings return before any session or console object is constructed. Usage
-errors return 2, runtime errors return 1, and orderly EOF, `/exit`, or idle
-Ctrl-C return 0.
+Listings return before any session or console object is constructed and take
+precedence over session-selection validation. Usage errors return 2, runtime
+errors return 1, and orderly EOF, `/exit`, or idle Ctrl-C return 0. Before a
+successful return, the console explicitly finalizes sanitizer state and checks
+the last stdout flush; destruction does not perform hidden output.
 
 ## Dependencies
 

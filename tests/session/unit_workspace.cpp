@@ -72,15 +72,18 @@ TEST_F(ApplicationWorkspaceTest, ListsRoomsAndSessionsAsApplicationValues) {
 TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     Workspace workspace(root_);
 
-    std::unique_ptr<SessionController> created =
+    CreatedSession created =
         workspace.create_session("lobby", "Browser-ready session");
-    created->shutdown();
-    created.reset();
+    const std::string created_id = created.id;
+    created.controller->shutdown();
+    created.controller.reset();
 
     const std::vector<SessionSummary> sessions =
         workspace.sessions("lobby");
     ASSERT_EQ(sessions.size(), 1U);
     EXPECT_FALSE(sessions.front().id.empty());
+    // The reported ID is the one a front end can hand back to open_session.
+    EXPECT_EQ(created_id, sessions.front().id);
     EXPECT_EQ(sessions.front().label, "Browser-ready session");
     EXPECT_TRUE(sessions.front().error.empty());
 
@@ -102,18 +105,18 @@ TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedPersonaConfig) {
     }
     Workspace workspace(root_);
 
-    std::unique_ptr<SessionController> session =
+    CreatedSession session =
         workspace.create_session("lobby", "No shared config");
 
-    session->shutdown();
+    session.controller->shutdown();
 }
 
 TEST_F(ApplicationWorkspaceTest, MapsInvalidStoredSessionDetails) {
     Workspace workspace(root_);
-    std::unique_ptr<SessionController> created =
+    CreatedSession created =
         workspace.create_session("lobby", "Broken later");
-    created->shutdown();
-    created.reset();
+    created.controller->shutdown();
+    created.controller.reset();
 
     const std::vector<SessionSummary> healthy = workspace.sessions("lobby");
     ASSERT_EQ(healthy.size(), 1U);

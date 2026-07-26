@@ -7,6 +7,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 
 namespace cha {
 namespace {
@@ -29,6 +30,7 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     int argc,
     const char* const* argv) {
     ConsoleOptions options;
+    bool session_selected = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--list-rooms") {
@@ -46,6 +48,7 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
             if (argument == "--room") {
                 options.room = value;
             } else if (argument == "--session") {
+                session_selected = true;
                 options.session_id = value;
             } else {
                 options.new_label = value;
@@ -78,10 +81,15 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     if (options.list_sessions) {
         return options;
     }
-    if (!options.session_id.empty() && options.new_label) {
+    // Validate selection only after listing modes have had their documented
+    // precedence over otherwise irrelevant selection flags.
+    if (session_selected && options.session_id.empty()) {
+        return argument_error("--session requires a session ID");
+    }
+    if (session_selected && options.new_label) {
         return argument_error("--session and --new cannot be used together");
     }
-    if (options.session_id.empty() && !options.new_label) {
+    if (!session_selected && !options.new_label) {
         options.new_label = "";
     }
     return options;
@@ -104,11 +112,16 @@ void write_session_listing(
     }
 }
 
-std::unique_ptr<SessionController> open_console_session(
+ConsoleSelection open_console_session(
     const Workspace& workspace,
     const ConsoleOptions& options) {
     if (options.new_label) {
-        return workspace.create_session(options.room, *options.new_label);
+        CreatedSession created =
+            workspace.create_session(options.room, *options.new_label);
+        return {
+            .controller = std::move(created.controller),
+            .session_id = std::move(created.id),
+        };
     }
 
     const std::vector<SessionSummary> sessions =
@@ -126,7 +139,11 @@ std::unique_ptr<SessionController> open_console_session(
     if (!found->error.empty()) {
         throw std::runtime_error(found->error);
     }
-    return workspace.open_session(options.room, options.session_id);
+    return {
+        .controller =
+            workspace.open_session(options.room, options.session_id),
+        .session_id = options.session_id,
+    };
 }
 
 } // namespace cha

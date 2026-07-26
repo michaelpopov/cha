@@ -28,6 +28,13 @@ struct SessionSummary {
     bool operator==(const SessionSummary&) const = default;
 };
 
+// A session just created on disk: the controller ready to run, and the ID the session was given so
+// a front end can show it or store it to reopen the session later.
+struct CreatedSession {
+    std::unique_ptr<SessionController> controller;
+    std::string id;
+};
+
 // The way into a workspace directory and the place where a chat session is assembled. It resolves
 // the layout (personas, rooms), lists rooms and their sessions, and on create or open loads the
 // room's AgentDefinition values, resolves the session file through SessionCatalog, restores the
@@ -43,7 +50,7 @@ public:
     std::filesystem::path persona_directory(std::string_view persona_name) const;
 
     std::vector<SessionSummary> sessions(const std::string& room_name) const;
-    [[nodiscard]] std::unique_ptr<SessionController> create_session(
+    [[nodiscard]] CreatedSession create_session(
         const std::string& room_name,
         std::string label) const;
     [[nodiscard]] std::unique_ptr<SessionController> open_session(

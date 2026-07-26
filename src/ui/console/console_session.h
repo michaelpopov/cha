@@ -14,12 +14,17 @@ namespace cha {
 // applying pipe backpressure before queued work grows without bound.
 inline constexpr std::size_t default_console_queue_limit = 64;
 
+// Presentation and flow-control choices supplied by the composition root so
+// the session state machine does not inspect process descriptors or TTY state.
 struct ConsoleSessionOptions {
     bool show_prompt{};
     bool backpressure_stdin{};
     std::size_t queue_limit{default_console_queue_limit};
 };
 
+// Runs one line-oriented chat over a ConsolePort and SessionController. It
+// serializes queued submissions, drains agent events after EOF, and advances
+// the TranscriptEmitter only after the port confirms a successful flush.
 class ConsoleSession {
 public:
     ConsoleSession(

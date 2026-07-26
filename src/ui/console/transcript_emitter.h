@@ -8,6 +8,9 @@
 
 namespace cha {
 
+// Projects TranscriptSnapshot changes onto an append-only TranscriptSurface.
+// Staged and committed positions let ConsoleSession flush output before
+// acknowledging bytes as delivered.
 class TranscriptEmitter {
 public:
     TranscriptEmitter(TranscriptSurface& surface, bool show_addressing);
@@ -16,6 +19,8 @@ public:
     void commit();
 
 private:
+    // The last successfully delivered point in one transcript history epoch,
+    // including the suffix position of an entry that is still streaming.
     struct Position {
         bool initialized{};
         std::size_t history_epoch{};

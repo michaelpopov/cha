@@ -191,7 +191,11 @@ sequenceDiagram
     end
     ws->>controller: build with AgentDefinitions and database path
     controller->>controller: restore entries, repair interrupted turns
-    ws-->>main: SessionController
+    alt New session
+        ws-->>main: CreatedSession with controller and assigned id
+    else Existing session
+        ws-->>main: SessionController
+    end
     main->>controller: run_user
 ```
 

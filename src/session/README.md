@@ -10,7 +10,7 @@ code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, list rooms and sessions, load a room's agent definitions, and build a `SessionController`. |
+| `workspace.*` | Resolve the workspace layout, list rooms and sessions, load a room's agent definitions, and build a controller; creation also returns the assigned session ID. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one room. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
 | `room_personas.*` | The ordered persona identities in a room, including validation, lookup, and handle resolution. |
@@ -81,7 +81,7 @@ sequenceDiagram
     SC->>SC: timestamp id, numeric suffix on collision
     SC->>DB: build hidden temporary sibling, then link into place
     WS->>CC: from_definitions with fresh database
-    CC-->>UI: controller
+    WS-->>UI: CreatedSession with controller and assigned id
 
     Note over UI,CC: Opening a session
     UI->>WS: open_session room, id
@@ -99,7 +99,10 @@ Creation publishes with `link(2)`, which fails rather than overwriting, so a
 half-written database is never visible under a real session name and a collision
 simply retries with the next numeric suffix. Listing is tolerant: a file that
 fails validation still appears, with its error attached, so the selector can
-show it instead of hiding a broken session.
+show it instead of hiding a broken session. `Workspace::create_session()`
+returns a `CreatedSession` containing both the ready controller and the exact ID
+that won publication; front ends can therefore report or retain the ID without
+rescanning the catalog.
 
 ## Persistence
 

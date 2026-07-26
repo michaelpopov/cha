@@ -93,8 +93,20 @@ public:
         return true;
     }
 
+    bool finish_transcript() override {
+        if (fail_finish_) {
+            fail_finish_ = false;
+            return false;
+        }
+        return flush();
+    }
+
     void fail_next_flush() {
         fail_flush_ = true;
+    }
+
+    void fail_next_finish() {
+        fail_finish_ = true;
     }
 
     const std::string& transcript_output() const {
@@ -124,6 +136,7 @@ private:
     bool interrupt_{};
     bool closed_{};
     bool fail_flush_{};
+    bool fail_finish_{};
     RecordingSurface surface_;
     std::ostringstream notices_;
 };

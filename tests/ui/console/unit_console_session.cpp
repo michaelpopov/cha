@@ -219,6 +219,29 @@ TEST(ConsoleSession, ExitDropsTheRemainingQueue) {
     EXPECT_TRUE(port.transcript_output().empty());
 }
 
+TEST(ConsoleSession, ExitWithAnArgumentUsesSharedCommandRules) {
+    TemporaryJournal journal;
+    auto session_controller = controller(journal);
+    test::ScriptedConsole port({
+        {
+            .input = true,
+            .closed = true,
+            .lines = {"/exit now", "still runs"},
+        },
+        {.notification = true},
+    });
+    TranscriptEmitter emitter(port.transcript(), false);
+    ConsoleSession session(port, *session_controller, emitter);
+
+    EXPECT_EQ(session.run(), 0);
+    EXPECT_NE(
+        port.notice_output().find("Command does not accept arguments"),
+        std::string::npos);
+    EXPECT_NE(
+        port.transcript_output().find("Answer to still runs"),
+        std::string::npos);
+}
+
 TEST(ConsoleSession, StopActsImmediatelyDuringGeneration) {
     TemporaryJournal journal;
     auto session_controller = controller(journal, true);
@@ -302,15 +325,13 @@ TEST(ConsoleSession, ClosedControllerChannelEndsTheSession) {
 TEST(ConsoleSession, PipeBackpressureSuppressesInputOnlyWhileQueueIsFull) {
     TemporaryJournal journal;
     auto session_controller = controller(journal);
+    // Standard input stays open until the last step so a suppressed poll can
+    // only be attributed to the full queue, never to end of input.
     test::ScriptedConsole port({
-        {
-            .input = true,
-            .closed = true,
-            .lines = {"one", "two", "three"},
-        },
+        {.input = true, .lines = {"one", "two", "three"}},
         {.notification = true},
         {.notification = true},
-        {.notification = true},
+        {.notification = true, .closed = true},
     });
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
@@ -337,13 +358,9 @@ TEST(ConsoleSession, InteractiveInputRemainsEnabledWhenQueueIsFull) {
     TemporaryJournal journal;
     auto session_controller = controller(journal);
     test::ScriptedConsole port({
-        {
-            .input = true,
-            .closed = true,
-            .lines = {"one", "two"},
-        },
+        {.input = true, .lines = {"one", "two"}},
         {.notification = true},
-        {.notification = true},
+        {.notification = true, .closed = true},
     });
     TranscriptEmitter emitter(port.transcript(), false);
     ConsoleSession session(
@@ -358,6 +375,28 @@ TEST(ConsoleSession, InteractiveInputRemainsEnabledWhenQueueIsFull) {
     EXPECT_EQ(session.run(), 0);
     EXPECT_TRUE(std::all_of(
         port.include_input_history.begin(),
+        port.include_input_history.end(),
+        [](bool included) { return included; }));
+}
+
+// POLLHUP survives the zero-length read, so a closed standard input left in the
+// poll set makes every wait return at once and spins the loop for the rest of
+// the turn.
+TEST(ConsoleSession, StopsPollingStandardInputOnceItIsExhausted) {
+    TemporaryJournal journal;
+    auto session_controller = controller(journal);
+    test::ScriptedConsole port({
+        {.input = true, .closed = true, .lines = {"one"}},
+        {.notification = true},
+    });
+    TranscriptEmitter emitter(port.transcript(), false);
+    ConsoleSession session(port, *session_controller, emitter);
+
+    EXPECT_EQ(session.run(), 0);
+    ASSERT_GE(port.include_input_history.size(), 2U);
+    EXPECT_TRUE(port.include_input_history.front());
+    EXPECT_TRUE(std::none_of(
+        port.include_input_history.begin() + 1,
         port.include_input_history.end(),
         [](bool included) { return included; }));
 }
@@ -395,6 +434,18 @@ TEST(ConsoleSession, ReportsWaitAndFlushFailures) {
     EXPECT_EQ(
         flush_port.transcript_output(),
         first_write + first_write);
+
+    TemporaryJournal finish_journal;
+    auto finish_controller = controller(finish_journal);
+    test::ScriptedConsole finish_port({{.closed = true}});
+    finish_port.fail_next_finish();
+    TranscriptEmitter finish_emitter(finish_port.transcript(), false);
+    ConsoleSession finish_session(
+        finish_port, *finish_controller, finish_emitter);
+    EXPECT_EQ(finish_session.run(), 1);
+    EXPECT_NE(
+        finish_port.notice_output().find("Failed to write"),
+        std::string::npos);
 }
 
 } // namespace

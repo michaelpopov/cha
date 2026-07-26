@@ -26,6 +26,13 @@ TEST(LineReader, ConcatenatesContinuationChainsWithoutNewlines) {
         std::vector<std::string>({"abc"}));
 }
 
+TEST(LineReader, RemovesCarriageReturnsFromCrlfInput) {
+    LineReader reader;
+    EXPECT_EQ(
+        reader.append("a\r\nb\r\n"),
+        std::vector<std::string>({"a", "b"}));
+}
+
 TEST(LineReader, FlushesEveryUnterminatedFinalForm) {
     LineReader tail;
     EXPECT_TRUE(tail.append("tail").empty());

@@ -127,21 +127,29 @@ chacon --room ROOM [--session ID | --new LABEL] [--color=auto|always|never]
 ```
 
 If neither `--session` nor `--new` is supplied, `chacon` creates a new session
-with the default timestamp label. Room listings contain one name per line.
-Session listings contain exactly three tab-separated fields—ID, label, and
-error—with no header, padding, or color. Invalid sessions remain visible in
-the listing.
+with the default timestamp label. On an interactive terminal it reports the room
+and the resolved session ID before the first prompt, so a session created by
+`--new` or by default can be reopened later with `--session`. Room listings
+contain one name per line. Session listings contain exactly three tab-separated
+fields—ID, label, and error—with no header, padding, or color. Invalid sessions
+remain visible in the listing. Listing modes ignore session-selection flags;
+selection validation applies only when opening or creating a session.
 
 Each input line is one submission. A trailing `\` continues the submission on
-the next line and the lines are concatenated without a newline. Piped
-submissions are queued and run one at a time; `/stop` and `/exit` take effect
-immediately. EOF stops input but lets the active response and queued prompts
+the next line and the lines are concatenated without a newline. CRLF input is
+normalized by removing the trailing carriage return. Piped submissions are
+queued and run one at a time. Bare `/stop` and `/exit` take effect immediately;
+forms with arguments retain FIFO order and receive the shared “does not accept
+arguments” notice. An immediate `/exit` cancels an active response instead of
+waiting for it. EOF stops input but lets the active response and queued prompts
 finish. Ctrl-C cancels an active response and exits when idle.
 
 Transcript text is an append-only log on stdout; prompts, responses, and
 restored history are never rewritten. Notices and the interactive prompt go to
 stderr, keeping stdout suitable for redirection. Model text is sanitized so it
-cannot inject terminal control sequences.
+cannot inject terminal control sequences, including a C1 sequence split across
+streaming chunks. Final sanitizer state is emitted before a checked stdout
+flush, so a late output failure still produces exit code 1.
 
 ## Build and test
 

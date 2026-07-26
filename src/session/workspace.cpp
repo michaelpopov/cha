@@ -162,7 +162,7 @@ std::vector<SessionSummary> Workspace::sessions(
     return result;
 }
 
-std::unique_ptr<SessionController> Workspace::create_session(
+CreatedSession Workspace::create_session(
     const std::string& room_name,
     std::string label) const {
     const Room room = load_room(room_name);
@@ -171,9 +171,12 @@ std::unique_ptr<SessionController> Workspace::create_session(
     const SessionCatalog catalog(room.directory / "sessions", room.name);
 
     const Session session = catalog.create(std::move(label));
-    return SessionController::from_definitions(
-        std::move(definitions),
-        catalog.database_path(session.id));
+    return {
+        .controller = SessionController::from_definitions(
+            std::move(definitions),
+            catalog.database_path(session.id)),
+        .id = session.id,
+    };
 }
 
 std::unique_ptr<SessionController> Workspace::open_session(

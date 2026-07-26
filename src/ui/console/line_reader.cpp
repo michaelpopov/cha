@@ -35,6 +35,9 @@ std::vector<std::string> LineReader::flush() {
 void LineReader::consume_line(
     std::string line,
     std::vector<std::string>& submissions) {
+    if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+    }
     const bool continues = !line.empty() && line.back() == '\\';
     if (continues) {
         line.pop_back();

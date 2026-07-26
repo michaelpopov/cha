@@ -51,5 +51,46 @@ TEST(ConsoleSurface, PreservesUtf8AndNeutralizesC1Controls) {
     EXPECT_NE(sanitized.find("[C1]"), std::string::npos);
 }
 
+// C1 is the only rule spanning two bytes, so deciding it one write() at a time
+// would let a sequence split on a chunk boundary reach the terminal intact.
+TEST(ConsoleSurface, NeutralizesAC1ControlSplitAcrossWrites) {
+    std::ostringstream output;
+    {
+        ConsoleSurface surface(output, false);
+        surface.write("before\xc2");
+        surface.write("\x9b" "31mafter");
+    }
+
+    const std::string written = output.str();
+    EXPECT_EQ(written.find("\xc2\x9b"), std::string::npos);
+    EXPECT_EQ(written, "before[C1]31mafter");
+}
+
+TEST(ConsoleSurface, EmptyWritesDoNotBreakSplitC1Neutralization) {
+    std::ostringstream output;
+    ConsoleSurface surface(output, false);
+    surface.write("before\xc2");
+    surface.write("");
+    surface.write("\x9b" "31mafter");
+
+    EXPECT_EQ(output.str(), "before[C1]31mafter");
+}
+
+TEST(ConsoleSurface, FinishEmitsALeadByteNoContinuationEverCompleted) {
+    std::ostringstream trailing;
+    ConsoleSurface trailing_surface(trailing, false);
+    trailing_surface.write("done\xc2");
+    EXPECT_EQ(trailing.str(), "done");
+    trailing_surface.finish();
+    EXPECT_EQ(trailing.str(), "done\xc2");
+
+    std::ostringstream printable;
+    ConsoleSurface printable_surface(printable, false);
+    printable_surface.write("cost \xc2");
+    printable_surface.write("\xa3" "5");
+    // A split two-byte character that is not a C1 control survives intact.
+    EXPECT_EQ(printable.str(), "cost \xc2\xa3" "5");
+}
+
 } // namespace
 } // namespace cha

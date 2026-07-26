@@ -6,6 +6,9 @@
 
 namespace cha {
 
+// Adapts real process descriptors and streams to ConsolePort. It owns the
+// signalfd, temporarily makes stdin non-blocking, parses it through LineReader,
+// and exposes a sanitizing ConsoleSurface over stdout.
 class SystemConsole final : public ConsolePort {
 public:
     SystemConsole(int signal_fd, bool color);
@@ -23,6 +26,7 @@ public:
     TranscriptSurface& transcript() override;
     std::ostream& notices() override;
     bool flush() override;
+    bool finish_transcript() override;
 
 private:
     int signal_fd_{-1};

@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 static int main_internal();
 
@@ -49,7 +50,9 @@ int main_internal() {
         if (!session_label) {
             throw std::runtime_error("Session name prompt cancelled");
         }
-        controller = workspace.create_session(*room_name, *session_label);
+        controller =
+            std::move(workspace.create_session(*room_name, *session_label)
+                .controller);
     } else {
         controller = workspace.open_session(*room_name, selected_session->id);
     }

@@ -104,15 +104,16 @@ int main_internal(int argc, const char* const* argv) {
             "Failed to create console signal descriptor");
     }
 
-    std::unique_ptr<cha::SessionController> controller =
+    cha::ConsoleSelection selection =
         cha::open_console_session(workspace, options);
+    cha::SessionController& controller = *selection.controller;
     const bool input_is_tty = ::isatty(STDIN_FILENO) != 0;
     const bool output_is_tty = ::isatty(STDOUT_FILENO) != 0;
     if (input_is_tty) {
-        std::cerr << options.room << " / "
-                  << (options.session_id.empty()
-                      ? "new session"
-                      : options.session_id)
+        // The resolved ID, not the requested one: a session created by --new or
+        // by default has no ID on the command line, so reporting it here avoids
+        // making the user run a separate listing before reopening it.
+        std::cerr << options.room << " / " << selection.session_id
                   << " ready\n";
     }
 
@@ -123,11 +124,11 @@ int main_internal(int argc, const char* const* argv) {
     cha::TranscriptEmitter emitter(
         console.transcript(),
         cha::show_addressing(
-            controller->personas(),
-            controller->transcript()));
+            controller.personas(),
+            controller.transcript()));
     cha::ConsoleSession session(
         console,
-        *controller,
+        controller,
         emitter,
         {
             .show_prompt = input_is_tty,

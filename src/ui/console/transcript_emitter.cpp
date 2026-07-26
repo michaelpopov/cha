@@ -43,7 +43,7 @@ void TranscriptEmitter::write(const TranscriptSnapshot& snapshot) {
     if (staged_.open_id) {
         const EntryId open_id = *staged_.open_id;
         const TranscriptEntry* entry = find_entry(snapshot, open_id);
-        if (entry && entry->text.size() >= staged_.open_text_size) {
+        if (entry && entry->text.size() > staged_.open_text_size) {
             write_transcript_suffix(
                 surface_,
                 std::string_view(entry->text).substr(staged_.open_text_size));

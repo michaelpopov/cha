@@ -28,6 +28,9 @@ public:
     virtual TranscriptSurface& transcript() = 0;
     virtual std::ostream& notices() = 0;
     [[nodiscard]] virtual bool flush() = 0;
+    // Ends the transcript byte stream and checks delivery of any sanitizer
+    // state that could not be emitted by an ordinary flush.
+    [[nodiscard]] virtual bool finish_transcript() = 0;
 };
 
 } // namespace cha
