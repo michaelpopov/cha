@@ -34,7 +34,11 @@ public:
 
         sockaddr_in address{};
         address.sin_family = AF_INET;
+#if defined(__APPLE__) && defined(__MACH__)
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+#else
         address.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+#endif
         address.sin_port = 0;
         if (::bind(
                 listener_,
@@ -55,7 +59,11 @@ public:
             ::close(listener_);
             throw std::runtime_error("Failed to read mock server port");
         }
+#if defined(__APPLE__) && defined(__MACH__)
+        port_ = static_cast<int>(ntohs(address.sin_port));
+#else
         port_ = static_cast<int>(::ntohs(address.sin_port));
+#endif
     }
 
     ~MockHttpServer() {

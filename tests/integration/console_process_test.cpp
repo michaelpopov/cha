@@ -180,7 +180,11 @@ ChildProcess launch_console(
         ::close(error_pipe[1]);
 
         sigset_t empty{};
+#if defined(__APPLE__) && defined(__MACH__)
+        (void)sigemptyset(&empty);
+#else
         (void)::sigemptyset(&empty);
+#endif
         (void)::pthread_sigmask(SIG_SETMASK, &empty, nullptr);
         if (::chdir(workspace.path().c_str()) == -1) {
             _exit(126);
@@ -355,7 +359,11 @@ public:
         }
         sockaddr_in address{};
         address.sin_family = AF_INET;
+#if defined(__APPLE__) && defined(__MACH__)
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+#else
         address.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+#endif
         address.sin_port = 0;
         if (::bind(
                 listener_,
@@ -371,7 +379,11 @@ public:
                 &size) == -1) {
             throw std::runtime_error("Failed to inspect slow server socket");
         }
+#if defined(__APPLE__) && defined(__MACH__)
+        port_ = static_cast<int>(ntohs(address.sin_port));
+#else
         port_ = static_cast<int>(::ntohs(address.sin_port));
+#endif
     }
 
     ~SlowHttpServer() {
@@ -577,11 +589,20 @@ TEST(ConsoleProcess, ConsoleBinaryDoesNotLinkNcurses) {
         (void)::dup2(output_pipe[1], STDERR_FILENO);
         ::close(output_pipe[0]);
         ::close(output_pipe[1]);
+#if defined(__APPLE__) && defined(__MACH__)
+        ::execlp(
+            "otool",
+            "otool",
+            "-L",
+            CHA_CONSOLE_BINARY,
+            static_cast<char*>(nullptr));
+#else
         ::execlp(
             "ldd",
             "ldd",
             CHA_CONSOLE_BINARY,
             static_cast<char*>(nullptr));
+#endif
         _exit(127);
     }
     ::close(output_pipe[1]);
