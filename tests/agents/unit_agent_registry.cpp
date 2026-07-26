@@ -303,7 +303,7 @@ TEST(AgentRegistry, RoutesPromptTargetsToTheMatchingBackendAndSharesOneChannel) 
 TEST(AgentRegistry, RejectsInvalidBackendMetadataAtTheRegistryBoundary) {
     Transcript transcript;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::make_unique<RegistryBackend>("bad-id", "Bad name"));
+    backends.push_back(std::make_unique<RegistryBackend>("bad-id", " Bad name"));
     EXPECT_THROW(
         AgentRegistry registry(
             transcript,

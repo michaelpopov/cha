@@ -166,10 +166,10 @@ void validate_persona_name(std::string_view name) {
     if (name.front() == '@' || name.front() == '/') {
         throw std::invalid_argument("Persona name cannot start with '@' or '/'");
     }
-    for (const unsigned char character : name) {
-        if (std::isspace(character)) {
-            throw std::invalid_argument("Persona name cannot contain whitespace");
-        }
+    if (std::isspace(static_cast<unsigned char>(name.front()))
+        || std::isspace(static_cast<unsigned char>(name.back()))) {
+        throw std::invalid_argument(
+            "Persona name cannot start or end with whitespace");
     }
     if (fold_ascii(name) == fold_ascii(human_speaker_name)) {
         throw std::invalid_argument("Persona name 'User' is reserved");

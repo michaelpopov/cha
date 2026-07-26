@@ -44,6 +44,42 @@ std::string_view trim_punctuation(std::string_view handle) {
     return handle;
 }
 
+bool matches_name_word(std::string_view name, std::string_view handle) {
+    std::size_t start = 0;
+    while (start < name.size()) {
+        while (start < name.size() && is_space(name[start])) {
+            ++start;
+        }
+        const std::size_t end = start;
+        while (start < name.size() && !is_space(name[start])) {
+            ++start;
+        }
+        if (start > end
+            && ascii_iequals(name.substr(end, start - end), handle)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool starts_with_name_word(std::string_view name, std::string_view handle) {
+    std::size_t start = 0;
+    while (start < name.size()) {
+        while (start < name.size() && is_space(name[start])) {
+            ++start;
+        }
+        const std::size_t end = start;
+        while (start < name.size() && !is_space(name[start])) {
+            ++start;
+        }
+        if (start > end
+            && starts_with_folded(name.substr(end, start - end), handle)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 ForumPersonas::ForumPersonas(std::vector<PersonaInfo> personas)
@@ -110,7 +146,19 @@ HandleResolution ForumPersonas::resolve_handle(std::string_view handle) const {
     }
     std::vector<const PersonaInfo*> candidates;
     for (const PersonaInfo& persona : personas_) {
-        if (starts_with_folded(persona.name, trimmed)) {
+        if (matches_name_word(persona.name, trimmed)) {
+            candidates.push_back(&persona);
+        }
+    }
+    if (candidates.size() == 1) {
+        return {HandleMatch::resolved, candidates.front(), {}};
+    }
+    if (candidates.size() > 1) {
+        return {HandleMatch::ambiguous, nullptr, std::move(candidates)};
+    }
+    for (const PersonaInfo& persona : personas_) {
+        if (starts_with_folded(persona.name, trimmed)
+            || starts_with_name_word(persona.name, trimmed)) {
             candidates.push_back(&persona);
         }
     }

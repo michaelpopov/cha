@@ -17,11 +17,34 @@ TEST(ForumPersonas, ResolvesNamesPunctuationAndUniquePrefixes) {
     EXPECT_EQ(personas.resolve_handle("?!").match, HandleMatch::unknown);
 }
 
+TEST(ForumPersonas, ResolvesUniqueWordsAndPrefixesInDisplayNames) {
+    ForumPersonas personas({
+        persona("churchill", "Winston Churchill"),
+        persona("roosevelt", "Franklin Roosevelt"),
+    });
+
+    EXPECT_EQ(personas.resolve_handle("Winston").persona->id, "churchill");
+    EXPECT_EQ(personas.resolve_handle("Churchill").persona->id, "churchill");
+    EXPECT_EQ(personas.resolve_handle("Church").persona->id, "churchill");
+    EXPECT_EQ(personas.resolve_handle("Roose").persona->id, "roosevelt");
+}
+
+TEST(ForumPersonas, ReportsAmbiguousDisplayNameWords) {
+    ForumPersonas personas({
+        persona("churchill", "Winston Churchill"),
+        persona("smith", "Winston Smith"),
+    });
+
+    const HandleResolution result = personas.resolve_handle("Winston");
+    ASSERT_EQ(result.match, HandleMatch::ambiguous);
+    ASSERT_EQ(result.candidates.size(), 2U);
+}
+
 TEST(ForumPersonas, RejectsAmbiguousPrefixAndUnusableNames) {
     ForumPersonas personas({persona("ada", "Ada"), persona("adam", "Adam")});
     EXPECT_EQ(personas.resolve_handle("a").match, HandleMatch::ambiguous);
     EXPECT_THROW(
-        ForumPersonas({persona("bad", "Local assistant")}),
+        ForumPersonas({persona("bad", " Local assistant")}),
         std::invalid_argument);
 }
 
@@ -119,10 +142,12 @@ TEST(ForumPersonas, TreatsEmptyAndUnknownHandlesAsUnresolved) {
 TEST(ForumPersonas, RejectsEveryUnusableDisplayNameForm) {
     EXPECT_THROW(ForumPersonas({persona("good", "")}), std::invalid_argument);
     EXPECT_THROW(ForumPersonas({persona("good", "/Ada")}), std::invalid_argument);
+    EXPECT_THROW(ForumPersonas({persona("good", "Ada ")}), std::invalid_argument);
     EXPECT_THROW(ForumPersonas({persona("good", "User")}), std::invalid_argument);
     EXPECT_THROW(ForumPersonas({persona("good", "user")}), std::invalid_argument);
     EXPECT_THROW(ForumPersonas({persona("", "Ada")}), std::invalid_argument);
     EXPECT_NO_THROW(ForumPersonas({persona("good", "Users")}));
+    EXPECT_NO_THROW(ForumPersonas({persona("good", "Winston Churchill")}));
 }
 
 } // namespace cha
