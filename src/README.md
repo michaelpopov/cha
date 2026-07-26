@@ -49,7 +49,7 @@ they need.
 | `session/` | Workspace and session operations, `RoomPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
 | `agents/` | Persona config, agent runtime metadata, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the thread-safe live `Transcript`. | Storage, providers, frontends. |
-| `util/` | Leaf helpers: text and path rules, `.env`, input waiting, and the pollable `EventChannel`. | Anything above it. |
+| `util/` | Leaf helpers: text and path rules, `.env`, input waiting, a portable concurrent queue, and platform wake adapters. | Anything above it. |
 
 ## Dependency direction
 
@@ -117,7 +117,7 @@ flowchart LR
     registry -->|"WorkItem queue"| execution
     execution --> backend
     backend <-->|"HTTP or SSE"| provider
-    execution -->|"AgentEvent channel"| frontend
+    execution -->|"AgentEvent queue + wake"| frontend
     execution -.->|"short-lived read view"| conv
 ```
 
@@ -133,19 +133,22 @@ Ownership is a strict tree, and destruction order matters:
   state of the in-flight turn. The transcript is declared *before* the registry
   so it outlives the thread that reads it.
 - `AgentRegistry` owns runtime information and a backend for each room persona,
-  the request channel, the event channel, the worker thread, and the
+  the request queue, the event queue, the worker thread, and the
   cancellation and outstanding-request atomics.
 
 ### How the two threads talk
 
-`EventChannel<T>` (see [`util/`](util/README.md)) is a mutex-protected queue
-paired with a Linux `eventfd`. There are two channels:
+`ConcurrentQueue<T>` (see [`util/`](util/README.md)) carries traffic in both
+directions:
 
-- a private `EventChannel<WorkItem>` carrying routed requests **to** the agent
-  thread;
-- the shared `AgentEventChannel` carrying `AgentEvent` values **back**. Its
-  descriptor is polled next to stdin by either frontend, so streamed output and
-  input wake the same loop with no timers and no busy-waiting.
+- a private `ConcurrentQueue<WorkItem>` carries routed requests **to** the
+  agent thread, which blocks directly in `get()`;
+- a shared `ConcurrentQueue<AgentEvent>` carries events **back**. After each
+  successful push, the registry calls an injected `WakeNotifier`.
+
+The terminal frontends own an `EventFdNotifier`, poll its descriptor next to
+stdin, acknowledge a wake, and then drain the event queue. This keeps Linux
+descriptor details out of the agent and session layers.
 
 Submission claims a single atomic gate, so at most one request is outstanding
 across all agents; a second submission is refused even for a different agent.
@@ -228,7 +231,7 @@ sequenceDiagram
     C->>J: start_turn, SQLite transaction
     C->>V: add human entry
     C->>G: submit CompletionRequest
-    G->>W: WorkItem via request channel
+    G->>W: WorkItem via request queue
     C-->>U: SessionUpdate, render and clear input
 
     W->>V: short-lived read view
@@ -236,7 +239,7 @@ sequenceDiagram
     W->>P: POST /v1/chat/completions
     loop streamed fragments
         P-->>W: SSE delta
-        W->>G: AgentDelta on event channel
+        W->>G: AgentDelta on event queue
         G-->>U: eventfd wakes poll
         U->>C: receive
         C->>V: begin or append streaming entry

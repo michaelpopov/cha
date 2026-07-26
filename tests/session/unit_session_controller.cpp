@@ -3,10 +3,9 @@
 #include "agents/completion_backend.h"
 #include "session/session_database.h"
 #include "support/test_backends.h"
+#include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
-
-#include <poll.h>
 
 #include <atomic>
 #include <chrono>
@@ -20,6 +19,11 @@
 
 namespace cha {
 namespace {
+
+test::TestNotifier& notifier() {
+    static test::TestNotifier instance;
+    return instance;
+}
 
 // Removes one temporary session database when a controller test leaves scope.
 class TemporaryJournal {
@@ -141,15 +145,7 @@ private:
 SessionUpdate receive_until_idle(SessionController& controller) {
     SessionUpdate combined;
     while (controller.generation_status().active) {
-        pollfd descriptor{
-            controller.notification_fd(),
-            POLLIN,
-            0,
-        };
-        if (::poll(&descriptor, 1, 1000) != 1) {
-            throw std::runtime_error(
-                "Timed out waiting for controller event");
-        }
+        const std::size_t observed = notifier().wake_count();
         const SessionUpdate update = controller.receive();
         combined.render_needed =
             combined.render_needed || update.render_needed;
@@ -160,8 +156,27 @@ SessionUpdate receive_until_idle(SessionController& controller) {
         if (update.notice) {
             combined.notice = update.notice;
         }
+        if (controller.generation_status().active
+            && !notifier().wait_for_wake(observed)) {
+            throw std::runtime_error(
+                "Timed out waiting for controller event");
+        }
     }
     return combined;
+}
+
+SessionUpdate receive_when_ready(SessionController& controller) {
+    while (true) {
+        const std::size_t observed = notifier().wake_count();
+        SessionUpdate update = controller.receive();
+        if (update.render_needed || update.end_session || update.notice) {
+            return update;
+        }
+        if (!notifier().wait_for_wake(observed)) {
+            throw std::runtime_error(
+                "Timed out waiting for controller event");
+        }
+    }
 }
 
 SessionRestore restore_with(
@@ -190,6 +205,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::move(backend)),
         temporary.path,
+        notifier(),
         restore_with({earlier}, 17, 11));
 
     const SessionUpdate submitted =
@@ -230,7 +246,10 @@ TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedTranscript) {
     auto backend = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"Answer"});
     ScriptedBackend* backend_view = backend.get();
-    auto controller = SessionController::from_backends_for_testing(test::one_backend(std::move(backend)), temporary.path);
+    auto controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("First");
     receive_until_idle(*controller);
@@ -252,7 +271,10 @@ TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     auto backend = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"Answer"});
     ScriptedBackend* backend_view = backend.get();
-    auto controller = SessionController::from_backends_for_testing(test::one_backend(std::move(backend)), temporary.path);
+    auto controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("First");
     receive_until_idle(*controller);
@@ -271,7 +293,10 @@ TEST(SessionController, ExcludesFailedTurnsFromTheFollowingModelContext) {
     auto backend = std::make_unique<ScriptedBackend>(
         CompletionResult{CompletionOutcome::transport_error, "unavailable"});
     ScriptedBackend* backend_view = backend.get();
-    auto controller = SessionController::from_backends_for_testing(test::one_backend(std::move(backend)), temporary.path);
+    auto controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Failed");
     receive_until_idle(*controller);
@@ -290,7 +315,10 @@ TEST(SessionController, ExcludesCancelledPartialOutputFromFollowingModelContext)
         CompletionResult{CompletionOutcome::cancelled, {}},
         std::vector<std::string>{"Partial"});
     ScriptedBackend* backend_view = backend.get();
-    auto controller = SessionController::from_backends_for_testing(test::one_backend(std::move(backend)), temporary.path);
+    auto controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("First");
     receive_until_idle(*controller);
@@ -312,7 +340,8 @@ TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
         test::one_backend(std::make_unique<ScriptedBackend>(
             CompletionResult{CompletionOutcome::cancelled, {}},
             std::vector<std::string>{"Partial"})),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Question");
     const SessionUpdate update =
@@ -335,7 +364,8 @@ TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
             CompletionResult{CompletionOutcome::cancelled, {}})),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Question");
     receive_until_idle(*controller);
@@ -353,7 +383,8 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
             CompletionResult{},
             std::vector<std::string>{},
             true)),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Question");
     EXPECT_EQ(
@@ -416,7 +447,8 @@ TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
             CompletionResult{},
             std::vector<std::string>{},
             true)),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Question");
     (void)controller->handle_agent_event(AgentDelta{
@@ -446,7 +478,8 @@ TEST(SessionController, RejectsCompletionWithoutResponseContent) {
     TemporaryJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Question");
     const SessionUpdate update =
@@ -472,7 +505,8 @@ TEST(SessionController, ReplacesPartialOutputWithATypedError) {
                 "network unavailable",
             },
             std::vector<std::string>{"Discard me"})),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Question");
     receive_until_idle(*controller);
@@ -498,6 +532,7 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
+        notifier(),
         restore_with({existing}, 1, 2));
 
     const SessionUpdate cleared =
@@ -524,7 +559,8 @@ TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
     TemporaryJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
     const std::filesystem::path moved = temporary.path.string() + ".moved";
     std::filesystem::rename(temporary.path, moved);
 
@@ -553,7 +589,8 @@ TEST(SessionController, RejectsNewOperationsDuringGeneration) {
             CompletionResult{},
             std::vector<std::string>{},
             true)),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Question");
     const SessionUpdate blocked =
@@ -576,7 +613,8 @@ TEST(SessionController, IgnoresEventsForAnotherRequest) {
             CompletionResult{},
             std::vector<std::string>{},
             true)),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Question");
     const SessionUpdate delta =
@@ -605,7 +643,8 @@ TEST(SessionController, AttributesDispatchFailuresToTheTargetAgent) {
     TemporaryJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
     controller->shutdown();
 
     const SessionUpdate update =
@@ -635,6 +674,7 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
+        notifier(),
         std::move(restored));
 
     const SessionRestore repaired =
@@ -659,7 +699,10 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossRoomPerson
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(guide));
     backends.push_back(std::move(ismael));
-    auto controller = SessionController::from_backends_for_testing(std::move(backends), temporary.path);
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends),
+        temporary.path,
+        notifier());
 
     const SessionUpdate mentioned =
         controller->submit_prompt("hello", "Ism");
@@ -710,16 +753,11 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
             CompletionResult{},
             std::vector<std::string>{"Partial"},
             true)),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)controller->submit_prompt("Question");
-    pollfd descriptor{
-        controller->notification_fd(),
-        POLLIN,
-        0,
-    };
-    ASSERT_EQ(::poll(&descriptor, 1, 1000), 1);
-    const SessionUpdate partial = controller->receive();
+    const SessionUpdate partial = receive_when_ready(*controller);
     EXPECT_TRUE(partial.render_needed);
     EXPECT_TRUE(controller->generation_status().active);
     controller->shutdown();

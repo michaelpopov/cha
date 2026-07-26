@@ -1,14 +1,13 @@
 #include "session/session_controller.h"
 #include "agents/completion_backend.h"
 #include "session/session_database.h"
+#include "support/test_notifier.h"
 #include "ui/tui/input_editor.h"
 #include "ui/tui/session_view.h"
 #include "support/test_backends.h"
 #include "ui/tui/user_session.h"
 
 #include <gtest/gtest.h>
-
-#include <poll.h>
 
 #include <atomic>
 #include <chrono>
@@ -25,6 +24,11 @@
 
 namespace cha {
 namespace {
+
+test::TestNotifier& notifier() {
+    static test::TestNotifier instance;
+    return instance;
+}
 
 // Removes one temporary session database when a controller test leaves scope.
 class TemporarySessionJournal {
@@ -191,23 +195,23 @@ void enter(FakeSessionView& view, std::string_view text) {
 void receive_when_ready(
     SessionController& controller,
     UserSession& session) {
-    pollfd descriptor{
-        controller.notification_fd(),
-        POLLIN,
-        0,
-    };
-    if (::poll(&descriptor, 1, 1000) != 1) {
-        throw std::runtime_error(
-            "Timed out waiting for session response");
+    while (controller.generation_status().active) {
+        const std::size_t observed = notifier().wake_count();
+        session.receive_responses();
+        if (controller.generation_status().active
+            && !notifier().wait_for_wake(observed)) {
+            throw std::runtime_error(
+                "Timed out waiting for session response");
+        }
     }
-    session.receive_responses();
 }
 
 TEST(UserSession, SubmitsEditedInputThroughTheController) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -226,7 +230,8 @@ TEST(UserSession, DelegatesClearAndInfoCommandsToTheController) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -252,7 +257,8 @@ TEST(UserSession, StopInputDrivesControllerCancellation) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -274,7 +280,8 @@ TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -295,7 +302,8 @@ TEST(UserSession, ConsumesStopCommandDuringGeneration) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -314,7 +322,8 @@ TEST(UserSession, ExitCommandStopsTheSession) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -324,11 +333,12 @@ TEST(UserSession, ExitCommandStopsTheSession) {
     EXPECT_FALSE(session.running());
 }
 
-TEST(UserSession, ClosedAgentEventChannelStopsTheSession) {
+TEST(UserSession, ClosedAgentEventQueueStopsTheSession) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
     controller->shutdown();
@@ -342,7 +352,8 @@ TEST(UserSession, PollReportedTerminalClosureStopsTheSession) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -355,7 +366,8 @@ TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -369,7 +381,10 @@ TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
 
 TEST(UserSession, RendersTheGeneratingAgentByName) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(two_agents(), temporary.path);
+    auto controller = SessionController::from_backends_for_testing(
+        two_agents(),
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -393,7 +408,10 @@ TEST(UserSession, RendersTheGeneratingAgentByName) {
 
 TEST(UserSession, RendersAddressingWheneverTheRoomHostsSeveralAgents) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(two_agents(), temporary.path);
+    auto controller = SessionController::from_backends_for_testing(
+        two_agents(),
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 
@@ -412,7 +430,9 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
     TemporarySessionJournal temporary;
     {
         auto controller = SessionController::from_backends_for_testing(
-            test::one_backend(std::make_unique<SessionBackend>()), temporary.path);
+            test::one_backend(std::make_unique<SessionBackend>()),
+            temporary.path,
+            notifier());
         FakeSessionView view;
         UserSession session(view, *controller);
         session.resize();
@@ -431,7 +451,10 @@ TEST(UserSession, RendersASingleAgentRoomWithoutAddressingUntilItsHistorySaysOth
     restored.entries.front().addressed_to = "departed";
     restored.entries.front().addressed_to_name = "Departed";
     auto reopened = SessionController::from_backends_for_testing(
-        test::one_backend(std::make_unique<SessionBackend>()), temporary.path, std::move(restored));
+        test::one_backend(std::make_unique<SessionBackend>()),
+        temporary.path,
+        notifier(),
+        std::move(restored));
     FakeSessionView view;
     UserSession session(view, *reopened);
 
@@ -450,7 +473,8 @@ TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {
     TemporarySessionJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
-        temporary.path);
+        temporary.path,
+        notifier());
     FakeSessionView view;
     UserSession session(view, *controller);
 

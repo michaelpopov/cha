@@ -10,6 +10,8 @@
 
 namespace cha {
 
+class WakeNotifier;
+
 // Controls transcript styling only; machine-readable listings remain plain.
 enum class ColorMode {
     automatic,
@@ -61,6 +63,7 @@ struct ConsoleSelection {
 // error, so console_main can report those as runtime rather than usage failures.
 [[nodiscard]] ConsoleSelection open_console_session(
     const Workspace& workspace,
-    const ConsoleOptions& options);
+    const ConsoleOptions& options,
+    WakeNotifier& notifier);
 
 } // namespace cha

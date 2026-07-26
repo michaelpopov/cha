@@ -13,10 +13,12 @@ namespace cha {
 ConsoleSession::ConsoleSession(
     ConsolePort& port,
     SessionController& controller,
+    EventFdNotifier& notifier,
     TranscriptEmitter& emitter,
     ConsoleSessionOptions options)
     : port_(port),
       controller_(controller),
+      notifier_(notifier),
       emitter_(emitter),
       options_(options) {
 }
@@ -64,7 +66,7 @@ int ConsoleSession::run() {
             !input_done_
             && !(options_.backpressure_stdin && queue_full);
         const InputEvents ready =
-            port_.wait(controller_.notification_fd(), include_input);
+            port_.wait(notifier_.descriptor(), include_input);
 
         if (ready.failed()) {
             port_.notices() << "Console input wait failed.\n";
@@ -80,6 +82,7 @@ int ConsoleSession::run() {
         }
 
         if (ready.notification_ready()) {
+            notifier_.acknowledge();
             const bool was_generating =
                 controller_.generation_status().active;
             apply(controller_.receive());

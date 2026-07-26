@@ -1,4 +1,5 @@
 #include "agents/agent_registry.h"
+#include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
 
@@ -6,7 +7,6 @@
 #include <chrono>
 #include <future>
 #include <memory>
-#include <poll.h>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -239,16 +239,27 @@ private:
     std::string id_{"assistant"};
 };
 
+test::TestNotifier& notifier() {
+    static test::TestNotifier instance;
+    return instance;
+}
+
 AgentEvent next_event(AgentRegistry& registry) {
-    pollfd descriptor{registry.notification_fd(), POLLIN, 0};
-    if (::poll(&descriptor, 1, 1000) != 1) {
-        throw std::runtime_error("Timed out waiting for registry event");
+    while (true) {
+        const std::size_t observed = notifier().wake_count();
+        AgentEvent event = AgentCompleted{};
+        const ChannelReadStatus status = registry.try_receive(event);
+        if (status == ChannelReadStatus::value) {
+            return event;
+        }
+        if (status == ChannelReadStatus::closed) {
+            throw std::runtime_error(
+                "Registry event queue closed unexpectedly");
+        }
+        if (!notifier().wait_for_wake(observed)) {
+            throw std::runtime_error("Timed out waiting for registry event");
+        }
     }
-    AgentEvent event = AgentCompleted{};
-    if (registry.try_receive(event) != ChannelReadStatus::value) {
-        throw std::runtime_error("Registry event channel closed unexpectedly");
-    }
-    return event;
 }
 
 CompletionRequest request(
@@ -274,7 +285,7 @@ TEST(AgentRegistry, RoutesPromptTargetsToTheMatchingBackendAndSharesOneChannel) 
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(alpha));
     backends.push_back(std::move(beta));
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(request(transcript, 1, "beta-id", "Beta", "hello")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Beta:hello");
@@ -293,7 +304,12 @@ TEST(AgentRegistry, RejectsInvalidBackendMetadataAtTheRegistryBoundary) {
     Transcript transcript;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::make_unique<RegistryBackend>("bad-id", "Bad name"));
-    EXPECT_THROW(AgentRegistry registry(transcript, std::move(backends)), std::invalid_argument);
+    EXPECT_THROW(
+        AgentRegistry registry(
+            transcript,
+            std::move(backends),
+            notifier()),
+        std::invalid_argument);
 }
 
 TEST(AgentRegistry, SerializesRequestsAcrossDifferentBackends) {
@@ -305,7 +321,7 @@ TEST(AgentRegistry, SerializesRequestsAcrossDifferentBackends) {
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(alpha));
     backends.push_back(std::move(beta));
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(request(transcript, 1, "alpha-id", "Alpha", "one")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Alpha:one");
@@ -333,7 +349,9 @@ TEST(AgentRegistry, RejectsEmptyConstruction) {
     Transcript transcript;
     EXPECT_THROW(
         AgentRegistry registry(
-            transcript, std::vector<std::unique_ptr<CompletionBackend>>{}),
+            transcript,
+            std::vector<std::unique_ptr<CompletionBackend>>{},
+            notifier()),
         std::invalid_argument);
 }
 
@@ -342,7 +360,10 @@ TEST(AgentRegistry, RejectsNullBackend) {
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(nullptr);
     EXPECT_THROW(
-        AgentRegistry registry(transcript, std::move(backends)),
+        AgentRegistry registry(
+            transcript,
+            std::move(backends),
+            notifier()),
         std::invalid_argument);
 }
 
@@ -359,7 +380,9 @@ TEST(AgentRegistry, IdentifiesThePersonaWhoseStartupFails) {
 
     try {
         AgentRegistry registry(
-            transcript, std::vector<AgentDefinition>{std::move(definition)});
+            transcript,
+            std::vector<AgentDefinition>{std::move(definition)},
+            notifier());
         FAIL() << "Expected startup failure";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("Persona 'Alpha'"), std::string::npos);
@@ -371,7 +394,7 @@ TEST(AgentRegistry, StartsOnConstructionAndStopsIdempotently) {
     Transcript transcript;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::make_unique<ConfigurableBackend>());
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 1, "assistant", "Fake", "Question")));
@@ -400,7 +423,7 @@ TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
     backend_view->delta_kind = CompletionDeltaKind::reasoning;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(
@@ -434,7 +457,7 @@ TEST(AgentRegistry, MapsCompletionFailureToAgentFailed) {
     backends.push_back(std::make_unique<ConfigurableBackend>(
         CompletionResult{
             CompletionOutcome::protocol_error, "malformed response"}));
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 12, "assistant", "Fake", "Question")));
@@ -450,7 +473,7 @@ TEST(AgentRegistry, CancelsTheActiveRequestWithTheSharedToken) {
         CompletionResult{},
         std::vector<std::string>{"Partial"},
         true));
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 13, "assistant", "Fake", "Question")));
@@ -465,7 +488,7 @@ TEST(AgentRegistry, CancelsBeforePrepareWithoutCallingTheBackend) {
     RegistryBackend* backend_view = backend.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
     CompletionRequest pending =
         request(transcript, 14, "assistant", "Fake", "Question");
 
@@ -490,7 +513,7 @@ TEST(AgentRegistry, StopCancelsJoinsAndLeavesTheTerminalEventDrainable) {
         std::vector<std::string>{"Partial"},
         true,
         &release_after_cancellation));
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 15, "assistant", "Fake", "Question")));
@@ -518,7 +541,7 @@ TEST(AgentRegistry, ReleasesTheTranscriptViewBeforePerforming) {
     std::future<void> prepared = backend_view->prepared.get_future();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 21, "assistant", "Boundary", "Question")));
@@ -542,7 +565,7 @@ TEST(AgentRegistry, FailingPreparationReleasesTheViewAndDoesNotPerform) {
     ThrowingPrepareBackend* backend_view = backend.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(transcript, std::move(backends));
+    AgentRegistry registry(transcript, std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 22, "assistant", "Throwing", "Question")));

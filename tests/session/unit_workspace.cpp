@@ -1,5 +1,6 @@
 #include "session/session_controller.h"
 #include "session/workspace.h"
+#include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
 
@@ -12,6 +13,11 @@
 
 namespace cha {
 namespace {
+
+test::NoopNotifier& notifier() {
+    static test::NoopNotifier instance;
+    return instance;
+}
 
 class ApplicationWorkspaceTest : public testing::Test {
 protected:
@@ -73,7 +79,10 @@ TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     Workspace workspace(root_);
 
     CreatedSession created =
-        workspace.create_session("lobby", "Browser-ready session");
+        workspace.create_session(
+            "lobby",
+            "Browser-ready session",
+            notifier());
     const std::string created_id = created.id;
     created.controller->shutdown();
     created.controller.reset();
@@ -88,7 +97,10 @@ TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     EXPECT_TRUE(sessions.front().error.empty());
 
     std::unique_ptr<SessionController> reopened =
-        workspace.open_session("lobby", sessions.front().id);
+        workspace.open_session(
+            "lobby",
+            sessions.front().id,
+            notifier());
     EXPECT_TRUE(reopened->transcript().entries().empty());
     reopened->shutdown();
 }
@@ -106,7 +118,10 @@ TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedPersonaConfig) {
     Workspace workspace(root_);
 
     CreatedSession session =
-        workspace.create_session("lobby", "No shared config");
+        workspace.create_session(
+            "lobby",
+            "No shared config",
+            notifier());
 
     session.controller->shutdown();
 }
@@ -114,7 +129,10 @@ TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedPersonaConfig) {
 TEST_F(ApplicationWorkspaceTest, MapsInvalidStoredSessionDetails) {
     Workspace workspace(root_);
     CreatedSession created =
-        workspace.create_session("lobby", "Broken later");
+        workspace.create_session(
+            "lobby",
+            "Broken later",
+            notifier());
     created.controller->shutdown();
     created.controller.reset();
 

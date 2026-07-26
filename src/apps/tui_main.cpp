@@ -4,6 +4,7 @@
 #include "ui/tui/terminal.h"
 #include "ui/tui/user.h"
 #include "util/environment.h"
+#include "util/event_fd_notifier.h"
 
 #include <exception>
 #include <iostream>
@@ -44,6 +45,7 @@ int main_internal() {
         throw std::runtime_error(selected_session->error);
     }
 
+    cha::EventFdNotifier notifier;
     std::unique_ptr<cha::SessionController> controller;
     if (selected_session->id.empty()) {
         const auto session_label = selector.prompt_session_name();
@@ -51,12 +53,18 @@ int main_internal() {
             throw std::runtime_error("Session name prompt cancelled");
         }
         controller =
-            std::move(workspace.create_session(*room_name, *session_label)
+            std::move(workspace.create_session(
+                *room_name,
+                *session_label,
+                notifier)
                 .controller);
     } else {
-        controller = workspace.open_session(*room_name, selected_session->id);
+        controller = workspace.open_session(
+            *room_name,
+            selected_session->id,
+            notifier);
     }
 
-    cha::run_user(terminal, *controller);
+    cha::run_user(terminal, *controller, notifier);
     return 0;
 }

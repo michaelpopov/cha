@@ -2,7 +2,6 @@
 
 #include "agents/config.h"
 #include "transcript/transcript.h"
-#include "util/event_channel.h"
 
 #include <filesystem>
 #include <optional>
@@ -115,6 +114,5 @@ struct AgentFailed {
 };
 
 using AgentEvent = std::variant<AgentDelta, AgentCompleted, AgentCancelled, AgentFailed>;
-using AgentEventChannel = EventChannel<AgentEvent>;
 
 } // namespace cha

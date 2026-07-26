@@ -114,10 +114,14 @@ void write_session_listing(
 
 ConsoleSelection open_console_session(
     const Workspace& workspace,
-    const ConsoleOptions& options) {
+    const ConsoleOptions& options,
+    WakeNotifier& notifier) {
     if (options.new_label) {
         CreatedSession created =
-            workspace.create_session(options.room, *options.new_label);
+            workspace.create_session(
+                options.room,
+                *options.new_label,
+                notifier);
         return {
             .controller = std::move(created.controller),
             .session_id = std::move(created.id),
@@ -141,7 +145,10 @@ ConsoleSelection open_console_session(
     }
     return {
         .controller =
-            workspace.open_session(options.room, options.session_id),
+            workspace.open_session(
+                options.room,
+                options.session_id,
+                notifier),
         .session_id = options.session_id,
     };
 }

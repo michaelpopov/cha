@@ -66,16 +66,22 @@ std::vector<std::unique_ptr<CompletionBackend>> build_backends(
 
 AgentRegistry::AgentRegistry(
     const Transcript& transcript,
-    std::vector<AgentDefinition> definitions)
-    : AgentRegistry(transcript, build_backends(std::move(definitions))) {
+    std::vector<AgentDefinition> definitions,
+    WakeNotifier& notifier)
+    : AgentRegistry(
+        transcript,
+        build_backends(std::move(definitions)),
+        notifier) {
 }
 
 AgentRegistry::AgentRegistry(
     const Transcript& transcript,
-    std::vector<std::unique_ptr<CompletionBackend>> backends)
+    std::vector<std::unique_ptr<CompletionBackend>> backends,
+    WakeNotifier& notifier)
     : transcript_(transcript),
       backends_(std::move(backends)),
       runtime_info_(build_runtime_info(backends_)),
+      notifier_(notifier),
       thread_(&AgentRegistry::dialog, this) {
 }
 
@@ -142,8 +148,6 @@ ChannelReadStatus AgentRegistry::try_receive(AgentEvent& event) {
     return events_.try_get(event);
 }
 
-int AgentRegistry::notification_fd() const { return events_.notification_fd(); }
-
 void AgentRegistry::stop() {
     if (stopped_) {
         return;
@@ -155,6 +159,7 @@ void AgentRegistry::stop() {
         thread_.join();
     }
     events_.close();
+    notifier_.wake();
     stopped_ = true;
 }
 
@@ -206,8 +211,9 @@ void AgentRegistry::dialog() {
 void AgentRegistry::publish_event(AgentEvent event) {
     if (!events_.push(std::move(event))) {
         throw std::logic_error(
-            "Agent event channel closed before execution stopped");
+            "Agent event queue closed before execution stopped");
     }
+    notifier_.wake();
 }
 
 void AgentRegistry::publish_terminal(AgentEvent event) {

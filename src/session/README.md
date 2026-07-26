@@ -210,7 +210,7 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | `agent_information()` | Room personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
 | `request_stop()` | Cancels the active turn, or says there is none. | Notice. |
-| `receive()` | Drains the event channel, applying each event through `handle_agent_event()`. | Merged updates; `end_session` when the channel is closed. |
+| `receive()` | Drains the event queue, applying each event through `handle_agent_event()`. | Merged updates; `end_session` when the queue is closed. |
 | `shutdown()` | Stops the registry and drains what remains. | — |
 
 Every command except `request_stop()` and `receive()` is refused while a turn is

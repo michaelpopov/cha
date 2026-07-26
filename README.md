@@ -193,5 +193,5 @@ The source tree is documented from the inside out, with diagrams:
 | [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
 | [`src/ui/README.md`](src/ui/README.md) | The UI contract, with shared [`render/`](src/ui/render/README.md) and [`text/`](src/ui/text/README.md), plus the [`tui/`](src/ui/tui/README.md) and [`console/`](src/ui/console/README.md) frontends. |
 | [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |
-| [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including the pollable event channel. |
+| [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including the concurrent queue and wake adapters. |
 | [`docs/cha.md`](docs/cha.md) | The exhaustive rule-by-rule design reference. |

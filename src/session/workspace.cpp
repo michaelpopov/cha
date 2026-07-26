@@ -164,7 +164,8 @@ std::vector<SessionSummary> Workspace::sessions(
 
 CreatedSession Workspace::create_session(
     const std::string& room_name,
-    std::string label) const {
+    std::string label,
+    WakeNotifier& notifier) const {
     const Room room = load_room(room_name);
     std::vector<AgentDefinition> definitions = load_definitions(
         *this, room, root_ / "personas" / "base_config.toml");
@@ -174,14 +175,16 @@ CreatedSession Workspace::create_session(
     return {
         .controller = SessionController::from_definitions(
             std::move(definitions),
-            catalog.database_path(session.id)),
+            catalog.database_path(session.id),
+            notifier),
         .id = session.id,
     };
 }
 
 std::unique_ptr<SessionController> Workspace::open_session(
     const std::string& room_name,
-    const std::string& session_id) const {
+    const std::string& session_id,
+    WakeNotifier& notifier) const {
     const Room room = load_room(room_name);
     std::vector<AgentDefinition> definitions = load_definitions(
         *this, room, root_ / "personas" / "base_config.toml");
@@ -193,6 +196,7 @@ std::unique_ptr<SessionController> Workspace::open_session(
     return SessionController::from_definitions(
         std::move(definitions),
         database_path,
+        notifier,
         std::move(restored));
 }
 

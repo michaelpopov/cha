@@ -4,6 +4,7 @@
 #include "ui/tui/terminal.h"
 #include "ui/tui/tui.h"
 #include "ui/tui/user_session.h"
+#include "util/event_fd_notifier.h"
 #include "util/input_wait.h"
 
 #include <exception>
@@ -13,7 +14,8 @@ namespace cha {
 // Coordinate semantic events here while leaving polling details and mutable UI state to their modules.
 void run_user(
     Terminal& terminal,
-    SessionController& controller) {
+    SessionController& controller,
+    EventFdNotifier& notifier) {
 
     std::exception_ptr failure;
     {
@@ -24,7 +26,7 @@ void run_user(
 
             while (session.running()) {
                 const InputEvents ready =
-                    wait_for_input_events(controller.notification_fd());
+                    wait_for_input_events(notifier.descriptor());
                 if (ready.interrupted()) {
                     session.resize();
                     session.render_if_needed();
@@ -41,6 +43,7 @@ void run_user(
                 }
 
                 if (ready.notification_ready()) {
+                    notifier.acknowledge();
                     session.receive_responses();
                 }
 

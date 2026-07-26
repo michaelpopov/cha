@@ -99,29 +99,34 @@ std::string format_session_information(
 std::unique_ptr<SessionController> SessionController::from_definitions(
     std::vector<AgentDefinition> definitions,
     std::filesystem::path database_path,
+    WakeNotifier& notifier,
     SessionRestore restored) {
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
         std::move(database_path),
+        notifier,
         std::move(restored)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     std::filesystem::path database_path,
+    WakeNotifier& notifier,
     SessionRestore restored) {
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(backends),
         std::move(database_path),
+        notifier,
         std::move(restored)));
 }
 
 SessionController::SessionController(
     std::vector<AgentDefinition> definitions,
     std::filesystem::path path,
+    WakeNotifier& notifier,
     SessionRestore restored)
     : journal_(std::move(path)),
-      registry_(transcript_, std::move(definitions)),
+      registry_(transcript_, std::move(definitions), notifier),
       personas_(make_room_personas(registry_.runtime_info())),
       default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
@@ -130,9 +135,10 @@ SessionController::SessionController(
 SessionController::SessionController(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     std::filesystem::path path,
+    WakeNotifier& notifier,
     SessionRestore restored)
     : journal_(std::move(path)),
-      registry_(transcript_, std::move(backends)),
+      registry_(transcript_, std::move(backends), notifier),
       personas_(make_room_personas(registry_.runtime_info())),
       default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));

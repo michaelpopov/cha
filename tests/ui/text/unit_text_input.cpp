@@ -3,6 +3,7 @@
 #include "ui/text/text_input.h"
 #include "session/session_database.h"
 #include "support/test_backends.h"
+#include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
 
@@ -18,6 +19,11 @@
 
 namespace cha {
 namespace {
+
+test::NoopNotifier& notifier() {
+    static test::NoopNotifier instance;
+    return instance;
+}
 
 class TemporaryTextSession {
 public:
@@ -101,7 +107,8 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     TemporaryTextSession temporary;
     auto controller = SessionController::from_definitions(
         std::vector<AgentDefinition>{definition()},
-        temporary.path);
+        temporary.path,
+        notifier());
 
     const SessionUpdate invalid_argument =
         handle_text_input(*controller, "/clear later");
@@ -157,7 +164,8 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
             definition(),
             definition("ismael-id", "Ismael"),
         },
-        temporary.path);
+        temporary.path,
+        notifier());
 
     const SessionUpdate submitted =
         handle_text_input(*controller, "  @Ism hello");
@@ -174,7 +182,8 @@ TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
     TemporaryTextSession temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<BlockingBackend>()),
-        temporary.path);
+        temporary.path,
+        notifier());
 
     (void)handle_text_input(*controller, "Question");
     const SessionUpdate blocked =

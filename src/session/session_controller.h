@@ -6,6 +6,7 @@
 #include "session/room_personas.h"
 #include "session/session_database.h"
 #include "transcript/transcript.h"
+#include "util/wake_notifier.h"
 
 #include <filesystem>
 #include <memory>
@@ -36,10 +37,12 @@ public:
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
+        WakeNotifier& notifier,
         SessionRestore restored = {});
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         std::filesystem::path database_path,
+        WakeNotifier& notifier,
         SessionRestore restored = {});
 
     ~SessionController();
@@ -51,7 +54,6 @@ public:
     GenerationStatus generation_status() const;
     const RoomPersonas& personas() const { return personas_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
-    int notification_fd() const { return registry_.notification_fd(); }
 
     // --- Session commands (mutate, then report UI side effects) ---------------
     // Return value carries render/end/clear/notice side effects the UI must apply.
@@ -80,10 +82,12 @@ private:
     SessionController(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
+        WakeNotifier& notifier,
         SessionRestore restored);
     SessionController(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         std::filesystem::path database_path,
+        WakeNotifier& notifier,
         SessionRestore restored);
 
     void initialize(SessionRestore restored);

@@ -6,6 +6,7 @@
 #include "ui/console/transcript_emitter.h"
 #include "ui/render/transcript_writer.h"
 #include "util/environment.h"
+#include "util/event_fd_notifier.h"
 
 #include <cerrno>
 #include <csignal>
@@ -104,8 +105,9 @@ int main_internal(int argc, const char* const* argv) {
             "Failed to create console signal descriptor");
     }
 
+    cha::EventFdNotifier notifier;
     cha::ConsoleSelection selection =
-        cha::open_console_session(workspace, options);
+        cha::open_console_session(workspace, options, notifier);
     cha::SessionController& controller = *selection.controller;
     const bool input_is_tty = ::isatty(STDIN_FILENO) != 0;
     const bool output_is_tty = ::isatty(STDOUT_FILENO) != 0;
@@ -134,6 +136,7 @@ int main_internal(int argc, const char* const* argv) {
     cha::ConsoleSession session(
         console,
         controller,
+        notifier,
         emitter,
         {
             .show_prompt = input_is_tty,

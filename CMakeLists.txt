@@ -96,6 +96,7 @@ target_compile_definitions(
 
 add_library(cha_core STATIC
     src/util/environment.cpp
+    src/util/event_fd_notifier.cpp
     src/util/input_wait.cpp
     src/util/path_name.cpp
     src/util/text.cpp
@@ -167,7 +168,8 @@ if(BUILD_TESTING)
 
     set(CHA_TEST_SOURCES
         tests/util/unit_environment.cpp
-        tests/util/unit_event_channel.cpp
+        tests/util/unit_concurrent_queue.cpp
+        tests/util/unit_event_fd_notifier.cpp
         tests/util/unit_input_wait.cpp
         tests/util/unit_text.cpp
         tests/transcript/unit_transcript.cpp

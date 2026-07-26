@@ -31,7 +31,7 @@ output failures return 1.
 
 ## Event loop and queue
 
-`ConsoleSession` waits on stdin, the controller notification descriptor, and a
+`ConsoleSession` waits on stdin, its event notifier descriptor, and a
 `signalfd` for SIGINT. Readiness flags are independent: in particular, a pipe
 commonly reports input and hangup together, so input is drained before EOF is
 recorded. EOF stops future reads but does not shut down the controller; the

@@ -9,6 +9,7 @@
 namespace cha {
 
 class SessionController;
+class WakeNotifier;
 
 // A room resolved from the workspace: its name, its ordered personas, and the
 // directory holding its instructions and sessions.
@@ -52,10 +53,12 @@ public:
     std::vector<SessionSummary> sessions(const std::string& room_name) const;
     [[nodiscard]] CreatedSession create_session(
         const std::string& room_name,
-        std::string label) const;
+        std::string label,
+        WakeNotifier& notifier) const;
     [[nodiscard]] std::unique_ptr<SessionController> open_session(
         const std::string& room_name,
-        const std::string& session_id) const;
+        const std::string& session_id,
+        WakeNotifier& notifier) const;
 
 private:
     std::filesystem::path room_directory(const std::string& name) const;

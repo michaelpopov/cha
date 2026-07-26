@@ -73,17 +73,17 @@ for lookup and handle resolution.
 ## Execution: one thread, one request
 
 `AgentRegistry` exists so a slow provider can never block the UI. It owns
-one worker thread, one backend per room persona, and two channels.
+one worker thread, one backend per room persona, and two queues.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant M as Main thread
     participant R as AgentRegistry
-    participant Q as WorkItem channel
+    participant Q as WorkItem queue
     participant W as Agent thread
     participant B as CompletionBackend
-    participant E as AgentEvent channel
+    participant E as AgentEvent queue
 
     M->>R: submit CompletionRequest
     R->>R: find backend by prompt.addressed_to
@@ -106,7 +106,8 @@ sequenceDiagram
         W->>W: release the gate
         W->>E: AgentCompleted, AgentCancelled, or AgentFailed
     end
-    M->>E: try_receive, woken by eventfd
+    R-->>M: WakeNotifier wake
+    M->>E: try_receive
 ```
 
 Rules that fall out of this design:
@@ -122,7 +123,7 @@ Rules that fall out of this design:
   `AgentFailed`, so an accepted request always has an observable outcome.
 - **Shutdown is ordered.** `stop()` sets cancellation, closes the request side,
   joins the worker, and only then closes the event side — so events already
-  published stay readable, and a closed event channel during execution is a bug
+  published stay readable, and a closed event queue during execution is a bug
   that throws rather than a silent loss.
 
 ## The backend seam
@@ -215,7 +216,7 @@ never included.
 ## Dependencies
 
 - **Depends on:** `transcript/` for entries, read views, and IDs; `util/` for
-  text helpers and `EventChannel`; nlohmann/json for shared-history and HTTP
+  text helpers, `ConcurrentQueue`, and `WakeNotifier`; nlohmann/json for shared-history and HTTP
   JSON; libcurl in the HTTP client; toml++ in the config loader.
 - **Must not depend on:** `session/` or `ui/`. Workspace discovery
   stays above; once the persona and room directories are known, this layer owns

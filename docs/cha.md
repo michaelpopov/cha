@@ -43,7 +43,7 @@ Main/UI thread                  SessionController
        | SessionUpdate        |       |
        |                      |       +-- AgentRuntimeInfo
        |                      |       +-- WorkItem request queue
-       |                      |       +-- shared AgentEventChannel
+       |                      |       +-- shared AgentEvent queue
        |                      |       +-- agent-execution thread
        |                      |               |
        |                      |               +-- CompletionClient[0]
@@ -52,7 +52,7 @@ Main/UI thread                  SessionController
        |                      |
        |                      +-- ActiveResponse (optional)
        |
-       +---- poll(stdin, shared agent-event eventfd)
+       +---- poll(stdin, frontend-owned EventFdNotifier)
 ```
 
 The ownership graph is:
@@ -67,7 +67,7 @@ The ownership graph is:
   ID, the next entry and request IDs seeded from durable state, and the
   optional `ActiveResponse` describing the turn in flight.
 - `AgentRegistry` owns public runtime information and a backend for each room
-  persona, one request channel, one shared `AgentEventChannel`, one execution
+  persona, one request queue, one shared agent-event queue, one execution
   thread, and shared cancellation/outstanding-request atomics.
 - Each production backend is a `CompletionClient` with one reusable libcurl easy
   handle and one agent-specific system prompt and configuration.
@@ -84,14 +84,13 @@ internal synchronization.
 
 ### Thread communication
 
-`EventChannel<T>` is a mutex-protected `std::deque` paired with a Linux
-`eventfd` opened with `EFD_NONBLOCK | EFD_SEMAPHORE`. The two channel
+`ConcurrentQueue<T>` is a portable mutex-protected `std::deque`. The two queue
 directions are:
 
-- One private `EventChannel<WorkItem>` carries routed requests from the main
+- One private `ConcurrentQueue<WorkItem>` carries routed requests from the main
   thread to the execution thread.
 - The execution thread publishes `AgentEvent` values into the registry's
-  shared `AgentEventChannel`.
+  shared `ConcurrentQueue<AgentEvent>`.
 
 `submit()`, `cancel()`, and `stop()` are externally serialized main-thread
 control operations. Submission resolves a backend slot before atomically
@@ -100,24 +99,19 @@ flag, and enqueues an owning `WorkItem {backend_index, request}`. A second
 submission is rejected while that gate remains claimed, even when it targets a
 different backend.
 
-The execution thread blocks on the request channel, resolves the backend vector
+The execution thread blocks on the request queue, resolves the backend vector
 slot once, and performs one request to completion. The gate means the otherwise
-unbounded request channel has a logical capacity of one. The execution thread
+unbounded request queue has a logical capacity of one. The execution thread
 clears the gate immediately before publishing a terminal event, so once the
 main thread observes completion it can submit the next request without racing
 the previous turn's cleanup.
 
-The shared event channel exposes one descriptor to the UI. Both frontends block
-in `poll(2)` over stdin and that descriptor, so input and streamed output wake
-the same event loop without timers or busy polling. The console also polls a
-`signalfd` and may temporarily omit pipe input for queue backpressure.
-
-The registry checks every outbound event publication. A closed event channel
-violates shutdown ordering and throws. A saturated `eventfd` already has a
-notification pending and is treated as successfully signaled. Other signaling
-failures receive one failed-request publication attempt; repeated failure is
-fatal because silently losing the event would leave an accepted request with
-no observable outcome.
+After each successful event push, the registry calls an injected
+`WakeNotifier`. Both terminal frontends own an `EventFdNotifier` and block in
+`poll(2)` over stdin and its descriptor, so input and streamed output wake the
+same event loop without timers or busy polling. They acknowledge a wake before
+draining the queue. The console also polls a `signalfd` and may temporarily
+omit pipe input for queue backpressure.
 
 The transport maps output into
 `CompletionDelta { kind = reasoning | answer, text }`. The registry attaches
@@ -890,17 +884,17 @@ caused the exceptional exit. `SessionController::shutdown()` is idempotent:
 
 `ConsoleSession` likewise calls the controller shutdown path on every exit.
 EOF is not itself an exit: queued prompts and an active turn drain first. An
-idle interrupt, `/exit`, a closed event channel, or a fatal wait/write error
+idle interrupt, `/exit`, a closed event queue, or a fatal wait/write error
 ends the loop immediately. Before shutdown, the console finalizes sanitizer
 state; a failed final flush changes an otherwise successful result to exit code
 1.
 
 1. `AgentRegistry::stop()` sets the shared cancellation flag.
-2. The registry closes its request channel, preserving any accepted work, and
+2. The registry closes its request queue, preserving any accepted work, and
    joins the execution thread. A queued request observes cancellation and
    publishes its terminal event before the thread exits.
 3. After the execution thread stops, the registry closes the shared event
-   channel and becomes permanently stopped.
+   queue, wakes the frontend, and becomes permanently stopped.
 4. The controller drains remaining queued events so a final cancellation or
    completion receives its durable terminal transition.
 
@@ -916,9 +910,9 @@ database, so a mistaken path cannot silently become an empty session.
 
 | Component | Responsibility |
 | --- | --- |
-| `src/util/` | Shared text, path, environment, event-channel, and input-wait utilities. |
+| `src/util/` | Shared text, path, environment, concurrent-queue, notifier, and input-wait utilities. |
 | `src/transcript/` | Typed transcript, turn identifiers, and response-content values. |
-| `src/agents/` | Agent definitions, runtime metadata, context projection, execution, provider communication, and the runtime event channel. |
+| `src/agents/` | Agent definitions, runtime metadata, context projection, execution, provider communication, and the runtime event queue. |
 | `src/session/` | Room personas, chat coordination and in-flight turn state (`SessionController`), workspace and session operations, session catalogs, SQLite journaling, presentation-safe summaries, and generation status. |
 | `src/ui/text/` | Shared slash-command and leading-mention parsing and dispatch. |
 | `src/ui/render/` | Frontend-independent transcript labels and writing vocabulary. |
@@ -940,7 +934,7 @@ libraries.
    number of room personas.
 5. Only the execution thread calls backend request methods after startup.
 6. At most one turn is active across the session.
-7. The request channel contains at most one work item, and at most one request
+7. The request queue contains at most one work item, and at most one request
    is queued or executing.
 8. Exactly one backend may perform at a time.
 9. Registry control operations are externally serialized on the main thread.
@@ -975,7 +969,7 @@ libraries.
 26. Every styled transcript and input-rendering path restores normal
     attributes.
 27. Sessions bind to a room, not to the room's current personas.
-28. The shared event channel closes only after the execution thread stops.
+28. The shared event queue closes only after the execution thread stops.
 29. A journal mutation failure ends the current run; the application never
     continues with transcript state it could not persist.
 
@@ -1003,7 +997,7 @@ configuration, identity, room-persona/mention routing, textual command parsing a
 dispatch, registry execution behavior, transcript/context semantics,
 controller lifecycle operations, workspace layout resolution and
 session-summary mapping, SQLite constraints and recovery, structured reasoning
-parsing and safe diagnostics, event channels, input/UI state, and styled
+parsing and safe diagnostics, concurrent queues and notification, input/UI state, and styled
 incremental rendering.
 
 `make itest` runs the separate integration binary from the checked-in

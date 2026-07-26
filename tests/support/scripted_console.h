@@ -2,6 +2,7 @@
 
 #include "ui/console/console_port.h"
 
+#include <cstddef>
 #include <deque>
 #include <ostream>
 #include <poll.h>
@@ -16,6 +17,10 @@ namespace cha::test {
 struct ScriptedWait {
     bool input{};
     bool notification{};
+    // Keep this notification-only step armed for subsequent waits. This models
+    // an event loop draining an asynchronous turn whose delta and terminal
+    // events may arrive in either one wake or separate wakes.
+    bool repeat{};
     bool signal{};
     bool closed{};
     bool failed{};
@@ -25,8 +30,12 @@ struct ScriptedWait {
 class ScriptedConsole final : public ConsolePort {
 public:
     explicit ScriptedConsole(std::vector<ScriptedWait> script = {}) {
-        for (ScriptedWait& step : script) {
-            script_.push_back(std::move(step));
+        for (std::size_t index = 0; index < script.size(); ++index) {
+            if (script[index].repeat && index + 1 != script.size()) {
+                throw std::invalid_argument(
+                    "A repeating scripted wait must be the final step");
+            }
+            script_.push_back(std::move(script[index]));
         }
     }
 
@@ -36,11 +45,18 @@ public:
         include_input_history.push_back(include_input);
         if (script_.empty()) {
             under_scripted = true;
-            closed_ = true;
-            return InputEvents::ready(false, true);
+            throw std::logic_error(
+                "Scripted console wait script exhausted");
         }
-        ScriptedWait step = std::move(script_.front());
-        script_.pop_front();
+        ScriptedWait step = script_.front();
+        if (!step.repeat) {
+            script_.pop_front();
+        } else if (step.input || step.signal || step.failed
+                   || !step.lines.empty() || !step.notification) {
+            throw std::logic_error(
+                "Only a notification wait without input, signal, or failure "
+                "may repeat");
+        }
         if (step.notification) {
             pollfd descriptor{notification_fd, POLLIN, 0};
             if (::poll(&descriptor, 1, 1000) != 1) {

@@ -8,11 +8,10 @@
 #include "support/mock_http_server.h"
 #include "session/session_database.h"
 #include "session/workspace.h"
+#include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
-
-#include <poll.h>
 
 #include <chrono>
 #include <cstddef>
@@ -29,6 +28,11 @@ namespace cha {
 namespace {
 
 using Json = nlohmann::json;
+
+test::TestNotifier& notifier() {
+    static test::TestNotifier instance;
+    return instance;
+}
 
 // Captures the response text and streaming chunk count produced by an integration chat run.
 struct ChatResult {
@@ -47,17 +51,24 @@ Config integration_config(bool stream) {
 }
 
 AgentEvent wait_for_agent_event(AgentRegistry& registry) {
-    pollfd descriptor{registry.notification_fd(), POLLIN, 0};
-    if (::poll(&descriptor, 1, -1) != 1) {
-        throw std::runtime_error(
-            "Failed to wait for integration agent event");
+    while (true) {
+        const std::size_t observed = notifier().wake_count();
+        AgentEvent event = AgentCompleted{};
+        const ChannelReadStatus status = registry.try_receive(event);
+        if (status == ChannelReadStatus::value) {
+            return event;
+        }
+        if (status == ChannelReadStatus::closed) {
+            throw std::runtime_error(
+                "Integration agent event queue closed unexpectedly");
+        }
+        if (!notifier().wait_for_wake(
+                observed,
+                std::chrono::seconds(5))) {
+            throw std::runtime_error(
+                "Failed to wait for integration agent event");
+        }
     }
-    AgentEvent event = AgentCompleted{};
-    if (registry.try_receive(event) != ChannelReadStatus::value) {
-        throw std::runtime_error(
-            "Integration agent event channel closed unexpectedly");
-    }
-    return event;
 }
 
 ChatResult run_chat(bool stream) {
@@ -65,7 +76,10 @@ ChatResult run_chat(bool stream) {
     Transcript transcript;
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
-    AgentRegistry registry(transcript, std::move(definitions));
+    AgentRegistry registry(
+        transcript,
+        std::move(definitions),
+        notifier());
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     CompletionRequest request{
@@ -96,7 +110,10 @@ ChatResult run_cancelled_chat() {
     Transcript transcript;
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
-    AgentRegistry registry(transcript, std::move(definitions));
+    AgentRegistry registry(
+        transcript,
+        std::move(definitions),
+        notifier());
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     CompletionRequest request{
@@ -202,11 +219,14 @@ std::string answer(std::string_view text) {
 
 void run_until_idle(SessionController& controller) {
     while (controller.generation_status().active) {
-        pollfd descriptor{controller.notification_fd(), POLLIN, 0};
-        if (::poll(&descriptor, 1, 5000) != 1) {
+        const std::size_t observed = notifier().wake_count();
+        (void)controller.receive();
+        if (controller.generation_status().active
+            && !notifier().wait_for_wake(
+                observed,
+                std::chrono::seconds(5))) {
             throw std::runtime_error("Timed out waiting for an integration turn");
         }
-        (void)controller.receive();
     }
 }
 
@@ -254,7 +274,10 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions(std::move(definitions), session.path);
+        auto controller = SessionController::from_definitions(
+            std::move(definitions),
+            session.path,
+            notifier());
         (void)handle_text_input(*controller, "First question");
         run_until_idle(*controller);
         const std::vector<TranscriptEntry> live =
@@ -293,7 +316,10 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
         ReasoningFormat::reasoning;
 
     TemporarySession session;
-    auto controller = SessionController::from_definitions(std::move(definitions), session.path);
+    auto controller = SessionController::from_definitions(
+        std::move(definitions),
+        session.path,
+        notifier());
     (void)handle_text_input(*controller, "Question");
     run_until_idle(*controller);
     server.join();
@@ -325,7 +351,10 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions(std::move(definitions), session.path);
+        auto controller = SessionController::from_definitions(
+            std::move(definitions),
+            session.path,
+            notifier());
         ASSERT_EQ(controller->personas().first().id, "cheburashka");
         EXPECT_TRUE(show_addressing(
             controller->personas(), controller->transcript()));
@@ -395,7 +424,10 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions(std::move(definitions), session.path);
+        auto controller = SessionController::from_definitions(
+            std::move(definitions),
+            session.path,
+            notifier());
         (void)handle_text_input(*controller, "Who are you?");
         run_until_idle(*controller);
         (void)handle_text_input(*controller, "@Ismael and you?");
@@ -411,6 +443,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
     auto reopened = SessionController::from_definitions(
         std::vector<AgentDefinition>{std::move(ismael_only)},
         session.path,
+        notifier(),
         std::move(restored));
     EXPECT_EQ(reopened->personas().all().size(), 1U);
     EXPECT_TRUE(show_addressing(
