@@ -217,8 +217,18 @@ if(BUILD_TESTING)
     cha_enable_warnings(itest)
     target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
 
+    add_executable(console_tests tests/integration/console_process_test.cpp)
+    target_link_libraries(console_tests PRIVATE cha_core GTest::gtest_main)
+    target_include_directories(console_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    target_compile_definitions(
+        console_tests
+        PRIVATE CHA_CONSOLE_BINARY="$<TARGET_FILE:chacon_app>")
+    add_dependencies(console_tests chacon_app)
+    cha_enable_warnings(console_tests)
+
     include(GoogleTest)
     gtest_discover_tests(cha_tests)
+    gtest_discover_tests(console_tests)
 endif()
 
 add_executable(chacon_app src/apps/console_main.cpp)
