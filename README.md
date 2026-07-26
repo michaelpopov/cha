@@ -89,8 +89,8 @@ http://HOST:PORT/v1/chat/completions
 Chat requests deliberately have no overall or low-speed timeout so long generations can complete. Use `/stop`, Escape, or Ctrl-C to cancel an active request.
 
 HTTPS servers require a libcurl build with a TLS backend. The bundled libcurl
-uses Schannel on Windows, Secure Transport on macOS, and OpenSSL when available
-on other platforms.
+uses Schannel on Windows, Secure Transport on macOS, and OpenSSL on other
+platforms. Unix-like builds require OpenSSL so HTTPS is always available.
 
 Before loading server configuration, the application optionally reads `.env` from the working directory. It accepts `NAME=value` entries, ignores blank lines and `#` comments, and does not replace variables already set in the process environment.
 
@@ -153,9 +153,12 @@ Transcript text is an append-only log on stdout; prompts, responses, and
 restored history are never rewritten. Notices and the named interactive prompt
 go to stderr, keeping stdout suitable for redirection. With `--color=auto`, the
 prompt uses stderr's terminal status for bold styling independently of stdout;
-`always` and `never` force styling for both streams. On Windows, automatic
-color enables virtual-terminal processing and stays off if the console host
-does not support it. Model text is sanitized so it cannot inject terminal
+`always` and `never` force styling for both streams. Console and redirected
+streams use UTF-8 bytes; on Windows, the attached console is configured to
+interpret those bytes as UTF-8. Windows command-line arguments are converted
+from UTF-16 to UTF-8 before parsing. Automatic color enables
+virtual-terminal processing and stays off if the console host does not support
+it. Model text is sanitized so it cannot inject terminal
 control sequences, including a C1 sequence split across streaming chunks.
 Final sanitizer state is emitted before a checked
 stdout flush, so a late output failure still produces exit code 1.
@@ -183,10 +186,13 @@ make itest
 The console and core library can be built without curses:
 
 ```bash
-cmake -S . -B build/notui -DCHA_BUILD_TUI=OFF
-cmake --build build/notui
-ctest --test-dir build/notui
+cmake --preset console
+cmake --build --preset console
+ctest --test-dir build/console
 ```
+
+The `console` preset explicitly sets `CHA_BUILD_TUI=OFF`, making it the
+appropriate preset for console-only CI on every platform.
 
 On macOS and Windows the TUI option defaults to off, so the default build
 produces the console frontend only. The ncurses TUI remains Linux-only.

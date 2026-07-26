@@ -29,7 +29,12 @@ endif()
 
 find_package(Threads REQUIRED)
 find_package(CURL QUIET)
-find_package(OpenSSL QUIET)
+if(WIN32 OR APPLE)
+    find_package(OpenSSL QUIET)
+else()
+    # Unix-like builds require OpenSSL so HTTPS is always available.
+    find_package(OpenSSL REQUIRED)
+endif()
 
 include(FetchContent)
 
@@ -49,7 +54,7 @@ if(NOT CURL_FOUND)
         set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
     elseif(APPLE)
         set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
-    elseif(OpenSSL_FOUND)
+    else()
         set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
     endif()
     set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
@@ -130,6 +135,7 @@ add_library(cha_core STATIC
     src/util/environment.cpp
     src/util/path_name.cpp
     src/util/text.cpp
+    src/util/utf8_path.cpp
     src/util/uv_event_loop.cpp
     src/transcript/transcript.cpp
     src/agents/agent.cpp
@@ -198,6 +204,12 @@ if(CHA_BUILD_TUI)
 endif()
 
 if(BUILD_TESTING)
+    if(MSVC)
+        # cha_tests uses MSVC's shared CRT by default. Keep the statically
+        # built GoogleTest libraries on that same CRT to avoid RuntimeLibrary
+        # linker mismatches.
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    endif()
     FetchContent_Declare(
         googletest
         URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.zip
@@ -209,6 +221,7 @@ if(BUILD_TESTING)
         tests/util/unit_environment.cpp
         tests/util/unit_concurrent_queue.cpp
         tests/util/unit_text.cpp
+        tests/util/unit_utf8_path.cpp
         tests/util/unit_uv_event_loop.cpp
         tests/transcript/unit_transcript.cpp
         tests/agents/unit_agent_context.cpp

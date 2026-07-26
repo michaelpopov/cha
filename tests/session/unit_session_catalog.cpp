@@ -2,6 +2,7 @@
 #include "session/session_database.h"
 #include "session/session_catalog.h"
 #include "session/workspace.h"
+#include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
 
@@ -138,6 +139,33 @@ TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
         (std::vector<TranscriptEntry>{human(1, "Persist me")}));
 }
 
+TEST(SessionDatabase, CreatesAndReadsFromANonAsciiPath) {
+    const std::filesystem::path directory =
+        std::filesystem::temp_directory_path()
+        / path_from_utf8(
+            "cha_session_na\xc3\xafve_\xe6\x9d\xb1\xe4\xba\xac_"
+            + std::to_string(
+                std::chrono::steady_clock::now()
+                    .time_since_epoch()
+                    .count()));
+    std::filesystem::create_directory(directory);
+    const std::filesystem::path path = directory / "session.sqlite3";
+
+    ASSERT_TRUE(create_session_database(
+        path,
+        {
+            .id = "session",
+            .room = "room",
+            .label = "Session",
+        }));
+    const SessionDatabaseMetadata metadata =
+        read_session_database_metadata(path);
+    EXPECT_EQ(metadata.id, "session");
+    EXPECT_EQ(metadata.room, "room");
+    EXPECT_EQ(metadata.label, "Session");
+    std::filesystem::remove_all(directory);
+}
+
 TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) {
     Workspace workspace(root);
     const Room room = workspace.load_room("lobby");
@@ -249,7 +277,7 @@ TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
         "Second");
     for (const auto& entry :
          std::filesystem::directory_iterator(room.directory / "sessions")) {
-        EXPECT_FALSE(entry.path().filename().string().starts_with("."));
+        EXPECT_FALSE(utf8_path(entry.path().filename()).starts_with("."));
     }
 }
 

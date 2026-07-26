@@ -6,12 +6,25 @@
       "displayName": "Ninja",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/ninja"
+    },
+    {
+      "name": "console",
+      "displayName": "Console (no TUI)",
+      "inherits": "ninja",
+      "binaryDir": "${sourceDir}/build/console",
+      "cacheVariables": {
+        "CHA_BUILD_TUI": "OFF"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "ninja",
       "configurePreset": "ninja"
+    },
+    {
+      "name": "console",
+      "configurePreset": "console"
     }
   ]
 }

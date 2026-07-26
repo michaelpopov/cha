@@ -1,12 +1,14 @@
 #include "session/session_catalog.h"
 
 #include "util/path_name.h"
+#include "util/utf8_path.h"
 #include "session/session_database.h"
 
 #include <algorithm>
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -15,12 +17,18 @@
 namespace cha {
 namespace {
 
-bool local_time(std::time_t now, std::tm& result) noexcept {
-#ifdef _WIN32
-    return ::localtime_s(&result, &now) == 0;
-#else
-    return ::localtime_r(&now, &result) != nullptr;
-#endif
+bool local_time(std::time_t now, std::tm& result) {
+    // std::localtime is standard C++, but returns a pointer to shared storage.
+    // Copy it while serializing this use so session-name generation remains
+    // safe when catalogs create sessions on multiple threads.
+    static std::mutex mutex;
+    const std::lock_guard lock(mutex);
+    const std::tm* const local = std::localtime(&now);
+    if (local == nullptr) {
+        return false;
+    }
+    result = *local;
+    return true;
 }
 
 std::string timestamp_name(std::time_t now) {
@@ -41,12 +49,12 @@ void validate_metadata(
 
     if (metadata.id != expected_id) {
         throw std::runtime_error(
-            "Session database '" + path.string()
+            "Session database '" + utf8_path(path)
             + "' does not match its filename");
     }
     if (metadata.room != expected_room) {
         throw std::runtime_error(
-            "Session database '" + path.string() + "' does not belong to room '"
+            "Session database '" + utf8_path(path) + "' does not belong to room '"
             + std::string(expected_room) + "'");
     }
 }
@@ -71,7 +79,7 @@ std::vector<Session> SessionCatalog::list() const {
     }
     if (!std::filesystem::is_directory(directory_)) {
         throw std::runtime_error(
-            "Sessions path '" + directory_.string() + "' is not a directory");
+            "Sessions path '" + utf8_path(directory_) + "' is not a directory");
     }
 
     std::vector<Session> result;
@@ -79,7 +87,7 @@ std::vector<Session> SessionCatalog::list() const {
         if (!entry.is_regular_file() || entry.path().extension() != ".sqlite3") {
             continue;
         }
-        const std::string id = entry.path().stem().string();
+        const std::string id = utf8_path(entry.path().stem());
 
         std::string label = id;
         std::string error;
@@ -128,7 +136,7 @@ Session SessionCatalog::create(std::string label) const {
 std::filesystem::path SessionCatalog::database_path(
     const std::string& session_id) const {
     require_path_component(session_id, directory_);
-    return directory_ / (session_id + ".sqlite3");
+    return directory_ / path_from_utf8(session_id + ".sqlite3");
 }
 
 std::filesystem::path SessionCatalog::open_database_path(

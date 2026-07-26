@@ -1,8 +1,11 @@
 #include "agents/config.h"
 
+#include "util/utf8_path.h"
+
 #include <toml++/toml.hpp>
 
 #include <cmath>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -40,7 +43,7 @@ std::optional<Value> read_optional(
     const std::optional<Value> value = table[key].value<Value>();
     if (!value) {
         throw std::runtime_error(
-            "Config file '" + path.string() + "' requires "
+            "Config file '" + utf8_path(path) + "' requires "
             + std::string(type) + " '" + std::string(key) + "' value");
     }
     return value;
@@ -61,7 +64,7 @@ std::optional<Mode> read_mode(
         return Mode::test;
     }
     throw std::runtime_error(
-        "Config file '" + path.string()
+        "Config file '" + utf8_path(path)
         + "' has unsupported mode '" + *value + "'");
 }
 
@@ -87,17 +90,22 @@ std::optional<ReasoningFormat> read_reasoning_format(
         return ReasoningFormat::reasoning;
     }
     throw std::runtime_error(
-        "Config file '" + path.string()
+        "Config file '" + utf8_path(path)
         + "' has unsupported reasoning_format '" + *value + "'");
 }
 
 ConfigPatch parse_config(
     const std::filesystem::path& path,
     bool base) {
-    const toml::table table = toml::parse_file(path.string());
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error(
+            "Failed to read config file '" + utf8_path(path) + "'");
+    }
+    const toml::table table = toml::parse(file, utf8_path(path));
     if (base && (table.contains("id") || table.contains("name"))) {
         throw std::runtime_error(
-            "Base config file '" + path.string()
+            "Base config file '" + utf8_path(path)
             + "' cannot define persona 'id' or 'name'");
     }
 
@@ -155,19 +163,19 @@ Config build_config(
     if (!persona.id || !persona.name
         || persona.id->empty() || persona.name->empty()) {
         throw std::runtime_error(
-            "Persona config file '" + persona_path.string()
+            "Persona config file '" + utf8_path(persona_path)
             + "' requires non-empty string 'id' and 'name' values");
     }
     if (!effective.host || !effective.port) {
         throw std::runtime_error(
-            "Effective config for persona file '" + persona_path.string()
+            "Effective config for persona file '" + utf8_path(persona_path)
             + "' requires string 'host' and integer 'port' values");
     }
     if (*effective.port < 1 || *effective.port > 65535) {
         const std::filesystem::path& source =
             persona.port || !base_path ? persona_path : *base_path;
         throw std::runtime_error(
-            "Config file '" + source.string()
+            "Config file '" + utf8_path(source)
             + "' requires 'port' between 1 and 65535");
     }
     if (effective.temperature
@@ -177,7 +185,7 @@ Config build_config(
         const std::filesystem::path& source =
             persona.temperature || !base_path ? persona_path : *base_path;
         throw std::runtime_error(
-            "Config file '" + source.string()
+            "Config file '" + utf8_path(source)
             + "' requires 'temperature' between 0 and 2");
     }
 

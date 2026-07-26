@@ -990,9 +990,19 @@ The build requires threads; wide ncurses is required only when
 fetches pinned curl 8.14.1. It also fetches libuv 1.52.1,
 nlohmann/json 3.11.3, toml++ 3.4.0, SQLite 3.46.1, and GoogleTest 1.15.2 for
 tests. The bundled curl uses Schannel on Windows, Secure Transport on macOS,
-and OpenSSL when available elsewhere. The TUI defaults on only for Linux;
+and OpenSSL elsewhere; Unix-like builds require OpenSSL so HTTPS is always
+available. The TUI defaults on only for Linux;
 macOS and Windows default to the console-only build. The POSIX socket and
 process integration harnesses are omitted from Windows builds.
+
+The `console` CMake preset explicitly sets `CHA_BUILD_TUI=OFF` and is the
+portable console-only build and CI entry point:
+
+```bash
+cmake --preset console
+cmake --build --preset console
+ctest --test-dir build/console
+```
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
 configuration, identity, room-persona/mention routing, textual command parsing and

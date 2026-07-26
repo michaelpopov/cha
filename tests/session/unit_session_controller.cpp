@@ -4,6 +4,7 @@
 #include "session/session_database.h"
 #include "support/test_backends.h"
 #include "support/test_notifier.h"
+#include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
 
@@ -561,7 +562,8 @@ TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
-    const std::filesystem::path moved = temporary.path.string() + ".moved";
+    const std::filesystem::path moved = path_from_utf8(
+        utf8_path(temporary.path) + ".moved");
     std::filesystem::rename(temporary.path, moved);
 
     std::string message;

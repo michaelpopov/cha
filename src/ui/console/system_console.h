@@ -20,6 +20,10 @@ enum class StandardStream {
 };
 
 bool standard_stream_is_terminal(StandardStream stream) noexcept;
+// Configures the attached Windows console to interpret narrow output as UTF-8.
+// The console output code page is process-wide; redirected streams retain their
+// byte-oriented UTF-8 contract.
+void enable_console_output_utf8() noexcept;
 // Returns whether the stream can use ANSI color after performing any
 // platform setup required to enable it.
 bool enable_standard_stream_color(StandardStream stream) noexcept;

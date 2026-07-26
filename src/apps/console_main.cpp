@@ -6,6 +6,7 @@
 #include "ui/console/transcript_emitter.h"
 #include "ui/render/transcript_writer.h"
 #include "util/environment.h"
+#include "util/utf8_path.h"
 
 #include <csignal>
 #include <exception>
@@ -14,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -31,6 +33,11 @@ int main_internal(int argc, const char* const* argv) {
 #ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
 #endif
+
+    // Console output and redirected output both use UTF-8 bytes. On Windows,
+    // opt the attached console into UTF-8 interpretation while leaving
+    // redirected streams untouched.
+    cha::enable_console_output_utf8();
 
     cha::load_dotenv();
     cha::Workspace workspace;
@@ -95,7 +102,7 @@ int main_internal(int argc, const char* const* argv) {
 
 } // namespace
 
-int main(int argc, const char* const* argv) {
+int run_main(int argc, const char* const* argv) {
     try {
         return main_internal(argc, argv);
     } catch (const std::exception& error) {
@@ -103,3 +110,28 @@ int main(int argc, const char* const* argv) {
         return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t* argv[]) {
+    try {
+        std::vector<std::string> arguments;
+        arguments.reserve(static_cast<std::size_t>(argc));
+        for (int index = 0; index < argc; ++index) {
+            arguments.push_back(cha::utf8_from_wide(argv[index]));
+        }
+        std::vector<const char*> pointers;
+        pointers.reserve(arguments.size());
+        for (const std::string& argument : arguments) {
+            pointers.push_back(argument.c_str());
+        }
+        return run_main(argc, pointers.data());
+    } catch (const std::exception& error) {
+        std::cerr << "Failed: " << error.what() << '\n';
+        return 1;
+    }
+}
+#else
+int main(int argc, const char* const* argv) {
+    return run_main(argc, argv);
+}
+#endif

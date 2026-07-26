@@ -11,6 +11,7 @@ belongs in that directory instead.
 | --- | --- |
 | `text.*` | Byte-oriented whitespace tests, trimming, and ASCII case folding. |
 | `path_name.*` | `require_path_component()` — a configured name must be one safe path component. |
+| `utf8_path.*` | Converts between UTF-8 application text and native filesystem paths. |
 | `environment.*` | `load_dotenv()` — optional `.env` loading that never overrides the real environment. |
 | `concurrent_queue.h` | `ConcurrentQueue<T>` — a portable typed thread-safe queue. |
 | `wake_notifier.h` | `WakeNotifier` — the event-loop wake interface used by producers. |
@@ -31,6 +32,14 @@ separator, and `.` / `..`. Every workspace-controlled name — a room from
 filename — passes through it before it is joined onto a path. This is the single
 chokepoint that keeps workspace files from addressing anything outside the
 workspace.
+
+## UTF-8 paths
+
+`utf8_path()` formats native filesystem paths as UTF-8 for diagnostics and
+libraries such as SQLite. `path_from_utf8()` constructs native paths from
+UTF-8 workspace names and command-line text, avoiding Windows code-page
+conversion. Windows console startup uses the same UTF-8 boundary for its
+UTF-16 command line.
 
 ## Dotenv loading
 

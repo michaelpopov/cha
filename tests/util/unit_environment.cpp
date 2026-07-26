@@ -13,24 +13,6 @@
 namespace cha {
 namespace {
 
-int set_environment(
-    const std::string& name,
-    const std::string& value) {
-#ifdef _WIN32
-    return ::_putenv_s(name.c_str(), value.c_str());
-#else
-    return ::setenv(name.c_str(), value.c_str(), 1);
-#endif
-}
-
-int unset_environment(const std::string& name) {
-#ifdef _WIN32
-    return ::_putenv_s(name.c_str(), "");
-#else
-    return ::unsetenv(name.c_str());
-#endif
-}
-
 // Temporarily sets one environment variable so dotenv tests do not affect each other.
 class ScopedEnvironmentVariable {
 public:
@@ -42,9 +24,9 @@ public:
 
     ~ScopedEnvironmentVariable() {
         if (previous_value_) {
-            (void)set_environment(name_, *previous_value_);
+            (void)set_environment_variable(name_, *previous_value_);
         } else {
-            (void)unset_environment(name_);
+            (void)unset_environment_variable(name_);
         }
     }
 
@@ -71,9 +53,9 @@ TEST(Environment, LoadsValuesAndSkipsComments) {
     ScopedEnvironmentVariable first("CHA_DOTENV_ONE");
     ScopedEnvironmentVariable second("CHA_DOTENV_TWO");
     ScopedEnvironmentVariable third("CHA_DOTENV_THREE");
-    (void)unset_environment("CHA_DOTENV_ONE");
-    (void)unset_environment("CHA_DOTENV_TWO");
-    (void)unset_environment("CHA_DOTENV_THREE");
+    (void)unset_environment_variable("CHA_DOTENV_ONE");
+    (void)unset_environment_variable("CHA_DOTENV_TWO");
+    (void)unset_environment_variable("CHA_DOTENV_THREE");
 
     load_dotenv(path);
 
@@ -90,9 +72,10 @@ TEST(Environment, DoesNotOverrideExistingValues) {
         file << "CHA_DOTENV_EXISTING=file-value\n";
     }
     ScopedEnvironmentVariable variable("CHA_DOTENV_EXISTING");
-    ASSERT_EQ(
-        set_environment("CHA_DOTENV_EXISTING", "process-value"),
-        0);
+    ASSERT_TRUE(
+        set_environment_variable(
+            "CHA_DOTENV_EXISTING",
+            "process-value"));
 
     load_dotenv(path);
 

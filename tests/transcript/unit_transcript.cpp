@@ -1,6 +1,7 @@
 #include "agents/agent.h"
 #include "transcript/transcript.h"
 #include "session/session_database.h"
+#include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -24,10 +25,16 @@ namespace {
 // The tests use it to reach schema constraints that the journal API refuses to violate.
 int raw_execute(const std::filesystem::path& path, const std::string& sql) {
     sqlite3* handle = nullptr;
-    if (sqlite3_open_v2(path.c_str(), &handle, SQLITE_OPEN_READWRITE, nullptr)
+    const std::string database_path = utf8_path(path);
+    if (sqlite3_open_v2(
+            database_path.c_str(),
+            &handle,
+            SQLITE_OPEN_READWRITE,
+            nullptr)
         != SQLITE_OK) {
         sqlite3_close_v2(handle);
-        throw std::runtime_error("Failed to open '" + path.string() + "' directly");
+        throw std::runtime_error(
+            "Failed to open '" + database_path + "' directly");
     }
     const int result = sqlite3_exec(handle, sql.c_str(), nullptr, nullptr, nullptr);
     sqlite3_close_v2(handle);
@@ -38,10 +45,16 @@ std::vector<std::string> table_columns(
     const std::filesystem::path& path,
     const std::string& table) {
     sqlite3* handle = nullptr;
-    if (sqlite3_open_v2(path.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr)
+    const std::string database_path = utf8_path(path);
+    if (sqlite3_open_v2(
+            database_path.c_str(),
+            &handle,
+            SQLITE_OPEN_READONLY,
+            nullptr)
         != SQLITE_OK) {
         sqlite3_close_v2(handle);
-        throw std::runtime_error("Failed to open '" + path.string() + "' directly");
+        throw std::runtime_error(
+            "Failed to open '" + database_path + "' directly");
     }
     sqlite3_stmt* statement = nullptr;
     const std::string sql = "PRAGMA table_info(" + table + ")";
@@ -68,7 +81,7 @@ void create_test_database(const std::filesystem::path& path) {
     if (!create_session_database(
             path,
             {
-                .id = path.stem().string(),
+                .id = utf8_path(path.stem()),
                 .room = "test-room",
                 .label = "Test session",
             })) {
@@ -270,7 +283,7 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
         }));
     const SessionDatabaseMetadata metadata =
         read_session_database_metadata(path);
-    EXPECT_EQ(metadata.id, path.stem().string());
+    EXPECT_EQ(metadata.id, utf8_path(path.stem()));
     EXPECT_EQ(metadata.label, "Test session");
     std::filesystem::remove(path);
 }

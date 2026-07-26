@@ -1,5 +1,7 @@
 #include "session/session_database.h"
 
+#include "util/utf8_path.h"
+
 #include <sqlite3.h>
 #include <uv.h>
 
@@ -48,7 +50,7 @@ public:
     enum class Mode { read_only, read_write, read_write_create };
 
     Database(const std::filesystem::path& path, Mode mode)
-        : path_(path.string()) {
+        : path_(utf8_path(path)) {
         int flags = mode == Mode::read_only ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE;
         if (mode == Mode::read_write_create) {
             flags |= SQLITE_OPEN_CREATE;
@@ -586,8 +588,9 @@ std::filesystem::path create_temporary_database_path(
 
     const std::filesystem::path pattern_path =
         path.parent_path()
-        / ("." + path.filename().string() + ".tmp.XXXXXX");
-    const std::string pattern = pattern_path.string();
+        / path_from_utf8(
+            "." + utf8_path(path.filename()) + ".tmp.XXXXXX");
+    const std::string pattern = utf8_path(pattern_path);
     std::vector<char> writable_pattern(pattern.begin(), pattern.end());
     writable_pattern.push_back('\0');
 
@@ -601,9 +604,10 @@ std::filesystem::path create_temporary_database_path(
         uv_fs_req_cleanup(&create_request);
         throw std::runtime_error(
             "Failed to create a temporary session database for '"
-            + path.string() + "': " + uv_strerror(descriptor));
+            + utf8_path(path) + "': " + uv_strerror(descriptor));
     }
-    const std::filesystem::path temporary_path(create_request.path);
+    const std::filesystem::path temporary_path =
+        path_from_utf8(create_request.path);
     uv_fs_req_cleanup(&create_request);
 
     uv_fs_t close_request{};
@@ -615,7 +619,7 @@ std::filesystem::path create_temporary_database_path(
         std::filesystem::remove(temporary_path, ignored);
         throw std::runtime_error(
             "Failed to close temporary session database '"
-            + temporary_path.string() + "': "
+            + utf8_path(temporary_path) + "': "
             + uv_strerror(close_status));
     }
     return temporary_path;
@@ -696,7 +700,7 @@ SessionDatabaseMetadata read_session_database_metadata(
         "SELECT id, room, label FROM session WHERE singleton = 1");
     if (!statement.step()) {
         throw std::runtime_error(
-            "Session database '" + path.string() + "' has no metadata");
+            "Session database '" + utf8_path(path) + "' has no metadata");
     }
     return {
         .id = statement.text(0),

@@ -3,6 +3,7 @@
 #include "agents/config.h"
 #include "agents/json_serialization.h"
 #include "util/text.h"
+#include "util/utf8_path.h"
 
 #include <nlohmann/json.hpp>
 
@@ -24,7 +25,8 @@ constexpr std::string_view human_speaker_name = "User";
 std::string read_prompt(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
-        throw std::runtime_error("Failed to read prompt file '" + path.string() + "'");
+        throw std::runtime_error(
+            "Failed to read prompt file '" + utf8_path(path) + "'");
     }
     std::ostringstream contents;
     contents << file.rdbuf();
@@ -35,7 +37,7 @@ AgentDefinition load_definition_files(
     const std::filesystem::path& persona_directory,
     const std::filesystem::path& room_directory,
     std::optional<std::filesystem::path> base_config_path) {
-    const std::string persona_name = persona_directory.filename().string();
+    const std::string persona_name = utf8_path(persona_directory.filename());
     Config config;
     try {
         config = load_config(
@@ -59,7 +61,7 @@ AgentDefinition load_definition_files(
         room_prompt = read_prompt(room_directory / "USER.md");
     } catch (const std::exception& error) {
         throw std::runtime_error(
-            "Room '" + room_directory.filename().string()
+            "Room '" + utf8_path(room_directory.filename())
             + "' failed to read USER.md: " + error.what());
     }
     return {

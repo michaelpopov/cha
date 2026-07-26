@@ -1,4 +1,5 @@
 #include "agents/config.h"
+#include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
 
@@ -53,6 +54,28 @@ TEST(Config, LoadsHostAndPortFromToml) {
     std::filesystem::remove_all(directory);
 }
 
+TEST(Config, LoadsTomlFromANonAsciiPath) {
+    const auto directory = std::filesystem::temp_directory_path()
+        / path_from_utf8(
+            "cha_config_na\xc3\xafve_\xe6\x9d\xb1\xe4\xba\xac_"
+            + std::to_string(
+                std::chrono::steady_clock::now()
+                    .time_since_epoch()
+                    .count()));
+    std::filesystem::create_directory(directory);
+    const auto path = directory / "config.toml";
+    {
+        std::ofstream config_file(path);
+        config_file << "id = \"example-id\"\n"
+                    << "name = \"Example\"\n"
+                    << "host = \"example.com\"\n"
+                    << "port = 8080\n";
+    }
+
+    EXPECT_EQ(load_config(path).id, "example-id");
+    std::filesystem::remove_all(directory);
+}
+
 TEST(Config, DefaultsAndValidatesReasoningFormat) {
     const auto path = std::filesystem::temp_directory_path()
         / ("cha_reasoning_format_"
@@ -83,7 +106,7 @@ TEST(Config, DefaultsAndValidatesReasoningFormat) {
         FAIL() << "Expected invalid reasoning_format to fail";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
-            std::string(error.what()).find(path.string()),
+            std::string(error.what()).find(utf8_path(path)),
             std::string::npos);
         EXPECT_NE(
             std::string(error.what()).find("reasoning_format"),
@@ -151,7 +174,7 @@ TEST(Config, RejectsOutOfRangeTemperature) {
         FAIL() << "Expected invalid temperature to fail";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
-            std::string(error.what()).find(path.string()),
+            std::string(error.what()).find(utf8_path(path)),
             std::string::npos);
         EXPECT_NE(
             std::string(error.what()).find("temperature"),
@@ -242,7 +265,7 @@ TEST(Config, RejectsPersonaIdentityInWorkspaceDefaults) {
         FAIL() << "Expected shared identity to fail";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
-            std::string(error.what()).find(base_path.string()),
+            std::string(error.what()).find(utf8_path(base_path)),
             std::string::npos);
         EXPECT_NE(
             std::string(error.what()).find("id"),
@@ -274,7 +297,7 @@ TEST(Config, IdentifiesInvalidWorkspaceDefaultSource) {
         FAIL() << "Expected invalid shared port to fail";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
-            std::string(error.what()).find(base_path.string()),
+            std::string(error.what()).find(utf8_path(base_path)),
             std::string::npos);
         EXPECT_NE(
             std::string(error.what()).find("port"),

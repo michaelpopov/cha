@@ -1,6 +1,7 @@
 #include "util/environment.h"
 
 #include "util/text.h"
+#include "util/utf8_path.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -35,17 +36,35 @@ std::string parse_value(std::string_view value) {
     return std::string(value);
 }
 
-bool set_environment_if_absent(
-    const std::string& name,
-    const std::string& value) {
+} // namespace
+
+bool set_environment_variable(
+    std::string_view name,
+    std::string_view value,
+    bool overwrite) {
+    const std::string name_string(name);
+    if (!overwrite && std::getenv(name_string.c_str()) != nullptr) {
+        return true;
+    }
+    const std::string value_string(value);
 #ifdef _WIN32
-    return ::_putenv_s(name.c_str(), value.c_str()) == 0;
+    return ::_putenv_s(name_string.c_str(), value_string.c_str()) == 0;
 #else
-    return ::setenv(name.c_str(), value.c_str(), 0) == 0;
+    return ::setenv(
+        name_string.c_str(),
+        value_string.c_str(),
+        overwrite ? 1 : 0) == 0;
 #endif
 }
 
-} // namespace
+bool unset_environment_variable(std::string_view name) {
+    const std::string name_string(name);
+#ifdef _WIN32
+    return ::_putenv_s(name_string.c_str(), "") == 0;
+#else
+    return ::unsetenv(name_string.c_str()) == 0;
+#endif
+}
 
 void load_dotenv(const std::filesystem::path& path) {
     std::ifstream file(path);
@@ -53,7 +72,8 @@ void load_dotenv(const std::filesystem::path& path) {
         if (!std::filesystem::exists(path)) {
             return;
         }
-        throw std::runtime_error("Failed to read dotenv file '" + path.string() + "'");
+        throw std::runtime_error(
+            "Failed to read dotenv file '" + utf8_path(path) + "'");
     }
 
     std::string line;
@@ -69,16 +89,17 @@ void load_dotenv(const std::filesystem::path& path) {
         const std::string_view name = trim_view(entry.substr(0, separator));
         if (separator == std::string_view::npos || !is_name(name)) {
             throw std::runtime_error(
-                "Invalid dotenv entry in '" + path.string() + "' at line " + std::to_string(line_number));
+                "Invalid dotenv entry in '" + utf8_path(path)
+                + "' at line " + std::to_string(line_number));
         }
 
         const std::string name_string(name);
         const std::string value =
             parse_value(entry.substr(separator + 1));
-        if (std::getenv(name_string.c_str()) == nullptr
-            && !set_environment_if_absent(name_string, value)) {
+        if (!set_environment_variable(name_string, value, false)) {
             throw std::runtime_error(
-                "Failed to set environment variable '" + name_string + "' from '" + path.string() + "'");
+                "Failed to set environment variable '" + name_string
+                + "' from '" + utf8_path(path) + "'");
         }
     }
 }

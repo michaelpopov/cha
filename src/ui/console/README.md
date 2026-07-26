@@ -98,9 +98,11 @@ is intentional append-only behavior, not a persistence leak.
 surfaces in both color modes: newlines and tabs pass, carriage returns are
 dropped, C0 and DEL controls become caret notation, and UTF-8 C1 controls are
 replaced. ANSI styling is generated only by `attributes()`.
-On Windows, automatic color first enables virtual-terminal processing on each
-console output handle; if the host does not support it, automatic color stays
-off.
+Console and redirected streams use UTF-8 bytes. On Windows, the attached
+console is configured process-wide to interpret those bytes as UTF-8;
+redirected streams remain byte-oriented. Automatic color then enables
+virtual-terminal processing on each console output handle; if the host does
+not support it, automatic color stays off.
 
 Sanitizing is a property of the whole stream, not of one call. C1 is the only
 rule spanning two bytes, and `U+009B` is an alternative CSI introducer, so

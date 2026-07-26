@@ -6,6 +6,7 @@
 #include "session/session_catalog.h"
 #include "util/path_name.h"
 #include "util/text.h"
+#include "util/utf8_path.h"
 
 #include <fstream>
 #include <optional>
@@ -55,7 +56,7 @@ Workspace::Workspace(std::filesystem::path root)
     if (!std::filesystem::is_directory(root_ / "personas")
         || !std::filesystem::is_directory(root_ / "rooms")) {
         throw std::runtime_error(
-            "Workspace '" + root_.string()
+            "Workspace '" + utf8_path(root_)
             + "' requires personas/ and rooms/ directories");
     }
 }
@@ -65,7 +66,7 @@ std::vector<std::string> Workspace::rooms() const {
     std::ifstream file(list_path);
     if (!file) {
         throw std::runtime_error(
-            "Failed to read rooms list '" + list_path.string() + "'");
+            "Failed to read rooms list '" + utf8_path(list_path) + "'");
     }
 
     std::vector<std::string> result;
@@ -80,13 +81,13 @@ std::vector<std::string> Workspace::rooms() const {
         if (!std::filesystem::is_directory(directory)) {
             throw std::runtime_error(
                 "Room '" + std::string(name) + "' listed in '"
-                + list_path.string() + "' does not exist");
+                + utf8_path(list_path) + "' does not exist");
         }
         result.emplace_back(name);
     }
     if (result.empty()) {
         throw std::runtime_error(
-            "Rooms list '" + list_path.string() + "' does not name a room");
+            "Rooms list '" + utf8_path(list_path) + "' does not name a room");
     }
     return result;
 }
@@ -105,7 +106,7 @@ std::filesystem::path Workspace::persona_directory(
     std::string_view persona_name) const {
     require_path_component(persona_name, root_ / "personas");
     const std::filesystem::path directory =
-        root_ / "personas" / std::string(persona_name);
+        root_ / "personas" / path_from_utf8(persona_name);
     if (!std::filesystem::is_directory(directory)) {
         throw std::runtime_error(
             "Persona '" + std::string(persona_name) + "' does not exist");
@@ -116,7 +117,7 @@ std::filesystem::path Workspace::persona_directory(
 std::filesystem::path Workspace::room_directory(
     const std::string& name) const {
     require_path_component(name, root_ / "rooms" / "rooms.list");
-    return root_ / "rooms" / name;
+    return root_ / "rooms" / path_from_utf8(name);
 }
 
 std::vector<std::string> Workspace::read_name_list(
@@ -124,7 +125,7 @@ std::vector<std::string> Workspace::read_name_list(
     std::ifstream file(path);
     if (!file) {
         throw std::runtime_error(
-            "Failed to read personas list '" + path.string() + "'");
+            "Failed to read personas list '" + utf8_path(path) + "'");
     }
     std::vector<std::string> result;
     std::unordered_set<std::string> seen;
@@ -137,14 +138,14 @@ std::vector<std::string> Workspace::read_name_list(
         require_path_component(value, path);
         if (!seen.insert(std::string(value)).second) {
             throw std::runtime_error(
-                "Personas list '" + path.string() + "' names persona '"
+                "Personas list '" + utf8_path(path) + "' names persona '"
                 + std::string(value) + "' more than once");
         }
         result.emplace_back(value);
     }
     if (result.empty()) {
         throw std::runtime_error(
-            "Personas list '" + path.string() + "' does not name a persona");
+            "Personas list '" + utf8_path(path) + "' does not name a persona");
     }
     return result;
 }

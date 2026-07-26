@@ -66,6 +66,14 @@ bool standard_stream_is_terminal(StandardStream stream) noexcept {
     return file >= 0 && uv_guess_handle(file) == UV_TTY;
 }
 
+void enable_console_output_utf8() noexcept {
+#ifdef _WIN32
+    if (::GetConsoleOutputCP() != 0) {
+        (void)::SetConsoleOutputCP(CP_UTF8);
+    }
+#endif
+}
+
 bool enable_standard_stream_color(StandardStream stream) noexcept {
     const uv_file file = file_number(standard_file(stream));
     if (file < 0 || uv_guess_handle(file) != UV_TTY) {
