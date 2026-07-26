@@ -1,7 +1,7 @@
-#include "ui/terminal/user_session.h"
+#include "ui/tui/user_session.h"
 
 #include "session/session_controller.h"
-#include "ui/terminal/transcript_renderer.h"
+#include "ui/render/transcript_writer.h"
 #include "ui/text/text_input.h"
 
 #include <utility>

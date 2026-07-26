@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ui/terminal/input_editor.h"
-#include "ui/terminal/session_view.h"
+#include "ui/tui/input_editor.h"
+#include "ui/tui/session_view.h"
 
 #include <string>
 

@@ -2,7 +2,7 @@
 #include "agents/agent_registry.h"
 #include "session/session_controller.h"
 #include "agents/config.h"
-#include "ui/terminal/transcript_renderer.h"
+#include "ui/render/transcript_writer.h"
 #include "ui/text/text_input.h"
 #include "util/environment.h"
 #include "support/mock_http_server.h"

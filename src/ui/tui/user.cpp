@@ -1,9 +1,9 @@
-#include "ui/terminal/user.h"
+#include "ui/tui/user.h"
 
 #include "session/session_controller.h"
-#include "ui/terminal/terminal.h"
-#include "ui/terminal/tui.h"
-#include "ui/terminal/user_session.h"
+#include "ui/tui/terminal.h"
+#include "ui/tui/tui.h"
+#include "ui/tui/user_session.h"
 
 #include <cerrno>
 #include <exception>

@@ -1,8 +1,8 @@
 #include "session/session_controller.h"
 #include "session/workspace.h"
-#include "ui/terminal/startup_selector.h"
-#include "ui/terminal/terminal.h"
-#include "ui/terminal/user.h"
+#include "ui/tui/startup_selector.h"
+#include "ui/tui/terminal.h"
+#include "ui/tui/user.h"
 #include "util/environment.h"
 
 #include <exception>

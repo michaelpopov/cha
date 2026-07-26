@@ -1,7 +1,7 @@
-#include "ui/terminal/startup_selector.h"
+#include "ui/tui/startup_selector.h"
 
-#include "ui/terminal/input_editor.h"
-#include "ui/terminal/terminal.h"
+#include "ui/tui/input_editor.h"
+#include "ui/tui/terminal.h"
 
 #include <curses.h>
 

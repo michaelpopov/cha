@@ -1,10 +1,10 @@
 #include "session/session_controller.h"
 #include "agents/completion_backend.h"
 #include "session/session_database.h"
-#include "ui/terminal/input_editor.h"
-#include "ui/terminal/session_view.h"
+#include "ui/tui/input_editor.h"
+#include "ui/tui/session_view.h"
 #include "support/test_backends.h"
-#include "ui/terminal/user_session.h"
+#include "ui/tui/user_session.h"
 
 #include <gtest/gtest.h>
 

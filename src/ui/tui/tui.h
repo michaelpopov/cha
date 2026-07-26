@@ -1,9 +1,11 @@
 #pragma once
 
 #include "transcript/transcript.h"
-#include "ui/terminal/input_editor.h"
-#include "ui/terminal/session_view.h"
-#include "ui/terminal/transcript_renderer.h"
+#include "ui/tui/input_editor.h"
+#include "ui/tui/session_view.h"
+#include "ui/render/transcript_writer.h"
+#include "ui/tui/render_plan.h"
+#include "ui/tui/screen_layout.h"
 
 #include <curses.h>
 

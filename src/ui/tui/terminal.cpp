@@ -1,4 +1,4 @@
-#include "ui/terminal/terminal.h"
+#include "ui/tui/terminal.h"
 
 #include <curses.h>
 

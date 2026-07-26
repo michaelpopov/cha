@@ -1,6 +1,6 @@
-#include "ui/terminal/tui.h"
+#include "ui/tui/tui.h"
 
-#include "ui/terminal/terminal.h"
+#include "ui/tui/terminal.h"
 
 #include <algorithm>
 #include <cwchar>

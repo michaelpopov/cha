@@ -1,5 +1,5 @@
-#include "ui/terminal/input_editor.h"
-#include "ui/terminal/user.h"
+#include "ui/tui/input_editor.h"
+#include "ui/tui/user.h"
 
 #include <gtest/gtest.h>
 

@@ -92,13 +92,15 @@ add_library(cha_core
     src/ui/text/command.cpp
     src/ui/text/mention.cpp
     src/ui/text/text_input.cpp
-    src/ui/terminal/input_editor.cpp
-    src/ui/terminal/startup_selector.cpp
-    src/ui/terminal/terminal.cpp
-    src/ui/terminal/transcript_renderer.cpp
-    src/ui/terminal/tui.cpp
-    src/ui/terminal/user.cpp
-    src/ui/terminal/user_session.cpp
+    src/ui/render/transcript_writer.cpp
+    src/ui/tui/input_editor.cpp
+    src/ui/tui/render_plan.cpp
+    src/ui/tui/screen_layout.cpp
+    src/ui/tui/startup_selector.cpp
+    src/ui/tui/terminal.cpp
+    src/ui/tui/tui.cpp
+    src/ui/tui/user.cpp
+    src/ui/tui/user_session.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
@@ -163,9 +165,11 @@ if(BUILD_TESTING)
         tests/ui/text/unit_command.cpp
         tests/ui/text/unit_mention.cpp
         tests/ui/text/unit_text_input.cpp
-        tests/ui/terminal/unit_transcript_renderer.cpp
+        tests/ui/render/unit_transcript_writer.cpp
+        tests/ui/tui/unit_render_plan.cpp
+        tests/ui/tui/unit_screen_layout.cpp
         tests/ui/terminal/unit_user.cpp
-        tests/ui/terminal/unit_user_session.cpp
+        tests/ui/tui/unit_user_session.cpp
     )
     # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
     target_link_libraries(cha_tests PRIVATE cha_core cha_sqlite3 GTest::gtest_main)

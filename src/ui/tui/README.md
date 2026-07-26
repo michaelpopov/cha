@@ -1,5 +1,8 @@
 # Terminal front end
 
+The paths in this README are temporarily stale during the console-mode source
+reorganization and are updated in its documentation step.
+
 `ui/terminal/` is the ncurses front end: it owns the terminal itself,
 the screens shown before a chat starts, the input editor, the transcript
 rendering, and the event loop that ties keyboard input and streamed agent output
