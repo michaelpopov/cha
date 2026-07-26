@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -241,14 +242,14 @@ TEST(TranscriptValidation, IsEnforcedByMemoryAndDatabase) {
 
     const auto path = temporary_path("cha_invalid_entry_");
     create_test_database(path);
-    SessionJournal journal(path);
-    EXPECT_THROW(journal.append(invalid), std::runtime_error);
+    auto journal = std::make_unique<SessionJournal>(path);
+    EXPECT_THROW(journal->append(invalid), std::runtime_error);
 
     const TranscriptEntry empty_completion = make_agent_entry(
         2, "reviewer-id", "Reviewer", std::string{}, EntryStatus::complete, 1);
     EXPECT_THROW(validate_transcript_entry(empty_completion), std::invalid_argument);
     EXPECT_THROW(transcript.add_entry(empty_completion), std::invalid_argument);
-    EXPECT_THROW(journal.append(empty_completion), std::runtime_error);
+    EXPECT_THROW(journal->append(empty_completion), std::runtime_error);
 
     Transcript streaming;
     streaming.begin_entry(make_agent_entry(
@@ -256,17 +257,18 @@ TEST(TranscriptValidation, IsEnforcedByMemoryAndDatabase) {
     EXPECT_THROW(
         streaming.finish_entry(1, EntryStatus::complete),
         std::invalid_argument);
+    journal.reset();
     std::filesystem::remove(path);
 }
 
 TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     const auto path = temporary_path("cha_transcript_");
     create_test_database(path);
-    SessionJournal journal(path);
-    journal.start_turn(1, human(1, "Hello", 1));
-    journal.complete_turn(1, make_agent_entry(
+    auto journal = std::make_unique<SessionJournal>(path);
+    journal->start_turn(1, human(1, "Hello", 1));
+    journal->complete_turn(1, make_agent_entry(
         2, "reviewer-id", "Reviewer", "Hello back", EntryStatus::complete, 1));
-    journal.append(make_notice_entry(3, "Information"));
+    journal->append(make_notice_entry(3, "Information"));
 
     EXPECT_EQ(
         load_transcript_entries(path),
@@ -285,15 +287,16 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
         read_session_database_metadata(path);
     EXPECT_EQ(metadata.id, utf8_path(path.stem()));
     EXPECT_EQ(metadata.label, "Test session");
+    journal.reset();
     std::filesystem::remove(path);
 }
 
 TEST(SessionDatabase, RejectsAStreamingEntry) {
     const auto path = temporary_path("cha_open_transcript_");
     create_test_database(path);
-    SessionJournal journal(path);
+    auto journal = std::make_unique<SessionJournal>(path);
     EXPECT_THROW(
-        journal.append(make_agent_entry(
+        journal->append(make_agent_entry(
             1,
             "reviewer-id",
             "Reviewer",
@@ -302,45 +305,48 @@ TEST(SessionDatabase, RejectsAStreamingEntry) {
             1)),
         std::runtime_error);
     EXPECT_TRUE(load_transcript_entries(path).empty());
+    journal.reset();
     std::filesystem::remove(path);
 }
 
 TEST(SessionJournal, ReplaysStandaloneEntriesAndClearEvents) {
     const auto path = temporary_path("cha_journal_");
     create_test_database(path);
-    SessionJournal journal(path);
-    journal.append(make_notice_entry(1, "Old"));
-    journal.clear();
-    journal.append(make_notice_entry(2, "Current"));
+    auto journal = std::make_unique<SessionJournal>(path);
+    journal->append(make_notice_entry(1, "Old"));
+    journal->clear();
+    journal->append(make_notice_entry(2, "Current"));
 
     EXPECT_EQ(
         load_transcript_entries(path),
         (std::vector<TranscriptEntry>{make_notice_entry(2, "Current")}));
+    journal.reset();
     std::filesystem::remove(path);
 }
 
 TEST(SessionJournal, RejectsOutOfOrderEntryIdsWithoutChangingStoredState) {
     const auto path = temporary_path("cha_out_of_order_journal_");
     create_test_database(path);
-    SessionJournal journal(path);
-    journal.append(make_notice_entry(2, "Later ID"));
+    auto journal = std::make_unique<SessionJournal>(path);
+    journal->append(make_notice_entry(2, "Later ID"));
 
     EXPECT_THROW(
-        journal.append(make_notice_entry(1, "Earlier ID")),
+        journal->append(make_notice_entry(1, "Earlier ID")),
         std::invalid_argument);
     EXPECT_EQ(
         load_transcript_entries(path),
         (std::vector<TranscriptEntry>{make_notice_entry(2, "Later ID")}));
+    journal.reset();
     std::filesystem::remove(path);
 }
 
 TEST(SessionJournal, RollsBackAnInvalidTerminalTransition) {
     const auto path = temporary_path("cha_rollback_journal_");
     create_test_database(path);
-    SessionJournal journal(path);
-    journal.start_turn(1, human(1, "Question", 1));
+    auto journal = std::make_unique<SessionJournal>(path);
+    journal->start_turn(1, human(1, "Question", 1));
     EXPECT_THROW(
-        journal.complete_turn(
+        journal->complete_turn(
             1,
             make_agent_entry(
                 1,
@@ -354,18 +360,19 @@ TEST(SessionJournal, RollsBackAnInvalidTerminalTransition) {
     const SessionRestore restored = load_session_state(path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
     EXPECT_EQ(restored.entries.front(), human(1, "Question", 1));
+    journal.reset();
     std::filesystem::remove(path);
 }
 
 TEST(SessionJournal, ReplaysIdentifiedTypedTurnOutcomes) {
     const auto path = temporary_path("cha_identified_journal_");
     create_test_database(path);
-    SessionJournal journal(path);
-    journal.start_turn(7, human(1, "First", 7));
-    journal.complete_turn(7, make_agent_entry(
+    auto journal = std::make_unique<SessionJournal>(path);
+    journal->start_turn(7, human(1, "First", 7));
+    journal->complete_turn(7, make_agent_entry(
         2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7));
-    journal.start_turn(8, human(3, "Second", 8));
-    journal.fail_turn(8, make_error_entry(4, "Unavailable", 8, "guide-id"));
+    journal->start_turn(8, human(3, "Second", 8));
+    journal->fail_turn(8, make_error_entry(4, "Unavailable", 8, "guide-id"));
 
     const SessionRestore restored = load_session_state(path);
     EXPECT_EQ(restored.next_request_id, 9U);
@@ -379,39 +386,41 @@ TEST(SessionJournal, ReplaysIdentifiedTypedTurnOutcomes) {
             human(3, "Second", 8),
             make_error_entry(4, "Unavailable", 8, "guide-id"),
         }));
+    journal.reset();
     std::filesystem::remove(path);
 }
 
 TEST(SessionJournal, RejectsEntriesThatDoNotMatchTheirTurnRecords) {
     const auto path = temporary_path("cha_invalid_turn_entry_");
     create_test_database(path);
-    SessionJournal journal(path);
+    auto journal = std::make_unique<SessionJournal>(path);
 
     EXPECT_THROW(
-        journal.start_turn(7, human(1, "Prompt", 8)),
+        journal->start_turn(7, human(1, "Prompt", 8)),
         std::invalid_argument);
     EXPECT_THROW(
-        journal.complete_turn(7, make_agent_entry(
+        journal->complete_turn(7, make_agent_entry(
             2, "guide-id", "Guide", "Answer", EntryStatus::cancelled, 7)),
         std::invalid_argument);
     EXPECT_THROW(
-        journal.cancel_turn(7, make_agent_entry(
+        journal->cancel_turn(7, make_agent_entry(
             2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7)),
         std::invalid_argument);
     EXPECT_THROW(
-        journal.fail_turn(7, make_error_entry(2, "Failure", 8, "guide-id")),
+        journal->fail_turn(7, make_error_entry(2, "Failure", 8, "guide-id")),
         std::invalid_argument);
 
+    journal.reset();
     std::filesystem::remove(path);
 }
 
 TEST(SessionJournal, RecognizesAnInterruptedTypedTurn) {
     const auto path = temporary_path("cha_interrupted_journal_");
     create_test_database(path);
-    SessionJournal journal(path);
+    auto journal = std::make_unique<SessionJournal>(path);
     const TranscriptEntry prompt =
         make_human_entry(5, "guide-id", "Guide", "Pending", 12);
-    journal.start_turn(12, prompt);
+    journal->start_turn(12, prompt);
 
     const SessionRestore restored = load_session_state(path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
@@ -426,6 +435,7 @@ TEST(SessionJournal, RecognizesAnInterruptedTypedTurn) {
     EXPECT_EQ(restored.interrupted_turns.front().error_entry.participant_id, "guide-id");
     EXPECT_EQ(restored.next_request_id, 13U);
     EXPECT_EQ(restored.next_entry_id, 7U);
+    journal.reset();
     std::filesystem::remove(path);
 }
 
@@ -484,18 +494,19 @@ TEST(TranscriptValidation, RejectsAddressingViolationsInMemoryAndInSqlite) {
 
     const auto path = temporary_path("cha_addressing_");
     create_test_database(path);
-    SessionJournal journal(path);
-    EXPECT_THROW(journal.append(untargeted), std::runtime_error);
+    auto journal = std::make_unique<SessionJournal>(path);
+    EXPECT_THROW(journal->append(untargeted), std::runtime_error);
     EXPECT_TRUE(load_transcript_entries(path).empty());
+    journal.reset();
     std::filesystem::remove(path);
 }
 
 TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
     const auto path = temporary_path("cha_addressed_round_trip_");
     create_test_database(path);
-    SessionJournal journal(path);
-    journal.start_turn(1, make_human_entry(1, "ismael", "Ismael", "And you?", 1));
-    journal.complete_turn(1, make_agent_entry(
+    auto journal = std::make_unique<SessionJournal>(path);
+    journal->start_turn(1, make_human_entry(1, "ismael", "Ismael", "And you?", 1));
+    journal->complete_turn(1, make_agent_entry(
         2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1));
 
     const std::vector<TranscriptEntry> restored = load_transcript_entries(path);
@@ -504,6 +515,7 @@ TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
     EXPECT_EQ(restored.front().addressed_to_name, "Ismael");
     EXPECT_TRUE(restored.back().addressed_to.empty());
     EXPECT_TRUE(restored.back().addressed_to_name.empty());
+    journal.reset();
     std::filesystem::remove(path);
 }
 

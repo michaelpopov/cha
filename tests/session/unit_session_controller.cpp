@@ -7,6 +7,7 @@
 #include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <atomic>
 #include <chrono>
@@ -562,9 +563,20 @@ TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
-    const std::filesystem::path moved = path_from_utf8(
-        utf8_path(temporary.path) + ".moved");
-    std::filesystem::rename(temporary.path, moved);
+    sqlite3* raw_blocker = nullptr;
+    ASSERT_EQ(
+        sqlite3_open_v2(
+            utf8_path(temporary.path).c_str(),
+            &raw_blocker,
+            SQLITE_OPEN_READWRITE,
+            nullptr),
+        SQLITE_OK);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close_v2)> blocker(
+        raw_blocker, &sqlite3_close_v2);
+    ASSERT_EQ(
+        sqlite3_exec(
+            blocker.get(), "BEGIN EXCLUSIVE", nullptr, nullptr, nullptr),
+        SQLITE_OK);
 
     std::string message;
     try {
@@ -573,7 +585,9 @@ TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
         message = error.what();
     }
 
-    std::filesystem::rename(moved, temporary.path);
+    EXPECT_EQ(
+        sqlite3_exec(blocker.get(), "ROLLBACK", nullptr, nullptr, nullptr),
+        SQLITE_OK);
     controller->shutdown();
     ASSERT_FALSE(message.empty());
     EXPECT_NE(
