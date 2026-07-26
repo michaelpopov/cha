@@ -1,9 +1,6 @@
-# Terminal front end
+# TUI frontend
 
-The paths in this README are temporarily stale during the console-mode source
-reorganization and are updated in its documentation step.
-
-`ui/terminal/` is the ncurses front end: it owns the terminal itself,
+`ui/tui/` is the ncurses frontend: it owns the terminal itself,
 the screens shown before a chat starts, the input editor, the transcript
 rendering, and the event loop that ties keyboard input and streamed agent output
 together.
@@ -27,13 +24,14 @@ directory decides only how it looks and how input reaches it.
 | `input_editor.*` | Wide-character multiline draft text: cursor movement, editing, continuation lines, UTF-8 on submit. |
 | `session_view.h` | `SessionInput` and the `SessionView` seam that isolates session logic from curses. |
 | `user_session.*` | The session state machine: input to actions, `SessionUpdate` to screen. |
-| `user.*` | `UserEvents` plus `run_user()` — the poll loop and orderly shutdown. |
+| `user.*` | `run_user()` — the shared-input-wait loop and orderly shutdown. |
 
 ### Rendering
 
 | Source | Responsibility |
 | --- | --- |
-| `transcript_renderer.*` | Entry styling and labels, incremental render planning, scrolling, and row layout estimation. |
+| `render_plan.*` | Incremental transcript redraw planning. |
+| `screen_layout.*` | Viewport state, wrapping, and row layout estimation. |
 | `tui.*` | The curses `SessionView`: pads for transcript and input, the status line, key decoding. |
 
 ## The event loop
@@ -44,7 +42,7 @@ the agent event descriptor. There are no timers and no polling intervals.
 ```mermaid
 flowchart TD
     start["run_user"] --> mk["construct Tui and UserSession<br/>render once"]
-    mk --> wait["wait_for_user_events<br/>poll stdin + agent eventfd"]
+    mk --> wait["wait_for_input_events<br/>poll stdin + agent eventfd"]
     wait --> res{"result"}
     res -->|"interrupted, EINTR"| resize["treat as resize,<br/>redraw if needed"] --> wait
     res -->|"failed"| fail["report terminal failure,<br/>leave the loop"]
@@ -117,7 +115,8 @@ only "Terminal is too small".
   transcript cheap to update while a response streams in.
 - **`TranscriptViewport`** owns the scroll offset and whether the view is still
   following new output, so a user who has scrolled back is not dragged forward.
-- **`TranscriptSurface`** is the styling sink. `write_transcript_entry()` writes
+- **`TranscriptSurface`**, from [`../render/`](../render/README.md), is the
+  styling sink. `write_transcript_entry()` writes
   a bold label — `[You]`, `[You → Name]`, `[Name]`, `[System]`,
   `[Error]`. While a turn is active, `write_active_response()` adds the
   ephemeral dim `[Reasoning]` block above any streamed answer. Tests implement
@@ -154,9 +153,11 @@ message never lands on a screen still in curses mode.
 
 | Test | Covers |
 | --- | --- |
-| `tests/ui/terminal/unit_user_session.cpp` | The state machine against a fake `SessionView`: input handling, update application, cancel-versus-exit, notices. |
-| `tests/ui/terminal/unit_transcript_renderer.cpp` | Render plans, labels and styling through a recording `TranscriptSurface`, viewport scrolling, row layout. |
-| `tests/ui/terminal/unit_user.cpp` | Event-loop readiness decoding and shutdown ordering. |
+| `tests/ui/tui/unit_user_session.cpp` | The state machine against a fake `SessionView`: input handling, update application, cancel-versus-exit, notices. |
+| `tests/ui/tui/unit_render_plan.cpp` | Incremental redraw decisions. |
+| `tests/ui/tui/unit_screen_layout.cpp` | Viewport scrolling, wrapping, and row layout. |
+| `tests/ui/tui/unit_input_editor.cpp` | Editing, UTF-8 conversion, and continuation input. |
+| `tests/ui/render/unit_transcript_writer.cpp` | Shared labels and styling through a recording `TranscriptSurface`. |
 
 Curses itself is never required by the unit tests — that is the point of
 `SessionView` and `TranscriptSurface`.

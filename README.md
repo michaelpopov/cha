@@ -1,10 +1,16 @@
 # cha
 
-`cha` is a C++20 terminal chat client for servers exposing the OpenAI-compatible chat-completions API.
+`cha` is a C++20 chat client for servers exposing the OpenAI-compatible
+chat-completions API. It provides the full-screen `cha` TUI and the
+line-oriented `chacon` console frontend.
 
 ## Workspace configuration
 
-Run `cha` from a workspace containing `personas/` and `rooms/`. `rooms/rooms.list` is an ordered list of room names (one per line; blank lines and `#` comments are ignored). At startup, a terminal selector lets you choose a room and then an existing session or **New session**.
+Run either executable from a workspace containing `personas/` and `rooms/`.
+`rooms/rooms.list` is an ordered list of room names (one per line; blank lines
+and `#` comments are ignored). At `cha` startup, a terminal selector lets you
+choose a room and then an existing session or **New session**. `chacon` makes
+the same selection through command-line options.
 
 Each room contains `personas.list`, an ordered list of one or more personas, and `USER.md`. Every listed persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (`SYSTEM.md`, followed by the room `USER.md`, followed by generated room context that identifies the agent and the room's other personas). The first persona is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
@@ -96,7 +102,7 @@ Before loading server configuration, the application optionally reads `.env` fro
 - `/stop` cancels the active model response.
 - `/exit` exits the application.
 
-## Terminal UI
+## Full-screen UI
 
 The UI has a scrollable chat transcript, a generation-status line, and a persistent multiline input pane. Input remains available while a response is streaming.
 
@@ -109,6 +115,34 @@ arrives, then to `responding` when answer text begins.
 - End an input line with `\` to continue on the next visual line. Continued lines are concatenated before being sent.
 - Arrow, Home, End, Backspace, and Delete keys edit the input buffer.
 
+## Console frontend
+
+`chacon` is intended for pipes, logs, and simple interactive terminals. It
+requires a room except when listing all rooms:
+
+```text
+chacon --list-rooms
+chacon --room ROOM --list-sessions
+chacon --room ROOM [--session ID | --new LABEL] [--color=auto|always|never]
+```
+
+If neither `--session` nor `--new` is supplied, `chacon` creates a new session
+with the default timestamp label. Room listings contain one name per line.
+Session listings contain exactly three tab-separated fields—ID, label, and
+error—with no header, padding, or color. Invalid sessions remain visible in
+the listing.
+
+Each input line is one submission. A trailing `\` continues the submission on
+the next line and the lines are concatenated without a newline. Piped
+submissions are queued and run one at a time; `/stop` and `/exit` take effect
+immediately. EOF stops input but lets the active response and queued prompts
+finish. Ctrl-C cancels an active response and exits when idle.
+
+Transcript text is an append-only log on stdout; prompts, responses, and
+restored history are never rewritten. Notices and the interactive prompt go to
+stderr, keeping stdout suitable for redirection. Model text is sanitized so it
+cannot inject terminal control sequences.
+
 ## Build and test
 
 The build uses an installed libcurl development package when available. Otherwise CMake downloads and builds a pinned libcurl automatically.
@@ -117,12 +151,21 @@ The build uses an installed libcurl development package when available. Otherwis
 make
 make test
 make run
+make run-console
 ```
 
 Live integration tests are built as the `itest` application but are not included in `make test`:
 
 ```bash
 make itest
+```
+
+The console and core library can be built without curses:
+
+```bash
+cmake -S . -B build/notui -DCHA_BUILD_TUI=OFF
+cmake --build build/notui
+ctest --test-dir build/notui
 ```
 
 ## Architecture
@@ -135,7 +178,7 @@ The source tree is documented from the inside out, with diagrams:
 | [`src/transcript/README.md`](src/transcript/README.md) | The transcript model shared by every layer. |
 | [`src/agents/README.md`](src/agents/README.md) | Persona loading, the execution thread, and the HTTP transport. |
 | [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
-| [`src/ui/README.md`](src/ui/README.md) | The UI contract, with [`text/`](src/ui/text/README.md) and [`terminal/`](src/ui/terminal/README.md) beneath it. |
+| [`src/ui/README.md`](src/ui/README.md) | The UI contract, with shared [`render/`](src/ui/render/README.md) and [`text/`](src/ui/text/README.md), plus the [`tui/`](src/ui/tui/README.md) and [`console/`](src/ui/console/README.md) frontends. |
 | [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |
 | [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including the pollable event channel. |
 | [`docs/cha.md`](docs/cha.md) | The exhaustive rule-by-rule design reference. |

@@ -13,27 +13,38 @@ same behavior? If yes, it belongs below `ui/`.
 | Directory | Responsibility |
 | --- | --- |
 | `text/` | The reusable textual grammar: slash commands and `@mention` addressing, dispatched to `SessionController`. |
-| `terminal/` | The ncurses front end: terminal lifecycle, startup selection, input editing, transcript rendering, event loop. |
+| `render/` | Shared transcript labels, attributes, and writing operations. |
+| `tui/` | The ncurses front end: terminal lifecycle, startup selection, input editing, screen layout, and redraw planning. |
+| `console/` | The line-oriented frontend: CLI selection, non-blocking input, queued dispatch, signals, and append-only output. |
 
-`text/` is separate from `terminal/` because the command language is not a
-terminal concept. Any input box — a TUI, a web form, a chat bridge — can reuse
-it, while an API with typed routes can skip it entirely.
+`text/` and `render/` are separate from the frontends because neither the
+command language nor transcript labels are curses concepts. A new input box or
+streaming protocol can reuse them while retaining its own event and layout
+policy.
 
 ## Where a front end sits
 
 ```mermaid
 flowchart TD
     subgraph ui["ui/"]
-        term["terminal/<br/>curses, input, rendering"]
+        tui["tui/<br/>curses screen and input"]
+        console["console/<br/>line stream and queue"]
+        render["render/<br/>shared transcript writer"]
         txt["text/<br/>command and mention grammar"]
     end
 
-    user(["User"]) --> term
-    term -->|"submitted line"| txt
+    user(["User"]) --> tui
+    user --> console
+    tui --> render
+    console --> render
+    tui -->|"submitted line"| txt
+    console -->|"submitted line"| txt
     txt -->|"calls"| controller["SessionController"]
-    controller -->|"SessionUpdate"| term
-    term -->|"reads"| convo["Transcript snapshots<br/>GenerationStatus"]
-    term -->|"reads"| personas["RoomPersonas<br/>names for labels"]
+    controller -->|"SessionUpdate"| tui
+    controller -->|"SessionUpdate"| console
+    tui -->|"reads"| convo["Transcript snapshots<br/>GenerationStatus"]
+    console -->|"reads"| convo
+    render -->|"reads"| personas["RoomPersonas<br/>names for labels"]
 
     controller -.->|"never called from ui/"| store["SessionCatalog<br/>SessionJournal<br/>CompletionBackend"]
 ```
@@ -50,13 +61,14 @@ Code under `ui/` may depend on:
 - `session/` for controller operations, generation status, and presentation-safe
   summaries such as `SessionSummary`;
 - `transcript/` for presentation-ready transcript values;
-- the shared grammar, as `terminal/` uses `text/`;
+- the shared grammar and transcript writer;
 - narrowly scoped `util/` helpers where protocol parsing needs them;
 - `RoomPersonas` from `session/` when a presentation needs persona names — for
   example deciding whether to label who a message was addressed to.
 
 It may not depend on `apps/`, on another front end's widgets, or on anything the
-two lists above exclude.
+two lists above exclude. In particular, `ui/tui/` and `ui/console/` must never
+include one another.
 
 ## Adding another front end
 
@@ -80,4 +92,6 @@ a public API would pin down layers that need to stay free to change.
 ## Documents
 
 - [`text/README.md`](text/README.md) — the grammar and dispatch rules.
-- [`terminal/README.md`](terminal/README.md) — the terminal front end.
+- [`render/README.md`](render/README.md) — shared transcript writing.
+- [`tui/README.md`](tui/README.md) — the ncurses frontend.
+- [`console/README.md`](console/README.md) — the line-oriented frontend.

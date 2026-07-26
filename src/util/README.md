@@ -13,6 +13,7 @@ belongs in that directory instead.
 | `path_name.*` | `require_path_component()` — a configured name must be one safe path component. |
 | `environment.*` | `load_dotenv()` — optional `.env` loading that never overrides the real environment. |
 | `event_channel.h` | `EventChannel<T>` — a typed thread-safe queue with a pollable notification descriptor. |
+| `input_wait.*` | `InputEvents` and `wait_for_input_events()` — semantic readiness for stdin, agent notification, and an optional signal descriptor. |
 
 ## Text helpers
 
@@ -82,6 +83,15 @@ guaranteed to wake anyway.
 Two channels of this type carry all cross-thread traffic in `cha`: work items to
 the agent thread, and `AgentEvent` values back to the UI.
 
+## Input waiting
+
+`wait_for_input_events()` wraps `poll(2)` and returns semantic flags rather than
+leaking descriptor bits into either frontend. It reports readable or closed
+stdin, pending agent notification, pending signal, interruption, and failure.
+The console may temporarily omit stdin to apply pipe backpressure while still
+waiting for agent and signal events. The TUI uses the same helper without a
+signal descriptor.
+
 ## Dependencies
 
 - **Depends on:** the standard library, the process environment, and POSIX
@@ -93,7 +103,7 @@ the agent thread, and `AgentEvent` values back to the UI.
 
 ## Tests
 
-`tests/util/unit_text.cpp`, `tests/util/unit_environment.cpp`, and
-`tests/util/unit_event_channel.cpp` — the last one covers blocking and
-non-blocking reads, close semantics, and the descriptor's wake behavior under
-concurrency.
+`tests/util/unit_text.cpp`, `tests/util/unit_environment.cpp`,
+`tests/util/unit_input_wait.cpp`, and `tests/util/unit_event_channel.cpp` — the
+last one covers blocking and non-blocking reads, close semantics, and the
+descriptor's wake behavior under concurrency.

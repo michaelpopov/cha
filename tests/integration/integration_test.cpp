@@ -418,7 +418,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheRoomKeepsOnlyOneAgent) {
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
         handle_text_input(*reopened, "@Cheburashka are you there?").notice,
-        "Unknown agent @Cheburashka. Agents in this room: @Ismael");
+        "Unknown agent @Cheburashka. Personas in this room: @Ismael");
 
     (void)handle_text_input(*reopened, "What did he say?");
     run_until_idle(*reopened);

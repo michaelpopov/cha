@@ -34,20 +34,22 @@ recorded in the database.
 
 ## Layer map
 
-The tree is organized by responsibility. The directories are *not* separate
-libraries: CMake compiles every production translation unit except
-`apps/tui_main.cpp` into one `cha_core` target, so the boundaries are
-architectural, enforced by review and by the include rules below.
+The tree is organized by responsibility. CMake keeps curses behind a real
+library boundary: reusable and console code is in static `cha_core`, while the
+ncurses frontend is in static `cha_tui`. Entry points link only the libraries
+they need.
 
 | Directory | Owns | Must not know about |
 | --- | --- | --- |
-| `util/` | Leaf helpers: text and path rules, `.env` loading, the pollable `EventChannel`. | Anything above it. |
-| `transcript/` | The transcript model: entry types, validation, and the thread-safe live `Transcript`. | Storage, providers, terminals. |
-| `agents/` | Persona config, agent runtime metadata, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, front ends. |
-| `session/` | Workspace and session operations, `RoomPersonas`, SQLite persistence, and live chat coordination. | Terminals, command syntax, transports. |
-| `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Curses, storage, backends. |
-| `ui/terminal/` | Terminal lifecycle, startup selection, input editing, rendering, and the event loop. | Workspace files, session catalogs, backends. |
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
+| `ui/tui/` | Curses lifecycle, startup selection, input editing, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
+| `ui/console/` | CLI selection, line input, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
+| `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
+| `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
+| `session/` | Workspace and session operations, `RoomPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
+| `agents/` | Persona config, agent runtime metadata, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, frontends. |
+| `transcript/` | The transcript model: entry types, validation, and the thread-safe live `Transcript`. | Storage, providers, frontends. |
+| `util/` | Leaf helpers: text and path rules, `.env`, input waiting, and the pollable `EventChannel`. | Anything above it. |
 
 ## Dependency direction
 
@@ -56,8 +58,10 @@ may include headers only from those listed beside it.
 
 | Directory | May include |
 | --- | --- |
-| `apps/` | `ui/terminal/`, `session/`, `util/` |
-| `ui/terminal/` | `ui/text/`, `session/`, and `transcript/` |
+| `apps/` | `ui/tui/`, `ui/console/`, `ui/render/`, `session/`, `transcript/`, `util/` |
+| `ui/tui/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
+| `ui/console/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
+| `ui/render/` | `session/`, `transcript/` |
 | `ui/text/` | `session/`, `util/` |
 | `session/` | `agents/`, `transcript/`, `util/` |
 | `agents/` | `transcript/`, `util/` |
@@ -76,6 +80,8 @@ Three rules keep this direction honest:
 3. **`agents/` owns persona loading but not workspace discovery.** Once
    `session/` has resolved which directories a room uses, `agents/` loads
    `Config` and `AgentDefinition` from them.
+4. **Frontends are siblings.** `ui/tui/` and `ui/console/` may share
+   `ui/render/` and `ui/text/`, but neither may include the other.
 
 ## Runtime structure
 
@@ -86,8 +92,8 @@ and reports back through a channel.
 ```mermaid
 flowchart LR
     subgraph mainthread["Main thread — UI, state, persistence"]
-        usession["UserSession"]
-        tui["Tui — curses"]
+        frontend["TUI UserSession or<br/>ConsoleSession"]
+        presentation["Tui screen or<br/>console stream"]
         controller["SessionController"]
         conv["Transcript"]
         personas["RoomPersonas"]
@@ -102,8 +108,8 @@ flowchart LR
 
     provider[("Model server<br/>/v1/chat/completions")]
 
-    usession --> tui
-    usession --> controller
+    frontend --> presentation
+    frontend --> controller
     controller --> conv
     controller --> personas
     controller --> journal
@@ -111,15 +117,17 @@ flowchart LR
     registry -->|"WorkItem queue"| execution
     execution --> backend
     backend <-->|"HTTP or SSE"| provider
-    execution -->|"AgentEvent channel"| usession
+    execution -->|"AgentEvent channel"| frontend
     execution -.->|"short-lived read view"| conv
 ```
 
 Ownership is a strict tree, and destruction order matters:
 
-- `main()` owns the `Workspace`, the process-wide `Terminal`, and the selected
-  `SessionController`.
-- `run_user()` owns the `Tui` and the `UserSession` for the chat loop.
+- Each entry point owns a `Workspace` and selected `SessionController`. The TUI
+  additionally owns its process-wide `Terminal`; the console owns a
+  `SystemConsole`, `TranscriptEmitter`, and `signalfd`.
+- `run_user()` owns the TUI chat state. `ConsoleSession::run()` owns the
+  console queue and EOF lifecycle.
 - `SessionController` owns the `Transcript`, `RoomPersonas`, the
   `SessionJournal`, the `AgentRegistry`, the current default agent, and the
   state of the in-flight turn. The transcript is declared *before* the registry
@@ -136,8 +144,8 @@ paired with a Linux `eventfd`. There are two channels:
 - a private `EventChannel<WorkItem>` carrying routed requests **to** the agent
   thread;
 - the shared `AgentEventChannel` carrying `AgentEvent` values **back**. Its
-  descriptor is what `run_user()` polls next to stdin, so streamed output and
-  keystrokes wake the same loop with no timers and no busy-waiting.
+  descriptor is polled next to stdin by either frontend, so streamed output and
+  input wake the same loop with no timers and no busy-waiting.
 
 Submission claims a single atomic gate, so at most one request is outstanding
 across all agents; a second submission is refused even for a different agent.
@@ -391,20 +399,26 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | New slash command | `ui/text/command.*` for the grammar, plus an operation on `SessionController` if it touches session state. |
 | New front end, e.g. HTTP | A new `ui/http/` front end plus a new `apps/` entry point, reusing `Workspace` and `SessionController` unchanged. |
 | New persisted field | `transcript/` entry model, its validators, the SQLite schema and its `CHECK` constraints, and the restore path — in that order. |
-| New rendering behavior | `ui/terminal/transcript_renderer.*`, testable through `TranscriptSurface` without curses. |
+| Shared transcript labels or styling | `ui/render/transcript_writer.*`, testable through `TranscriptSurface`. |
+| TUI layout or redraw behavior | `ui/tui/render_plan.*` or `ui/tui/screen_layout.*`. |
+| Console stream behavior | `ui/console/`, preserving its append-only output contract. |
 
 ## Build and test map
 
 | Target | Contents |
 | --- | --- |
-| `cha_core` | Every production source except `apps/tui_main.cpp`. |
-| `cha` | The terminal application: `cha_core` plus `apps/tui_main.cpp`. |
+| `cha_core` | Static reusable core, shared rendering, and console implementation; no curses dependency. |
+| `cha_tui` | Static curses frontend library, built only with `CHA_BUILD_TUI=ON`. |
+| `cha` | Full-screen application: `cha_core`, `cha_tui`, and `apps/tui_main.cpp`. |
+| `chacon` | Line-oriented application: `cha_core` and `apps/console_main.cpp`. |
 | `cha_tests` | Unit and component tests under `tests/`, mirroring this tree. Run with `make test`. |
+| `console_tests` | Registered fork/exec tests for pipes, signals, output failures, and link dependencies. |
 | `itest` | Live integration tests driving the real stack against the checked-in `workspace/`. Run with `make itest`; not part of `make test`. |
 
 Third-party dependencies are libcurl, nlohmann/json, toml++, SQLite
-(amalgamation), wide ncurses, and GoogleTest — vendored through CMake
-`FetchContent` when not already installed.
+(amalgamation), and GoogleTest, plus wide ncurses when the TUI is enabled.
+Dependencies are vendored through CMake `FetchContent` when not already
+installed.
 
 ## Source conventions
 
@@ -429,7 +443,9 @@ Third-party dependencies are libcurl, nlohmann/json, toml++, SQLite
 | Operations and persistence | [`session/README.md`](session/README.md) |
 | UI contract | [`ui/README.md`](ui/README.md) |
 | Command and mention grammar | [`ui/text/README.md`](ui/text/README.md) |
-| Terminal front end | [`ui/terminal/README.md`](ui/terminal/README.md) |
+| Shared transcript rendering | [`ui/render/README.md`](ui/render/README.md) |
+| TUI frontend | [`ui/tui/README.md`](ui/tui/README.md) |
+| Console frontend | [`ui/console/README.md`](ui/console/README.md) |
 | Entry points | [`apps/README.md`](apps/README.md) |
 | Shared helpers | [`util/README.md`](util/README.md) |
 | Exhaustive design rules | [`../docs/cha.md`](../docs/cha.md) |

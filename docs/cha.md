@@ -25,20 +25,20 @@ rule-by-rule maintenance reference.
 
 ## Architecture
 
-`cha` has two long-lived application threads: the main/UI thread and one shared
-agent-execution thread. The main thread owns all transcript and database
-mutation. The execution thread prepares and performs one blocking completion at
-a time, then returns typed events through one shared channel.
+Both frontends use two long-lived application threads: the main/UI thread and
+one shared agent-execution thread. The main thread owns all transcript and
+database mutation. The execution thread prepares and performs one blocking
+completion at a time, then returns typed events through one shared channel.
 
 ```text
 Startup
-  Workspace + StartupSelector
+  Workspace + TUI selector or console CLI
                                       |
                                       v
 Main/UI thread                  SessionController
-  run_user                   +-- Transcript
-  UserSession -------------->+-- SessionJournal (SQLite)
-  Tui                         +-- RoomPersonas
+  UserSession or             +-- Transcript
+  ConsoleSession ----------->+-- SessionJournal (SQLite)
+  Tui or console stream       +-- RoomPersonas
        ^                      +-- AgentRegistry
        | SessionUpdate        |       |
        |                      |       +-- AgentRuntimeInfo
@@ -57,9 +57,11 @@ Main/UI thread                  SessionController
 
 The ownership graph is:
 
-- `main()` owns the `Workspace`, `Terminal`, `StartupSelector`, and the selected
-  `SessionController`.
-- `run_user()` owns a `Tui` and `UserSession` for the chat loop.
+- Each entry point owns the `Workspace` and selected `SessionController`. The
+  TUI owns `Terminal` and `StartupSelector`; the console owns `SystemConsole`,
+  `TranscriptEmitter`, and its signal descriptor.
+- `run_user()` owns a `Tui` and `UserSession`; `ConsoleSession::run()` owns the
+  line queue and console lifecycle.
 - `SessionController` owns the in-memory `Transcript`, SQLite
   `SessionJournal`, `AgentRegistry`, `RoomPersonas`, the current default agent
   ID, the next entry and request IDs seeded from durable state, and the
@@ -105,10 +107,10 @@ clears the gate immediately before publishing a terminal event, so once the
 main thread observes completion it can submit the next request without racing
 the previous turn's cleanup.
 
-The shared event channel exposes one descriptor to the UI. `run_user()` blocks
-in one `poll(2)` call over stdin and that descriptor, so input and streamed
-output wake the same event loop without timers or busy polling. When both are
-ready, agent events are applied before terminal input.
+The shared event channel exposes one descriptor to the UI. Both frontends block
+in `poll(2)` over stdin and that descriptor, so input and streamed output wake
+the same event loop without timers or busy polling. The console also polls a
+`signalfd` and may temporarily omit pipe input for queue backpressure.
 
 The registry checks every outbound event publication. A closed event channel
 violates shutdown ordering and throws. A saturated `eventfd` already has a
@@ -134,10 +136,10 @@ span; it is destroyed before network I/O and before any delta is published.
 
 ## Source organization and dependency rules
 
-The source tree is organized by responsibility while remaining one build
-target. Directories communicate intended ownership; they are not separate
-static libraries. Every non-entry-point `.cpp` is compiled independently and
-linked into `cha_core`.
+The source tree is organized by responsibility. Reusable and console sources
+are linked into static `cha_core`; curses-specific sources are linked into
+static `cha_tui`. This makes the console and integration targets independent of
+ncurses.
 
 ```text
 src/
@@ -147,7 +149,9 @@ src/
   session/               reusable operations, transcript coordination, and session persistence
   ui/
     text/                 slash-command and leading-mention grammar
-    terminal/             ncurses front end and terminal session flow
+    render/               shared transcript labels and writing
+    tui/                  ncurses frontend and screen flow
+    console/              line-oriented frontend and append-only stream
   apps/                   executable composition roots
 ```
 
@@ -157,9 +161,11 @@ The intended dependency direction is below; an arrow means “depends on”:
 
 ```text
 apps
-  |--> ui/terminal --+--> ui/text --> session
-  |                  +--> session
-  |                  +--> transcript
+  |--> ui/tui -----+
+  |                +--> ui/render
+  |--> ui/console -+--> ui/text --> session
+  |                +--> session
+  |                +--> transcript
   |
   `--> session ------+--> agents -------> transcript
                      `--> transcript
@@ -169,8 +175,10 @@ agents, ui/text, session, and apps may also depend on util.
 
 More precisely:
 
-- the terminal front end, and any future HTTP front end, may call `session/` and
+- either frontend, and any future HTTP frontend, may call `session/` and
   read presentation-safe values from `transcript/`;
+- `ui/tui/` and `ui/console/` may share `ui/render/` and `ui/text/`, but may
+  not include one another;
 - a front end does not access agent execution or session catalogs directly;
 - `session/` coordinates `agents/` and `transcript/`, and owns session persistence;
 - `agents/` may read transcript state but does not depend on `session/` or `ui/`;
@@ -181,7 +189,7 @@ HTTP requests and responses around the same session-layer operations.
 It should not load workspace files, open catalogs, or invoke completion
 backends directly.
 
-The terminal renderer consumes `TranscriptSnapshot`, `TranscriptEntry`,
+The renderers consume `TranscriptSnapshot`, `TranscriptEntry`,
 `GenerationStatus`, and `RoomPersonas` directly. Mirroring these into
 presentation types would add no useful isolation. `RoomPersonas` tells it when
 transcript labels should name the addressed agent. Storage-specific values do
@@ -196,7 +204,7 @@ directly.
 
 ## Startup and workspace loading
 
-`main()` and `Workspace` perform these steps:
+The TUI entry point and `Workspace` perform these steps:
 
 1. Load optional `.env` values without replacing existing process variables.
 2. Construct `Workspace`, which requires `personas/` and `rooms/` to exist, and
@@ -217,6 +225,13 @@ directly.
 
 Cancelling either selector is an error rather than a silent exit: `main()`
 throws, and the failure is reported after terminal restoration.
+
+The console entry point replaces steps 2–4 with command-line parsing. It
+supports room and session listings, opens `--session ID`, or creates a session
+for `--new LABEL` (and creates one with a default label when neither selection
+option is present). It then creates a `signalfd`, `SystemConsole`,
+`TranscriptEmitter`, and `ConsoleSession`. Usage failures return 2; workspace
+and runtime failures return 1.
 
 The workspace shape is:
 
@@ -559,6 +574,13 @@ layer and front-end responses cannot drift.
 `SessionUpdate` values, and coalesces rendering behind `render_needed`.
 `SessionView` is its test seam; `Tui` is the ncurses implementation.
 
+`ConsoleSession` reuses the same grammar but has different arrival semantics:
+complete lines received during generation are queued and dispatched one at a
+time rather than refused. Bare `/stop` and `/exit` act while enqueueing.
+Piped stdin receives backpressure at the queue limit. EOF means “no more
+submissions”; the loop continues until the active turn and queue are drained.
+SIGINT cancels an active turn and exits while idle.
+
 The input editor stores wide characters, supports cursor movement and editing,
 and converts to UTF-8 on submission. A trailing backslash enters a visual
 continuation line; visual newlines are removed from the submitted value.
@@ -582,6 +604,14 @@ Addressed human labels are enabled whenever `RoomPersonas` contains multiple
 personas, or when restored single-agent history contains another participant
 or target. `/clear` forgets historical addressing evidence but keeps
 addressing enabled for a currently multi-agent room.
+
+The console writes an append-only transcript log to stdout and notices to
+stderr. `TranscriptEmitter` tracks entries by ID and streaming suffix length,
+and advances its watermark only after stdout flushes successfully. A history
+clear produces a marker rather than retracting bytes. If a failed turn discards
+a partial answer from the stored transcript, already-written partial text
+remains in the log and the error follows it. `ConsoleSurface` neutralizes C0,
+DEL, and C1 terminal controls in model and transcript text.
 
 Transcript entries use the compact `[Name] Answer` form. While a turn is
 active and reasoning is present, the TUI combines the ephemeral reasoning
@@ -830,6 +860,11 @@ exceptional exit it first preserves the original exception and destroys the
 directly. A shutdown exception does not replace the operation failure that
 caused the exceptional exit. `SessionController::shutdown()` is idempotent:
 
+`ConsoleSession` likewise calls the controller shutdown path on every exit.
+EOF is not itself an exit: queued prompts and an active turn drain first. An
+idle interrupt, `/exit`, a closed event channel, or a fatal wait/write error
+ends the loop immediately.
+
 1. `AgentRegistry::stop()` sets the shared cancellation flag.
 2. The registry closes its request channel, preserving any accepted work, and
    joins the execution thread. A queued request observes cancellation and
@@ -851,17 +886,20 @@ database, so a mistaken path cannot silently become an empty session.
 
 | Component | Responsibility |
 | --- | --- |
-| `src/util/` | Shared text, path, and environment utilities. |
+| `src/util/` | Shared text, path, environment, event-channel, and input-wait utilities. |
 | `src/transcript/` | Typed transcript, turn identifiers, and response-content values. |
 | `src/agents/` | Agent definitions, runtime metadata, context projection, execution, provider communication, and the runtime event channel. |
 | `src/session/` | Room personas, chat coordination and in-flight turn state (`SessionController`), workspace and session operations, session catalogs, SQLite journaling, presentation-safe summaries, and generation status. |
 | `src/ui/text/` | Shared slash-command and leading-mention parsing and dispatch. |
-| `src/ui/terminal/` | Ncurses selection, input, rendering, polling, and terminal session flow. |
+| `src/ui/render/` | Frontend-independent transcript labels and writing vocabulary. |
+| `src/ui/tui/` | Ncurses selection, input, layout, redraw planning, and terminal session flow. |
+| `src/ui/console/` | Console CLI, queued line input, signal handling, append-only emission, and sanitizing. |
 | `src/apps/` | Executable composition roots. |
 | `tests/` | Tests mirroring the source layout, plus integration and shared test support. |
 
-Every production `.cpp` except `src/apps/tui_main.cpp` is compiled into
-`cha_core`.
+All reusable non-curses sources are compiled into `cha_core`. Curses sources
+are isolated in `cha_tui`; both application entry points remain outside those
+libraries.
 
 ## Key invariants
 
@@ -916,15 +954,19 @@ Every production `.cpp` except `src/apps/tui_main.cpp` is compiled into
 CMake builds:
 
 - `cha_sqlite3`: pinned SQLite amalgamation;
-- `cha_core`: all non-entry-point sources across the logical directories;
-- `cha`: terminal application;
+- `cha_core`: static reusable core and console implementation, with no curses;
+- `cha_tui`: static ncurses frontend when `CHA_BUILD_TUI=ON`;
+- `cha`: full-screen application;
+- `chacon`: line-oriented console application;
 - `cha_tests`: discovered unit tests;
+- `console_tests`: registered process tests for the console executable;
 - `itest`: separately invoked integration executable.
 
-The build requires wide ncurses and threads. It uses an installed libcurl when
-available, otherwise fetches pinned curl 8.14.1. It also fetches nlohmann/json
-3.11.3, toml++ 3.4.0, SQLite 3.46.1, and GoogleTest 1.15.2 for tests. The
-bundled curl enables OpenSSL when it is available.
+The build requires threads; wide ncurses is required only when
+`CHA_BUILD_TUI=ON`. It uses an installed libcurl when available, otherwise
+fetches pinned curl 8.14.1. It also fetches nlohmann/json 3.11.3, toml++ 3.4.0,
+SQLite 3.46.1, and GoogleTest 1.15.2 for tests. The bundled curl enables OpenSSL
+when it is available.
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
 configuration, identity, room-persona/mention routing, textual command parsing and

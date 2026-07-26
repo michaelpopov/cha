@@ -48,12 +48,29 @@ Two properties matter more than the sequence:
 Cancelling either selector is an error, not a silent exit: the process reports
 why it stopped.
 
+## `console_main.cpp`
+
+The line-oriented application parses room/session selection, creates a
+`signalfd` for SIGINT, opens the controller through `Workspace`, and assembles
+`SystemConsole`, `TranscriptEmitter`, and `ConsoleSession`. It also decides
+TTY-dependent behavior: prompts and the ready banner appear only for
+interactive stdin, pipe input receives queue backpressure, and automatic color
+is enabled only for a terminal stdout.
+
+SIGINT is blocked before the controller creates its agent thread so every
+thread inherits the mask and the main loop can consume interrupts reliably.
+SIGPIPE is ignored so `ConsoleSession` can turn a closed stdout into exit code
+1 with an error on stderr.
+
+Listings return before any session or console object is constructed. Usage
+errors return 2, runtime errors return 1, and orderly EOF, `/exit`, or idle
+Ctrl-C return 0.
+
 ## Dependencies
 
 A composition root may depend on any concrete component it needs to assemble a
-program. `tui_main.cpp` currently uses `session/` for the workspace and chat
-operations, `ui/terminal/` for selection, terminal ownership, and the
-chat loop, and `util/` for `.env` loading.
+program. `tui_main.cpp` uses `session/`, `ui/tui/`, and `util/`.
+`console_main.cpp` uses `session/`, `ui/console/`, `ui/render/`, and `util/`.
 
 Nothing depends on `apps/`.
 
