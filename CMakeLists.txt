@@ -77,6 +77,7 @@ target_compile_definitions(
 
 add_library(cha_core
     src/util/environment.cpp
+    src/util/input_wait.cpp
     src/util/path_name.cpp
     src/util/text.cpp
     src/transcript/transcript.cpp
@@ -149,6 +150,7 @@ if(BUILD_TESTING)
 
     add_executable(cha_tests
         tests/util/unit_environment.cpp
+        tests/util/unit_input_wait.cpp
         tests/util/unit_text.cpp
         tests/transcript/unit_transcript.cpp
         tests/agents/unit_agent_context.cpp
@@ -168,7 +170,7 @@ if(BUILD_TESTING)
         tests/ui/render/unit_transcript_writer.cpp
         tests/ui/tui/unit_render_plan.cpp
         tests/ui/tui/unit_screen_layout.cpp
-        tests/ui/terminal/unit_user.cpp
+        tests/ui/tui/unit_input_editor.cpp
         tests/ui/tui/unit_user_session.cpp
     )
     # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
