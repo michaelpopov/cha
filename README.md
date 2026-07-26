@@ -6,30 +6,28 @@ line-oriented `chacon` console frontend.
 
 ## Workspace configuration
 
-Run either executable from a workspace containing `personas/` and `forums/`.
-`forums/forums.list` is an ordered list of forum names (one per line; blank lines
-and `#` comments are ignored). At `cha` startup, a terminal selector lets you
-choose a forum and then an existing session or **New session**. `chacon` makes
-the same selection through command-line options.
+Run either executable from a workspace containing `forums/`.
+Each immediate subdirectory of `forums/` is a forum; forums are presented in
+lexicographic name order. At `cha` startup, a terminal selector lets you choose
+a forum and then an existing session or **New session**. `chacon` makes the same
+selection through command-line options.
 
-Each forum contains `personas.list`, an ordered list of one or more personas, and `USER.md`. Every listed persona is loaded from `personas/<persona>/config.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (`SYSTEM.md`, followed by the forum `USER.md`, followed by generated forum context that identifies the agent and the forum's other personas). The first persona is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
+Each forum has `config.toml` with a required `display_name` string, a `personas/` directory with one or more persona subdirectories, and `USER.md`. The directory name is the stable forum ID used by `chacon --forum`; the display name is shown in the UI and forum listings. Each persona is loaded from `forums/<forum>/personas/<persona>/config.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (`SYSTEM.md`, followed by the forum `USER.md`, followed by generated forum context that identifies the agent and the forum's other personas). Persona directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
-Each persona's immutable `id` identifies transcript entries; its `name` is the visible `@mention` handle. Names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A forum cannot contain duplicate IDs or names. All agents use the session's shared chat transcript. Exchanges involving another agent are supplied as escaped JSON Lines so the receiving agent can treat the other speaker's first-person statements as quoted history rather than its own identity. A session stores only its forum and transcript, so it can be reopened even if the forum's personas changed.
+Each persona directory's immutable name identifies transcript entries; its `display_name` is the visible `@mention` handle. Display names cannot contain whitespace, start with `@` or `/`, or be `User` (case-insensitively). A forum cannot contain duplicate IDs or display names. All agents use the session's shared chat transcript. Exchanges involving another agent are supplied as escaped JSON Lines so the receiving agent can treat the other speaker's first-person statements as quoted history rather than its own identity. A session stores only its forum and transcript, so it can be reopened even if the forum's personas changed.
 
 Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and forum must match the selected forum before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
 
-`personas/base_config.toml` may define configuration shared by every persona in
-the workspace. A persona's own `config.toml` overrides it field by field. The
+`forums/<forum>/personas/base_config.toml` may define configuration shared by every persona in
+that forum. A persona's own `config.toml` overrides it field by field. The
 precedence is built-in defaults, then `base_config.toml`, then the persona
-file. The base file is optional. `id` and `name` are never inherited: they must
-appear in every persona file and are not allowed in the base file.
+file. The base file is optional; it cannot define `display_name`.
 
 The following top-level configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
-- `id`: required stable persona identifier containing only ASCII letters, digits, underscores, and hyphens. Do not change it when renaming or moving the persona directory.
-- `name`: required display name and `@mention` handle. It cannot contain whitespace, start with `@` or `/`, or equal `User` case-insensitively.
+- `display_name`: required display name and `@mention` handle. It cannot contain whitespace, start with `@` or `/`, or equal `User` case-insensitively. The persona directory name is its stable identifier and must contain only ASCII letters, digits, underscores, and hyphens.
 - `mode`: `net` for llama.cpp or `test` for the built-in echo server; defaults to `test`.
 - `model`: optional model name sent in chat-completions requests. If omitted, the first model returned by the endpoint's `/v1/models` API is used.
 - `stream`: whether to request streamed SSE responses; defaults to `true`.
@@ -44,7 +42,7 @@ The following top-level configuration fields are supported:
 Example:
 
 ```toml
-# personas/base_config.toml
+# forums/example/personas/base_config.toml
 host = "127.0.0.1"
 port = 8080
 mode = "net"
@@ -55,9 +53,8 @@ reasoning_format = "auto"
 ```
 
 ```toml
-# personas/local-assistant/config.toml
-id = "local-assistant"
-name = "Local assistant"
+# forums/example/personas/local-assistant/config.toml
+display_name = "Local assistant"
 temperature = 0.7
 ```
 
@@ -135,7 +132,7 @@ and the resolved session ID before the first prompt, so a session created by
 prompt is a bold `@DefaultAgentName> ` marker, for example `@Ismael> `, so it
 always identifies the agent that will receive an unaddressed submission.
 Running `/@Name` changes both the run-local default and the next prompt marker.
-Forum listings contain one name per line. Session listings contain exactly three tab-separated
+Forum listings contain one display name per line. Session listings contain exactly three tab-separated
 fields—ID, label, and error—with no header, padding, or color. Invalid sessions
 remain visible in the listing. Listing modes ignore session-selection flags;
 selection validation applies only when opening or creating a session.

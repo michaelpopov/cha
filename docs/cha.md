@@ -200,7 +200,7 @@ directly.
 The TUI entry point and `Workspace` perform these steps:
 
 1. Load optional `.env` values without replacing existing process variables.
-2. Construct `Workspace`, which requires `personas/` and `forums/` to exist, and
+2. Construct `Workspace`, which requires `forums/` to exist, and
    `Terminal`.
 3. Let `StartupSelector` choose a forum from `Workspace::forums()`.
 4. Let the selector choose an existing session or **New session** from
@@ -236,29 +236,29 @@ The workspace shape is:
 ```text
 workspace/
   .env                         optional
-  personas/
-    base_config.toml           optional shared persona configuration
-    <persona>/
-      config.toml
-      SYSTEM.md
   forums/
-    forums.list
     <forum>/
-      personas.list
+      config.toml              required display_name
       USER.md
+      personas/
+        base_config.toml       optional forum persona configuration
+        <persona>/
+          config.toml
+          SYSTEM.md
       sessions/
         <session-id>.sqlite3
 ```
 
-Blank lines and lines beginning with `#` are ignored in both list files. Names
-must be safe single path components. `personas.list` must contain at least one
-entry and cannot repeat a persona directory name. `Workspace::load_forum`
-parses the forum and list; persona-directory existence is checked when
+Each immediate `forums/` subdirectory is a forum, and they are listed in
+lexicographic name order. Each forum's `personas/` subdirectories are its
+personas and are likewise loaded in lexicographic name order. Each forum must
+contain at least one persona directory. `Workspace::load_forum` resolves those
+directories and reads the required `display_name` from `config.toml`; persona configuration is checked when
 `Workspace` resolves each entry.
 
 `Config` and `AgentDefinition` are agent-owned value types. Their disk loaders
 live under `agents/`. `Workspace` resolves the optional
-`personas/base_config.toml` and passes it explicitly to
+the selected forum's `personas/base_config.toml` and passes it explicitly to
 `load_agent_definitions()`; the agent layer does not infer the workspace
 layout. `load_config()` parses the base and persona files as typed partial
 configurations, overlays them, and validates the effective result. Precedence
@@ -277,8 +277,8 @@ representation used for shared history.
 over the root path and holds no cached forum or persona state, so every operation
 resolves what it needs when it is called:
 
-- `forums()` reads and validates `forums.list`;
-- `load_forum()` resolves one forum directory and its ordered `personas.list`;
+- `forums()` enumerates and sorts the `forums/` subdirectories;
+- `load_forum()` resolves one forum directory and its ordered persona directories;
 - `sessions()` builds a `SessionCatalog` for the forum and maps its `Session`
   records to `SessionSummary` values;
 - `create_session()` and `open_session()` load the forum's complete ordered agent

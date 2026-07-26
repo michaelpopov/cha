@@ -11,10 +11,11 @@ namespace cha {
 class SessionController;
 class WakeNotifier;
 
-// A forum resolved from the workspace: its name, its ordered personas, and the
-// directory holding its instructions and sessions.
+// A forum resolved from the workspace: its directory name, user-facing display
+// name, ordered personas, and the directory holding its instructions and sessions.
 struct Forum {
     std::string name;
+    std::string display_name;
     std::vector<std::string> persona_names;
     std::filesystem::path directory;
 };
@@ -47,9 +48,6 @@ public:
 
     std::vector<std::string> forums() const;
     Forum load_forum(const std::string& name) const;
-    // Resolves the selected persona directory without loading its agent configuration.
-    std::filesystem::path persona_directory(std::string_view persona_name) const;
-
     std::vector<SessionSummary> sessions(const std::string& forum_name) const;
     [[nodiscard]] CreatedSession create_session(
         const std::string& forum_name,
@@ -62,8 +60,6 @@ public:
 
 private:
     std::filesystem::path forum_directory(const std::string& name) const;
-    static std::vector<std::string> read_name_list(const std::filesystem::path& path);
-
     std::filesystem::path root_;
 };
 

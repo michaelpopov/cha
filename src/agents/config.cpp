@@ -16,8 +16,9 @@ namespace cha {
 namespace {
 
 struct ConfigPatch {
-    std::optional<std::string> id;
-    std::optional<std::string> name;
+    std::optional<std::string> display_name;
+    std::optional<std::string> legacy_id;
+    std::optional<std::string> legacy_name;
     std::optional<std::string> host;
     std::optional<int> port;
     std::optional<Mode> mode;
@@ -103,15 +104,18 @@ ConfigPatch parse_config(
             "Failed to read config file '" + utf8_path(path) + "'");
     }
     const toml::table table = toml::parse(file, utf8_path(path));
-    if (base && (table.contains("id") || table.contains("name"))) {
+    if (base && (table.contains("display_name") || table.contains("id")
+                 || table.contains("name"))) {
         throw std::runtime_error(
             "Base config file '" + utf8_path(path)
-            + "' cannot define persona 'id' or 'name'");
+            + "' cannot define persona identity");
     }
 
     return {
-        .id = read_optional<std::string>(table, path, "id", "string"),
-        .name = read_optional<std::string>(table, path, "name", "string"),
+        .display_name = read_optional<std::string>(
+            table, path, "display_name", "string"),
+        .legacy_id = read_optional<std::string>(table, path, "id", "string"),
+        .legacy_name = read_optional<std::string>(table, path, "name", "string"),
         .host = read_optional<std::string>(table, path, "host", "string"),
         .port = read_optional<int>(table, path, "port", "integer"),
         .mode = read_mode(table, path),
@@ -140,8 +144,6 @@ void override_with(
 }
 
 void overlay(ConfigPatch& effective, const ConfigPatch& persona) {
-    override_with(effective.id, persona.id);
-    override_with(effective.name, persona.name);
     override_with(effective.host, persona.host);
     override_with(effective.port, persona.port);
     override_with(effective.mode, persona.mode);
@@ -160,11 +162,13 @@ Config build_config(
     const ConfigPatch& persona,
     const std::filesystem::path& persona_path,
     const std::optional<std::filesystem::path>& base_path) {
-    if (!persona.id || !persona.name
-        || persona.id->empty() || persona.name->empty()) {
+    const std::optional<std::string>& name = persona.display_name
+        ? persona.display_name
+        : persona.legacy_name;
+    if (!name || name->empty()) {
         throw std::runtime_error(
             "Persona config file '" + utf8_path(persona_path)
-            + "' requires non-empty string 'id' and 'name' values");
+            + "' requires a non-empty string 'display_name' value");
     }
     if (!effective.host || !effective.port) {
         throw std::runtime_error(
@@ -190,8 +194,9 @@ Config build_config(
     }
 
     Config config;
-    config.id = *persona.id;
-    config.name = *persona.name;
+    config.id = persona.legacy_id.value_or(
+        utf8_path(persona_path.parent_path().filename()));
+    config.name = *name;
     config.host = *effective.host;
     config.port = *effective.port;
     if (effective.mode) config.mode = *effective.mode;

@@ -26,16 +26,11 @@ protected:
             / ("cha_workspace_"
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()));
-        std::filesystem::create_directories(root_ / "personas" / "guide");
-        std::filesystem::create_directories(root_ / "forums" / "lobby");
+        std::filesystem::create_directories(
+            root_ / "forums" / "lobby" / "personas" / "guide");
         {
-            std::ofstream forums(root_ / "forums" / "forums.list");
-            forums << "lobby\n";
-        }
-        {
-            std::ofstream personas(
-                root_ / "forums" / "lobby" / "personas.list");
-            personas << "guide\n";
+            std::ofstream forum_config(root_ / "forums" / "lobby" / "config.toml");
+            forum_config << "display_name = \"The Lobby\"\n";
         }
         {
             std::ofstream forum_prompt(
@@ -44,19 +39,18 @@ protected:
         }
         {
             std::ofstream base_config(
-                root_ / "personas" / "base_config.toml");
+                root_ / "forums" / "lobby" / "personas" / "base_config.toml");
             base_config << "host = \"127.0.0.1\"\n"
                         << "port = 8080\n";
         }
         {
             std::ofstream config(
-                root_ / "personas" / "guide" / "config.toml");
-            config << "id = \"guide-id\"\n"
-                   << "name = \"Guide\"\n";
+                root_ / "forums" / "lobby" / "personas" / "guide" / "config.toml");
+            config << "display_name = \"Guide\"\n";
         }
         {
             std::ofstream system_prompt(
-                root_ / "personas" / "guide" / "SYSTEM.md");
+                root_ / "forums" / "lobby" / "personas" / "guide" / "SYSTEM.md");
             system_prompt << "Persona instructions";
         }
     }
@@ -106,12 +100,12 @@ TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
 }
 
 TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedPersonaConfig) {
-    std::filesystem::remove(root_ / "personas" / "base_config.toml");
+    std::filesystem::remove(
+        root_ / "forums" / "lobby" / "personas" / "base_config.toml");
     {
         std::ofstream config(
-            root_ / "personas" / "guide" / "config.toml");
-        config << "id = \"guide-id\"\n"
-               << "name = \"Guide\"\n"
+            root_ / "forums" / "lobby" / "personas" / "guide" / "config.toml");
+        config << "display_name = \"Guide\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
     }

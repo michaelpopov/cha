@@ -24,9 +24,9 @@ thread.
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
-        base["personas/base_config.toml<br/>optional shared defaults"]
-        cfg["personas/X/config.toml"]
-        sys["personas/X/SYSTEM.md"]
+        base["forums/R/personas/base_config.toml<br/>optional forum defaults"]
+        cfg["forums/R/personas/X/config.toml"]
+        sys["forums/R/personas/X/SYSTEM.md"]
         usr["forums/R/USER.md"]
     end
 
@@ -52,10 +52,10 @@ happens on the main thread during session construction: `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
 Configuration is a one-level overlay, not general inheritance. Built-in
-defaults are applied first, then the optional workspace
+defaults are applied first, then the optional forum
 `personas/base_config.toml`, then the persona's own `config.toml`. An omitted
-field inherits the value below it. `id` and `name` are the exception: each
-persona file must define them, and the base file must not. Parsing and
+field inherits the value below it. The persona directory name provides the ID,
+and each persona file must define `display_name`; the base file must not. Parsing and
 validation errors identify the file that supplied the invalid value.
 
 Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:

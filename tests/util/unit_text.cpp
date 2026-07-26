@@ -33,7 +33,7 @@ TEST(PathName, AcceptsOneSafePathComponent) {
 }
 
 TEST(PathName, RejectsEmptySpecialAndNestedPaths) {
-    const std::filesystem::path source = "forums.list";
+    const std::filesystem::path source = "personas";
 
     EXPECT_THROW(require_path_component("", source), std::runtime_error);
     EXPECT_THROW(require_path_component(".", source), std::runtime_error);

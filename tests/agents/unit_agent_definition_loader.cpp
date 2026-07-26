@@ -52,8 +52,7 @@ TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
     std::filesystem::create_directories(forum);
     {
         std::ofstream config(persona / "config.toml");
-        config << "id = \"guide-id\"\n"
-               << "name = \"Guide\"\n"
+        config << "display_name = \"Guide\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
         std::ofstream system_prompt(persona / "SYSTEM.md");
@@ -67,7 +66,7 @@ TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
 
     ASSERT_EQ(definitions.size(), 1U);
     const AgentDefinition& definition = definitions.front();
-    EXPECT_EQ(definition.config.id, "guide-id");
+    EXPECT_EQ(definition.config.id, "persona");
     EXPECT_EQ(definition.config.name, "Guide");
     expect_forum_context(
         definition,
@@ -85,8 +84,7 @@ TEST(AgentDefinitions, RequiresBothPromptFiles) {
     std::filesystem::create_directories(forum);
     {
         std::ofstream config(persona / "config.toml");
-        config << "id = \"guide-id\"\n"
-               << "name = \"Guide\"\n"
+        config << "display_name = \"Guide\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
         std::ofstream system_prompt(persona / "SYSTEM.md");
@@ -109,17 +107,15 @@ TEST(AgentDefinitions, RequiresBothPromptFiles) {
     std::filesystem::remove_all(root);
 }
 
-// Writes one persona directory whose config declares the given id and name.
+// Writes one persona directory whose name is its ID and whose config declares its display name.
 std::filesystem::path make_persona(
     const std::filesystem::path& root,
     std::string_view directory_name,
-    std::string_view id,
     std::string_view name) {
     const std::filesystem::path persona = root / directory_name;
     std::filesystem::create_directories(persona);
     std::ofstream config(persona / "config.toml");
-    config << "id = \"" << id << "\"\n"
-           << "name = \"" << name << "\"\n"
+    config << "display_name = \"" << name << "\"\n"
            << "host = \"127.0.0.1\"\n"
            << "port = 8080\n";
     std::ofstream system_prompt(persona / "SYSTEM.md");
@@ -138,8 +134,8 @@ std::filesystem::path make_forum(const std::filesystem::path& root) {
 TEST(AgentDefinitions, LoadsEveryPersonaInTheDeclaredOrder) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = make_forum(root);
-    const std::filesystem::path first = make_persona(root, "cheburashka", "cheburashka", "Cheburashka");
-    const std::filesystem::path second = make_persona(root, "ismael", "ismael", "Ismael");
+    const std::filesystem::path first = make_persona(root, "cheburashka", "Cheburashka");
+    const std::filesystem::path second = make_persona(root, "ismael", "Ismael");
 
     const std::vector<AgentDefinition> definitions =
         load_agent_definitions({first, second}, forum);
@@ -163,8 +159,8 @@ TEST(AgentDefinitions, LoadsEveryPersonaInTheDeclaredOrder) {
 TEST(AgentDefinitions, RefusesToOpenAForumWithMissingPersonaDefinitions) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = make_forum(root);
-    const std::filesystem::path healthy = make_persona(root, "healthy", "healthy", "Healthy");
-    const std::filesystem::path broken = make_persona(root, "broken", "broken", "Broken");
+    const std::filesystem::path healthy = make_persona(root, "healthy", "Healthy");
+    const std::filesystem::path broken = make_persona(root, "broken", "Broken");
     std::filesystem::remove(broken / "SYSTEM.md");
 
     try {

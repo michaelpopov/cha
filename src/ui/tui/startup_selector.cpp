@@ -34,9 +34,14 @@ StartupSelector::StartupSelector(Terminal& terminal) : terminal_(terminal) {
     terminal_.configure_selector();
 }
 
-std::optional<std::string> StartupSelector::select_forum(const std::vector<std::string>& forums) {
-    const auto selected = select("Select a forum", forums);
-    return selected ? std::optional<std::string>(forums[*selected]) : std::nullopt;
+std::optional<std::string> StartupSelector::select_forum(const std::vector<Forum>& forums) {
+    std::vector<std::string> options;
+    options.reserve(forums.size());
+    for (const Forum& forum : forums) {
+        options.push_back(forum.display_name);
+    }
+    const auto selected = select("Select a forum", options);
+    return selected ? std::optional<std::string>(forums[*selected].name) : std::nullopt;
 }
 
 std::optional<SessionSummary> StartupSelector::select_session(

@@ -44,8 +44,8 @@ Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
     Config config = load_config(
-        workspace_directory / "personas" / "Ismael" / "config.toml",
-        workspace_directory / "personas" / "base_config.toml");
+        workspace_directory / "forums" / "lobby" / "personas" / "Ismael" / "config.toml",
+        workspace_directory / "forums" / "lobby" / "personas" / "base_config.toml");
     config.stream = stream;
     return config;
 }
@@ -190,13 +190,13 @@ std::vector<AgentDefinition> lobby_definitions() {
     const Forum forum = workspace.load_forum("lobby");
     std::vector<std::filesystem::path> directories;
     for (const std::string& persona_name : forum.persona_names) {
-        directories.push_back(workspace.persona_directory(persona_name));
+        directories.push_back(
+            forum.directory / "personas" / persona_name);
     }
     return load_agent_definitions(
         directories,
         forum.directory,
-        std::filesystem::path{CHA_WORKSPACE_DIRECTORY}
-            / "personas" / "base_config.toml");
+        forum.directory / "personas" / "base_config.toml");
 }
 
 // Redirects one agent's backend at a local mock server without touching its prompt.
@@ -359,7 +359,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
         EXPECT_TRUE(show_addressing(
             controller->personas(), controller->transcript()));
 
-        // No mention: the first persona in personas.list answers.
+        // No mention: the first persona directory in name order answers.
         SessionUpdate update = handle_text_input(*controller, "Who are you?");
         ASSERT_TRUE(update.clear_input);
         run_until_idle(*controller);
@@ -435,7 +435,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
     }
     cheburashka_server.join();
 
-    // Cheburashka has left personas.list; the stored session still opens.
+    // Cheburashka has left the forum; the stored session still opens.
     SessionRestore restored = load_session_state(session.path);
     ASSERT_EQ(restored.entries.size(), 4U);
     ASSERT_TRUE(restored.interrupted_turns.empty());

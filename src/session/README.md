@@ -21,26 +21,30 @@ code.
 
 ```mermaid
 flowchart TD
-    root["workspace root"] --> personas["personas/"]
     root --> forums["forums/"]
     root --> env[".env — optional"]
-    personas --> base["base_config.toml<br/>optional shared defaults"]
+    personas --> base["base_config.toml<br/>optional forum defaults"]
     personas --> p1["Name/config.toml<br/>Name/SYSTEM.md"]
-    forums --> list["forums.list — ordered forum names"]
     forums --> forum["forum-name/"]
-    forum --> plist["personas.list — ordered persona names"]
+    forum --> config["config.toml — required display_name"]
+    forum --> personas["personas/ — persona directories"]
+    personas --> persona["persona-name/config.toml + SYSTEM.md"]
     forum --> user["USER.md — forum system-prompt extension"]
     forum --> sessions["sessions/&lt;id&gt;.sqlite3"]
 ```
 
-`Workspace` refuses to construct unless `personas/` and `forums/` both exist.
-List files ignore blank lines and `#` comments, must name at least one entry,
-and every name is checked with `require_path_component()` before it becomes a
-path — so a workspace file can never reach outside its directory. A forum's
-persona list additionally rejects duplicates.
+`Workspace` refuses to construct unless `forums/` exists.
+The `forums/` directory must contain at least one forum subdirectory; its names
+are sorted before presentation. Each forum's `personas/` directory must contain
+at least one persona subdirectory, also sorted before loading. Every directory
+name is checked with `require_path_component()` before it becomes a path.
+Each forum's `config.toml` must provide a non-empty string `display_name` for
+user-facing selection and listings; its directory name remains the stable ID.
+Each persona directory likewise supplies its stable ID, while its
+`config.toml` provides the required user-facing `display_name`.
 
 When a session is created or opened, `Workspace` checks for
-`personas/base_config.toml` and explicitly passes that optional path to the
+`personas/base_config.toml` within the selected forum and explicitly passes that optional path to the
 agent loaders along with each persona directory. The agent layer therefore
 applies shared configuration without knowing or inferring the workspace
 layout.
@@ -75,7 +79,7 @@ sequenceDiagram
 
     Note over UI,CC: Creating a session
     UI->>WS: create_session forum, label
-    WS->>WS: load_forum, read personas.list
+    WS->>WS: load_forum, enumerate personas/ directories
     WS->>AG: load_agent_definitions
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision

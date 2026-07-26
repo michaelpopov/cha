@@ -17,7 +17,7 @@ the chat loop.
 ```mermaid
 flowchart TD
     a["main<br/>catch and report any exception"] --> b["load_dotenv"]
-    b --> c["construct Workspace<br/>requires personas/ and forums/"]
+    b --> c["construct Workspace<br/>requires forums/"]
     c --> d["construct Terminal<br/>process-wide curses"]
     d --> e["StartupSelector.select_forum"]
     e -->|"cancelled"| x["throw, exit 1"]

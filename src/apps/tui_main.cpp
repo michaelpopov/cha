@@ -12,6 +12,7 @@
 #include <optional>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 static int main_internal();
 
@@ -31,7 +32,11 @@ int main_internal() {
     cha::Terminal terminal;
     cha::StartupSelector selector(terminal);
 
-    const auto forum_name = selector.select_forum(workspace.forums());
+    std::vector<cha::Forum> forums;
+    for (const std::string& forum_name : workspace.forums()) {
+        forums.push_back(workspace.load_forum(forum_name));
+    }
+    const auto forum_name = selector.select_forum(forums);
     if (!forum_name) {
         throw std::runtime_error("Forum selection cancelled");
     }

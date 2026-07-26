@@ -26,10 +26,10 @@ public:
                         .count()))) {
         const auto forum = root / "forums" / "hall";
         const auto sessions = forum / "sessions";
-        std::filesystem::create_directories(root / "personas");
+        std::filesystem::create_directories(
+            forum / "personas" / "Guide");
         std::filesystem::create_directories(sessions);
-        write(root / "forums" / "forums.list", "hall\n");
-        write(forum / "personas.list", "Guide\n");
+        write(forum / "config.toml", "display_name = \"The Hall\"\n");
         if (!create_session_database(
                 sessions / "valid.sqlite3",
                 {
@@ -103,12 +103,12 @@ TEST(ConsoleStartup, RejectsUsageErrorsWithCodeTwo) {
     }
 }
 
-TEST(ConsoleStartup, ForumListingUsesWorkspaceOrder) {
+TEST(ConsoleStartup, ForumListingUsesFilesystemNameOrder) {
     ListingWorkspace fixture;
     const Workspace workspace(fixture.root);
     std::ostringstream output;
     write_forum_listing(workspace, output);
-    EXPECT_EQ(output.str(), "hall\n");
+    EXPECT_EQ(output.str(), "The Hall\n");
 }
 
 TEST(ConsoleStartup, SessionListingIsPlainStableAndIncludesErrors) {

@@ -75,19 +75,18 @@ public:
                        .time_since_epoch()
                        .count()))) {
         std::filesystem::create_directories(
-            path_ / "personas" / "Ismael");
+            path_ / "forums" / "hall" / "personas" / "Ismael");
         std::filesystem::create_directories(
             path_ / "forums" / "hall" / "sessions");
         write_file(
-            path_ / "personas" / "Ismael" / "config.toml",
-            "id = \"ismael\"\nname = \"Ismael\"\n");
+            path_ / "forums" / "hall" / "config.toml",
+            "display_name = \"The Hall\"\n");
         write_file(
-            path_ / "personas" / "Ismael" / "SYSTEM.md",
+            path_ / "forums" / "hall" / "personas" / "Ismael" / "config.toml",
+            "display_name = \"Ismael\"\n");
+        write_file(
+            path_ / "forums" / "hall" / "personas" / "Ismael" / "SYSTEM.md",
             "You are a process test agent.\n");
-        write_file(path_ / "forums" / "forums.list", "hall\n");
-        write_file(
-            path_ / "forums" / "hall" / "personas.list",
-            "Ismael\n");
         write_file(
             path_ / "forums" / "hall" / "USER.md",
             "Answer the user.\n");
@@ -100,7 +99,7 @@ public:
 
     void point_at(int port) const {
         write_file(
-            path_ / "personas" / "base_config.toml",
+            path_ / "forums" / "hall" / "personas" / "base_config.toml",
             "host = \"127.0.0.1\"\n"
             "port = " + std::to_string(port) + "\n"
             "https = false\n"

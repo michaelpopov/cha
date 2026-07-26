@@ -97,7 +97,7 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
 
 void write_forum_listing(const Workspace& workspace, std::ostream& out) {
     for (const std::string& forum : workspace.forums()) {
-        out << listing_field(forum) << '\n';
+        out << listing_field(workspace.load_forum(forum).display_name) << '\n';
     }
 }
 

@@ -14,7 +14,7 @@ manual is the [top-level `README.md`](../README.md).
 It runs inside a workspace containing persona definitions and forums. A persona
 definition contains an identity, effective model configuration, and base
 system prompt. Its model configuration may inherit shared values from the
-workspace's optional `personas/base_config.toml`; persona-specific values
+selected forum's optional `personas/base_config.toml`; persona-specific values
 override them. A forum contains an ordered list of the personas participating in
 chats in that forum, together with a forum-specific system-prompt extension.
 When the forum is loaded, that extension is appended to each participating
@@ -171,9 +171,9 @@ sequenceDiagram
     participant controller as SessionController
 
     main->>main: load_dotenv
-    main->>ws: construct, require personas/ and forums/
+    main->>ws: construct, require forums/
     main->>ws: forums
-    ws-->>main: forum names from forums/forums.list
+    ws-->>main: forum names from forums/ subdirectories
     main->>sel: select_forum
     sel-->>main: chosen forum
     main->>ws: sessions of forum

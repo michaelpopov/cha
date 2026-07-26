@@ -19,8 +19,8 @@ enum class ReasoningFormat {
 };
 
 // Everything needed to reach one persona's provider and shape its replies: identity, endpoint and
-// credentials, model, streaming, and reasoning settings. load_config() overlays the persona file
-// on optional workspace defaults, then applies the built-in defaults below.
+// credentials, model, streaming, and reasoning settings. The persona directory
+// provides the stable ID; its config provides the display name.
 struct Config {
     std::string id{"assistant"};
     std::string name{"Assistant"};
@@ -37,8 +37,9 @@ struct Config {
     bool https{};
 };
 
-// Loads one persona configuration. id and name must come from persona_path. When base_path is
-// present, its other values become defaults that the persona file may override.
+// Loads one persona configuration. The parent directory name becomes its ID and
+// display_name must come from persona_path. When base_path is present, its other
+// values become defaults that the persona file may override.
 Config load_config(
     const std::filesystem::path& persona_path,
     std::optional<std::filesystem::path> base_path = std::nullopt);

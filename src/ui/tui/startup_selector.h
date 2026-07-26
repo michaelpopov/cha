@@ -21,7 +21,7 @@ public:
     StartupSelector(const StartupSelector&) = delete;
     StartupSelector& operator=(const StartupSelector&) = delete;
 
-    std::optional<std::string> select_forum(const std::vector<std::string>& forums);
+    std::optional<std::string> select_forum(const std::vector<Forum>& forums);
     std::optional<SessionSummary> select_session(
         const std::vector<SessionSummary>& sessions,
         std::string_view error = {});

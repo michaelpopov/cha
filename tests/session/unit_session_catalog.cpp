@@ -21,34 +21,23 @@ protected:
     void SetUp() override {
         root = std::filesystem::temp_directory_path()
             / ("cha_workspace_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-        std::filesystem::create_directories(root / "personas" / "guide");
-        std::filesystem::create_directories(root / "personas" / "other");
+        std::filesystem::create_directories(
+            root / "forums" / "lobby" / "personas" / "guide");
         std::filesystem::create_directories(root / "forums" / "lobby" / "sessions");
         {
-            std::ofstream file(root / "forums" / "forums.list");
-            file << "# forums\n\nlobby\n";
+            std::ofstream file(root / "forums" / "lobby" / "config.toml");
+            file << "display_name = \"The Lobby\"\n";
         }
         {
-            std::ofstream file(root / "personas" / "guide" / "config.toml");
-            file << "id = \"guide-id\"\nname = \"Guide\"\n"
+            std::ofstream file(
+                root / "forums" / "lobby" / "personas" / "guide" / "config.toml");
+            file << "display_name = \"Guide\"\n"
                  << "host = \"127.0.0.1\"\nport = 8080\n";
         }
         {
-            std::ofstream file(root / "personas" / "guide" / "SYSTEM.md");
+            std::ofstream file(
+                root / "forums" / "lobby" / "personas" / "guide" / "SYSTEM.md");
             file << "Persona instructions";
-        }
-        {
-            std::ofstream file(root / "personas" / "other" / "config.toml");
-            file << "id = \"other-id\"\nname = \"Other\"\n"
-                 << "host = \"127.0.0.1\"\nport = 8081\n";
-        }
-        {
-            std::ofstream file(root / "personas" / "other" / "SYSTEM.md");
-            file << "Other instructions";
-        }
-        {
-            std::ofstream file(root / "forums" / "lobby" / "personas.list");
-            file << "guide\n";
         }
         {
             std::ofstream file(root / "forums" / "lobby" / "USER.md");
@@ -86,15 +75,26 @@ TranscriptEntry human(EntryId id, std::string text) {
     return make_human_entry(id, "guide-id", "Guide", std::move(text));
 }
 
-TEST_F(WorkspaceTest, LoadsForumsAndResolvesTheirPersonaDirectory) {
+TEST_F(WorkspaceTest, LoadsForumsAndTheirPersonaDirectories) {
     Workspace workspace(root);
 
     EXPECT_EQ(workspace.forums(), (std::vector<std::string>{"lobby"}));
     const Forum forum = workspace.load_forum("lobby");
 
     EXPECT_EQ(forum.name, "lobby");
+    EXPECT_EQ(forum.display_name, "The Lobby");
     EXPECT_EQ(forum.persona_names, (std::vector<std::string>{"guide"}));
-    EXPECT_EQ(workspace.persona_directory("guide"), root / "personas" / "guide");
+}
+
+TEST_F(WorkspaceTest, EnumeratesForumSubdirectoriesInNameOrder) {
+    std::filesystem::create_directories(root / "forums" / "alpha");
+    std::ofstream(root / "forums" / "README.md") << "not a forum";
+
+    Workspace workspace(root);
+
+    EXPECT_EQ(
+        workspace.forums(),
+        (std::vector<std::string>{"alpha", "lobby"}));
 }
 
 TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
@@ -281,84 +281,28 @@ TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
     }
 }
 
-TEST_F(WorkspaceTest, LoadsForumsWithMultiplePersonasInDeclaredOrder) {
-    {
-        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::app);
-        file << "other\n";
-    }
+TEST_F(WorkspaceTest, LoadsForumPersonasFromSubdirectoriesInNameOrder) {
+    std::filesystem::create_directories(
+        root / "forums" / "lobby" / "personas" / "other");
     Workspace workspace(root);
     EXPECT_EQ(
         workspace.load_forum("lobby").persona_names,
         (std::vector<std::string>{"guide", "other"}));
 }
 
-TEST_F(WorkspaceTest, IgnoresBlankLinesAndCommentsInThePersonaList) {
-    {
-        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
-        file << "# forum personas\n\n  other  \n\n# guide moved down\nguide\n";
-    }
+TEST_F(WorkspaceTest, IgnoresFilesWhenEnumeratingForumPersonas) {
+    std::ofstream(root / "forums" / "lobby" / "personas" / "README.md")
+        << "not a persona";
     Workspace workspace(root);
     EXPECT_EQ(
         workspace.load_forum("lobby").persona_names,
-        (std::vector<std::string>{"other", "guide"}));
+        (std::vector<std::string>{"guide"}));
 }
 
-TEST_F(WorkspaceTest, RejectsAPersonaListNamingOnePersonaTwice) {
-    {
-        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
-        file << "guide\nother\nguide\n";
-    }
+TEST_F(WorkspaceTest, RejectsAnEmptyOrAbsentForumPersonasDirectory) {
+    std::filesystem::remove_all(root / "forums" / "lobby" / "personas");
+    std::filesystem::create_directories(root / "forums" / "lobby" / "personas");
     Workspace workspace(root);
-
-    try {
-        (void)workspace.load_forum("lobby");
-        FAIL() << "expected a duplicate persona diagnostic";
-    } catch (const std::runtime_error& error) {
-        const std::string message = error.what();
-        EXPECT_NE(message.find("personas.list"), std::string::npos) << message;
-        EXPECT_NE(message.find("'guide' more than once"), std::string::npos) << message;
-    }
-}
-
-TEST_F(WorkspaceTest, DefersMissingPersonaValidationUntilPersonaResolution) {
-    {
-        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
-        file << "guide\nabsent\n";
-    }
-    Workspace workspace(root);
-
-    EXPECT_EQ(
-        workspace.load_forum("lobby").persona_names,
-        (std::vector<std::string>{"guide", "absent"}));
-    EXPECT_THROW((void)workspace.persona_directory("absent"), std::runtime_error);
-}
-
-TEST_F(WorkspaceTest, RejectsAnEmptyOrAbsentPersonaList) {
-    Workspace workspace(root);
-    {
-        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
-        file << "# nobody lives here\n\n";
-    }
-
-    try {
-        (void)workspace.load_forum("lobby");
-        FAIL() << "expected an empty persona list diagnostic";
-    } catch (const std::runtime_error& error) {
-        EXPECT_NE(std::string(error.what()).find("does not name a persona"), std::string::npos)
-            << error.what();
-    }
-
-    std::filesystem::remove(root / "forums" / "lobby" / "personas.list");
-    EXPECT_THROW((void)workspace.load_forum("lobby"), std::runtime_error);
-}
-
-TEST_F(WorkspaceTest, RejectsAPersonaNameThatEscapesThePersonaDirectory) {
-    {
-        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
-        file << "../personas/guide\n";
-    }
-    Workspace workspace(root);
-
     EXPECT_THROW((void)workspace.load_forum("lobby"), std::runtime_error);
 }
 
@@ -375,10 +319,9 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumPersonasAre) {
     }
 
     // The forum now contains completely different personas; the session is unaffected.
-    {
-        std::ofstream file(root / "forums" / "lobby" / "personas.list", std::ios::trunc);
-        file << "guide\n";
-    }
+    std::filesystem::remove_all(root / "forums" / "lobby" / "personas");
+    std::filesystem::create_directories(
+        root / "forums" / "lobby" / "personas" / "guide");
     const Forum reduced = workspace.load_forum("lobby");
     SessionCatalog reopened(reduced.directory / "sessions", reduced.name);
 
