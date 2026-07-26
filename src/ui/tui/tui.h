@@ -35,6 +35,7 @@ public:
         const InputEditor& editor,
         const GenerationStatus& status,
         bool show_addressing,
+        std::string_view input_target_name,
         std::string_view notice = {}) override;
     void scroll_up() override;
     void scroll_down() override;
@@ -60,7 +61,12 @@ private:
         int output_height,
         int columns,
         bool show_addressing);
-    void render_input(const InputEditor& editor, int input_y, int input_height, int columns);
+    void render_input(
+        const InputEditor& editor,
+        std::string_view input_target_name,
+        int input_y,
+        int input_height,
+        int columns);
 
     WINDOW* transcript_pad_{};
     WINDOW* input_pad_{};

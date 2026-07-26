@@ -3,6 +3,7 @@
 #include "session/session_controller.h"
 #include "ui/render/transcript_writer.h"
 #include "ui/text/text_input.h"
+#include "ui/text/mention.h"
 
 #include <utility>
 
@@ -26,6 +27,7 @@ void UserSession::render() {
         editor_,
         controller_.generation_status(),
         show_addressing(controller_.personas(), controller_.transcript()),
+        input_target_name(),
         notice_);
     render_needed_ = false;
 }
@@ -155,6 +157,20 @@ void UserSession::submit_input() {
 
 void UserSession::request_stop() {
     apply_update(controller_.request_stop());
+}
+
+std::string UserSession::input_target_name() const {
+    const PersonaInfo* target =
+        controller_.personas().find(controller_.default_agent_id());
+    const AddressedPrompt prompt = parse_addressed_prompt(editor_.value());
+    if (!prompt.handle.empty()) {
+        const HandleResolution resolution =
+            controller_.personas().resolve_handle(prompt.handle);
+        if (resolution.match == HandleMatch::resolved) {
+            target = resolution.persona;
+        }
+    }
+    return target ? target->name : std::string{};
 }
 
 void UserSession::shutdown() {

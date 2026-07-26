@@ -14,7 +14,7 @@
 namespace cha {
 namespace {
 
-constexpr int input_height = 5;
+constexpr int input_height = 6;
 constexpr int status_height = 1;
 
 class CursesTranscriptSurface final : public TranscriptSurface {
@@ -188,6 +188,7 @@ void Tui::render(
     const InputEditor& editor,
     const GenerationStatus& status,
     bool show_addressing,
+    std::string_view input_target_name,
     std::string_view notice) {
     int rows = 0;
     int columns = 0;
@@ -237,7 +238,7 @@ void Tui::render(
     wnoutrefresh(stdscr);
     render_transcript(
         transcript.snapshot(), status, output_height, columns, show_addressing);
-    render_input(editor, input_y, input_height, columns);
+    render_input(editor, input_target_name, input_y, input_height, columns);
     doupdate();
 }
 
@@ -420,8 +421,13 @@ void Tui::render_transcript(
     pnoutrefresh(transcript_pad_, transcript_viewport_.top(), 0, 0, 0, output_height - 1, columns - 1);
 }
 
-void Tui::render_input(const InputEditor& editor, int input_y, int height, int columns) {
-    const int inner_height = height - 2;
+void Tui::render_input(
+    const InputEditor& editor,
+    std::string_view input_target_name,
+    int input_y,
+    int height,
+    int columns) {
+    const int inner_height = height - 3;
     const int inner_width = columns - 2;
     const int estimated_rows = layout_rows(editor.text(), inner_width, 2) + inner_height + 4;
     ensure_input_pad(estimated_rows, inner_width);
@@ -429,6 +435,12 @@ void Tui::render_input(const InputEditor& editor, int input_y, int height, int c
     initialize_transcript_surface(surface);
     werase(input_pad_);
     wmove(input_pad_, 0, 0);
+    waddstr(input_pad_, "To: @");
+    waddnstr(
+        input_pad_,
+        input_target_name.data(),
+        std::max(0, inner_width - 5));
+    wmove(input_pad_, 1, 0);
 
     waddwstr(input_pad_, L"> ");
     const std::wstring prefix = editor.text().substr(0, editor.cursor());
@@ -439,7 +451,7 @@ void Tui::render_input(const InputEditor& editor, int input_y, int height, int c
     getyx(input_pad_, cursor_y, cursor_x);
     waddwstr(input_pad_, suffix.c_str());
 
-    const int input_view_top = std::max(0, cursor_y - inner_height + 1);
+    const int input_view_top = std::max(0, cursor_y - inner_height + 2);
     pnoutrefresh(
         input_pad_,
         input_view_top,

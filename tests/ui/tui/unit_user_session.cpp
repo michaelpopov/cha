@@ -77,6 +77,7 @@ public:
         const InputEditor& editor,
         const GenerationStatus& status,
         bool show_addressing,
+        std::string_view input_target_name,
         std::string_view notice) override {
         ++render_count;
         rendered_entries = transcript.entries();
@@ -85,6 +86,7 @@ public:
         rendered_agent_name = std::move(status.agent_name);
         rendered_phase = status.phase;
         rendered_show_addressing = show_addressing;
+        rendered_input_target_name = input_target_name;
         rendered_notice = notice;
     }
 
@@ -121,6 +123,7 @@ public:
     std::string rendered_agent_name;
     ResponsePhase rendered_phase{ResponsePhase::waiting};
     bool rendered_show_addressing{};
+    std::string rendered_input_target_name;
     int render_count{};
     int scroll_up_count{};
     int scroll_down_count{};
@@ -424,6 +427,25 @@ TEST(UserSession, RendersAddressingWheneverTheForumHostsSeveralAgents) {
     session.render_if_needed();
     EXPECT_TRUE(view.rendered_show_addressing)
         << "a forum with multiple personas keeps showing every prompt's target";
+}
+
+TEST(UserSession, PreviewsTheDefaultOrLeadingMentionedInputTarget) {
+    TemporarySessionJournal temporary;
+    auto controller = SessionController::from_backends_for_testing(
+        two_agents(),
+        temporary.path,
+        notifier());
+    FakeSessionView view;
+    UserSession session(view, *controller);
+
+    session.resize();
+    session.render_if_needed();
+    EXPECT_EQ(view.rendered_input_target_name, "Guide");
+
+    view.type("@Ismael Hello");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    EXPECT_EQ(view.rendered_input_target_name, "Ismael");
 }
 
 TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOtherwise) {

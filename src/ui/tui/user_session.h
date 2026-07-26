@@ -37,6 +37,7 @@ private:
     void handle_input(const SessionInput& input);
     void submit_input();
     void request_stop();
+    std::string input_target_name() const;
 
     SessionView& view_;
     InputEditor editor_;

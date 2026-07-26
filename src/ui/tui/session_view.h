@@ -50,6 +50,7 @@ public:
         const InputEditor& editor,
         const GenerationStatus& status,
         bool show_addressing,
+        std::string_view input_target_name,
         std::string_view notice) = 0;
     virtual void scroll_up() = 0;
     virtual void scroll_down() = 0;
