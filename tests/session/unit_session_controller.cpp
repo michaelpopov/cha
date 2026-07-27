@@ -99,6 +99,7 @@ public:
         model_contexts.push_back(project_agent_context(
             transcript.entries(),
             transcript.open_entry_id(),
+            transcript.offrecord_span(),
             {},
             id_));
         return {.bytes = request.prompt.text};
@@ -555,6 +556,105 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
     EXPECT_TRUE(controller->transcript().entries().empty());
     EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
 
+}
+
+TEST(SessionController, KeepsOffrecordMarkersOutOfTheSessionDatabase) {
+    TemporaryJournal temporary;
+    auto controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    EXPECT_EQ(controller->extend_offrecord().notice, "No off-record span to extend");
+    const SessionUpdate opened = controller->open_offrecord();
+    EXPECT_TRUE(opened.render_needed);
+    EXPECT_TRUE(opened.clear_input);
+    EXPECT_FALSE(opened.notice);
+    EXPECT_EQ(controller->open_offrecord().notice,
+              "Already off the record; use /hide-off first");
+    EXPECT_TRUE(controller->extend_offrecord().render_needed);
+    EXPECT_TRUE(controller->restore_offrecord().render_needed);
+    EXPECT_EQ(controller->restore_offrecord().notice, "Nothing to restore");
+
+    EXPECT_EQ(
+        controller->transcript().entries(),
+        (std::vector<TranscriptEntry>{
+            make_hide_on_marker(1),
+            make_hide_marker(2),
+            make_hide_off_marker(3),
+        }));
+    EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
+}
+
+TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater) {
+    TemporaryJournal temporary;
+    auto backend = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Answer"});
+    ScriptedBackend* backend_view = backend.get();
+    auto controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("Visible");
+    receive_until_idle(*controller);
+    (void)controller->open_offrecord();
+    (void)controller->submit_prompt("Hidden");
+    receive_until_idle(*controller);
+    (void)controller->extend_offrecord();
+    (void)controller->submit_prompt("Current");
+    receive_until_idle(*controller);
+
+    ASSERT_EQ(backend_view->model_contexts.size(), 3U);
+    EXPECT_EQ(
+        backend_view->model_contexts[2],
+        (std::vector<AgentMessage>{
+            {AgentRole::user, "Visible"},
+            {AgentRole::assistant, "Answer"},
+            {AgentRole::user, "Current"},
+        }));
+
+    (void)controller->restore_offrecord();
+    (void)controller->submit_prompt("Restored");
+    receive_until_idle(*controller);
+
+    ASSERT_EQ(backend_view->model_contexts.size(), 4U);
+    EXPECT_EQ(
+        backend_view->model_contexts[3],
+        (std::vector<AgentMessage>{
+            {AgentRole::user, "Visible"},
+            {AgentRole::assistant, "Answer"},
+            {AgentRole::user, "Hidden"},
+            {AgentRole::assistant, "Answer"},
+            {AgentRole::user, "Current"},
+            {AgentRole::assistant, "Answer"},
+            {AgentRole::user, "Restored"},
+        }));
+}
+
+TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan) {
+    TemporaryJournal busy_temporary;
+    auto busy_controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            CompletionResult{}, std::vector<std::string>{}, true)),
+        busy_temporary.path,
+        notifier());
+    (void)busy_controller->submit_prompt("Question");
+
+    EXPECT_EQ(busy_controller->open_offrecord().notice, generation_in_progress_notice);
+    EXPECT_EQ(busy_controller->extend_offrecord().notice, generation_in_progress_notice);
+    EXPECT_EQ(busy_controller->restore_offrecord().notice, generation_in_progress_notice);
+    busy_controller->shutdown();
+
+    TemporaryJournal clear_temporary;
+    auto clear_controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        clear_temporary.path,
+        notifier());
+    EXPECT_TRUE(clear_controller->open_offrecord().render_needed);
+    EXPECT_EQ(clear_controller->clear_transcript().notice, "Transcript cleared");
+    EXPECT_EQ(clear_controller->extend_offrecord().notice, "No off-record span to extend");
+    EXPECT_TRUE(clear_controller->transcript().entries().empty());
 }
 
 TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {

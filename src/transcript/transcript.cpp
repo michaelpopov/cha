@@ -9,6 +9,7 @@ TranscriptReadView::TranscriptReadView(const Transcript& transcript)
     : lock_(transcript.mutex_),
       entries_(&transcript.entries_),
       open_entry_id_(transcript.open_entry_id_),
+      offrecord_(transcript.offrecord_),
       history_epoch_(transcript.history_epoch_) {
 }
 
@@ -18,6 +19,10 @@ std::span<const TranscriptEntry> TranscriptReadView::entries() const noexcept {
 
 std::optional<EntryId> TranscriptReadView::open_entry_id() const noexcept {
     return open_entry_id_;
+}
+
+OffrecordSpan TranscriptReadView::offrecord_span() const noexcept {
+    return offrecord_;
 }
 
 std::size_t TranscriptReadView::history_epoch() const noexcept {
@@ -68,6 +73,30 @@ TranscriptEntry make_notice_entry(EntryId id, std::string text) {
         .display_name = std::string(notice_display_name),
         .text = std::move(text),
     };
+}
+
+namespace {
+
+TranscriptEntry make_marker_entry(EntryId id, std::string display_name) {
+    return {
+        .id = id,
+        .kind = EntryKind::notice,
+        .display_name = std::move(display_name),
+    };
+}
+
+} // namespace
+
+TranscriptEntry make_hide_on_marker(EntryId id) {
+    return make_marker_entry(id, "hide-on");
+}
+
+TranscriptEntry make_hide_marker(EntryId id) {
+    return make_marker_entry(id, "hide");
+}
+
+TranscriptEntry make_hide_off_marker(EntryId id) {
+    return make_marker_entry(id, "hide-off");
 }
 
 TranscriptEntry make_error_entry(
@@ -214,6 +243,7 @@ void Transcript::clear() {
         throw std::logic_error("Cannot clear a transcript while an entry is streaming");
     }
     entries_.clear();
+    offrecord_ = {};
     ++revision_;
     ++history_epoch_;
 }
@@ -233,8 +263,51 @@ void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
     }
 
     entries_ = std::move(entries);
+    offrecord_ = {};
     ++revision_;
     ++history_epoch_;
+}
+
+bool Transcript::open_offrecord(EntryId marker_id) {
+    std::lock_guard lock(mutex_);
+    if (open_entry_id_ || offrecord_.begin) {
+        return false;
+    }
+    TranscriptEntry marker = make_hide_on_marker(marker_id);
+    require_terminal_transcript_entry(marker);
+    require_next_id(marker.id);
+    offrecord_.begin = boundary();
+    entries_.push_back(std::move(marker));
+    ++revision_;
+    return true;
+}
+
+bool Transcript::extend_offrecord(EntryId marker_id) {
+    std::lock_guard lock(mutex_);
+    if (open_entry_id_ || !offrecord_.begin) {
+        return false;
+    }
+    TranscriptEntry marker = make_hide_marker(marker_id);
+    require_terminal_transcript_entry(marker);
+    require_next_id(marker.id);
+    offrecord_.end = boundary();
+    entries_.push_back(std::move(marker));
+    ++revision_;
+    return true;
+}
+
+bool Transcript::restore_offrecord(EntryId marker_id) {
+    std::lock_guard lock(mutex_);
+    if (open_entry_id_ || !offrecord_.begin) {
+        return false;
+    }
+    TranscriptEntry marker = make_hide_off_marker(marker_id);
+    require_terminal_transcript_entry(marker);
+    require_next_id(marker.id);
+    offrecord_ = {};
+    entries_.push_back(std::move(marker));
+    ++revision_;
+    return true;
 }
 
 TranscriptSnapshot Transcript::snapshot() const {
@@ -259,6 +332,10 @@ void Transcript::require_next_id(EntryId entry_id) const {
     if (!entries_.empty() && entry_id <= entries_.back().id) {
         throw std::invalid_argument("Transcript entry IDs must be strictly increasing");
     }
+}
+
+EntryId Transcript::boundary() const {
+    return entries_.empty() ? 1 : entries_.back().id + 1;
 }
 
 } // namespace cha

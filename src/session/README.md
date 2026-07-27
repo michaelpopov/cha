@@ -212,7 +212,9 @@ Streaming status never reaches SQL: `require_storable_transcript_entry()` and
 the schema constraints reject it. Reasoning is even further outside
 persistence—it lives only in the active response and never enters a
 `TranscriptEntry`. A cancelled agent response is stored only if it has answer
-text.
+text. The off-record span and its marker entries are also run-time only:
+reopening a session presents the complete durable conversation with no span and
+no markers.
 
 ## Session control
 
@@ -223,6 +225,9 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | --- | --- | --- |
 | `submit_prompt(text, handle)` | Resolves the handle, or falls back to the default agent, and starts a turn. | On success `clear_input` + `render_needed`; on an unknown or ambiguous handle, or an empty prompt, only a notice — the draft text is left in the editor. |
 | `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
+| `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success `render_needed` + `clear_input` and no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
+| `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
+| `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
 | `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
@@ -234,6 +239,13 @@ Every command except `request_stop()` and `receive()` is refused while a turn is
 active, with the shared in-progress notice. The controller formats session
 notices itself — handle errors, forum-persona text, `/info` — because their wording
 belongs to the session, not to a UI.
+
+The three off-record commands are the only ones that add a transcript entry
+without a journal write. Each passes the current `next_entry_id_` to the
+matching `Transcript` mutation *without* incrementing it and advances the
+counter only after a `true` result, so a refused command burns no ID. The
+marker entries are never journaled; a later durable write simply leaves their
+IDs as gaps, which entry IDs already permit.
 
 The controller does **not** parse `/commands`, mentions, HTTP routes, or JSON.
 Front ends translate those into these calls.

@@ -21,6 +21,7 @@ std::vector<AgentMessage> context(
     return project_agent_context(
         transcript.entries,
         transcript.open_entry_id,
+        {},
         system_prompt,
         agent_id);
 }
@@ -68,6 +69,128 @@ TEST(AgentContext, OmitsNoticesErrorsFailedPromptsAndIncompleteAgentEntries) {
     EXPECT_EQ(
         context(transcript, {}, "reviewer-id"),
         (std::vector<AgentMessage>{{AgentRole::user, "Current request"}}));
+}
+
+TEST(AgentContext, OmitsTheClosedOffrecordSpan) {
+    const std::vector<TranscriptEntry> entries{
+        make_human_entry(1, "assistant", "Assistant", "Before", 1),
+        make_hide_on_marker(2),
+        make_human_entry(3, "assistant", "Assistant", "Hidden", 2),
+        make_agent_entry(4, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 2),
+        make_hide_marker(5),
+        make_human_entry(6, "assistant", "Assistant", "After", 3),
+    };
+
+    EXPECT_EQ(
+        project_agent_context(
+            entries,
+            std::nullopt,
+            OffrecordSpan{.begin = 2, .end = 5},
+            {},
+            "assistant"),
+        (std::vector<AgentMessage>{
+            {AgentRole::user, "Before"},
+            {AgentRole::user, "After"},
+        }));
+}
+
+TEST(AgentContext, AnOpenOffrecordSpanExcludesNothing) {
+    const std::vector<TranscriptEntry> entries{
+        make_human_entry(1, "assistant", "Assistant", "Before", 1),
+        make_hide_on_marker(2),
+        make_human_entry(3, "assistant", "Assistant", "After opening", 2),
+    };
+
+    EXPECT_EQ(
+        project_agent_context(
+            entries,
+            std::nullopt,
+            OffrecordSpan{.begin = 2, .end = std::nullopt},
+            {},
+            "assistant"),
+        (std::vector<AgentMessage>{
+            {AgentRole::user, "Before"},
+            {AgentRole::user, "After opening"},
+        }));
+}
+
+TEST(AgentContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
+    const std::vector<TranscriptEntry> entries{
+        make_human_entry(1, "other", "Other", "First question", 1),
+        make_agent_entry(2, "other", "Other", "First answer", EntryStatus::complete, 1),
+        make_hide_on_marker(3),
+        make_human_entry(4, "assistant", "Assistant", "Hidden question", 2),
+        make_agent_entry(5, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 2),
+        make_hide_marker(6),
+        make_human_entry(7, "other", "Other", "Second question", 3),
+        make_agent_entry(8, "other", "Other", "Second answer", EntryStatus::complete, 3),
+        make_human_entry(9, "assistant", "Assistant", "Current", 4),
+    };
+
+    EXPECT_EQ(
+        project_agent_context(
+            entries,
+            std::nullopt,
+            OffrecordSpan{.begin = 3, .end = 6},
+            {},
+            "assistant"),
+        (std::vector<AgentMessage>{
+            {AgentRole::user,
+             "Shared chat history (JSONL):\n"
+             R"({"kind":"human","speaker":"User","addressed_to":"Other","text":"First question"})"
+             "\n"
+             R"({"kind":"agent","speaker":"Other","text":"First answer"})"
+             "\n"
+             R"({"kind":"human","speaker":"User","addressed_to":"Other","text":"Second question"})"
+             "\n"
+             R"({"kind":"agent","speaker":"Other","text":"Second answer"})"},
+            {AgentRole::user, "Current"},
+        }));
+}
+
+TEST(AgentContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
+    const std::vector<TranscriptEntry> entries{
+        make_human_entry(1, "assistant", "Assistant", "Earlier", 1),
+        make_agent_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 1),
+        make_hide_on_marker(3),
+        make_hide_marker(4),
+        make_human_entry(5, "assistant", "Assistant", "Current", 2),
+    };
+
+    EXPECT_EQ(
+        project_agent_context(
+            entries,
+            std::nullopt,
+            OffrecordSpan{.begin = 1, .end = 5},
+            "System",
+            "assistant"),
+        (std::vector<AgentMessage>{
+            {AgentRole::system, "System"},
+            {AgentRole::user, "Current"},
+        }));
+}
+
+TEST(AgentContext, CombinesSpanExclusionWithFailedAndCancelledTurnRules) {
+    const std::vector<TranscriptEntry> entries{
+        make_human_entry(1, "assistant", "Assistant", "Hidden", 1),
+        make_human_entry(2, "assistant", "Assistant", "Failed", 2),
+        make_error_entry(3, "unavailable", 2, "assistant"),
+        make_human_entry(4, "assistant", "Assistant", "Cancelled", 3),
+        make_agent_entry(5, "assistant", "Assistant", "Partial", EntryStatus::cancelled, 3),
+        make_human_entry(6, "assistant", "Assistant", "Current", 4),
+    };
+
+    EXPECT_EQ(
+        project_agent_context(
+            entries,
+            std::nullopt,
+            OffrecordSpan{.begin = 1, .end = 2},
+            {},
+            "assistant"),
+        (std::vector<AgentMessage>{
+            {AgentRole::user, "Cancelled"},
+            {AgentRole::user, "Current"},
+        }));
 }
 
 TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {

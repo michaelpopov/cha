@@ -396,9 +396,10 @@ request_id            optional correlation with a turn
 ```
 
 The fixed human identity is `participant_id = "human"` and display name
-`"You"`. Notices display as `"System"` and errors as `"Error"`. Agent entries
-carry the producing agent's stable ID and the display name used during that
-turn.
+`"You"`. Ordinary notices display as `"System"` and errors as `"Error"`; the
+off-record markers below are the only notices with another display name. Agent
+entries carry the producing agent's stable ID and the display name used during
+that turn.
 
 `Transcript` supports terminal insertion and a single open streaming agent
 entry:
@@ -411,9 +412,23 @@ entry:
 - `clear`
 - `replace_entries`
 
+It also owns the run-time off-record span, whose two boundary values are set
+and cleared only under the same mutex as the entries they describe:
+
+- `open_offrecord`
+- `extend_offrecord`
+- `restore_offrecord`
+
+Each takes the marker ID to append, returns whether the command precondition
+held, and on success performs its one bound mutation and appends its marker
+notice as one locked step. `clear()` and `replace_entries()` reset both bounds,
+so `/clear` and session restore can never retain a span over a different ID
+space.
+
 Every mutation increments a revision. `clear()` and `replace_entries()` also
-advance an in-memory history epoch so incremental renderers know to rebuild.
-Entry IDs must be positive and strictly increasing, but need not be contiguous.
+advance an in-memory history epoch so incremental renderers know to rebuild;
+the off-record mutations do not. Entry IDs must be positive and strictly
+increasing, but need not be contiguous.
 
 Snapshots are owning copies used by rendering and tests. `TranscriptReadView`
 is the locked non-owning API used during backend preparation.
@@ -447,13 +462,14 @@ the new prompt:
    personas, and defines the shared-history encoding.
 2. Exclude the currently open streaming entry.
 3. Exclude all notices and errors.
-4. Exclude a human prompt whose request has a matching error entry.
-5. Include only complete, non-empty agent responses; cancelled partial output
+4. Exclude entries inside a closed off-record span.
+5. Exclude a human prompt whose request has a matching error entry.
+6. Include only complete, non-empty agent responses; cancelled partial output
    remains visible but is not sent back to a model.
-6. Emit the target agent's own completed responses as `assistant`.
-7. Emit human prompts addressed to the target agent as ordinary `user`
+7. Emit the target agent's own completed responses as `assistant`.
+8. Emit human prompts addressed to the target agent as ordinary `user`
    messages.
-8. Group contiguous human prompts addressed elsewhere and other agents'
+9. Group contiguous human prompts addressed elsewhere and other agents'
    completed responses into a separate `user` message headed
    `Shared chat history (JSONL):`.
 
@@ -568,6 +584,10 @@ When idle, the shared text grammar translates:
 
 - `/clear`: advance the durable history epoch, empty visible history, and reset
   addressing labels based on the number of forum personas.
+- `/hide-on`: start an in-memory off-record span at the current turn boundary.
+- `/hide`: close the span at the current turn boundary, or move that boundary
+  forward when the span is already closed.
+- `/hide-off`: remove the in-memory off-record span.
 - `/agents`: show a transient status notice containing the forum personas and
   their runtime details; `*` marks the run-local default.
 - `/info`: show a transient status notice containing the current transcript
@@ -576,9 +596,12 @@ When idle, the shared text grammar translates:
 - `/stop`: report that no generation is active.
 - `/exit`: request session termination.
 
-Command output is never added to the transcript or session database. Unknown
-commands and commands with unexpected arguments likewise produce transient
-status notices. While a turn is active, only bare `/stop` is accepted; other
+Command output is never added to the transcript or session database, except
+that each successful off-record command adds an in-memory empty notice marker
+named `hide-on`, `hide`, or `hide-off`. These markers render in the transcript
+but are excluded from model context and are never journaled. Unknown commands
+and commands with unexpected arguments likewise produce transient status
+notices. While a turn is active, only bare `/stop` is accepted; other
 submitted text remains in the editor and produces a “Generation in progress”
 notice. This ordering intentionally preserves `/stop value` as a draft during
 generation, while the same input when idle is rejected as an unexpected
@@ -997,6 +1020,24 @@ libraries.
     graph of a forum is closed under the directory that is shipped as a unit.
 31. Forum validation loads the same static persona definitions as session
     startup but creates neither a session nor a completion provider.
+32. Off-record state is exactly one of: neither bound set, `begin` only, or
+    both bounds set with `begin <= end`. `end` is never set without `begin`,
+    and membership requires both bounds.
+33. A bound is only ever assigned while no turn is active, so no span boundary
+    falls between a prompt and its response.
+34. At most one off-record span exists, and its two bounds are set and cleared
+    only under the transcript mutex.
+35. A successful off-record command performs exactly its one bound mutation and
+    appends exactly one marker under the same transcript lock, then consumes
+    exactly one in-memory entry ID. A refused command changes no bound, appends
+    no marker, and consumes no entry ID.
+36. Off-record bounds and markers never reach SQLite. In-memory
+    `next_entry_id_` may advance past marker IDs; a later durable write
+    preserves them as gaps, while restart before such a write may reuse them.
+    Bounds and markers never survive `clear()`, `replace_entries()`, or process
+    restart.
+37. Bounds never enter `TranscriptSnapshot`; markers reach renderers only as
+    ordinary notice entries and never enter model context.
 
 ## Build and testing
 

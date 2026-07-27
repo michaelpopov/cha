@@ -334,6 +334,52 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
     EXPECT_EQ(restored.back().text, "Non-stream answer");
 }
 
+TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
+    std::vector<AgentDefinition> definitions = lobby_definitions();
+    definitions.resize(1);
+    const std::string system_prompt = definitions.front().system_prompt;
+    MockHttpServer server({
+        answer("Visible answer"),
+        answer("Hidden answer"),
+        answer("Current answer"),
+    });
+    server.start();
+    point_at(definitions.front(), server.port());
+
+    TemporarySession session;
+    {
+        auto controller = SessionController::from_definitions(
+            std::move(definitions),
+            session.path,
+            notifier());
+        (void)handle_text_input(*controller, "Visible question");
+        run_until_idle(*controller);
+        EXPECT_TRUE(handle_text_input(*controller, "/hide-on").render_needed);
+        (void)handle_text_input(*controller, "Hidden question");
+        run_until_idle(*controller);
+        EXPECT_TRUE(handle_text_input(*controller, "/hide").render_needed);
+        (void)handle_text_input(*controller, "Current question");
+        run_until_idle(*controller);
+    }
+    server.join();
+
+    ASSERT_EQ(server.requests().size(), 3U);
+    const Json current_body =
+        Json::parse(request_body(server.requests().back()));
+    EXPECT_EQ(current_body["messages"], Json::array({
+        Json{{"role", "system"}, {"content", system_prompt}},
+        Json{{"role", "user"}, {"content", "Visible question"}},
+        Json{{"role", "assistant"}, {"content", "Visible answer"}},
+        Json{{"role", "user"}, {"content", "Current question"}},
+    }));
+
+    const std::vector<TranscriptEntry> restored =
+        load_transcript_entries(session.path);
+    ASSERT_EQ(restored.size(), 6U);
+    EXPECT_EQ(restored[2].text, "Hidden question");
+    EXPECT_EQ(restored[3].text, "Hidden answer");
+}
+
 TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     std::vector<AgentDefinition> definitions = lobby_definitions();
     ASSERT_EQ(definitions.size(), 2U);

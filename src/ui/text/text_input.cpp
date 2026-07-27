@@ -38,6 +38,12 @@ SessionUpdate handle_text_input(
     switch (command.kind) {
     case CommandKind::clear:
         return controller.clear_transcript();
+    case CommandKind::hide_on:
+        return controller.open_offrecord();
+    case CommandKind::hide:
+        return controller.extend_offrecord();
+    case CommandKind::hide_off:
+        return controller.restore_offrecord();
     case CommandKind::info:
         return controller.session_information();
     case CommandKind::stop:
@@ -55,7 +61,7 @@ SessionUpdate handle_text_input(
     case CommandKind::unknown:
         update.clear_input = true;
         update.notice =
-            "Unknown command. Commands: /clear, /info, /agents, /@Name, /stop, /exit";
+            "Unknown command. Commands: /clear, /hide-on, /hide, /hide-off, /info, /agents, /@Name, /stop, /exit";
         return update;
     case CommandKind::text:
         return update;

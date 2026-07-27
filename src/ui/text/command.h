@@ -8,6 +8,9 @@ namespace cha {
 enum class CommandKind {
     text,
     clear,
+    hide_on,
+    hide,
+    hide_off,
     info,
     stop,
     exit,

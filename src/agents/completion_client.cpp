@@ -387,6 +387,7 @@ std::string build_request_body(
     for (const AgentMessage& message : project_agent_context(
              transcript.entries(),
              transcript.open_entry_id(),
+             transcript.offrecord_span(),
              system_prompt,
              config.id)) {
         messages.push_back({

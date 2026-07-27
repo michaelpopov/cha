@@ -216,6 +216,88 @@ TEST(Transcript, ReplacesAndClearsEntries) {
     EXPECT_EQ(transcript.snapshot().history_epoch, initial_epoch + 2);
 }
 
+TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
+    Transcript transcript;
+
+    EXPECT_THROW((void)transcript.open_offrecord(0), std::invalid_argument);
+    EXPECT_TRUE(transcript.entries().empty());
+    EXPECT_FALSE(transcript.extend_offrecord(1));
+    EXPECT_FALSE(transcript.restore_offrecord(1));
+    EXPECT_TRUE(transcript.open_offrecord(1));
+    EXPECT_FALSE(transcript.open_offrecord(2));
+    transcript.add_entry(human(2, "Hidden prompt", 1));
+    transcript.add_entry(make_agent_entry(
+        3, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1));
+    EXPECT_TRUE(transcript.extend_offrecord(4));
+
+    {
+        const TranscriptReadView view = transcript.read();
+        EXPECT_EQ(view.offrecord_span(), (OffrecordSpan{.begin = 1, .end = 4}));
+        EXPECT_TRUE(view.offrecord_span().contains(1));
+        EXPECT_TRUE(view.offrecord_span().contains(3));
+        EXPECT_FALSE(view.offrecord_span().contains(4));
+    }
+    EXPECT_EQ(
+        transcript.entries(),
+        (std::vector<TranscriptEntry>{
+            make_hide_on_marker(1),
+            human(2, "Hidden prompt", 1),
+            make_agent_entry(
+                3, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1),
+            make_hide_marker(4),
+        }));
+
+    EXPECT_TRUE(transcript.restore_offrecord(5));
+    EXPECT_EQ(transcript.read().offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(transcript.entries().back(), make_hide_off_marker(5));
+    transcript.clear();
+    EXPECT_EQ(transcript.read().offrecord_span(), OffrecordSpan{});
+}
+
+TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) {
+    Transcript transcript;
+    transcript.add_entry(human(2, "Earlier", 1));
+    const TranscriptSnapshot before = transcript.snapshot();
+
+    EXPECT_TRUE(transcript.open_offrecord(5));
+    const TranscriptSnapshot opened = transcript.snapshot();
+    EXPECT_EQ(opened.revision, before.revision + 1);
+    EXPECT_EQ(opened.history_epoch, before.history_epoch);
+    EXPECT_EQ(
+        transcript.read().offrecord_span(),
+        (OffrecordSpan{.begin = 3, .end = std::nullopt}));
+
+    transcript.add_entry(human(6, "Hidden", 2));
+    const TranscriptSnapshot before_extend = transcript.snapshot();
+    EXPECT_TRUE(transcript.extend_offrecord(9));
+    const TranscriptSnapshot closed = transcript.snapshot();
+    EXPECT_EQ(closed.revision, before_extend.revision + 1);
+    EXPECT_EQ(closed.history_epoch, before_extend.history_epoch);
+    EXPECT_EQ(
+        transcript.read().offrecord_span(),
+        (OffrecordSpan{.begin = 3, .end = 7}));
+
+    EXPECT_TRUE(transcript.restore_offrecord(12));
+    const TranscriptSnapshot restored = transcript.snapshot();
+    EXPECT_EQ(restored.revision, closed.revision + 1);
+    EXPECT_EQ(restored.history_epoch, closed.history_epoch);
+}
+
+TEST(Transcript, ReplacingEntriesDropsTheOffrecordSpan) {
+    Transcript transcript;
+    EXPECT_TRUE(transcript.open_offrecord(1));
+    transcript.add_entry(human(2, "Hidden", 1));
+    EXPECT_TRUE(transcript.extend_offrecord(3));
+    ASSERT_NE(transcript.read().offrecord_span(), OffrecordSpan{});
+
+    transcript.replace_entries({human(20, "Restored", 2)});
+
+    EXPECT_EQ(transcript.read().offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(transcript.entries(), (std::vector<TranscriptEntry>{
+        human(20, "Restored", 2),
+    }));
+}
+
 TEST(Transcript, RequiresStrictlyIncreasingEntryIds) {
     Transcript transcript;
     transcript.add_entry(make_notice_entry(2, "First"));
@@ -677,6 +759,7 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
         project_agent_context(
             snapshot.entries,
             snapshot.open_entry_id,
+            {},
             "Ismael system",
             "ismael"),
         (std::vector<AgentMessage>{

@@ -311,6 +311,7 @@ rebuilds a per-agent view of it for each request:
   section identifies the current agent and other current personas and explains
   the shared-history encoding;
 - notices, errors, and any still-open streaming entry are dropped;
+- entries inside a closed off-record span are dropped without a placeholder;
 - human prompts belonging to a failed turn are dropped with it;
 - only `complete` agent entries with non-empty text survive; cancelled and
   failed answers stay on screen but never become history;

@@ -90,8 +90,18 @@ TEST(TranscriptLabel, FormatsEveryEntryKind) {
         transcript_entry_label(make_notice_entry(3, "Notice"), false),
         "[System] ");
     EXPECT_EQ(
+        transcript_entry_label(make_hide_on_marker(4), false),
+        "[hide-on]");
+    EXPECT_EQ(
         transcript_entry_label(make_error_entry(4, "Failure"), false),
         "[Error] ");
+}
+
+TEST(TranscriptRendering, RendersAnEmptyMarkerWithoutATrailingSeparator) {
+    RecordingSurface surface;
+    write_transcript_entry(surface, make_hide_off_marker(1), false);
+
+    EXPECT_EQ(surface.output, "[hide-off]");
 }
 
 TEST(TranscriptRendering, LabelsEphemeralReasoningAndRestoresNormalAttributes) {

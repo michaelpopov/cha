@@ -132,11 +132,21 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_EQ(
         handle_text_input(*controller, "/clear").notice,
         "Transcript cleared");
+    EXPECT_TRUE(handle_text_input(*controller, "/hide-on").render_needed);
+    EXPECT_TRUE(handle_text_input(*controller, "/hide").render_needed);
+    EXPECT_TRUE(handle_text_input(*controller, "/hide-off").render_needed);
+    EXPECT_EQ(
+        controller->transcript().entries(),
+        (std::vector<TranscriptEntry>{
+            make_hide_on_marker(1),
+            make_hide_marker(2),
+            make_hide_off_marker(3),
+        }));
     const SessionUpdate information =
         handle_text_input(*controller, "/info");
     ASSERT_TRUE(information.notice);
     EXPECT_NE(
-        information.notice->find("Transcript entries: 0"),
+        information.notice->find("Transcript entries: 3"),
         std::string::npos);
     const SessionUpdate agents =
         handle_text_input(*controller, "/agents");
@@ -191,6 +201,13 @@ TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
     EXPECT_FALSE(blocked.clear_input);
     EXPECT_EQ(
         blocked.notice,
+        "Generation in progress; use /stop, Esc, or Ctrl-C");
+
+    const SessionUpdate hidden_while_active =
+        handle_text_input(*controller, "/hide");
+    EXPECT_FALSE(hidden_while_active.clear_input);
+    EXPECT_EQ(
+        hidden_while_active.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
 
     const SessionUpdate stop_with_argument =

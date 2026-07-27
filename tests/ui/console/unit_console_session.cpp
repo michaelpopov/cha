@@ -177,6 +177,29 @@ TEST(ConsoleSession, DrainsSeveralPipedPromptsInOrderAfterEof) {
     EXPECT_FALSE(port.under_scripted);
 }
 
+TEST(ConsoleSession, EmitsQueuedOffrecordMarkersInCommandOrder) {
+    TemporaryJournal journal;
+    test::ScriptedConsole port({
+        {
+            .input = true,
+            .closed = true,
+            .lines = {"/hide-on", "/hide", "/hide-off"},
+        },
+    });
+    auto session_controller = controller(journal, port);
+    TranscriptEmitter emitter(port.transcript(), false);
+    ConsoleSession session(
+        port,
+        *session_controller,
+        emitter);
+
+    EXPECT_EQ(session.run(), 0);
+    EXPECT_EQ(
+        port.transcript_output(),
+        "[hide-on]\n\n[hide]\n\n[hide-off]\n\n");
+    EXPECT_TRUE(port.notice_output().empty());
+}
+
 TEST(ConsoleSession, ShowsPromptWhenIdleNotWhileGenerating) {
     TemporaryJournal journal;
     test::ScriptedConsole port({

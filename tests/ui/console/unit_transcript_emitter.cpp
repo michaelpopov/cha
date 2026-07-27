@@ -170,5 +170,28 @@ TEST(TranscriptEmitter, DoesNotAdvanceWithoutCommit) {
         "[Guide] Answer\n\n[Guide] Answer\n\n");
 }
 
+TEST(TranscriptEmitter, EmitsOffrecordMarkersOnceAndInOrder) {
+    RecordingSurface surface;
+    TranscriptEmitter emitter(surface, false);
+    const TranscriptSnapshot snapshot{
+        .entries = {
+            make_hide_on_marker(1),
+            make_hide_marker(2),
+            make_hide_off_marker(3),
+        },
+        .revision = 3,
+        .history_epoch = 1,
+    };
+
+    emitter.write(snapshot);
+    emitter.commit();
+    emitter.write(snapshot);
+    emitter.commit();
+
+    EXPECT_EQ(
+        surface.output,
+        "[hide-on]\n\n[hide]\n\n[hide-off]\n\n");
+}
+
 } // namespace
 } // namespace cha

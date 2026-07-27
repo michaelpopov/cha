@@ -86,7 +86,10 @@ from the TTY status of stdout and stderr; `always` and `never` override both.
 `TranscriptEmitter` treats stdout as an append-only event log, not a repaintable
 view. Restored history is emitted before the first wait, completed entries
 appear once, and streamed entries append only their new suffix. `/clear` emits
-a marker because previously delivered bytes cannot be removed.
+a marker because previously delivered bytes cannot be removed. The off-record
+markers need no special handling for the same reason: they are ordinary notice
+entries, so they are emitted once each, in the order the commands were given,
+and nothing already written is ever retracted when the span changes.
 
 On an interactive TTY, live human prompts are not rewritten as transcript
 lines: the terminal already echoed the typed input, so a second `[You] ...`

@@ -211,6 +211,7 @@ It is pure, and it is tested directly.
 flowchart TD
     E["transcript entries"] --> F{"projectable?"}
     F -->|"open streaming entry"| D["drop"]
+    F -->|"inside the off-record span"| D
     F -->|"notice or error"| D
     F -->|"human turn of a failed request"| D
     F -->|"agent entry not complete, or empty"| D
@@ -230,6 +231,16 @@ false entry boundaries. A human prompt addressed to the requesting agent is
 always emitted outside the preceding shared-history block. Plain single-agent
 history retains its ordinary user/assistant wire shape, and reasoning text is
 never included.
+
+The predicate is a conjunction, so the off-record rule needs no ordering against
+the others. The span is passed in as one `OffrecordSpan` value taken from the
+same read view as the entries, and it is global: every persona in the forum sees
+the same exclusion, so the shared history they quote stays consistent between
+them. Excluded turns are spliced out silently — no placeholder marks the gap,
+since a note saying material was withheld is itself the influence the span
+exists to remove. Because the bounds only ever land on turn boundaries the span
+holds whole turns, so a splice can merge the runs on either side of it into one
+shared-history block but can never separate a prompt from its answer.
 
 ## Dependencies
 

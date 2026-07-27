@@ -65,6 +65,7 @@ void validate_persona_name(std::string_view name);
 std::vector<AgentMessage> project_agent_context(
     std::span<const TranscriptEntry> entries,
     std::optional<EntryId> open_entry_id,
+    OffrecordSpan offrecord_span,
     std::string_view system_prompt,
     std::string_view agent_id);
 

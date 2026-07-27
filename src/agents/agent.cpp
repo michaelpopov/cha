@@ -191,6 +191,7 @@ void validate_persona_name(std::string_view name) {
 std::vector<AgentMessage> project_agent_context(
     std::span<const TranscriptEntry> entries,
     std::optional<EntryId> open_entry_id,
+    OffrecordSpan offrecord_span,
     std::string_view system_prompt,
     std::string_view agent_id) {
     std::vector<AgentMessage> messages;
@@ -205,8 +206,9 @@ std::vector<AgentMessage> project_agent_context(
         }
     }
 
-    const auto projectable = [&failed_requests, open_entry_id](const TranscriptEntry& entry) {
+    const auto projectable = [&failed_requests, open_entry_id, offrecord_span](const TranscriptEntry& entry) {
         if (open_entry_id && *open_entry_id == entry.id) return false;
+        if (offrecord_span.contains(entry.id)) return false;
         if (entry.kind == EntryKind::notice || entry.kind == EntryKind::error) return false;
         if (entry.kind == EntryKind::human) return !entry.request_id || !failed_requests.contains(*entry.request_id);
         return entry.status == EntryStatus::complete && !entry.text.empty();

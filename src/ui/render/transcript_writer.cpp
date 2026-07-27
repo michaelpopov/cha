@@ -27,7 +27,7 @@ std::string transcript_entry_label(const TranscriptEntry& entry, bool show_addre
     case EntryKind::agent:
         return "[" + entry.display_name + "] ";
     case EntryKind::notice:
-        return "[System] ";
+        return "[" + entry.display_name + "]" + (entry.text.empty() ? "" : " ");
     case EntryKind::error:
         return "[Error] ";
     }

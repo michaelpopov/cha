@@ -19,6 +19,9 @@ TEST(Command, RecognizesEveryArgumentlessCommand) {
     EXPECT_EQ(parse_command("/stop").kind, CommandKind::stop);
     EXPECT_EQ(parse_command("/exit").kind, CommandKind::exit);
     EXPECT_EQ(parse_command("/agents").kind, CommandKind::agents);
+    EXPECT_EQ(parse_command("/hide-on").kind, CommandKind::hide_on);
+    EXPECT_EQ(parse_command("/hide").kind, CommandKind::hide);
+    EXPECT_EQ(parse_command("/hide-off").kind, CommandKind::hide_off);
     EXPECT_EQ(parse_command("/nonsense").kind, CommandKind::unknown);
     EXPECT_EQ(parse_command("/clearly").kind, CommandKind::unknown);
     EXPECT_EQ(parse_command("/model other-model").kind, CommandKind::unknown);
@@ -36,6 +39,10 @@ TEST(Command, CapturesTrailingTextAsTheRejectableArgument) {
     const Command agents = parse_command("/agents   please  ");
     EXPECT_EQ(agents.kind, CommandKind::agents);
     EXPECT_EQ(agents.argument, "please");
+
+    const Command hide = parse_command("/hide later");
+    EXPECT_EQ(hide.kind, CommandKind::hide);
+    EXPECT_EQ(hide.argument, "later");
 }
 
 TEST(Command, ParsesTheDefaultAgentCommandHandle) {

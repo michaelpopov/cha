@@ -11,6 +11,12 @@ select `normal`, `bold`, `dim`, or `bold_dim` attributes and write text.
 frontend. `show_addressing()` enables `[You → Name]` labels for multi-agent
 forums and for restored history involving agents no longer in the forum.
 
+Human and error entries have fixed labels, while agent and notice entries are
+labelled with their own `display_name`. That is what lets the off-record markers
+render as `[hide-on]`, `[hide]`, and `[hide-off]` while ordinary notices stay
+`[System]`. An entry with empty text also drops the trailing separator after its
+label, so a marker is exactly its bracketed name and nothing more.
+
 This directory deliberately excludes layout and redraw policy. Curses-specific
 incremental planning, viewport state, wrapping, and `wcwidth` calculations live
 in `ui/tui/`. Append-only stream tracking lives in `ui/console/`.

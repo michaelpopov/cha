@@ -61,6 +61,9 @@ public:
         std::string text,
         std::string handle = {});
     [[nodiscard]] SessionUpdate clear_transcript();
+    [[nodiscard]] SessionUpdate open_offrecord();
+    [[nodiscard]] SessionUpdate extend_offrecord();
+    [[nodiscard]] SessionUpdate restore_offrecord();
     [[nodiscard]] SessionUpdate session_information();
     [[nodiscard]] SessionUpdate agent_information();
     [[nodiscard]] SessionUpdate set_default_agent(std::string_view handle);

@@ -54,6 +54,19 @@ struct TranscriptEntry {
     bool operator==(const TranscriptEntry&) const = default;
 };
 
+// A half-open range of transcript entry IDs excluded from model context. The
+// begin-only state records an open span; membership requires both bounds.
+struct OffrecordSpan {
+    std::optional<EntryId> begin;
+    std::optional<EntryId> end;
+
+    [[nodiscard]] bool contains(EntryId id) const noexcept {
+        return begin && end && *begin <= id && id < *end;
+    }
+
+    bool operator==(const OffrecordSpan&) const = default;
+};
+
 // A point-in-time copy of a Transcript for readers that must not hold its lock while they work.
 // The revision and history epoch let a renderer decide what changed since the frame it drew last.
 struct TranscriptSnapshot {
@@ -81,6 +94,7 @@ public:
     std::span<const TranscriptEntry> entries() const noexcept;
     std::size_t revision() const noexcept;
     std::optional<EntryId> open_entry_id() const noexcept;
+    OffrecordSpan offrecord_span() const noexcept;
     std::size_t history_epoch() const noexcept;
 
 private:
@@ -91,6 +105,7 @@ private:
     std::unique_lock<std::mutex> lock_;
     const std::vector<TranscriptEntry>* entries_{};
     std::optional<EntryId> open_entry_id_;
+    OffrecordSpan offrecord_;
     std::size_t history_epoch_{};
 };
 
@@ -108,6 +123,9 @@ TranscriptEntry make_agent_entry(
     EntryStatus status,
     std::optional<RequestId> request_id = std::nullopt);
 TranscriptEntry make_notice_entry(EntryId id, std::string text);
+TranscriptEntry make_hide_on_marker(EntryId id);
+TranscriptEntry make_hide_marker(EntryId id);
+TranscriptEntry make_hide_off_marker(EntryId id);
 TranscriptEntry make_error_entry(
     EntryId id,
     std::string text,
@@ -143,6 +161,12 @@ public:
     void clear();
     void replace_entries(std::vector<TranscriptEntry> entries);
 
+    // Each successful mutation also appends its transient presentation marker.
+    // A false result means the command precondition failed without mutation.
+    [[nodiscard]] bool open_offrecord(EntryId marker_id);
+    [[nodiscard]] bool extend_offrecord(EntryId marker_id);
+    [[nodiscard]] bool restore_offrecord(EntryId marker_id);
+
     TranscriptSnapshot snapshot() const;
     std::vector<TranscriptEntry> entries() const;
     std::optional<EntryId> open_entry_id() const;
@@ -151,11 +175,13 @@ public:
 private:
     friend class TranscriptReadView;
     void require_next_id(EntryId entry_id) const;
+    EntryId boundary() const;
 
     mutable std::mutex mutex_;
     std::vector<TranscriptEntry> entries_;
     std::size_t revision_{};
     std::optional<EntryId> open_entry_id_;
+    OffrecordSpan offrecord_;
     std::size_t history_epoch_{};
 };
 

@@ -288,6 +288,48 @@ SessionUpdate SessionController::clear_transcript() {
     };
 }
 
+SessionUpdate SessionController::open_offrecord() {
+    if (active_) {
+        return busy_notice();
+    }
+    if (!transcript_.open_offrecord(next_entry_id_)) {
+        return {.notice = "Already off the record; use /hide-off first"};
+    }
+    ++next_entry_id_;
+    return {
+        .render_needed = true,
+        .clear_input = true,
+    };
+}
+
+SessionUpdate SessionController::extend_offrecord() {
+    if (active_) {
+        return busy_notice();
+    }
+    if (!transcript_.extend_offrecord(next_entry_id_)) {
+        return {.notice = "No off-record span to extend"};
+    }
+    ++next_entry_id_;
+    return {
+        .render_needed = true,
+        .clear_input = true,
+    };
+}
+
+SessionUpdate SessionController::restore_offrecord() {
+    if (active_) {
+        return busy_notice();
+    }
+    if (!transcript_.restore_offrecord(next_entry_id_)) {
+        return {.notice = "Nothing to restore"};
+    }
+    ++next_entry_id_;
+    return {
+        .render_needed = true,
+        .clear_input = true,
+    };
+}
+
 SessionUpdate SessionController::session_information() {
     if (active_) {
         return busy_notice();

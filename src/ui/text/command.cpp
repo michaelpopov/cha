@@ -24,6 +24,15 @@ Command parse_command(std::string_view input) {
     if (name == "/clear") {
         return {CommandKind::clear, argument};
     }
+    if (name == "/hide-on") {
+        return {CommandKind::hide_on, argument};
+    }
+    if (name == "/hide") {
+        return {CommandKind::hide, argument};
+    }
+    if (name == "/hide-off") {
+        return {CommandKind::hide_off, argument};
+    }
     if (name == "/info") {
         return {CommandKind::info, argument};
     }
