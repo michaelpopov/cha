@@ -83,12 +83,17 @@ under the lock.
 | `open_offrecord` | Opens the span at the current boundary and appends `[hide-on]`. |
 | `extend_offrecord` | Sets or moves the span's end to the current boundary and appends `[hide]`. |
 | `restore_offrecord` | Clears both bounds and appends `[hide-off]`. |
+| `open_silent_offrecord` | Opens the same span without a marker, ID, revision, or epoch change; internal misuse throws. |
+| `extend_silent_offrecord` | Advances that silent span's end without a presentation change; internal misuse throws. |
+| `restore_silent_offrecord` | Clears a silent span without a presentation change; internal misuse throws. |
 
-Every mutation bumps `revision`, and every entry ID must be strictly greater
-than the last. Renderers use `revision` to detect change and `history_epoch` to
-detect that everything they had drawn is now invalid. The off-record mutations
-bump `revision` for their marker like any other insertion, but leave
-`history_epoch` alone: nothing already drawn becomes invalid.
+Every presentation-changing mutation bumps `revision`, and every entry ID must
+be strictly greater than the last. The silent off-record mutations deliberately
+change neither: they have no visible effect. Renderers use `revision` to detect
+change and `history_epoch` to detect that everything they had drawn is now
+invalid. The marker-producing off-record mutations bump `revision` for their
+marker like any other insertion, but leave `history_epoch` alone: nothing
+already drawn becomes invalid.
 
 ### The off-record span
 
@@ -104,8 +109,8 @@ numeric cuts one past the transcript tail, which stay meaningful across the
 gaps entry IDs are allowed to have. `contains()` requires both bounds, so a
 span with only `begin` set hides nothing.
 
-The three mutations each take the ID of the marker to append and return whether
-the command precondition held. On success, checking the precondition, capturing
+The three marker-producing mutations each take the ID of the marker to append
+and return whether the command precondition held. On success, checking the precondition, capturing
 the boundary, assigning the one bound, and appending the marker all happen under
 one lock; a `false` result changes neither bounds nor entries, so the caller can
 allocate the entry ID only once the command has actually applied. The boundary

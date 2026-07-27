@@ -9,7 +9,8 @@ curses, storage, or providers.
 
 | Source | Responsibility |
 | --- | --- |
-| `command.*` | `parse_command()` — recognizes `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/info`, `/agents`, `/stop`, `/exit`, and `/@Name`, splitting off any argument. |
+| `command.*` | `parse_command()` — recognizes `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/mcast`, `/info`, `/agents`, `/stop`, `/exit`, and `/@Name`, splitting off any argument. |
+| `mcast.*` | `parse_multicast_input()` — parses recipient lists and prompts for `/mcast`. |
 | `mention.*` | `parse_addressed_prompt()` — splits a leading `@Name` from the prompt text, with `@@` as the escape for a literal at-sign. |
 | `text_input.*` | `handle_text_input()` — the policy layer that turns a parsed line into controller calls. |
 
@@ -22,6 +23,8 @@ curses, storage, or providers.
 | `@@channel hi` | Literal text `@channel hi` — no addressing. |
 | `@` alone, or `@ ` | Not a mention; sent as ordinary text. |
 | `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/info`, `/agents`, `/stop`, `/exit` | Commands. They take no arguments. |
+| `/mcast prompt` | Sends `prompt` to every forum persona in order. |
+| `/mcast @Ada, @Grace. prompt` | Sends `prompt` to the named personas in that order. `@@` starts a literal `@` prompt. |
 | `/@Ada` | Set the default agent for this run. |
 | `/anything-else` | Unknown command; produces a notice. |
 
@@ -47,6 +50,7 @@ flowchart TD
     busy -->|"no"| kind{"command kind"}
     kind -->|"text"| mention["parse_addressed_prompt"]
     mention --> submit["controller.submit_prompt"]
+    kind -->|"mcast"| multicast["parse_multicast_input, then controller.start_multicast"]
     kind -->|"has an argument"| argerr["notice: takes no arguments"]
     kind -->|"clear"| c1["controller.clear_transcript"]
     kind -->|"hide_on"| c2["controller.open_offrecord"]

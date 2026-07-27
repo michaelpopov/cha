@@ -97,6 +97,22 @@ TEST(TranscriptLabel, FormatsEveryEntryKind) {
         "[Error] ");
 }
 
+TEST(TranscriptRendering, RendersMulticastPromptsAsOrdinaryAddressedPrompts) {
+    RecordingSurface surface;
+    write_transcript_entry(
+        surface,
+        make_human_entry(1, "one-id", "One", "Question", 1),
+        true);
+    write_transcript_entry(
+        surface,
+        make_human_entry(2, "two-id", "Two", "Question", 2),
+        true);
+
+    EXPECT_EQ(
+        surface.output,
+        "[You → One] Question[You → Two] Question");
+}
+
 TEST(TranscriptRendering, RendersAnEmptyMarkerWithoutATrailingSeparator) {
     RecordingSurface surface;
     write_transcript_entry(surface, make_hide_off_marker(1), false);

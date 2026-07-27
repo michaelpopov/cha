@@ -33,6 +33,9 @@ Command parse_command(std::string_view input) {
     if (name == "/hide-off") {
         return {CommandKind::hide_off, argument};
     }
+    if (name == "/mcast") {
+        return {CommandKind::mcast, argument};
+    }
     if (name == "/info") {
         return {CommandKind::info, argument};
     }

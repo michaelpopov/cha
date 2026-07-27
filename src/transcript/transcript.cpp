@@ -310,6 +310,30 @@ bool Transcript::restore_offrecord(EntryId marker_id) {
     return true;
 }
 
+void Transcript::open_silent_offrecord() {
+    std::lock_guard lock(mutex_);
+    if (open_entry_id_ || offrecord_.begin) {
+        throw std::logic_error("Cannot open a silent off-record span in the current state");
+    }
+    offrecord_.begin = boundary();
+}
+
+void Transcript::extend_silent_offrecord() {
+    std::lock_guard lock(mutex_);
+    if (open_entry_id_ || !offrecord_.begin) {
+        throw std::logic_error("Cannot extend a silent off-record span in the current state");
+    }
+    offrecord_.end = boundary();
+}
+
+void Transcript::restore_silent_offrecord() {
+    std::lock_guard lock(mutex_);
+    if (open_entry_id_ || !offrecord_.begin) {
+        throw std::logic_error("Cannot restore a silent off-record span in the current state");
+    }
+    offrecord_ = {};
+}
+
 TranscriptSnapshot Transcript::snapshot() const {
     std::lock_guard lock(mutex_);
     return {entries_, revision_, open_entry_id_, history_epoch_};

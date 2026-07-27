@@ -177,6 +177,32 @@ TEST(ConsoleSession, DrainsSeveralPipedPromptsInOrderAfterEof) {
     EXPECT_FALSE(port.under_scripted);
 }
 
+TEST(ConsoleSession, EmitsPipedMulticastTurnsWithoutInternalMarkers) {
+    TemporaryJournal journal;
+    test::ScriptedConsole port({
+        {
+            .input = true,
+            .closed = true,
+            .lines = {"/mcast @One, @Two. Question"},
+        },
+        {.notification = true, .repeat = true},
+    });
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::make_unique<EchoBackend>(false, "one-id", "One"));
+    backends.push_back(std::make_unique<EchoBackend>(false, "two-id", "Two"));
+    TestController session_controller(journal, port, std::move(backends));
+    TranscriptEmitter emitter(port.transcript(), false);
+    ConsoleSession session(port, *session_controller, emitter);
+
+    EXPECT_EQ(session.run(), 0);
+    EXPECT_EQ(
+        port.transcript_output(),
+        "[You] Question\n\n[One] Answer to Question\n\n"
+        "[You] Question\n\n[Two] Answer to Question\n\n");
+    EXPECT_TRUE(port.notice_output().empty());
+    EXPECT_FALSE(port.under_scripted);
+}
+
 TEST(ConsoleSession, EmitsQueuedOffrecordMarkersInCommandOrder) {
     TemporaryJournal journal;
     test::ScriptedConsole port({

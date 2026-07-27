@@ -457,6 +457,63 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     EXPECT_EQ(restored[3].display_name, "Ismael");
 }
 
+TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
+    std::vector<AgentDefinition> definitions = lobby_definitions();
+    ASSERT_EQ(definitions.size(), 2U);
+    const std::string cheburashka_prompt = definitions.front().system_prompt;
+    const std::string ismael_prompt = definitions.back().system_prompt;
+    MockHttpServer cheburashka_server({
+        answer("Cheburashka multicast answer"),
+        answer("Cheburashka follow-up answer"),
+    });
+    MockHttpServer ismael_server({answer("Ismael multicast answer")});
+    cheburashka_server.start();
+    ismael_server.start();
+    point_at(definitions.front(), cheburashka_server.port());
+    point_at(definitions.back(), ismael_server.port());
+
+    TemporarySession session;
+    {
+        auto controller = SessionController::from_definitions(
+            std::move(definitions), session.path, notifier());
+        const SessionUpdate multicast =
+            handle_text_input(*controller, "/mcast What time is it?");
+        ASSERT_TRUE(multicast.clear_input);
+        run_until_idle(*controller);
+
+        (void)handle_text_input(*controller, "What did the panel say?");
+        run_until_idle(*controller);
+    }
+    cheburashka_server.join();
+    ismael_server.join();
+
+    ASSERT_EQ(cheburashka_server.requests().size(), 2U);
+    ASSERT_EQ(ismael_server.requests().size(), 1U);
+    EXPECT_EQ(
+        Json::parse(request_body(cheburashka_server.requests()[0]))["messages"],
+        Json::array({
+            Json{{"role", "system"}, {"content", cheburashka_prompt}},
+            Json{{"role", "user"}, {"content", "What time is it?"}},
+        }));
+    EXPECT_EQ(
+        body_of(ismael_server)["messages"],
+        Json::array({
+            Json{{"role", "system"}, {"content", ismael_prompt}},
+            Json{{"role", "user"}, {"content", "What time is it?"}},
+        }));
+
+    const std::string follow_up =
+        Json::parse(request_body(cheburashka_server.requests()[1])).dump();
+    EXPECT_NE(follow_up.find("Cheburashka multicast answer"), std::string::npos);
+    EXPECT_NE(follow_up.find("Ismael multicast answer"), std::string::npos);
+    const std::vector<TranscriptEntry> restored =
+        load_transcript_entries(session.path);
+    ASSERT_EQ(restored.size(), 6U);
+    EXPECT_EQ(restored[0].text, "What time is it?");
+    EXPECT_EQ(restored[2].text, "What time is it?");
+    EXPECT_EQ(restored[4].text, "What did the panel say?");
+}
+
 TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
     std::vector<AgentDefinition> definitions = lobby_definitions();
     const std::string ismael_prompt = definitions.back().system_prompt;

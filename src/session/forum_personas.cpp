@@ -182,4 +182,27 @@ std::string ForumPersonas::handle_list() const {
     return result;
 }
 
+std::string format_handle_resolution_notice(
+    std::string_view handle,
+    const HandleResolution& resolution,
+    const ForumPersonas& personas) {
+    if (resolution.match == HandleMatch::unknown) {
+        return "Unknown agent @" + std::string(handle)
+            + ". Personas in this forum: " + personas.handle_list();
+    }
+    std::string result =
+        "Ambiguous agent @" + std::string(handle) + ": matches ";
+    for (std::size_t index = 0; index < resolution.candidates.size(); ++index) {
+        if (index) {
+            result += ", ";
+        }
+        result += "@" + resolution.candidates[index]->name;
+    }
+    return result + ". Type more of the name.";
+}
+
+std::string format_duplicate_persona_notice(std::string_view name) {
+    return "Multicast target @" + std::string(name) + " is duplicated";
+}
+
 } // namespace cha

@@ -3,6 +3,7 @@
 #include <exception>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 
@@ -44,25 +45,6 @@ void merge_update(SessionUpdate& all, SessionUpdate one) {
     if (one.notice) {
         all.notice = std::move(one.notice);
     }
-}
-
-std::string format_handle_notice(
-    std::string_view handle,
-    const HandleResolution& resolution,
-    const ForumPersonas& personas) {
-    if (resolution.match == HandleMatch::unknown) {
-        return "Unknown agent @" + std::string(handle)
-            + ". Personas in this forum: " + personas.handle_list();
-    }
-    std::string result =
-        "Ambiguous agent @" + std::string(handle) + ": matches ";
-    for (std::size_t i = 0; i < resolution.candidates.size(); ++i) {
-        if (i) {
-            result += ", ";
-        }
-        result += "@" + resolution.candidates[i]->name;
-    }
-    return result + ". Type more of the name.";
 }
 
 std::string format_personas_notice(
@@ -170,11 +152,15 @@ void SessionController::initialize(SessionRestore restored) {
 
 GenerationStatus SessionController::generation_status() const {
     return {
-        .active = active_.has_value(),
+        .active = busy(),
         .agent_name = active_ ? active_->agent_name : "",
         .phase = active_ ? active_->phase : ResponsePhase::waiting,
         .reasoning_text = active_ ? active_->reasoning_text : "",
     };
+}
+
+bool SessionController::busy() const {
+    return active_ || multicast_;
 }
 
 SessionUpdate SessionController::busy_notice() const {
@@ -184,7 +170,7 @@ SessionUpdate SessionController::busy_notice() const {
 SessionUpdate SessionController::submit_prompt(
     std::string text,
     std::string handle) {
-    if (active_) {
+    if (busy()) {
         return busy_notice();
     }
     if (text.empty() && handle.empty()) {
@@ -198,7 +184,7 @@ SessionUpdate SessionController::submit_prompt(
     } else {
         const HandleResolution resolution = personas_.resolve_handle(handle);
         if (resolution.match != HandleMatch::resolved) {
-            update.notice = format_handle_notice(
+            update.notice = format_handle_resolution_notice(
                 handle, resolution, personas_);
             return update;
         }
@@ -270,8 +256,67 @@ SessionUpdate SessionController::start_response(
     return update;
 }
 
+void SessionController::start_next_multicast_child(SessionUpdate& update) {
+    if (!multicast_) {
+        return;
+    }
+    if (multicast_->abort_requested) {
+        abandon_multicast();
+        return;
+    }
+    if (multicast_->current_target >= multicast_->targets.size()) {
+        throw std::logic_error("Multicast target index is out of range");
+    }
+
+    try {
+        merge_update(
+            update,
+            start_response(
+                multicast_->text,
+                multicast_->targets[multicast_->current_target]));
+    } catch (...) {
+        abandon_multicast();
+        throw;
+    }
+    if (!active_) {
+        abandon_multicast();
+    }
+}
+
+void SessionController::finish_multicast_child(SessionUpdate& update) {
+    if (!multicast_) {
+        return;
+    }
+    if (update.notice && !update.notice->empty()) {
+        if (!multicast_->terminal_notices.empty()) {
+            multicast_->terminal_notices += '\n';
+        }
+        multicast_->terminal_notices += *update.notice;
+    }
+    transcript_.extend_silent_offrecord();
+    if (multicast_->abort_requested
+        || multicast_->current_target + 1 == multicast_->targets.size()) {
+        const std::string terminal_notices = multicast_->terminal_notices;
+        abandon_multicast();
+        if (!terminal_notices.empty()) {
+            update.notice = terminal_notices;
+        }
+        return;
+    }
+    ++multicast_->current_target;
+    start_next_multicast_child(update);
+}
+
+void SessionController::abandon_multicast() {
+    if (!multicast_) {
+        return;
+    }
+    transcript_.restore_silent_offrecord();
+    multicast_.reset();
+}
+
 SessionUpdate SessionController::clear_transcript() {
-    if (active_) {
+    if (busy()) {
         return busy_notice();
     }
     try {
@@ -289,7 +334,7 @@ SessionUpdate SessionController::clear_transcript() {
 }
 
 SessionUpdate SessionController::open_offrecord() {
-    if (active_) {
+    if (busy()) {
         return busy_notice();
     }
     if (!transcript_.open_offrecord(next_entry_id_)) {
@@ -303,7 +348,7 @@ SessionUpdate SessionController::open_offrecord() {
 }
 
 SessionUpdate SessionController::extend_offrecord() {
-    if (active_) {
+    if (busy()) {
         return busy_notice();
     }
     if (!transcript_.extend_offrecord(next_entry_id_)) {
@@ -317,7 +362,7 @@ SessionUpdate SessionController::extend_offrecord() {
 }
 
 SessionUpdate SessionController::restore_offrecord() {
-    if (active_) {
+    if (busy()) {
         return busy_notice();
     }
     if (!transcript_.restore_offrecord(next_entry_id_)) {
@@ -330,8 +375,48 @@ SessionUpdate SessionController::restore_offrecord() {
     };
 }
 
+SessionUpdate SessionController::start_multicast(
+    std::string text,
+    std::vector<PersonaInfo> targets) {
+    if (busy()) {
+        return busy_notice();
+    }
+    if (text.empty()) {
+        return {.notice = "Multicast prompt is empty"};
+    }
+    if (targets.empty()) {
+        return {.notice = "Multicast has no targets"};
+    }
+
+    std::unordered_set<ParticipantId> ids;
+    for (const PersonaInfo& target : targets) {
+        const PersonaInfo* known = personas_.find(target.id);
+        if (!known || known->name != target.name) {
+            return {.notice = "Unknown multicast target @" + target.name};
+        }
+        if (!ids.insert(target.id).second) {
+            return {.notice = format_duplicate_persona_notice(target.name)};
+        }
+    }
+    {
+        const TranscriptReadView view = transcript_.read();
+        if (view.offrecord_span().begin) {
+            return {.notice = "Cannot start multicast while an off-record span is active"};
+        }
+    }
+
+    transcript_.open_silent_offrecord();
+    multicast_ = ActiveMulticast{
+        .text = std::move(text),
+        .targets = std::move(targets),
+    };
+    SessionUpdate update{.clear_input = true};
+    start_next_multicast_child(update);
+    return update;
+}
+
 SessionUpdate SessionController::session_information() {
-    if (active_) {
+    if (busy()) {
         return busy_notice();
     }
     return {
@@ -346,7 +431,7 @@ SessionUpdate SessionController::session_information() {
 }
 
 SessionUpdate SessionController::agent_information() {
-    if (active_) {
+    if (busy()) {
         return busy_notice();
     }
     return {
@@ -358,7 +443,7 @@ SessionUpdate SessionController::agent_information() {
 }
 
 SessionUpdate SessionController::set_default_agent(std::string_view handle) {
-    if (active_) {
+    if (busy()) {
         return busy_notice();
     }
     SessionUpdate update{.clear_input = true};
@@ -368,7 +453,7 @@ SessionUpdate SessionController::set_default_agent(std::string_view handle) {
     }
     const HandleResolution result = personas_.resolve_handle(handle);
     if (result.match != HandleMatch::resolved) {
-        update.notice = format_handle_notice(handle, result, personas_);
+        update.notice = format_handle_resolution_notice(handle, result, personas_);
         return update;
     }
     default_agent_id_ = result.persona->id;
@@ -378,8 +463,17 @@ SessionUpdate SessionController::set_default_agent(std::string_view handle) {
 
 SessionUpdate SessionController::request_stop() {
     SessionUpdate update;
+    if (multicast_) {
+        multicast_->abort_requested = true;
+    }
     if (!active_) {
-        update.notice = "No generation is active";
+        if (multicast_) {
+            abandon_multicast();
+            update.render_needed = true;
+            update.notice = "Generation stopped";
+        } else {
+            update.notice = "No generation is active";
+        }
         return update;
     }
     registry_.cancel();
@@ -421,6 +515,7 @@ void SessionController::apply(const AgentCompleted& event, SessionUpdate& update
     if (active_->phase != ResponsePhase::answering) {
         fail_active_response(
             "Agent completed without answer content", active_->agent_id, update);
+        finish_multicast_child(update);
         return;
     }
     const TranscriptEntry response =
@@ -437,6 +532,7 @@ void SessionController::apply(const AgentCompleted& event, SessionUpdate& update
     active_.reset();
     update.render_needed = true;
     update.notice = "";
+    finish_multicast_child(update);
 }
 
 void SessionController::apply(const AgentCancelled& event, SessionUpdate& update) {
@@ -468,11 +564,13 @@ void SessionController::apply(const AgentCancelled& event, SessionUpdate& update
     active_.reset();
     update.render_needed = true;
     update.notice = "Generation stopped";
+    finish_multicast_child(update);
 }
 
 void SessionController::apply(const AgentFailed& event, SessionUpdate& update) {
     if (matches(event.request_id)) {
         fail_active_response(event.message, active_->agent_id, update);
+        finish_multicast_child(update);
     }
 }
 
@@ -555,8 +653,14 @@ void SessionController::shutdown() {
         return;
     }
     shutdown_ = true;
+    if (multicast_) {
+        multicast_->abort_requested = true;
+    }
     registry_.stop();
     (void)receive();
+    if (multicast_) {
+        abandon_multicast();
+    }
 }
 
 } // namespace cha

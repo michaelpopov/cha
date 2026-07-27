@@ -298,6 +298,34 @@ TEST(Transcript, ReplacingEntriesDropsTheOffrecordSpan) {
     }));
 }
 
+TEST(Transcript, SilentOffrecordMutationsDoNotCreatePresentationChanges) {
+    Transcript transcript;
+    transcript.add_entry(human(1, "Earlier", 1));
+    const TranscriptSnapshot before = transcript.snapshot();
+
+    transcript.open_silent_offrecord();
+    EXPECT_EQ(
+        transcript.read().offrecord_span(),
+        (OffrecordSpan{.begin = 2, .end = std::nullopt}));
+    EXPECT_EQ(transcript.snapshot().revision, before.revision);
+    EXPECT_EQ(transcript.snapshot().history_epoch, before.history_epoch);
+    EXPECT_EQ(transcript.entries(), before.entries);
+
+    transcript.add_entry(human(2, "Hidden", 2));
+    const TranscriptSnapshot before_extend = transcript.snapshot();
+    transcript.extend_silent_offrecord();
+    EXPECT_EQ(
+        transcript.read().offrecord_span(),
+        (OffrecordSpan{.begin = 2, .end = 3}));
+    EXPECT_EQ(transcript.snapshot().revision, before_extend.revision);
+    EXPECT_EQ(transcript.snapshot().history_epoch, before_extend.history_epoch);
+
+    transcript.restore_silent_offrecord();
+    EXPECT_EQ(transcript.read().offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(transcript.snapshot().revision, before_extend.revision);
+    EXPECT_THROW(transcript.restore_silent_offrecord(), std::logic_error);
+}
+
 TEST(Transcript, RequiresStrictlyIncreasingEntryIds) {
     Transcript transcript;
     transcript.add_entry(make_notice_entry(2, "First"));

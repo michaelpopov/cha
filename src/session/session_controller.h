@@ -64,6 +64,9 @@ public:
     [[nodiscard]] SessionUpdate open_offrecord();
     [[nodiscard]] SessionUpdate extend_offrecord();
     [[nodiscard]] SessionUpdate restore_offrecord();
+    [[nodiscard]] SessionUpdate start_multicast(
+        std::string text,
+        std::vector<PersonaInfo> targets);
     [[nodiscard]] SessionUpdate session_information();
     [[nodiscard]] SessionUpdate agent_information();
     [[nodiscard]] SessionUpdate set_default_agent(std::string_view handle);
@@ -82,6 +85,14 @@ private:
         std::string reasoning_text;
     };
 
+    struct ActiveMulticast {
+        std::string text;
+        std::vector<PersonaInfo> targets;
+        std::size_t current_target{};
+        bool abort_requested{};
+        std::string terminal_notices;
+    };
+
     SessionController(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
@@ -94,8 +105,12 @@ private:
         SessionRestore restored);
 
     void initialize(SessionRestore restored);
+    bool busy() const;
     SessionUpdate busy_notice() const;
     SessionUpdate start_response(std::string text, const PersonaInfo& target);
+    void start_next_multicast_child(SessionUpdate& update);
+    void finish_multicast_child(SessionUpdate& update);
+    void abandon_multicast();
     void apply(const AgentDelta& event, SessionUpdate& update);
     void apply(const AgentCompleted& event, SessionUpdate& update);
     void apply(const AgentCancelled& event, SessionUpdate& update);
@@ -116,6 +131,7 @@ private:
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;
+    std::optional<ActiveMulticast> multicast_;
     bool shutdown_{};
 };
 

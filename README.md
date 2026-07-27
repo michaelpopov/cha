@@ -163,6 +163,9 @@ Before loading server configuration, the application optionally reads `.env` fro
 - `/hide` closes or extends that span to the current boundary; the transcript
   remains visible, but the enclosed entries are omitted from later requests.
 - `/hide-off` removes the span and returns its entries to later model context.
+- `/mcast [@Name, ... .] prompt` sends the same prompt to every persona, or the
+  selected personas in order, while keeping earlier multicast answers out of
+  later multicast requests.
 - `/info` displays the transcript entry count followed by the current forum's personas.
 - `/agents` displays the current forum's personas and marks the default agent.
 - `/@Name` changes the default agent for this run only.

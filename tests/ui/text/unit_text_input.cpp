@@ -128,6 +128,12 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_TRUE(unknown.clear_input);
     ASSERT_TRUE(unknown.notice);
     EXPECT_NE(unknown.notice->find("Unknown command"), std::string::npos);
+    EXPECT_NE(unknown.notice->find("/mcast"), std::string::npos);
+
+    const SessionUpdate empty_multicast =
+        handle_text_input(*controller, "/mcast");
+    EXPECT_TRUE(empty_multicast.clear_input);
+    EXPECT_EQ(empty_multicast.notice, "Multicast prompt is empty");
 
     EXPECT_EQ(
         handle_text_input(*controller, "/clear").notice,
@@ -186,6 +192,27 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
     EXPECT_EQ(entries.front().addressed_to, "ismael-id");
     EXPECT_EQ(entries.front().text, "hello");
     controller->shutdown();
+}
+
+TEST(TextInput, ResolvesMulticastRecipientsBeforeStartingAnyChild) {
+    TemporaryTextSession temporary;
+    auto controller = SessionController::from_definitions(
+        std::vector<AgentDefinition>{definition()},
+        temporary.path,
+        notifier());
+
+    const SessionUpdate duplicate = handle_text_input(
+        *controller, "/mcast @Guide @Gui What time is it?");
+    EXPECT_TRUE(duplicate.clear_input);
+    EXPECT_EQ(duplicate.notice, "Multicast target @Guide is duplicated");
+    EXPECT_TRUE(controller->transcript().entries().empty());
+
+    const SessionUpdate unknown = handle_text_input(
+        *controller, "/mcast @Nobody What time is it?");
+    EXPECT_TRUE(unknown.clear_input);
+    ASSERT_TRUE(unknown.notice);
+    EXPECT_NE(unknown.notice->find("Unknown agent @Nobody"), std::string::npos);
+    EXPECT_TRUE(controller->transcript().entries().empty());
 }
 
 TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {

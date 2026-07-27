@@ -228,6 +228,7 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success `render_needed` + `clear_input` and no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
+| `start_multicast(text, targets)` | Runs resolved targets in order while a marker-free span keeps completed multicast children out of later child contexts. | Starts the first ordinary turn; terminal notices are retained until the multicast completes. |
 | `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
@@ -235,10 +236,10 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | `receive()` | Drains the event queue, applying each event through `handle_agent_event()`. | Merged updates; `end_session` when the queue is closed. |
 | `shutdown()` | Stops the registry and drains what remains. | — |
 
-Every command except `request_stop()` and `receive()` is refused while a turn is
-active, with the shared in-progress notice. The controller formats session
-notices itself — handle errors, forum-persona text, `/info` — because their wording
-belongs to the session, not to a UI.
+Every command except `request_stop()` and `receive()` is refused while a turn or
+multicast is active, with the shared in-progress notice. The controller and its
+forum-persona helpers format session notices — handle errors, forum-persona
+text, `/info` — because their wording belongs to the session, not to a UI.
 
 The three off-record commands are the only ones that add a transcript entry
 without a journal write. Each passes the current `next_entry_id_` to the

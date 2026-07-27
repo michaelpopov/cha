@@ -149,6 +149,7 @@ add_library(cha_core STATIC
     src/session/session_database.cpp
     src/session/workspace.cpp
     src/ui/text/command.cpp
+    src/ui/text/mcast.cpp
     src/ui/text/mention.cpp
     src/ui/text/text_input.cpp
     src/ui/console/console_writer.cpp
@@ -236,6 +237,7 @@ if(BUILD_TESTING)
         tests/session/unit_session_controller.cpp
         tests/session/unit_workspace.cpp
         tests/ui/text/unit_command.cpp
+        tests/ui/text/unit_mcast.cpp
         tests/ui/text/unit_mention.cpp
         tests/ui/text/unit_text_input.cpp
         tests/ui/render/unit_transcript_writer.cpp

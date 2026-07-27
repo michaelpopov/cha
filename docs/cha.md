@@ -588,6 +588,9 @@ When idle, the shared text grammar translates:
 - `/hide`: close the span at the current turn boundary, or move that boundary
   forward when the span is already closed.
 - `/hide-off`: remove the in-memory off-record span.
+- `/mcast [@Name, ... .] prompt`: send the same prompt to every persona, or
+  selected personas in order, while keeping each earlier multicast child out of
+  later multicast model context.
 - `/agents`: show a transient status notice containing the forum personas and
   their runtime details; `*` marks the run-local default.
 - `/info`: show a transient status notice containing the current transcript

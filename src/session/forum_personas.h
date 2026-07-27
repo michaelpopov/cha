@@ -17,6 +17,13 @@ struct HandleResolution {
     std::vector<const PersonaInfo*> candidates;
 };
 
+[[nodiscard]] std::string format_handle_resolution_notice(
+    std::string_view handle,
+    const HandleResolution& resolution,
+    const class ForumPersonas& personas);
+[[nodiscard]] std::string format_duplicate_persona_notice(
+    std::string_view name);
+
 // The ordered personas participating in one forum. Construction guarantees that the collection is
 // non-empty and that persona IDs and case-folded names are unique.
 class ForumPersonas {

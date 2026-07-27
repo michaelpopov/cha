@@ -166,6 +166,9 @@ public:
     [[nodiscard]] bool open_offrecord(EntryId marker_id);
     [[nodiscard]] bool extend_offrecord(EntryId marker_id);
     [[nodiscard]] bool restore_offrecord(EntryId marker_id);
+    void open_silent_offrecord();
+    void extend_silent_offrecord();
+    void restore_silent_offrecord();
 
     TranscriptSnapshot snapshot() const;
     std::vector<TranscriptEntry> entries() const;

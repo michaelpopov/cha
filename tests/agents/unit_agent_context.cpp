@@ -114,6 +114,23 @@ TEST(AgentContext, AnOpenOffrecordSpanExcludesNothing) {
         }));
 }
 
+TEST(AgentContext, ProjectsOnlyTheCurrentMulticastChildInsideItsSilentSpan) {
+    const std::vector<TranscriptEntry> entries{
+        make_human_entry(1, "one", "One", "Question", 1),
+        make_agent_entry(2, "one", "One", "One answer", EntryStatus::complete, 1),
+        make_human_entry(3, "two", "Two", "Question", 2),
+    };
+
+    EXPECT_EQ(
+        project_agent_context(
+            entries,
+            std::nullopt,
+            OffrecordSpan{.begin = 1, .end = 3},
+            {},
+            "two"),
+        (std::vector<AgentMessage>{{AgentRole::user, "Question"}}));
+}
+
 TEST(AgentContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
     const std::vector<TranscriptEntry> entries{
         make_human_entry(1, "other", "Other", "First question", 1),

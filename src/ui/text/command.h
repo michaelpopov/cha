@@ -11,6 +11,7 @@ enum class CommandKind {
     hide_on,
     hide,
     hide_off,
+    mcast,
     info,
     stop,
     exit,

@@ -657,6 +657,145 @@ TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan
     EXPECT_TRUE(clear_controller->transcript().entries().empty());
 }
 
+TEST(SessionController, MulticastRunsTargetsSequentiallyWithIsolatedContexts) {
+    TemporaryJournal temporary;
+    auto one = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"One answer"}, false,
+        "one-id", "One");
+    auto two = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        "two-id", "Two");
+    ScriptedBackend* one_view = one.get();
+    ScriptedBackend* two_view = two.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(one));
+    backends.push_back(std::move(two));
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends), temporary.path, notifier());
+
+    const SessionUpdate started = controller->start_multicast(
+        "What time is it?",
+        {
+            {"one-id", "One"},
+            {"two-id", "Two"},
+        });
+    EXPECT_TRUE(started.clear_input);
+    EXPECT_TRUE(controller->generation_status().active);
+    EXPECT_EQ(
+        controller->transcript().read().offrecord_span(),
+        (OffrecordSpan{.begin = 1}));
+
+    const SessionUpdate finished = receive_until_idle(*controller);
+    EXPECT_TRUE(finished.render_needed);
+    EXPECT_FALSE(controller->generation_status().active);
+    EXPECT_EQ(controller->transcript().read().offrecord_span(), OffrecordSpan{});
+
+    ASSERT_EQ(one_view->requests.size(), 1U);
+    ASSERT_EQ(two_view->requests.size(), 1U);
+    EXPECT_EQ(one_view->requests.front().prompt.addressed_to, "one-id");
+    EXPECT_EQ(two_view->requests.front().prompt.addressed_to, "two-id");
+    EXPECT_EQ(
+        one_view->model_contexts.front(),
+        (std::vector<AgentMessage>{{AgentRole::user, "What time is it?"}}));
+    EXPECT_EQ(
+        two_view->model_contexts.front(),
+        (std::vector<AgentMessage>{{AgentRole::user, "What time is it?"}}));
+
+    const std::vector<TranscriptEntry> entries = controller->transcript().entries();
+    ASSERT_EQ(entries.size(), 4U);
+    EXPECT_EQ(entries[0].addressed_to, "one-id");
+    EXPECT_EQ(entries[0].text, "What time is it?");
+    EXPECT_EQ(entries[1].text, "One answer");
+    EXPECT_EQ(entries[2].addressed_to, "two-id");
+    EXPECT_EQ(entries[2].text, "What time is it?");
+    EXPECT_EQ(entries[3].text, "Two answer");
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+}
+
+TEST(SessionController, MulticastRefusesAUserOffrecordSpanAndStopPreventsNextChild) {
+    TemporaryJournal span_temporary;
+    auto span_controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        span_temporary.path,
+        notifier());
+    (void)span_controller->open_offrecord();
+    EXPECT_EQ(
+        span_controller->start_multicast("Question", {{"guide-id", "Guide"}}).notice,
+        "Cannot start multicast while an off-record span is active");
+
+    TemporaryJournal stop_temporary;
+    auto first = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{}, true, "one-id", "One");
+    auto second = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        "two-id", "Two");
+    ScriptedBackend* second_view = second.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(first));
+    backends.push_back(std::move(second));
+    auto stop_controller = SessionController::from_backends_for_testing(
+        std::move(backends), stop_temporary.path, notifier());
+
+    (void)stop_controller->start_multicast(
+        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    EXPECT_EQ(stop_controller->submit_prompt("Another").notice,
+              generation_in_progress_notice);
+    EXPECT_EQ(stop_controller->clear_transcript().notice,
+              generation_in_progress_notice);
+    EXPECT_EQ(stop_controller->open_offrecord().notice,
+              generation_in_progress_notice);
+    EXPECT_EQ(stop_controller->extend_offrecord().notice,
+              generation_in_progress_notice);
+    EXPECT_EQ(stop_controller->restore_offrecord().notice,
+              generation_in_progress_notice);
+    EXPECT_EQ(
+        stop_controller->start_multicast("Again", {{"one-id", "One"}}).notice,
+        generation_in_progress_notice);
+    EXPECT_EQ(stop_controller->request_stop().notice, "Stopping generation...");
+    (void)stop_controller->handle_agent_event(AgentCompleted{1});
+    EXPECT_FALSE(stop_controller->generation_status().active);
+    EXPECT_TRUE(second_view->requests.empty());
+    EXPECT_EQ(stop_controller->transcript().read().offrecord_span(), OffrecordSpan{});
+    stop_controller->shutdown();
+}
+
+TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
+    TemporaryJournal temporary;
+    auto failed = std::make_unique<ScriptedBackend>(
+        CompletionResult{CompletionOutcome::transport_error, "Unavailable"},
+        std::vector<std::string>{}, false, "one-id", "One");
+    auto cancelled = std::make_unique<ScriptedBackend>(
+        CompletionResult{CompletionOutcome::cancelled, {}},
+        std::vector<std::string>{"Partial"}, false, "two-id", "Two");
+    auto complete = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Three answer"}, false,
+        "three-id", "Three");
+    ScriptedBackend* failed_view = failed.get();
+    ScriptedBackend* cancelled_view = cancelled.get();
+    ScriptedBackend* complete_view = complete.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(failed));
+    backends.push_back(std::move(cancelled));
+    backends.push_back(std::move(complete));
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends), temporary.path, notifier());
+
+    (void)controller->start_multicast(
+        "Question",
+        {{"one-id", "One"}, {"two-id", "Two"}, {"three-id", "Three"}});
+    const SessionUpdate finished = receive_until_idle(*controller);
+
+    EXPECT_EQ(finished.notice, "Generation failed\nGeneration stopped");
+    ASSERT_EQ(failed_view->requests.size(), 1U);
+    ASSERT_EQ(cancelled_view->requests.size(), 1U);
+    ASSERT_EQ(complete_view->requests.size(), 1U);
+    EXPECT_EQ(
+        complete_view->model_contexts.front(),
+        (std::vector<AgentMessage>{{AgentRole::user, "Question"}}));
+    EXPECT_FALSE(controller->generation_status().active);
+    EXPECT_EQ(controller->transcript().read().offrecord_span(), OffrecordSpan{});
+}
+
 TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
     TemporaryJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
