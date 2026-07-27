@@ -135,6 +135,7 @@ add_library(cha_core STATIC
     src/util/environment.cpp
     src/util/path_name.cpp
     src/util/text.cpp
+    src/util/text_template.cpp
     src/util/utf8_path.cpp
     src/util/uv_event_loop.cpp
     src/transcript/transcript.cpp
@@ -221,6 +222,7 @@ if(BUILD_TESTING)
         tests/util/unit_environment.cpp
         tests/util/unit_concurrent_queue.cpp
         tests/util/unit_text.cpp
+        tests/util/unit_text_template.cpp
         tests/util/unit_utf8_path.cpp
         tests/util/unit_uv_event_loop.cpp
         tests/transcript/unit_transcript.cpp

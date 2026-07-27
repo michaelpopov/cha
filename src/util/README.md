@@ -10,6 +10,7 @@ belongs in that directory instead.
 | Source | Responsibility |
 | --- | --- |
 | `text.*` | Byte-oriented whitespace tests, trimming, and ASCII case folding. |
+| `text_template.*` | Prompt template expansion: `$$(path)` includes, `$${name}` variables, and `[prompt]` scope loading. |
 | `path_name.*` | `require_path_component()` — a configured name must be one safe path component. |
 | `utf8_path.*` | Converts between UTF-8 application text and native filesystem paths. |
 | `environment.*` | `load_dotenv()` — optional `.env` loading that never overrides the real environment. |
@@ -29,9 +30,34 @@ the ASCII range, which is exactly what the agent-name rules allow.
 `require_path_component()` rejects empty names, absolute paths, anything with a
 separator, and `.` / `..`. Every workspace-controlled name — a forum directory,
 a persona directory, a session ID derived from a
-filename — passes through it before it is joined onto a path. This is the single
-chokepoint that keeps workspace files from addressing anything outside the
-workspace.
+filename — passes through it before it is joined onto a path. That chokepoint
+keeps configured names from addressing anything outside the workspace.
+
+Prompt-template includes need a second rule. An include path is resolved relative
+to the including file and may leave a persona directory to reach shared forum
+text, so component checking cannot apply. Instead `expand_template_file()`
+canonicalizes every template and scope file it reads and requires it to lie
+under a caller-supplied containment root (the forum directory). The comparison
+is path-component-wise, not a string-prefix test.
+
+## Prompt templates
+
+`expand_template_file()` recognizes `$$(relative/path)` includes and
+`$${variable}` substitutions. Macro bodies are trimmed. Includes are expanded
+in place without adding whitespace, may repeat, and must resolve to regular
+files. `$$$` emits a literal `$$`, allowing macro-looking text to pass through.
+
+The caller supplies an initial scope and unshadowable reserved values. For each
+file, the engine overlays the named table (normally `[prompt]`) from the named
+adjacent scope file (normally `config.toml`) onto the inherited scope, then
+passes the result into included files. Scope values may be TOML strings,
+integers, floating-point numbers, or booleans. Unknown variables and
+non-scalar values are errors.
+
+Expansion reports file, line, column, and include-chain context. It rejects
+malformed macros, missing or non-regular includes, cycles, containment escapes,
+and symlink escapes. Default resource limits are 16 active files, 256 include
+expansions, and 1 MiB of combined output for one root expansion.
 
 ## UTF-8 paths
 
@@ -101,7 +127,8 @@ session layer.
 
 ## Dependencies
 
-- **Depends on:** the standard library, the process environment, and libuv.
+- **Depends on:** the standard library, the process environment, libuv, and
+  toml++ (for `text_template.*` scope tables).
 - **Must not depend on:** `transcript/`, `agents/`, `session/`, or
   `ui/`.
 - **Used by:** agent code, workspace and session code, the text grammar, and
@@ -109,6 +136,6 @@ session layer.
 
 ## Tests
 
-`tests/util/unit_text.cpp`, `tests/util/unit_environment.cpp`,
-`tests/util/unit_concurrent_queue.cpp`, and
+`tests/util/unit_text.cpp`, `tests/util/unit_text_template.cpp`,
+`tests/util/unit_environment.cpp`, `tests/util/unit_concurrent_queue.cpp`, and
 `tests/util/unit_uv_event_loop.cpp`.

@@ -1,10 +1,17 @@
 #pragma once
 
+#include "util/text_template.h"
+
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace cha {
+
+// TOML table name for prompt-template variables. Used by load_prompt_variables()
+// and as TemplateOptions::scope_table_name when expanding persona/forum prompts.
+inline constexpr std::string_view prompt_scope_table = "prompt";
 
 enum class Mode {
     net,
@@ -41,6 +48,12 @@ struct Config {
 // display_name must come from persona_path. When base_path is present, its other
 // values become defaults that the persona file may override.
 Config load_config(
+    const std::filesystem::path& persona_path,
+    std::optional<std::filesystem::path> base_path = std::nullopt);
+
+// base [prompt] then persona [prompt], using the same precedence
+// load_config() applies to every other field.
+TemplateScope load_prompt_variables(
     const std::filesystem::path& persona_path,
     std::optional<std::filesystem::path> base_path = std::nullopt);
 

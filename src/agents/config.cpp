@@ -230,4 +230,23 @@ Config load_config(
         std::move(effective), persona, persona_path, base_path);
 }
 
+TemplateScope load_prompt_variables(
+    const std::filesystem::path& persona_path,
+    std::optional<std::filesystem::path> base_path) {
+    TemplateScope scope;
+    if (base_path) {
+        if (std::optional<TemplateScope> base =
+                load_template_scope(*base_path, prompt_scope_table)) {
+            scope = std::move(*base);
+        }
+    }
+    if (std::optional<TemplateScope> persona =
+            load_template_scope(persona_path, prompt_scope_table)) {
+        for (auto& [key, value] : *persona) {
+            scope.insert_or_assign(key, std::move(value));
+        }
+    }
+    return scope;
+}
+
 } // namespace cha

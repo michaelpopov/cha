@@ -50,9 +50,14 @@ why it stopped.
 
 ## `console_main.cpp`
 
-The line-oriented application parses forum/session selection, constructs a
-`SystemConsole` whose libuv loop handles SIGINT and stdin, opens the controller
-through `Workspace`, and assembles `TranscriptEmitter` and `ConsoleSession`. It also decides
+The line-oriented application parses forum/session selection and handles
+forum/session listings or `--forum ID --check` before constructing any console
+or session object. A forum check loads and validates the static definitions
+through `Workspace`, then exits without provider initialization.
+
+For a chat run, the entry point constructs a `SystemConsole` whose libuv loop
+handles SIGINT and stdin, opens the controller through `Workspace`, and
+assembles `TranscriptEmitter` and `ConsoleSession`. It also decides
 TTY-dependent behavior: the named `@DefaultAgentName> ` prompt and ready banner
 appear only for interactive stdin, pipe input receives queue backpressure, and
 automatic attributes are enabled independently for terminal stdout and stderr.
@@ -64,11 +69,13 @@ The libuv signal watcher is started before the controller creates its agent
 thread. On POSIX, SIGPIPE is ignored so `ConsoleSession` can turn a closed
 stdout into exit code 1 with an error on stderr.
 
-Listings return before any session or console object is constructed and take
-precedence over session-selection validation. Usage errors return 2, runtime
-errors return 1, and orderly EOF, `/exit`, or idle Ctrl-C return 0. Before a
-successful return, the console explicitly finalizes sanitizer state and checks
-the last stdout flush; destruction does not perform hidden output.
+Listings and checks return before any session or console object is constructed.
+`--list-forums` takes global precedence; `--list-sessions` takes precedence over
+session-selection validation but conflicts with `--check`. Usage errors return
+2, runtime and validation errors return 1, and a successful listing/check,
+orderly EOF, `/exit`, or idle Ctrl-C returns 0. Before a successful chat return,
+the console explicitly finalizes sanitizer state and checks the last stdout
+flush; destruction does not perform hidden output.
 
 ## Dependencies
 

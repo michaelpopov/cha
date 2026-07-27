@@ -30,6 +30,16 @@ public:
             forum / "personas" / "Guide");
         std::filesystem::create_directories(sessions);
         write(forum / "config.toml", "display_name = \"The Hall\"\n");
+        write(forum / "USER.md", "Forum instructions\n");
+        write(
+            forum / "personas" / "base_config.toml",
+            "host = \"127.0.0.1\"\nport = 8080\n");
+        write(
+            forum / "personas" / "Guide" / "config.toml",
+            "display_name = \"Guide\"\n");
+        write(
+            forum / "personas" / "Guide" / "SYSTEM.md",
+            "Persona instructions\n");
         if (!create_session_database(
                 sessions / "valid.sqlite3",
                 {
@@ -82,6 +92,11 @@ TEST(ConsoleStartup, ParsesSelectionAndColorOptions) {
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(fresh));
     ASSERT_TRUE(std::get<ConsoleOptions>(fresh).new_label.has_value());
     EXPECT_TRUE(std::get<ConsoleOptions>(fresh).new_label->empty());
+
+    const auto checked = parse({"chacon", "--forum", "hall", "--check"});
+    ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(checked));
+    EXPECT_TRUE(std::get<ConsoleOptions>(checked).check_forum);
+    EXPECT_FALSE(std::get<ConsoleOptions>(checked).new_label.has_value());
 }
 
 TEST(ConsoleStartup, RejectsUsageErrorsWithCodeTwo) {
@@ -95,6 +110,18 @@ TEST(ConsoleStartup, RejectsUsageErrorsWithCodeTwo) {
         parse({
             "chacon", "--forum", "hall",
             "--session", "x", "--new", "y",
+        }),
+        parse({
+            "chacon", "--forum", "hall",
+            "--check", "--session", "x",
+        }),
+        parse({
+            "chacon", "--forum", "hall",
+            "--check", "--new", "x",
+        }),
+        parse({
+            "chacon", "--forum", "hall",
+            "--check", "--list-sessions",
         }),
         parse({"chacon", "--forum", "hall", "--color=sometimes"}),
     }) {
@@ -127,6 +154,19 @@ TEST(ConsoleStartup, SessionListingIsPlainStableAndIncludesErrors) {
     EXPECT_EQ(listing.find('\x1b'), std::string::npos);
 }
 
+TEST(ConsoleStartup, ForumCheckIsPlainAndDoesNotCreateASession) {
+    ListingWorkspace fixture;
+    const Workspace workspace(fixture.root);
+    std::ostringstream output;
+    const std::vector<SessionSummary> sessions_before =
+        workspace.sessions("hall");
+
+    write_forum_check(workspace, "hall", output);
+
+    EXPECT_EQ(output.str(), "Forum 'hall' is valid (1 persona).\n");
+    EXPECT_EQ(workspace.sessions("hall"), sessions_before);
+}
+
 TEST(ConsoleStartup, ListForumsWinsOverSelectionFlags) {
     const auto parsed = parse({
         "chacon",
@@ -134,6 +174,7 @@ TEST(ConsoleStartup, ListForumsWinsOverSelectionFlags) {
         "--forum", "ignored",
         "--session", "ignored",
         "--new", "ignored",
+        "--check",
     });
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(parsed));
     EXPECT_TRUE(std::get<ConsoleOptions>(parsed).list_forums);

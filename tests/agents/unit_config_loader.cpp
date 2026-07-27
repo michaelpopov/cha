@@ -275,6 +275,49 @@ TEST(Config, RejectsPersonaIdentityInWorkspaceDefaults) {
     std::filesystem::remove_all(directory);
 }
 
+TEST(Config, LoadPromptVariablesOverlaysBaseThenPersona) {
+    const auto directory = std::filesystem::temp_directory_path()
+        / ("cha_prompt_vars_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(directory);
+    const auto base_path = directory / "base_config.toml";
+    const auto persona_path = directory / "config.toml";
+    {
+        std::ofstream base(base_path);
+        base << "host = \"shared.example\"\n"
+             << "port = 443\n"
+             << "[prompt]\n"
+             << "register = \"measured\"\n"
+             << "period = \"base-period\"\n";
+        std::ofstream persona(persona_path);
+        persona << "display_name = \"Example\"\n"
+                << "[prompt]\n"
+                << "register = \"energetic\"\n";
+    }
+
+    const auto persona_no_prompt = directory / "persona_no_prompt.toml";
+    {
+        std::ofstream file(persona_no_prompt);
+        file << "display_name = \"Example\"\n";
+    }
+
+    const TemplateScope only_base =
+        load_prompt_variables(persona_no_prompt, base_path);
+    EXPECT_EQ(only_base.at("register"), "measured");
+    EXPECT_EQ(only_base.at("period"), "base-period");
+
+    const TemplateScope only_persona = load_prompt_variables(persona_path);
+    EXPECT_EQ(only_persona.at("register"), "energetic");
+    EXPECT_EQ(only_persona.find("period"), only_persona.end());
+
+    const TemplateScope overlaid = load_prompt_variables(persona_path, base_path);
+    EXPECT_EQ(overlaid.at("register"), "energetic");
+    EXPECT_EQ(overlaid.at("period"), "base-period");
+
+    std::filesystem::remove_all(directory);
+}
+
 TEST(Config, IdentifiesInvalidWorkspaceDefaultSource) {
     const auto directory = std::filesystem::temp_directory_path()
         / ("cha_config_base_value_"

@@ -55,6 +55,10 @@ int main_internal(int argc, const char* const* argv) {
         cha::write_session_listing(workspace, options.forum, std::cout);
         return 0;
     }
+    if (options.check_forum) {
+        cha::write_forum_check(workspace, options.forum, std::cout);
+        return 0;
+    }
 
     const bool input_is_tty =
         cha::standard_stream_is_terminal(

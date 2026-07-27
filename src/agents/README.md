@@ -12,8 +12,8 @@ thread.
 
 | Source | Responsibility |
 | --- | --- |
-| `config.*` | `Config` — identity, connection, model, streaming, auth, and reasoning settings — plus typed TOML overlays and field validation. |
-| `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, the request and event protocol types, and `project_agent_context()`. |
+| `config.*` | `Config` — identity, connection, model, streaming, auth, and reasoning settings — plus typed TOML overlays, field validation, and `load_prompt_variables()`. |
+| `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
 | `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
 | `agent_registry.*` | Runtime metadata, the execution thread, request routing, cancellation, and channels. |
 | `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
@@ -24,17 +24,24 @@ thread.
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
-        base["forums/R/personas/base_config.toml<br/>optional forum defaults"]
+        base["forums/R/personas/base_config.toml<br/>optional forum defaults + [prompt]"]
         cfg["forums/R/personas/X/config.toml"]
         sys["forums/R/personas/X/SYSTEM.md"]
         usr["forums/R/USER.md"]
+        shared["shared prompt files under the forum"]
     end
 
     base --> load["load_config<br/>typed overlay"]
     cfg --> load
     load --> conf["Config"]
-    sys --> def["AgentDefinition<br/>config + effective system prompt"]
-    usr --> def
+    base --> vars["load_prompt_variables"]
+    cfg --> vars
+    conf --> expand["expand_template_file<br/>SYSTEM.md and USER.md"]
+    vars --> expand
+    sys --> expand
+    usr --> expand
+    shared --> expand
+    expand --> def["AgentDefinition<br/>config + effective system prompt"]
     conf --> def
     def -->|"one per persona"| client["CompletionClient"]
     client --> registry["AgentRegistry"]
@@ -43,13 +50,18 @@ flowchart LR
     runtime -->|"identity only"| personas["session/ForumPersonas"]
 ```
 
-The effective system prompt is the persona's `SYSTEM.md`, followed by the
-forum's `USER.md`, followed by generated forum context. The generated section
-names the current agent, lists the other current personas, and defines how
-quoted shared history is encoded. It is added even for a single-agent forum,
-because restored history can still mention a persona that has left. Loading
-happens on the main thread during session construction: `session/` decides
-*which* directories to load, `agents/` decides *how*.
+The effective system prompt is the expanded persona `SYSTEM.md`, followed by the
+expanded forum `USER.md`, followed by generated forum context. Expansion is
+implemented in `util/text_template.*`; this layer supplies the policy: forum
+directory as containment root, reserved `persona.*` / `forum.*` names, and the
+base-then-persona `[prompt]` initial scope. An adjacent `config.toml` overlays
+that inherited scope for its template directory and descendants; reserved
+loader values always win. The generated section names the current agent, lists
+the other current personas, and defines how quoted shared history is encoded.
+It is added even for a single-agent forum, because restored history can still
+mention a persona that has left. Loading happens on the main thread during
+session construction or a forum check: `session/` decides *which* directories
+to load, `agents/` decides *how*.
 
 Configuration is a one-level overlay, not general inheritance. Built-in
 defaults are applied first, then the optional forum
@@ -58,12 +70,18 @@ field inherits the value below it. The persona directory name provides the ID,
 and each persona file must define `display_name`; the base file must not. Parsing and
 validation errors identify the file that supplied the invalid value.
 
+Legacy persona files may use `name` as a fallback for `display_name` and may
+override the directory-derived ID with `id`. The base file rejects all three
+identity fields. New definitions should use only the directory ID and
+`display_name`.
+
 Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
 
 - an **ID** is ASCII letters, digits, underscores, and hyphens. It is stable and
   is what transcript entries record — never change it when renaming a persona.
-- a **name** is the visible `@handle`. It may not be empty, contain whitespace,
-  start with `@` or `/`, or be `User` in any casing.
+- a **name** is the visible `@handle`. It may not be empty, start or end with
+  whitespace, start with `@` or `/`, or be `User` in any casing. Internal
+  whitespace is allowed for multi-word handles.
 - within one forum, IDs are unique and names are unique case-insensitively.
 
 `AgentRegistry` validates these rules when it accepts backend metadata.
@@ -227,7 +245,7 @@ never included.
 | Test | Covers |
 | --- | --- |
 | `tests/agents/unit_config_loader.cpp` | TOML fields, defaults, and rejection of malformed values. |
-| `tests/agents/unit_agent_definition_loader.cpp` | Persona and forum prompt composition, and load errors. |
+| `tests/agents/unit_agent_definition_loader.cpp` | Persona and forum prompt expansion, composition, scopes, and load errors. |
 | `tests/session/unit_forum_personas.cpp` | Forum-persona validation and every handle-resolution branch. |
 | `tests/agents/unit_agent_registry.cpp` | Single-flight gating, event correlation, cancellation, shutdown ordering. |
 | `tests/agents/unit_agent_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |

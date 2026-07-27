@@ -3,13 +3,12 @@
 #include "agents/config.h"
 #include "agents/json_serialization.h"
 #include "util/text.h"
+#include "util/text_template.h"
 #include "util/utf8_path.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cctype>
-#include <fstream>
-#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -22,35 +21,43 @@ constexpr std::string_view shared_history_heading =
     "Shared chat history (JSONL):";
 constexpr std::string_view human_speaker_name = "User";
 
-std::string read_prompt(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error(
-            "Failed to read prompt file '" + utf8_path(path) + "'");
-    }
-    std::ostringstream contents;
-    contents << file.rdbuf();
-    return contents.str();
-}
-
 AgentDefinition load_definition_files(
     const std::filesystem::path& persona_directory,
     const std::filesystem::path& forum_directory,
+    std::string_view forum_display_name,
     std::optional<std::filesystem::path> base_config_path) {
     const std::string persona_name = utf8_path(persona_directory.filename());
     Config config;
+    TemplateScope initial_scope;
     try {
         config = load_config(
             persona_directory / "config.toml",
-            std::move(base_config_path));
+            base_config_path);
+        initial_scope = load_prompt_variables(
+            persona_directory / "config.toml", base_config_path);
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Persona '" + persona_name
             + "' has invalid configuration: " + error.what());
     }
+
+    TemplateOptions options{
+        .containment_root = forum_directory,
+        .scope_table_name = std::string(prompt_scope_table),
+        .reserved =
+            {
+                {"persona.id", config.id},
+                {"persona.display_name", config.name},
+                {"forum.id", utf8_path(forum_directory.filename())},
+                {"forum.display_name", std::string(forum_display_name)},
+            },
+        .initial_scope = std::move(initial_scope),
+    };
+
     std::string persona_prompt;
     try {
-        persona_prompt = read_prompt(persona_directory / "SYSTEM.md");
+        persona_prompt = expand_template_file(
+            persona_directory / "SYSTEM.md", options);
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Persona '" + persona_name
@@ -58,10 +65,11 @@ AgentDefinition load_definition_files(
     }
     std::string forum_prompt;
     try {
-        forum_prompt = read_prompt(forum_directory / "USER.md");
+        forum_prompt = expand_template_file(
+            forum_directory / "USER.md", options);
     } catch (const std::exception& error) {
         throw std::runtime_error(
-            "Forum '" + utf8_path(forum_directory.filename())
+            "Persona '" + persona_name
             + "' failed to read USER.md: " + error.what());
     }
     return {
@@ -132,13 +140,17 @@ std::string encode_shared_entry(const TranscriptEntry& entry) {
 std::vector<AgentDefinition> load_agent_definitions(
     const std::vector<std::filesystem::path>& persona_directories,
     const std::filesystem::path& forum_directory,
+    std::string_view forum_display_name,
     std::optional<std::filesystem::path> base_config_path) {
     std::vector<AgentDefinition> definitions;
     definitions.reserve(persona_directories.size());
     for (const auto& directory : persona_directories) {
         definitions.push_back(
             load_definition_files(
-                directory, forum_directory, base_config_path));
+                directory,
+                forum_directory,
+                forum_display_name,
+                base_config_path));
     }
     append_forum_context(definitions);
     return definitions;

@@ -11,8 +11,18 @@ transcript-writing vocabulary without depending on curses or `ui/tui/`.
 ```text
 chacon --list-forums
 chacon --forum FORUM --list-sessions
+chacon --forum FORUM --check
 chacon --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
 ```
+
+`--check` fully loads the forum configuration and expanded prompts, validates
+effective connection settings plus persona identity and uniqueness, then exits
+without inspecting stored sessions, creating a session, resolving
+`api_key_env`, initializing completion providers, discovering a model, or
+making network requests. It validates prompt-template includes, not arbitrary
+Markdown hyperlinks. A valid forum prints one plain summary line, such as
+`Forum 'stoics' is valid (3 personas).`; validation failures use the normal
+`Failed: ...` diagnostic and exit code 1.
 
 Forum listings are one display name per line. Session listings always contain three
 tab-separated fields—ID, label, error—with no header, padding, or color.
@@ -25,9 +35,9 @@ interactive stdin, the ready banner prints that resolved ID before the first
 prompt, including for `--new` and default session creation, so the session can
 later be reopened with `--session`.
 
-Exit code 0 means normal EOF drain, `/exit`, idle Ctrl-C, or a completed
-listing. Usage errors return 2. Workspace, persistence, transport setup, and
-output failures return 1.
+Exit code 0 means normal EOF drain, `/exit`, idle Ctrl-C, a completed listing,
+or a successful forum check. Usage errors return 2. Workspace, forum
+validation, persistence, transport setup, and output failures return 1.
 
 ## Event loop and queue
 
@@ -124,7 +134,7 @@ performs no output.
 | `transcript_emitter.*` | Append-only entry-ID and streaming-suffix watermarks. |
 | `console_writer.*` | Sanitizing attributed surfaces and the bold `@Name> ` prompt writer. |
 | `console_session.*` | Queue, EOF, signal, event, emission, and shutdown state machine. |
-| `console_startup.*` | CLI parsing, stable listings, and workspace session selection. |
+| `console_startup.*` | CLI parsing, stable listings, forum checking, and workspace session selection. |
 | `system_console.*` | Libuv input, signal, and wake handles plus stdout transcript and stderr prompt surfaces. |
 
 ## Regression traps
@@ -144,7 +154,9 @@ performs no output.
 | Emitting held sanitizer state from a destructor | The byte bypasses the checked flush and output failure exit status |
 
 Unit tests live in `tests/ui/console/`. The process tests in
-`tests/integration/console_process_test.cpp` cover actual EOF, signals, closed
-stdout, sanitization, queue order, and the absence of an ncurses dependency.
+`tests/integration/console_process_test.cpp` cover forum checking without
+sessions, credentials, providers, or network access, plus actual EOF, signals,
+closed stdout, sanitization, queue order, and the absence of an ncurses
+dependency.
 The session and writer tests additionally cover default-agent prompt changes
 and the prompt's bold/normal attribute boundary.

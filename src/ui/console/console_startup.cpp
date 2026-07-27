@@ -37,6 +37,8 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
             options.list_forums = true;
         } else if (argument == "--list-sessions") {
             options.list_sessions = true;
+        } else if (argument == "--check") {
+            options.check_forum = true;
         } else if (argument == "--forum"
             || argument == "--session"
             || argument == "--new") {
@@ -78,6 +80,10 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     if (options.forum.empty()) {
         return argument_error("--forum is required");
     }
+    if (options.list_sessions && options.check_forum) {
+        return argument_error(
+            "--list-sessions and --check cannot be used together");
+    }
     if (options.list_sessions) {
         return options;
     }
@@ -88,6 +94,13 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     }
     if (session_selected && options.new_label) {
         return argument_error("--session and --new cannot be used together");
+    }
+    if (options.check_forum && (session_selected || options.new_label)) {
+        return argument_error(
+            "--check cannot be used with --session or --new");
+    }
+    if (options.check_forum) {
+        return options;
     }
     if (!session_selected && !options.new_label) {
         options.new_label = "";
@@ -110,6 +123,17 @@ void write_session_listing(
             << listing_field(session.label) << '\t'
             << listing_field(session.error) << '\n';
     }
+}
+
+void write_forum_check(
+    const Workspace& workspace,
+    const std::string& forum_name,
+    std::ostream& out) {
+    const Forum forum = workspace.check_forum(forum_name);
+    out << "Forum '" << listing_field(forum.name) << "' is valid ("
+        << forum.persona_names.size() << ' '
+        << (forum.persona_names.size() == 1 ? "persona" : "personas")
+        << ").\n";
 }
 
 ConsoleSelection open_console_session(

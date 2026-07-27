@@ -48,6 +48,9 @@ public:
 
     std::vector<std::string> forums() const;
     Forum load_forum(const std::string& name) const;
+    // Fully validates one forum without creating a session or initializing
+    // completion providers. Returns its resolved metadata on success.
+    Forum check_forum(const std::string& name) const;
     std::vector<SessionSummary> sessions(const std::string& forum_name) const;
     [[nodiscard]] CreatedSession create_session(
         const std::string& forum_name,

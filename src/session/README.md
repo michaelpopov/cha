@@ -10,7 +10,7 @@ code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, list forums and sessions, load a forum's agent definitions, and build a controller; creation also returns the assigned session ID. |
+| `workspace.*` | Resolve the workspace layout, list and validate forums and sessions, load a forum's agent definitions, and build a controller; creation also returns the assigned session ID. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
 | `forum_personas.*` | The ordered persona identities in a forum, including validation, lookup, and handle resolution. |
@@ -23,14 +23,14 @@ code.
 flowchart TD
     root --> forums["forums/"]
     root --> env[".env — optional"]
-    personas --> base["base_config.toml<br/>optional forum defaults"]
-    personas --> p1["Name/config.toml<br/>Name/SYSTEM.md"]
-    forums --> forum["forum-name/"]
-    forum --> config["config.toml — required display_name"]
+    personas --> base["base_config.toml<br/>optional forum defaults + [prompt]"]
+    personas --> shared["shared prompt files<br/>e.g. character-voice.md"]
+    forums --> forum["forum-name/ — distribution unit and template containment root"]
+    forum --> config["config.toml — required display_name + optional [prompt]"]
     forum --> personas["personas/ — persona directories"]
-    personas --> persona["persona-name/config.toml + SYSTEM.md"]
-    forum --> user["USER.md — forum system-prompt extension"]
-    forum --> sessions["sessions/&lt;id&gt;.sqlite3"]
+    personas --> persona["persona-name/config.toml<br/>SYSTEM.md + includes"]
+    forum --> user["USER.md — template-expanded forum prompt extension"]
+    forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
 ```
 
 `Workspace` refuses to construct unless `forums/` exists.
@@ -41,13 +41,26 @@ name is checked with `require_path_component()` before it becomes a path.
 Each forum's `config.toml` must provide a non-empty string `display_name` for
 user-facing selection and listings; its directory name remains the stable ID.
 Each persona directory likewise supplies its stable ID, while its
-`config.toml` provides the required user-facing `display_name`.
+`config.toml` provides the required user-facing `display_name`. The agent
+loader retains compatibility with legacy persona-level `id` and `name` fields;
+new forum packages should use directory IDs and `display_name`.
+
+The forum directory is both the distribution unit and the prompt-template
+containment root: includes in `SYSTEM.md` / `USER.md` cannot leave it, so a
+zipped forum stays self-contained when unpacked elsewhere.
 
 When a session is created or opened, `Workspace` checks for
-`personas/base_config.toml` within the selected forum and explicitly passes that optional path to the
-agent loaders along with each persona directory. The agent layer therefore
-applies shared configuration without knowing or inferring the workspace
-layout.
+`personas/base_config.toml` within the selected forum and explicitly passes that optional path, the
+forum directory, and the forum display name to the agent loaders along with each
+persona directory. The agent layer therefore applies shared configuration and
+template policy without knowing or inferring the workspace layout.
+
+`Workspace::check_forum()` follows the same loading path without creating or
+opening a session. It also constructs `ForumPersonas` to validate persona IDs,
+display names, and uniqueness, giving the console's `--check` mode the same
+static validation a real session receives before provider initialization. It
+does not inspect the optional `sessions/` directory or resolve provider
+credentials and models.
 
 ## Forum personas
 
@@ -272,7 +285,7 @@ session continues.
 
 | Test | Covers |
 | --- | --- |
-| `tests/session/unit_workspace.cpp` | Layout resolution, list-file rules, forum loading, session create/open. |
+| `tests/session/unit_workspace.cpp` | Layout resolution, forum loading and checking, session create/open. |
 | `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics. |
 | `tests/session/unit_session_controller.cpp` | Command behavior, event application, persistence ordering, restore and repair. |
 | `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |

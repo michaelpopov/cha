@@ -1,6 +1,7 @@
 #include "session/workspace.h"
 
 #include "agents/agent.h"
+#include "session/forum_personas.h"
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "session/session_catalog.h"
@@ -34,7 +35,10 @@ std::vector<AgentDefinition> load_definitions(
         ? std::optional<std::filesystem::path>(base_config_candidate)
         : std::nullopt;
     return load_agent_definitions(
-        persona_directories, forum.directory, base_config);
+        persona_directories,
+        forum.directory,
+        forum.display_name,
+        base_config);
 }
 
 SessionCatalog session_catalog(
@@ -116,6 +120,23 @@ Forum Workspace::load_forum(const std::string& name) const {
     const std::vector<std::string> persona_names = subdirectory_names(
         directory / "personas", "Personas");
     return {name, load_display_name(directory), persona_names, directory};
+}
+
+Forum Workspace::check_forum(const std::string& name) const {
+    Forum forum = load_forum(name);
+    const std::vector<AgentDefinition> definitions = load_definitions(
+        forum, forum.directory / "personas" / "base_config.toml");
+
+    std::vector<PersonaInfo> personas;
+    personas.reserve(definitions.size());
+    for (const AgentDefinition& definition : definitions) {
+        personas.push_back({
+            .id = definition.config.id,
+            .name = definition.config.name,
+        });
+    }
+    (void)ForumPersonas(std::move(personas));
+    return forum;
 }
 
 std::filesystem::path Workspace::forum_directory(

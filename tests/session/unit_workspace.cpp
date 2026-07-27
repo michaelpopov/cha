@@ -69,6 +69,70 @@ TEST_F(ApplicationWorkspaceTest, ListsForumsAndSessionsAsApplicationValues) {
     EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
+TEST_F(ApplicationWorkspaceTest, ChecksAForumWithoutCreatingASession) {
+    Workspace workspace(root_);
+
+    const Forum forum = workspace.check_forum("lobby");
+
+    EXPECT_EQ(forum.name, "lobby");
+    EXPECT_EQ(forum.display_name, "The Lobby");
+    EXPECT_EQ(forum.persona_names, (std::vector<std::string>{"guide"}));
+    EXPECT_TRUE(workspace.sessions("lobby").empty());
+}
+
+TEST_F(ApplicationWorkspaceTest, ForumCheckRequiresEffectiveSettings) {
+    std::filesystem::remove(
+        root_ / "forums" / "lobby" / "personas" / "base_config.toml");
+    Workspace workspace(root_);
+
+    try {
+        (void)workspace.check_forum("lobby");
+        FAIL() << "expected missing effective settings to fail";
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("guide"), std::string::npos) << message;
+        EXPECT_NE(message.find("host"), std::string::npos) << message;
+        EXPECT_NE(message.find("port"), std::string::npos) << message;
+    }
+    EXPECT_TRUE(workspace.sessions("lobby").empty());
+}
+
+TEST_F(ApplicationWorkspaceTest, ForumCheckExpandsEveryPromptLink) {
+    {
+        std::ofstream system_prompt(
+            root_ / "forums" / "lobby" / "personas" / "guide" / "SYSTEM.md");
+        system_prompt << "$$(missing.md)";
+    }
+    Workspace workspace(root_);
+
+    try {
+        (void)workspace.check_forum("lobby");
+        FAIL() << "expected a missing prompt include to fail";
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("guide"), std::string::npos) << message;
+        EXPECT_NE(message.find("cannot read included file"), std::string::npos)
+            << message;
+    }
+    EXPECT_TRUE(workspace.sessions("lobby").empty());
+}
+
+TEST_F(ApplicationWorkspaceTest, ForumCheckRejectsDuplicatePersonaNames) {
+    const std::filesystem::path duplicate =
+        root_ / "forums" / "lobby" / "personas" / "other";
+    std::filesystem::create_directories(duplicate);
+    {
+        std::ofstream config(duplicate / "config.toml");
+        config << "display_name = \"Guide\"\n";
+        std::ofstream system_prompt(duplicate / "SYSTEM.md");
+        system_prompt << "Other instructions";
+    }
+    Workspace workspace(root_);
+
+    EXPECT_THROW((void)workspace.check_forum("lobby"), std::invalid_argument);
+    EXPECT_TRUE(workspace.sessions("lobby").empty());
+}
+
 TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     Workspace workspace(root_);
 

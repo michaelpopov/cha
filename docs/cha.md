@@ -222,14 +222,19 @@ Cancelling either selector is an error rather than a silent exit: `main()`
 throws, and the failure is reported after terminal restoration.
 
 The console entry point replaces steps 2–4 with command-line parsing. It
-supports forum and session listings, opens `--session ID`, or creates a session
-for `--new LABEL` (and creates one with a default label when neither selection
-option is present). Listing modes return before selection validation. For an
-interactive run, the ready banner reports the resolved ID from
-`CreatedSession`, so a new session can be reopened later. The entry point then
-creates a `SystemConsole` with its libuv loop, a `TranscriptEmitter`, and a
-`ConsoleSession`. Usage failures return 2; workspace and runtime failures
-return 1.
+supports forum and session listings, performs read-only forum validation with
+`--forum ID --check`, opens `--session ID`, or creates a session for
+`--new LABEL` (and creates one with a default label when neither selection
+option is present). A check loads the effective persona configurations, expands
+all prompts, and validates persona identity and uniqueness, but does not inspect
+stored sessions, create a session, resolve `api_key_env`, initialize providers,
+discover a model, or access the network. `--list-forums` returns before all
+selection validation; `--list-sessions` returns before session selection but
+conflicts with `--check`. For an interactive run, the ready banner reports the
+resolved ID from `CreatedSession`, so a new session can be reopened later. The
+entry point then creates a `SystemConsole` with its libuv loop, a
+`TranscriptEmitter`, and a `ConsoleSession`. Usage failures return 2; workspace
+and runtime failures return 1.
 
 The workspace shape is:
 
@@ -237,15 +242,16 @@ The workspace shape is:
 workspace/
   .env                         optional
   forums/
-    <forum>/
-      config.toml              required display_name
-      USER.md
+    <forum>/                   distribution unit and template containment root
+      config.toml              required display_name; optional [prompt]
+      USER.md                  template-expanded forum prompt extension
       personas/
-        base_config.toml       optional forum persona configuration
+        base_config.toml       optional forum persona configuration + [prompt]
+        shared prompt files    optional includes (e.g. character-voice.md)
         <persona>/
           config.toml
-          SYSTEM.md
-      sessions/
+          SYSTEM.md            template-expanded persona prompt
+      sessions/                 optional until a session is created
         <session-id>.sqlite3
 ```
 
@@ -257,21 +263,33 @@ directories and reads the required `display_name` from `config.toml`; persona co
 `Workspace` resolves each entry.
 
 `Config` and `AgentDefinition` are agent-owned value types. Their disk loaders
-live under `agents/`. `Workspace` resolves the optional
-the selected forum's `personas/base_config.toml` and passes it explicitly to
+live under `agents/`. `Workspace` resolves the selected forum's optional
+`personas/base_config.toml` and passes it explicitly to
 `load_agent_definitions()`; the agent layer does not infer the workspace
 layout. `load_config()` parses the base and persona files as typed partial
 configurations, overlays them, and validates the effective result. Precedence
-is built-in defaults, then the base file, then the persona file. `id` and
-`name` are required in the persona file and forbidden in the base file.
-Omitting any other persona field inherits the base or built-in value; there is
-no separate syntax for clearing an inherited optional value.
+is built-in defaults, then the base file, then the persona file. In the current
+format, the persona directory supplies the stable ID and its config defines
+`display_name`; persona identity is forbidden in the base file. For backward
+compatibility, a persona file may use `name` when `display_name` is absent and
+may use `id` to override the directory-derived ID. Omitting any other persona
+field inherits the base or built-in value; there is no separate syntax for
+clearing an inherited optional value.
 
-`load_agent_definitions()` reads each persona's `SYSTEM.md` and the selected
-forum's `USER.md`, preserves persona-list order, and appends a generated
-forum-context section to each effective system prompt. That section identifies
-the current agent, lists the other current personas, and defines the JSON Lines
-representation used for shared history.
+`load_agent_definitions()` expands each persona's `SYSTEM.md` and the selected
+forum's `USER.md` through the prompt template engine (`util/text_template.*`),
+preserves persona-list order, and appends a generated forum-context section to
+each effective system prompt. Expansion supports `$$(path)` includes (contained
+under the forum directory) and `$${name}` variables from reserved loader names
+and `[prompt]` tables. Initial prompt-variable precedence is base then persona.
+For each expanded file, `[prompt]` in an adjacent `config.toml` overlays the
+inherited scope for that file and its descendants; reserved values cannot be
+shadowed. Because expansion is per persona, `USER.md` may differ across
+personas when it references `persona.*` or `[prompt]` values. Expansion
+enforces forum containment, include-cycle, depth, count, and output-size
+limits. The generated forum-context section identifies the current agent,
+lists the other current personas, and defines the JSON Lines representation
+used for shared history.
 
 `Workspace` is the only entry point into workspace layout. It is a thin value
 over the root path and holds no cached forum or persona state, so every operation
@@ -279,6 +297,8 @@ resolves what it needs when it is called:
 
 - `forums()` enumerates and sorts the `forums/` subdirectories;
 - `load_forum()` resolves one forum directory and its ordered persona directories;
+- `check_forum()` loads every effective definition and validates the resulting
+  persona set without creating a session or provider;
 - `sessions()` builds a `SessionCatalog` for the forum and maps its `Session`
   records to `SessionSummary` values;
 - `create_session()` and `open_session()` load the forum's complete ordered agent
@@ -286,10 +306,10 @@ resolves what it needs when it is called:
   `SessionController`; creation returns it with the assigned ID in
   `CreatedSession`, while opening returns the controller directly.
 
-Persona files are therefore read once per session create/open rather than once
-per selection, and catalog paths and `Session` records never leave the
-session-layer boundary — `StartupSelector` sees only forum names and
-`SessionSummary` values.
+Persona files are therefore read once per session create/open or explicit
+forum check rather than once per selection, and catalog paths and `Session`
+records never leave the session-layer boundary — `StartupSelector` sees only
+forum names and `SessionSummary` values.
 
 `ForumPersonas` is the session-layer boundary for a non-empty ordered group and
 for lookup and handle resolution. `AgentRegistry` separately validates the
@@ -297,8 +317,10 @@ identity in backend-provided `AgentRuntimeInfo`, including when tests inject
 backends without workspace loading.
 
 Agent IDs are non-empty ASCII letters, digits, underscores, or hyphens. Display
-names are non-empty, contain no whitespace, cannot begin with `@` or `/`, and
-cannot equal `User` under ASCII case folding.
+names are non-empty, cannot start or end with whitespace, cannot begin with `@`
+or `/`, and cannot equal `User` under ASCII case folding. Internal whitespace
+is allowed, and handle lookup can resolve a unique word or word prefix within a
+multi-word display name.
 
 Sessions are forum-scoped and do not capture the forum's current personas.
 Session metadata contains the session ID, forum, and display label, but no
@@ -909,7 +931,7 @@ database, so a mistaken path cannot silently become an empty session.
 
 | Component | Responsibility |
 | --- | --- |
-| `src/util/` | Shared text, path, environment, concurrent-queue, notifier, and input-wait utilities. |
+| `src/util/` | Shared text, path, environment, prompt templates, concurrent-queue, notifier, and input-wait utilities. |
 | `src/transcript/` | Typed transcript, turn identifiers, and response-content values. |
 | `src/agents/` | Agent definitions, runtime metadata, context projection, execution, provider communication, and the runtime event queue. |
 | `src/session/` | Forum personas, chat coordination and in-flight turn state (`SessionController`), workspace and session operations, session catalogs, SQLite journaling, presentation-safe summaries, and generation status. |
@@ -971,6 +993,10 @@ libraries.
 28. The shared event queue closes only after the execution thread stops.
 29. A journal mutation failure ends the current run; the application never
     continues with transcript state it could not persist.
+30. Prompt-template includes resolve under the forum directory only: the include
+    graph of a forum is closed under the directory that is shipped as a unit.
+31. Forum validation loads the same static persona definitions as session
+    startup but creates neither a session nor a completion provider.
 
 ## Build and testing
 
@@ -1005,12 +1031,13 @@ ctest --test-dir build/console
 ```
 
 `make test` builds and runs the unit suite through CTest. Unit tests cover
-configuration, identity, forum-persona/mention routing, textual command parsing and
-dispatch, registry execution behavior, transcript/context semantics,
-controller lifecycle operations, workspace layout resolution and
-session-summary mapping, SQLite constraints and recovery, structured reasoning
-parsing and safe diagnostics, concurrent queues and notification, input/UI state, and styled
-incremental rendering.
+configuration and prompt scopes, template expansion, identity,
+forum-persona/mention routing, textual command parsing and dispatch, registry
+execution behavior, transcript/context semantics, controller lifecycle
+operations, workspace layout resolution, forum checking and session-summary
+mapping, SQLite constraints and recovery, structured reasoning parsing and
+safe diagnostics, concurrent queues and notification, input/UI state, and
+styled incremental rendering.
 
 `make itest` runs the separate integration binary from the checked-in
 `workspace/`. Its tests cover live configured streaming, non-streaming, and

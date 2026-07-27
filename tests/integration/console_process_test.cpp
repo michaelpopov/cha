@@ -143,7 +143,8 @@ void make_nonblocking(int descriptor) {
 
 ChildProcess launch_console(
     const TemporaryWorkspace& workspace,
-    const std::filesystem::path& input_path = {}) {
+    const std::filesystem::path& input_path = {},
+    bool check_forum = false) {
     int input_pipe[2]{-1, -1};
     int output_pipe[2]{};
     int error_pipe[2]{};
@@ -188,16 +189,23 @@ ChildProcess launch_console(
         if (::chdir(workspace.path().c_str()) == -1) {
             _exit(126);
         }
-        const char* const arguments[]{
-            CHA_CONSOLE_BINARY,
-            "--forum",
-            "hall",
-            "--color=never",
-            nullptr,
-        };
-        ::execv(
-            CHA_CONSOLE_BINARY,
-            const_cast<char* const*>(arguments));
+        if (check_forum) {
+            ::execl(
+                CHA_CONSOLE_BINARY,
+                CHA_CONSOLE_BINARY,
+                "--forum",
+                "hall",
+                "--check",
+                static_cast<char*>(nullptr));
+        } else {
+            ::execl(
+                CHA_CONSOLE_BINARY,
+                CHA_CONSOLE_BINARY,
+                "--forum",
+                "hall",
+                "--color=never",
+                static_cast<char*>(nullptr));
+        }
         _exit(127);
     }
 
@@ -464,6 +472,33 @@ TEST(ConsoleProcess, PromptThenImmediateEofCompletes) {
     EXPECT_FALSE(result.timed_out);
     EXPECT_EQ(result.exit_code, 0) << result.errors;
     EXPECT_NE(result.output.find("Complete answer"), std::string::npos);
+}
+
+TEST(ConsoleProcess, CheckValidatesWithoutCreatingASessionOrConnecting) {
+    TemporaryWorkspace workspace;
+    const char* const unused_api_key_env =
+        "CHA_CONSOLE_CHECK_UNUSED_API_KEY_7D3A";
+    ASSERT_EQ(::unsetenv(unused_api_key_env), 0);
+    // A missing configured secret and unreachable provider demonstrate that
+    // --check neither initializes completion clients nor performs requests.
+    write_file(
+        workspace.path()
+            / "forums" / "hall" / "personas" / "base_config.toml",
+        "host = \"127.0.0.1\"\n"
+        "port = 9\n"
+        "https = false\n"
+        "mode = \"net\"\n"
+        "model = \"process-test-model\"\n"
+        "api_key_env = \"" + std::string(unused_api_key_env) + "\"\n");
+    ChildProcess process = launch_console(workspace, {}, true);
+
+    const ProcessResult result = run_to_completion(process);
+
+    EXPECT_FALSE(result.timed_out);
+    EXPECT_EQ(result.exit_code, 0) << result.errors;
+    EXPECT_EQ(result.output, "Forum 'hall' is valid (1 persona).\n");
+    EXPECT_TRUE(result.errors.empty());
+    EXPECT_FALSE(workspace.has_session());
 }
 
 TEST(ConsoleProcess, RedirectedRegularFileCompletes) {

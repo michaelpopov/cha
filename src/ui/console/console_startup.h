@@ -27,6 +27,7 @@ struct ConsoleOptions {
     std::optional<std::string> new_label;
     bool list_forums{};
     bool list_sessions{};
+    bool check_forum{};
     ColorMode color{ColorMode::automatic};
 };
 
@@ -46,6 +47,10 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
 // Writes stable, sanitized, uncolored records for scripts.
 void write_forum_listing(const Workspace& workspace, std::ostream& out);
 void write_session_listing(
+    const Workspace& workspace,
+    const std::string& forum,
+    std::ostream& out);
+void write_forum_check(
     const Workspace& workspace,
     const std::string& forum,
     std::ostream& out);

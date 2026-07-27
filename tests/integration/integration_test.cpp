@@ -196,6 +196,7 @@ std::vector<AgentDefinition> lobby_definitions() {
     return load_agent_definitions(
         directories,
         forum.directory,
+        forum.display_name,
         forum.directory / "personas" / "base_config.toml");
 }
 
