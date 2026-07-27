@@ -246,4 +246,20 @@ std::vector<AgentMessage> project_agent_context(
     return messages;
 }
 
+std::vector<AgentMessage> project_agent_context(
+    const CompletionInput& input,
+    std::string_view system_prompt) {
+    if (!input.history) {
+        throw std::invalid_argument("Completion input requires history");
+    }
+    std::vector<AgentMessage> messages = project_agent_context(
+        input.history->entries,
+        input.history->open_entry_id,
+        input.history->offrecord_span,
+        system_prompt,
+        input.run.target.id);
+    messages.push_back({AgentRole::user, input.run.prompt_text});
+    return messages;
+}
+
 } // namespace cha

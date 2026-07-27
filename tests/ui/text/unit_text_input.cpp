@@ -71,10 +71,8 @@ AgentDefinition definition(
 
 class BlockingBackend final : public CompletionBackend {
 public:
-    RequestPayload prepare(
-        const CompletionRequest& request,
-        const TranscriptReadView&) override {
-        return {.bytes = request.prompt.text};
+    RequestPayload prepare(const CompletionInput& input) override {
+        return {.bytes = input.run.prompt_text};
     }
 
     CompletionResult perform(

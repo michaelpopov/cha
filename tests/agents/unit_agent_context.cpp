@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -114,7 +115,7 @@ TEST(AgentContext, AnOpenOffrecordSpanExcludesNothing) {
         }));
 }
 
-TEST(AgentContext, ProjectsOnlyTheCurrentMulticastChildInsideItsSilentSpan) {
+TEST(AgentContext, ProjectsOnlyEntriesOutsideAClosedOffrecordSpan) {
     const std::vector<TranscriptEntry> entries{
         make_human_entry(1, "one", "One", "Question", 1),
         make_agent_entry(2, "one", "One", "One answer", EntryStatus::complete, 1),
@@ -129,6 +130,52 @@ TEST(AgentContext, ProjectsOnlyTheCurrentMulticastChildInsideItsSilentSpan) {
             {},
             "two"),
         (std::vector<AgentMessage>{{AgentRole::user, "Question"}}));
+}
+
+TEST(AgentContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
+    auto history = std::make_shared<const CompletionHistory>(
+        CompletionHistory{
+            .entries = {
+                make_human_entry(
+                    1, "other", "Other", "Other question", 1),
+                make_agent_entry(
+                    2,
+                    "other",
+                    "Other",
+                    "Other answer",
+                    EntryStatus::complete,
+                    1),
+            },
+        });
+    const CompletionInput input{
+        .history = std::move(history),
+        .run = {
+            .request_id = 2,
+            .target = {"assistant", "Assistant"},
+            .prompt_text = "Current question",
+        },
+    };
+    std::vector<TranscriptEntry> old_tail = input.history->entries;
+    old_tail.push_back(make_human_entry(
+        3, "assistant", "Assistant", "Current question", 2));
+
+    const std::vector<AgentMessage> projected =
+        project_agent_context(input, {});
+
+    EXPECT_EQ(
+        projected,
+        project_agent_context(
+            old_tail, std::nullopt, {}, {}, "assistant"));
+    EXPECT_EQ(
+        projected,
+        (std::vector<AgentMessage>{
+            {AgentRole::user,
+             "Shared chat history (JSONL):\n"
+             R"({"kind":"human","speaker":"User","addressed_to":"Other","text":"Other question"})"
+             "\n"
+             R"({"kind":"agent","speaker":"Other","text":"Other answer"})"},
+            {AgentRole::user, "Current question"},
+        }));
 }
 
 TEST(AgentContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {

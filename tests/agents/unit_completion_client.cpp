@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,7 +17,7 @@ namespace {
 
 using Json = nlohmann::json;
 
-CompletionRequest client_request(
+CompletionInput client_request(
     Transcript& transcript,
     RequestId request_id,
     std::string prompt,
@@ -24,30 +25,31 @@ CompletionRequest client_request(
     for (TranscriptEntry& entry : history) {
         transcript.add_entry(std::move(entry));
     }
-    CompletionRequest request{
-        .request_id = request_id,
-        .prompt = make_human_entry(
-            1000 + request_id,
-            "assistant",
-            "Assistant",
-            std::move(prompt),
-            request_id),
+    CompletionInput input{
+        .history = std::make_shared<const CompletionHistory>(
+            transcript.completion_history()),
+        .run = {
+            .request_id = request_id,
+            .target = {"assistant", "Assistant"},
+            .prompt_text = std::move(prompt),
+        },
     };
-    transcript.add_entry(request.prompt);
-    return request;
+    transcript.add_entry(make_human_entry(
+        1000 + request_id,
+        "assistant",
+        "Assistant",
+        input.run.prompt_text,
+        request_id));
+    return input;
 }
 
 CompletionResult complete(
     CompletionClient& client,
-    const CompletionRequest& request,
-    const Transcript& transcript,
+    const CompletionInput& input,
+    const Transcript&,
     const CompletionDeltaSink& on_delta,
     const std::atomic_bool& cancellation) {
-    RequestPayload payload;
-    {
-        TranscriptReadView view = transcript.read();
-        payload = client.prepare(request, view);
-    }
+    RequestPayload payload = client.prepare(input);
     return client.perform(std::move(payload), on_delta, cancellation);
 }
 
@@ -81,7 +83,7 @@ TEST(CompletionClient, EchoesOnePromptInTestMode) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = config});
     Transcript transcript;
-    CompletionRequest request = client_request(transcript, 1, "hello");
+    CompletionInput request = client_request(transcript, 1, "hello");
     std::vector<std::string> deltas;
 
     const CompletionResult result = complete(
@@ -103,7 +105,7 @@ TEST(CompletionClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
     std::atomic_bool cancellation{true};
     CompletionClient client({.config = config});
     Transcript transcript;
-    CompletionRequest request = client_request(transcript, 2, "do not dispatch");
+    CompletionInput request = client_request(transcript, 2, "do not dispatch");
     bool received_delta = false;
 
     const CompletionResult result = complete(
@@ -130,7 +132,7 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = config, .system_prompt = "Be concise."});
     Transcript transcript;
-    const CompletionRequest request = client_request(
+    const CompletionInput request = client_request(
         transcript, 7, "Question", {
             make_human_entry(1, "assistant", "Assistant", "Earlier question", 6),
             make_agent_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 6),
@@ -176,7 +178,7 @@ TEST(CompletionClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
     CompletionClient client({.config = network_config(mock.port(), false)});
     Transcript transcript;
     const std::string prompt = "quote \" and newline\n and backslash \\";
-    const CompletionRequest request = client_request(transcript, 19, prompt);
+    const CompletionInput request = client_request(transcript, 19, prompt);
 
     const CompletionResult result = complete(
         client, request, transcript, [](CompletionDelta) {}, cancellation);
@@ -193,15 +195,14 @@ TEST(CompletionClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
 TEST(CompletionClient, RejectsInvalidUtf8WhenPreparingRequest) {
     CompletionClient client({.config = network_config(1, false)});
     Transcript transcript;
-    const CompletionRequest request = client_request(
+    const CompletionInput request = client_request(
         transcript,
         20,
         std::string("\xc0\x80", 2));
 
     std::string message;
     try {
-        const TranscriptReadView view = transcript.read();
-        (void)client.prepare(request, view);
+        (void)client.prepare(request);
     } catch (const std::runtime_error& error) {
         message = error.what();
     }
@@ -216,7 +217,7 @@ TEST(CompletionClient, HandlesNonStreamingProviderResponse) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port(), false)});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 8, "Question");
+    const CompletionInput request = client_request(transcript, 8, "Question");
     std::string output;
 
     const CompletionResult result = complete(
@@ -236,7 +237,7 @@ TEST(CompletionClient, ReportsProviderHttpFailure) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 9, "Question");
+    const CompletionInput request = client_request(transcript, 9, "Question");
 
     const CompletionResult result = complete(
         client, request, transcript, [](CompletionDelta) {}, cancellation);
@@ -257,7 +258,7 @@ TEST(CompletionClient, ReportsMalformedStreamingProtocolDirectly) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 10, "Question");
+    const CompletionInput request = client_request(transcript, 10, "Question");
     std::string output;
 
     const CompletionResult result = complete(
@@ -277,7 +278,7 @@ TEST(CompletionClient, RejectsAStreamWithoutTheCompletionMarker) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 11, "Question");
+    const CompletionInput request = client_request(transcript, 11, "Question");
     std::string output;
 
     const CompletionResult result = complete(
@@ -300,7 +301,7 @@ TEST(CompletionClient, ReportsATruncatedResponseAsATransportError) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 12, "Question");
+    const CompletionInput request = client_request(transcript, 12, "Question");
     std::string output;
 
     const CompletionResult result = complete(
@@ -323,7 +324,7 @@ TEST(CompletionClient, CancelsAnActiveStreamingTransfer) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 13, "Question");
+    const CompletionInput request = client_request(transcript, 13, "Question");
     std::string output;
 
     const CompletionResult result = complete(
@@ -345,7 +346,7 @@ TEST(CompletionClient, ReportsAJsonErrorReturnedInsteadOfAStream) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 14, "Question");
+    const CompletionInput request = client_request(transcript, 14, "Question");
 
     const CompletionResult result = complete(
         client, request, transcript, [](CompletionDelta) {}, cancellation);
@@ -366,7 +367,7 @@ TEST(CompletionClient, RejectsACompletedStreamWithoutText) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 15, "Question");
+    const CompletionInput request = client_request(transcript, 15, "Question");
 
     const CompletionResult result = complete(
         client, request, transcript, [](CompletionDelta) {}, cancellation);
@@ -387,7 +388,7 @@ TEST(CompletionClient, IgnoresDataAfterTheCompletionMarker) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 16, "Question");
+    const CompletionInput request = client_request(transcript, 16, "Question");
     std::string output;
 
     const CompletionResult result = complete(
@@ -406,7 +407,7 @@ TEST(CompletionClient, RejectsANonStreamingResponseWithoutText) {
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = network_config(mock.port(), false)});
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 17, "Question");
+    const CompletionInput request = client_request(transcript, 17, "Question");
 
     const CompletionResult result = complete(
         client, request, transcript, [](CompletionDelta) {}, cancellation);
@@ -428,7 +429,7 @@ TEST(CompletionClient, DiscoversItsModelBeforeTheFirstCompletion) {
     CompletionClient client({.config = config});
     EXPECT_EQ(client.info().model, "discovered-model");
     Transcript transcript;
-    const CompletionRequest request = client_request(transcript, 18, "Question");
+    const CompletionInput request = client_request(transcript, 18, "Question");
 
     const CompletionResult result = complete(
         client, request, transcript, [](CompletionDelta) {}, cancellation);
@@ -452,7 +453,7 @@ TEST(CompletionClient, StreamsStructuredReasoningBeforeAnswerWithAutoPrecedence)
     mock.start();
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request =
+    const CompletionInput request =
         client_request(transcript, 21, "Question");
     std::atomic_bool cancellation{false};
     std::vector<CompletionDelta> deltas;
@@ -489,7 +490,7 @@ TEST(CompletionClient, AppliesExplicitReasoningFormatStrictly) {
     config.reasoning_format = ReasoningFormat::reasoning_content;
     CompletionClient client({.config = config});
     Transcript transcript;
-    const CompletionRequest request =
+    const CompletionInput request =
         client_request(transcript, 22, "Question");
     std::atomic_bool cancellation{false};
     std::string answer;
@@ -529,7 +530,7 @@ TEST(CompletionClient, ParsesNonStreamingReasoningAndRequiresAnAnswer) {
     std::atomic_bool cancellation{false};
 
     Transcript first_transcript;
-    const CompletionRequest first =
+    const CompletionInput first =
         client_request(first_transcript, 23, "Question");
     std::vector<CompletionDelta> deltas;
     const CompletionResult success = complete(
@@ -546,7 +547,7 @@ TEST(CompletionClient, ParsesNonStreamingReasoningAndRequiresAnAnswer) {
     EXPECT_EQ(deltas[1].kind, CompletionDeltaKind::answer);
 
     Transcript second_transcript;
-    const CompletionRequest second =
+    const CompletionInput second =
         client_request(second_transcript, 24, "Question");
     const CompletionResult failure = complete(
         client,
@@ -570,7 +571,7 @@ TEST(CompletionClient, ReasoningOnlyStreamIsNotACompletedAnswer) {
     mock.start();
     CompletionClient client({.config = network_config(mock.port())});
     Transcript transcript;
-    const CompletionRequest request =
+    const CompletionInput request =
         client_request(transcript, 25, "Question");
     std::atomic_bool cancellation{false};
     std::vector<CompletionDelta> deltas;

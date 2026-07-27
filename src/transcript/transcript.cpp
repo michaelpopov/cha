@@ -5,30 +5,6 @@
 
 namespace cha {
 
-TranscriptReadView::TranscriptReadView(const Transcript& transcript)
-    : lock_(transcript.mutex_),
-      entries_(&transcript.entries_),
-      open_entry_id_(transcript.open_entry_id_),
-      offrecord_(transcript.offrecord_),
-      history_epoch_(transcript.history_epoch_) {
-}
-
-std::span<const TranscriptEntry> TranscriptReadView::entries() const noexcept {
-    return *entries_;
-}
-
-std::optional<EntryId> TranscriptReadView::open_entry_id() const noexcept {
-    return open_entry_id_;
-}
-
-OffrecordSpan TranscriptReadView::offrecord_span() const noexcept {
-    return offrecord_;
-}
-
-std::size_t TranscriptReadView::history_epoch() const noexcept {
-    return history_epoch_;
-}
-
 TranscriptEntry make_human_entry(
     EntryId id,
     ParticipantId addressed_to,
@@ -310,33 +286,18 @@ bool Transcript::restore_offrecord(EntryId marker_id) {
     return true;
 }
 
-void Transcript::open_silent_offrecord() {
-    std::lock_guard lock(mutex_);
-    if (open_entry_id_ || offrecord_.begin) {
-        throw std::logic_error("Cannot open a silent off-record span in the current state");
-    }
-    offrecord_.begin = boundary();
-}
-
-void Transcript::extend_silent_offrecord() {
-    std::lock_guard lock(mutex_);
-    if (open_entry_id_ || !offrecord_.begin) {
-        throw std::logic_error("Cannot extend a silent off-record span in the current state");
-    }
-    offrecord_.end = boundary();
-}
-
-void Transcript::restore_silent_offrecord() {
-    std::lock_guard lock(mutex_);
-    if (open_entry_id_ || !offrecord_.begin) {
-        throw std::logic_error("Cannot restore a silent off-record span in the current state");
-    }
-    offrecord_ = {};
-}
-
 TranscriptSnapshot Transcript::snapshot() const {
     std::lock_guard lock(mutex_);
     return {entries_, revision_, open_entry_id_, history_epoch_};
+}
+
+CompletionHistory Transcript::completion_history() const {
+    std::lock_guard lock(mutex_);
+    return {
+        .entries = entries_,
+        .open_entry_id = open_entry_id_,
+        .offrecord_span = offrecord_,
+    };
 }
 
 std::vector<TranscriptEntry> Transcript::entries() const {
@@ -348,8 +309,21 @@ std::optional<EntryId> Transcript::open_entry_id() const {
     return open_entry_id_;
 }
 
-TranscriptReadView Transcript::read() const {
-    return TranscriptReadView(*this);
+std::string Transcript::open_entry_text(EntryId entry_id) const {
+    std::lock_guard lock(mutex_);
+    if (!open_entry_id_ || *open_entry_id_ != entry_id
+        || entries_.empty() || entries_.back().id != entry_id
+        || entries_.back().kind != EntryKind::agent
+        || entries_.back().status != EntryStatus::streaming) {
+        throw std::logic_error(
+            "The requested transcript entry is not the open tail entry");
+    }
+    return entries_.back().text;
+}
+
+OffrecordSpan Transcript::offrecord_span() const {
+    std::lock_guard lock(mutex_);
+    return offrecord_;
 }
 
 void Transcript::require_next_id(EntryId entry_id) const {

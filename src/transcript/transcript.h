@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -76,37 +75,13 @@ struct TranscriptSnapshot {
     std::size_t history_epoch{};
 };
 
-class Transcript;
-
-// Borrowed read access to a Transcript for callers that need its entries without copying them,
-// such as preparing a completion request. The view holds the transcript lock for its whole
-// lifetime, so the spans and references it hands out stay valid only while it lives; keep it
-// short and never block the writer behind it.
-class TranscriptReadView {
-public:
-    ~TranscriptReadView() = default;
-
-    TranscriptReadView(const TranscriptReadView&) = delete;
-    TranscriptReadView& operator=(const TranscriptReadView&) = delete;
-    TranscriptReadView(TranscriptReadView&&) = delete;
-    TranscriptReadView& operator=(TranscriptReadView&&) = delete;
-
-    std::span<const TranscriptEntry> entries() const noexcept;
-    std::size_t revision() const noexcept;
-    std::optional<EntryId> open_entry_id() const noexcept;
-    OffrecordSpan offrecord_span() const noexcept;
-    std::size_t history_epoch() const noexcept;
-
-private:
-    friend class Transcript;
-
-    explicit TranscriptReadView(const Transcript& transcript);
-
-    std::unique_lock<std::mutex> lock_;
-    const std::vector<TranscriptEntry>* entries_{};
-    std::optional<EntryId> open_entry_id_;
-    OffrecordSpan offrecord_;
-    std::size_t history_epoch_{};
+// An owned, immutable source for model-context projection. Unlike the
+// presentation-oriented TranscriptSnapshot, it includes the off-record span
+// that determines which entries are visible to a completion.
+struct CompletionHistory {
+    std::vector<TranscriptEntry> entries;
+    std::optional<EntryId> open_entry_id;
+    OffrecordSpan offrecord_span;
 };
 
 TranscriptEntry make_human_entry(
@@ -141,10 +116,10 @@ void require_terminal_transcript_entry(const TranscriptEntry& entry);
 // Applies the terminal-entry contract at the persistence boundary.
 void require_storable_transcript_entry(const TranscriptEntry& entry);
 
-// The live transcript of one session, and the only mutable transcript state shared between the
-// UI and the agent runtime. It serializes appends, streaming updates, and history resets
-// behind a mutex, allows at most one open streaming entry, and offers readers either a snapshot
-// copy or a locked read view. It depends on nothing beyond the entry model declared above.
+// The live transcript of one session. It serializes appends, streaming
+// updates, and history resets behind a mutex, allows at most one open
+// streaming entry, and exposes only owning snapshots or narrow locked
+// accessors. It depends on nothing beyond the entry model declared above.
 class Transcript {
 public:
     Transcript() = default;
@@ -166,17 +141,15 @@ public:
     [[nodiscard]] bool open_offrecord(EntryId marker_id);
     [[nodiscard]] bool extend_offrecord(EntryId marker_id);
     [[nodiscard]] bool restore_offrecord(EntryId marker_id);
-    void open_silent_offrecord();
-    void extend_silent_offrecord();
-    void restore_silent_offrecord();
 
     TranscriptSnapshot snapshot() const;
+    CompletionHistory completion_history() const;
     std::vector<TranscriptEntry> entries() const;
     std::optional<EntryId> open_entry_id() const;
-    TranscriptReadView read() const;
+    std::string open_entry_text(EntryId entry_id) const;
+    OffrecordSpan offrecord_span() const;
 
 private:
-    friend class TranscriptReadView;
     void require_next_id(EntryId entry_id) const;
     EntryId boundary() const;
 

@@ -103,18 +103,17 @@ sequenceDiagram
     participant B as CompletionBackend
     participant E as AgentEvent queue
 
-    M->>R: submit CompletionRequest
-    R->>R: find backend by prompt.addressed_to
+    M->>R: submit CompletionInput
+    R->>R: find backend by run.target.id
     R->>R: claim outstanding-request gate
     Note over R: refused if already claimed or stopped
     R->>R: clear cancellation flag
     R->>Q: push WorkItem
     W->>Q: blocking get
-    W->>W: take Transcript read view
     alt cancelled before preparation
         W->>E: AgentCancelled
     else
-        W->>B: prepare, then release the view
+        W->>B: prepare from immutable history + logical prompt
         W->>B: perform with delta sink and cancellation flag
         loop while output arrives
             B-->>W: CompletionDelta
@@ -132,6 +131,10 @@ Rules that fall out of this design:
 
 - **Single flight.** The gate is process-wide, not per agent: a second submit is
   refused while any request is outstanding.
+- **Submission validates immutable input.** A missing completion history is a
+  caller error and throws before the gate is claimed. Unknown targets, stopped
+  execution, and queue-admission failure return `false`; a failed queue push
+  releases the gate.
 - **The gate opens before the terminal event.** By the time the main thread sees
   a terminal event, the next request can already be submitted.
 - **Cancellation is cooperative.** `cancel()` only sets an atomic flag. It is
@@ -150,13 +153,15 @@ Rules that fall out of this design:
 
 | Step | Runs | Purpose |
 | --- | --- | --- |
-| `prepare(request, view)` | Under the transcript lock | Read the transcript and build a `RequestPayload`. Must be fast. |
-| `perform(payload, sink, cancellation)` | Without the lock | One synchronous completion, streaming fragments to the sink. |
+| `prepare(input)` | Agent worker | Project owned `CompletionHistory`, append the run prompt once, and build a `RequestPayload`. Must be fast and local. |
+| `perform(payload, sink, cancellation)` | Agent worker | One synchronous completion, streaming fragments to the sink. |
 | `info()` | Any time | Persona identity and public runtime details for the registry. |
 
-Splitting them is what lets the main thread keep writing to the transcript
-while a generation runs. Tests supply their own backend and never touch the
-network; `tests/support/test_backends.h` has the helpers.
+The controller captures immutable completion history before activating a turn,
+so neither the registry nor a backend reads the live transcript. Splitting
+preparation from performance keeps request construction separate from slow
+provider I/O. Tests supply their own backend and never touch the network;
+`tests/support/test_backends.h` has the helpers.
 
 ## HTTP transport
 
@@ -234,17 +239,18 @@ never included.
 
 The predicate is a conjunction, so the off-record rule needs no ordering against
 the others. The span is passed in as one `OffrecordSpan` value taken from the
-same read view as the entries, and it is global: every persona in the forum sees
-the same exclusion, so the shared history they quote stays consistent between
-them. Excluded turns are spliced out silently — no placeholder marks the gap,
-since a note saying material was withheld is itself the influence the span
-exists to remove. Because the bounds only ever land on turn boundaries the span
-holds whole turns, so a splice can merge the runs on either side of it into one
-shared-history block but can never separate a prompt from its answer.
+same owned `CompletionHistory` as the entries, and it is global: every persona
+in the forum sees the same exclusion, so the shared history they quote stays
+consistent between them. Excluded turns are spliced out silently — no
+placeholder marks the gap, since a note saying material was withheld is itself
+the influence the span exists to remove. Because the bounds only ever land on
+turn boundaries the span holds whole turns, so a splice can merge the runs on
+either side of it into one shared-history block but can never separate a prompt
+from its answer.
 
 ## Dependencies
 
-- **Depends on:** `transcript/` for entries, read views, and IDs; `util/` for
+- **Depends on:** `transcript/` for entries, completion histories, and IDs; `util/` for
   text helpers, `ConcurrentQueue`, and `WakeNotifier`; nlohmann/json for shared-history and HTTP
   JSON; libcurl in the HTTP client; toml++ in the config loader.
 - **Must not depend on:** `session/` or `ui/`. Workspace discovery

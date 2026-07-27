@@ -10,12 +10,9 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <future>
 #include <memory>
 #include <string>
 #include <string_view>
-#include <thread>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -107,8 +104,11 @@ TEST(Transcript, StoresTypedCompleteAndStreamingEntries) {
     transcript.append_answer(2, "issues found");
 
     EXPECT_EQ(transcript.open_entry_id(), 2U);
+    EXPECT_EQ(transcript.open_entry_text(2), "Two issues found");
+    EXPECT_THROW(transcript.open_entry_text(3), std::logic_error);
     transcript.finish_entry(2, EntryStatus::complete);
     EXPECT_FALSE(transcript.open_entry_id());
+    EXPECT_THROW(transcript.open_entry_text(2), std::logic_error);
     EXPECT_EQ(
         transcript.entries(),
         (std::vector<TranscriptEntry>{
@@ -161,45 +161,6 @@ TEST(Transcript, ReturnsAnIndependentEntrySnapshot) {
     EXPECT_EQ(transcript.entries().front().text, "Original");
 }
 
-TEST(Transcript, ReadViewIsLockedNonOwningAndNeitherCopyableNorMovable) {
-    static_assert(!std::is_copy_constructible_v<TranscriptReadView>);
-    static_assert(!std::is_move_constructible_v<TranscriptReadView>);
-
-    Transcript transcript;
-    transcript.add_entry(make_notice_entry(1, "Original"));
-    TranscriptReadView view = transcript.read();
-
-    EXPECT_EQ(view.entries().size(), 1U);
-    EXPECT_EQ(view.entries().front().text, "Original");
-    EXPECT_FALSE(view.open_entry_id());
-}
-
-TEST(Transcript, MutationWaitsUntilTheReadViewIsDestroyed) {
-    Transcript transcript;
-    transcript.add_entry(make_notice_entry(1, "Original"));
-    std::promise<void> view_ready;
-    std::future<void> ready = view_ready.get_future();
-    std::promise<void> release_view;
-    std::shared_future<void> release = release_view.get_future().share();
-
-    std::thread reader([&] {
-        TranscriptReadView view = transcript.read();
-        view_ready.set_value();
-        release.wait();
-    });
-    ASSERT_EQ(ready.wait_for(std::chrono::seconds(1)), std::future_status::ready);
-
-    std::future<void> mutation = std::async(std::launch::async, [&] {
-        transcript.add_entry(make_notice_entry(2, "Later"));
-    });
-    EXPECT_EQ(mutation.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
-
-    release_view.set_value();
-    reader.join();
-    EXPECT_EQ(mutation.wait_for(std::chrono::seconds(1)), std::future_status::ready);
-    mutation.get();
-}
-
 TEST(Transcript, ReplacesAndClearsEntries) {
     Transcript transcript;
     transcript.add_entry(make_notice_entry(1, "Old"));
@@ -230,13 +191,11 @@ TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
         3, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1));
     EXPECT_TRUE(transcript.extend_offrecord(4));
 
-    {
-        const TranscriptReadView view = transcript.read();
-        EXPECT_EQ(view.offrecord_span(), (OffrecordSpan{.begin = 1, .end = 4}));
-        EXPECT_TRUE(view.offrecord_span().contains(1));
-        EXPECT_TRUE(view.offrecord_span().contains(3));
-        EXPECT_FALSE(view.offrecord_span().contains(4));
-    }
+    const OffrecordSpan closed_span = transcript.offrecord_span();
+    EXPECT_EQ(closed_span, (OffrecordSpan{.begin = 1, .end = 4}));
+    EXPECT_TRUE(closed_span.contains(1));
+    EXPECT_TRUE(closed_span.contains(3));
+    EXPECT_FALSE(closed_span.contains(4));
     EXPECT_EQ(
         transcript.entries(),
         (std::vector<TranscriptEntry>{
@@ -248,10 +207,10 @@ TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
         }));
 
     EXPECT_TRUE(transcript.restore_offrecord(5));
-    EXPECT_EQ(transcript.read().offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(transcript.offrecord_span(), OffrecordSpan{});
     EXPECT_EQ(transcript.entries().back(), make_hide_off_marker(5));
     transcript.clear();
-    EXPECT_EQ(transcript.read().offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(transcript.offrecord_span(), OffrecordSpan{});
 }
 
 TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) {
@@ -264,7 +223,7 @@ TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) 
     EXPECT_EQ(opened.revision, before.revision + 1);
     EXPECT_EQ(opened.history_epoch, before.history_epoch);
     EXPECT_EQ(
-        transcript.read().offrecord_span(),
+        transcript.offrecord_span(),
         (OffrecordSpan{.begin = 3, .end = std::nullopt}));
 
     transcript.add_entry(human(6, "Hidden", 2));
@@ -274,7 +233,7 @@ TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) 
     EXPECT_EQ(closed.revision, before_extend.revision + 1);
     EXPECT_EQ(closed.history_epoch, before_extend.history_epoch);
     EXPECT_EQ(
-        transcript.read().offrecord_span(),
+        transcript.offrecord_span(),
         (OffrecordSpan{.begin = 3, .end = 7}));
 
     EXPECT_TRUE(transcript.restore_offrecord(12));
@@ -288,42 +247,43 @@ TEST(Transcript, ReplacingEntriesDropsTheOffrecordSpan) {
     EXPECT_TRUE(transcript.open_offrecord(1));
     transcript.add_entry(human(2, "Hidden", 1));
     EXPECT_TRUE(transcript.extend_offrecord(3));
-    ASSERT_NE(transcript.read().offrecord_span(), OffrecordSpan{});
+    ASSERT_NE(transcript.offrecord_span(), OffrecordSpan{});
 
     transcript.replace_entries({human(20, "Restored", 2)});
 
-    EXPECT_EQ(transcript.read().offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(transcript.offrecord_span(), OffrecordSpan{});
     EXPECT_EQ(transcript.entries(), (std::vector<TranscriptEntry>{
         human(20, "Restored", 2),
     }));
 }
 
-TEST(Transcript, SilentOffrecordMutationsDoNotCreatePresentationChanges) {
+TEST(Transcript, CompletionHistoryOwnsOneAtomicModelContextSnapshot) {
     Transcript transcript;
-    transcript.add_entry(human(1, "Earlier", 1));
-    const TranscriptSnapshot before = transcript.snapshot();
+    transcript.add_entry(human(1, "Question", 1));
+    transcript.begin_entry(make_agent_entry(
+        2, "reviewer-id", "Reviewer", {}, EntryStatus::streaming, 1));
+    const CompletionHistory history = transcript.completion_history();
 
-    transcript.open_silent_offrecord();
-    EXPECT_EQ(
-        transcript.read().offrecord_span(),
-        (OffrecordSpan{.begin = 2, .end = std::nullopt}));
-    EXPECT_EQ(transcript.snapshot().revision, before.revision);
-    EXPECT_EQ(transcript.snapshot().history_epoch, before.history_epoch);
-    EXPECT_EQ(transcript.entries(), before.entries);
+    transcript.append_answer(2, "Live mutation");
 
+    EXPECT_EQ(history.open_entry_id, 2U);
+    ASSERT_EQ(history.entries.size(), 2U);
+    EXPECT_TRUE(history.entries.back().text.empty());
+    EXPECT_EQ(history.offrecord_span, OffrecordSpan{});
+}
+
+TEST(Transcript, CompletionHistoryIncludesOffrecordProjectionState) {
+    Transcript transcript;
+    EXPECT_TRUE(transcript.open_offrecord(1));
     transcript.add_entry(human(2, "Hidden", 2));
-    const TranscriptSnapshot before_extend = transcript.snapshot();
-    transcript.extend_silent_offrecord();
-    EXPECT_EQ(
-        transcript.read().offrecord_span(),
-        (OffrecordSpan{.begin = 2, .end = 3}));
-    EXPECT_EQ(transcript.snapshot().revision, before_extend.revision);
-    EXPECT_EQ(transcript.snapshot().history_epoch, before_extend.history_epoch);
+    EXPECT_TRUE(transcript.extend_offrecord(3));
 
-    transcript.restore_silent_offrecord();
-    EXPECT_EQ(transcript.read().offrecord_span(), OffrecordSpan{});
-    EXPECT_EQ(transcript.snapshot().revision, before_extend.revision);
-    EXPECT_THROW(transcript.restore_silent_offrecord(), std::logic_error);
+    const CompletionHistory history = transcript.completion_history();
+
+    EXPECT_EQ(
+        history.offrecord_span,
+        (OffrecordSpan{.begin = 1, .end = 3}));
+    EXPECT_EQ(history.entries, transcript.entries());
 }
 
 TEST(Transcript, RequiresStrictlyIncreasingEntryIds) {

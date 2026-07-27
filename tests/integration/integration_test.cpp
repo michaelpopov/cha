@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -77,16 +78,19 @@ ChatResult run_chat(bool stream) {
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
     AgentRegistry registry(
-        transcript,
         std::move(definitions),
         notifier());
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
-    CompletionRequest request{
-        .request_id = 1,
-        .prompt = make_human_entry(1, config.id, config.name, input, 1),
+    CompletionInput request{
+        .history = std::make_shared<const CompletionHistory>(
+            transcript.completion_history()),
+        .run = {
+            .request_id = 1,
+            .target = {config.id, config.name},
+            .prompt_text = input,
+        },
     };
-    transcript.add_entry(request.prompt);
     EXPECT_TRUE(registry.submit(std::move(request)));
 
     ChatResult result;
@@ -111,16 +115,19 @@ ChatResult run_cancelled_chat() {
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
     AgentRegistry registry(
-        transcript,
         std::move(definitions),
         notifier());
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
-    CompletionRequest request{
-        .request_id = 2,
-        .prompt = make_human_entry(1, config.id, config.name, input, 2),
+    CompletionInput request{
+        .history = std::make_shared<const CompletionHistory>(
+            transcript.completion_history()),
+        .run = {
+            .request_id = 2,
+            .target = {config.id, config.name},
+            .prompt_text = input,
+        },
     };
-    transcript.add_entry(request.prompt);
     EXPECT_TRUE(registry.submit(std::move(request)));
 
     ChatResult result;

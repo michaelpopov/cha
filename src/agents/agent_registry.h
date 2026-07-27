@@ -2,7 +2,6 @@
 
 #include "agents/agent.h"
 #include "agents/completion_backend.h"
-#include "transcript/transcript.h"
 #include "util/concurrent_queue.h"
 #include "util/wake_notifier.h"
 
@@ -17,19 +16,17 @@ namespace cha {
 
 // Runs agent completions off the caller's thread so the UI never blocks on a provider.
 // It owns one CompletionBackend per forum persona and one worker thread, accepts a single
-// outstanding CompletionRequest, prepares that request from a short-lived Transcript read view,
-// and publishes correlated AgentEvent values on a portable queue. A front-end notifier wakes the
-// event loop after event queue state changes.
+// outstanding CompletionInput, prepares from its immutable history, and
+// publishes correlated AgentEvent values on a portable queue. A front-end
+// notifier wakes the event loop after event queue state changes.
 // Cancellation is cooperative, and every accepted request receives a terminal event, including
 // across shutdown.
 class AgentRegistry {
 public:
     AgentRegistry(
-        const Transcript& transcript,
         std::vector<AgentDefinition> definitions,
         WakeNotifier& notifier);
     AgentRegistry(
-        const Transcript& transcript,
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         WakeNotifier& notifier);
     ~AgentRegistry() noexcept;
@@ -38,8 +35,9 @@ public:
     AgentRegistry& operator=(const AgentRegistry&) = delete;
 
     const std::vector<AgentRuntimeInfo>& runtime_info() const noexcept;
-    // False means the request was not accepted (busy/stopped).
-    [[nodiscard]] bool submit(CompletionRequest request);
+    // False means the request was not accepted (busy, stopped, unknown target,
+    // or queue admission failure). Missing immutable history is a caller error.
+    [[nodiscard]] bool submit(CompletionInput input);
     void cancel();
     [[nodiscard]] ChannelReadStatus try_receive(AgentEvent& event);
     void stop();
@@ -47,14 +45,13 @@ public:
 private:
     struct WorkItem {
         std::size_t backend_index{};
-        CompletionRequest request;
+        CompletionInput input;
     };
 
     void dialog();
     void publish_event(AgentEvent event);
     void publish_terminal(AgentEvent event);
 
-    const Transcript& transcript_;
     std::vector<std::unique_ptr<CompletionBackend>> backends_;
     std::vector<AgentRuntimeInfo> runtime_info_;
     ConcurrentQueue<WorkItem> requests_;

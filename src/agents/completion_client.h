@@ -23,9 +23,7 @@ public:
     CompletionClient(const CompletionClient&) = delete;
     CompletionClient& operator=(const CompletionClient&) = delete;
 
-    RequestPayload prepare(
-        const CompletionRequest& request,
-        const TranscriptReadView& transcript) override;
+    RequestPayload prepare(const CompletionInput& input) override;
     CompletionResult perform(
         RequestPayload payload,
         const CompletionDeltaSink& on_delta,

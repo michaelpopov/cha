@@ -23,9 +23,8 @@ struct CompletionResult {
     std::string message;
 };
 
-// The request a backend built for itself, opaque to its caller. It exists so that reading the
-// transcript and performing the slow call can be separate steps: prepare() runs under the
-// transcript lock, perform() runs without it.
+// The request a backend built for itself, opaque to its caller. Preparation
+// consumes immutable input; performing the slow call is a separate step.
 struct RequestPayload {
     std::string bytes;
 };
@@ -35,16 +34,15 @@ using CompletionDeltaSink = std::function<void(CompletionDelta)>;
 
 // The provider boundary of the agent runtime: all AgentRegistry needs to answer one request,
 // with no knowledge of HTTP, JSON, or any particular vendor. An implementation builds a payload
-// from a TranscriptReadView, then performs a single synchronous completion, reporting output
-// through the delta sink and stopping when the cancellation flag is set. Tests supply their own
-// implementation instead of reaching the network.
+// from CompletionInput, then performs a single synchronous completion,
+// reporting output through the delta sink and stopping when the cancellation
+// flag is set. Tests supply their own implementation instead of reaching the
+// network.
 class CompletionBackend {
 public:
     virtual ~CompletionBackend() = default;
 
-    virtual RequestPayload prepare(
-        const CompletionRequest& request,
-        const TranscriptReadView& transcript) = 0;
+    virtual RequestPayload prepare(const CompletionInput& input) = 0;
     virtual CompletionResult perform(
         RequestPayload payload,
         const CompletionDeltaSink& on_delta,

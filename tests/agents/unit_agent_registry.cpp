@@ -17,17 +17,37 @@
 namespace cha {
 namespace {
 
+// The first request emits no deltas, so its first wake is the terminal event.
+// Block that wake after publish_terminal() clears the outstanding gate but
+// before the worker can pop again. This creates a deterministic window to
+// enqueue and cancel a second request before its prepare() check.
+class BlockFirstWakeNotifier final : public WakeNotifier {
+public:
+    void wake() noexcept override {
+        if (!blocked_.exchange(true, std::memory_order_acq_rel)) {
+            entered.store(true, std::memory_order_release);
+            while (!release.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+        }
+    }
+
+    std::atomic_bool entered{false};
+    std::atomic_bool release{false};
+
+private:
+    std::atomic_bool blocked_{false};
+};
+
 class RegistryBackend final : public CompletionBackend {
 public:
     RegistryBackend(std::string id, std::string name)
         : id_(std::move(id)), name_(std::move(name)) {
     }
 
-    RequestPayload prepare(
-        const CompletionRequest& request,
-        const TranscriptReadView&) override {
-        prepared_requests.push_back(request.request_id);
-        return {.bytes = request.prompt.text};
+    RequestPayload prepare(const CompletionInput& input) override {
+        prepared_requests.push_back(input.run.request_id);
+        return {.bytes = input.run.prompt_text};
     }
 
     CompletionResult perform(
@@ -60,11 +80,9 @@ public:
         : id_(std::move(id)), name_(std::move(name)) {
     }
 
-    RequestPayload prepare(
-        const CompletionRequest& request,
-        const TranscriptReadView&) override {
+    RequestPayload prepare(const CompletionInput& input) override {
         prepared.store(true, std::memory_order_release);
-        return {.bytes = request.prompt.text};
+        return {.bytes = input.run.prompt_text};
     }
 
     CompletionResult perform(
@@ -111,18 +129,17 @@ public:
           release_after_cancellation_(release_after_cancellation) {
     }
 
-    RequestPayload prepare(
-        const CompletionRequest& completion_request,
-        const TranscriptReadView& transcript) override {
-        requests.push_back(completion_request);
-        latest_prompts.push_back(transcript.entries().back());
-        return {.bytes = completion_request.prompt.text};
+    RequestPayload prepare(const CompletionInput& input) override {
+        inputs.push_back(input);
+        histories.push_back(input.history->entries);
+        return {.bytes = input.run.prompt_text};
     }
 
     CompletionResult perform(
         RequestPayload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
+        perform_calls.fetch_add(1, std::memory_order_relaxed);
         for (const std::string& delta : deltas_) {
             on_delta({delta_kind, delta});
         }
@@ -152,8 +169,9 @@ public:
         };
     }
 
-    std::vector<CompletionRequest> requests;
-    std::vector<TranscriptEntry> latest_prompts;
+    std::vector<CompletionInput> inputs;
+    std::vector<std::vector<TranscriptEntry>> histories;
+    std::atomic_size_t perform_calls{};
     CompletionDeltaKind delta_kind{CompletionDeltaKind::answer};
 
 private:
@@ -166,14 +184,10 @@ private:
 
 class BoundaryBackend final : public CompletionBackend {
 public:
-    RequestPayload prepare(
-        const CompletionRequest& request,
-        const TranscriptReadView& transcript) override {
-        if (transcript.entries().back() != request.prompt) {
-            throw std::logic_error("prompt was not latest");
-        }
+    RequestPayload prepare(const CompletionInput& input) override {
+        captured_history = input.history->entries;
         prepared.set_value();
-        return {.bytes = request.prompt.text};
+        return {.bytes = input.run.prompt_text};
     }
 
     CompletionResult perform(
@@ -200,6 +214,7 @@ public:
 
     std::promise<void> prepared;
     std::atomic_bool release{false};
+    std::vector<TranscriptEntry> captured_history;
 
 private:
     std::string id_{"assistant"};
@@ -207,9 +222,7 @@ private:
 
 class ThrowingPrepareBackend final : public CompletionBackend {
 public:
-    RequestPayload prepare(
-        const CompletionRequest&,
-        const TranscriptReadView&) override {
+    RequestPayload prepare(const CompletionInput&) override {
         throw std::runtime_error("preparation failed");
     }
 
@@ -262,18 +275,21 @@ AgentEvent next_event(AgentRegistry& registry) {
     }
 }
 
-CompletionRequest request(
-    Transcript& transcript,
+CompletionInput request(
+    const Transcript& transcript,
     RequestId id,
     std::string target,
     std::string name,
     std::string text) {
-    CompletionRequest result{
-        .request_id = id,
-        .prompt = make_human_entry(id, std::move(target), std::move(name), std::move(text), id),
+    return {
+        .history = std::make_shared<const CompletionHistory>(
+            transcript.completion_history()),
+        .run = {
+            .request_id = id,
+            .target = {std::move(target), std::move(name)},
+            .prompt_text = std::move(text),
+        },
     };
-    transcript.add_entry(result.prompt);
-    return result;
 }
 
 TEST(AgentRegistry, RoutesPromptTargetsToTheMatchingBackendAndSharesOneChannel) {
@@ -285,7 +301,7 @@ TEST(AgentRegistry, RoutesPromptTargetsToTheMatchingBackendAndSharesOneChannel) 
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(alpha));
     backends.push_back(std::move(beta));
-    AgentRegistry registry(transcript, std::move(backends), notifier());
+    AgentRegistry registry(std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(request(transcript, 1, "beta-id", "Beta", "hello")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Beta:hello");
@@ -293,11 +309,28 @@ TEST(AgentRegistry, RoutesPromptTargetsToTheMatchingBackendAndSharesOneChannel) 
     EXPECT_TRUE(alpha_view->prepared_requests.empty());
     EXPECT_EQ(beta_view->prepared_requests, (std::vector<RequestId>{1}));
 
-    CompletionRequest unknown = request(transcript, 2, "missing-id", "Missing", "nope");
+    CompletionInput unknown = request(transcript, 2, "missing-id", "Missing", "nope");
     EXPECT_FALSE(registry.submit(std::move(unknown)));
     registry.stop();
     AgentEvent event = AgentCompleted{};
     EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
+}
+
+TEST(AgentRegistry, RejectsMissingHistoryBeforeClaimingTheOutstandingGate) {
+    Transcript transcript;
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::make_unique<ConfigurableBackend>());
+    AgentRegistry registry(std::move(backends), notifier());
+    CompletionInput invalid =
+        request(transcript, 1, "assistant", "Fake", "Invalid");
+    invalid.history.reset();
+
+    EXPECT_THROW(
+        (void)registry.submit(std::move(invalid)),
+        std::invalid_argument);
+    ASSERT_TRUE(registry.submit(
+        request(transcript, 2, "assistant", "Fake", "Valid")));
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 2U);
 }
 
 TEST(AgentRegistry, RejectsInvalidBackendMetadataAtTheRegistryBoundary) {
@@ -306,7 +339,6 @@ TEST(AgentRegistry, RejectsInvalidBackendMetadataAtTheRegistryBoundary) {
     backends.push_back(std::make_unique<RegistryBackend>("bad-id", " Bad name"));
     EXPECT_THROW(
         AgentRegistry registry(
-            transcript,
             std::move(backends),
             notifier()),
         std::invalid_argument);
@@ -321,7 +353,7 @@ TEST(AgentRegistry, SerializesRequestsAcrossDifferentBackends) {
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(alpha));
     backends.push_back(std::move(beta));
-    AgentRegistry registry(transcript, std::move(backends), notifier());
+    AgentRegistry registry(std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(request(transcript, 1, "alpha-id", "Alpha", "one")));
     EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Alpha:one");
@@ -349,7 +381,6 @@ TEST(AgentRegistry, RejectsEmptyConstruction) {
     Transcript transcript;
     EXPECT_THROW(
         AgentRegistry registry(
-            transcript,
             std::vector<std::unique_ptr<CompletionBackend>>{},
             notifier()),
         std::invalid_argument);
@@ -361,7 +392,6 @@ TEST(AgentRegistry, RejectsNullBackend) {
     backends.push_back(nullptr);
     EXPECT_THROW(
         AgentRegistry registry(
-            transcript,
             std::move(backends),
             notifier()),
         std::invalid_argument);
@@ -380,7 +410,6 @@ TEST(AgentRegistry, IdentifiesThePersonaWhoseStartupFails) {
 
     try {
         AgentRegistry registry(
-            transcript,
             std::vector<AgentDefinition>{std::move(definition)},
             notifier());
         FAIL() << "Expected startup failure";
@@ -394,7 +423,7 @@ TEST(AgentRegistry, StartsOnConstructionAndStopsIdempotently) {
     Transcript transcript;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::make_unique<ConfigurableBackend>());
-    AgentRegistry registry(transcript, std::move(backends), notifier());
+    AgentRegistry registry(std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 1, "assistant", "Fake", "Question")));
@@ -423,7 +452,7 @@ TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
     backend_view->delta_kind = CompletionDeltaKind::reasoning;
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(transcript, std::move(backends), notifier());
+    AgentRegistry registry(std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(
@@ -442,12 +471,11 @@ TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
     EXPECT_EQ(second.text, " world");
     EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 10U);
 
-    ASSERT_EQ(backend_view->requests.size(), 1U);
+    ASSERT_EQ(backend_view->inputs.size(), 1U);
     EXPECT_EQ(
-        backend_view->requests.front().prompt.text, "Current question");
-    EXPECT_EQ(
-        backend_view->latest_prompts.front(),
-        backend_view->requests.front().prompt);
+        backend_view->inputs.front().run.prompt_text, "Current question");
+    ASSERT_EQ(backend_view->histories.front().size(), 1U);
+    EXPECT_EQ(backend_view->histories.front().front().text, "Earlier question");
     EXPECT_EQ(registry.runtime_info().front().model, "fake-model");
 }
 
@@ -457,7 +485,7 @@ TEST(AgentRegistry, MapsCompletionFailureToAgentFailed) {
     backends.push_back(std::make_unique<ConfigurableBackend>(
         CompletionResult{
             CompletionOutcome::protocol_error, "malformed response"}));
-    AgentRegistry registry(transcript, std::move(backends), notifier());
+    AgentRegistry registry(std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 12, "assistant", "Fake", "Question")));
@@ -473,7 +501,7 @@ TEST(AgentRegistry, CancelsTheActiveRequestWithTheSharedToken) {
         CompletionResult{},
         std::vector<std::string>{"Partial"},
         true));
-    AgentRegistry registry(transcript, std::move(backends), notifier());
+    AgentRegistry registry(std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 13, "assistant", "Fake", "Question")));
@@ -482,26 +510,61 @@ TEST(AgentRegistry, CancelsTheActiveRequestWithTheSharedToken) {
     EXPECT_EQ(std::get<AgentCancelled>(next_event(registry)).request_id, 13U);
 }
 
-TEST(AgentRegistry, CancelsBeforePrepareWithoutCallingTheBackend) {
+TEST(AgentRegistry, CancellationBeforePreparationSkipsBothBackendMethods) {
     Transcript transcript;
-    auto backend = std::make_unique<RegistryBackend>("assistant", "Fake");
-    RegistryBackend* backend_view = backend.get();
+    BlockFirstWakeNotifier blocking_notifier;
+    auto backend = std::make_unique<ConfigurableBackend>(
+        CompletionResult{},
+        std::vector<std::string>{});
+    ConfigurableBackend* backend_view = backend.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(transcript, std::move(backends), notifier());
-    CompletionRequest pending =
-        request(transcript, 14, "assistant", "Fake", "Question");
+    AgentRegistry registry(std::move(backends), blocking_notifier);
 
-    {
-        TranscriptReadView queue_barrier = transcript.read();
-        (void)queue_barrier;
-        ASSERT_TRUE(registry.submit(std::move(pending)));
-        registry.cancel();
+    ASSERT_TRUE(registry.submit(
+        request(transcript, 14, "assistant", "Fake", "First")));
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!blocking_notifier.entered.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    if (!blocking_notifier.entered.load(std::memory_order_acquire)) {
+        blocking_notifier.release.store(true, std::memory_order_release);
+        FAIL() << "Timed out waiting for the first terminal notification";
     }
 
-    EXPECT_EQ(std::get<AgentCancelled>(next_event(registry)).request_id, 14U);
-    EXPECT_TRUE(backend_view->prepared_requests.empty());
-    EXPECT_FALSE(backend_view->performed);
+    const bool second_accepted = registry.submit(
+        request(transcript, 15, "assistant", "Fake", "Second"));
+    if (!second_accepted) {
+        blocking_notifier.release.store(true, std::memory_order_release);
+    }
+    ASSERT_TRUE(second_accepted);
+    registry.cancel();
+    blocking_notifier.release.store(true, std::memory_order_release);
+
+    AgentEvent first = AgentCompleted{};
+    ASSERT_EQ(registry.try_receive(first), ChannelReadStatus::value);
+    EXPECT_EQ(std::get<AgentCompleted>(first).request_id, 14U);
+
+    AgentEvent second = AgentCompleted{};
+    ChannelReadStatus second_status = ChannelReadStatus::empty;
+    const auto second_deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while ((second_status = registry.try_receive(second))
+               == ChannelReadStatus::empty
+           && std::chrono::steady_clock::now() < second_deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_EQ(second_status, ChannelReadStatus::value);
+    EXPECT_EQ(std::get<AgentCancelled>(second).request_id, 15U);
+    ASSERT_EQ(backend_view->inputs.size(), 1U);
+    EXPECT_EQ(backend_view->inputs.front().run.request_id, 14U);
+    EXPECT_EQ(
+        backend_view->perform_calls.load(std::memory_order_relaxed),
+        1U);
+    AgentEvent no_second_event = AgentCompleted{};
+    EXPECT_EQ(registry.try_receive(no_second_event), ChannelReadStatus::empty);
 }
 
 TEST(AgentRegistry, StopCancelsJoinsAndLeavesTheTerminalEventDrainable) {
@@ -513,7 +576,7 @@ TEST(AgentRegistry, StopCancelsJoinsAndLeavesTheTerminalEventDrainable) {
         std::vector<std::string>{"Partial"},
         true,
         &release_after_cancellation));
-    AgentRegistry registry(transcript, std::move(backends), notifier());
+    AgentRegistry registry(std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 15, "assistant", "Fake", "Question")));
@@ -534,14 +597,16 @@ TEST(AgentRegistry, StopCancelsJoinsAndLeavesTheTerminalEventDrainable) {
     EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
 }
 
-TEST(AgentRegistry, ReleasesTheTranscriptViewBeforePerforming) {
+TEST(AgentRegistry, UsesImmutableHistoryWithoutHoldingTheTranscript) {
     Transcript transcript;
+    transcript.add_entry(
+        make_human_entry(1, "assistant", "Boundary", "Earlier", 20));
     auto backend = std::make_unique<BoundaryBackend>();
     BoundaryBackend* backend_view = backend.get();
     std::future<void> prepared = backend_view->prepared.get_future();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(transcript, std::move(backends), notifier());
+    AgentRegistry registry(std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 21, "assistant", "Boundary", "Question")));
@@ -555,17 +620,19 @@ TEST(AgentRegistry, ReleasesTheTranscriptViewBeforePerforming) {
         std::future_status::ready);
     mutation.get();
 
+    ASSERT_EQ(backend_view->captured_history.size(), 1U);
+    EXPECT_EQ(backend_view->captured_history.front().text, "Earlier");
     backend_view->release.store(true, std::memory_order_release);
     EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 21U);
 }
 
-TEST(AgentRegistry, FailingPreparationReleasesTheViewAndDoesNotPerform) {
+TEST(AgentRegistry, FailingPreparationDoesNotPerform) {
     Transcript transcript;
     auto backend = std::make_unique<ThrowingPrepareBackend>();
     ThrowingPrepareBackend* backend_view = backend.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));
-    AgentRegistry registry(transcript, std::move(backends), notifier());
+    AgentRegistry registry(std::move(backends), notifier());
 
     ASSERT_TRUE(registry.submit(
         request(transcript, 22, "assistant", "Throwing", "Question")));
@@ -575,7 +642,6 @@ TEST(AgentRegistry, FailingPreparationReleasesTheViewAndDoesNotPerform) {
         failed.message.find("preparation failed"), std::string::npos);
     EXPECT_FALSE(backend_view->performed.load(std::memory_order_acquire));
 
-    EXPECT_NO_THROW(transcript.clear());
     AgentEvent no_second_event = AgentCompleted{};
     EXPECT_EQ(
         registry.try_receive(no_second_event), ChannelReadStatus::empty);

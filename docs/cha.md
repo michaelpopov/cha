@@ -65,17 +65,18 @@ The ownership graph is:
 - `SessionController` owns the in-memory `Transcript`, SQLite
   `SessionJournal`, `AgentRegistry`, `ForumPersonas`, the current default agent
   ID, the next entry and request IDs seeded from durable state, and the
-  optional `ActiveResponse` describing the turn in flight.
+  optional `ResponseBatch` and `ActiveResponse` describing the operation and
+  its foreground turn.
 - `AgentRegistry` owns public runtime information and a backend for each forum
   persona, one request queue, one shared agent-event queue, one execution
   thread, and shared cancellation/outstanding-request atomics.
 - Each production backend is a `CompletionClient` with one reusable libcurl easy
   handle and one agent-specific system prompt and configuration.
 
-The registry holds a non-owning reference to `Transcript`. The transcript
-must outlive the registry and its joined execution thread. `SessionController`
-satisfies this through member declaration order: its transcript is declared
-before its registry and therefore destroyed afterward.
+The registry has no transcript reference. Before starting a response-producing
+operation, the controller captures an owned `CompletionHistory` containing the
+entries, open-entry state, and off-record span. It shares that immutable
+history with every run in the operation.
 
 Backend construction and optional model discovery happen on the main thread
 before the execution thread starts. After startup, only the execution thread
@@ -95,9 +96,12 @@ directions are:
 `submit()`, `cancel()`, and `stop()` are externally serialized main-thread
 control operations. Submission resolves a backend slot before atomically
 claiming one global outstanding-request gate, resets the shared cancellation
-flag, and enqueues an owning `WorkItem {backend_index, request}`. A second
-submission is rejected while that gate remains claimed, even when it targets a
-different backend.
+flag, and enqueues an owning `WorkItem {backend_index, input}`. The input
+contains the shared immutable history and one owning `RunSpec`; backend routing
+uses `input.run.target.id`. Missing history is rejected before the gate is
+claimed. A second submission is rejected while that gate remains claimed, even
+when it targets a different backend. Failed queue admission releases the gate
+and returns false.
 
 The execution thread blocks on the request queue, resolves the backend vector
 slot once, and performs one request to completion. The gate means the otherwise
@@ -122,10 +126,11 @@ contains:
 - `AgentCancelled { request_id }`
 - `AgentFailed { request_id, message }`
 
-`Transcript` is mutex-protected. The main thread is its sole writer.
-The registry's execution loop obtains a short-lived `TranscriptReadView`
-while preparing a request. That view holds the mutex and exposes a non-owning
-span; it is destroyed before network I/O and before any delta is published.
+`Transcript` is mutex-protected. The main thread is its sole writer. The
+registry's execution loop prepares solely from submitted immutable input; it
+does not read or lock the live transcript. It checks cancellation immediately
+before preparation, then performs provider I/O and publishes deltas and one
+terminal event.
 
 ## Source organization and dependency rules
 
@@ -430,8 +435,11 @@ advance an in-memory history epoch so incremental renderers know to rebuild;
 the off-record mutations do not. Entry IDs must be positive and strictly
 increasing, but need not be contiguous.
 
-Snapshots are owning copies used by rendering and tests. `TranscriptReadView`
-is the locked non-owning API used during backend preparation.
+`TranscriptSnapshot` is an owning presentation snapshot.
+`CompletionHistory` is an owning model-context snapshot containing entries,
+open-entry state, and the off-record span copied under one lock.
+Narrow accessors copy the open tail text or off-record span under the
+transcript's lock. No caller can retain that lock.
 
 ### Validation
 
@@ -496,13 +504,15 @@ history may still contain a persona that has since left the forum.
 
 For an idle controller, `SessionController::submit_prompt()` accepts prompt text
 and an optional handle from a front end, resolves the target agent
-through `ForumPersonas`, and rejects an empty prompt. It then starts the turn:
+through `ForumPersonas`, and rejects an empty prompt. It then starts a one-run
+`ResponseBatch`:
 
-1. allocates a request ID and human entry ID;
-2. commits the `started` turn and prompt entry in one SQLite transaction;
-3. adds the prompt to the in-memory transcript;
-4. reserves the response entry ID and creates `ActiveResponse`;
-5. routes the request to the target backend through the shared request queue.
+1. captures immutable completion history before changing durable or live state;
+2. reserves a request ID and constructs the batch's `RunSpec`;
+3. allocates prompt and response entry IDs for the foreground run;
+4. commits the `started` turn and prompt entry in one SQLite transaction;
+5. adds the prompt and installs `ActiveResponse`;
+6. submits `CompletionInput {history, run}` to the target backend.
 
 The database commit intentionally precedes the screen and execution request.
 Once a started turn is durable, normal error paths drive it to a terminal
@@ -510,11 +520,18 @@ state. If the transcript rejects the prompt, or the registry refuses the
 request, the controller fails that durable turn before reporting the problem.
 
 `SessionController` is the only transcript writer and rejects new mutations
-while a turn is active. `AgentRegistry` routes the request by its already
-resolved target, so
-the execution thread does not revalidate session-controller-owned request and
-transcript invariants. It prepares an owning `RequestPayload` under
-`TranscriptReadView`, releases the lock, and calls the synchronous backend.
+while a response batch is active. Backend preparation projects the immutable
+history for `run.target`, appends `run.prompt_text` exactly once as the current
+user message, and returns an owning `RequestPayload`. The execution thread
+never observes when the controller appends the corresponding durable prompt.
+
+Multicast uses the same batch path with multiple ordered `RunSpec` values. All
+children share the history captured before the first prompt. The current
+single-worker implementation activates, submits, and commits one foreground
+run at a time; after its terminal event, the controller activates the next run.
+`ActiveResponse` therefore continues to identify the only run allowed to
+mutate the transcript and journal. Per-run terminal notices accumulate in the
+batch and are emitted in target order when it finishes or aborts.
 
 ### Streaming success
 
@@ -589,8 +606,8 @@ When idle, the shared text grammar translates:
   forward when the span is already closed.
 - `/hide-off`: remove the in-memory off-record span.
 - `/mcast [@Name, ... .] prompt`: send the same prompt to every persona, or
-  selected personas in order, while keeping each earlier multicast child out of
-  later multicast model context.
+  selected personas in order. Every child receives the same immutable
+  pre-multicast history plus its own logical prompt.
 - `/agents`: show a transient status notice containing the forum personas and
   their runtime details; `*` marks the run-local default.
 - `/info`: show a transient status notice containing the current transcript
@@ -987,10 +1004,12 @@ libraries.
 9. Registry control operations are externally serialized on the main thread.
 10. At most one streaming transcript entry exists, and it is the last entry.
 11. The main thread is the only transcript and database writer.
-12. Backend preparation holds a read view; backend performance never does.
-13. The transcript outlives the registry and its joined execution thread.
-14. Registry routing sends a request to exactly one backend while the
-    active-turn state prevents intervening transcript mutations.
+12. Backend preparation consumes owned immutable input and never reads or
+    locks the live transcript.
+13. Nothing outside `Transcript` holds its mutex; readers receive owned
+    snapshots or values from narrow accessors.
+14. Registry routing sends each input to exactly the backend identified by
+    `input.run.target.id`.
 15. The outstanding gate clears before a terminal event becomes observable.
 16. Request IDs are positive, strictly increasing, and durable. Entry IDs are
     positive and strictly increasing within the live or restored transcript;

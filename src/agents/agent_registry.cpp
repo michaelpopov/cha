@@ -65,21 +65,17 @@ std::vector<std::unique_ptr<CompletionBackend>> build_backends(
 } // namespace
 
 AgentRegistry::AgentRegistry(
-    const Transcript& transcript,
     std::vector<AgentDefinition> definitions,
     WakeNotifier& notifier)
     : AgentRegistry(
-        transcript,
         build_backends(std::move(definitions)),
         notifier) {
 }
 
 AgentRegistry::AgentRegistry(
-    const Transcript& transcript,
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     WakeNotifier& notifier)
-    : transcript_(transcript),
-      backends_(std::move(backends)),
+    : backends_(std::move(backends)),
       runtime_info_(build_runtime_info(backends_)),
       notifier_(notifier),
       thread_(&AgentRegistry::dialog, this) {
@@ -103,14 +99,17 @@ const std::vector<AgentRuntimeInfo>& AgentRegistry::runtime_info() const noexcep
     return runtime_info_;
 }
 
-bool AgentRegistry::submit(CompletionRequest request) {
+bool AgentRegistry::submit(CompletionInput input) {
+    if (!input.history) {
+        throw std::invalid_argument("Completion input requires history");
+    }
     if (stopped_) {
         return false;
     }
 
     std::size_t backend_index = runtime_info_.size();
     for (std::size_t index = 0; index < runtime_info_.size(); ++index) {
-        if (runtime_info_[index].persona.id == request.prompt.addressed_to) {
+        if (runtime_info_[index].persona.id == input.run.target.id) {
             backend_index = index;
             break;
         }
@@ -129,12 +128,12 @@ bool AgentRegistry::submit(CompletionRequest request) {
 
     cancellation_.store(false, std::memory_order_release);
     try {
-        if (requests_.push(WorkItem{backend_index, std::move(request)})) {
+        if (requests_.push(WorkItem{backend_index, std::move(input)})) {
             return true;
         }
     } catch (...) {
         request_outstanding_.store(false, std::memory_order_release);
-        throw;
+        return false;
     }
     request_outstanding_.store(false, std::memory_order_release);
     return false;
@@ -170,22 +169,16 @@ void AgentRegistry::dialog() {
             break;
         }
 
-        const RequestId request_id = work->request.request_id;
+        const RequestId request_id = work->input.run.request_id;
         CompletionBackend& backend = *backends_[work->backend_index];
         try {
-            std::optional<RequestPayload> payload;
-            {
-                TranscriptReadView transcript = transcript_.read();
-                if (!cancellation_.load(std::memory_order_acquire)) {
-                    payload = backend.prepare(work->request, transcript);
-                }
-            }
-            if (!payload) {
+            if (cancellation_.load(std::memory_order_acquire)) {
                 publish_terminal(AgentCancelled{request_id});
                 continue;
             }
+            RequestPayload payload = backend.prepare(work->input);
             const CompletionResult result = backend.perform(
-                std::move(*payload),
+                std::move(payload),
                 [this, request_id](CompletionDelta delta) {
                     publish_event(AgentDelta{
                         request_id,

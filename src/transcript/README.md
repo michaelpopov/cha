@@ -12,7 +12,7 @@ project.
 
 | Source | Responsibility |
 | --- | --- |
-| `transcript.h` | IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, `TranscriptSnapshot`, `TranscriptReadView`, and the `Transcript` container. |
+| `transcript.h` | IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, `TranscriptSnapshot`, `CompletionHistory`, and the `Transcript` container. |
 | `transcript.cpp` | Factory construction, the validation rules, and the synchronized mutation and read operations. |
 
 ## The entry model
@@ -83,26 +83,22 @@ under the lock.
 | `open_offrecord` | Opens the span at the current boundary and appends `[hide-on]`. |
 | `extend_offrecord` | Sets or moves the span's end to the current boundary and appends `[hide]`. |
 | `restore_offrecord` | Clears both bounds and appends `[hide-off]`. |
-| `open_silent_offrecord` | Opens the same span without a marker, ID, revision, or epoch change; internal misuse throws. |
-| `extend_silent_offrecord` | Advances that silent span's end without a presentation change; internal misuse throws. |
-| `restore_silent_offrecord` | Clears a silent span without a presentation change; internal misuse throws. |
 
 Every presentation-changing mutation bumps `revision`, and every entry ID must
-be strictly greater than the last. The silent off-record mutations deliberately
-change neither: they have no visible effect. Renderers use `revision` to detect
-change and `history_epoch` to detect that everything they had drawn is now
-invalid. The marker-producing off-record mutations bump `revision` for their
-marker like any other insertion, but leave `history_epoch` alone: nothing
-already drawn becomes invalid.
+be strictly greater than the last. Renderers use `revision` to detect change
+and `history_epoch` to detect that everything they had drawn is now invalid.
+The marker-producing off-record mutations bump `revision` for their marker
+like any other insertion, but leave `history_epoch` alone: nothing already
+drawn becomes invalid.
 
 ### The off-record span
 
 `OffrecordSpan` is a half-open range of entry IDs excluded from model context
 while remaining fully visible on screen. It lives in `Transcript` because that
 is the one place a reader can take the bounds and the entries they describe
-under a single lock; `TranscriptReadView::offrecord_span()` is how the agent
-thread gets it. `TranscriptSnapshot` has no span field — renderers never need
-the bounds, only the marker entries already in `entries`.
+under a single lock. `completion_history()` copies both together for immutable
+backend input. `TranscriptSnapshot` has no span field—renderers never need the
+bounds, only the marker entries already in `entries`.
 
 Bounds are **boundary values, not entry references**: `begin` and `end` are
 numeric cuts one past the transcript tail, which stay meaningful across the
@@ -136,26 +132,27 @@ stateDiagram-v2
     end note
 ```
 
-### Two ways to read
+### Reading transcript state
 
 ```mermaid
 flowchart TD
     C["Transcript<br/>entries + revision + epoch"]
     S["TranscriptSnapshot<br/>owned copy"]
-    V["TranscriptReadView<br/>borrowed, holds the lock"]
-    R["Renderers, status, tests"]
-    B["Backend request preparation"]
+    H["CompletionHistory<br/>owned entries + projection state"]
+    N["Narrow accessors<br/>owned text or span value"]
+    R["Renderers and status"]
+    B["Immutable backend input"]
+    T["Session checks and tests"]
 
     C -->|"snapshot"| S --> R
-    C -->|"read"| V --> B
+    C -->|"completion_history"| H --> B
+    C -->|"copy under lock"| N --> T
 ```
 
-Use a **snapshot** when the reader will hold the data across work of its own —
-that is what the terminal renderer does. Use a **read view** when the reader
-needs the entries without copying them and can finish quickly: the agent thread
-takes one to project the model context, then releases it before any network I/O.
-A read view holds the transcript mutex for its whole lifetime, so blocking
-inside one blocks the writer.
+Use a **snapshot** for presentation state and a **completion history** for
+model-context projection. Both are owned copies that remain stable after the
+live transcript changes. Narrow accessors return owned values while keeping
+lock ownership inside `Transcript`.
 
 ## Dependencies
 
@@ -171,8 +168,8 @@ protocol, or terminal concepts.
 
 `tests/transcript/unit_transcript.cpp` covers the factories, every
 validation rule, the streaming lifecycle, ID ordering, the off-record bound
-states and their markers, and snapshot/read-view consistency — including that a
-read view really does block the writer.
+states and their markers, immutable completion-history capture, and
+snapshot and narrow-accessor consistency.
 
 The same file also tests `SessionJournal` and the session database, on
 purpose: the SQL `CHECK` constraints are a second encoding of the rules above,

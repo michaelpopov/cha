@@ -85,10 +85,10 @@ private:
         std::string reasoning_text;
     };
 
-    struct ActiveMulticast {
-        std::string text;
-        std::vector<PersonaInfo> targets;
-        std::size_t current_target{};
+    struct ResponseBatch {
+        SharedCompletionHistory history;
+        std::vector<RunSpec> runs;
+        std::size_t foreground_index{};
         bool abort_requested{};
         std::string terminal_notices;
     };
@@ -107,10 +107,17 @@ private:
     void initialize(SessionRestore restored);
     bool busy() const;
     SessionUpdate busy_notice() const;
-    SessionUpdate start_response(std::string text, const PersonaInfo& target);
-    void start_next_multicast_child(SessionUpdate& update);
-    void finish_multicast_child(SessionUpdate& update);
-    void abandon_multicast();
+    void start_batch(
+        std::string text,
+        std::vector<PersonaInfo> targets,
+        SharedCompletionHistory history,
+        SessionUpdate& update);
+    void activate_current_run(SessionUpdate& update);
+    void start_next_batch_run(SessionUpdate& update);
+    void finish_batch_run(SessionUpdate& update);
+    void finish_batch(SessionUpdate& update);
+    void append_batch_notice(const SessionUpdate& update);
+    void abandon_batch();
     void apply(const AgentDelta& event, SessionUpdate& update);
     void apply(const AgentCompleted& event, SessionUpdate& update);
     void apply(const AgentCancelled& event, SessionUpdate& update);
@@ -131,7 +138,7 @@ private:
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;
-    std::optional<ActiveMulticast> multicast_;
+    std::optional<ResponseBatch> batch_;
     bool shutdown_{};
 };
 

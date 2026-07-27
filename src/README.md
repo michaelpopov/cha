@@ -117,11 +117,11 @@ flowchart LR
     controller --> personas
     controller --> journal
     controller --> registry
+    controller -->|"capture CompletionHistory"| conv
     registry -->|"WorkItem queue"| execution
     execution --> backend
     backend <-->|"HTTP or SSE"| provider
     execution -->|"AgentEvent queue + wake"| frontend
-    execution -.->|"short-lived read view"| conv
 ```
 
 Ownership is a strict tree, and destruction order matters:
@@ -133,11 +133,12 @@ Ownership is a strict tree, and destruction order matters:
   console queue and EOF lifecycle.
 - `SessionController` owns the `Transcript`, `ForumPersonas`, the
   `SessionJournal`, the `AgentRegistry`, the current default agent, and the
-  state of the in-flight turn. The transcript is declared *before* the registry
-  so it outlives the thread that reads it.
+  state of the in-flight response batch. It captures immutable completion
+  history before activating any run.
 - `AgentRegistry` owns runtime information and a backend for each forum persona,
   the request queue, the event queue, the worker thread, and the
-  cancellation and outstanding-request atomics.
+  cancellation and outstanding-request atomics. It has no reference to the
+  live transcript.
 
 ### How the two threads talk
 
@@ -232,14 +233,14 @@ sequenceDiagram
     T->>C: submit_prompt text and handle
     C->>C: reject if a turn is active
     C->>C: resolve handle against ForumPersonas
+    C->>V: capture immutable CompletionHistory
     C->>J: start_turn, SQLite transaction
     C->>V: add human entry
-    C->>G: submit CompletionRequest
+    C->>G: submit CompletionInput
     G->>W: WorkItem via request queue
     C-->>U: SessionUpdate, render and clear input
 
-    W->>V: short-lived read view
-    W->>W: backend.prepare, project context and build body
+    W->>W: backend.prepare from immutable history + prompt
     W->>P: POST /v1/chat/completions
     loop streamed fragments
         P-->>W: SSE delta

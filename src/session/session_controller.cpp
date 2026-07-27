@@ -108,7 +108,7 @@ SessionController::SessionController(
     WakeNotifier& notifier,
     SessionRestore restored)
     : journal_(std::move(path)),
-      registry_(transcript_, std::move(definitions), notifier),
+      registry_(std::move(definitions), notifier),
       personas_(make_forum_personas(registry_.runtime_info())),
       default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
@@ -120,7 +120,7 @@ SessionController::SessionController(
     WakeNotifier& notifier,
     SessionRestore restored)
     : journal_(std::move(path)),
-      registry_(transcript_, std::move(backends), notifier),
+      registry_(std::move(backends), notifier),
       personas_(make_forum_personas(registry_.runtime_info())),
       default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
@@ -160,7 +160,7 @@ GenerationStatus SessionController::generation_status() const {
 }
 
 bool SessionController::busy() const {
-    return active_ || multicast_;
+    return active_ || batch_;
 }
 
 SessionUpdate SessionController::busy_notice() const {
@@ -198,121 +198,174 @@ SessionUpdate SessionController::submit_prompt(
         return update;
     }
 
+    SharedCompletionHistory history =
+        std::make_shared<const CompletionHistory>(
+            transcript_.completion_history());
     update.clear_input = true;
-    merge_update(update, start_response(std::move(text), *target));
+    start_batch(
+        std::move(text),
+        std::vector<PersonaInfo>{*target},
+        std::move(history),
+        update);
     return update;
 }
 
-SessionUpdate SessionController::start_response(
+void SessionController::start_batch(
     std::string text,
-    const PersonaInfo& target) {
-    SessionUpdate update;
-    const RequestId request_id = next_request_id_++;
-    CompletionRequest request{
-        .request_id = request_id,
-        .prompt = make_human_entry(
-            next_entry_id_++, target.id, target.name, std::move(text), request_id),
+    std::vector<PersonaInfo> targets,
+    SharedCompletionHistory history,
+    SessionUpdate& update) {
+    if (!history || targets.empty()) {
+        throw std::invalid_argument(
+            "Response batch requires history and at least one target");
+    }
+    ResponseBatch batch{
+        .history = std::move(history),
     };
+    batch.runs.reserve(targets.size());
+    for (PersonaInfo& target : targets) {
+        batch.runs.push_back({
+            .request_id = next_request_id_++,
+            .target = std::move(target),
+            .prompt_text = text,
+        });
+    }
+    batch_ = std::move(batch);
+
+    start_next_batch_run(update);
+}
+
+void SessionController::activate_current_run(SessionUpdate& update) {
+    if (!batch_ || batch_->foreground_index >= batch_->runs.size()) {
+        throw std::logic_error("Response batch run index is out of range");
+    }
+    const RunSpec& run = batch_->runs[batch_->foreground_index];
+    CompletionInput input{
+        .history = batch_->history,
+        .run = run,
+    };
+    TranscriptEntry prompt = make_human_entry(
+        next_entry_id_++,
+        run.target.id,
+        run.target.name,
+        run.prompt_text,
+        run.request_id);
+    ActiveResponse response{
+        .request_id = run.request_id,
+        .response_entry_id = next_entry_id_++,
+        .agent_id = run.target.id,
+        .agent_name = run.target.name,
+        .phase = ResponsePhase::waiting,
+    };
+
     persist(
         request_action(
             "persist start of",
-            request.request_id,
-            target.name),
-        [this, &request] {
-            journal_.start_turn(request.request_id, request.prompt);
+            run.request_id,
+            run.target.name),
+        [this, &run, &prompt] {
+            journal_.start_turn(run.request_id, prompt);
         });
     try {
-        transcript_.add_entry(request.prompt);
+        transcript_.add_entry(prompt);
     } catch (...) {
         TranscriptEntry error = make_error_entry(
             next_entry_id_++,
             "Failed to add the submitted prompt to the transcript",
-            request.request_id,
-            target.id);
+            run.request_id,
+            run.target.id);
         persist(
             request_action(
                 "persist failure of",
-                request.request_id,
-                target.name),
-            [this, &request, &error] {
-                journal_.fail_turn(request.request_id, error);
+                run.request_id,
+                run.target.name),
+            [this, &run, &error] {
+                journal_.fail_turn(run.request_id, error);
             });
         throw;
     }
-    active_ = ActiveResponse{
-        .request_id = request.request_id,
-        .response_entry_id = next_entry_id_++,
-        .agent_id = target.id,
-        .agent_name = target.name,
-        .phase = ResponsePhase::waiting,
-    };
-    if (registry_.submit(std::move(request))) {
+    active_ = std::move(response);
+
+    bool submitted = false;
+    try {
+        submitted = registry_.submit(std::move(input));
+    } catch (...) {
+        // The durable prompt already exists and ActiveResponse is installed.
+        // Convert any registry-boundary exception into the same terminal
+        // failure as an ordinary admission refusal.
+        submitted = false;
+    }
+    if (submitted) {
         update.render_needed = true;
         update.notice = "";
-        return update;
+        return;
     }
-    fail_active_response("Agent execution is unavailable", target.id, update);
+    fail_active_response(
+        "Agent execution is unavailable", run.target.id, update);
     update.notice = "Request could not be dispatched";
-    return update;
 }
 
-void SessionController::start_next_multicast_child(SessionUpdate& update) {
-    if (!multicast_) {
+void SessionController::start_next_batch_run(SessionUpdate& update) {
+    if (!batch_) {
         return;
     }
-    if (multicast_->abort_requested) {
-        abandon_multicast();
+    if (batch_->abort_requested) {
+        abandon_batch();
         return;
     }
-    if (multicast_->current_target >= multicast_->targets.size()) {
-        throw std::logic_error("Multicast target index is out of range");
+    if (batch_->foreground_index >= batch_->runs.size()) {
+        throw std::logic_error("Response batch run index is out of range");
     }
 
     try {
-        merge_update(
-            update,
-            start_response(
-                multicast_->text,
-                multicast_->targets[multicast_->current_target]));
+        activate_current_run(update);
     } catch (...) {
-        abandon_multicast();
+        abandon_batch();
         throw;
     }
     if (!active_) {
-        abandon_multicast();
+        finish_batch(update);
     }
 }
 
-void SessionController::finish_multicast_child(SessionUpdate& update) {
-    if (!multicast_) {
+void SessionController::finish_batch_run(SessionUpdate& update) {
+    if (!batch_) {
         return;
     }
-    if (update.notice && !update.notice->empty()) {
-        if (!multicast_->terminal_notices.empty()) {
-            multicast_->terminal_notices += '\n';
-        }
-        multicast_->terminal_notices += *update.notice;
-    }
-    transcript_.extend_silent_offrecord();
-    if (multicast_->abort_requested
-        || multicast_->current_target + 1 == multicast_->targets.size()) {
-        const std::string terminal_notices = multicast_->terminal_notices;
-        abandon_multicast();
-        if (!terminal_notices.empty()) {
-            update.notice = terminal_notices;
-        }
+    if (batch_->abort_requested
+        || batch_->foreground_index + 1 == batch_->runs.size()) {
+        finish_batch(update);
         return;
     }
-    ++multicast_->current_target;
-    start_next_multicast_child(update);
+    append_batch_notice(update);
+    ++batch_->foreground_index;
+    start_next_batch_run(update);
 }
 
-void SessionController::abandon_multicast() {
-    if (!multicast_) {
+void SessionController::finish_batch(SessionUpdate& update) {
+    if (!batch_) {
         return;
     }
-    transcript_.restore_silent_offrecord();
-    multicast_.reset();
+    append_batch_notice(update);
+    const std::string terminal_notices = batch_->terminal_notices;
+    abandon_batch();
+    if (!terminal_notices.empty()) {
+        update.notice = terminal_notices;
+    }
+}
+
+void SessionController::append_batch_notice(const SessionUpdate& update) {
+    if (!batch_ || !update.notice || update.notice->empty()) {
+        return;
+    }
+    if (!batch_->terminal_notices.empty()) {
+        batch_->terminal_notices += '\n';
+    }
+    batch_->terminal_notices += *update.notice;
+}
+
+void SessionController::abandon_batch() {
+    batch_.reset();
 }
 
 SessionUpdate SessionController::clear_transcript() {
@@ -398,20 +451,24 @@ SessionUpdate SessionController::start_multicast(
             return {.notice = format_duplicate_persona_notice(target.name)};
         }
     }
-    {
-        const TranscriptReadView view = transcript_.read();
-        if (view.offrecord_span().begin) {
-            return {.notice = "Cannot start multicast while an off-record span is active"};
-        }
+    // Check the precondition on the same atomic snapshot every child receives,
+    // avoiding a separate lock and a potentially different observed state.
+    SharedCompletionHistory history =
+        std::make_shared<const CompletionHistory>(
+            transcript_.completion_history());
+    if (history->offrecord_span.begin) {
+        return {
+            .notice =
+                "Cannot start multicast while an off-record span is active",
+        };
     }
 
-    transcript_.open_silent_offrecord();
-    multicast_ = ActiveMulticast{
-        .text = std::move(text),
-        .targets = std::move(targets),
-    };
     SessionUpdate update{.clear_input = true};
-    start_next_multicast_child(update);
+    start_batch(
+        std::move(text),
+        std::move(targets),
+        std::move(history),
+        update);
     return update;
 }
 
@@ -463,12 +520,13 @@ SessionUpdate SessionController::set_default_agent(std::string_view handle) {
 
 SessionUpdate SessionController::request_stop() {
     SessionUpdate update;
-    if (multicast_) {
-        multicast_->abort_requested = true;
+    if (batch_) {
+        batch_->abort_requested = true;
     }
     if (!active_) {
-        if (multicast_) {
-            abandon_multicast();
+        const bool had_batch = batch_.has_value();
+        abandon_batch();
+        if (had_batch) {
             update.render_needed = true;
             update.notice = "Generation stopped";
         } else {
@@ -515,7 +573,7 @@ void SessionController::apply(const AgentCompleted& event, SessionUpdate& update
     if (active_->phase != ResponsePhase::answering) {
         fail_active_response(
             "Agent completed without answer content", active_->agent_id, update);
-        finish_multicast_child(update);
+        finish_batch_run(update);
         return;
     }
     const TranscriptEntry response =
@@ -532,7 +590,7 @@ void SessionController::apply(const AgentCompleted& event, SessionUpdate& update
     active_.reset();
     update.render_needed = true;
     update.notice = "";
-    finish_multicast_child(update);
+    finish_batch_run(update);
 }
 
 void SessionController::apply(const AgentCancelled& event, SessionUpdate& update) {
@@ -564,13 +622,13 @@ void SessionController::apply(const AgentCancelled& event, SessionUpdate& update
     active_.reset();
     update.render_needed = true;
     update.notice = "Generation stopped";
-    finish_multicast_child(update);
+    finish_batch_run(update);
 }
 
 void SessionController::apply(const AgentFailed& event, SessionUpdate& update) {
     if (matches(event.request_id)) {
         fail_active_response(event.message, active_->agent_id, update);
-        finish_multicast_child(update);
+        finish_batch_run(update);
     }
 }
 
@@ -607,16 +665,7 @@ void SessionController::finish_response_entry(EntryStatus status) {
 TranscriptEntry SessionController::response_entry(EntryStatus status) const {
     std::string text;
     if (active_->phase == ResponsePhase::answering) {
-        const TranscriptReadView view = transcript_.read();
-        const std::span<const TranscriptEntry> entries = view.entries();
-        if (!view.open_entry_id()
-            || *view.open_entry_id() != active_->response_entry_id
-            || entries.empty()
-            || entries.back().id != active_->response_entry_id) {
-            throw std::logic_error(
-                "Active response does not match the open transcript entry");
-        }
-        text = entries.back().text;
+        text = transcript_.open_entry_text(active_->response_entry_id);
     }
     return make_agent_entry(
         active_->response_entry_id,
@@ -653,14 +702,12 @@ void SessionController::shutdown() {
         return;
     }
     shutdown_ = true;
-    if (multicast_) {
-        multicast_->abort_requested = true;
+    if (batch_) {
+        batch_->abort_requested = true;
     }
     registry_.stop();
     (void)receive();
-    if (multicast_) {
-        abandon_multicast();
-    }
+    abandon_batch();
 }
 
 } // namespace cha

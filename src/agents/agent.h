@@ -4,6 +4,7 @@
 #include "transcript/transcript.h"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -33,6 +34,24 @@ struct AgentRuntimeInfo {
     std::string model;
     std::string api;
     bool streaming{};
+};
+
+using SharedCompletionHistory =
+    std::shared_ptr<const CompletionHistory>;
+
+// One logical model run. It deliberately has no durable transcript entry ID:
+// those IDs are assigned only when the controller activates the run.
+struct RunSpec {
+    RequestId request_id{};
+    PersonaInfo target;
+    std::string prompt_text;
+};
+
+// Complete immutable input for backend preparation. Ordinary requests and
+// multicast children use the same representation.
+struct CompletionInput {
+    SharedCompletionHistory history;
+    RunSpec run;
 };
 
 // Classifies model-visible message roles independently of their JSON spelling.
@@ -69,12 +88,11 @@ std::vector<AgentMessage> project_agent_context(
     std::string_view system_prompt,
     std::string_view agent_id);
 
-// One unit of work for AgentRegistry: the human TranscriptEntry to answer, plus the request ID
-// that correlates every event of that run back to it.
-struct CompletionRequest {
-    RequestId request_id{};
-    TranscriptEntry prompt;
-};
+// Projects immutable history and appends the run's addressed prompt exactly
+// once as a user message.
+std::vector<AgentMessage> project_agent_context(
+    const CompletionInput& input,
+    std::string_view system_prompt);
 
 // One fragment of streamed provider output, classified as private reasoning or answer text.
 // CompletionBackend emits this without request identity; AgentRegistry attaches that identity

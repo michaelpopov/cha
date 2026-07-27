@@ -228,7 +228,7 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success `render_needed` + `clear_input` and no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
-| `start_multicast(text, targets)` | Runs resolved targets in order while a marker-free span keeps completed multicast children out of later child contexts. | Starts the first ordinary turn; terminal notices are retained until the multicast completes. |
+| `start_multicast(text, targets)` | Captures one immutable pre-multicast history and runs the resolved targets against it in order. | Starts the first batch run; terminal notices are retained until the multicast completes or dispatch aborts it. |
 | `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
@@ -258,8 +258,9 @@ Front ends translate those into these calls.
 Starting a turn, in order: allocate a request ID and entry ID, build the human
 entry, `start_turn()` it to disk, add it to the transcript, reserve the
 response entry ID, then submit. If the transcript refuses the prompt, the turn
-is failed on disk before the exception propagates. If the registry refuses the
-request, the turn is failed immediately and the caller is told it could not be
+is failed on disk before the exception propagates. If registry admission
+returns false or throws, the turn is failed immediately, the batch emits its
+accumulated terminal notices, and the caller is told it could not be
 dispatched.
 
 Applying events:

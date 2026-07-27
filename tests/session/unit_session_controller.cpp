@@ -57,7 +57,7 @@ public:
     std::filesystem::path path;
 };
 
-// Returns scripted completion output while retaining prompt-only requests for assertions.
+// Returns scripted completion output while retaining immutable inputs for assertions.
 class ScriptedBackend final : public CompletionBackend {
 public:
     ScriptedBackend(
@@ -91,18 +91,10 @@ public:
         wait_for_cancellation_(wait_for_cancellation) {
     }
 
-    RequestPayload prepare(
-        const CompletionRequest& request,
-        const TranscriptReadView& transcript) override {
-        requests.push_back(request);
-        latest_prompt = transcript.entries().back();
-        model_contexts.push_back(project_agent_context(
-            transcript.entries(),
-            transcript.open_entry_id(),
-            transcript.offrecord_span(),
-            {},
-            id_));
-        return {.bytes = request.prompt.text};
+    RequestPayload prepare(const CompletionInput& input) override {
+        inputs.push_back(input);
+        model_contexts.push_back(project_agent_context(input, {}));
+        return {.bytes = input.run.prompt_text};
     }
 
     CompletionResult perform(
@@ -133,9 +125,8 @@ public:
         };
     }
 
-    std::vector<CompletionRequest> requests;
+    std::vector<CompletionInput> inputs;
     std::vector<std::vector<AgentMessage>> model_contexts;
-    TranscriptEntry latest_prompt;
 
 private:
     std::string id_{"guide-id"};
@@ -143,6 +134,35 @@ private:
     CompletionResult result_;
     std::vector<CompletionDelta> deltas_;
     bool wait_for_cancellation_{};
+};
+
+class ThrowingPrepareBackend final : public CompletionBackend {
+public:
+    RequestPayload prepare(const CompletionInput&) override {
+        throw std::runtime_error("preparation failed");
+    }
+
+    CompletionResult perform(
+        RequestPayload,
+        const CompletionDeltaSink&,
+        const std::atomic_bool&) override {
+        performed = true;
+        return {};
+    }
+
+    AgentRuntimeInfo info() const override {
+        return {
+            .persona = {
+                .id = "guide-id",
+                .name = "Guide",
+            },
+            .model = "test-model",
+            .api = "test://completion",
+            .streaming = true,
+        };
+    }
+
+    bool performed{};
 };
 
 SessionUpdate receive_until_idle(SessionController& controller) {
@@ -217,14 +237,14 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     const SessionUpdate completed =
         receive_until_idle(*controller);
 
-    ASSERT_EQ(backend_view->requests.size(), 1U);
-    const CompletionRequest& request =
-        backend_view->requests.front();
-    EXPECT_EQ(request.request_id, 17U);
-    EXPECT_EQ(request.prompt.addressed_to, "guide-id");
-    EXPECT_EQ(request.prompt.kind, EntryKind::human);
-    EXPECT_EQ(request.prompt.text, "Current");
-    EXPECT_EQ(backend_view->latest_prompt, request.prompt);
+    ASSERT_EQ(backend_view->inputs.size(), 1U);
+    const CompletionInput& request =
+        backend_view->inputs.front();
+    EXPECT_EQ(request.run.request_id, 17U);
+    EXPECT_EQ(request.run.target.id, "guide-id");
+    EXPECT_EQ(request.run.prompt_text, "Current");
+    ASSERT_EQ(request.history->entries.size(), 1U);
+    EXPECT_EQ(request.history->entries.front(), earlier);
     EXPECT_EQ(
         backend_view->model_contexts.front(),
         (std::vector<AgentMessage>{
@@ -499,6 +519,29 @@ TEST(SessionController, RejectsCompletionWithoutResponseContent) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
+TEST(SessionController, PersistsPreparationFailureAsTheTurnOutcome) {
+    TemporaryJournal temporary;
+    auto backend = std::make_unique<ThrowingPrepareBackend>();
+    ThrowingPrepareBackend* backend_view = backend.get();
+    auto controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("Question");
+    const SessionUpdate update = receive_until_idle(*controller);
+
+    EXPECT_EQ(update.notice, "Generation failed");
+    EXPECT_FALSE(backend_view->performed);
+    const std::vector<TranscriptEntry> entries =
+        controller->transcript().entries();
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries.front().kind, EntryKind::human);
+    EXPECT_EQ(entries.back().kind, EntryKind::error);
+    EXPECT_EQ(entries.back().text, "preparation failed");
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+}
+
 TEST(SessionController, ReplacesPartialOutputWithATypedError) {
     TemporaryJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
@@ -682,18 +725,19 @@ TEST(SessionController, MulticastRunsTargetsSequentiallyWithIsolatedContexts) {
     EXPECT_TRUE(started.clear_input);
     EXPECT_TRUE(controller->generation_status().active);
     EXPECT_EQ(
-        controller->transcript().read().offrecord_span(),
-        (OffrecordSpan{.begin = 1}));
+        controller->transcript().offrecord_span(),
+        OffrecordSpan{});
 
     const SessionUpdate finished = receive_until_idle(*controller);
     EXPECT_TRUE(finished.render_needed);
     EXPECT_FALSE(controller->generation_status().active);
-    EXPECT_EQ(controller->transcript().read().offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(controller->transcript().offrecord_span(), OffrecordSpan{});
 
-    ASSERT_EQ(one_view->requests.size(), 1U);
-    ASSERT_EQ(two_view->requests.size(), 1U);
-    EXPECT_EQ(one_view->requests.front().prompt.addressed_to, "one-id");
-    EXPECT_EQ(two_view->requests.front().prompt.addressed_to, "two-id");
+    ASSERT_EQ(one_view->inputs.size(), 1U);
+    ASSERT_EQ(two_view->inputs.size(), 1U);
+    EXPECT_EQ(one_view->inputs.front().run.target.id, "one-id");
+    EXPECT_EQ(two_view->inputs.front().run.target.id, "two-id");
+    EXPECT_EQ(one_view->inputs.front().history, two_view->inputs.front().history);
     EXPECT_EQ(
         one_view->model_contexts.front(),
         (std::vector<AgentMessage>{{AgentRole::user, "What time is it?"}}));
@@ -701,15 +745,25 @@ TEST(SessionController, MulticastRunsTargetsSequentiallyWithIsolatedContexts) {
         two_view->model_contexts.front(),
         (std::vector<AgentMessage>{{AgentRole::user, "What time is it?"}}));
 
-    const std::vector<TranscriptEntry> entries = controller->transcript().entries();
-    ASSERT_EQ(entries.size(), 4U);
-    EXPECT_EQ(entries[0].addressed_to, "one-id");
-    EXPECT_EQ(entries[0].text, "What time is it?");
-    EXPECT_EQ(entries[1].text, "One answer");
-    EXPECT_EQ(entries[2].addressed_to, "two-id");
-    EXPECT_EQ(entries[2].text, "What time is it?");
-    EXPECT_EQ(entries[3].text, "Two answer");
-    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+    const std::vector<TranscriptEntry> multicast_entries =
+        controller->transcript().entries();
+    ASSERT_EQ(multicast_entries.size(), 4U);
+    EXPECT_EQ(multicast_entries[0].addressed_to, "one-id");
+    EXPECT_EQ(multicast_entries[0].text, "What time is it?");
+    EXPECT_EQ(multicast_entries[1].text, "One answer");
+    EXPECT_EQ(multicast_entries[2].addressed_to, "two-id");
+    EXPECT_EQ(multicast_entries[2].text, "What time is it?");
+    EXPECT_EQ(multicast_entries[3].text, "Two answer");
+
+    (void)controller->submit_prompt("Follow-up");
+    receive_until_idle(*controller);
+    ASSERT_EQ(one_view->inputs.size(), 2U);
+    EXPECT_EQ(
+        one_view->inputs.back().history->entries,
+        multicast_entries);
+    EXPECT_EQ(
+        load_transcript_entries(temporary.path),
+        controller->transcript().entries());
 }
 
 TEST(SessionController, MulticastRefusesAUserOffrecordSpanAndStopPreventsNextChild) {
@@ -754,8 +808,8 @@ TEST(SessionController, MulticastRefusesAUserOffrecordSpanAndStopPreventsNextChi
     EXPECT_EQ(stop_controller->request_stop().notice, "Stopping generation...");
     (void)stop_controller->handle_agent_event(AgentCompleted{1});
     EXPECT_FALSE(stop_controller->generation_status().active);
-    EXPECT_TRUE(second_view->requests.empty());
-    EXPECT_EQ(stop_controller->transcript().read().offrecord_span(), OffrecordSpan{});
+    EXPECT_TRUE(second_view->inputs.empty());
+    EXPECT_EQ(stop_controller->transcript().offrecord_span(), OffrecordSpan{});
     stop_controller->shutdown();
 }
 
@@ -786,14 +840,49 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     const SessionUpdate finished = receive_until_idle(*controller);
 
     EXPECT_EQ(finished.notice, "Generation failed\nGeneration stopped");
-    ASSERT_EQ(failed_view->requests.size(), 1U);
-    ASSERT_EQ(cancelled_view->requests.size(), 1U);
-    ASSERT_EQ(complete_view->requests.size(), 1U);
+    ASSERT_EQ(failed_view->inputs.size(), 1U);
+    ASSERT_EQ(cancelled_view->inputs.size(), 1U);
+    ASSERT_EQ(complete_view->inputs.size(), 1U);
     EXPECT_EQ(
         complete_view->model_contexts.front(),
         (std::vector<AgentMessage>{{AgentRole::user, "Question"}}));
     EXPECT_FALSE(controller->generation_status().active);
-    EXPECT_EQ(controller->transcript().read().offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(controller->transcript().offrecord_span(), OffrecordSpan{});
+}
+
+TEST(SessionController, MidBatchDispatchFailureRetainsEarlierNotices) {
+    TemporaryJournal temporary;
+    auto first = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{}, true, "one-id", "One");
+    auto second = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        "two-id", "Two");
+    ScriptedBackend* second_view = second.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(first));
+    backends.push_back(std::move(second));
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends), temporary.path, notifier());
+
+    (void)controller->start_multicast(
+        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    // Keep request 1 outstanding while applying its terminal event manually.
+    // Activating request 2 then exercises the registry admission-refusal path.
+    const SessionUpdate update =
+        controller->handle_agent_event(AgentFailed{1, "First failed"});
+
+    EXPECT_EQ(
+        update.notice,
+        "Generation failed\nRequest could not be dispatched");
+    EXPECT_FALSE(controller->generation_status().active);
+    EXPECT_TRUE(second_view->inputs.empty());
+    const std::vector<TranscriptEntry> entries =
+        controller->transcript().entries();
+    ASSERT_EQ(entries.size(), 4U);
+    EXPECT_EQ(entries[1].text, "First failed");
+    EXPECT_EQ(entries[3].text, "Agent execution is unavailable");
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+    controller->shutdown();
 }
 
 TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
@@ -963,9 +1052,9 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumPerso
         controller->submit_prompt("hello", "Ism");
     EXPECT_TRUE(mentioned.clear_input);
     receive_until_idle(*controller);
-    ASSERT_EQ(ismael_view->requests.size(), 1U);
-    EXPECT_EQ(ismael_view->requests.front().prompt.addressed_to, "ismael-id");
-    EXPECT_TRUE(guide_view->requests.empty());
+    ASSERT_EQ(ismael_view->inputs.size(), 1U);
+    EXPECT_EQ(ismael_view->inputs.front().run.target.id, "ismael-id");
+    EXPECT_TRUE(guide_view->inputs.empty());
 
     const SessionUpdate default_changed =
         controller->set_default_agent("Gui");
@@ -973,8 +1062,8 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumPerso
     EXPECT_EQ(default_changed.notice, "Default agent is now Guide");
     (void)controller->submit_prompt("next");
     receive_until_idle(*controller);
-    ASSERT_EQ(guide_view->requests.size(), 1U);
-    EXPECT_EQ(guide_view->requests.front().prompt.addressed_to, "guide-id");
+    ASSERT_EQ(guide_view->inputs.size(), 1U);
+    EXPECT_EQ(guide_view->inputs.front().run.target.id, "guide-id");
 
     const std::size_t entries_before_rejection = controller->transcript().entries().size();
     const SessionUpdate rejected =
