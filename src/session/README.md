@@ -179,11 +179,11 @@ restore only reads entries of the current epoch. Older rows stay in the file.
 
 ### Transactions
 
-Each of `start_turn`, `complete_turn`, `cancel_turn`, `fail_turn`, `append`, and
-`clear` is one transaction. `start_turn` writes the turn row, the prompt entry,
-and the advanced `next_request_id` together; a terminal call writes the state
-change and the response or error entry together. So the durable turn state and
-the entry that explains it can never disagree.
+Each of `start_turn`, `complete_turn`, `cancel_turn`, `fail_turn`, and `clear`
+is one transaction. `start_turn` writes the turn row, the prompt entry, and the
+advanced `next_request_id` together; a terminal call writes the state change
+and the response or error entry together. So the durable turn state and the
+entry that explains it can never disagree.
 
 ### Turn states and recovery
 
@@ -215,6 +215,28 @@ persistence—it lives only in the active response and never enters a
 text. The off-record span and its marker entries are also run-time only:
 reopening a session presents the complete durable conversation with no span and
 no markers.
+
+### Reviewed multicast durability tradeoff
+
+Concurrent multicast deliberately has a narrower durability boundary than its
+execution boundary. The database continues to permit one `started` turn: the
+initial foreground child is journaled before the shared gate opens, while later
+children may already be running or finished in memory before they become
+foreground and receive their own durable turn records.
+
+Consequently, a process crash can discard background child turn records,
+addressed prompts, output, and completed answers that have not yet become
+foreground. Recovery reports only the durably started foreground turn as
+interrupted. This is a reviewed and accepted tradeoff. Multicast concurrency
+and ordered transcript commits are requirements, but crash recovery of
+background work is not.
+
+The design therefore does not add a durable batch manifest, background-result
+spooling, or out-of-order turn persistence solely to recover that work. When
+choosing between additional crash durability and a simpler persistence and
+controller model for multicast, simplicity wins. This decision concerns
+process-crash recovery; normal event handling still commits every foreground
+terminal outcome before making it visible.
 
 ## Session control
 
@@ -276,7 +298,9 @@ Starting a batch, in order:
    If in-memory activation fails after the journal write, the controller
    compensates with `fail_turn()` and discards the parked batch.
 5. Open the gate once. Every staged backend may now begin concurrently, while
-   only the foreground child's events are applied to the transcript.
+   only the foreground child's events are applied to the transcript. The
+   background work remains intentionally volatile until each child becomes
+   foreground, as described in the reviewed durability tradeoff above.
 
 After a foreground terminal event is committed, the controller retires that
 run, selects the next child, activates its turn, and drains its already-buffered

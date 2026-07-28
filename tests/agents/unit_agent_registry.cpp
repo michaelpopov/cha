@@ -977,7 +977,7 @@ TEST(AgentRegistry, StopCancelsJoinsAndLeavesTheTerminalEventDrainable) {
     EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
 }
 
-TEST(AgentRegistry, UsesImmutableHistoryWithoutHoldingTheTranscript) {
+TEST(AgentRegistry, UsesImmutableHistoryAfterTranscriptMutation) {
     Transcript transcript;
     transcript.add_entry(
         make_human_entry(1, "assistant", "Boundary", "Earlier", 20));
@@ -994,12 +994,7 @@ TEST(AgentRegistry, UsesImmutableHistoryWithoutHoldingTheTranscript) {
     ASSERT_EQ(
         prepared.wait_for(std::chrono::seconds(1)),
         std::future_status::ready);
-    std::future<void> mutation = std::async(
-        std::launch::async, [&transcript] { transcript.clear(); });
-    EXPECT_EQ(
-        mutation.wait_for(std::chrono::milliseconds(100)),
-        std::future_status::ready);
-    mutation.get();
+    transcript.clear();
 
     ASSERT_EQ(backend_view->captured_history.size(), 1U);
     EXPECT_EQ(backend_view->captured_history.front().text, "Earlier");

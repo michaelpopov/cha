@@ -303,7 +303,8 @@ TEST(Transcript, RequiresStrictlyIncreasingEntryIds) {
 }
 
 TEST(TranscriptValidation, IsEnforcedByMemoryAndDatabase) {
-    TranscriptEntry invalid = make_error_entry(1, "Failure");
+    TranscriptEntry invalid =
+        make_error_entry(2, "Failure", 1, "reviewer-id");
     invalid.status = EntryStatus::complete;
     EXPECT_THROW(validate_transcript_entry(invalid), std::invalid_argument);
 
@@ -313,13 +314,20 @@ TEST(TranscriptValidation, IsEnforcedByMemoryAndDatabase) {
     const auto path = temporary_path("cha_invalid_entry_");
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
-    EXPECT_THROW(journal->append(invalid), std::runtime_error);
+    const TranscriptEntry prompt = human(1, "Question", 1);
+    journal->start_turn(1, prompt);
+    EXPECT_THROW(journal->fail_turn(1, invalid), std::invalid_argument);
 
     const TranscriptEntry empty_completion = make_agent_entry(
         2, "reviewer-id", "Reviewer", std::string{}, EntryStatus::complete, 1);
     EXPECT_THROW(validate_transcript_entry(empty_completion), std::invalid_argument);
     EXPECT_THROW(transcript.add_entry(empty_completion), std::invalid_argument);
-    EXPECT_THROW(journal->append(empty_completion), std::runtime_error);
+    EXPECT_THROW(
+        journal->complete_turn(1, empty_completion),
+        std::runtime_error);
+    EXPECT_EQ(
+        load_transcript_entries(path),
+        (std::vector<TranscriptEntry>{prompt}));
 
     Transcript streaming;
     streaming.begin_entry(make_agent_entry(
@@ -338,7 +346,6 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     journal->start_turn(1, human(1, "Hello", 1));
     journal->complete_turn(1, make_agent_entry(
         2, "reviewer-id", "Reviewer", "Hello back", EntryStatus::complete, 1));
-    journal->append(make_notice_entry(3, "Information"));
 
     EXPECT_EQ(
         load_transcript_entries(path),
@@ -351,7 +358,6 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
                 "Hello back",
                 EntryStatus::complete,
                 1),
-            make_notice_entry(3, "Information"),
         }));
     const SessionDatabaseMetadata metadata =
         read_session_database_metadata(path);
@@ -361,35 +367,55 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     std::filesystem::remove(path);
 }
 
-TEST(SessionDatabase, RejectsAStreamingEntry) {
+TEST(SessionDatabase, RejectsAStreamingTerminalResponse) {
     const auto path = temporary_path("cha_open_transcript_");
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
+    const TranscriptEntry prompt = human(1, "Question", 1);
+    journal->start_turn(1, prompt);
     EXPECT_THROW(
-        journal->append(make_agent_entry(
-            1,
+        journal->complete_turn(1, make_agent_entry(
+            2,
             "reviewer-id",
             "Reviewer",
             std::string{},
             EntryStatus::streaming,
             1)),
-        std::runtime_error);
-    EXPECT_TRUE(load_transcript_entries(path).empty());
+        std::invalid_argument);
+    EXPECT_EQ(
+        load_transcript_entries(path),
+        (std::vector<TranscriptEntry>{prompt}));
     journal.reset();
     std::filesystem::remove(path);
 }
 
-TEST(SessionJournal, ReplaysStandaloneEntriesAndClearEvents) {
+TEST(SessionJournal, ReplaysOnlyTheCurrentEpochAfterClear) {
     const auto path = temporary_path("cha_journal_");
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
-    journal->append(make_notice_entry(1, "Old"));
+    journal->start_turn(1, human(1, "Old question", 1));
+    journal->complete_turn(1, make_agent_entry(
+        2,
+        "reviewer-id",
+        "Reviewer",
+        "Old answer",
+        EntryStatus::complete,
+        1));
     journal->clear();
-    journal->append(make_notice_entry(2, "Current"));
+    const TranscriptEntry current_prompt = human(3, "Current question", 2);
+    const TranscriptEntry current_response = make_agent_entry(
+        4,
+        "reviewer-id",
+        "Reviewer",
+        "Current answer",
+        EntryStatus::complete,
+        2);
+    journal->start_turn(2, current_prompt);
+    journal->complete_turn(2, current_response);
 
     EXPECT_EQ(
         load_transcript_entries(path),
-        (std::vector<TranscriptEntry>{make_notice_entry(2, "Current")}));
+        (std::vector<TranscriptEntry>{current_prompt, current_response}));
     journal.reset();
     std::filesystem::remove(path);
 }
@@ -398,14 +424,16 @@ TEST(SessionJournal, RejectsOutOfOrderEntryIdsWithoutChangingStoredState) {
     const auto path = temporary_path("cha_out_of_order_journal_");
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
-    journal->append(make_notice_entry(2, "Later ID"));
+    const TranscriptEntry later = human(2, "Later ID", 1);
+    journal->start_turn(1, later);
+    journal->cancel_turn(1, std::nullopt);
 
     EXPECT_THROW(
-        journal->append(make_notice_entry(1, "Earlier ID")),
+        journal->start_turn(2, human(1, "Earlier ID", 2)),
         std::invalid_argument);
     EXPECT_EQ(
         load_transcript_entries(path),
-        (std::vector<TranscriptEntry>{make_notice_entry(2, "Later ID")}));
+        (std::vector<TranscriptEntry>{later}));
     journal.reset();
     std::filesystem::remove(path);
 }
@@ -555,7 +583,7 @@ TEST(TranscriptValidation, RequiresATargetOnHumanEntriesAndForbidsItElsewhere) {
 }
 
 TEST(TranscriptValidation, RejectsAddressingViolationsInMemoryAndInSqlite) {
-    TranscriptEntry untargeted = human(1, "No target");
+    TranscriptEntry untargeted = human(1, "No target", 1);
     untargeted.addressed_to.clear();
     untargeted.addressed_to_name.clear();
 
@@ -565,7 +593,7 @@ TEST(TranscriptValidation, RejectsAddressingViolationsInMemoryAndInSqlite) {
     const auto path = temporary_path("cha_addressing_");
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
-    EXPECT_THROW(journal->append(untargeted), std::runtime_error);
+    EXPECT_THROW(journal->start_turn(1, untargeted), std::runtime_error);
     EXPECT_TRUE(load_transcript_entries(path).empty());
     journal.reset();
     std::filesystem::remove(path);

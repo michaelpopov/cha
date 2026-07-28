@@ -24,10 +24,11 @@ enum class CleanupStatus {
 
 // Owns every configured backend and coordinates one reusable regular runner
 // plus temporary runners for concurrent multicast batches. Runners prepare
-// exclusively from owned CompletionInput values and retain separate delta
-// queues plus terminal slots; only the selected foreground event channel is
-// visible to the controller. Exactly one batch may be live, and its fixed run
-// positions match the input order for the batch's full lifetime.
+// exclusively from owned CompletionInput values and retain separate event
+// channels whose queues reserve terminal delivery; only the selected
+// foreground channel is visible to the controller. Exactly one batch may be
+// live, and its fixed run positions match the input order for the batch's full
+// lifetime.
 class AgentRegistry {
 public:
     // Optional fault-injection seam invoked immediately before each temporary

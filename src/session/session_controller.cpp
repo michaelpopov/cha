@@ -521,8 +521,8 @@ SessionUpdate SessionController::start_multicast(
             return {.notice = format_duplicate_persona_notice(target.name)};
         }
     }
-    // Check the precondition on the same atomic snapshot every child receives,
-    // avoiding a separate lock and a potentially different observed state.
+    // Capture once so the off-record precondition and every child use the
+    // same completion history.
     SharedCompletionHistory history =
         std::make_shared<const CompletionHistory>(
             transcript_.completion_history());

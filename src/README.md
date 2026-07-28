@@ -50,7 +50,7 @@ they need.
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
 | `session/` | Workspace and session operations, `ForumPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
 | `agents/` | Persona config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
-| `transcript/` | The transcript model: entry types, validation, and the thread-safe live `Transcript`. | Storage, providers, frontends. |
+| `transcript/` | The transcript model: entry types, validation, and the main-thread-owned live `Transcript`. | Storage, providers, frontends. |
 | `util/` | Leaf helpers: text and path rules, `.env`, a portable concurrent queue, and the libuv wake loop. | Anything above it. |
 
 ## Dependency direction
@@ -122,7 +122,7 @@ flowchart LR
     registry -->|"staged CompletionInput + gate"| execution
     execution --> backend
     backend <-->|"HTTP or SSE"| provider
-    execution -->|"per-runner delta queue,<br/>terminal slot + wake"| frontend
+    execution -->|"per-runner event channel + wake"| frontend
 ```
 
 Ownership is a strict tree, and destruction order matters:
@@ -144,13 +144,13 @@ Ownership is a strict tree, and destruction order matters:
 
 ### How runner threads communicate
 
-Each staged execution owns a `ConcurrentQueue<AgentEvent>` for deltas and a
-preallocated slot for its exactly-one terminal event (see
-[`util/`](util/README.md)). A runner publishes deltas to its queue, stores its
-terminal event in the slot, and calls the injected `WakeNotifier` after each
-successful publication. Foreground reads drain queued deltas before consuming
-the terminal slot, preserving event order without requiring terminal delivery
-to allocate memory.
+Each staged execution owns a `ConcurrentQueue<AgentEvent>` (see
+[`util/`](util/README.md)). A runner pushes deltas normally, then publishes its
+exactly-one terminal event with the queue's allocation-free `close_with()`
+operation. The injected `WakeNotifier` follows each successful publication.
+Foreground reads drain queued deltas before consuming the reserved closing
+event, preserving event order even if allocating more deque storage is no
+longer possible.
 
 The regular runner has one persistent worker waiting for staged executions.
 Concurrent multicast adds one-shot temporary runners. All runners park behind
@@ -159,6 +159,14 @@ the gate is still closed, then durably activates its turn; only after those
 steps succeed does opening the gate admit every backend call. The registry
 exposes only the selected foreground runner's event channel, so background
 output remains buffered and cannot mutate the transcript.
+
+This foreground boundary is also the deliberate durability boundary. Later
+multicast children can run or finish before they have durable turn records, so
+a process crash may lose their prompts and buffered answers. That behavior has
+been reviewed and accepted: concurrent execution and ordered foreground commits
+are retained, while batch manifests, background-result persistence, and their
+recovery state machines are omitted. For in-flight multicast work, simpler
+code and storage semantics take priority over additional crash durability.
 
 The terminal frontends own a `UvEventLoop`. Agent threads wake it through
 `uv_async_send()`; frontend-owned libuv input and signal handles share the same
@@ -274,9 +282,9 @@ Two ordering rules are load-bearing:
   to the journal before it is added to the in-memory transcript, and a response
   is committed before its entry is finalized. A crash can therefore lose a
   turn, but can never show one that was not recorded.
-- **One writer.** Every mutation above happens on the main thread. The agent
-  runners never read the live transcript; each owns the immutable history
-  captured before staging.
+- **One owner.** Every live transcript read and mutation happens on the main
+  thread. Agent runners receive only the immutable history captured before
+  staging.
 
 ## Turn states
 
@@ -393,8 +401,8 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | --- | --- |
 | `ForumPersonas` is non-empty, with unique IDs and unique case-folded names. | `ForumPersonas` constructor |
 | At most one user operation and one foreground turn are active, while one multicast may run distinct backends concurrently. | `SessionController::busy`, batch reservation, backend leases |
-| Every launched run, including one cancelled at an unopened gate, yields exactly one terminal `AgentEvent` through a preallocated terminal slot. | Per-runner execution and shutdown order |
-| Only the main thread mutates `Transcript` or the journal. | `SessionController` |
+| Every launched run, including one cancelled at an unopened gate, yields exactly one terminal `AgentEvent` through its queue's reserved closing slot. | Per-runner execution and shutdown order |
+| Only the main thread accesses the live `Transcript` or mutates the journal. | `SessionController`, owning snapshots and completion histories |
 | At most one streaming entry is open at a time. | `Transcript` |
 | Entry and request IDs are positive and strictly increasing. | `Transcript::require_next_id`, `state` table |
 | Durable writes precede visible ones. | `SessionController` |

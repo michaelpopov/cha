@@ -62,17 +62,6 @@ MulticastParseResult parse_multicast_input(std::string_view argument) {
                 ? empty_prompt()
                 : MulticastInput{std::move(result.handles), std::string(text)};
         }
-        if (argument[index] == ',') {
-            index = skip_space(argument, index + 1);
-            if (index >= argument.size() || argument[index] == ',') {
-                return MulticastParseError::unexpected_comma;
-            }
-            if (argument[index] != '@') {
-                return MulticastParseError::missing_separator;
-            }
-            continue;
-        }
-
         index = skip_space(argument, index);
         if (index >= argument.size()) {
             return empty_prompt();

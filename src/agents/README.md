@@ -93,7 +93,8 @@ for lookup and handle resolution.
 `AgentRegistry` exists so slow providers never block the UI. It owns one
 backend per forum persona, one persistent regular runner, and temporary
 one-shot runners used only by concurrent multicast batches. Every runner has
-its own cancellation flag, delta queue, and preallocated terminal-event slot.
+its own cancellation flag and event queue. The queue buffers deltas in its
+deque and reserves separate storage for one final event supplied when it closes.
 
 ```mermaid
 sequenceDiagram
@@ -152,7 +153,7 @@ Rules that fall out of this design:
 - **Guaranteed terminal delivery.** Allocating delta storage may fail and
   becomes an execution failure, but every launched execution—including one
   cancelled before `perform()`—publishes exactly one terminal event through
-  its preallocated slot and cannot fail for lack of queue capacity.
+  the queue's allocation-free `close_with()` operation.
 - **Batch reservation.** Child 0 uses the regular runner. After it retires the
   worker may be execution-idle, but admission of another batch remains refused
   until the entire batch retires.
@@ -168,6 +169,12 @@ Rules that fall out of this design:
   queue cap or silent dropping in this version. Memory use is proportional to
   the total delta data and queue overhead buffered by children that have not
   yet become foreground.
+- **Background multicast work is intentionally volatile.** Only the selected
+  foreground child has a durable turn. A process crash may lose queued output
+  or a completed answer from a later child. This reviewed tradeoff preserves
+  concurrent backends and ordered commits without adding batch persistence or
+  result-spooling machinery; simplicity is preferred over crash durability for
+  this in-flight work.
 - **Exceptions become events.** Anything thrown on the worker is converted to
   `AgentFailed`, so an accepted request always has an observable outcome.
 - **Shutdown is ordered.** `stop()` reconciles abort cleanup, joins every

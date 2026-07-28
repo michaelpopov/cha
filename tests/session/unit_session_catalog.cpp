@@ -10,6 +10,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <regex>
 
 namespace cha {
@@ -71,8 +72,13 @@ protected:
     std::filesystem::path root;
 };
 
-TranscriptEntry human(EntryId id, std::string text) {
-    return make_human_entry(id, "guide-id", "Guide", std::move(text));
+TranscriptEntry human(EntryId id, std::string text, RequestId request_id) {
+    return make_human_entry(
+        id,
+        "guide-id",
+        "Guide",
+        std::move(text),
+        request_id);
 }
 
 TEST_F(WorkspaceTest, LoadsForumsAndTheirPersonaDirectories) {
@@ -100,9 +106,11 @@ TEST_F(WorkspaceTest, EnumeratesForumSubdirectoriesInNameOrder) {
 TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
     const std::filesystem::path saved =
         create_database("saved", "Saved session");
+    const TranscriptEntry prompt = human(1, "Hello", 1);
     {
         SessionJournal journal(saved);
-        journal.append(human(1, "Hello"));
+        journal.start_turn(1, prompt);
+        journal.cancel_turn(1, std::nullopt);
         std::ofstream unrelated(
             root / "forums" / "lobby" / "sessions" / "ignored.data");
         unrelated << "not a session database";
@@ -116,7 +124,7 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
         (std::vector<Session>{{"saved", "Saved session"}}));
     EXPECT_EQ(
         load_transcript_entries(sessions.open_database_path("saved")),
-        (std::vector<TranscriptEntry>{human(1, "Hello")}));
+        (std::vector<TranscriptEntry>{prompt}));
 }
 
 TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
@@ -129,14 +137,16 @@ TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
         forum.directory / "sessions" / (session.id + ".sqlite3")));
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
 
+    const TranscriptEntry prompt = human(1, "Persist me", 1);
     {
         SessionJournal journal(sessions.database_path(session.id));
-        journal.append(human(1, "Persist me"));
+        journal.start_turn(1, prompt);
+        journal.cancel_turn(1, std::nullopt);
     }
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
     EXPECT_EQ(
         load_transcript_entries(sessions.open_database_path(session.id)),
-        (std::vector<TranscriptEntry>{human(1, "Persist me")}));
+        (std::vector<TranscriptEntry>{prompt}));
 }
 
 TEST(SessionDatabase, CreatesAndReadsFromANonAsciiPath) {
@@ -313,9 +323,19 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumPersonasAre) {
     const Session session = sessions.create("Two agents");
     {
         SessionJournal journal(sessions.database_path(session.id));
-        journal.append(make_human_entry(1, "other-id", "Other", "Question"));
-        journal.append(make_agent_entry(
-            2, "other-id", "Other", "Answer", EntryStatus::complete));
+        journal.start_turn(
+            1,
+            make_human_entry(
+                1, "other-id", "Other", "Question", 1));
+        journal.complete_turn(
+            1,
+            make_agent_entry(
+                2,
+                "other-id",
+                "Other",
+                "Answer",
+                EntryStatus::complete,
+                1));
     }
 
     // The forum now contains completely different personas; the session is unaffected.

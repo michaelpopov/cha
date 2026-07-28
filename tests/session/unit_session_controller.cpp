@@ -277,10 +277,11 @@ SessionRestore restore_with(
 TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     TemporaryJournal temporary;
     const TranscriptEntry earlier =
-        make_human_entry(10, "guide-id", "Guide", "Earlier");
+        make_human_entry(10, "guide-id", "Guide", "Earlier", 16);
     {
         SessionJournal journal(temporary.path);
-        journal.append(earlier);
+        journal.start_turn(16, earlier);
+        journal.cancel_turn(16, std::nullopt);
     }
     auto backend = std::make_unique<ScriptedBackend>(
         CompletionResult{},
@@ -631,16 +632,17 @@ TEST(SessionController, ReplacesPartialOutputWithATypedError) {
 TEST(SessionController, OwnsClearAndInformationSemantics) {
     TemporaryJournal temporary;
     const TranscriptEntry existing =
-        make_notice_entry(1, "Existing");
+        make_human_entry(1, "guide-id", "Guide", "Existing", 1);
     {
         SessionJournal journal(temporary.path);
-        journal.append(existing);
+        journal.start_turn(1, existing);
+        journal.cancel_turn(1, std::nullopt);
     }
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier(),
-        restore_with({existing}, 1, 2));
+        restore_with({existing}, 2, 2));
 
     const SessionUpdate cleared =
         controller->clear_transcript();

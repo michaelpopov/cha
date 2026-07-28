@@ -767,12 +767,6 @@ SessionJournal::SessionJournal(std::filesystem::path path)
 
 SessionJournal::~SessionJournal() = default;
 
-void SessionJournal::append(const TranscriptEntry& entry) {
-    Transaction transaction(impl_->database);
-    insert_entry(impl_->database, current_epoch(impl_->database), entry);
-    transaction.commit();
-}
-
 void SessionJournal::start_turn(
     RequestId request_id,
     const TranscriptEntry& prompt) {

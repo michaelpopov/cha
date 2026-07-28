@@ -24,6 +24,8 @@ struct SessionUpdate {
     bool render_needed{};
     bool end_session{};
     bool clear_input{};
+    // nullopt leaves the frontend's current notice unchanged, an empty string
+    // clears it, and a non-empty string replaces it.
     std::optional<std::string> notice;
 };
 
@@ -44,6 +46,8 @@ public:
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {});
+    // Test-only construction and activation fault injection. These seams live
+    // here because the otherwise private controller owns both dependencies.
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         std::filesystem::path database_path,

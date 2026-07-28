@@ -196,17 +196,7 @@ struct AgentRegistry::Impl {
         }
 
         ChannelReadStatus try_receive(AgentEvent& event) {
-            const ChannelReadStatus status = events.try_get(event);
-            if (status != ChannelReadStatus::closed) {
-                return status;
-            }
-            std::lock_guard lock(terminal_mutex);
-            if (!terminal) {
-                return ChannelReadStatus::closed;
-            }
-            event = std::move(*terminal);
-            terminal.reset();
-            return ChannelReadStatus::value;
+            return events.try_get(event);
         }
 
         void publish_delta(AgentEvent event) {
@@ -218,25 +208,24 @@ struct AgentRegistry::Impl {
         }
 
         void publish_terminal(AgentEvent event) noexcept {
-            {
-                std::lock_guard lock(terminal_mutex);
-                terminal.emplace(std::move(event));
-            }
-            events.close();
+            events.close_with(std::move(event));
             notifier.wake();
         }
 
         void publish_failure(
             RequestId request_id,
             std::string_view message) noexcept {
+            AgentEvent failure = std::move(fallback_terminal);
             try {
-                publish_terminal(AgentFailed{
+                AgentEvent detailed = AgentFailed{
                     request_id,
                     std::string(message),
-                });
+                };
+                failure = std::move(detailed);
             } catch (...) {
-                publish_terminal(std::move(fallback_terminal));
+                // Keep the preallocated failure when copying details allocates.
             }
+            publish_terminal(std::move(failure));
         }
 
         void finish() noexcept {
@@ -256,8 +245,6 @@ struct AgentRegistry::Impl {
         std::shared_ptr<StartGate> gate;
         WakeNotifier& notifier;
         ConcurrentQueue<AgentEvent> events;
-        std::mutex terminal_mutex;
-        std::optional<AgentEvent> terminal;
         AgentEvent fallback_terminal;
         std::atomic_bool cancellation{false};
         std::mutex done_mutex;

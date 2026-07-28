@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -66,8 +65,8 @@ struct OffrecordSpan {
     bool operator==(const OffrecordSpan&) const = default;
 };
 
-// A point-in-time copy of a Transcript for readers that must not hold its lock while they work.
-// The revision and history epoch let a renderer decide what changed since the frame it drew last.
+// An owning point-in-time copy of a Transcript. The revision and history epoch
+// let a renderer decide what changed since the frame it drew last.
 struct TranscriptSnapshot {
     std::vector<TranscriptEntry> entries;
     std::size_t revision{};
@@ -116,9 +115,9 @@ void require_terminal_transcript_entry(const TranscriptEntry& entry);
 // Applies the terminal-entry contract at the persistence boundary.
 void require_storable_transcript_entry(const TranscriptEntry& entry);
 
-// The live transcript of one session. It serializes appends, streaming
-// updates, and history resets behind a mutex, allows at most one open
-// streaming entry, and exposes only owning snapshots or narrow locked
+// The main-thread-owned live transcript of one session. It is not thread-safe:
+// all reads and mutations must happen on its owning thread. It allows at most
+// one open streaming entry and exposes only owning snapshots or narrow value
 // accessors. It depends on nothing beyond the entry model declared above.
 class Transcript {
 public:
@@ -153,7 +152,6 @@ private:
     void require_next_id(EntryId entry_id) const;
     EntryId boundary() const;
 
-    mutable std::mutex mutex_;
     std::vector<TranscriptEntry> entries_;
     std::size_t revision_{};
     std::optional<EntryId> open_entry_id_;

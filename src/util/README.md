@@ -80,13 +80,17 @@ environment always win, so a shell export beats the file — which is what makes
 Queue storage and event-loop notification are separate. `ConcurrentQueue<T>`
 contains no descriptor or operating-system dependency. Producers that also need
 to wake a frontend call its injected `WakeNotifier` after a successful push.
+`close()` preserves already queued values. `close_with(value)` additionally
+stores one final value in a reserved optional slot, so readers drain the deque,
+then that value, then observe closure without terminal delivery allocating
+deque storage. The first close operation wins.
 
 ```mermaid
 flowchart LR
     subgraph producer["Producer thread"]
         push["push value"]
     end
-    q["ConcurrentQueue<br/>mutex + deque"]
+    q["ConcurrentQueue<br/>mutex + deque + final slot"]
     notifier["WakeNotifier"]
     async["UvEventLoop<br/>uv_async_t"]
     subgraph consumer["Consumer thread"]
@@ -109,9 +113,10 @@ Semantics worth knowing:
 | Operation | Behavior |
 | --- | --- |
 | `push` | Enqueues a value. Returns `false` if the queue is closed. |
-| `get` | Blocks until a value arrives. After close, drains what is queued and then returns `nullopt` forever. |
-| `try_get` | Never blocks; distinguishes *empty* from *closed* so a caller can tell "nothing yet" from "no more". |
+| `get` | Blocks until a value arrives. After close, drains queued values, then the reserved closing value when present, and then returns `nullopt` forever. |
+| `try_get` | Never blocks; drains queued values and then the reserved closing value before distinguishing *empty* from *closed*. |
 | `close` | Stops new writes and wakes blocked readers. Already queued values are still delivered. |
+| `close_with(value)` | Reserves one final value without allocating deque storage, stops new writes, and wakes blocked readers. The first close operation wins. |
 
 `UvEventLoop` uses libuv's coalescing, thread-safe `uv_async_send()`. The
 frontend observes the async callback before draining the producer's queue.

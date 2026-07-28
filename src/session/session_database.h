@@ -49,10 +49,10 @@ SessionRestore load_session_state(
 std::vector<TranscriptEntry> load_transcript_entries(
     const std::filesystem::path& path);
 
-// The durable half of one session. It writes transcript entries and turn transitions — start,
-// complete, cancel, fail — to a single SQLite file as transactions, so a run that dies mid-turn
-// can be restored and repaired afterwards. It accepts only terminal TranscriptEntry values;
-// active streaming state never reaches disk.
+// The durable half of one session. It writes turn transitions — start, complete,
+// cancel, fail — to a single SQLite file as transactions, so a run that dies
+// mid-turn can be restored and repaired afterwards. It accepts only terminal
+// TranscriptEntry values; active streaming state never reaches disk.
 class SessionJournal {
 public:
     explicit SessionJournal(std::filesystem::path path);
@@ -61,7 +61,6 @@ public:
     SessionJournal(const SessionJournal&) = delete;
     SessionJournal& operator=(const SessionJournal&) = delete;
 
-    void append(const TranscriptEntry& entry);
     void start_turn(
         RequestId request_id,
         const TranscriptEntry& prompt);

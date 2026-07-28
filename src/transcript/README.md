@@ -13,7 +13,7 @@ project.
 | Source | Responsibility |
 | --- | --- |
 | `transcript.h` | IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, `TranscriptSnapshot`, `CompletionHistory`, and the `Transcript` container. |
-| `transcript.cpp` | Factory construction, the validation rules, and the synchronized mutation and read operations. |
+| `transcript.cpp` | Factory construction, validation rules, and live-state mutation and read operations. |
 
 ## The entry model
 
@@ -67,9 +67,11 @@ terminal transcript entry is currently storable.
 
 ## The live transcript
 
-`Transcript` is the live mutable transcript state. It has a single-writer
-design: the main thread mutates and snapshots it under the lock. Completion
-runners never read it; the controller captures an immutable
+`Transcript` is the live mutable transcript state. It has a
+single-thread-owned design: the main thread exclusively mutates and snapshots
+it. The class is not thread-safe, and callers must not share a live instance
+across threads.
+Completion runners never read it; the controller captures an immutable
 `CompletionHistory` before staging a batch.
 
 | Operation | Rule |
@@ -96,8 +98,8 @@ drawn becomes invalid.
 
 `OffrecordSpan` is a half-open range of entry IDs excluded from model context
 while remaining fully visible on screen. It lives in `Transcript` because that
-is the one place a reader can take the bounds and the entries they describe
-under a single lock. `completion_history()` copies both together for immutable
+is the one place that owns both the bounds and the entries they describe.
+`completion_history()` copies both together in one operation for immutable
 backend input. `TranscriptSnapshot` has no span field—renderers never need the
 bounds, only the marker entries already in `entries`.
 
@@ -108,12 +110,13 @@ span with only `begin` set hides nothing.
 
 The three marker-producing mutations each take the ID of the marker to append
 and return whether the command precondition held. On success, checking the precondition, capturing
-the boundary, assigning the one bound, and appending the marker all happen under
-one lock; a `false` result changes neither bounds nor entries, so the caller can
-allocate the entry ID only once the command has actually applied. The boundary
-is captured *before* the marker is appended, which is why `[hide-on]` falls
-inside the span it opens and `[hide]` falls outside the span it closes. Both are
-notices, and notices never reach model context in any case.
+the boundary, assigning the one bound, and appending the marker all happen in
+one method without external interleaving; a `false` result changes neither
+bounds nor entries, so the caller can allocate the entry ID only once the
+command has actually applied. The boundary is captured *before* the marker is
+appended, which is why `[hide-on]` falls inside the span it opens and `[hide]`
+falls outside the span it closes. Both are notices, and notices never reach
+model context in any case.
 
 Neither the bounds nor the markers are persisted, and `clear()` and
 `replace_entries()` reset the bounds so no caller has to remember to.
@@ -147,13 +150,13 @@ flowchart TD
 
     C -->|"snapshot"| S --> R
     C -->|"completion_history"| H --> B
-    C -->|"copy under lock"| N --> T
+    C -->|"copy value"| N --> T
 ```
 
 Use a **snapshot** for presentation state and a **completion history** for
 model-context projection. Both are owned copies that remain stable after the
 live transcript changes. Narrow accessors return owned values while keeping
-lock ownership inside `Transcript`.
+the live container private.
 
 ## Dependencies
 

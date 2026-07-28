@@ -144,7 +144,6 @@ void require_storable_transcript_entry(const TranscriptEntry& entry) {
 }
 
 void Transcript::add_entry(TranscriptEntry entry) {
-    std::lock_guard lock(mutex_);
     if (open_entry_id_) {
         throw std::logic_error("Cannot add an entry while another entry is streaming");
     }
@@ -156,7 +155,6 @@ void Transcript::add_entry(TranscriptEntry entry) {
 }
 
 void Transcript::begin_entry(TranscriptEntry entry) {
-    std::lock_guard lock(mutex_);
     if (open_entry_id_) {
         throw std::logic_error("A transcript entry is already streaming");
     }
@@ -172,7 +170,6 @@ void Transcript::begin_entry(TranscriptEntry entry) {
 }
 
 void Transcript::append_answer(EntryId entry_id, std::string_view text) {
-    std::lock_guard lock(mutex_);
     if (!open_entry_id_ || *open_entry_id_ != entry_id) {
         throw std::logic_error("The requested transcript entry is not streaming");
     }
@@ -182,7 +179,6 @@ void Transcript::append_answer(EntryId entry_id, std::string_view text) {
 }
 
 void Transcript::finish_entry(EntryId entry_id, EntryStatus status) {
-    std::lock_guard lock(mutex_);
     if (!open_entry_id_ || *open_entry_id_ != entry_id) {
         throw std::logic_error("The requested transcript entry is not streaming");
     }
@@ -203,7 +199,6 @@ void Transcript::finish_entry(EntryId entry_id, EntryStatus status) {
 }
 
 void Transcript::discard_entry(EntryId entry_id) {
-    std::lock_guard lock(mutex_);
     if (!open_entry_id_ || *open_entry_id_ != entry_id) {
         throw std::logic_error("The requested transcript entry is not streaming");
     }
@@ -214,7 +209,6 @@ void Transcript::discard_entry(EntryId entry_id) {
 }
 
 void Transcript::clear() {
-    std::lock_guard lock(mutex_);
     if (open_entry_id_) {
         throw std::logic_error("Cannot clear a transcript while an entry is streaming");
     }
@@ -225,7 +219,6 @@ void Transcript::clear() {
 }
 
 void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
-    std::lock_guard lock(mutex_);
     if (open_entry_id_) {
         throw std::logic_error("Cannot replace entries while an entry is streaming");
     }
@@ -245,7 +238,6 @@ void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
 }
 
 bool Transcript::open_offrecord(EntryId marker_id) {
-    std::lock_guard lock(mutex_);
     if (open_entry_id_ || offrecord_.begin) {
         return false;
     }
@@ -259,7 +251,6 @@ bool Transcript::open_offrecord(EntryId marker_id) {
 }
 
 bool Transcript::extend_offrecord(EntryId marker_id) {
-    std::lock_guard lock(mutex_);
     if (open_entry_id_ || !offrecord_.begin) {
         return false;
     }
@@ -273,7 +264,6 @@ bool Transcript::extend_offrecord(EntryId marker_id) {
 }
 
 bool Transcript::restore_offrecord(EntryId marker_id) {
-    std::lock_guard lock(mutex_);
     if (open_entry_id_ || !offrecord_.begin) {
         return false;
     }
@@ -287,12 +277,10 @@ bool Transcript::restore_offrecord(EntryId marker_id) {
 }
 
 TranscriptSnapshot Transcript::snapshot() const {
-    std::lock_guard lock(mutex_);
     return {entries_, revision_, open_entry_id_, history_epoch_};
 }
 
 CompletionHistory Transcript::completion_history() const {
-    std::lock_guard lock(mutex_);
     return {
         .entries = entries_,
         .open_entry_id = open_entry_id_,
@@ -305,12 +293,10 @@ std::vector<TranscriptEntry> Transcript::entries() const {
 }
 
 std::optional<EntryId> Transcript::open_entry_id() const {
-    std::lock_guard lock(mutex_);
     return open_entry_id_;
 }
 
 std::string Transcript::open_entry_text(EntryId entry_id) const {
-    std::lock_guard lock(mutex_);
     if (!open_entry_id_ || *open_entry_id_ != entry_id
         || entries_.empty() || entries_.back().id != entry_id
         || entries_.back().kind != EntryKind::agent
@@ -322,7 +308,6 @@ std::string Transcript::open_entry_text(EntryId entry_id) const {
 }
 
 OffrecordSpan Transcript::offrecord_span() const {
-    std::lock_guard lock(mutex_);
     return offrecord_;
 }
 
