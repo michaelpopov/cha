@@ -91,7 +91,7 @@ int main_internal(int argc, const char* const* argv) {
         console.transcript(),
         cha::show_addressing(
             controller.personas(),
-            controller.transcript()),
+            controller.transcript().view()),
         // TTY input is already visible when typed; only pipes need a second
         // copy of the human prompt in the transcript stream.
         !input_is_tty);

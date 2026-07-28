@@ -27,6 +27,11 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
+std::vector<TranscriptEntry> copy_entries(const Transcript& transcript) {
+    const std::span<const TranscriptEntry> entries = transcript.entries();
+    return {entries.begin(), entries.end()};
+}
+
 // Removes one temporary session database when a controller test leaves scope.
 class TemporaryJournal {
 public:
@@ -315,7 +320,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
         }));
     EXPECT_TRUE(completed.render_needed);
 
-    const auto entries = controller->transcript().entries();
+    const auto entries = copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 3U);
     const TranscriptEntry& response = entries.back();
     EXPECT_EQ(response.kind, EntryKind::agent);
@@ -455,7 +460,7 @@ TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     (void)controller->submit_prompt("Question");
     receive_until_idle(*controller);
 
-    const auto entries = controller->transcript().entries();
+    const auto entries = copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().kind, EntryKind::human);
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
@@ -515,7 +520,7 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_TRUE(controller->generation_status().reasoning_text.empty());
     const std::vector<TranscriptEntry> live =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(live.size(), 2U);
     EXPECT_EQ(live.back().text, "Answer");
     EXPECT_EQ(live.back().status, EntryStatus::complete);
@@ -550,7 +555,7 @@ TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
     EXPECT_TRUE(controller->generation_status().reasoning_text.empty());
 
     const std::vector<TranscriptEntry> live =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(live.size(), 1U);
     EXPECT_EQ(live.front().kind, EntryKind::human);
 
@@ -572,7 +577,7 @@ TEST(SessionController, RejectsCompletionWithoutResponseContent) {
 
     ASSERT_TRUE(update.notice);
     EXPECT_EQ(*update.notice, "Generation failed");
-    const auto entries = controller->transcript().entries();
+    const auto entries = copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.back().kind, EntryKind::error);
     EXPECT_EQ(
@@ -596,7 +601,7 @@ TEST(SessionController, PersistsPreparationFailureAsTheTurnOutcome) {
     EXPECT_EQ(update.notice, "Generation failed");
     EXPECT_FALSE(backend_view->performed);
     const std::vector<TranscriptEntry> entries =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.front().kind, EntryKind::human);
     EXPECT_EQ(entries.back().kind, EntryKind::error);
@@ -619,7 +624,7 @@ TEST(SessionController, ReplacesPartialOutputWithATypedError) {
     (void)controller->submit_prompt("Question");
     receive_until_idle(*controller);
 
-    const auto entries = controller->transcript().entries();
+    const auto entries = copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 2U);
     const TranscriptEntry& error = entries.back();
     EXPECT_EQ(error.kind, EntryKind::error);
@@ -683,7 +688,7 @@ TEST(SessionController, KeepsOffrecordMarkersOutOfTheSessionDatabase) {
     EXPECT_EQ(controller->restore_offrecord().notice, "Nothing to restore");
 
     EXPECT_EQ(
-        controller->transcript().entries(),
+        copy_entries(controller->transcript()),
         (std::vector<TranscriptEntry>{
             make_hide_on_marker(1),
             make_hide_marker(2),
@@ -809,7 +814,7 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
         (std::vector<AgentMessage>{{AgentRole::user, "What time is it?"}}));
 
     const std::vector<TranscriptEntry> multicast_entries =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(multicast_entries.size(), 4U);
     EXPECT_EQ(multicast_entries[0].addressed_to, "one-id");
     EXPECT_EQ(multicast_entries[0].text, "What time is it?");
@@ -826,7 +831,7 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
         multicast_entries);
     EXPECT_EQ(
         load_transcript_entries(temporary.path),
-        controller->transcript().entries());
+        copy_entries(controller->transcript()));
 }
 
 TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) {
@@ -882,7 +887,7 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
     // the child's durable turn.
     EXPECT_LE(second_view->inputs.size(), 1U);
     const std::vector<TranscriptEntry> entries =
-        stop_controller->transcript().entries();
+        copy_entries(stop_controller->transcript());
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().addressed_to, "one-id");
     EXPECT_EQ(stop_controller->transcript().offrecord_span(), OffrecordSpan{});
@@ -917,7 +922,7 @@ TEST(SessionController, CompletedForegroundWinsTheStopRace) {
 
     EXPECT_EQ(stopped.notice, "Generation stopped");
     const std::vector<TranscriptEntry> entries =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries[0].addressed_to, "one-id");
     EXPECT_EQ(entries[1].text, "One answer");
@@ -999,7 +1004,7 @@ TEST(SessionController, StartsAllChildrenAndBuffersLaterOutputUntilForeground) {
     receive_until_idle(*controller);
 
     const std::vector<TranscriptEntry> entries =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 4U);
     EXPECT_EQ(entries[0].addressed_to, "one-id");
     EXPECT_EQ(entries[1].text, "One answer");
@@ -1038,7 +1043,7 @@ TEST(SessionController, DrainsLargeCompletedBackgroundBacklogInOrder) {
     receive_until_idle(*controller);
 
     const std::vector<TranscriptEntry> entries =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 4U);
     EXPECT_EQ(entries[1].text, "One answer");
     EXPECT_EQ(entries[2].addressed_to, "two-id");
@@ -1167,7 +1172,7 @@ TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryRunner) {
         std::runtime_error);
     EXPECT_FALSE(controller->generation_status().active);
     const std::vector<TranscriptEntry> entries =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries[0].addressed_to, "one-id");
     EXPECT_EQ(entries[1].text, "One answer");
@@ -1229,7 +1234,7 @@ TEST(SessionController, IgnoresEventsForAnotherRequest) {
     EXPECT_FALSE(delta.render_needed);
     EXPECT_FALSE(completed.render_needed);
     EXPECT_TRUE(controller->generation_status().active);
-    const auto entries = controller->transcript().entries();
+    const auto entries = copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().kind, EntryKind::human);
 
@@ -1326,7 +1331,7 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumPerso
     EXPECT_EQ(controller->transcript().entries().size(), entries_before_rejection);
 
     const std::vector<TranscriptEntry> entries_before_agents =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     const SessionUpdate agents = controller->agent_information();
     EXPECT_TRUE(agents.clear_input);
     ASSERT_TRUE(agents.notice);
@@ -1335,7 +1340,9 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumPerso
         std::string::npos);
     EXPECT_EQ(agents.notice->find("Cheburashka"), std::string::npos);
     EXPECT_NE(agents.notice->find("@Ismael"), std::string::npos);
-    EXPECT_EQ(controller->transcript().entries(), entries_before_agents);
+    EXPECT_EQ(
+        copy_entries(controller->transcript()),
+        entries_before_agents);
     EXPECT_EQ(
         load_transcript_entries(temporary.path),
         entries_before_agents);

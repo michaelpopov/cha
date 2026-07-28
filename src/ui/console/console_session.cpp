@@ -29,7 +29,7 @@ int ConsoleSession::run() {
     while (true) {
         if (end_session_
             || (input_done_ && queue_.empty()
-                && !controller_.generation_status().active)) {
+                && !controller_.is_generating())) {
             return finish(0);
         }
 
@@ -37,7 +37,7 @@ int ConsoleSession::run() {
         // Printing it as soon as stdin wakes leaves a stray ">" in front of the
         // next agent line, and never restores one after the turn goes idle.
         if (options_.show_prompt && prompt_needed_
-            && !controller_.generation_status().active
+            && !controller_.is_generating()
             && queue_.empty()
             && !input_done_
             && !end_session_) {
@@ -70,7 +70,7 @@ int ConsoleSession::run() {
         }
 
         if (ready.signal_ready() && port_.take_interrupt()) {
-            if (controller_.generation_status().active) {
+            if (controller_.is_generating()) {
                 apply(controller_.request_stop());
             } else {
                 return finish(0);
@@ -79,11 +79,11 @@ int ConsoleSession::run() {
 
         if (ready.notification_ready()) {
             const bool was_generating =
-                controller_.generation_status().active;
+                controller_.is_generating();
             apply(controller_.receive());
             // A finished turn must offer a fresh prompt even when no further
             // stdin activity re-armed it (for example after Ctrl-C cancel).
-            if (was_generating && !controller_.generation_status().active) {
+            if (was_generating && !controller_.is_generating()) {
                 prompt_needed_ = true;
             }
         }
@@ -138,7 +138,7 @@ void ConsoleSession::enqueue(std::vector<std::string> lines) {
 
 void ConsoleSession::pump() {
     while (!end_session_ && !queue_.empty()
-        && !controller_.generation_status().active) {
+        && !controller_.is_generating()) {
         std::string line = std::move(queue_.front());
         queue_.pop_front();
         apply(handle_text_input(controller_, std::move(line)));
@@ -146,7 +146,7 @@ void ConsoleSession::pump() {
 }
 
 bool ConsoleSession::emit() {
-    emitter_.write(controller_.transcript().snapshot());
+    emitter_.write(controller_.transcript().view());
     if (!port_.flush()) {
         port_.notices() << "Failed to write console transcript.\n";
         return false;

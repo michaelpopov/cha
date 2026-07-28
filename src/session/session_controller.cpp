@@ -70,7 +70,7 @@ std::string format_session_information(
     const std::vector<AgentRuntimeInfo>& runtime_info,
     const ParticipantId& default_agent_id) {
     std::ostringstream text;
-    text << "Transcript entries: " << transcript.snapshot().entries.size()
+    text << "Transcript entries: " << transcript.size()
          << " | " << format_personas_notice(
              personas, runtime_info, default_agent_id);
     return text.str();
@@ -171,7 +171,11 @@ GenerationStatus SessionController::generation_status() const {
     };
 }
 
-bool SessionController::busy() const {
+bool SessionController::is_generating() const noexcept {
+    return busy();
+}
+
+bool SessionController::busy() const noexcept {
     return active_ || batch_;
 }
 

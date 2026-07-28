@@ -89,14 +89,14 @@ void write_status(std::string_view text, int row, int columns) {
 }
 
 bool active_answer_has_reasoning(
-    const TranscriptSnapshot& snapshot,
+    TranscriptView transcript,
     const GenerationStatus& status) {
     return status.active
         && status.phase == ResponsePhase::answering
         && !status.reasoning_text.empty()
-        && snapshot.open_entry_id
-        && !snapshot.entries.empty()
-        && snapshot.entries.back().id == *snapshot.open_entry_id;
+        && transcript.open_entry_id
+        && !transcript.empty()
+        && transcript.entries.back().id == *transcript.open_entry_id;
 }
 
 std::string active_response_layout_text(
@@ -184,7 +184,7 @@ std::optional<SessionInput> Tui::read_input() {
 }
 
 void Tui::render(
-    const Transcript& transcript,
+    TranscriptView transcript,
     const InputEditor& editor,
     const GenerationStatus& status,
     bool show_addressing,
@@ -239,7 +239,7 @@ void Tui::render(
 
     wnoutrefresh(stdscr);
     render_transcript(
-        transcript.snapshot(), status, output_height, columns, show_addressing);
+        transcript, status, output_height, columns, show_addressing);
     render_input(editor, input_target_name, input_y, input_height, columns);
     doupdate();
 }
@@ -325,18 +325,18 @@ void Tui::write_active_response(
 }
 
 void Tui::rebuild_transcript(
-    const TranscriptSnapshot& snapshot,
+    TranscriptView transcript,
     const GenerationStatus& status,
     int output_height,
     int columns,
     bool show_addressing) {
     int estimated_rows = output_height + 4;
     const bool decorate_active_answer =
-        active_answer_has_reasoning(snapshot, status);
-    for (std::size_t index = 0; index < snapshot.entries.size(); ++index) {
-        const TranscriptEntry& entry = snapshot.entries[index];
+        active_answer_has_reasoning(transcript, status);
+    for (std::size_t index = 0; index < transcript.size(); ++index) {
+        const TranscriptEntry& entry = transcript.entries[index];
         const bool active_answer =
-            decorate_active_answer && index + 1 == snapshot.entries.size();
+            decorate_active_answer && index + 1 == transcript.size();
         const std::string rendered_entry = active_answer
             ? active_response_layout_text(status, entry.text)
             : transcript_entry_label(entry, show_addressing)
@@ -353,9 +353,9 @@ void Tui::rebuild_transcript(
     transcript_capacity_ = estimated_rows;
     transcript_columns_ = columns;
 
-    for (std::size_t index = 0; index < snapshot.entries.size(); ++index) {
-        const TranscriptEntry& entry = snapshot.entries[index];
-        if (decorate_active_answer && index + 1 == snapshot.entries.size()) {
+    for (std::size_t index = 0; index < transcript.size(); ++index) {
+        const TranscriptEntry& entry = transcript.entries[index];
+        if (decorate_active_answer && index + 1 == transcript.size()) {
             write_active_response(status, entry.text);
         } else {
             write_transcript_entry(entry, show_addressing);
@@ -369,22 +369,22 @@ void Tui::rebuild_transcript(
 }
 
 void Tui::render_transcript(
-    const TranscriptSnapshot& snapshot,
+    TranscriptView transcript,
     const GenerationStatus& status,
     int output_height,
     int columns,
     bool show_addressing) {
     const TranscriptRenderPlan plan = status == rendered_generation_
-        ? transcript_planner_.plan(snapshot, columns)
+        ? transcript_planner_.plan(transcript, columns)
         : TranscriptRenderPlan{.action = TranscriptRenderAction::rebuild};
-    const auto& entries = snapshot.entries;
+    const auto entries = transcript.entries;
     if (plan.action == TranscriptRenderAction::rebuild) {
         rebuild_transcript(
-            snapshot, status, output_height, columns, show_addressing);
+            transcript, status, output_height, columns, show_addressing);
     } else if (plan.action == TranscriptRenderAction::append) {
         const int tail_y = plan.resumes_last_message ? rendered_last_content_y_ : 0;
         const int tail_x = plan.resumes_last_message ? rendered_last_content_x_ : 0;
-        std::string rendered_tail = plan.last_message_suffix;
+        std::string rendered_tail(plan.last_message_suffix);
         if (plan.resumes_last_message) {
             rendered_tail += "\n\n";
         }
@@ -411,7 +411,7 @@ void Tui::render_transcript(
     } else {
         ensure_transcript_capacity(output_height + 4);
     }
-    transcript_planner_.commit(snapshot, columns);
+    transcript_planner_.commit(transcript, columns);
     rendered_generation_ = status;
 
     int transcript_lines = 0;

@@ -2,7 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace cha {
 namespace {
@@ -21,41 +24,68 @@ public:
 
 TranscriptEntry streaming(EntryId id, std::string text) {
     return make_agent_entry(
-        id, "guide", "Guide", std::move(text), EntryStatus::streaming);
+        id,
+        "guide",
+        "Guide",
+        std::move(text),
+        EntryStatus::streaming);
 }
 
 TranscriptEntry complete(EntryId id, std::string text) {
     return make_agent_entry(
-        id, "guide", "Guide", std::move(text), EntryStatus::complete);
+        id,
+        "guide",
+        "Guide",
+        std::move(text),
+        EntryStatus::complete);
 }
+
+struct TestTranscript {
+    std::vector<TranscriptEntry> entries;
+    std::size_t revision{};
+    std::optional<EntryId> open_entry_id;
+    std::size_t history_epoch{};
+
+    [[nodiscard]] TranscriptView view() const noexcept {
+        return {
+            entries,
+            revision,
+            open_entry_id,
+            history_epoch,
+        };
+    }
+};
 
 TEST(TranscriptEmitter, WritesOnlyStreamingSuffixAndClosesOnFinalization) {
     RecordingSurface surface;
     TranscriptEmitter emitter(surface, false);
 
-    emitter.write({
+    const TestTranscript first{
         .entries = {streaming(1, "One")},
         .revision = 1,
         .open_entry_id = 1,
         .history_epoch = 1,
-    });
+    };
+    emitter.write(first.view());
     emitter.commit();
     EXPECT_EQ(surface.output, "[Guide] One");
 
-    emitter.write({
+    const TestTranscript second{
         .entries = {streaming(1, "One two")},
         .revision = 2,
         .open_entry_id = 1,
         .history_epoch = 1,
-    });
+    };
+    emitter.write(second.view());
     emitter.commit();
     EXPECT_EQ(surface.output, "[Guide] One two");
 
-    emitter.write({
+    const TestTranscript complete_view{
         .entries = {complete(1, "One two")},
         .revision = 3,
         .history_epoch = 1,
-    });
+    };
+    emitter.write(complete_view.view());
     emitter.commit();
     EXPECT_EQ(surface.output, "[Guide] One two\n\n");
 }
@@ -63,7 +93,7 @@ TEST(TranscriptEmitter, WritesOnlyStreamingSuffixAndClosesOnFinalization) {
 TEST(TranscriptEmitter, WritesCompleteEntriesAndNeverRepeatsCommittedState) {
     RecordingSurface surface;
     TranscriptEmitter emitter(surface, false);
-    const TranscriptSnapshot snapshot{
+    const TestTranscript transcript{
         .entries = {
             make_human_entry(1, "guide", "Guide", "Question"),
             complete(2, "Answer"),
@@ -72,9 +102,9 @@ TEST(TranscriptEmitter, WritesCompleteEntriesAndNeverRepeatsCommittedState) {
         .history_epoch = 1,
     };
 
-    emitter.write(snapshot);
+    emitter.write(transcript.view());
     emitter.commit();
-    emitter.write(snapshot);
+    emitter.write(transcript.view());
     emitter.commit();
 
     EXPECT_EQ(surface.output, "[You] Question\n\n[Guide] Answer\n\n");
@@ -83,17 +113,20 @@ TEST(TranscriptEmitter, WritesCompleteEntriesAndNeverRepeatsCommittedState) {
 TEST(TranscriptEmitter, MarksClearAndHandlesRestartedIds) {
     RecordingSurface surface;
     TranscriptEmitter emitter(surface, false);
-    emitter.write({
+    const TestTranscript before{
         .entries = {complete(8, "Before")},
         .revision = 1,
         .history_epoch = 1,
-    });
+    };
+    emitter.write(before.view());
     emitter.commit();
-    emitter.write({
+
+    const TestTranscript after{
         .entries = {complete(1, "After")},
         .revision = 2,
         .history_epoch = 2,
-    });
+    };
+    emitter.write(after.view());
     emitter.commit();
 
     EXPECT_EQ(
@@ -104,18 +137,21 @@ TEST(TranscriptEmitter, MarksClearAndHandlesRestartedIds) {
 TEST(TranscriptEmitter, KeepsDiscardedPartialTextAndAppendsTheError) {
     RecordingSurface surface;
     TranscriptEmitter emitter(surface, false);
-    emitter.write({
+    const TestTranscript partial{
         .entries = {streaming(2, "Partial")},
         .revision = 1,
         .open_entry_id = 2,
         .history_epoch = 1,
-    });
+    };
+    emitter.write(partial.view());
     emitter.commit();
-    emitter.write({
+
+    const TestTranscript failed{
         .entries = {make_error_entry(3, "Failed")},
         .revision = 2,
         .history_epoch = 1,
-    });
+    };
+    emitter.write(failed.view());
     emitter.commit();
 
     EXPECT_EQ(surface.output, "[Guide] Partial\n\n[Error] Failed\n\n");
@@ -125,20 +161,21 @@ TEST(TranscriptEmitter, PrintsRestoredHumansThenSkipsLiveOnesWhenEchoOff) {
     RecordingSurface surface;
     TranscriptEmitter emitter(surface, false, false);
 
-    emitter.write({
+    const TestTranscript restored{
         .entries = {
             make_human_entry(1, "guide", "Guide", "Earlier"),
             complete(2, "Earlier answer"),
         },
         .revision = 2,
         .history_epoch = 1,
-    });
+    };
+    emitter.write(restored.view());
     emitter.commit();
     EXPECT_EQ(
         surface.output,
         "[You] Earlier\n\n[Guide] Earlier answer\n\n");
 
-    emitter.write({
+    const TestTranscript live{
         .entries = {
             make_human_entry(1, "guide", "Guide", "Earlier"),
             complete(2, "Earlier answer"),
@@ -147,7 +184,8 @@ TEST(TranscriptEmitter, PrintsRestoredHumansThenSkipsLiveOnesWhenEchoOff) {
         },
         .revision = 4,
         .history_epoch = 1,
-    });
+    };
+    emitter.write(live.view());
     emitter.commit();
     EXPECT_EQ(
         surface.output,
@@ -158,13 +196,13 @@ TEST(TranscriptEmitter, PrintsRestoredHumansThenSkipsLiveOnesWhenEchoOff) {
 TEST(TranscriptEmitter, DoesNotAdvanceWithoutCommit) {
     RecordingSurface surface;
     TranscriptEmitter emitter(surface, false);
-    const TranscriptSnapshot snapshot{
+    const TestTranscript transcript{
         .entries = {complete(1, "Answer")},
         .revision = 1,
         .history_epoch = 1,
     };
-    emitter.write(snapshot);
-    emitter.write(snapshot);
+    emitter.write(transcript.view());
+    emitter.write(transcript.view());
     EXPECT_EQ(
         surface.output,
         "[Guide] Answer\n\n[Guide] Answer\n\n");
@@ -173,7 +211,7 @@ TEST(TranscriptEmitter, DoesNotAdvanceWithoutCommit) {
 TEST(TranscriptEmitter, EmitsOffrecordMarkersOnceAndInOrder) {
     RecordingSurface surface;
     TranscriptEmitter emitter(surface, false);
-    const TranscriptSnapshot snapshot{
+    const TestTranscript transcript{
         .entries = {
             make_hide_on_marker(1),
             make_hide_marker(2),
@@ -183,9 +221,9 @@ TEST(TranscriptEmitter, EmitsOffrecordMarkersOnceAndInOrder) {
         .history_epoch = 1,
     };
 
-    emitter.write(snapshot);
+    emitter.write(transcript.view());
     emitter.commit();
-    emitter.write(snapshot);
+    emitter.write(transcript.view());
     emitter.commit();
 
     EXPECT_EQ(

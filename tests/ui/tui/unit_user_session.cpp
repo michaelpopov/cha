@@ -73,14 +73,16 @@ public:
     }
 
     void render(
-        const Transcript& transcript,
+        TranscriptView transcript,
         const InputEditor& editor,
         const GenerationStatus& status,
         bool show_addressing,
         std::string_view input_target_name,
         std::string_view notice) override {
         ++render_count;
-        rendered_entries = transcript.entries();
+        rendered_entries.assign(
+            transcript.entries.begin(),
+            transcript.entries.end());
         rendered_input = editor.value();
         rendered_generating = status.active;
         rendered_agent_name = std::move(status.agent_name);
@@ -188,6 +190,11 @@ std::vector<std::unique_ptr<CompletionBackend>> two_agents() {
     return backends;
 }
 
+std::vector<TranscriptEntry> copy_entries(const Transcript& transcript) {
+    const auto entries = transcript.entries();
+    return {entries.begin(), entries.end()};
+}
+
 void enter(FakeSessionView& view, std::string_view text) {
     view.type(text);
     view.push(SessionInputKind::enter);
@@ -220,7 +227,7 @@ TEST(UserSession, SubmitsEditedInputThroughTheController) {
     session.receive_terminal_input();
     receive_when_ready(*controller, session);
 
-    const auto entries = controller->transcript().entries();
+    const auto entries = copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.front().text, "Question");
     EXPECT_EQ(entries.back().text, "Answer to Question");
@@ -277,7 +284,7 @@ TEST(UserSession, StopInputDrivesControllerCancellation) {
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_EQ(
         load_transcript_entries(temporary.path),
-        controller->transcript().entries());
+        copy_entries(controller->transcript()));
 }
 
 TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
@@ -508,7 +515,7 @@ TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_EQ(
         load_transcript_entries(temporary.path),
-        controller->transcript().entries());
+        copy_entries(controller->transcript()));
 }
 
 } // namespace

@@ -44,7 +44,7 @@ void initialize_transcript_surface(TranscriptSurface& surface);
 // Whether transcript labels should include routing (multi-agent forum or foreign history).
 bool show_addressing(
     const ForumPersonas& personas,
-    const Transcript& transcript);
+    TranscriptView transcript);
 
 // Produces an unambiguous display label from an entry's semantic kind.
 std::string transcript_entry_label(const TranscriptEntry& entry, bool show_addressing);

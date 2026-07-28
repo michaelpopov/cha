@@ -35,6 +35,11 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
+std::vector<TranscriptEntry> copy_entries(const Transcript& transcript) {
+    const auto entries = transcript.entries();
+    return {entries.begin(), entries.end()};
+}
+
 // Captures the response text and streaming chunk count produced by an integration chat run.
 struct ChatResult {
     std::string response;
@@ -308,7 +313,7 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
         (void)handle_text_input(*controller, "First question");
         run_until_idle(*controller);
         const std::vector<TranscriptEntry> live =
-            controller->transcript().entries();
+            copy_entries(controller->transcript());
         ASSERT_EQ(live.size(), 2U);
         EXPECT_EQ(live.back().text, "First answer");
 
@@ -352,7 +357,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
     server.join();
 
     const std::vector<TranscriptEntry> live =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(live.size(), 2U);
     EXPECT_EQ(live.back().text, "Non-stream answer");
     const std::vector<TranscriptEntry> restored =
@@ -430,7 +435,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
             notifier());
         ASSERT_EQ(controller->personas().first().id, "cheburashka");
         EXPECT_TRUE(show_addressing(
-            controller->personas(), controller->transcript()));
+            controller->personas(), controller->transcript().view()));
 
         // No mention: the first persona directory in name order answers.
         SessionUpdate update = handle_text_input(*controller, "Who are you?");
@@ -577,7 +582,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
         std::move(restored));
     EXPECT_EQ(reopened->personas().all().size(), 1U);
     EXPECT_TRUE(show_addressing(
-        reopened->personas(), reopened->transcript()))
+        reopened->personas(), reopened->transcript().view()))
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
         handle_text_input(*reopened, "@Cheburashka are you there?").notice,

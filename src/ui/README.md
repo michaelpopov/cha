@@ -42,7 +42,7 @@ flowchart TD
     txt -->|"calls"| controller["SessionController"]
     controller -->|"SessionUpdate"| tui
     controller -->|"SessionUpdate"| console
-    tui -->|"reads"| convo["Transcript snapshots<br/>GenerationStatus"]
+    tui -->|"borrows"| convo["TranscriptView<br/>GenerationStatus"]
     console -->|"reads"| convo
     render -->|"reads"| personas["ForumPersonas<br/>names for labels"]
 
@@ -89,6 +89,14 @@ bodies, and response framing around the same session-layer operations:
 shape already suits the transport. Session-persistence and agent-runtime types
 must not become transport contracts — they are internal, and freezing them into
 a public API would pin down layers that need to stay free to change.
+
+In-process frontends render a call-scoped `TranscriptView`. It borrows the
+main-thread transcript and must not be retained across a controller operation
+or any other transcript mutation. Frontends that need an owning transport
+value must build that value deliberately at their boundary; the live UI does
+not copy the whole transcript on each update.
+Code that only needs the activity bit uses `SessionController::is_generating()`;
+it does not construct a `GenerationStatus` and copy active reasoning text.
 
 ## Documents
 

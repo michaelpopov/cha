@@ -262,6 +262,9 @@ Every command except `request_stop()` and `receive()` is refused while a turn or
 multicast is active, with the shared in-progress notice. The controller and its
 forum-persona helpers format session notices — handle errors, forum-persona
 text, `/info` — because their wording belongs to the session, not to a UI.
+For read-only activity checks, `is_generating()` avoids constructing a
+`GenerationStatus` and copying its potentially growing reasoning text.
+Frontends request the full status only when they are about to render it.
 
 The three off-record commands are the only ones that add a transcript entry
 without a journal write. Each passes the current `next_entry_id_` to the

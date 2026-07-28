@@ -3,55 +3,85 @@
 
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace cha {
 namespace {
 
 TranscriptEntry human(EntryId id, std::string text) {
-    return make_human_entry(id, "guide-id", "Guide", std::move(text));
+    return make_human_entry(
+        id,
+        "guide-id",
+        "Guide",
+        std::move(text));
 }
 
 TranscriptEntry agent(EntryId id, std::string text) {
     return make_agent_entry(
-        id, "guide-id", "Guide", std::move(text), EntryStatus::complete);
+        id,
+        "guide-id",
+        "Guide",
+        std::move(text),
+        EntryStatus::complete);
 }
+
+struct TestTranscript {
+    std::vector<TranscriptEntry> entries;
+    std::size_t revision{};
+    std::optional<EntryId> open_entry_id;
+    std::size_t history_epoch{};
+
+    [[nodiscard]] TranscriptView view() const noexcept {
+        return {
+            entries,
+            revision,
+            open_entry_id,
+            history_epoch,
+        };
+    }
+};
 
 TEST(TranscriptRenderPlanner, RebuildsInitiallyAndAfterWidthChanges) {
     TranscriptRenderPlanner planner;
-    const TranscriptSnapshot snapshot{
+    const TestTranscript transcript{
         .entries = {human(1, "Hello")},
         .revision = 1,
     };
 
     EXPECT_EQ(
-        planner.plan(snapshot, 80).action,
+        planner.plan(transcript.view(), 80).action,
         TranscriptRenderAction::rebuild);
-    planner.commit(snapshot, 80);
+    planner.commit(transcript.view(), 80);
 
     EXPECT_EQ(
-        planner.plan(snapshot, 80).action,
+        planner.plan(transcript.view(), 80).action,
         TranscriptRenderAction::none);
     EXPECT_EQ(
-        planner.plan(snapshot, 40).action,
+        planner.plan(transcript.view(), 40).action,
         TranscriptRenderAction::rebuild);
 }
 
 TEST(TranscriptRenderPlanner, AppendsAStreamingSuffixAndNewMessages) {
     TranscriptRenderPlanner planner;
-    const TranscriptSnapshot initial{
+    const TestTranscript initial{
         .entries = {
             human(1, "Question"),
             make_agent_entry(
-                2, "guide-id", "Guide", "Partial", EntryStatus::streaming),
+                2,
+                "guide-id",
+                "Guide",
+                "Partial",
+                EntryStatus::streaming),
         },
         .revision = 2,
         .open_entry_id = 2,
     };
-    planner.commit(initial, 80);
+    planner.commit(initial.view(), 80);
 
-    const TranscriptSnapshot streamed{
+    const TestTranscript streamed{
         .entries = {
             human(1, "Question"),
             make_agent_entry(
@@ -64,14 +94,15 @@ TEST(TranscriptRenderPlanner, AppendsAStreamingSuffixAndNewMessages) {
         .revision = 3,
         .open_entry_id = 2,
     };
-    const TranscriptRenderPlan stream_plan = planner.plan(streamed, 80);
+    const TranscriptRenderPlan stream_plan =
+        planner.plan(streamed.view(), 80);
     EXPECT_EQ(stream_plan.action, TranscriptRenderAction::append);
     EXPECT_TRUE(stream_plan.resumes_last_message);
     EXPECT_EQ(stream_plan.last_message_suffix, " answer");
     EXPECT_EQ(stream_plan.first_new_message, 2U);
-    planner.commit(streamed, 80);
+    planner.commit(streamed.view(), 80);
 
-    const TranscriptSnapshot with_new_message{
+    const TestTranscript with_new_message{
         .entries = {
             human(1, "Question"),
             agent(2, "Partial answer"),
@@ -80,7 +111,7 @@ TEST(TranscriptRenderPlanner, AppendsAStreamingSuffixAndNewMessages) {
         .revision = 4,
     };
     const TranscriptRenderPlan new_message_plan =
-        planner.plan(with_new_message, 80);
+        planner.plan(with_new_message.view(), 80);
     EXPECT_EQ(new_message_plan.action, TranscriptRenderAction::append);
     EXPECT_TRUE(new_message_plan.resumes_last_message);
     EXPECT_TRUE(new_message_plan.last_message_suffix.empty());
@@ -89,67 +120,69 @@ TEST(TranscriptRenderPlanner, AppendsAStreamingSuffixAndNewMessages) {
 
 TEST(TranscriptRenderPlanner, AppendsFromAnEmptyRenderedTranscript) {
     TranscriptRenderPlanner planner;
-    planner.commit({.revision = 1}, 80);
+    const TestTranscript empty{.revision = 1};
+    planner.commit(empty.view(), 80);
 
-    const TranscriptSnapshot snapshot{
+    const TestTranscript transcript{
         .entries = {human(1, "First")},
         .revision = 2,
     };
-    const TranscriptRenderPlan plan = planner.plan(snapshot, 80);
+    const TranscriptRenderPlan plan =
+        planner.plan(transcript.view(), 80);
 
     EXPECT_EQ(plan.action, TranscriptRenderAction::append);
     EXPECT_FALSE(plan.resumes_last_message);
     EXPECT_EQ(plan.first_new_message, 0U);
 }
 
-TEST(TranscriptRenderPlanner, RebuildsWhenRenderedContentIsNotAnAppend) {
+TEST(TranscriptRenderPlanner, RebuildsWhenHistoryOrTailIsNotAnAppend) {
     TranscriptRenderPlanner planner;
-    const TranscriptSnapshot initial{
+    const TestTranscript initial{
         .entries = {human(1, "First"), agent(2, "Second")},
         .revision = 1,
     };
-    planner.commit(initial, 80);
+    planner.commit(initial.view(), 80);
 
-    const TranscriptSnapshot changed_prefix{
+    const TestTranscript replaced_history{
         .entries = {human(1, "Changed"), agent(2, "Second")},
         .revision = 2,
         .history_epoch = 1,
     };
     EXPECT_EQ(
-        planner.plan(changed_prefix, 80).action,
+        planner.plan(replaced_history.view(), 80).action,
         TranscriptRenderAction::rebuild);
 
-    const TranscriptSnapshot shortened_last{
+    const TestTranscript shortened_last{
         .entries = {human(1, "First"), agent(2, "Sec")},
         .revision = 3,
     };
     EXPECT_EQ(
-        planner.plan(shortened_last, 80).action,
+        planner.plan(shortened_last.view(), 80).action,
         TranscriptRenderAction::rebuild);
 
-    const TranscriptSnapshot fewer_messages{
+    const TestTranscript fewer_messages{
         .entries = {human(1, "First")},
         .revision = 4,
     };
     EXPECT_EQ(
-        planner.plan(fewer_messages, 80).action,
+        planner.plan(fewer_messages.view(), 80).action,
         TranscriptRenderAction::rebuild);
 }
 
 TEST(TranscriptRenderPlanner, IgnoresARevisionOnlyChange) {
     TranscriptRenderPlanner planner;
-    const TranscriptSnapshot initial{
+    const TestTranscript initial{
         .entries = {human(1, "Same")},
         .revision = 1,
     };
-    planner.commit(initial, 80);
+    planner.commit(initial.view(), 80);
 
-    const TranscriptSnapshot unchanged{
+    const TestTranscript unchanged{
         .entries = {human(1, "Same")},
         .revision = 2,
     };
     EXPECT_EQ(
-        planner.plan(unchanged, 80).action,
+        planner.plan(unchanged.view(), 80).action,
         TranscriptRenderAction::none);
 }
 

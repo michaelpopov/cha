@@ -94,7 +94,7 @@ the notice, request a repaint, end the session — whichever fields it sets.
 
 ```mermaid
 flowchart LR
-    conv["Transcript"] -->|"snapshot"| plan["TranscriptRenderPlanner"]
+    conv["Transcript"] -->|"call-scoped view"| plan["TranscriptRenderPlanner"]
     plan -->|"TranscriptRenderPlan"| tui["Tui"]
     tui -->|"rebuild or append"| pad["transcript pad"]
     tui --> port["TranscriptViewport<br/>top row, follow state"]
@@ -110,11 +110,13 @@ The screen is three regions: a scrollable transcript pad, a reverse-video status
 line, and a boxed multiline input pad. Below a minimum size the UI draws
 only "Terminal is too small".
 
-- **`TranscriptRenderPlanner`** compares the newest snapshot with what was last
-  drawn and returns *none*, *append*, or *rebuild*. Streaming answer text becomes
-  an append; a width change, a history reset, a shrunk transcript, or any edit
-  that is not pure appended text forces a rebuild. This is what keeps a long
-  transcript cheap to update while a response streams in.
+- **`TranscriptRenderPlanner`** compares the newest borrowed view with scalar
+  positions from the last frame and returns *none*, *append*, or *rebuild*. It
+  retains only the last entry ID and text length, never an entry or message
+  string. Streaming answer text becomes an append; a width change, a history
+  reset, a shrunk transcript, or any edit that is not pure appended text forces
+  a rebuild. This keeps a long transcript cheap to update while a response
+  streams in.
 - **`TranscriptViewport`** owns the scroll offset and whether the view is still
   following new output, so a user who has scrolled back is not dragged forward.
 - **`TranscriptSurface`**, from [`../render/`](../render/README.md), is the
@@ -148,7 +150,7 @@ message never lands on a screen still in curses mode.
 ## Dependencies
 
 - **Depends on:** `session/` for controller operations, generation status,
-  and session summaries; `transcript/` for snapshots and entries;
+  and session summaries; `transcript/` for call-scoped views and entries;
   `ui/text/` for command dispatch; `session/` for forum-persona values used in
   labels; wide ncurses and POSIX polling.
 - **Must not:** load workspace files, open session catalogs, or call

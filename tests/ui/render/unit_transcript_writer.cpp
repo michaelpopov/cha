@@ -57,8 +57,8 @@ TEST(ShowAddressing, DependsOnForumPersonasAndForeignHistory) {
     });
 
     Transcript empty;
-    EXPECT_FALSE(show_addressing(single, empty));
-    EXPECT_TRUE(show_addressing(multi, empty));
+    EXPECT_FALSE(show_addressing(single, empty.view()));
+    EXPECT_TRUE(show_addressing(multi, empty.view()));
 
     Transcript foreign;
     foreign.replace_entries({
@@ -66,10 +66,10 @@ TEST(ShowAddressing, DependsOnForumPersonasAndForeignHistory) {
         make_agent_entry(
             2, "former-id", "Former", "Answer", EntryStatus::complete, 1),
     });
-    EXPECT_TRUE(show_addressing(single, foreign));
+    EXPECT_TRUE(show_addressing(single, foreign.view()));
 
     foreign.clear();
-    EXPECT_FALSE(show_addressing(single, foreign));
+    EXPECT_FALSE(show_addressing(single, foreign.view()));
 }
 
 TEST(TranscriptLabel, FormatsEveryEntryKind) {

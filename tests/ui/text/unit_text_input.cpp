@@ -69,6 +69,11 @@ AgentDefinition definition(
     };
 }
 
+std::vector<TranscriptEntry> copy_entries(const Transcript& transcript) {
+    const auto entries = transcript.entries();
+    return {entries.begin(), entries.end()};
+}
+
 class BlockingBackend final : public CompletionBackend {
 public:
     RequestPayload prepare(const CompletionInput& input) override {
@@ -140,7 +145,7 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_TRUE(handle_text_input(*controller, "/hide").render_needed);
     EXPECT_TRUE(handle_text_input(*controller, "/hide-off").render_needed);
     EXPECT_EQ(
-        controller->transcript().entries(),
+        copy_entries(controller->transcript()),
         (std::vector<TranscriptEntry>{
             make_hide_on_marker(1),
             make_hide_marker(2),
@@ -185,7 +190,7 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
         handle_text_input(*controller, "  @Ism hello");
     EXPECT_TRUE(submitted.clear_input);
     const std::vector<TranscriptEntry> entries =
-        controller->transcript().entries();
+        copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().addressed_to, "ismael-id");
     EXPECT_EQ(entries.front().text, "hello");

@@ -7,7 +7,7 @@
 
 namespace cha {
 
-class Transcript;
+struct TranscriptView;
 class InputEditor;
 
 // Identifies one UI-independent input action produced by a terminal front end.
@@ -46,7 +46,7 @@ public:
 
     virtual std::optional<SessionInput> read_input() = 0;
     virtual void render(
-        const Transcript& transcript,
+        TranscriptView transcript,
         const InputEditor& editor,
         const GenerationStatus& status,
         bool show_addressing,

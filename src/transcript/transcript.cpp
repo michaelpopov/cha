@@ -276,8 +276,12 @@ bool Transcript::restore_offrecord(EntryId marker_id) {
     return true;
 }
 
-TranscriptSnapshot Transcript::snapshot() const {
+TranscriptView Transcript::view() const noexcept {
     return {entries_, revision_, open_entry_id_, history_epoch_};
+}
+
+std::size_t Transcript::size() const noexcept {
+    return entries_.size();
 }
 
 CompletionHistory Transcript::completion_history() const {
@@ -288,8 +292,8 @@ CompletionHistory Transcript::completion_history() const {
     };
 }
 
-std::vector<TranscriptEntry> Transcript::entries() const {
-    return snapshot().entries;
+std::span<const TranscriptEntry> Transcript::entries() const noexcept {
+    return entries_;
 }
 
 std::optional<EntryId> Transcript::open_entry_id() const {

@@ -12,7 +12,7 @@ project.
 
 | Source | Responsibility |
 | --- | --- |
-| `transcript.h` | IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, `TranscriptSnapshot`, `CompletionHistory`, and the `Transcript` container. |
+| `transcript.h` | IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, the non-owning `TranscriptView`, `CompletionHistory`, and the `Transcript` container. |
 | `transcript.cpp` | Factory construction, validation rules, and live-state mutation and read operations. |
 
 ## The entry model
@@ -68,8 +68,8 @@ terminal transcript entry is currently storable.
 ## The live transcript
 
 `Transcript` is the live mutable transcript state. It has a
-single-thread-owned design: the main thread exclusively mutates and snapshots
-it. The class is not thread-safe, and callers must not share a live instance
+single-thread-owned design: the main thread exclusively reads and mutates it.
+The class is not thread-safe, and callers must not share a live instance
 across threads.
 Completion runners never read it; the controller captures an immutable
 `CompletionHistory` before staging a batch.
@@ -100,7 +100,7 @@ drawn becomes invalid.
 while remaining fully visible on screen. It lives in `Transcript` because that
 is the one place that owns both the bounds and the entries they describe.
 `completion_history()` copies both together in one operation for immutable
-backend input. `TranscriptSnapshot` has no span field—renderers never need the
+backend input. `TranscriptView` has no span field—renderers never need the
 bounds, only the marker entries already in `entries`.
 
 Bounds are **boundary values, not entry references**: `begin` and `end` are
@@ -141,22 +141,29 @@ stateDiagram-v2
 ```mermaid
 flowchart TD
     C["Transcript<br/>entries + revision + epoch"]
-    S["TranscriptSnapshot<br/>owned copy"]
+    V["TranscriptView<br/>borrowed span + scalar state"]
     H["CompletionHistory<br/>owned entries + projection state"]
-    N["Narrow accessors<br/>owned text or span value"]
+    N["Narrow accessors<br/>borrowed span or owned value"]
     R["Renderers and status"]
     B["Immutable backend input"]
     T["Session checks and tests"]
 
-    C -->|"snapshot"| S --> R
+    C -->|"view"| V --> R
     C -->|"completion_history"| H --> B
-    C -->|"copy value"| N --> T
+    C -->|"read value"| N --> T
 ```
 
-Use a **snapshot** for presentation state and a **completion history** for
-model-context projection. Both are owned copies that remain stable after the
-live transcript changes. Narrow accessors return owned values while keeping
-the live container private.
+Use a **view** for synchronous presentation and a **completion history** for
+model-context projection. A `TranscriptView` is call-scoped: it borrows the
+entry vector through `std::span`, and any transcript mutation may invalidate
+the span, its entries, and their strings. Renderers therefore consume it before
+returning and retain only scalar positions such as an entry ID, entry count, or
+text length. `CompletionHistory` is the sole owning point-in-time copy because
+workers genuinely need immutable state after the main thread continues.
+
+The direct entry accessor is also a borrowed span for narrow same-thread reads.
+`size()` answers count-only questions without constructing a view. Accessors for
+an open entry's text and off-record state return owned values.
 
 ## Dependencies
 
@@ -173,7 +180,7 @@ protocol, or terminal concepts.
 `tests/transcript/unit_transcript.cpp` covers the factories, every
 validation rule, the streaming lifecycle, ID ordering, the off-record bound
 states and their markers, immutable completion-history capture, and
-snapshot and narrow-accessor consistency.
+view borrowing and narrow-accessor consistency.
 
 The same file also tests `SessionJournal` and the session database, on
 purpose: the SQL `CHECK` constraints are a second encoding of the rules above,

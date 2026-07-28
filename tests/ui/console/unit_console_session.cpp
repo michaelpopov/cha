@@ -654,7 +654,7 @@ TEST(ConsoleSession, ReportsWaitAndFlushFailures) {
         flush_port.notice_output().find("Failed to write"),
         std::string::npos);
     const std::string first_write = flush_port.transcript_output();
-    flush_emitter.write(flush_controller->transcript().snapshot());
+    flush_emitter.write(flush_controller->transcript().view());
     EXPECT_EQ(
         flush_port.transcript_output(),
         first_write + first_write);

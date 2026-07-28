@@ -60,7 +60,7 @@ SessionUpdate handle_text_input(
         return update;
     }
     const Command command = parse_command(input);
-    if (controller.generation_status().active) {
+    if (controller.is_generating()) {
         if (command.kind == CommandKind::stop && command.argument.empty()) {
             update = controller.request_stop();
             update.clear_input = true;

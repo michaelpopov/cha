@@ -22,11 +22,12 @@ bool UserSession::running() const {
 }
 
 void UserSession::render() {
+    const TranscriptView transcript = controller_.transcript().view();
     view_.render(
-        controller_.transcript(),
+        transcript,
         editor_,
         controller_.generation_status(),
-        show_addressing(controller_.personas(), controller_.transcript()),
+        show_addressing(controller_.personas(), transcript),
         input_target_name(),
         notice_);
     render_needed_ = false;
@@ -124,7 +125,7 @@ void UserSession::handle_input(const SessionInput& input) {
         break;
     case SessionInputKind::escape:
     case SessionInputKind::interrupt:
-        if (controller_.generation_status().active) {
+        if (controller_.is_generating()) {
             request_stop();
         } else if (input.kind == SessionInputKind::interrupt) {
             running_ = false;

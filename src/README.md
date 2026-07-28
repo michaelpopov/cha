@@ -402,7 +402,7 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | `ForumPersonas` is non-empty, with unique IDs and unique case-folded names. | `ForumPersonas` constructor |
 | At most one user operation and one foreground turn are active, while one multicast may run distinct backends concurrently. | `SessionController::busy`, batch reservation, backend leases |
 | Every launched run, including one cancelled at an unopened gate, yields exactly one terminal `AgentEvent` through its queue's reserved closing slot. | Per-runner execution and shutdown order |
-| Only the main thread accesses the live `Transcript` or mutates the journal. | `SessionController`, owning snapshots and completion histories |
+| Only the main thread accesses the live `Transcript` or mutates the journal. Presentation views are call-scoped; only completion histories own copied entries. | `SessionController`, `TranscriptView`, `CompletionHistory` |
 | At most one streaming entry is open at a time. | `Transcript` |
 | Entry and request IDs are positive and strictly increasing. | `Transcript::require_next_id`, `state` table |
 | Durable writes precede visible ones. | `SessionController` |

@@ -61,6 +61,7 @@ public:
 
     // --- Session state (read-only) --------------------------------------------
     const Transcript& transcript() const { return transcript_; }
+    [[nodiscard]] bool is_generating() const noexcept;
     GenerationStatus generation_status() const;
     const ForumPersonas& personas() const { return personas_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
@@ -118,7 +119,7 @@ private:
         ActivationHook before_activation);
 
     void initialize(SessionRestore restored);
-    bool busy() const;
+    bool busy() const noexcept;
     SessionUpdate busy_notice() const;
     void start_batch(
         std::string text,

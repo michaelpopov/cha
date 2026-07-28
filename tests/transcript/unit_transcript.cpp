@@ -19,6 +19,17 @@
 namespace cha {
 namespace {
 
+void expect_entries(
+    std::span<const TranscriptEntry> actual,
+    const std::vector<TranscriptEntry>& expected) {
+    ASSERT_EQ(actual.size(), expected.size());
+    EXPECT_TRUE(std::equal(
+        actual.begin(),
+        actual.end(),
+        expected.begin(),
+        expected.end()));
+}
+
 // Runs one statement directly against a session database and returns its SQLite code.
 // The tests use it to reach schema constraints that the journal API refuses to violate.
 int raw_execute(const std::filesystem::path& path, const std::string& sql) {
@@ -109,7 +120,7 @@ TEST(Transcript, StoresTypedCompleteAndStreamingEntries) {
     transcript.finish_entry(2, EntryStatus::complete);
     EXPECT_FALSE(transcript.open_entry_id());
     EXPECT_THROW(transcript.open_entry_text(2), std::logic_error);
-    EXPECT_EQ(
+    expect_entries(
         transcript.entries(),
         (std::vector<TranscriptEntry>{
             human(1, "Review this code", 10),
@@ -151,30 +162,31 @@ TEST(Transcript, RequiresAnswerTextForTerminalAgentEntries) {
         require_storable_transcript_entry(transcript.entries().back()));
 }
 
-TEST(Transcript, ReturnsAnIndependentEntrySnapshot) {
+TEST(Transcript, ExposesACallScopedConstViewWithoutCopyingEntries) {
     Transcript transcript;
     transcript.add_entry(make_notice_entry(1, "Original"));
 
-    auto snapshot = transcript.entries();
-    snapshot.front().text = "Changed";
-
-    EXPECT_EQ(transcript.entries().front().text, "Original");
+    const TranscriptView view = transcript.view();
+    EXPECT_EQ(view.entries.data(), transcript.entries().data());
+    EXPECT_EQ(view.entries.front().text, "Original");
+    EXPECT_EQ(view.size(), 1U);
+    EXPECT_EQ(transcript.size(), 1U);
 }
 
 TEST(Transcript, ReplacesAndClearsEntries) {
     Transcript transcript;
     transcript.add_entry(make_notice_entry(1, "Old"));
-    const std::size_t initial_epoch = transcript.snapshot().history_epoch;
+    const std::size_t initial_epoch = transcript.view().history_epoch;
     transcript.replace_entries({
         human(2, "Restored"),
         make_agent_entry(3, "guide-id", "Guide", "Welcome", EntryStatus::complete),
     });
 
     EXPECT_EQ(transcript.entries().size(), 2U);
-    EXPECT_EQ(transcript.snapshot().history_epoch, initial_epoch + 1);
+    EXPECT_EQ(transcript.view().history_epoch, initial_epoch + 1);
     transcript.clear();
     EXPECT_TRUE(transcript.entries().empty());
-    EXPECT_EQ(transcript.snapshot().history_epoch, initial_epoch + 2);
+    EXPECT_EQ(transcript.view().history_epoch, initial_epoch + 2);
 }
 
 TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
@@ -196,7 +208,7 @@ TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
     EXPECT_TRUE(closed_span.contains(1));
     EXPECT_TRUE(closed_span.contains(3));
     EXPECT_FALSE(closed_span.contains(4));
-    EXPECT_EQ(
+    expect_entries(
         transcript.entries(),
         (std::vector<TranscriptEntry>{
             make_hide_on_marker(1),
@@ -216,10 +228,10 @@ TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
 TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) {
     Transcript transcript;
     transcript.add_entry(human(2, "Earlier", 1));
-    const TranscriptSnapshot before = transcript.snapshot();
+    const TranscriptView before = transcript.view();
 
     EXPECT_TRUE(transcript.open_offrecord(5));
-    const TranscriptSnapshot opened = transcript.snapshot();
+    const TranscriptView opened = transcript.view();
     EXPECT_EQ(opened.revision, before.revision + 1);
     EXPECT_EQ(opened.history_epoch, before.history_epoch);
     EXPECT_EQ(
@@ -227,9 +239,9 @@ TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) 
         (OffrecordSpan{.begin = 3, .end = std::nullopt}));
 
     transcript.add_entry(human(6, "Hidden", 2));
-    const TranscriptSnapshot before_extend = transcript.snapshot();
+    const TranscriptView before_extend = transcript.view();
     EXPECT_TRUE(transcript.extend_offrecord(9));
-    const TranscriptSnapshot closed = transcript.snapshot();
+    const TranscriptView closed = transcript.view();
     EXPECT_EQ(closed.revision, before_extend.revision + 1);
     EXPECT_EQ(closed.history_epoch, before_extend.history_epoch);
     EXPECT_EQ(
@@ -237,7 +249,7 @@ TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) 
         (OffrecordSpan{.begin = 3, .end = 7}));
 
     EXPECT_TRUE(transcript.restore_offrecord(12));
-    const TranscriptSnapshot restored = transcript.snapshot();
+    const TranscriptView restored = transcript.view();
     EXPECT_EQ(restored.revision, closed.revision + 1);
     EXPECT_EQ(restored.history_epoch, closed.history_epoch);
 }
@@ -252,9 +264,9 @@ TEST(Transcript, ReplacingEntriesDropsTheOffrecordSpan) {
     transcript.replace_entries({human(20, "Restored", 2)});
 
     EXPECT_EQ(transcript.offrecord_span(), OffrecordSpan{});
-    EXPECT_EQ(transcript.entries(), (std::vector<TranscriptEntry>{
-        human(20, "Restored", 2),
-    }));
+    expect_entries(
+        transcript.entries(),
+        (std::vector<TranscriptEntry>{human(20, "Restored", 2)}));
 }
 
 TEST(Transcript, CompletionHistoryOwnsOneAtomicModelContextSnapshot) {
@@ -283,7 +295,7 @@ TEST(Transcript, CompletionHistoryIncludesOffrecordProjectionState) {
     EXPECT_EQ(
         history.offrecord_span,
         (OffrecordSpan{.begin = 1, .end = 3}));
-    EXPECT_EQ(history.entries, transcript.entries());
+    expect_entries(transcript.entries(), history.entries);
 }
 
 TEST(Transcript, RequiresStrictlyIncreasingEntryIds) {
@@ -770,11 +782,10 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
     EXPECT_EQ(restored.entries.front().addressed_to, "cheburashka");
     EXPECT_EQ(restored.entries[1].display_name, "Cheburashka");
 
-    TranscriptSnapshot snapshot{.entries = restored.entries};
     EXPECT_EQ(
         project_agent_context(
-            snapshot.entries,
-            snapshot.open_entry_id,
+            restored.entries,
+            std::nullopt,
             {},
             "Ismael system",
             "ismael"),

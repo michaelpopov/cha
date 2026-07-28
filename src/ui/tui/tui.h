@@ -31,7 +31,7 @@ public:
 
     std::optional<SessionInput> read_input() override;
     void render(
-        const Transcript& transcript,
+        TranscriptView transcript,
         const InputEditor& editor,
         const GenerationStatus& status,
         bool show_addressing,
@@ -46,7 +46,7 @@ private:
     void ensure_transcript_capacity(int required_rows);
     void ensure_input_pad(int required_rows, int columns);
     void rebuild_transcript(
-        const TranscriptSnapshot& snapshot,
+        TranscriptView transcript,
         const GenerationStatus& status,
         int output_height,
         int columns,
@@ -56,7 +56,7 @@ private:
         const GenerationStatus& status,
         std::string_view answer_text);
     void render_transcript(
-        const TranscriptSnapshot& snapshot,
+        TranscriptView transcript,
         const GenerationStatus& status,
         int output_height,
         int columns,

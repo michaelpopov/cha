@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -65,18 +66,26 @@ struct OffrecordSpan {
     bool operator==(const OffrecordSpan&) const = default;
 };
 
-// An owning point-in-time copy of a Transcript. The revision and history epoch
-// let a renderer decide what changed since the frame it drew last.
-struct TranscriptSnapshot {
-    std::vector<TranscriptEntry> entries;
+// A call-scoped, non-owning presentation view of the main-thread Transcript.
+// Any Transcript mutation may invalidate the span and strings reached through
+// it, so renderers may retain only scalar positions derived from this value.
+struct TranscriptView {
+    std::span<const TranscriptEntry> entries;
     std::size_t revision{};
     std::optional<EntryId> open_entry_id;
     std::size_t history_epoch{};
+
+    [[nodiscard]] bool empty() const noexcept {
+        return entries.empty();
+    }
+
+    [[nodiscard]] std::size_t size() const noexcept {
+        return entries.size();
+    }
 };
 
-// An owned, immutable source for model-context projection. Unlike the
-// presentation-oriented TranscriptSnapshot, it includes the off-record span
-// that determines which entries are visible to a completion.
+// The sole owning point-in-time copy of a Transcript. Worker threads share it
+// immutably for model-context projection; presentation uses TranscriptView.
 struct CompletionHistory {
     std::vector<TranscriptEntry> entries;
     std::optional<EntryId> open_entry_id;
@@ -117,8 +126,9 @@ void require_storable_transcript_entry(const TranscriptEntry& entry);
 
 // The main-thread-owned live transcript of one session. It is not thread-safe:
 // all reads and mutations must happen on its owning thread. It allows at most
-// one open streaming entry and exposes only owning snapshots or narrow value
-// accessors. It depends on nothing beyond the entry model declared above.
+// one open streaming entry. Presentation borrows call-scoped views; completion
+// workers receive owning immutable histories. It depends on nothing beyond the
+// entry model declared above.
 class Transcript {
 public:
     Transcript() = default;
@@ -141,9 +151,10 @@ public:
     [[nodiscard]] bool extend_offrecord(EntryId marker_id);
     [[nodiscard]] bool restore_offrecord(EntryId marker_id);
 
-    TranscriptSnapshot snapshot() const;
+    [[nodiscard]] TranscriptView view() const noexcept;
+    [[nodiscard]] std::size_t size() const noexcept;
     CompletionHistory completion_history() const;
-    std::vector<TranscriptEntry> entries() const;
+    [[nodiscard]] std::span<const TranscriptEntry> entries() const noexcept;
     std::optional<EntryId> open_entry_id() const;
     std::string open_entry_text(EntryId entry_id) const;
     OffrecordSpan offrecord_span() const;

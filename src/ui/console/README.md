@@ -86,9 +86,11 @@ changes and is shown only while the controller is idle and able to accept
 input. `--color=auto` decides transcript and prompt attributes independently
 from the TTY status of stdout and stderr; `always` and `never` override both.
 `TranscriptEmitter` treats stdout as an append-only event log, not a repaintable
-view. Restored history is emitted before the first wait, completed entries
-appear once, and streamed entries append only their new suffix. `/clear` emits
-a marker because previously delivered bytes cannot be removed. The off-record
+view. It consumes a call-scoped borrowed transcript view and retains only an
+entry index, open-entry ID, and text length between emissions. Restored history
+is emitted before the first wait, completed entries appear once, and streamed
+entries append only their new suffix. `/clear` emits a marker because previously
+delivered bytes cannot be removed. The off-record
 markers need no special handling for the same reason: they are ordinary notice
 entries, so they are emitted once each, in the order the commands were given,
 and nothing already written is ever retracted when the span changes.
@@ -136,7 +138,7 @@ performs no output.
 | --- | --- |
 | `console_port.h` | Test seam for waiting, input, signals, attributed transcript and prompt output, notices, ordinary flushing, and checked finalization. |
 | `line_reader.*` | Pure byte-to-submission parser. |
-| `transcript_emitter.*` | Append-only entry-ID and streaming-suffix watermarks. |
+| `transcript_emitter.*` | Append-only entry-index and streaming-suffix watermarks. |
 | `console_writer.*` | Sanitizing attributed surfaces and the bold `@Name> ` prompt writer. |
 | `console_session.*` | Queue, EOF, signal, event, emission, and shutdown state machine. |
 | `console_startup.*` | CLI parsing, stable listings, forum checking, and workspace session selection. |

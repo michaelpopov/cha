@@ -8,9 +8,9 @@
 
 namespace cha {
 
-// Projects TranscriptSnapshot changes onto an append-only TranscriptSurface.
-// Staged and committed positions let ConsoleSession flush output before
-// acknowledging bytes as delivered.
+// Projects a call-scoped TranscriptView onto an append-only TranscriptSurface.
+// Staged and committed indices let ConsoleSession flush output before
+// acknowledging bytes as delivered; no transcript storage is retained.
 class TranscriptEmitter {
 public:
     // When echo_human_entries is false, only restored history still prints human
@@ -20,7 +20,7 @@ public:
         bool show_addressing,
         bool echo_human_entries = true);
 
-    void write(const TranscriptSnapshot& snapshot);
+    void write(TranscriptView transcript);
     void commit();
 
 private:
@@ -29,9 +29,9 @@ private:
     struct Position {
         bool initialized{};
         std::size_t history_epoch{};
-        EntryId last_emitted_id{};
         std::optional<EntryId> open_id;
         std::size_t open_text_size{};
+        std::size_t next_entry_index{};
     };
 
     TranscriptSurface& surface_;
