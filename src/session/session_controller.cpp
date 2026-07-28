@@ -253,9 +253,8 @@ void SessionController::start_batch(
     }
 
     try {
-        StagedBatch staged = registry_.stage_batch(std::move(inputs));
-        batch.staged_batch_id = staged.batch_id;
-        batch.staged_run_ids = std::move(staged.run_ids);
+        batch.staged_batch_id =
+            registry_.stage_batch(std::move(inputs));
     } catch (const std::runtime_error&) {
         update.clear_input = false;
         update.notice = "Request could not be dispatched";
@@ -294,9 +293,10 @@ void SessionController::activate_current_run(SessionUpdate& update) {
     };
 
     // Select the still-gated event channel before durable or active state.
-    // If the run ID is stale, batch teardown remains side-effect free.
+    // If the batch or position is stale, teardown remains side-effect free.
     registry_.set_foreground(
-        batch_->staged_run_ids[batch_->foreground_index]);
+        batch_->staged_batch_id,
+        batch_->foreground_index);
     if (before_activation_) {
         before_activation_(batch_->foreground_index);
     }
@@ -357,23 +357,26 @@ void SessionController::finish_batch_run(SessionUpdate& update) {
     if (!batch_) {
         return;
     }
-    const RunId completed_run =
-        batch_->staged_run_ids[batch_->foreground_index];
-
     if (shutdown_) {
-        registry_.retire(completed_run);
+        registry_.retire(
+            batch_->staged_batch_id,
+            batch_->foreground_index);
         finish_batch(update);
         return;
     }
 
     if (batch_->abort_requested) {
         append_batch_notice(update);
-        registry_.release_foreground_to_cleanup(completed_run);
+        registry_.release_foreground_to_cleanup(
+            batch_->staged_batch_id,
+            batch_->foreground_index);
         poll_abort_cleanup(update);
         return;
     }
 
-    registry_.retire(completed_run);
+    registry_.retire(
+        batch_->staged_batch_id,
+        batch_->foreground_index);
     if (batch_->foreground_index + 1 == batch_->runs.size()) {
         finish_batch(update);
         return;
@@ -594,10 +597,9 @@ SessionUpdate SessionController::request_stop() {
 
     if (!batch_->abort_requested) {
         batch_->abort_requested = true;
-        std::optional<RunId> retained_foreground;
+        std::optional<std::size_t> retained_foreground;
         if (active_) {
-            retained_foreground =
-                batch_->staged_run_ids[batch_->foreground_index];
+            retained_foreground = batch_->foreground_index;
         }
         registry_.begin_abort_cleanup(
             batch_->staged_batch_id,

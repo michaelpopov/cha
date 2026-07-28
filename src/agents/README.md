@@ -111,8 +111,8 @@ sequenceDiagram
     R->>WN: stage remaining children behind closed gate
     W0-->>R: parked
     WN-->>R: all parked
-    R-->>M: StagedBatch
-    M->>R: set_foreground(child 0)
+    R-->>M: BatchId; positions match input order
+    M->>R: set_foreground(BatchId, position 0)
     M->>R: open_batch_gate
     par every runner
         W0->>B: prepare then perform
@@ -123,7 +123,7 @@ sequenceDiagram
     B-->>WN: deltas and terminal
     W0-->>M: foreground channel through try_receive
     Note over WN: background channels remain buffered
-    M->>R: retire child 0, select child 1
+    M->>R: retire position 0, select position 1
     WN-->>M: drain child 1 channel
 ```
 
@@ -131,6 +131,11 @@ Rules that fall out of this design:
 
 - **One operation, several backends.** The controller still admits one user
   operation, while a multicast may lease several distinct backends at once.
+- **One explicit batch.** The registry stores at most one `BatchRecord`, not a
+  collection keyed by batch ID. Its fixed vector of run slots follows input
+  order; retirement or cleanup empties a slot without shifting later
+  positions. The returned `BatchId` is only a generation guard against stale
+  controller calls.
 - **Lease exclusivity.** A backend lease lasts from staging until its run is
   retired. Input validation precedes acquisition; staging rollback releases
   every acquired lease. Normal retirement and abort cleanup release a lease

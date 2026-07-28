@@ -95,7 +95,6 @@ private:
         SharedCompletionHistory history;
         std::vector<RunSpec> runs;
         BatchId staged_batch_id{};
-        std::vector<RunId> staged_run_ids;
         std::size_t foreground_index{};
         bool abort_requested{};
         bool stop_notice_recorded{};

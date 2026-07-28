@@ -5,6 +5,7 @@
 #include "util/concurrent_queue.h"
 #include "util/wake_notifier.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -14,12 +15,6 @@
 namespace cha {
 
 using BatchId = std::uint64_t;
-using RunId = std::uint64_t;
-
-struct StagedBatch {
-    BatchId batch_id{};
-    std::vector<RunId> run_ids;
-};
 
 enum class CleanupStatus {
     none,
@@ -31,7 +26,8 @@ enum class CleanupStatus {
 // plus temporary runners for concurrent multicast batches. Runners prepare
 // exclusively from owned CompletionInput values and retain separate delta
 // queues plus terminal slots; only the selected foreground event channel is
-// visible to the controller.
+// visible to the controller. Exactly one batch may be live, and its fixed run
+// positions match the input order for the batch's full lifetime.
 class AgentRegistry {
 public:
     // Optional fault-injection seam invoked immediately before each cleanup or
@@ -53,12 +49,13 @@ public:
     const std::vector<AgentRuntimeInfo>& runtime_info() const noexcept;
 
     // Strong guarantee: on success, every input and backend lease belongs to a
-    // runner parked at the returned batch's unopened start gate. On failure,
-    // no backend is called and no lease or runner remains live.
-    StagedBatch stage_batch(std::vector<CompletionInput> inputs);
-    void set_foreground(RunId run);
+    // runner parked at the returned batch's unopened start gate. Run positions
+    // are the corresponding input indices. On failure, no backend is called
+    // and no lease or runner remains live.
+    BatchId stage_batch(std::vector<CompletionInput> inputs);
+    void set_foreground(BatchId batch, std::size_t run_index);
     void open_batch_gate(BatchId batch) noexcept;
-    void retire(RunId run);
+    void retire(BatchId batch, std::size_t run_index);
     void retire_batch(BatchId batch) noexcept;
 
     void cancel_all() noexcept;
@@ -68,8 +65,10 @@ public:
     void discard_batch(BatchId batch) noexcept;
     void begin_abort_cleanup(
         BatchId batch,
-        std::optional<RunId> retained_foreground) noexcept;
-    void release_foreground_to_cleanup(RunId run) noexcept;
+        std::optional<std::size_t> retained_foreground) noexcept;
+    void release_foreground_to_cleanup(
+        BatchId batch,
+        std::size_t run_index) noexcept;
     CleanupStatus poll_abort_cleanup(BatchId batch) noexcept;
 
     [[nodiscard]] ChannelReadStatus try_receive(AgentEvent& event);

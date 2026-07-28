@@ -11,7 +11,6 @@
 #include <string>
 #include <thread>
 #include <type_traits>
-#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -331,8 +330,6 @@ struct AgentRegistry::Impl {
     };
 
     struct RunRecord {
-        RunId id{};
-        BatchId batch_id{};
         std::size_t backend_index{};
         bool regular{};
         bool started{};
@@ -354,7 +351,8 @@ struct AgentRegistry::Impl {
 
     struct BatchRecord {
         BatchId id{};
-        std::vector<RunId> run_ids;
+        std::vector<std::unique_ptr<RunRecord>> runs;
+        std::optional<std::size_t> foreground;
         std::shared_ptr<StartGate> gate;
         std::shared_ptr<CleanupState> cleanup;
         std::thread cleanup_thread;
@@ -376,17 +374,15 @@ struct AgentRegistry::Impl {
             stop();
         } catch (...) {
         }
-        std::vector<BatchId> ids;
+        std::optional<BatchId> remaining;
         {
             std::lock_guard lock(state_mutex);
-            ids.reserve(batches.size());
-            for (const auto& [id, ignored] : batches) {
-                (void)ignored;
-                ids.push_back(id);
+            if (batch) {
+                remaining = batch->id;
             }
         }
-        for (const BatchId id : ids) {
-            discard_batch(id);
+        if (remaining) {
+            discard_batch(*remaining);
         }
         regular.stop();
     }
@@ -480,21 +476,19 @@ struct AgentRegistry::Impl {
         }
     }
 
-    void rollback_staging(
-        std::unique_ptr<BatchRecord> batch,
-        std::vector<std::unique_ptr<RunRecord>> records) noexcept {
-        batch->gate->cancel();
-        for (std::unique_ptr<RunRecord>& record : records) {
+    void rollback_staging(BatchRecord& candidate) noexcept {
+        candidate.gate->cancel();
+        for (std::unique_ptr<RunRecord>& record : candidate.runs) {
             if (record && record->started) {
                 cleanup_record(std::move(record));
             } else if (record) {
                 release_lease(record->backend_index);
             }
         }
-        stop_cleanup(*batch);
+        stop_cleanup(candidate);
     }
 
-    StagedBatch stage_batch(std::vector<CompletionInput> inputs) {
+    BatchId stage_batch(std::vector<CompletionInput> inputs) {
         if (inputs.empty()) {
             throw std::invalid_argument(
                 "Staged batch requires at least one completion input");
@@ -522,40 +516,32 @@ struct AgentRegistry::Impl {
         }
 
         const BatchId batch_id = next_batch_id++;
-        auto batch = std::make_unique<BatchRecord>();
-        batch->id = batch_id;
-        batch->gate = std::make_shared<StartGate>();
-        batch->cleanup = std::make_shared<CleanupState>();
-        batch->cleanup->jobs.reserve(inputs.size());
-        batch->run_ids.reserve(inputs.size());
+        BatchRecord candidate;
+        candidate.id = batch_id;
+        candidate.gate = std::make_shared<StartGate>();
+        candidate.cleanup = std::make_shared<CleanupState>();
+        candidate.cleanup->jobs.reserve(inputs.size());
+        candidate.runs.reserve(inputs.size());
 
-        std::vector<std::unique_ptr<RunRecord>> records;
-        records.reserve(inputs.size());
         std::vector<RunRecord*> record_views;
         record_views.reserve(inputs.size());
         for (std::size_t index = 0; index < inputs.size(); ++index) {
-            const RunId run_id = next_run_id++;
             auto record = std::make_unique<RunRecord>();
-            record->id = run_id;
-            record->batch_id = batch_id;
             record->backend_index = backend_indices[index];
             record->regular = index == 0;
             record->execution = std::make_shared<Execution>(
                 std::move(inputs[index]),
                 *backends[backend_indices[index]],
-                batch->gate,
+                candidate.gate,
                 notifier);
-            batch->run_ids.push_back(run_id);
             record_views.push_back(record.get());
-            records.push_back(std::move(record));
+            candidate.runs.push_back(std::move(record));
         }
-        StagedBatch staged{batch_id, batch->run_ids};
-        BatchRecord* const batch_view = batch.get();
 
         std::vector<std::size_t> claimed;
         claimed.reserve(backend_indices.size());
         std::unique_lock state_lock(state_mutex);
-        if (stopping || stopped || !batches.empty()) {
+        if (stopping || stopped || batch) {
             throw std::runtime_error("Agent registry is busy");
         }
         for (const std::size_t index : backend_indices) {
@@ -569,40 +555,12 @@ struct AgentRegistry::Impl {
             claimed.push_back(index);
         }
 
-        // Allocate every ownership-map node before launching a worker. Once
-        // the unique_ptr assignments below occur, registration cannot throw.
-        try {
-            if (!batches.try_emplace(batch_id, nullptr).second) {
-                throw std::logic_error("Duplicate staged batch ID");
-            }
-            for (const RunId run_id : batch->run_ids) {
-                if (!runs.try_emplace(run_id, nullptr).second) {
-                    throw std::logic_error("Duplicate staged run ID");
-                }
-            }
-        } catch (...) {
-            batches.erase(batch_id);
-            for (const RunId run_id : batch->run_ids) {
-                runs.erase(run_id);
-            }
-            for (const std::size_t index : claimed) {
-                leased[index] = false;
-            }
-            throw;
-        }
-
-        batches.find(batch_id)->second = std::move(batch);
-        for (std::size_t index = 0; index < records.size(); ++index) {
-            runs.find(record_views[index]->id)->second =
-                std::move(records[index]);
-        }
-
         try {
             if (before_stage_thread_start) {
                 before_stage_thread_start();
             }
-            batch_view->cleanup_thread = std::thread(
-                [this, cleanup = batch_view->cleanup] {
+            candidate.cleanup_thread = std::thread(
+                [this, cleanup = candidate.cleanup] {
                     cleanup_dialog(cleanup);
                 });
             if (!regular.stage(record_views.front()->execution)) {
@@ -620,41 +578,35 @@ struct AgentRegistry::Impl {
                     });
                 record.started = true;
             }
-            batch_view->gate->wait_until_parked(record_views.size());
+            candidate.gate->wait_until_parked(record_views.size());
         } catch (...) {
-            batch = std::move(batches.find(batch_id)->second);
-            batches.erase(batch_id);
-            for (std::size_t index = 0; index < record_views.size(); ++index) {
-                const RunId run_id = batch->run_ids[index];
-                records[index] = std::move(runs.find(run_id)->second);
-                runs.erase(run_id);
-            }
             state_lock.unlock();
-            rollback_staging(
-                std::move(batch),
-                std::move(records));
+            rollback_staging(candidate);
             throw;
         }
 
-        return staged;
+        static_assert(std::is_nothrow_move_constructible_v<BatchRecord>);
+        batch.emplace(std::move(candidate));
+        return batch_id;
     }
 
-    void set_foreground(RunId run_id) {
+    void set_foreground(BatchId batch_id, std::size_t run_index) {
         std::lock_guard lock(state_mutex);
-        if (stopped || !runs.contains(run_id)) {
+        if (stopped || !batch || batch->id != batch_id
+            || run_index >= batch->runs.size()
+            || !batch->runs[run_index]) {
             throw std::logic_error(
                 "Foreground run is not live in the agent registry");
         }
-        foreground = run_id;
+        batch->foreground = run_index;
     }
 
     void open_batch_gate(BatchId batch_id) noexcept {
         std::shared_ptr<StartGate> gate;
         {
             std::lock_guard lock(state_mutex);
-            if (const auto found = batches.find(batch_id);
-                found != batches.end()) {
-                gate = found->second->gate;
+            if (batch && batch->id == batch_id) {
+                gate = batch->gate;
             }
         }
         if (gate) {
@@ -662,108 +614,103 @@ struct AgentRegistry::Impl {
         }
     }
 
-    void retire(RunId run_id) {
+    void retire(BatchId batch_id, std::size_t run_index) {
         std::unique_ptr<RunRecord> record;
         {
             std::lock_guard lock(state_mutex);
-            const auto found = runs.find(run_id);
-            if (found == runs.end()) {
+            if (!batch || batch->id != batch_id
+                || run_index >= batch->runs.size()
+                || !batch->runs[run_index]) {
                 return;
             }
-            if (foreground == run_id) {
-                foreground.reset();
+            if (batch->foreground == run_index) {
+                batch->foreground.reset();
             }
-            record = std::move(found->second);
-            runs.erase(found);
+            record = std::move(batch->runs[run_index]);
         }
         cleanup_record(std::move(record));
     }
 
     void retire_batch(BatchId batch_id) noexcept {
-        std::unique_ptr<BatchRecord> batch;
+        std::optional<BatchRecord> retired;
         {
             std::lock_guard lock(state_mutex);
-            const auto found = batches.find(batch_id);
-            if (found == batches.end()) {
+            if (!batch || batch->id != batch_id) {
                 return;
             }
-            for (const auto& [ignored, run] : runs) {
-                (void)ignored;
-                if (run->batch_id == batch_id) {
+            for (const std::unique_ptr<RunRecord>& run : batch->runs) {
+                if (run) {
                     return;
                 }
             }
-            batch = std::move(found->second);
-            batches.erase(found);
+            retired.emplace(std::move(*batch));
+            batch.reset();
         }
-        stop_cleanup(*batch);
+        stop_cleanup(*retired);
     }
 
     void cancel_all() noexcept {
         std::lock_guard lock(state_mutex);
-        for (const auto& [ignored, run] : runs) {
-            (void)ignored;
-            run->execution->request_cancel();
+        if (!batch) {
+            return;
+        }
+        for (const std::unique_ptr<RunRecord>& run : batch->runs) {
+            if (run) {
+                run->execution->request_cancel();
+            }
         }
     }
 
     void discard_batch(BatchId batch_id) noexcept {
-        std::unique_ptr<BatchRecord> batch;
-        std::vector<std::unique_ptr<RunRecord>> records;
+        std::optional<BatchRecord> discarded;
         {
             std::lock_guard lock(state_mutex);
-            const auto found = batches.find(batch_id);
-            if (found == batches.end()) {
+            if (!batch || batch->id != batch_id) {
                 return;
             }
-            batch = std::move(found->second);
-            batches.erase(found);
-            records.reserve(batch->run_ids.size());
-            for (const RunId run_id : batch->run_ids) {
-                const auto run = runs.find(run_id);
-                if (run != runs.end()) {
-                    records.push_back(std::move(run->second));
-                    runs.erase(run);
-                }
-                if (foreground == run_id) {
-                    foreground.reset();
-                }
-            }
+            discarded.emplace(std::move(*batch));
+            batch.reset();
         }
-        batch->gate->cancel();
-        for (std::unique_ptr<RunRecord>& record : records) {
+        discarded->gate->cancel();
+        for (std::unique_ptr<RunRecord>& record : discarded->runs) {
             cleanup_record(std::move(record));
         }
-        stop_cleanup(*batch);
+        stop_cleanup(*discarded);
     }
 
     void begin_abort_cleanup(
         BatchId batch_id,
-        std::optional<RunId> retained_foreground) noexcept {
+        std::optional<std::size_t> retained_foreground) noexcept {
         cancel_all();
         std::shared_ptr<CleanupState> cleanup;
         bool became_complete = false;
         {
             std::lock_guard lock(state_mutex);
-            const auto found = batches.find(batch_id);
-            if (found == batches.end()) {
+            if (!batch || batch->id != batch_id) {
                 return;
             }
-            found->second->gate->cancel();
-            cleanup = found->second->cleanup;
+            batch->gate->cancel();
+            cleanup = batch->cleanup;
             std::lock_guard cleanup_lock(cleanup->mutex);
             cleanup->aborting = true;
-            cleanup->waiting_for_foreground =
-                retained_foreground.has_value();
-            for (const RunId run_id : found->second->run_ids) {
-                if (retained_foreground == run_id) {
+            const bool retain =
+                retained_foreground
+                && *retained_foreground < batch->runs.size()
+                && batch->runs[*retained_foreground];
+            cleanup->waiting_for_foreground = retain;
+            for (std::size_t index = 0;
+                 index < batch->runs.size();
+                 ++index) {
+                if (retain && retained_foreground == index) {
                     continue;
                 }
-                const auto run = runs.find(run_id);
-                if (run != runs.end()) {
-                    cleanup->jobs.push_back(std::move(run->second));
-                    runs.erase(run);
+                if (batch->runs[index]) {
+                    cleanup->jobs.push_back(
+                        std::move(batch->runs[index]));
                 }
+            }
+            if (!retain) {
+                batch->foreground.reset();
             }
             if (!cleanup->waiting_for_foreground
                 && cleanup->next_job == cleanup->jobs.size()
@@ -779,23 +726,23 @@ struct AgentRegistry::Impl {
         }
     }
 
-    void release_foreground_to_cleanup(RunId run_id) noexcept {
+    void release_foreground_to_cleanup(
+        BatchId batch_id,
+        std::size_t run_index) noexcept {
         std::shared_ptr<CleanupState> cleanup;
         bool became_complete = false;
         {
             std::lock_guard lock(state_mutex);
-            const auto found = runs.find(run_id);
-            if (found == runs.end()) {
+            if (!batch || batch->id != batch_id
+                || run_index >= batch->runs.size()
+                || !batch->runs[run_index]) {
                 return;
             }
-            const auto batch = batches.find(found->second->batch_id);
-            if (batch == batches.end()) {
-                return;
-            }
-            cleanup = batch->second->cleanup;
+            cleanup = batch->cleanup;
             {
                 std::lock_guard cleanup_lock(cleanup->mutex);
-                cleanup->jobs.push_back(std::move(found->second));
+                cleanup->jobs.push_back(
+                    std::move(batch->runs[run_index]));
                 cleanup->waiting_for_foreground = false;
                 cleanup->complete = false;
                 if (cleanup->next_job == cleanup->jobs.size()
@@ -804,9 +751,8 @@ struct AgentRegistry::Impl {
                     became_complete = true;
                 }
             }
-            runs.erase(found);
-            if (foreground == run_id) {
-                foreground.reset();
+            if (batch->foreground == run_index) {
+                batch->foreground.reset();
             }
         }
         cleanup->changed.notify_all();
@@ -819,11 +765,10 @@ struct AgentRegistry::Impl {
         std::shared_ptr<CleanupState> cleanup;
         {
             std::lock_guard lock(state_mutex);
-            const auto found = batches.find(batch_id);
-            if (found == batches.end()) {
+            if (!batch || batch->id != batch_id) {
                 return CleanupStatus::none;
             }
-            cleanup = found->second->cleanup;
+            cleanup = batch->cleanup;
         }
         {
             std::lock_guard lock(cleanup->mutex);
@@ -840,17 +785,15 @@ struct AgentRegistry::Impl {
 
     ChannelReadStatus try_receive(AgentEvent& event) {
         std::shared_ptr<Execution> execution;
-        std::optional<RunId> current;
         bool is_stopped = false;
         {
             std::lock_guard lock(state_mutex);
-            current = foreground;
             is_stopped = stopped;
-            if (current) {
-                const auto found = runs.find(*current);
-                if (found != runs.end()) {
-                    execution = found->second->execution;
-                }
+            if (batch && batch->foreground
+                && *batch->foreground < batch->runs.size()
+                && batch->runs[*batch->foreground]) {
+                execution =
+                    batch->runs[*batch->foreground]->execution;
             }
         }
         if (!execution) {
@@ -870,7 +813,7 @@ struct AgentRegistry::Impl {
 
     void stop() {
         std::optional<BatchId> batch_id;
-        std::optional<RunId> retained;
+        std::optional<std::size_t> retained;
         {
             std::lock_guard lock(state_mutex);
             if (stopped) {
@@ -880,9 +823,9 @@ struct AgentRegistry::Impl {
                 return;
             }
             stopping = true;
-            retained = foreground;
-            if (!batches.empty()) {
-                batch_id = batches.begin()->first;
+            if (batch) {
+                batch_id = batch->id;
+                retained = batch->foreground;
             }
         }
 
@@ -890,12 +833,11 @@ struct AgentRegistry::Impl {
         if (batch_id) {
             begin_abort_cleanup(*batch_id, retained);
             std::shared_ptr<CleanupState> cleanup;
-            BatchRecord* batch = nullptr;
+            BatchRecord* current_batch = nullptr;
             {
                 std::lock_guard lock(state_mutex);
-                const auto found = batches.find(*batch_id);
-                if (found != batches.end()) {
-                    batch = found->second.get();
+                if (batch && batch->id == *batch_id) {
+                    current_batch = &*batch;
                     cleanup = batch->cleanup;
                 }
             }
@@ -915,8 +857,8 @@ struct AgentRegistry::Impl {
                         return cleanup->complete;
                     });
                 }
-                if (batch) {
-                    stop_cleanup(*batch);
+                if (current_batch) {
+                    stop_cleanup(*current_batch);
                 }
             }
         }
@@ -925,12 +867,11 @@ struct AgentRegistry::Impl {
         RunRecord* foreground_record = nullptr;
         {
             std::lock_guard lock(state_mutex);
-            if (retained) {
-                const auto found = runs.find(*retained);
-                if (found != runs.end()) {
-                    foreground_record = found->second.get();
-                    foreground_execution = foreground_record->execution;
-                }
+            if (batch_id && batch && batch->id == *batch_id
+                && retained && *retained < batch->runs.size()
+                && batch->runs[*retained]) {
+                foreground_record = batch->runs[*retained].get();
+                foreground_execution = foreground_record->execution;
             }
         }
         if (foreground_execution) {
@@ -947,7 +888,8 @@ struct AgentRegistry::Impl {
         {
             std::lock_guard lock(state_mutex);
             stopped = true;
-            discard_empty_batch = batch_id && !foreground;
+            discard_empty_batch =
+                batch_id && batch && !batch->foreground;
         }
         if (discard_empty_batch) {
             retire_batch(*batch_id);
@@ -963,11 +905,8 @@ struct AgentRegistry::Impl {
     RegularRunner regular;
 
     std::mutex state_mutex;
-    std::unordered_map<RunId, std::unique_ptr<RunRecord>> runs;
-    std::unordered_map<BatchId, std::unique_ptr<BatchRecord>> batches;
-    std::optional<RunId> foreground;
+    std::optional<BatchRecord> batch;
     BatchId next_batch_id{1};
-    RunId next_run_id{1};
     bool stopping{};
     bool stopped{};
 };
@@ -998,21 +937,23 @@ AgentRegistry::runtime_info() const noexcept {
     return impl_->runtime_info;
 }
 
-StagedBatch AgentRegistry::stage_batch(
+BatchId AgentRegistry::stage_batch(
     std::vector<CompletionInput> inputs) {
     return impl_->stage_batch(std::move(inputs));
 }
 
-void AgentRegistry::set_foreground(RunId run) {
-    impl_->set_foreground(run);
+void AgentRegistry::set_foreground(
+    BatchId batch,
+    std::size_t run_index) {
+    impl_->set_foreground(batch, run_index);
 }
 
 void AgentRegistry::open_batch_gate(BatchId batch) noexcept {
     impl_->open_batch_gate(batch);
 }
 
-void AgentRegistry::retire(RunId run) {
-    impl_->retire(run);
+void AgentRegistry::retire(BatchId batch, std::size_t run_index) {
+    impl_->retire(batch, run_index);
 }
 
 void AgentRegistry::retire_batch(BatchId batch) noexcept {
@@ -1029,12 +970,14 @@ void AgentRegistry::discard_batch(BatchId batch) noexcept {
 
 void AgentRegistry::begin_abort_cleanup(
     BatchId batch,
-    std::optional<RunId> retained_foreground) noexcept {
+    std::optional<std::size_t> retained_foreground) noexcept {
     impl_->begin_abort_cleanup(batch, retained_foreground);
 }
 
-void AgentRegistry::release_foreground_to_cleanup(RunId run) noexcept {
-    impl_->release_foreground_to_cleanup(run);
+void AgentRegistry::release_foreground_to_cleanup(
+    BatchId batch,
+    std::size_t run_index) noexcept {
+    impl_->release_foreground_to_cleanup(batch, run_index);
 }
 
 CleanupStatus AgentRegistry::poll_abort_cleanup(

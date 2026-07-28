@@ -265,7 +265,9 @@ Starting a batch, in order:
    failure opens no gate, calls no backend, releases every lease, and creates no
    durable turn. Expected runtime refusals are reported as
    `Request could not be dispatched` and preserve the user's draft; invalid
-   inputs are controller bugs and propagate.
+   inputs are controller bugs and propagate. The returned `BatchId` guards the
+   one live registry batch, and each run's stable registry position is its
+   index in the controller's existing `runs` vector.
 3. Select the first foreground run while the gate is still closed. Selection
    occurs before journal, transcript, or `active_` mutation, so a selection
    failure cannot leave the controller permanently busy or a journal turn

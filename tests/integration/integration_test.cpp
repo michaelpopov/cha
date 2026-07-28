@@ -72,21 +72,21 @@ AgentEvent wait_for_agent_event(AgentRegistry& registry) {
     }
 }
 
-StagedBatch start_agent_run(
+BatchId start_agent_run(
     AgentRegistry& registry,
     CompletionInput input) {
-    StagedBatch staged = registry.stage_batch(
+    BatchId staged = registry.stage_batch(
         std::vector<CompletionInput>{std::move(input)});
-    registry.set_foreground(staged.run_ids.front());
-    registry.open_batch_gate(staged.batch_id);
+    registry.set_foreground(staged, 0);
+    registry.open_batch_gate(staged);
     return staged;
 }
 
 void retire_agent_run(
     AgentRegistry& registry,
-    const StagedBatch& staged) {
-    registry.retire(staged.run_ids.front());
-    registry.retire_batch(staged.batch_id);
+    BatchId staged) {
+    registry.retire(staged, 0);
+    registry.retire_batch(staged);
 }
 
 ChatResult run_chat(bool stream) {
@@ -108,7 +108,7 @@ ChatResult run_chat(bool stream) {
             .prompt_text = input,
         },
     };
-    const StagedBatch staged = start_agent_run(registry, std::move(request));
+    const BatchId staged = start_agent_run(registry, std::move(request));
 
     ChatResult result;
     while (true) {
@@ -146,7 +146,7 @@ ChatResult run_cancelled_chat() {
             .prompt_text = input,
         },
     };
-    const StagedBatch staged = start_agent_run(registry, std::move(request));
+    const BatchId staged = start_agent_run(registry, std::move(request));
 
     ChatResult result;
     while (true) {

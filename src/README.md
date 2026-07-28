@@ -137,9 +137,11 @@ Ownership is a strict tree, and destruction order matters:
   state of the in-flight response batch. It captures immutable completion
   history before activating any run.
 - `AgentRegistry` owns runtime information and a backend for each forum persona,
-  one reusable regular runner, temporary multicast runners, per-runner event
-  channels and cancellation flags, backend leases, and the parked cleanup
-  thread for each live batch. It has no reference to the live transcript.
+  one reusable regular runner, temporary multicast runners, and one optional
+  live batch whose fixed run slots follow input order. It also owns per-runner
+  event channels and cancellation flags, backend leases, and the waiting
+  cleanup thread for the live batch. It has no reference to the live
+  transcript.
 
 ### How runner threads communicate
 
