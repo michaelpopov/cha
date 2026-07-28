@@ -270,6 +270,9 @@ TEST(UserSession, StopInputDrivesControllerCancellation) {
     session.render_if_needed();
 
     EXPECT_EQ(view.rendered_notice, "Stopping generation...");
+    EXPECT_TRUE(view.rendered_generating);
+    EXPECT_EQ(view.rendered_agent_name, "Guide");
+    EXPECT_EQ(view.rendered_phase, ResponsePhase::stopping);
     receive_when_ready(*controller, session);
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_EQ(

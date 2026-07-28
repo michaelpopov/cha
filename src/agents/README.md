@@ -15,7 +15,7 @@ thread.
 | `config.*` | `Config` — identity, connection, model, streaming, auth, and reasoning settings — plus typed TOML overlays, field validation, and `load_prompt_variables()`. |
 | `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
 | `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
-| `agent_registry.*` | Runtime metadata, the execution thread, request routing, cancellation, and channels. |
+| `agent_registry.*` | Runtime metadata, backend leases, staged regular/temporary runners, foreground event routing, cancellation, and abort cleanup. |
 | `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
 | `completion_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
 
@@ -88,64 +88,70 @@ Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
 `ForumPersonas` in `session/` separately owns the ordered identity-only view used
 for lookup and handle resolution.
 
-## Execution: one thread, one request
+## Execution: staged runners and foreground routing
 
-`AgentRegistry` exists so a slow provider can never block the UI. It owns
-one worker thread, one backend per forum persona, and two queues.
+`AgentRegistry` exists so slow providers never block the UI. It owns one
+backend per forum persona, one persistent regular runner, and temporary
+one-shot runners used only by concurrent multicast batches. Every runner has
+its own cancellation flag, delta queue, and preallocated terminal-event slot.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant M as Main thread
     participant R as AgentRegistry
-    participant Q as WorkItem queue
-    participant W as Agent thread
-    participant B as CompletionBackend
-    participant E as AgentEvent queue
+    participant W0 as Regular runner
+    participant WN as Temporary runners
+    participant B as Backends
 
-    M->>R: submit CompletionInput
-    R->>R: find backend by run.target.id
-    R->>R: claim outstanding-request gate
-    Note over R: refused if already claimed or stopped
-    R->>R: clear cancellation flag
-    R->>Q: push WorkItem
-    W->>Q: blocking get
-    alt cancelled before preparation
-        W->>E: AgentCancelled
-    else
-        W->>B: prepare from immutable history + logical prompt
-        W->>B: perform with delta sink and cancellation flag
-        loop while output arrives
-            B-->>W: CompletionDelta
-            W->>E: AgentDelta with request id
-        end
-        B-->>W: CompletionResult
-        W->>W: release the gate
-        W->>E: AgentCompleted, AgentCancelled, or AgentFailed
+    M->>R: stage_batch(CompletionInput[])
+    R->>R: acquire one lease per distinct backend
+    R->>W0: stage child 0 behind closed gate
+    R->>WN: stage remaining children behind closed gate
+    W0-->>R: parked
+    WN-->>R: all parked
+    R-->>M: StagedBatch
+    M->>R: set_foreground(child 0)
+    M->>R: open_batch_gate
+    par every runner
+        W0->>B: prepare then perform
+    and
+        WN->>B: prepare then perform
     end
-    R-->>M: WakeNotifier wake
-    M->>E: try_receive
+    B-->>W0: deltas and terminal
+    B-->>WN: deltas and terminal
+    W0-->>M: foreground queue through try_receive
+    Note over WN: background queues remain buffered
+    M->>R: retire child 0, select child 1
+    WN-->>M: drain child 1 queue
 ```
 
 Rules that fall out of this design:
 
-- **Single flight.** The gate is process-wide, not per agent: a second submit is
-  refused while any request is outstanding.
-- **Submission validates immutable input.** A missing completion history is a
-  caller error and throws before the gate is claimed. Unknown targets, stopped
-  execution, and queue-admission failure return `false`; a failed queue push
-  releases the gate.
-- **The gate opens before the terminal event.** By the time the main thread sees
-  a terminal event, the next request can already be submitted.
-- **Cancellation is cooperative.** `cancel()` only sets an atomic flag. It is
-  checked before preparation and continuously by the transport, so a request
-  that has not started yet is cancelled without ever reaching the provider.
+- **One operation, several backends.** The controller still admits one user
+  operation, while a multicast may lease several distinct backends at once.
+- **Lease exclusivity.** A backend lease lasts from staging until its run is
+  retired. Duplicate targets and concurrent use of one backend are rejected.
+- **Failure-atomic staging.** `stage_batch()` returns only after every runner is
+  parked. A construction failure cancels the unopened gate, joins temporary
+  workers, resets the regular runner, and releases every lease.
+- **Foreground-only consumption.** `try_receive()` exposes only the selected
+  runner. A temporary runner is retained until its terminal event is consumed
+  and committed.
+- **Guaranteed terminal delivery.** Allocating delta storage may fail and
+  becomes an execution failure, but the exactly-one terminal event uses its
+  preallocated slot and cannot fail for lack of queue capacity.
+- **Batch reservation.** Child 0 uses the regular runner. After it retires the
+  worker may be execution-idle, but ordinary admission remains refused until
+  the entire batch retires.
+- **Cancellation is per execution.** It is checked before preparation and by
+  the transport. `/stop` cancels every live batch runner; unactivated queues
+  are discarded only by abort cleanup.
 - **Exceptions become events.** Anything thrown on the worker is converted to
   `AgentFailed`, so an accepted request always has an observable outcome.
-- **Shutdown is ordered.** `stop()` sets cancellation, closes the request side,
-  joins the worker, and only then closes the event side — so events already
-  published stay readable, and a closed event queue during execution is a bug
-  that throws rather than a silent loss.
+- **Shutdown is ordered.** `stop()` reconciles abort cleanup, joins every
+  runner, retains and drains the foreground terminal queue, and only then makes
+  the registry receive source report `closed`.
 
 ## The backend seam
 

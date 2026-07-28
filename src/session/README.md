@@ -228,13 +228,13 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success `render_needed` + `clear_input` and no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
-| `start_multicast(text, targets)` | Captures one immutable pre-multicast history and runs the resolved targets against it in order. | Starts the first batch run; terminal notices are retained until the multicast completes or dispatch aborts it. |
+| `start_multicast(text, targets)` | Captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Starts the staged batch; terminal notices are retained until multicast completion or abort cleanup. |
 | `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
-| `request_stop()` | Cancels the active turn, or says there is none. | Notice. |
-| `receive()` | Drains the event queue, applying each event through `handle_agent_event()`. | Merged updates; `end_session` when the queue is closed. |
-| `shutdown()` | Stops the registry and drains what remains. | — |
+| `request_stop()` | Cancels every live batch runner and starts non-blocking cleanup while retaining the foreground terminal queue, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
+| `receive()` | Drains the foreground queue, advances to already-buffered children in the same turn, and polls abort cleanup. | Merged updates; `end_session` when the registry receive source is closed. |
+| `shutdown()` | Reconciles abort cleanup, joins all runners, and commits the retained foreground terminal state. | — |
 
 Every command except `request_stop()` and `receive()` is refused while a turn or
 multicast is active, with the shared in-progress notice. The controller and its

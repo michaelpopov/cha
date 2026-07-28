@@ -211,11 +211,13 @@ void Tui::render(
         phase = "reasoning";
     } else if (status.phase == ResponsePhase::answering) {
         phase = "responding";
+    } else if (status.phase == ResponsePhase::stopping) {
+        phase = "stopping";
     }
     std::string status_text = status.active
         ? "[" + status.agent_name + " " + phase + "] "
         : "[Idle] ";
-    if (status.active) {
+    if (status.active && status.phase != ResponsePhase::stopping) {
         status_text += " | type /stop or press Esc/Ctrl-C";
     }
     if (!notice.empty()) {

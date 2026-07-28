@@ -94,12 +94,14 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
-    SessionRestore restored) {
+    SessionRestore restored,
+    ActivationHook before_activation) {
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(backends),
         std::move(database_path),
         notifier,
-        std::move(restored)));
+        std::move(restored),
+        std::move(before_activation)));
 }
 
 SessionController::SessionController(
@@ -118,11 +120,13 @@ SessionController::SessionController(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     std::filesystem::path path,
     WakeNotifier& notifier,
-    SessionRestore restored)
+    SessionRestore restored,
+    ActivationHook before_activation)
     : journal_(std::move(path)),
       registry_(std::move(backends), notifier),
       personas_(make_forum_personas(registry_.runtime_info())),
-      default_agent_id_(personas_.first().id) {
+      default_agent_id_(personas_.first().id),
+      before_activation_(std::move(before_activation)) {
     initialize(std::move(restored));
 }
 
@@ -151,6 +155,14 @@ void SessionController::initialize(SessionRestore restored) {
 }
 
 GenerationStatus SessionController::generation_status() const {
+    if (batch_ && batch_->abort_requested) {
+        const RunSpec& run = batch_->runs[batch_->foreground_index];
+        return {
+            .active = true,
+            .agent_name = run.target.name,
+            .phase = ResponsePhase::stopping,
+        };
+    }
     return {
         .active = busy(),
         .agent_name = active_ ? active_->agent_name : "",
@@ -230,9 +242,36 @@ void SessionController::start_batch(
             .prompt_text = text,
         });
     }
-    batch_ = std::move(batch);
 
-    start_next_batch_run(update);
+    std::vector<CompletionInput> inputs;
+    inputs.reserve(batch.runs.size());
+    for (const RunSpec& run : batch.runs) {
+        inputs.push_back({
+            .history = batch.history,
+            .run = run,
+        });
+    }
+
+    try {
+        StagedBatch staged = registry_.stage_batch(std::move(inputs));
+        batch.staged_batch_id = staged.batch_id;
+        batch.staged_run_ids = std::move(staged.run_ids);
+    } catch (const std::runtime_error&) {
+        update.clear_input = false;
+        update.notice = "Request could not be dispatched";
+        return;
+    }
+
+    batch_ = std::move(batch);
+    try {
+        activate_current_run(update);
+        registry_.open_batch_gate(batch_->staged_batch_id);
+    } catch (...) {
+        const BatchId batch_id = batch_->staged_batch_id;
+        abandon_batch();
+        registry_.discard_batch(batch_id);
+        throw;
+    }
 }
 
 void SessionController::activate_current_run(SessionUpdate& update) {
@@ -240,10 +279,6 @@ void SessionController::activate_current_run(SessionUpdate& update) {
         throw std::logic_error("Response batch run index is out of range");
     }
     const RunSpec& run = batch_->runs[batch_->foreground_index];
-    CompletionInput input{
-        .history = batch_->history,
-        .run = run,
-    };
     TranscriptEntry prompt = make_human_entry(
         next_entry_id_++,
         run.target.id,
@@ -258,6 +293,13 @@ void SessionController::activate_current_run(SessionUpdate& update) {
         .phase = ResponsePhase::waiting,
     };
 
+    // Select the still-gated queue before creating durable or active state.
+    // If the run ID is stale, batch teardown remains side-effect free.
+    registry_.set_foreground(
+        batch_->staged_run_ids[batch_->foreground_index]);
+    if (before_activation_) {
+        before_activation_(batch_->foreground_index);
+    }
     persist(
         request_action(
             "persist start of",
@@ -285,24 +327,8 @@ void SessionController::activate_current_run(SessionUpdate& update) {
         throw;
     }
     active_ = std::move(response);
-
-    bool submitted = false;
-    try {
-        submitted = registry_.submit(std::move(input));
-    } catch (...) {
-        // The durable prompt already exists and ActiveResponse is installed.
-        // Convert any registry-boundary exception into the same terminal
-        // failure as an ordinary admission refusal.
-        submitted = false;
-    }
-    if (submitted) {
-        update.render_needed = true;
-        update.notice = "";
-        return;
-    }
-    fail_active_response(
-        "Agent execution is unavailable", run.target.id, update);
-    update.notice = "Request could not be dispatched";
+    update.render_needed = true;
+    update.notice = "";
 }
 
 void SessionController::start_next_batch_run(SessionUpdate& update) {
@@ -310,7 +336,7 @@ void SessionController::start_next_batch_run(SessionUpdate& update) {
         return;
     }
     if (batch_->abort_requested) {
-        abandon_batch();
+        poll_abort_cleanup(update);
         return;
     }
     if (batch_->foreground_index >= batch_->runs.size()) {
@@ -320,11 +346,10 @@ void SessionController::start_next_batch_run(SessionUpdate& update) {
     try {
         activate_current_run(update);
     } catch (...) {
+        const BatchId batch_id = batch_->staged_batch_id;
         abandon_batch();
+        registry_.discard_batch(batch_id);
         throw;
-    }
-    if (!active_) {
-        finish_batch(update);
     }
 }
 
@@ -332,8 +357,24 @@ void SessionController::finish_batch_run(SessionUpdate& update) {
     if (!batch_) {
         return;
     }
-    if (batch_->abort_requested
-        || batch_->foreground_index + 1 == batch_->runs.size()) {
+    const RunId completed_run =
+        batch_->staged_run_ids[batch_->foreground_index];
+
+    if (shutdown_) {
+        registry_.retire(completed_run);
+        finish_batch(update);
+        return;
+    }
+
+    if (batch_->abort_requested) {
+        append_batch_notice(update);
+        registry_.release_foreground_to_cleanup(completed_run);
+        poll_abort_cleanup(update);
+        return;
+    }
+
+    registry_.retire(completed_run);
+    if (batch_->foreground_index + 1 == batch_->runs.size()) {
         finish_batch(update);
         return;
     }
@@ -348,9 +389,35 @@ void SessionController::finish_batch(SessionUpdate& update) {
     }
     append_batch_notice(update);
     const std::string terminal_notices = batch_->terminal_notices;
+    registry_.retire_batch(batch_->staged_batch_id);
     abandon_batch();
     if (!terminal_notices.empty()) {
         update.notice = terminal_notices;
+    }
+}
+
+void SessionController::finish_aborted_batch(SessionUpdate& update) {
+    if (!batch_) {
+        return;
+    }
+    std::string notices = batch_->terminal_notices;
+    if (!batch_->stop_notice_recorded && !notices.empty()) {
+        notices += "\nGeneration stopped";
+    } else if (!batch_->stop_notice_recorded) {
+        notices = "Generation stopped";
+    }
+    abandon_batch();
+    update.render_needed = true;
+    update.notice = std::move(notices);
+}
+
+void SessionController::poll_abort_cleanup(SessionUpdate& update) {
+    if (!batch_ || !batch_->abort_requested || active_) {
+        return;
+    }
+    if (registry_.poll_abort_cleanup(batch_->staged_batch_id)
+        == CleanupStatus::complete) {
+        finish_aborted_batch(update);
     }
 }
 
@@ -520,21 +587,29 @@ SessionUpdate SessionController::set_default_agent(std::string_view handle) {
 
 SessionUpdate SessionController::request_stop() {
     SessionUpdate update;
-    if (batch_) {
+    if (!batch_) {
+        update.notice = "No generation is active";
+        return update;
+    }
+
+    if (!batch_->abort_requested) {
         batch_->abort_requested = true;
+        std::optional<RunId> retained_foreground;
+        if (active_) {
+            retained_foreground =
+                batch_->staged_run_ids[batch_->foreground_index];
+        }
+        registry_.begin_abort_cleanup(
+            batch_->staged_batch_id,
+            retained_foreground);
     }
     if (!active_) {
-        const bool had_batch = batch_.has_value();
-        abandon_batch();
-        if (had_batch) {
-            update.render_needed = true;
-            update.notice = "Generation stopped";
-        } else {
-            update.notice = "No generation is active";
+        poll_abort_cleanup(update);
+        if (!update.notice) {
+            update.notice = "Stopping generation...";
         }
         return update;
     }
-    registry_.cancel();
     update.notice = "Stopping generation...";
     return update;
 }
@@ -622,6 +697,7 @@ void SessionController::apply(const AgentCancelled& event, SessionUpdate& update
     active_.reset();
     update.render_needed = true;
     update.notice = "Generation stopped";
+    batch_->stop_notice_recorded = true;
     finish_batch_run(update);
 }
 
@@ -694,6 +770,7 @@ SessionUpdate SessionController::receive() {
         }
         merge_update(update, handle_agent_event(std::move(event)));
     }
+    poll_abort_cleanup(update);
     return update;
 }
 
@@ -705,8 +782,13 @@ void SessionController::shutdown() {
     if (batch_) {
         batch_->abort_requested = true;
     }
+    registry_.cancel_all();
     registry_.stop();
     (void)receive();
+    if (batch_) {
+        registry_.discard_batch(batch_->staged_batch_id);
+    }
+    active_.reset();
     abandon_batch();
 }
 

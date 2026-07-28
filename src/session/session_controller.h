@@ -9,6 +9,7 @@
 #include "util/wake_notifier.h"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,6 +35,10 @@ struct SessionUpdate {
 // mentions, and transport formats belong to front ends, not here.
 class SessionController {
 public:
+    // Fault-injection seam used to fail foreground activation after selection
+    // but before durable state changes.
+    using ActivationHook = std::function<void(std::size_t)>;
+
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
@@ -43,7 +48,8 @@ public:
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
-        SessionRestore restored = {});
+        SessionRestore restored = {},
+        ActivationHook before_activation = {});
 
     ~SessionController();
     SessionController(const SessionController&) = delete;
@@ -88,8 +94,11 @@ private:
     struct ResponseBatch {
         SharedCompletionHistory history;
         std::vector<RunSpec> runs;
+        BatchId staged_batch_id{};
+        std::vector<RunId> staged_run_ids;
         std::size_t foreground_index{};
         bool abort_requested{};
+        bool stop_notice_recorded{};
         std::string terminal_notices;
     };
 
@@ -102,7 +111,8 @@ private:
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
-        SessionRestore restored);
+        SessionRestore restored,
+        ActivationHook before_activation);
 
     void initialize(SessionRestore restored);
     bool busy() const;
@@ -116,6 +126,8 @@ private:
     void start_next_batch_run(SessionUpdate& update);
     void finish_batch_run(SessionUpdate& update);
     void finish_batch(SessionUpdate& update);
+    void finish_aborted_batch(SessionUpdate& update);
+    void poll_abort_cleanup(SessionUpdate& update);
     void append_batch_notice(const SessionUpdate& update);
     void abandon_batch();
     void apply(const AgentDelta& event, SessionUpdate& update);
@@ -139,6 +151,7 @@ private:
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;
     std::optional<ResponseBatch> batch_;
+    ActivationHook before_activation_;
     bool shutdown_{};
 };
 

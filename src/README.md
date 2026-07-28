@@ -50,7 +50,7 @@ they need.
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
 | `session/` | Workspace and session operations, `ForumPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
-| `agents/` | Persona config, agent runtime metadata, model-context projection, the execution thread, and HTTP transport. | Workspace layout, sessions, frontends. |
+| `agents/` | Persona config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the thread-safe live `Transcript`. | Storage, providers, frontends. |
 | `util/` | Leaf helpers: text and path rules, `.env`, a portable concurrent queue, and the libuv wake loop. | Anything above it. |
 
@@ -104,9 +104,9 @@ flowchart LR
         registry["AgentRegistry<br/>main-thread handle"]
     end
 
-    subgraph agentthread["Agent thread — one request at a time"]
-        execution["Agent execution"]
-        backend["CompletionBackend<br/>CompletionClient + libcurl"]
+    subgraph agentthreads["Runner threads — one per staged target"]
+        execution["Regular or temporary runner"]
+        backend["Exclusively leased CompletionBackend<br/>CompletionClient + libcurl"]
     end
 
     provider[("Model server<br/>/v1/chat/completions")]
@@ -118,10 +118,10 @@ flowchart LR
     controller --> journal
     controller --> registry
     controller -->|"capture CompletionHistory"| conv
-    registry -->|"WorkItem queue"| execution
+    registry -->|"staged CompletionInput + gate"| execution
     execution --> backend
     backend <-->|"HTTP or SSE"| provider
-    execution -->|"AgentEvent queue + wake"| frontend
+    execution -->|"per-runner AgentEvent queue + wake"| frontend
 ```
 
 Ownership is a strict tree, and destruction order matters:
@@ -136,31 +136,28 @@ Ownership is a strict tree, and destruction order matters:
   state of the in-flight response batch. It captures immutable completion
   history before activating any run.
 - `AgentRegistry` owns runtime information and a backend for each forum persona,
-  the request queue, the event queue, the worker thread, and the
-  cancellation and outstanding-request atomics. It has no reference to the
-  live transcript.
+  one reusable regular runner, temporary multicast runners, per-runner event
+  queues and cancellation flags, backend leases, and abort cleanup. It has no
+  reference to the live transcript.
 
-### How the two threads talk
+### How runner threads communicate
 
-`ConcurrentQueue<T>` (see [`util/`](util/README.md)) carries traffic in both
-directions:
+Each staged execution owns a `ConcurrentQueue<AgentEvent>` (see
+[`util/`](util/README.md)). A runner publishes to its own queue and calls the
+injected `WakeNotifier` after every successful push.
 
-- a private `ConcurrentQueue<WorkItem>` carries routed requests **to** the
-  agent thread, which blocks directly in `get()`;
-- a shared `ConcurrentQueue<AgentEvent>` carries events **back**. After each
-  successful push, the registry calls an injected `WakeNotifier`.
+The regular runner has one persistent worker waiting for staged executions.
+Concurrent multicast adds one-shot temporary runners. All runners park behind
+a shared start gate; after the controller durably activates child 0, opening
+that gate admits every backend call. The registry exposes only the selected
+foreground runner's queue, so background output remains buffered and cannot
+mutate the transcript.
 
 The terminal frontends own a `UvEventLoop`. Agent threads wake it through
 `uv_async_send()`; frontend-owned libuv input and signal handles share the same
-loop. The frontend then drains the event queue. This keeps platform handle
-details out of the agent and session layers.
-
-Submission claims a single atomic gate, so at most one request is outstanding
-across all agents; a second submission is refused even for a different agent.
-The agent thread clears the gate immediately *before* publishing a
-terminal event, so the main thread can start the next turn as soon as it sees
-one. Cancellation is a shared atomic flag checked before `prepare()`, and by the
-libcurl progress callback during transfer.
+loop. The frontend then drains the foreground queue. Wakeups from background
+runners may coalesce or find no foreground event; foreground advance therefore
+drains the newly selected queue immediately without waiting for another wake.
 
 ## Lifecycle: startup
 
@@ -225,7 +222,7 @@ sequenceDiagram
     participant J as SessionJournal
     participant V as Transcript
     participant G as AgentRegistry
-    participant W as Agent thread
+    participant W as Regular runner
     participant P as Model server
 
     U->>T: submitted line
@@ -234,10 +231,10 @@ sequenceDiagram
     C->>C: reject if a turn is active
     C->>C: resolve handle against ForumPersonas
     C->>V: capture immutable CompletionHistory
+    C->>G: stage one-run batch behind closed gate
     C->>J: start_turn, SQLite transaction
     C->>V: add human entry
-    C->>G: submit CompletionInput
-    G->>W: WorkItem via request queue
+    C->>G: set foreground and open gate
     C-->>U: SessionUpdate, render and clear input
 
     W->>W: backend.prepare from immutable history + prompt
@@ -265,8 +262,8 @@ Two ordering rules are load-bearing:
   entry is finalized. A crash can therefore lose a turn, but can never show one
   that was not recorded.
 - **One writer.** Every mutation above happens on the main thread. The agent
-  thread only reads the transcript, and only through a short-lived locked
-  view taken before any network I/O.
+  runners never read the live transcript; each owns the immutable history
+  captured before staging.
 
 ## Turn states
 
@@ -276,9 +273,10 @@ There are two kinds of state, with different purposes:
   `started` and then receives exactly one final outcome: `completed`,
   `cancelled`, or `failed`.
 - While a response is in progress, the application also tracks a live
-  `ResponsePhase`: `waiting`, `reasoning`, or `answering`. This phase drives
-  `GenerationStatus` and the status-line text (`generating`, `reasoning`, or
-  `responding`). It is not stored as part of the turn.
+  `ResponsePhase`: `waiting`, `reasoning`, `answering`, or the abort-cleanup
+  overlay `stopping`. This phase drives `GenerationStatus` and the status-line
+  text (`generating`, `reasoning`, `responding`, or `stopping`). It is not
+  stored as part of the turn.
 
 The response phase changes as output arrives. A new request begins in
 `waiting`. The first reasoning fragment changes the phase to `reasoning`, but
@@ -381,8 +379,8 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | Invariant | Enforced by |
 | --- | --- |
 | `ForumPersonas` is non-empty, with unique IDs and unique case-folded names. | `ForumPersonas` constructor |
-| At most one turn is in flight, process-wide. | `AgentRegistry` outstanding-request gate |
-| Every accepted request yields exactly one terminal `AgentEvent`. | `AgentRegistry::dialog` and shutdown order |
+| At most one user operation and one foreground turn are active, while one multicast may run distinct backends concurrently. | `SessionController::busy`, batch reservation, backend leases |
+| Every gate-released run yields exactly one terminal `AgentEvent`. | Per-runner execution and shutdown order |
 | Only the main thread mutates `Transcript` or the journal. | `SessionController` |
 | At most one streaming entry is open at a time. | `Transcript` |
 | Entry and request IDs are positive and strictly increasing. | `Transcript::require_next_id`, `state` table |

@@ -5,65 +5,81 @@
 #include "util/concurrent_queue.h"
 #include "util/wake_notifier.h"
 
-#include <atomic>
-#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <memory>
-#include <string>
-#include <thread>
+#include <optional>
 #include <vector>
 
 namespace cha {
 
-// Runs agent completions off the caller's thread so the UI never blocks on a provider.
-// It owns one CompletionBackend per forum persona and one worker thread, accepts a single
-// outstanding CompletionInput, prepares from its immutable history, and
-// publishes correlated AgentEvent values on a portable queue. A front-end
-// notifier wakes the event loop after event queue state changes.
-// Cancellation is cooperative, and every accepted request receives a terminal event, including
-// across shutdown.
+using BatchId = std::uint64_t;
+using RunId = std::uint64_t;
+
+struct StagedBatch {
+    BatchId batch_id{};
+    std::vector<RunId> run_ids;
+};
+
+enum class CleanupStatus {
+    none,
+    pending,
+    complete,
+};
+
+// Owns every configured backend and coordinates one reusable regular runner
+// plus temporary runners for concurrent multicast batches. Runners prepare
+// exclusively from owned CompletionInput values and retain separate event
+// queues; only the selected foreground queue is visible to the controller.
 class AgentRegistry {
 public:
+    // Optional fault-injection seam invoked immediately before each cleanup or
+    // temporary staging thread is constructed.
+    using StageThreadHook = std::function<void()>;
+
     AgentRegistry(
         std::vector<AgentDefinition> definitions,
         WakeNotifier& notifier);
     AgentRegistry(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
-        WakeNotifier& notifier);
+        WakeNotifier& notifier,
+        StageThreadHook before_stage_thread_start = {});
     ~AgentRegistry() noexcept;
 
     AgentRegistry(const AgentRegistry&) = delete;
     AgentRegistry& operator=(const AgentRegistry&) = delete;
 
     const std::vector<AgentRuntimeInfo>& runtime_info() const noexcept;
-    // False means the request was not accepted (busy, stopped, unknown target,
-    // or queue admission failure). Missing immutable history is a caller error.
-    [[nodiscard]] bool submit(CompletionInput input);
-    void cancel();
+
+    // Strong guarantee: on success, every input and backend lease belongs to a
+    // runner parked at the returned batch's unopened start gate. On failure,
+    // no backend is called and no lease or runner remains live.
+    StagedBatch stage_batch(std::vector<CompletionInput> inputs);
+    void set_foreground(RunId run);
+    void open_batch_gate(BatchId batch) noexcept;
+    void retire(RunId run);
+    void retire_batch(BatchId batch) noexcept;
+
+    void cancel_all() noexcept;
+
+    // Exceptional, synchronous teardown for a batch whose foreground
+    // activation failed. Interactive /stop uses the non-blocking cleanup API.
+    void discard_batch(BatchId batch) noexcept;
+    void begin_abort_cleanup(
+        BatchId batch,
+        std::optional<RunId> retained_foreground) noexcept;
+    void release_foreground_to_cleanup(RunId run) noexcept;
+    CleanupStatus poll_abort_cleanup(BatchId batch) noexcept;
+
     [[nodiscard]] ChannelReadStatus try_receive(AgentEvent& event);
+
+    // Cancels and joins every worker. The foreground queue remains drainable;
+    // once drained, try_receive() reports closed.
     void stop();
 
 private:
-    struct WorkItem {
-        std::size_t backend_index{};
-        CompletionInput input;
-    };
-
-    void dialog();
-    void publish_event(AgentEvent event);
-    void publish_terminal(AgentEvent event);
-
-    std::vector<std::unique_ptr<CompletionBackend>> backends_;
-    std::vector<AgentRuntimeInfo> runtime_info_;
-    ConcurrentQueue<WorkItem> requests_;
-    // Event mutation has exactly two funnels: publish_event() pushes then
-    // wakes, and stop() closes then wakes. Keep every future mutation paired
-    // with notifier_.wake() so a sleeping frontend can observe the new state.
-    ConcurrentQueue<AgentEvent> events_;
-    WakeNotifier& notifier_;
-    std::atomic_bool cancellation_{false};
-    std::atomic_bool request_outstanding_{false};
-    std::thread thread_;
-    bool stopped_{};
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace cha

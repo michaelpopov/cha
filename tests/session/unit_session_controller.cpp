@@ -136,6 +136,67 @@ private:
     bool wait_for_cancellation_{};
 };
 
+class ConcurrentBackend final : public CompletionBackend {
+public:
+    ConcurrentBackend(
+        std::string id,
+        std::string name,
+        std::string answer,
+        const std::atomic_bool* release = nullptr,
+        std::size_t delta_count = 1)
+        : id_(std::move(id)),
+          name_(std::move(name)),
+          answer_(std::move(answer)),
+          release_(release),
+          delta_count_(delta_count) {
+    }
+
+    RequestPayload prepare(const CompletionInput& input) override {
+        inputs.push_back(input);
+        return {.bytes = input.run.prompt_text};
+    }
+
+    CompletionResult perform(
+        RequestPayload,
+        const CompletionDeltaSink& on_delta,
+        const std::atomic_bool& cancellation) override {
+        entered.store(true, std::memory_order_release);
+        while (release_ && !release_->load(std::memory_order_acquire)
+               && !cancellation.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        if (cancellation.load(std::memory_order_acquire)) {
+            finished.store(true, std::memory_order_release);
+            return {CompletionOutcome::cancelled, {}};
+        }
+        for (std::size_t index = 0; index < delta_count_; ++index) {
+            on_delta({CompletionDeltaKind::answer, answer_});
+        }
+        finished.store(true, std::memory_order_release);
+        return {};
+    }
+
+    AgentRuntimeInfo info() const override {
+        return {
+            .persona = {.id = id_, .name = name_},
+            .model = "test-model",
+            .api = "test://completion",
+            .streaming = true,
+        };
+    }
+
+    std::vector<CompletionInput> inputs;
+    std::atomic_bool entered{false};
+    std::atomic_bool finished{false};
+
+private:
+    std::string id_;
+    std::string name_;
+    std::string answer_;
+    const std::atomic_bool* release_{};
+    std::size_t delta_count_{1};
+};
+
 class ThrowingPrepareBackend final : public CompletionBackend {
 public:
     RequestPayload prepare(const CompletionInput&) override {
@@ -700,7 +761,7 @@ TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan
     EXPECT_TRUE(clear_controller->transcript().entries().empty());
 }
 
-TEST(SessionController, MulticastRunsTargetsSequentiallyWithIsolatedContexts) {
+TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     TemporaryJournal temporary;
     auto one = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"One answer"}, false,
@@ -766,7 +827,7 @@ TEST(SessionController, MulticastRunsTargetsSequentiallyWithIsolatedContexts) {
         controller->transcript().entries());
 }
 
-TEST(SessionController, MulticastRefusesAUserOffrecordSpanAndStopPreventsNextChild) {
+TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) {
     TemporaryJournal span_temporary;
     auto span_controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>()),
@@ -806,11 +867,60 @@ TEST(SessionController, MulticastRefusesAUserOffrecordSpanAndStopPreventsNextChi
         stop_controller->start_multicast("Again", {{"one-id", "One"}}).notice,
         generation_in_progress_notice);
     EXPECT_EQ(stop_controller->request_stop().notice, "Stopping generation...");
-    (void)stop_controller->handle_agent_event(AgentCompleted{1});
+    const GenerationStatus stopping =
+        stop_controller->generation_status();
+    EXPECT_TRUE(stopping.active);
+    EXPECT_EQ(stopping.agent_name, "One");
+    EXPECT_EQ(stopping.phase, ResponsePhase::stopping);
+    const SessionUpdate stopped = receive_until_idle(*stop_controller);
+    EXPECT_EQ(stopped.notice, "Generation stopped");
     EXPECT_FALSE(stop_controller->generation_status().active);
-    EXPECT_TRUE(second_view->inputs.empty());
+    // Cancellation may win before the background worker enters prepare(), or
+    // it may race with already-started provider work. Neither case activates
+    // the child's durable turn.
+    EXPECT_LE(second_view->inputs.size(), 1U);
+    const std::vector<TranscriptEntry> entries =
+        stop_controller->transcript().entries();
+    ASSERT_EQ(entries.size(), 1U);
+    EXPECT_EQ(entries.front().addressed_to, "one-id");
     EXPECT_EQ(stop_controller->transcript().offrecord_span(), OffrecordSpan{});
     stop_controller->shutdown();
+}
+
+TEST(SessionController, CompletedForegroundWinsTheStopRace) {
+    TemporaryJournal temporary;
+    auto first = std::make_unique<ConcurrentBackend>(
+        "one-id", "One", "One answer");
+    auto second = std::make_unique<ConcurrentBackend>(
+        "two-id", "Two", "Two answer");
+    ConcurrentBackend* const first_view = first.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(first));
+    backends.push_back(std::move(second));
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends), temporary.path, notifier());
+
+    (void)controller->start_multicast(
+        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!first_view->finished.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_TRUE(first_view->finished.load(std::memory_order_acquire));
+
+    EXPECT_EQ(controller->request_stop().notice, "Stopping generation...");
+    const SessionUpdate stopped = receive_until_idle(*controller);
+
+    EXPECT_EQ(stopped.notice, "Generation stopped");
+    const std::vector<TranscriptEntry> entries =
+        controller->transcript().entries();
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries[0].addressed_to, "one-id");
+    EXPECT_EQ(entries[1].text, "One answer");
+    EXPECT_EQ(entries[1].status, EntryStatus::complete);
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
 TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
@@ -850,14 +960,15 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     EXPECT_EQ(controller->transcript().offrecord_span(), OffrecordSpan{});
 }
 
-TEST(SessionController, MidBatchDispatchFailureRetainsEarlierNotices) {
+TEST(SessionController, StartsAllChildrenAndBuffersLaterOutputUntilForeground) {
     TemporaryJournal temporary;
-    auto first = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{}, true, "one-id", "One");
-    auto second = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
-        "two-id", "Two");
-    ScriptedBackend* second_view = second.get();
+    std::atomic_bool release_first{false};
+    auto first = std::make_unique<ConcurrentBackend>(
+        "one-id", "One", "One answer", &release_first);
+    auto second = std::make_unique<ConcurrentBackend>(
+        "two-id", "Two", "Two answer");
+    ConcurrentBackend* first_view = first.get();
+    ConcurrentBackend* second_view = second.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
@@ -866,29 +977,80 @@ TEST(SessionController, MidBatchDispatchFailureRetainsEarlierNotices) {
 
     (void)controller->start_multicast(
         "Question", {{"one-id", "One"}, {"two-id", "Two"}});
-    // Keep request 1 outstanding while applying its terminal event manually.
-    // Activating request 2 then exercises the registry admission-refusal path.
-    const SessionUpdate update =
-        controller->handle_agent_event(AgentFailed{1, "First failed"});
 
-    EXPECT_EQ(
-        update.notice,
-        "Generation failed\nRequest could not be dispatched");
-    EXPECT_FALSE(controller->generation_status().active);
-    EXPECT_TRUE(second_view->inputs.empty());
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while ((!first_view->entered.load(std::memory_order_acquire)
+            || !second_view->finished.load(std::memory_order_acquire))
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_TRUE(first_view->entered.load(std::memory_order_acquire));
+    ASSERT_TRUE(second_view->finished.load(std::memory_order_acquire));
+
+    // Child 2 has already completed, but only child 1's prompt is durable and
+    // its queued answer remains hidden until child 1 commits.
+    ASSERT_EQ(controller->transcript().entries().size(), 1U);
+    EXPECT_EQ(controller->transcript().entries().front().addressed_to, "one-id");
+
+    release_first.store(true, std::memory_order_release);
+    receive_until_idle(*controller);
+
     const std::vector<TranscriptEntry> entries =
         controller->transcript().entries();
     ASSERT_EQ(entries.size(), 4U);
-    EXPECT_EQ(entries[1].text, "First failed");
-    EXPECT_EQ(entries[3].text, "Agent execution is unavailable");
+    EXPECT_EQ(entries[0].addressed_to, "one-id");
+    EXPECT_EQ(entries[1].text, "One answer");
+    EXPECT_EQ(entries[2].addressed_to, "two-id");
+    EXPECT_EQ(entries[3].text, "Two answer");
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
-    controller->shutdown();
+}
+
+TEST(SessionController, DrainsLargeCompletedBackgroundBacklogInOrder) {
+    TemporaryJournal temporary;
+    constexpr std::size_t backlog_size = 4096;
+    std::atomic_bool release_first{false};
+    auto first = std::make_unique<ConcurrentBackend>(
+        "one-id", "One", "One answer", &release_first);
+    auto second = std::make_unique<ConcurrentBackend>(
+        "two-id", "Two", "x", nullptr, backlog_size);
+    ConcurrentBackend* const second_view = second.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(first));
+    backends.push_back(std::move(second));
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends), temporary.path, notifier());
+
+    (void)controller->start_multicast(
+        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!second_view->finished.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_TRUE(second_view->finished.load(std::memory_order_acquire));
+    ASSERT_EQ(controller->transcript().entries().size(), 1U);
+
+    release_first.store(true, std::memory_order_release);
+    receive_until_idle(*controller);
+
+    const std::vector<TranscriptEntry> entries =
+        controller->transcript().entries();
+    ASSERT_EQ(entries.size(), 4U);
+    EXPECT_EQ(entries[1].text, "One answer");
+    EXPECT_EQ(entries[2].addressed_to, "two-id");
+    EXPECT_EQ(entries[3].text, std::string(backlog_size, 'x'));
+    EXPECT_EQ(entries[3].status, EntryStatus::complete);
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
 TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
     TemporaryJournal temporary;
+    auto backend = std::make_unique<ScriptedBackend>();
+    ScriptedBackend* backend_view = backend.get();
     auto controller = SessionController::from_backends_for_testing(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
+        test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
     sqlite3* raw_blocker = nullptr;
@@ -924,6 +1086,96 @@ TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
         << message;
     EXPECT_NE(message.find("Session database"), std::string::npos)
         << message;
+    EXPECT_TRUE(backend_view->inputs.empty());
+}
+
+TEST(SessionController, FirstActivationFailureTearsDownEveryParkedRunner) {
+    TemporaryJournal temporary;
+    auto first = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"One answer"}, false,
+        "one-id", "One");
+    auto second = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        "two-id", "Two");
+    ScriptedBackend* const first_view = first.get();
+    ScriptedBackend* const second_view = second.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(first));
+    backends.push_back(std::move(second));
+    bool fail_first_activation = true;
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends),
+        temporary.path,
+        notifier(),
+        {},
+        [&fail_first_activation](std::size_t index) {
+            if (index == 0 && fail_first_activation) {
+                fail_first_activation = false;
+                throw std::runtime_error("injected first activation failure");
+            }
+        });
+
+    EXPECT_THROW(
+        (void)controller->start_multicast(
+            "Question", {{"one-id", "One"}, {"two-id", "Two"}}),
+        std::runtime_error);
+    EXPECT_FALSE(controller->generation_status().active);
+    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(first_view->inputs.empty());
+    EXPECT_TRUE(second_view->inputs.empty());
+
+    const SessionUpdate restarted = controller->start_multicast(
+        "Retry", {{"one-id", "One"}, {"two-id", "Two"}});
+    EXPECT_TRUE(restarted.clear_input);
+    receive_until_idle(*controller);
+    EXPECT_EQ(first_view->inputs.size(), 1U);
+    EXPECT_EQ(second_view->inputs.size(), 1U);
+}
+
+TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryRunner) {
+    TemporaryJournal temporary;
+    auto first = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"One answer"}, false,
+        "one-id", "One");
+    auto second = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        "two-id", "Two");
+    ScriptedBackend* const first_view = first.get();
+    ScriptedBackend* const second_view = second.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(first));
+    backends.push_back(std::move(second));
+    bool fail_second_activation = true;
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends),
+        temporary.path,
+        notifier(),
+        {},
+        [&fail_second_activation](std::size_t index) {
+            if (index == 1 && fail_second_activation) {
+                fail_second_activation = false;
+                throw std::runtime_error("injected later activation failure");
+            }
+        });
+
+    (void)controller->start_multicast(
+        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    EXPECT_THROW(
+        (void)receive_until_idle(*controller),
+        std::runtime_error);
+    EXPECT_FALSE(controller->generation_status().active);
+    const std::vector<TranscriptEntry> entries =
+        controller->transcript().entries();
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries[0].addressed_to, "one-id");
+    EXPECT_EQ(entries[1].text, "One answer");
+
+    const SessionUpdate restarted = controller->start_multicast(
+        "Retry", {{"one-id", "One"}, {"two-id", "Two"}});
+    EXPECT_TRUE(restarted.clear_input);
+    receive_until_idle(*controller);
+    EXPECT_GE(first_view->inputs.size(), 2U);
+    EXPECT_GE(second_view->inputs.size(), 1U);
 }
 
 TEST(SessionController, RejectsNewOperationsDuringGeneration) {
@@ -983,7 +1235,7 @@ TEST(SessionController, IgnoresEventsForAnotherRequest) {
     receive_until_idle(*controller);
 }
 
-TEST(SessionController, AttributesDispatchFailuresToTheTargetAgent) {
+TEST(SessionController, StagingFailureLeavesNoDurableTurn) {
     TemporaryJournal temporary;
     auto controller = SessionController::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>()),
@@ -995,12 +1247,11 @@ TEST(SessionController, AttributesDispatchFailuresToTheTargetAgent) {
         controller->submit_prompt("Question");
 
     EXPECT_EQ(update.notice, "Request could not be dispatched");
+    EXPECT_FALSE(update.clear_input);
     const auto restored =
         load_transcript_entries(temporary.path);
-    ASSERT_EQ(restored.size(), 2U);
-    EXPECT_EQ(restored.back().kind, EntryKind::error);
-    EXPECT_EQ(restored.back().participant_id, "guide-id");
-    EXPECT_EQ(restored.back().text, "Agent execution is unavailable");
+    EXPECT_TRUE(restored.empty());
+    EXPECT_TRUE(controller->transcript().entries().empty());
 }
 
 TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {

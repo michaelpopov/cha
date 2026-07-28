@@ -72,6 +72,23 @@ AgentEvent wait_for_agent_event(AgentRegistry& registry) {
     }
 }
 
+StagedBatch start_agent_run(
+    AgentRegistry& registry,
+    CompletionInput input) {
+    StagedBatch staged = registry.stage_batch(
+        std::vector<CompletionInput>{std::move(input)});
+    registry.set_foreground(staged.run_ids.front());
+    registry.open_batch_gate(staged.batch_id);
+    return staged;
+}
+
+void retire_agent_run(
+    AgentRegistry& registry,
+    const StagedBatch& staged) {
+    registry.retire(staged.run_ids.front());
+    registry.retire_batch(staged.batch_id);
+}
+
 ChatResult run_chat(bool stream) {
     const Config config = integration_config(stream);
     Transcript transcript;
@@ -91,7 +108,7 @@ ChatResult run_chat(bool stream) {
             .prompt_text = input,
         },
     };
-    EXPECT_TRUE(registry.submit(std::move(request)));
+    const StagedBatch staged = start_agent_run(registry, std::move(request));
 
     ChatResult result;
     while (true) {
@@ -105,6 +122,7 @@ ChatResult run_chat(bool stream) {
         }
     }
 
+    retire_agent_run(registry, staged);
     registry.stop();
     return result;
 }
@@ -128,7 +146,7 @@ ChatResult run_cancelled_chat() {
             .prompt_text = input,
         },
     };
-    EXPECT_TRUE(registry.submit(std::move(request)));
+    const StagedBatch staged = start_agent_run(registry, std::move(request));
 
     ChatResult result;
     while (true) {
@@ -136,13 +154,14 @@ ChatResult run_cancelled_chat() {
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
-            registry.cancel();
+            registry.cancel_all();
         } else {
             EXPECT_TRUE(std::holds_alternative<AgentCancelled>(event));
             break;
         }
     }
 
+    retire_agent_run(registry, staged);
     registry.stop();
     return result;
 }

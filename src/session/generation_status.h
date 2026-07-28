@@ -12,10 +12,12 @@ enum class ResponsePhase {
     waiting,
     reasoning,
     answering,
+    stopping,
 };
 
-// What a front end needs to show about the turn in progress. Reasoning is ephemeral presentation
-// state: it is cleared at the terminal event and never enters the Transcript or session database.
+// What a front end needs to show about execution or abort cleanup in progress.
+// Reasoning is ephemeral presentation state: it is cleared at the terminal
+// event and never enters the Transcript or session database.
 struct GenerationStatus {
     bool active{};
     std::string agent_name;

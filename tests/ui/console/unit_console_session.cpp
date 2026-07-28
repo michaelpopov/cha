@@ -412,7 +412,7 @@ TEST(ConsoleSession, StopActsImmediatelyDuringGeneration) {
     test::ScriptedConsole port({
         {.input = true, .lines = {"question"}},
         {.input = true, .closed = true, .lines = {"/stop "}},
-        {.notification = true},
+        {.notification = true, .repeat = true},
     });
     auto session_controller = controller(journal, port, true);
     TranscriptEmitter emitter(port.transcript(), false);
@@ -433,6 +433,7 @@ TEST(ConsoleSession, InterruptWhileGeneratingCancelsWithoutExiting) {
     test::ScriptedConsole port({
         {.input = true, .lines = {"question"}},
         {.signal = true},
+        {.notification = true},
         {.notification = true},
         {.closed = true},
     });
@@ -470,6 +471,7 @@ TEST(ConsoleSession, HandlesSignalAndNotificationFromTheSameWait) {
     test::ScriptedConsole port({
         {.input = true, .lines = {"question"}},
         {.notification = true, .signal = true},
+        {.notification = true},
         {.closed = true},
     });
     auto session_controller = controller(journal, port);
