@@ -506,7 +506,7 @@ TEST(AgentRegistry, StagesDistinctBackendsConcurrentlyAndRoutesOnlyForeground) {
 }
 
 TEST(AgentRegistry, RollsBackPartialThreadConstructionAndReleasesEveryLease) {
-    for (const std::size_t fail_on_start : {1U, 3U}) {
+    for (const std::size_t fail_on_start : {1U, 2U}) {
         SCOPED_TRACE(fail_on_start);
         Transcript transcript;
         auto one = std::make_unique<RegistryBackend>("one-id", "One");
@@ -565,6 +565,30 @@ TEST(AgentRegistry, RollsBackPartialThreadConstructionAndReleasesEveryLease) {
     }
 }
 
+TEST(AgentRegistry, OrdinaryRunUsesOnlyThePersistentRunner) {
+    Transcript transcript;
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(
+        std::make_unique<RegistryBackend>("one-id", "One"));
+    std::size_t temporary_thread_starts{};
+    AgentRegistry registry(
+        std::move(backends),
+        notifier(),
+        [&temporary_thread_starts] {
+            ++temporary_thread_starts;
+        });
+
+    const BatchId batch = start_run(
+        registry,
+        request(transcript, 1, "one-id", "One", "ordinary"));
+    EXPECT_EQ(temporary_thread_starts, 0U);
+    EXPECT_TRUE(std::holds_alternative<AgentDelta>(
+        next_event(registry)));
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(
+        next_event(registry)));
+    retire_run(registry, batch);
+}
+
 TEST(AgentRegistry, InteractiveAbortCleanupDoesNotJoinBackgroundOnCaller) {
     Transcript transcript;
     std::atomic_bool release_background{false};
@@ -608,7 +632,7 @@ TEST(AgentRegistry, InteractiveAbortCleanupDoesNotJoinBackgroundOnCaller) {
         CleanupStatus::pending);
 
     EXPECT_EQ(std::get<AgentCancelled>(next_event(registry)).request_id, 1U);
-    registry.release_foreground_to_cleanup(staged, 0);
+    registry.release_abort_foreground(staged, 0);
     EXPECT_EQ(
         registry.poll_abort_cleanup(staged),
         CleanupStatus::pending);

@@ -6,7 +6,7 @@ registry-owned threads, and speaking the provider's HTTP protocol. The ordered
 personas in a forum and `@handle` resolution belong to `session/`.
 
 It is the only layer that talks to a model server, and the only one that owns
-completion and cleanup threads.
+completion runner threads.
 
 ## Contents
 
@@ -106,7 +106,6 @@ sequenceDiagram
 
     M->>R: stage_batch(CompletionInput[])
     R->>R: acquire one lease per distinct backend
-    R->>R: create batch cleanup thread
     R->>W0: stage child 0 behind closed gate
     R->>WN: stage remaining children behind closed gate
     W0-->>R: parked
@@ -160,10 +159,11 @@ Rules that fall out of this design:
 - **Cancellation is per execution.** It is checked before preparation and by
   the transport. `/stop` cancels every live batch runner; unactivated channels
   are discarded only by abort cleanup.
-- **Cleanup capacity is staged.** Every live batch, including a one-run batch,
-  owns a cleanup thread waiting for teardown jobs before `stage_batch()`
-  returns. It becomes active only during abort cleanup and is joined when the
-  batch retires.
+- **Abort cleanup is event-loop driven.** `/stop` only cancels the executions
+  and marks the batch aborting. Each execution wakes the main loop after
+  becoming fully done; `poll_abort_cleanup()` then resets or joins only those
+  finished runners and releases their leases. No cleanup thread is created,
+  and polling never waits for an unfinished backend.
 - **Background buffering is lossless and unbounded.** There is no artificial
   queue cap or silent dropping in this version. Memory use is proportional to
   the total delta data and queue overhead buffered by children that have not
@@ -176,19 +176,19 @@ Rules that fall out of this design:
 
 The abort and shutdown ownership states are:
 
-| State | UI | Foreground channel | Cleanup thread | Regular runner |
+| State | UI | Foreground channel | Cleanup/reaping | Regular runner |
 | --- | --- | --- | --- | --- |
-| Batch executing | Busy | Registry-selected foreground | Parked | Batch-owned; may run child 0 |
-| Stopping, foreground not terminal | `stopping` with agent name | Retained and drained through terminal commit | Reaps non-foreground runs | Live or done if it owns the foreground |
-| Stopping, foreground committed | Still busy | Released to cleanup | Finishes remaining teardown | Reset if it owned child 0 |
-| Abort complete | Idle | None | Joined with retired batch | Idle and reusable |
-| Shutdown during a batch | Ending | Retained until its execution finishes, then drained | Finishes non-foreground teardown | Joined by registry shutdown |
+| Batch executing | Busy | Registry-selected foreground | None | Batch-owned; may run child 0 |
+| Stopping, foreground not terminal | `stopping` with agent name | Retained and drained through terminal commit | Main-loop polls and reaps finished non-foreground runs | Live or done if it owns the foreground |
+| Stopping, foreground committed | Still busy | Released for reaping | Main-loop finishes reaping as workers report done | Reset after it reports done if it owned child 0 |
+| Abort complete | Idle | None | Batch retired | Idle and reusable |
+| Shutdown during a batch | Ending | Retained until its execution finishes, then drained | `stop()` synchronously joins non-foreground runners | Joined by registry shutdown |
 
 The regular worker can become execution-idle after child 0 retires, but it
 remains structurally batch-owned: the live batch record prevents admission of a
-new batch until every child and the cleanup thread retire. Reuse receives a new
-`Execution`, so cancellation state and the prior backend lease cannot carry
-into a later request.
+new batch until every child retires. Reuse receives a new `Execution`, so
+cancellation state and the prior backend lease cannot carry into a later
+request.
 
 ## The backend seam
 

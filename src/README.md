@@ -89,9 +89,9 @@ Three rules keep this direction honest:
 
 One process has one main thread plus registry-owned worker threads. The main
 thread owns all transcript and database mutation. The registry keeps one
-persistent regular runner, creates one-shot runners for the additional targets
-in a multicast batch, and creates a waiting cleanup thread for each live batch
-so `/stop` does not need to allocate one after cancellation begins.
+persistent regular runner and creates one-shot runners only for the additional
+targets in a multicast batch. Abort cleanup is driven by main-thread polling;
+it creates no thread and never waits for an unfinished worker.
 
 ```mermaid
 flowchart LR
@@ -139,9 +139,8 @@ Ownership is a strict tree, and destruction order matters:
 - `AgentRegistry` owns runtime information and a backend for each forum persona,
   one reusable regular runner, temporary multicast runners, and one optional
   live batch whose fixed run slots follow input order. It also owns per-runner
-  event channels and cancellation flags, backend leases, and the waiting
-  cleanup thread for the live batch. It has no reference to the live
-  transcript.
+  event channels and cancellation flags and backend leases. It has no
+  reference to the live transcript.
 
 ### How runner threads communicate
 

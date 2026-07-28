@@ -30,8 +30,8 @@ enum class CleanupStatus {
 // positions match the input order for the batch's full lifetime.
 class AgentRegistry {
 public:
-    // Optional fault-injection seam invoked immediately before each cleanup or
-    // temporary staging thread is constructed.
+    // Optional fault-injection seam invoked immediately before each temporary
+    // staging thread is constructed.
     using StageThreadHook = std::function<void()>;
 
     AgentRegistry(
@@ -66,7 +66,9 @@ public:
     void begin_abort_cleanup(
         BatchId batch,
         std::optional<std::size_t> retained_foreground) noexcept;
-    void release_foreground_to_cleanup(
+    // The controller has committed the retained foreground terminal. Clear
+    // its selection so subsequent abort polling may reap that run.
+    void release_abort_foreground(
         BatchId batch,
         std::size_t run_index) noexcept;
     CleanupStatus poll_abort_cleanup(BatchId batch) noexcept;

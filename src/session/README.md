@@ -261,9 +261,9 @@ Starting a batch, in order:
 1. Resolve and deduplicate every target, then capture one immutable pre-batch
    history and build every complete `CompletionInput`, including its moved run
    specification.
-2. Stage all runners and the cleanup thread behind a closed gate. A staging
-   failure opens no gate, calls no backend, releases every lease, and creates no
-   durable turn. Expected runtime refusals are reported as
+2. Stage all runners behind a closed gate. A staging failure opens no gate,
+   calls no backend, releases every lease, and creates no durable turn.
+   Expected runtime refusals are reported as
    `Request could not be dispatched` and preserve the user's draft; invalid
    inputs are controller bugs and propagate. The returned `BatchId` guards the
    one live registry batch, and each run's stable registry position is its

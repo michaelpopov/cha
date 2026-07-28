@@ -367,7 +367,7 @@ void SessionController::finish_batch_run(SessionUpdate& update) {
 
     if (batch_->abort_requested) {
         append_batch_notice(update);
-        registry_.release_foreground_to_cleanup(
+        registry_.release_abort_foreground(
             batch_->staged_batch_id,
             batch_->foreground_index);
         poll_abort_cleanup(update);
@@ -415,7 +415,7 @@ void SessionController::finish_aborted_batch(SessionUpdate& update) {
 }
 
 void SessionController::poll_abort_cleanup(SessionUpdate& update) {
-    if (!batch_ || !batch_->abort_requested || active_) {
+    if (!batch_ || !batch_->abort_requested) {
         return;
     }
     if (registry_.poll_abort_cleanup(batch_->staged_batch_id)

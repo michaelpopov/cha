@@ -190,6 +190,11 @@ struct AgentRegistry::Impl {
             done_changed.wait(lock, [this] { return done; });
         }
 
+        bool is_done() noexcept {
+            std::lock_guard lock(done_mutex);
+            return done;
+        }
+
         ChannelReadStatus try_receive(AgentEvent& event) {
             const ChannelReadStatus status = events.try_get(event);
             if (status != ChannelReadStatus::closed) {
@@ -240,6 +245,10 @@ struct AgentRegistry::Impl {
                 done = true;
             }
             done_changed.notify_all();
+            // Terminal publication may wake and be consumed before execute()
+            // reaches this point. Abort polling needs a later wake once it is
+            // safe to reset or join this runner without waiting on a backend.
+            notifier.wake();
         }
 
         CompletionInput input;
@@ -337,25 +346,12 @@ struct AgentRegistry::Impl {
         std::thread thread;
     };
 
-    struct CleanupState {
-        std::mutex mutex;
-        std::condition_variable changed;
-        std::vector<std::unique_ptr<RunRecord>> jobs;
-        std::size_t next_job{};
-        bool active{};
-        bool aborting{};
-        bool waiting_for_foreground{};
-        bool complete{};
-        bool stopping{};
-    };
-
     struct BatchRecord {
         BatchId id{};
         std::vector<std::unique_ptr<RunRecord>> runs;
         std::optional<std::size_t> foreground;
         std::shared_ptr<StartGate> gate;
-        std::shared_ptr<CleanupState> cleanup;
-        std::thread cleanup_thread;
+        bool aborting{};
     };
 
     Impl(
@@ -421,61 +417,6 @@ struct AgentRegistry::Impl {
         release_lease(record->backend_index);
     }
 
-    void cleanup_dialog(const std::shared_ptr<CleanupState>& cleanup) noexcept {
-        while (true) {
-            std::unique_ptr<RunRecord> record;
-            {
-                std::unique_lock lock(cleanup->mutex);
-                cleanup->changed.wait(lock, [&cleanup] {
-                    return cleanup->stopping
-                        || cleanup->next_job < cleanup->jobs.size();
-                });
-                if (cleanup->next_job == cleanup->jobs.size()) {
-                    if (cleanup->stopping) {
-                        break;
-                    }
-                    continue;
-                }
-                cleanup->active = true;
-                record = std::move(cleanup->jobs[cleanup->next_job++]);
-            }
-
-            cleanup_record(std::move(record));
-
-            bool became_complete = false;
-            {
-                std::lock_guard lock(cleanup->mutex);
-                cleanup->active = false;
-                if (cleanup->aborting
-                    && !cleanup->waiting_for_foreground
-                    && cleanup->next_job == cleanup->jobs.size()
-                    && !cleanup->complete) {
-                    cleanup->complete = true;
-                    became_complete = true;
-                }
-            }
-            cleanup->changed.notify_all();
-            if (became_complete) {
-                notifier.wake();
-            }
-        }
-    }
-
-    void stop_cleanup(BatchRecord& batch) noexcept {
-        {
-            std::lock_guard lock(batch.cleanup->mutex);
-            batch.cleanup->stopping = true;
-        }
-        batch.cleanup->changed.notify_all();
-        if (batch.cleanup_thread.joinable()) {
-            try {
-                batch.cleanup_thread.join();
-            } catch (...) {
-                std::terminate();
-            }
-        }
-    }
-
     void rollback_staging(BatchRecord& candidate) noexcept {
         candidate.gate->cancel();
         for (std::unique_ptr<RunRecord>& record : candidate.runs) {
@@ -485,7 +426,6 @@ struct AgentRegistry::Impl {
                 release_lease(record->backend_index);
             }
         }
-        stop_cleanup(candidate);
     }
 
     BatchId stage_batch(std::vector<CompletionInput> inputs) {
@@ -519,8 +459,6 @@ struct AgentRegistry::Impl {
         BatchRecord candidate;
         candidate.id = batch_id;
         candidate.gate = std::make_shared<StartGate>();
-        candidate.cleanup = std::make_shared<CleanupState>();
-        candidate.cleanup->jobs.reserve(inputs.size());
         candidate.runs.reserve(inputs.size());
 
         std::vector<RunRecord*> record_views;
@@ -556,13 +494,6 @@ struct AgentRegistry::Impl {
         }
 
         try {
-            if (before_stage_thread_start) {
-                before_stage_thread_start();
-            }
-            candidate.cleanup_thread = std::thread(
-                [this, cleanup = candidate.cleanup] {
-                    cleanup_dialog(cleanup);
-                });
             if (!regular.stage(record_views.front()->execution)) {
                 throw std::runtime_error("Regular agent runner is unavailable");
             }
@@ -632,21 +563,16 @@ struct AgentRegistry::Impl {
     }
 
     void retire_batch(BatchId batch_id) noexcept {
-        std::optional<BatchRecord> retired;
-        {
-            std::lock_guard lock(state_mutex);
-            if (!batch || batch->id != batch_id) {
+        std::lock_guard lock(state_mutex);
+        if (!batch || batch->id != batch_id) {
+            return;
+        }
+        for (const std::unique_ptr<RunRecord>& run : batch->runs) {
+            if (run) {
                 return;
             }
-            for (const std::unique_ptr<RunRecord>& run : batch->runs) {
-                if (run) {
-                    return;
-                }
-            }
-            retired.emplace(std::move(*batch));
-            batch.reset();
         }
-        stop_cleanup(*retired);
+        batch.reset();
     }
 
     void cancel_all() noexcept {
@@ -675,112 +601,85 @@ struct AgentRegistry::Impl {
         for (std::unique_ptr<RunRecord>& record : discarded->runs) {
             cleanup_record(std::move(record));
         }
-        stop_cleanup(*discarded);
     }
 
     void begin_abort_cleanup(
         BatchId batch_id,
         std::optional<std::size_t> retained_foreground) noexcept {
-        cancel_all();
-        std::shared_ptr<CleanupState> cleanup;
-        bool became_complete = false;
-        {
-            std::lock_guard lock(state_mutex);
-            if (!batch || batch->id != batch_id) {
-                return;
-            }
-            batch->gate->cancel();
-            cleanup = batch->cleanup;
-            std::lock_guard cleanup_lock(cleanup->mutex);
-            cleanup->aborting = true;
-            const bool retain =
-                retained_foreground
-                && *retained_foreground < batch->runs.size()
-                && batch->runs[*retained_foreground];
-            cleanup->waiting_for_foreground = retain;
-            for (std::size_t index = 0;
-                 index < batch->runs.size();
-                 ++index) {
-                if (retain && retained_foreground == index) {
-                    continue;
-                }
-                if (batch->runs[index]) {
-                    cleanup->jobs.push_back(
-                        std::move(batch->runs[index]));
-                }
-            }
-            if (!retain) {
-                batch->foreground.reset();
-            }
-            if (!cleanup->waiting_for_foreground
-                && cleanup->next_job == cleanup->jobs.size()
-                && !cleanup->active
-                && !cleanup->complete) {
-                cleanup->complete = true;
-                became_complete = true;
+        std::lock_guard lock(state_mutex);
+        if (!batch || batch->id != batch_id) {
+            return;
+        }
+        for (const std::unique_ptr<RunRecord>& run : batch->runs) {
+            if (run) {
+                run->execution->request_cancel();
             }
         }
-        cleanup->changed.notify_all();
-        if (became_complete) {
-            notifier.wake();
+        batch->gate->cancel();
+        batch->aborting = true;
+        const bool retain =
+            retained_foreground
+            && *retained_foreground < batch->runs.size()
+            && batch->runs[*retained_foreground];
+        if (retain) {
+            batch->foreground = *retained_foreground;
+        } else {
+            batch->foreground.reset();
         }
     }
 
-    void release_foreground_to_cleanup(
+    void release_abort_foreground(
         BatchId batch_id,
         std::size_t run_index) noexcept {
-        std::shared_ptr<CleanupState> cleanup;
-        bool became_complete = false;
-        {
-            std::lock_guard lock(state_mutex);
-            if (!batch || batch->id != batch_id
-                || run_index >= batch->runs.size()
-                || !batch->runs[run_index]) {
-                return;
-            }
-            cleanup = batch->cleanup;
-            {
-                std::lock_guard cleanup_lock(cleanup->mutex);
-                cleanup->jobs.push_back(
-                    std::move(batch->runs[run_index]));
-                cleanup->waiting_for_foreground = false;
-                cleanup->complete = false;
-                if (cleanup->next_job == cleanup->jobs.size()
-                    && !cleanup->active) {
-                    cleanup->complete = true;
-                    became_complete = true;
-                }
-            }
-            if (batch->foreground == run_index) {
-                batch->foreground.reset();
-            }
+        std::lock_guard lock(state_mutex);
+        if (!batch || batch->id != batch_id || !batch->aborting
+            || run_index >= batch->runs.size()
+            || !batch->runs[run_index]) {
+            return;
         }
-        cleanup->changed.notify_all();
-        if (became_complete) {
-            notifier.wake();
+        if (batch->foreground == run_index) {
+            batch->foreground.reset();
         }
     }
 
     CleanupStatus poll_abort_cleanup(BatchId batch_id) noexcept {
-        std::shared_ptr<CleanupState> cleanup;
-        {
-            std::lock_guard lock(state_mutex);
-            if (!batch || batch->id != batch_id) {
-                return CleanupStatus::none;
+        while (true) {
+            std::unique_ptr<RunRecord> ready;
+            bool complete = false;
+            {
+                std::lock_guard lock(state_mutex);
+                if (!batch || batch->id != batch_id
+                    || !batch->aborting) {
+                    return CleanupStatus::none;
+                }
+                bool any_live = false;
+                for (std::size_t index = 0;
+                     index < batch->runs.size();
+                     ++index) {
+                    if (!batch->runs[index]) {
+                        continue;
+                    }
+                    any_live = true;
+                    if (batch->foreground == index) {
+                        continue;
+                    }
+                    if (batch->runs[index]->execution->is_done()) {
+                        ready = std::move(batch->runs[index]);
+                        break;
+                    }
+                }
+                complete = !any_live;
             }
-            cleanup = batch->cleanup;
-        }
-        {
-            std::lock_guard lock(cleanup->mutex);
-            if (!cleanup->aborting) {
-                return CleanupStatus::none;
+            if (ready) {
+                cleanup_record(std::move(ready));
+                continue;
             }
-            if (!cleanup->complete) {
+            if (!complete) {
                 return CleanupStatus::pending;
             }
+            retire_batch(batch_id);
+            return CleanupStatus::complete;
         }
-        retire_batch(batch_id);
-        return CleanupStatus::complete;
     }
 
     ChannelReadStatus try_receive(AgentEvent& event) {
@@ -829,57 +728,53 @@ struct AgentRegistry::Impl {
             }
         }
 
-        cancel_all();
         if (batch_id) {
             begin_abort_cleanup(*batch_id, retained);
-            std::shared_ptr<CleanupState> cleanup;
-            BatchRecord* current_batch = nullptr;
-            {
-                std::lock_guard lock(state_mutex);
-                if (batch && batch->id == *batch_id) {
-                    current_batch = &*batch;
-                    cleanup = batch->cleanup;
-                }
-            }
-            if (cleanup) {
+            while (true) {
+                std::unique_ptr<RunRecord> record;
                 {
-                    std::lock_guard lock(cleanup->mutex);
-                    cleanup->waiting_for_foreground = false;
-                    if (cleanup->next_job == cleanup->jobs.size()
-                        && !cleanup->active) {
-                        cleanup->complete = true;
+                    std::lock_guard lock(state_mutex);
+                    if (!batch || batch->id != *batch_id) {
+                        break;
+                    }
+                    for (std::size_t index = 0;
+                         index < batch->runs.size();
+                         ++index) {
+                        if (retained == index) {
+                            continue;
+                        }
+                        if (batch->runs[index]) {
+                            record = std::move(batch->runs[index]);
+                            break;
+                        }
                     }
                 }
-                cleanup->changed.notify_all();
-                {
-                    std::unique_lock lock(cleanup->mutex);
-                    cleanup->changed.wait(lock, [&cleanup] {
-                        return cleanup->complete;
-                    });
+                if (!record) {
+                    break;
                 }
-                if (current_batch) {
-                    stop_cleanup(*current_batch);
-                }
+                cleanup_record(std::move(record));
             }
         }
 
         std::shared_ptr<Execution> foreground_execution;
-        RunRecord* foreground_record = nullptr;
+        std::thread foreground_thread;
         {
             std::lock_guard lock(state_mutex);
             if (batch_id && batch && batch->id == *batch_id
                 && retained && *retained < batch->runs.size()
                 && batch->runs[*retained]) {
-                foreground_record = batch->runs[*retained].get();
-                foreground_execution = foreground_record->execution;
+                RunRecord& record = *batch->runs[*retained];
+                foreground_execution = record.execution;
+                if (!record.regular) {
+                    foreground_thread = std::move(record.thread);
+                }
             }
         }
         if (foreground_execution) {
             foreground_execution->request_cancel();
             foreground_execution->wait();
-            if (foreground_record && !foreground_record->regular
-                && foreground_record->thread.joinable()) {
-                foreground_record->thread.join();
+            if (foreground_thread.joinable()) {
+                foreground_thread.join();
             }
         }
         regular.stop();
@@ -974,10 +869,10 @@ void AgentRegistry::begin_abort_cleanup(
     impl_->begin_abort_cleanup(batch, retained_foreground);
 }
 
-void AgentRegistry::release_foreground_to_cleanup(
+void AgentRegistry::release_abort_foreground(
     BatchId batch,
     std::size_t run_index) noexcept {
-    impl_->release_foreground_to_cleanup(batch, run_index);
+    impl_->release_abort_foreground(batch, run_index);
 }
 
 CleanupStatus AgentRegistry::poll_abort_cleanup(
