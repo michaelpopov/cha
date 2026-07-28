@@ -29,8 +29,9 @@ enum class CleanupStatus {
 
 // Owns every configured backend and coordinates one reusable regular runner
 // plus temporary runners for concurrent multicast batches. Runners prepare
-// exclusively from owned CompletionInput values and retain separate event
-// queues; only the selected foreground queue is visible to the controller.
+// exclusively from owned CompletionInput values and retain separate delta
+// queues plus terminal slots; only the selected foreground event channel is
+// visible to the controller.
 class AgentRegistry {
 public:
     // Optional fault-injection seam invoked immediately before each cleanup or
@@ -73,8 +74,8 @@ public:
 
     [[nodiscard]] ChannelReadStatus try_receive(AgentEvent& event);
 
-    // Cancels and joins every worker. The foreground queue remains drainable;
-    // once drained, try_receive() reports closed.
+    // Cancels and joins every worker. The foreground event channel remains
+    // drainable; once drained, try_receive() reports closed.
     void stop();
 
 private:

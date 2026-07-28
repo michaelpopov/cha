@@ -65,9 +65,9 @@ automatic attributes are enabled independently for terminal stdout and stderr.
 controller; the ready banner prints that resolved ID rather than a placeholder
 for newly created sessions.
 
-The libuv signal watcher is started before the controller creates its agent
-thread. On POSIX, SIGPIPE is ignored so `ConsoleSession` can turn a closed
-stdout into exit code 1 with an error on stderr.
+The libuv signal watcher is started before the controller creates its registry
+runner threads. On POSIX, SIGPIPE is ignored so `ConsoleSession` can turn a
+closed stdout into exit code 1 with an error on stderr.
 
 Listings and checks return before any session or console object is constructed.
 `--list-forums` takes global precedence; `--list-sessions` takes precedence over

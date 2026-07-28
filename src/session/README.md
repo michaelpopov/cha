@@ -14,7 +14,7 @@ code.
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
 | `forum_personas.*` | The ordered persona identities in a forum, including validation, lookup, and handle resolution. |
-| `session_controller.*` | Own one live session: commands, the in-flight turn, agent events, default agent, notices, and shutdown. |
+| `session_controller.*` | Own one live session: commands, the in-flight response batch, agent events, default agent, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
 ## Workspace layout
@@ -232,8 +232,8 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
-| `request_stop()` | Cancels every live batch runner and starts non-blocking cleanup while retaining the foreground terminal queue, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
-| `receive()` | Drains the foreground queue, advances to already-buffered children in the same turn, and polls abort cleanup. | Merged updates; `end_session` when the registry receive source is closed. |
+| `request_stop()` | Cancels every live batch runner and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
+| `receive()` | Drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged updates; `end_session` when the registry receive source is closed. |
 | `shutdown()` | Reconciles abort cleanup, joins all runners, and commits the retained foreground terminal state. | — |
 
 Every command except `request_stop()` and `receive()` is refused while a turn or
@@ -253,15 +253,33 @@ Front ends translate those into these calls.
 
 ## The in-flight turn
 
-`SessionController` holds the mechanics and state of its single in-flight turn.
+`SessionController` holds the mechanics and state of one in-flight response
+batch. An ordinary prompt is represented as a one-child batch.
 
-Starting a turn, in order: allocate a request ID and entry ID, build the human
-entry, `start_turn()` it to disk, add it to the transcript, reserve the
-response entry ID, then submit. If the transcript refuses the prompt, the turn
-is failed on disk before the exception propagates. If registry admission
-returns false or throws, the turn is failed immediately, the batch emits its
-accumulated terminal notices, and the caller is told it could not be
-dispatched.
+Starting a batch, in order:
+
+1. Resolve and deduplicate every target, then capture one immutable pre-batch
+   history and build every complete `CompletionInput`, including its moved run
+   specification.
+2. Stage all runners and the cleanup thread behind a closed gate. A staging
+   failure opens no gate, calls no backend, releases every lease, and creates no
+   durable turn. Expected runtime refusals are reported as
+   `Request could not be dispatched` and preserve the user's draft; invalid
+   inputs are controller bugs and propagate.
+3. Select the first foreground run while the gate is still closed. Selection
+   occurs before journal, transcript, or `active_` mutation, so a selection
+   failure cannot leave the controller permanently busy or a journal turn
+   non-terminal.
+4. Persist `start_turn()`, add the human entry, and install the active response.
+   If in-memory activation fails after the journal write, the controller
+   compensates with `fail_turn()` and discards the parked batch.
+5. Open the gate once. Every staged backend may now begin concurrently, while
+   only the foreground child's events are applied to the transcript.
+
+After a foreground terminal event is committed, the controller retires that
+run, selects the next child, activates its turn, and drains its already-buffered
+events in the same controller turn. It never relies on a later wakeup to
+advance a multicast.
 
 Applying events:
 
@@ -278,6 +296,13 @@ Applying events:
 
 Events whose request ID does not match the active turn are ignored, which is
 what makes a cancelled turn's late fragments harmless.
+
+`ResponsePhase` is monotonic during normal generation:
+`waiting` → `reasoning` → `answering`. The separate `stopping` phase is an
+abort-cleanup overlay. It keeps the foreground agent name visible while the
+registry commits that child's terminal event and joins or resets all remaining
+runners. A foreground completion already queued when `/stop` is processed wins
+the race and is committed normally.
 
 ## Failure policy
 
@@ -301,7 +326,7 @@ session continues.
 | --- | --- |
 | `tests/session/unit_workspace.cpp` | Layout resolution, forum loading and checking, session create/open. |
 | `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics. |
-| `tests/session/unit_session_controller.cpp` | Command behavior, event application, persistence ordering, restore and repair. |
+| `tests/session/unit_session_controller.cpp` | Command behavior, concurrent staging, ordered foreground drain, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
 | `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
 
 Those database tests link `cha_sqlite3` directly, so they can assert on the

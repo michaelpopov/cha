@@ -31,7 +31,7 @@ struct SessionUpdate {
 // halves: read-only session state (transcript, forum personas, default agent, generation status) and
 // commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
 // each returning a SessionUpdate instead of touching the UI. It owns the Transcript,
-// SessionJournal, AgentRegistry, and the state of the single in-flight turn. Command syntax,
+// SessionJournal, AgentRegistry, and the state of the in-flight response batch. Command syntax,
 // mentions, and transport formats belong to front ends, not here.
 class SessionController {
 public:

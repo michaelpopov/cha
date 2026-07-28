@@ -9,7 +9,8 @@ namespace cha {
 // Owns one libuv loop and its cross-thread async wake handle. Frontends add
 // their input and signal handles to native_loop(), then drive the loop from
 // their main thread. uv_async_send() coalesces wakes, which is sufficient
-// because every frontend drains the complete agent-event queue after a wake.
+// because every frontend drains the complete foreground event channel after a
+// wake.
 class UvEventLoop final : public WakeNotifier {
 public:
     UvEventLoop();

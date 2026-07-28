@@ -60,7 +60,7 @@ private:
 
 // Everything the console loop needs from the outside world. wait() reports
 // non-sticky semantic events; input_closed() is sticky after EOF. The port is
-// also the agent thread's wake target, so its concrete event loop never leaks
+// also the agent runners' wake target, so its concrete event loop never leaks
 // into ConsoleSession. When include_input is false, wait() must suppress both
 // input-ready and input-closed delivery, and input_closed() must not become
 // sticky for an EOF whose buffered input is still deferred. This lets a

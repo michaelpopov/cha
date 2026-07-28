@@ -57,7 +57,8 @@ instead defers complete input lines and dispatches them one at a time after the
 active turn. Bare `/stop` and `/exit` are recognized while enqueueing because
 their meaning depends on immediacy; all other commands keep FIFO order.
 An immediate `/exit` during an active turn shuts the session down and therefore
-cancels that turn; it does not wait for the response to finish.
+cancels every live runner in that request's batch; it does not wait for provider
+responses to finish.
 
 ## Input
 
@@ -72,9 +73,10 @@ rules.
 
 Once stdin is exhausted its watcher remains stopped, preventing a closed input
 source from spinning the loop. Ctrl-C is delivered by libuv. During generation
-it requests cancellation and keeps the process alive; while idle it exits
-successfully. On POSIX, SIGPIPE is ignored so a closed stdout is reported as a
-normal write failure rather than terminating the process by signal.
+it requests cancellation of every live runner in the current batch and keeps
+the process alive through cleanup; while idle it exits successfully. On POSIX,
+SIGPIPE is ignored so a closed stdout is reported as a normal write failure
+rather than terminating the process by signal.
 
 ## Append-only output
 

@@ -147,7 +147,9 @@ In net mode, `cha` sends HTTP requests to:
 http://HOST:PORT/v1/chat/completions
 ```
 
-Chat requests deliberately have no overall or low-speed timeout so long generations can complete. Use `/stop`, Escape, or Ctrl-C to cancel an active request.
+Chat requests deliberately have no overall or low-speed timeout so long
+generations can complete. Use `/stop`, Escape, or Ctrl-C to cancel the current
+request, including every live runner in a multicast batch.
 
 HTTPS servers require a libcurl build with a TLS backend. The bundled libcurl
 uses Schannel on Windows, Secure Transport on macOS, and OpenSSL on other
@@ -169,7 +171,10 @@ Before loading server configuration, the application optionally reads `.env` fro
 - `/info` displays the transcript entry count followed by the current forum's personas.
 - `/agents` displays the current forum's personas and marks the default agent.
 - `/@Name` changes the default agent for this run only.
-- `/stop` cancels the active model response.
+- `/stop` cancels every live model run in the current request. If a
+  foreground response completed before the stop request was processed, that
+  completion is committed normally while the remaining multicast work is
+  cancelled.
 - `/exit` exits the application.
 
 ## Full-screen UI
@@ -177,10 +182,11 @@ Before loading server configuration, the application optionally reads `.env` fro
 The UI has a scrollable chat transcript, a generation-status line, and a persistent multiline input pane. Input remains available while a response is streaming.
 
 The status changes from `generating` to `reasoning` when structured reasoning
-arrives, then to `responding` when answer text begins.
+arrives, then to `responding` when answer text begins. After cancellation it
+shows `stopping` until background cleanup has retired the batch's runners.
 
 - Press `Page Up` and `Page Down` to scroll through the transcript.
-- Press `Esc` or `Ctrl-C` while generating to stop the response immediately.
+- Press `Esc` or `Ctrl-C` while generating to request cancellation immediately.
 - Press `Ctrl-C` while idle to exit.
 - End an input line with `\` to continue on the next visual line. Continued lines are concatenated before being sent.
 - Arrow, Home, End, Backspace, and Delete keys edit the input buffer.
@@ -288,9 +294,8 @@ The source tree is documented from the inside out, with diagrams:
 | --- | --- |
 | [`src/README.md`](src/README.md) | High-level architecture: layers, threading, the life of a turn, persistence, and the invariants that hold everywhere. Start here. |
 | [`src/transcript/README.md`](src/transcript/README.md) | The transcript model shared by every layer. |
-| [`src/agents/README.md`](src/agents/README.md) | Persona loading, the execution thread, and the HTTP transport. |
+| [`src/agents/README.md`](src/agents/README.md) | Persona loading, staged runner threads, and the HTTP transport. |
 | [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
 | [`src/ui/README.md`](src/ui/README.md) | The UI contract, with shared [`render/`](src/ui/render/README.md) and [`text/`](src/ui/text/README.md), plus the [`tui/`](src/ui/tui/README.md) and [`console/`](src/ui/console/README.md) frontends. |
 | [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |
 | [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including prompt-template expansion, the concurrent queue, and wake adapters. |
-| [`docs/cha.md`](docs/cha.md) | The exhaustive rule-by-rule design reference. |

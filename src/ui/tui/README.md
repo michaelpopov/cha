@@ -36,9 +36,10 @@ directory decides only how it looks and how input reaches it.
 
 ## The event loop
 
-The whole chat runs on one thread, blocked in one libuv loop containing a Linux
-stdin poll handle, a resize-signal handle, and the agent async wake handle.
-There are no timers and no polling intervals.
+The TUI, controller, transcript, and persistence side runs on the main thread,
+blocked in one libuv loop containing a Linux stdin poll handle, a resize-signal
+handle, and the agent async wake handle. Provider completions and abort cleanup
+run on registry-owned threads. There are no timers and no polling intervals.
 
 ```mermaid
 flowchart TD
@@ -79,8 +80,8 @@ single repaint.
 | --- | --- | --- |
 | Printable key | Insert into the editor, clear the notice | Same — typing during generation is allowed |
 | `Enter` | Submit, unless the line ends with `\`, which starts a continuation line | Submit is refused by `text/` with a notice |
-| `Esc` | Clear the editor and the notice | Cancel the turn |
-| `Ctrl-C` | Exit the session | Cancel the turn |
+| `Esc` | Clear the editor and the notice | Request cancellation of the current batch |
+| `Ctrl-C` | Exit the session | Request cancellation of the current batch |
 | `Page Up` / `Page Down` | Scroll the transcript | Same |
 | Arrows, `Home`, `End`, `Backspace`, `Delete` | Edit the draft | Same |
 | Resize | Re-lay out through `Terminal` | Same |
@@ -128,8 +129,10 @@ only "Terminal is too small".
   contains entries from or to somebody else — which is what a session reopened
   after the personas in a forum change.
 
-The status line shows `[Idle]`, or `[Name generating|reasoning|responding]` with
-the cancel hint, and appends the current notice when there is one.
+The status line shows `[Idle]`, or
+`[Name generating|reasoning|responding|stopping]`, and appends the current
+notice when there is one. Active generation phases include the cancel hint;
+`stopping` retains the foreground agent's name while cleanup finishes.
 
 ## Terminal ownership
 

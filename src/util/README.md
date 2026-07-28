@@ -114,9 +114,9 @@ Semantics worth knowing:
 | `close` | Stops new writes and wakes blocked readers. Already queued values are still delivered. |
 
 `UvEventLoop` uses libuv's coalescing, thread-safe `uv_async_send()`. The
-frontend observes the async callback before draining the event queue. The
-request queue needs no notifier because the agent thread blocks directly in
-`get()`.
+frontend observes the async callback before draining the producer's queue.
+Notification is intentionally separate from storage: not every queue consumer
+needs an event-loop wake.
 
 ## Event-loop ownership
 

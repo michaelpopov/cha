@@ -131,7 +131,7 @@ void ConsoleSession::enqueue(std::vector<std::string> lines) {
         queue_.push_back(std::move(line));
         // Pump between lines from the same read. This makes
         // "prompt\n/stop\n" observe the prompt as active while still queuing
-        // ordinary prompt batches behind the single in-flight turn.
+        // ordinary prompt batches behind the in-flight response batch.
         pump();
     }
 }

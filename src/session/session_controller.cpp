@@ -293,7 +293,7 @@ void SessionController::activate_current_run(SessionUpdate& update) {
         .phase = ResponsePhase::waiting,
     };
 
-    // Select the still-gated queue before creating durable or active state.
+    // Select the still-gated event channel before durable or active state.
     // If the run ID is stale, batch teardown remains side-effect free.
     registry_.set_foreground(
         batch_->staged_run_ids[batch_->foreground_index]);

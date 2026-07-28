@@ -4,9 +4,8 @@ This document explains how `cha` is built: what the layers are, what each one
 owns, how a message travels from a keystroke to a model and back, and which
 rules must hold as the code grows. Read it before changing anything structural.
 
-Per-directory `README.md` files describe each layer in detail; the exhaustive
-rule-by-rule reference lives in [`docs/cha.md`](../docs/cha.md); the user-facing
-manual is the [top-level `README.md`](../README.md).
+Per-directory `README.md` files are the detailed reference for each layer; the
+user-facing manual is the [top-level `README.md`](../README.md).
 
 ## System overview
 
@@ -88,9 +87,11 @@ Three rules keep this direction honest:
 
 ## Runtime structure
 
-One process, two long-lived threads. The main thread owns all transcript and
-database mutation; the agent thread performs one blocking completion at a time
-and reports back through a channel.
+One process has one main thread plus registry-owned worker threads. The main
+thread owns all transcript and database mutation. The registry keeps one
+persistent regular runner, creates one-shot runners for the additional targets
+in a multicast batch, and creates a waiting cleanup thread for each live batch
+so `/stop` does not need to allocate one after cancellation begins.
 
 ```mermaid
 flowchart LR
@@ -121,7 +122,7 @@ flowchart LR
     registry -->|"staged CompletionInput + gate"| execution
     execution --> backend
     backend <-->|"HTTP or SSE"| provider
-    execution -->|"per-runner AgentEvent queue + wake"| frontend
+    execution -->|"per-runner delta queue,<br/>terminal slot + wake"| frontend
 ```
 
 Ownership is a strict tree, and destruction order matters:
@@ -137,27 +138,33 @@ Ownership is a strict tree, and destruction order matters:
   history before activating any run.
 - `AgentRegistry` owns runtime information and a backend for each forum persona,
   one reusable regular runner, temporary multicast runners, per-runner event
-  queues and cancellation flags, backend leases, and abort cleanup. It has no
-  reference to the live transcript.
+  channels and cancellation flags, backend leases, and the parked cleanup
+  thread for each live batch. It has no reference to the live transcript.
 
 ### How runner threads communicate
 
-Each staged execution owns a `ConcurrentQueue<AgentEvent>` (see
-[`util/`](util/README.md)). A runner publishes to its own queue and calls the
-injected `WakeNotifier` after every successful push.
+Each staged execution owns a `ConcurrentQueue<AgentEvent>` for deltas and a
+preallocated slot for its exactly-one terminal event (see
+[`util/`](util/README.md)). A runner publishes deltas to its queue, stores its
+terminal event in the slot, and calls the injected `WakeNotifier` after each
+successful publication. Foreground reads drain queued deltas before consuming
+the terminal slot, preserving event order without requiring terminal delivery
+to allocate memory.
 
 The regular runner has one persistent worker waiting for staged executions.
 Concurrent multicast adds one-shot temporary runners. All runners park behind
-a shared start gate; after the controller durably activates child 0, opening
-that gate admits every backend call. The registry exposes only the selected
-foreground runner's queue, so background output remains buffered and cannot
-mutate the transcript.
+a shared start gate. The controller first selects child 0 as foreground while
+the gate is still closed, then durably activates its turn; only after those
+steps succeed does opening the gate admit every backend call. The registry
+exposes only the selected foreground runner's event channel, so background
+output remains buffered and cannot mutate the transcript.
 
 The terminal frontends own a `UvEventLoop`. Agent threads wake it through
 `uv_async_send()`; frontend-owned libuv input and signal handles share the same
-loop. The frontend then drains the foreground queue. Wakeups from background
+loop. The frontend then drains the foreground channel. Wakeups from background
 runners may coalesce or find no foreground event; foreground advance therefore
-drains the newly selected queue immediately without waiting for another wake.
+drains the newly selected channel immediately without waiting for another
+wake.
 
 ## Lifecycle: startup
 
@@ -206,8 +213,9 @@ sequenceDiagram
 
 Persona loading happens here, on the main thread: each `CompletionClient` is
 constructed — including optional `/v1/models` discovery when `model` is unset —
-*before* the agent thread starts. After that point only the agent thread touches
-a backend, which is why the clients need no internal locking.
+*before* completion runners start. After that point a backend is touched only
+by the runner holding its exclusive lease, which is why the clients need no
+internal locking.
 
 ## Lifecycle: one turn
 
@@ -232,16 +240,17 @@ sequenceDiagram
     C->>C: resolve handle against ForumPersonas
     C->>V: capture immutable CompletionHistory
     C->>G: stage one-run batch behind closed gate
+    C->>G: select foreground while gate remains closed
     C->>J: start_turn, SQLite transaction
-    C->>V: add human entry
-    C->>G: set foreground and open gate
+    C->>V: add human entry and install ActiveResponse
+    C->>G: open batch gate
     C-->>U: SessionUpdate, render and clear input
 
     W->>W: backend.prepare from immutable history + prompt
     W->>P: POST /v1/chat/completions
     loop streamed fragments
         P-->>W: SSE delta
-        W->>G: AgentDelta on event queue
+        W->>G: AgentDelta on delta queue
         G-->>U: uv_async_send wakes loop
         U->>C: receive
         C->>V: begin or append streaming entry
@@ -257,10 +266,13 @@ sequenceDiagram
 
 Two ordering rules are load-bearing:
 
-- **Durable before visible.** The prompt is written to the journal before it is
-  added to the in-memory transcript, and a response is committed before its
-  entry is finalized. A crash can therefore lose a turn, but can never show one
-  that was not recorded.
+- **Select before durable activation.** A staged child becomes foreground while
+  every runner is still gated. If selection fails, no journal turn, transcript
+  prompt, or active response exists to abandon.
+- **Durable before visible.** After foreground selection, the prompt is written
+  to the journal before it is added to the in-memory transcript, and a response
+  is committed before its entry is finalized. A crash can therefore lose a
+  turn, but can never show one that was not recorded.
 - **One writer.** Every mutation above happens on the main thread. The agent
   runners never read the live transcript; each owns the immutable history
   captured before staging.
@@ -380,7 +392,7 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | --- | --- |
 | `ForumPersonas` is non-empty, with unique IDs and unique case-folded names. | `ForumPersonas` constructor |
 | At most one user operation and one foreground turn are active, while one multicast may run distinct backends concurrently. | `SessionController::busy`, batch reservation, backend leases |
-| Every gate-released run yields exactly one terminal `AgentEvent`. | Per-runner execution and shutdown order |
+| Every launched run, including one cancelled at an unopened gate, yields exactly one terminal `AgentEvent` through a preallocated terminal slot. | Per-runner execution and shutdown order |
 | Only the main thread mutates `Transcript` or the journal. | `SessionController` |
 | At most one streaming entry is open at a time. | `Transcript` |
 | Entry and request IDs are positive and strictly increasing. | `Transcript::require_next_id`, `state` table |
@@ -459,4 +471,3 @@ installed.
 | Console frontend | [`ui/console/README.md`](ui/console/README.md) |
 | Entry points | [`apps/README.md`](apps/README.md) |
 | Shared helpers | [`util/README.md`](util/README.md) |
-| Exhaustive design rules | [`../docs/cha.md`](../docs/cha.md) |

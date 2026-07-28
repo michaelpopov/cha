@@ -2,7 +2,7 @@
 
 namespace cha {
 
-// Wakes the front-end event loop after agent-event queue state changes.
+// Wakes the front-end event loop after agent-event channel state changes.
 class WakeNotifier {
 public:
     virtual ~WakeNotifier() = default;

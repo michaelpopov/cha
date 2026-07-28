@@ -29,7 +29,7 @@ void enable_console_output_utf8() noexcept;
 bool enable_standard_stream_color(StandardStream stream) noexcept;
 
 // Adapts process streams and Ctrl-C to ConsolePort through one libuv loop. The
-// same loop owns the uv_async_t used by the agent thread, so ConsoleSession sees
+// same loop owns the uv_async_t used by agent runners, so ConsoleSession sees
 // only semantic input, notification, and interrupt events.
 class SystemConsole final : public ConsolePort {
 public:

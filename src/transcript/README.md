@@ -67,9 +67,10 @@ terminal transcript entry is currently storable.
 
 ## The live transcript
 
-`Transcript` is the only mutable transcript state shared between threads.
-It has a single-writer design: the main thread mutates, any thread may read
-under the lock.
+`Transcript` is the live mutable transcript state. It has a single-writer
+design: the main thread mutates and snapshots it under the lock. Completion
+runners never read it; the controller captures an immutable
+`CompletionHistory` before staging a batch.
 
 | Operation | Rule |
 | --- | --- |
