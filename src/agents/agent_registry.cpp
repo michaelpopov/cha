@@ -3,6 +3,9 @@
 #include "agents/completion_client.h"
 #include "util/text.h"
 
+#include <spdlog/spdlog.h>
+
+#include <chrono>
 #include <condition_variable>
 #include <exception>
 #include <mutex>
@@ -16,6 +19,53 @@
 
 namespace cha {
 namespace {
+
+using DiagnosticClock = std::chrono::steady_clock;
+
+template <typename... Args>
+void trace_registry(
+    spdlog::format_string_t<Args...> format,
+    Args&&... args) noexcept {
+    try {
+        if (const auto logger = spdlog::get("cha")) {
+            logger->trace(
+                format,
+                std::forward<Args>(args)...);
+        }
+    } catch (...) {
+        // Diagnostics must never affect request execution.
+    }
+}
+
+double elapsed_milliseconds(
+    DiagnosticClock::time_point start,
+    DiagnosticClock::time_point end = DiagnosticClock::now()) noexcept {
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+std::string_view outcome_name(CompletionOutcome outcome) noexcept {
+    switch (outcome) {
+    case CompletionOutcome::completed:
+        return "completed";
+    case CompletionOutcome::cancelled:
+        return "cancelled";
+    case CompletionOutcome::protocol_error:
+        return "protocol_error";
+    case CompletionOutcome::transport_error:
+        return "transport_error";
+    }
+    return "unknown";
+}
+
+std::string_view delta_kind_name(CompletionDeltaKind kind) noexcept {
+    switch (kind) {
+    case CompletionDeltaKind::reasoning:
+        return "reasoning";
+    case CompletionDeltaKind::answer:
+        return "answer";
+    }
+    return "unknown";
+}
 
 std::vector<AgentRuntimeInfo> build_runtime_info(
     const std::vector<std::unique_ptr<CompletionBackend>>& backends) {
@@ -123,11 +173,13 @@ struct AgentRegistry::Impl {
 
     struct Execution {
         Execution(
+            BatchId owned_batch_id,
             CompletionInput owned_input,
             CompletionBackend& owned_backend,
             std::shared_ptr<StartGate> start_gate,
             WakeNotifier& wake_notifier)
-            : input(std::move(owned_input)),
+            : batch_id(owned_batch_id),
+              input(std::move(owned_input)),
               backend(owned_backend),
               gate(std::move(start_gate)),
               notifier(wake_notifier),
@@ -142,21 +194,75 @@ struct AgentRegistry::Impl {
         void execute() noexcept {
             const RequestId request_id = input.run.request_id;
             if (!gate->arrive_and_wait()) {
+                trace_registry(
+                    "batch={} request={} persona_id={} event=gate_cancelled",
+                    batch_id,
+                    request_id,
+                    input.run.target.id);
                 publish_terminal(AgentCancelled{request_id});
                 finish();
                 return;
             }
 
+            const DiagnosticClock::time_point admitted_at =
+                DiagnosticClock::now();
+            trace_registry(
+                "batch={} request={} persona_id={} event=gate_released",
+                batch_id,
+                request_id,
+                input.run.target.id);
+            bool performing = false;
             try {
                 if (cancellation.load(std::memory_order_acquire)) {
+                    trace_registry(
+                        "batch={} request={} persona_id={} "
+                        "event=cancelled_before_prepare",
+                        batch_id,
+                        request_id,
+                        input.run.target.id);
                     publish_terminal(AgentCancelled{request_id});
                     finish();
                     return;
                 }
                 RequestPayload payload = backend.prepare(input);
+                const DiagnosticClock::time_point perform_started_at =
+                    DiagnosticClock::now();
+                performing = true;
+                trace_registry(
+                    "batch={} request={} persona_id={} event=perform_start "
+                    "after_gate_ms={:.3f}",
+                    batch_id,
+                    request_id,
+                    input.run.target.id,
+                    elapsed_milliseconds(
+                        admitted_at,
+                        perform_started_at));
+                bool first_delta = true;
                 const CompletionResult result = backend.perform(
                     std::move(payload),
-                    [this, request_id](CompletionDelta delta) {
+                    [this,
+                     request_id,
+                     perform_started_at,
+                     &first_delta](CompletionDelta delta) {
+                        published_deltas.fetch_add(
+                            1,
+                            std::memory_order_relaxed);
+                        published_bytes.fetch_add(
+                            delta.text.size(),
+                            std::memory_order_relaxed);
+                        if (first_delta) {
+                            first_delta = false;
+                            trace_registry(
+                                "batch={} request={} persona_id={} "
+                                "event=first_delta kind={} "
+                                "after_perform_ms={:.3f}",
+                                batch_id,
+                                request_id,
+                                input.run.target.id,
+                                delta_kind_name(delta.kind),
+                                elapsed_milliseconds(
+                                    perform_started_at));
+                        }
                         publish_delta(AgentDelta{
                             request_id,
                             delta.kind,
@@ -164,6 +270,16 @@ struct AgentRegistry::Impl {
                         });
                     },
                     cancellation);
+                trace_registry(
+                    "batch={} request={} persona_id={} event=perform_end "
+                    "outcome={} after_perform_ms={:.3f} deltas={} bytes={}",
+                    batch_id,
+                    request_id,
+                    input.run.target.id,
+                    outcome_name(result.outcome),
+                    elapsed_milliseconds(perform_started_at),
+                    published_deltas.load(std::memory_order_relaxed),
+                    published_bytes.load(std::memory_order_relaxed));
                 if (result.outcome == CompletionOutcome::completed) {
                     publish_terminal(AgentCompleted{request_id});
                 } else if (result.outcome == CompletionOutcome::cancelled) {
@@ -172,8 +288,24 @@ struct AgentRegistry::Impl {
                     publish_terminal(AgentFailed{request_id, result.message});
                 }
             } catch (const std::exception& error) {
+                trace_registry(
+                    "batch={} request={} persona_id={} event=exception "
+                    "phase={} after_gate_ms={:.3f}",
+                    batch_id,
+                    request_id,
+                    input.run.target.id,
+                    performing ? "perform" : "prepare",
+                    elapsed_milliseconds(admitted_at));
                 publish_failure(request_id, error.what());
             } catch (...) {
+                trace_registry(
+                    "batch={} request={} persona_id={} event=exception "
+                    "phase={} after_gate_ms={:.3f}",
+                    batch_id,
+                    request_id,
+                    input.run.target.id,
+                    performing ? "perform" : "prepare",
+                    elapsed_milliseconds(admitted_at));
                 publish_failure(
                     request_id,
                     "Unknown agent execution failure");
@@ -196,7 +328,14 @@ struct AgentRegistry::Impl {
         }
 
         ChannelReadStatus try_receive(AgentEvent& event) {
-            return events.try_get(event);
+            const ChannelReadStatus status = events.try_get(event);
+            if (status == ChannelReadStatus::value
+                && std::holds_alternative<AgentDelta>(event)) {
+                delivered_deltas.fetch_add(
+                    1,
+                    std::memory_order_relaxed);
+            }
+            return status;
         }
 
         void publish_delta(AgentEvent event) {
@@ -209,6 +348,7 @@ struct AgentRegistry::Impl {
 
         void publish_terminal(AgentEvent event) noexcept {
             events.close_with(std::move(event));
+            terminal_published.store(true, std::memory_order_release);
             notifier.wake();
         }
 
@@ -240,6 +380,7 @@ struct AgentRegistry::Impl {
             notifier.wake();
         }
 
+        BatchId batch_id{};
         CompletionInput input;
         CompletionBackend& backend;
         std::shared_ptr<StartGate> gate;
@@ -250,6 +391,10 @@ struct AgentRegistry::Impl {
         std::mutex done_mutex;
         std::condition_variable done_changed;
         bool done{};
+        std::atomic_size_t published_deltas{};
+        std::atomic_size_t delivered_deltas{};
+        std::atomic_size_t published_bytes{};
+        std::atomic_bool terminal_published{false};
     };
 
     class RegularRunner {
@@ -455,6 +600,7 @@ struct AgentRegistry::Impl {
             record->backend_index = backend_indices[index];
             record->regular = index == 0;
             record->execution = std::make_shared<Execution>(
+                batch_id,
                 std::move(inputs[index]),
                 *backends[backend_indices[index]],
                 candidate.gate,
@@ -505,18 +651,40 @@ struct AgentRegistry::Impl {
 
         static_assert(std::is_nothrow_move_constructible_v<BatchRecord>);
         batch.emplace(std::move(candidate));
+        trace_registry(
+            "batch={} event=staged runs={}",
+            batch_id,
+            record_views.size());
         return batch_id;
     }
 
     void set_foreground(BatchId batch_id, std::size_t run_index) {
-        std::lock_guard lock(state_mutex);
-        if (stopped || !batch || batch->id != batch_id
-            || run_index >= batch->runs.size()
-            || !batch->runs[run_index]) {
-            throw std::logic_error(
-                "Foreground run is not live in the agent registry");
+        std::shared_ptr<Execution> execution;
+        {
+            std::lock_guard lock(state_mutex);
+            if (stopped || !batch || batch->id != batch_id
+                || run_index >= batch->runs.size()
+                || !batch->runs[run_index]) {
+                throw std::logic_error(
+                    "Foreground run is not live in the agent registry");
+            }
+            batch->foreground = run_index;
+            execution = batch->runs[run_index]->execution;
         }
-        batch->foreground = run_index;
+        const std::size_t published =
+            execution->published_deltas.load(std::memory_order_relaxed);
+        const std::size_t delivered =
+            execution->delivered_deltas.load(std::memory_order_relaxed);
+        trace_registry(
+            "batch={} request={} persona_id={} event=foreground_set "
+            "run_index={} buffered_deltas={} published_bytes={} terminal={}",
+            batch_id,
+            execution->input.run.request_id,
+            execution->input.run.target.id,
+            run_index,
+            published - delivered,
+            execution->published_bytes.load(std::memory_order_relaxed),
+            execution->terminal_published.load(std::memory_order_acquire));
     }
 
     void open_batch_gate(BatchId batch_id) noexcept {
@@ -528,6 +696,9 @@ struct AgentRegistry::Impl {
             }
         }
         if (gate) {
+            trace_registry(
+                "batch={} event=gate_open",
+                batch_id);
             gate->open();
         }
     }

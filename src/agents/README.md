@@ -127,6 +127,13 @@ sequenceDiagram
     WN-->>M: drain child 1 channel
 ```
 
+When `CHA_LOG_FILE` enables diagnostics, the registry emits one trace at the
+gate, backend start, first delta, backend end, and each foreground selection.
+These are observation points only: logging failures are suppressed so a
+diagnostic sink cannot change execution. The `foreground_set` event reports
+how many deltas were already buffered, which separates provider/transport
+serialization from a frontend-drain problem without logging response content.
+
 Rules that fall out of this design:
 
 - **One operation, several backends.** The controller still admits one user

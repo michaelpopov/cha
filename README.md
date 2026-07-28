@@ -157,6 +157,28 @@ platforms. Unix-like builds require OpenSSL so HTTPS is always available.
 
 Before loading server configuration, the application optionally reads `.env` from the working directory. It accepts `NAME=value` entries, ignores blank lines and `#` comments, and does not replace variables already set in the process environment.
 
+### Diagnostic logging
+
+Diagnostic logging is off by default. Set `CHA_LOG_FILE` in the environment or
+in `.env` to append a file-only trace:
+
+```text
+CHA_LOG_FILE=cha.log
+```
+
+The trace never writes to the transcript or terminal streams. For each agent
+run it records the batch, request and persona IDs; gate release; backend
+`perform()` start; first received delta; completion outcome and duration; and
+the number of deltas already buffered when that run becomes foreground. It
+does not record prompts, response text, credentials, or provider error bodies.
+
+For a concurrent multicast, all children should show `perform_start` close
+together. If a later child shows `first_delta` and `perform_end` while the
+first child is still running, its backend work and local buffering were
+concurrent. If its `perform_start` is early but `first_delta` is delayed, the
+delay is below the registry boundary—for example in the transport, provider,
+or model scheduler.
+
 ## Commands
 
 - `/clear` starts a new visible history while retaining the system prompt.

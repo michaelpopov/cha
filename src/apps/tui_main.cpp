@@ -4,6 +4,7 @@
 #include "ui/tui/terminal.h"
 #include "ui/tui/user.h"
 #include "util/environment.h"
+#include "util/logging.h"
 #include "util/uv_event_loop.h"
 
 #include <exception>
@@ -27,6 +28,7 @@ int main() {
 
 int main_internal() {
     cha::load_dotenv();
+    cha::initialize_diagnostic_logging();
 
     cha::Workspace workspace;
     cha::Terminal terminal;

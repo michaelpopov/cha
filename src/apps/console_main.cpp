@@ -6,6 +6,7 @@
 #include "ui/console/transcript_emitter.h"
 #include "ui/render/transcript_writer.h"
 #include "util/environment.h"
+#include "util/logging.h"
 #include "util/utf8_path.h"
 
 #include <csignal>
@@ -40,6 +41,7 @@ int main_internal(int argc, const char* const* argv) {
     cha::enable_console_output_utf8();
 
     cha::load_dotenv();
+    cha::initialize_diagnostic_logging();
     cha::Workspace workspace;
     const auto parsed = cha::parse_console_arguments(argc, argv);
     if (const auto* error = std::get_if<cha::ArgumentError>(&parsed)) {

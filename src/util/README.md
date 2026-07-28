@@ -14,6 +14,7 @@ belongs in that directory instead.
 | `path_name.*` | `require_path_component()` — a configured name must be one safe path component. |
 | `utf8_path.*` | Converts between UTF-8 application text and native filesystem paths. |
 | `environment.*` | `load_dotenv()` — optional `.env` loading that never overrides the real environment. |
+| `logging.*` | Opt-in, file-only spdlog initialization from `CHA_LOG_FILE`. |
 | `concurrent_queue.h` | `ConcurrentQueue<T>` — a portable typed thread-safe queue. |
 | `wake_notifier.h` | `WakeNotifier` — the event-loop wake interface used by producers. |
 | `uv_event_loop.*` | `UvEventLoop` — the portable libuv loop and cross-thread wake adapter used by the terminal frontends. |
@@ -75,6 +76,15 @@ unreadable existing file is an error. Variables already present in the process
 environment always win, so a shell export beats the file — which is what makes
 `api_key_env` usable in both development and deployment.
 
+## Diagnostic logging
+
+`initialize_diagnostic_logging()` is called by each composition root after
+dotenv loading and before any worker starts. With no `CHA_LOG_FILE` it does
+nothing. With a path it creates the named, synchronous, thread-safe spdlog file
+logger used by worker instrumentation. Every diagnostic event is flushed so a
+timing investigation can inspect the file while a request is still active.
+The logger appends rather than truncating and has no console sink.
+
 ## Queue and event-loop notification
 
 Queue storage and event-loop notification are separate. `ConcurrentQueue<T>`
@@ -132,8 +142,8 @@ session layer.
 
 ## Dependencies
 
-- **Depends on:** the standard library, the process environment, libuv, and
-  toml++ (for `text_template.*` scope tables).
+- **Depends on:** the standard library, the process environment, libuv,
+  spdlog, and toml++ (for `text_template.*` scope tables).
 - **Must not depend on:** `transcript/`, `agents/`, `session/`, or
   `ui/`.
 - **Used by:** agent code, workspace and session code, the text grammar, and

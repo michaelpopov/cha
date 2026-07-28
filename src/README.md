@@ -447,8 +447,8 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | `console_tests` | Registered fork/exec tests for pipes, signals, output failures, and link dependencies. |
 | `itest` | Live integration tests driving the real stack against the checked-in `workspace/`. Run with `make itest`; not part of `make test`. |
 
-Third-party dependencies are libcurl, libuv, nlohmann/json, toml++, SQLite
-(amalgamation), and GoogleTest, plus wide ncurses when the TUI is enabled.
+Third-party dependencies are libcurl, libuv, nlohmann/json, toml++, spdlog,
+SQLite (amalgamation), and GoogleTest, plus wide ncurses when the TUI is enabled.
 Dependencies are vendored through CMake `FetchContent` when not already
 installed.
 

@@ -81,6 +81,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
+set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+set(SPDLOG_DISABLE_DEFAULT_LOGGER ON CACHE BOOL "" FORCE)
+if(WIN32)
+    set(SPDLOG_WCHAR_FILENAMES ON CACHE BOOL "" FORCE)
+endif()
+FetchContent_Declare(
+    spdlog
+    URL https://github.com/gabime/spdlog/archive/refs/tags/v1.17.0.zip
+    URL_HASH SHA256=b11912a82d149792fef33fabd0503b13d54aeac25c1464755461d4108ea71fc2
+)
+FetchContent_MakeAvailable(spdlog)
+
 set(LIBUV_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(LIBUV_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LIBUV_BUILD_BENCH OFF CACHE BOOL "" FORCE)
@@ -133,6 +148,7 @@ target_compile_definitions(
 
 add_library(cha_core STATIC
     src/util/environment.cpp
+    src/util/logging.cpp
     src/util/path_name.cpp
     src/util/text.cpp
     src/util/text_template.cpp
@@ -180,6 +196,7 @@ target_link_libraries(
         tomlplusplus::tomlplusplus
     PRIVATE
         cha_sqlite3
+        spdlog::spdlog
 )
 cha_enable_warnings(cha_core)
 
