@@ -7,6 +7,7 @@
 #include "session/session_catalog.h"
 #include "util/path_name.h"
 #include "util/text.h"
+#include "util/logging.h"
 #include "util/utf8_path.h"
 
 #include <toml++/toml.hpp>
@@ -24,6 +25,9 @@ namespace {
 std::vector<AgentDefinition> load_definitions(
     const Forum& forum,
     const std::filesystem::path& base_config_candidate) {
+    log_info(
+        "Loading forum persona definitions: forum_id=" + forum.name
+        + " personas=" + std::to_string(forum.persona_names.size()));
     std::vector<std::filesystem::path> persona_directories;
     persona_directories.reserve(forum.persona_names.size());
     for (const std::string& persona : forum.persona_names) {
@@ -98,13 +102,59 @@ std::string load_display_name(const std::filesystem::path& directory) {
 
 } // namespace
 
+ApplicationConfig load_application_config(const std::filesystem::path& root) {
+    const std::filesystem::path path = root / "app.toml";
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error(
+            "Failed to read application config '" + utf8_path(path) + "'");
+    }
+    const toml::table table = toml::parse(file, utf8_path(path));
+    const toml::table* logging = table["logging"].as_table();
+    if (!logging) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(path)
+            + "' requires a [logging] table");
+    }
+    const std::optional<std::string> log_file =
+        (*logging)["file"].value<std::string>();
+    if (!log_file || log_file->empty()) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(path)
+            + "' requires a non-empty string 'logging.file'");
+    }
+    const std::optional<std::string> log_level =
+        (*logging)["level"].value<std::string>();
+    if (!log_level || log_level->empty()) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(path)
+            + "' requires a non-empty string 'logging.level'");
+    }
+
+    std::filesystem::path log_path = path_from_utf8(*log_file);
+    if (log_path.is_relative()) {
+        log_path = root / log_path;
+    }
+    return {.log_file = std::move(log_path), .log_level = *log_level};
+}
+
 Workspace::Workspace(std::filesystem::path root)
-    : root_(std::move(root)) {
+    : Workspace(root, load_application_config(root)) {
+}
+
+Workspace::Workspace(
+    std::filesystem::path root,
+    ApplicationConfig app_config)
+    : root_(std::move(root)), app_config_(std::move(app_config)) {
     if (!std::filesystem::is_directory(root_ / "forums")) {
         throw std::runtime_error(
             "Workspace '" + utf8_path(root_)
             + "' requires a forums/ directory");
     }
+}
+
+const ApplicationConfig& Workspace::app_config() const {
+    return app_config_;
 }
 
 std::vector<std::string> Workspace::forums() const {
@@ -125,7 +175,7 @@ Forum Workspace::load_forum(const std::string& name) const {
 Forum Workspace::check_forum(const std::string& name) const {
     Forum forum = load_forum(name);
     const std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "base_config.toml");
+        forum, forum.directory / "personas" / "persona_defaults.toml");
 
     std::vector<PersonaInfo> personas;
     personas.reserve(definitions.size());
@@ -164,10 +214,11 @@ CreatedSession Workspace::create_session(
     WakeNotifier& notifier) const {
     const Forum forum = load_forum(forum_name);
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "base_config.toml");
+        forum, forum.directory / "personas" / "persona_defaults.toml");
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
 
     const Session session = catalog.create(std::move(label));
+    log_info("Session created");
     return {
         .controller = SessionController::from_definitions(
             std::move(definitions),
@@ -183,12 +234,13 @@ std::unique_ptr<SessionController> Workspace::open_session(
     WakeNotifier& notifier) const {
     const Forum forum = load_forum(forum_name);
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "base_config.toml");
+        forum, forum.directory / "personas" / "persona_defaults.toml");
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
 
     const std::filesystem::path database_path =
         catalog.open_database_path(session_id);
     SessionRestore restored = load_session_state(database_path);
+    log_info("Session opened");
     return SessionController::from_definitions(
         std::move(definitions),
         database_path,

@@ -24,8 +24,8 @@ completion pool tasks.
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
-        base["forums/R/personas/base_config.toml<br/>optional forum defaults + [prompt]"]
-        cfg["forums/R/personas/X/config.toml"]
+        base["forums/R/personas/persona_defaults.toml<br/>optional forum defaults + [prompt]"]
+        cfg["forums/R/personas/X/persona.toml"]
         sys["forums/R/personas/X/SYSTEM.md"]
         usr["forums/R/USER.md"]
         shared["shared prompt files under the forum"]
@@ -51,7 +51,7 @@ The effective system prompt is the expanded persona `SYSTEM.md`, followed by the
 expanded forum `USER.md`, followed by generated forum context. Expansion is
 implemented in `util/text_template.*`; this layer supplies the policy: forum
 directory as containment root, reserved `persona.*` / `forum.*` names, and the
-base-then-persona `[prompt]` initial scope. An adjacent `config.toml` overlays
+base-then-persona `[prompt]` initial scope. An adjacent template `config.toml` overlays
 that inherited scope for its template directory and descendants; reserved
 loader values always win. The generated section names the current agent, lists
 the other current personas, and defines how quoted shared history is encoded.
@@ -62,9 +62,9 @@ to load, `agents/` decides *how*.
 
 Configuration is a one-level overlay, not general inheritance. Built-in
 defaults are applied first, then the optional forum
-`personas/base_config.toml`, then the persona's own `config.toml`. An omitted
+`personas/persona_defaults.toml`, then the persona's own `persona.toml`. An omitted
 field inherits the value below it. The persona directory name provides the ID,
-and each persona file must define `display_name`; the base file must not. The
+and each persona file must define `display_name`; the defaults file must not. The
 removed `id` and `name` fields are rejected. Parsing and validation errors
 identify the file that supplied the invalid value.
 

@@ -41,8 +41,13 @@ int main_internal(int argc, const char* const* argv) {
     cha::enable_console_output_utf8();
 
     cha::load_dotenv();
-    cha::initialize_diagnostic_logging();
-    cha::Workspace workspace;
+    const cha::ApplicationConfig app_config =
+        cha::load_application_config();
+    cha::initialize_diagnostic_logging(
+        app_config.log_file,
+        app_config.log_level);
+    cha::log_info("Console application started");
+    cha::Workspace workspace(".", app_config);
     const auto parsed = cha::parse_console_arguments(argc, argv);
     if (const auto* error = std::get_if<cha::ArgumentError>(&parsed)) {
         std::cerr << error->message << '\n';
@@ -103,7 +108,9 @@ int main_internal(int argc, const char* const* argv) {
             .show_prompt = input_is_tty,
             .backpressure_stdin = !input_is_tty,
         });
-    return session.run();
+    const int exit_code = session.run();
+    cha::log_info("Console application stopped");
+    return exit_code;
 }
 
 } // namespace
@@ -112,6 +119,7 @@ int run_main(int argc, const char* const* argv) {
     try {
         return main_internal(argc, argv);
     } catch (const std::exception& error) {
+        cha::log_critical("Console application terminated by an unhandled exception");
         std::cerr << "Failed: " << error.what() << '\n';
         return 1;
     }

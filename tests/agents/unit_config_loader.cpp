@@ -225,8 +225,8 @@ TEST(Config, OverlaysPersonaValuesOnWorkspaceDefaults) {
            + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(directory);
-    const auto base_path = directory / "base_config.toml";
-    const auto persona_path = directory / "config.toml";
+    const auto base_path = directory / "persona_defaults.toml";
+    const auto persona_path = directory / "persona.toml";
     {
         std::ofstream base(base_path);
         base << "host = \"shared.example\"\n"
@@ -269,8 +269,8 @@ TEST(Config, RejectsDisplayNameInWorkspaceDefaults) {
            + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(directory);
-    const auto base_path = directory / "base_config.toml";
-    const auto persona_path = directory / "config.toml";
+    const auto base_path = directory / "persona_defaults.toml";
+    const auto persona_path = directory / "persona.toml";
     {
         std::ofstream base(base_path);
         base << "display_name = \"Shared\"\n"
@@ -301,8 +301,8 @@ TEST(Config, LoadsPromptVariablesWithTheSameOverlayAsTheConnectionConfig) {
            + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(directory);
-    const auto base_path = directory / "base_config.toml";
-    const auto persona_path = directory / "config.toml";
+    const auto base_path = directory / "persona_defaults.toml";
+    const auto persona_path = directory / "persona.toml";
     {
         std::ofstream base(base_path);
         base << "host = \"shared.example\"\n"
@@ -349,8 +349,8 @@ TEST(Config, IdentifiesInvalidWorkspaceDefaultSource) {
            + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(directory);
-    const auto base_path = directory / "base_config.toml";
-    const auto persona_path = directory / "config.toml";
+    const auto base_path = directory / "persona_defaults.toml";
+    const auto persona_path = directory / "persona.toml";
     {
         std::ofstream base(base_path);
         base << "host = \"shared.example\"\n"

@@ -1,6 +1,7 @@
 #include "session/session_catalog.h"
 
 #include "util/path_name.h"
+#include "util/logging.h"
 #include "util/utf8_path.h"
 #include "session/session_database.h"
 
@@ -103,6 +104,9 @@ std::vector<Session> SessionCatalog::list() const {
             label = metadata.label;
         } catch (const std::exception& exception) {
             error = exception.what();
+            log_warn(
+                "Invalid session database ignored: path=" + utf8_path(entry.path())
+                + " reason=" + error);
             label += " [invalid database]";
         }
         result.push_back({id, std::move(label), std::move(error)});

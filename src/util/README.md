@@ -14,7 +14,7 @@ belongs in that directory instead.
 | `path_name.*` | `require_path_component()` — a configured name must be one safe path component. |
 | `utf8_path.*` | Converts between UTF-8 application text and native filesystem paths. |
 | `environment.*` | `load_dotenv()` — optional `.env` loading that never overrides the real environment. |
-| `logging.*` | Opt-in, file-only spdlog initialization from `CHA_LOG_FILE`. |
+| `logging.*` | File-only spdlog initialization from workspace application settings. |
 | `concurrent_queue.h` | `ConcurrentQueue<T>` — a portable typed thread-safe queue. |
 | `thread_pool.*` | `ThreadPool` — a fixed-size executor for session-scoped blocking work. |
 | `wake_notifier.h` | `WakeNotifier` — the event-loop wake interface used by producers. |
@@ -79,12 +79,14 @@ environment always win, so a shell export beats the file — which is what makes
 
 ## Diagnostic logging
 
-`initialize_diagnostic_logging()` is called by each composition root after
-dotenv loading and before any worker starts. With no `CHA_LOG_FILE` it does
-nothing. With a path it creates the named, synchronous, thread-safe spdlog file
+`initialize_diagnostic_logging()` is called by each composition root after it
+loads the workspace's `app.toml` and before any worker starts. The configured
+level `off` leaves logging disabled; supported levels are `trace`, `debug`,
+`info`, `warn`, `error`, and `critical`. Every enabled level creates any missing
+parent directories and opens the named, synchronous, thread-safe spdlog file
 logger used by worker instrumentation. Every diagnostic event is flushed so a
-timing investigation can inspect the file while a request is still active.
-The logger appends rather than truncating and has no console sink.
+timing investigation can inspect the file while a request is still active. The
+logger has no console sink and rotates at 10 MiB, retaining three files.
 
 ## Queue and event-loop notification
 

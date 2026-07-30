@@ -51,7 +51,7 @@ TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
     std::filesystem::create_directories(persona);
     std::filesystem::create_directories(forum);
     {
-        std::ofstream config(persona / "config.toml");
+        std::ofstream config(persona / "persona.toml");
         config << "display_name = \"Guide\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
@@ -83,7 +83,7 @@ TEST(AgentDefinitions, RequiresBothPromptFiles) {
     std::filesystem::create_directories(persona);
     std::filesystem::create_directories(forum);
     {
-        std::ofstream config(persona / "config.toml");
+        std::ofstream config(persona / "persona.toml");
         config << "display_name = \"Guide\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
@@ -114,7 +114,7 @@ std::filesystem::path make_persona(
     std::string_view name) {
     const std::filesystem::path persona = root / directory_name;
     std::filesystem::create_directories(persona);
-    std::ofstream config(persona / "config.toml");
+    std::ofstream config(persona / "persona.toml");
     config << "display_name = \"" << name << "\"\n"
            << "host = \"127.0.0.1\"\n"
            << "port = 8080\n";
@@ -188,12 +188,12 @@ TEST(AgentDefinitions, ExpandsTemplatesInSystemAndUserPrompts) {
     {
         std::ofstream forum_config(forum / "config.toml");
         forum_config << "display_name = \"The Stoics Forum\"\n";
-        std::ofstream base(personas / "base_config.toml");
+        std::ofstream base(personas / "persona_defaults.toml");
         base << "host = \"127.0.0.1\"\n"
              << "port = 8080\n"
              << "[prompt]\n"
              << "register = \"measured\"\n";
-        std::ofstream config(persona / "config.toml");
+        std::ofstream config(persona / "persona.toml");
         config << "display_name = \"Seneca\"\n"
                << "[prompt]\n"
                << "register = \"energetic\"\n";
@@ -210,7 +210,7 @@ TEST(AgentDefinitions, ExpandsTemplatesInSystemAndUserPrompts) {
         {persona},
         forum,
         "The Stoics Forum",
-        personas / "base_config.toml");
+        personas / "persona_defaults.toml");
 
     ASSERT_EQ(definitions.size(), 1U);
     expect_forum_context(
@@ -230,7 +230,7 @@ TEST(AgentDefinitions, WrapsExpansionFailuresWithPersonaAndChain) {
     const std::filesystem::path persona = forum / "personas" / "seneca";
     std::filesystem::create_directories(persona);
     {
-        std::ofstream config(persona / "config.toml");
+        std::ofstream config(persona / "persona.toml");
         config << "display_name = \"Seneca\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
@@ -263,12 +263,12 @@ TEST(AgentDefinitions, IdentifiesInvalidPromptVariableConfiguration) {
     const std::filesystem::path persona = personas / "seneca";
     std::filesystem::create_directories(persona);
     {
-        std::ofstream base(personas / "base_config.toml");
+        std::ofstream base(personas / "persona_defaults.toml");
         base << "host = \"127.0.0.1\"\n"
              << "port = 8080\n"
              << "[prompt]\n"
              << "unsupported = [1, 2]\n";
-        std::ofstream config(persona / "config.toml");
+        std::ofstream config(persona / "persona.toml");
         config << "display_name = \"Seneca\"\n";
         std::ofstream system_prompt(persona / "SYSTEM.md");
         system_prompt << "system\n";
@@ -281,7 +281,7 @@ TEST(AgentDefinitions, IdentifiesInvalidPromptVariableConfiguration) {
             {persona},
             forum,
             "Forum",
-            personas / "base_config.toml");
+            personas / "persona_defaults.toml");
         FAIL() << "expected invalid prompt-variable configuration";
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
@@ -289,7 +289,7 @@ TEST(AgentDefinitions, IdentifiesInvalidPromptVariableConfiguration) {
             message.find("Persona 'seneca' has invalid configuration"),
             std::string::npos)
             << message;
-        EXPECT_NE(message.find("base_config.toml"), std::string::npos)
+        EXPECT_NE(message.find("persona_defaults.toml"), std::string::npos)
             << message;
         EXPECT_NE(message.find("unsupported type"), std::string::npos)
             << message;

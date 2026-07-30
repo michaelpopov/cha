@@ -6,13 +6,27 @@ line-oriented `chacon` console frontend.
 
 ## Workspace configuration
 
-Run either executable from a workspace containing `forums/`.
+Run either executable from a workspace containing `app.toml` and `forums/`.
 Each immediate subdirectory of `forums/` is a forum; forums are presented in
 lexicographic name order. At `cha` startup, a terminal selector lets you choose
 a forum and then an existing session or **New session**. `chacon` makes the same
 selection through command-line options.
 
-Each forum has `config.toml` with a required `display_name` string, a `personas/` directory with one or more persona subdirectories, and `USER.md`. The directory name is the stable forum ID used by `chacon --forum`; the display name is shown in the UI and forum listings. A forum is also the unit of distribution: it can be zipped and unpacked into another workspace. Each persona is loaded from `forums/<forum>/personas/<persona>/config.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (expanded `SYSTEM.md`, followed by expanded `USER.md`, followed by generated forum context that identifies the agent and the forum's other personas). Persona directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
+`app.toml` configures application-wide behavior. Its logging section requires
+a log file and level; relative log paths are resolved from the workspace root.
+
+```toml
+# app.toml
+[logging]
+file = "logs/cha.log"
+level = "info"
+```
+
+Supported levels are `trace`, `debug`, `info`, `warn`, `error`, `critical`,
+and `off`. When logging is enabled, missing parent directories for `file` are
+created automatically. Logs rotate at 10 MiB and retain three files.
+
+Each forum has `config.toml` with a required `display_name` string, a `personas/` directory with one or more persona subdirectories, and `USER.md`. The directory name is the stable forum ID used by `chacon --forum`; the display name is shown in the UI and forum listings. A forum is also the unit of distribution: it can be zipped and unpacked into another workspace. Each persona is loaded from `forums/<forum>/personas/<persona>/persona.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (expanded `SYSTEM.md`, followed by expanded `USER.md`, followed by generated forum context that identifies the agent and the forum's other personas). Persona directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
 Each persona directory's name is its stable ID and identifies transcript entries;
 its `display_name` is the visible `@mention` handle. Display names cannot start
@@ -28,10 +42,10 @@ even if the forum's personas changed.
 
 Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and forum must match the selected forum before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
 
-`forums/<forum>/personas/base_config.toml` may define configuration shared by every persona in
-that forum. A persona's own `config.toml` overrides it field by field. The
-precedence is built-in defaults, then `base_config.toml`, then the persona
-file. The base file is optional; it cannot define `display_name`.
+`forums/<forum>/personas/persona_defaults.toml` may define configuration shared by every persona in
+that forum. A persona's own `persona.toml` overrides it field by field. The
+precedence is built-in defaults, then `persona_defaults.toml`, then the persona
+file. The defaults file is optional; it cannot define `display_name`.
 
 ### Prompt templates
 
@@ -54,11 +68,11 @@ Variables come from a `[prompt]` table (never from top-level connection fields
 such as `api_key`) and from reserved names supplied by the loader:
 
 ```toml
-# forums/example/personas/base_config.toml
+# forums/example/personas/persona_defaults.toml
 [prompt]
 register = "measured"
 
-# forums/example/personas/local-assistant/config.toml
+# forums/example/personas/local-assistant/persona.toml
 [prompt]
 register = "energetic"
 ```
@@ -70,7 +84,7 @@ You are portraying $${persona.display_name} in $${forum.display_name}.
 
 The initial variable scope is the base `[prompt]` table overlaid by the
 persona's `[prompt]` table. When a template or included file is read, a
-`[prompt]` table in that file's adjacent `config.toml` overlays the inherited
+`[prompt]` table in a template directory's adjacent `config.toml` overlays the inherited
 scope for that file and its descendants. Values may be strings, integers,
 floating-point numbers, or booleans. Variable names may contain ASCII letters,
 digits, `_`, `-`, and `.`.
@@ -100,13 +114,13 @@ The following top-level configuration fields are supported:
 
 For compatibility with older persona files, `name` is accepted when
 `display_name` is absent, and `id` can override the directory-derived ID.
-Neither legacy identity field is allowed in `base_config.toml`; new persona
+Neither legacy identity field is allowed in `persona_defaults.toml`; new persona
 files should use `display_name` and their directory name.
 
 Example:
 
 ```toml
-# forums/example/personas/base_config.toml
+# forums/example/personas/persona_defaults.toml
 host = "127.0.0.1"
 port = 8080
 mode = "net"
@@ -117,7 +131,7 @@ reasoning_format = "auto"
 ```
 
 ```toml
-# forums/example/personas/local-assistant/config.toml
+# forums/example/personas/local-assistant/persona.toml
 display_name = "Local assistant"
 temperature = 0.7
 ```
@@ -159,25 +173,15 @@ Before loading server configuration, the application optionally reads `.env` fro
 
 ### Diagnostic logging
 
-Diagnostic logging is off by default. Set `CHA_LOG_FILE` in the environment or
-in `.env` to append a file-only trace:
+Diagnostic logging is configured by the workspace's `app.toml`. Set
+`[logging].level` to `off` to disable it; otherwise logs append to
+`[logging].file`. The application records lifecycle events at `info`, routine
+cancellations at `info`, agent and persistence failures at `error`, and
+unhandled top-level failures at `critical`. `debug` and `trace` are available
+for detailed transport diagnostics.
 
-```text
-CHA_LOG_FILE=cha.log
-```
-
-The trace never writes to the transcript or terminal streams. For each agent
-run it records the batch, request and persona IDs; gate release; backend
-`perform()` start; first received delta; completion outcome and duration; and
-the number of deltas already buffered when that run becomes foreground. It
-does not record prompts, response text, credentials, or provider error bodies.
-
-For a concurrent multicast, all children should show `perform_start` close
-together. If a later child shows `first_delta` and `perform_end` while the
-first child is still running, its backend work and local buffering were
-concurrent. If its `perform_start` is early but `first_delta` is delayed, the
-delay is below the registry boundary—for example in the transport, provider,
-or model scheduler.
+Logs never write to the transcript or terminal streams. They do not record
+prompts, response text, credentials, or provider error bodies.
 
 ## Commands
 

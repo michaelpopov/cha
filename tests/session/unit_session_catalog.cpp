@@ -27,12 +27,18 @@ protected:
             root / "forums" / "lobby" / "personas" / "guide");
         std::filesystem::create_directories(root / "forums" / "lobby" / "sessions");
         {
+            std::ofstream file(root / "app.toml");
+            file << "[logging]\n"
+                 << "file = \"logs/cha.log\"\n"
+                 << "level = \"off\"\n";
+        }
+        {
             std::ofstream file(root / "forums" / "lobby" / "config.toml");
             file << "display_name = \"The Lobby\"\n";
         }
         {
             std::ofstream file(
-                root / "forums" / "lobby" / "personas" / "guide" / "config.toml");
+                root / "forums" / "lobby" / "personas" / "guide" / "persona.toml");
             file << "display_name = \"Guide\"\n"
                  << "host = \"127.0.0.1\"\nport = 8080\n";
         }

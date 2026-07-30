@@ -29,13 +29,16 @@ public:
         std::filesystem::create_directories(
             forum / "personas" / "Guide");
         std::filesystem::create_directories(sessions);
+        write(
+            root / "app.toml",
+            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n");
         write(forum / "config.toml", "display_name = \"The Hall\"\n");
         write(forum / "USER.md", "Forum instructions\n");
         write(
-            forum / "personas" / "base_config.toml",
+            forum / "personas" / "persona_defaults.toml",
             "host = \"127.0.0.1\"\nport = 8080\n");
         write(
-            forum / "personas" / "Guide" / "config.toml",
+            forum / "personas" / "Guide" / "persona.toml",
             "display_name = \"Guide\"\n");
         write(
             forum / "personas" / "Guide" / "SYSTEM.md",

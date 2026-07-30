@@ -1,5 +1,7 @@
 #include "session/session_controller.h"
 
+#include "util/logging.h"
+
 #include <exception>
 #include <sstream>
 #include <stdexcept>
@@ -10,11 +12,24 @@
 namespace cha {
 namespace {
 
+void log_persistence_failure(
+    const std::string& action,
+    std::string_view details) noexcept {
+    try {
+        log_error(
+            "Session persistence failed: " + action + "; reason="
+            + std::string(details));
+    } catch (...) {
+        log_error("Session persistence failed");
+    }
+}
+
 template<typename Operation>
 void persist(std::string action, Operation&& operation) {
     try {
         operation();
     } catch (const std::exception& error) {
+        log_persistence_failure(action, error.what());
         throw std::runtime_error(
             "Failed to " + std::move(action) + ": " + error.what());
     }
@@ -636,6 +651,7 @@ SessionUpdate SessionController::request_stop() {
     }
 
     if (!batch_->abort_requested) {
+        log_info("Session generation cancellation requested");
         batch_->abort_requested = true;
         registry_.cancel_batch();
     }
@@ -753,6 +769,7 @@ void SessionController::fail_active_response(
         std::move(message),
         active_->request_id,
         std::move(participant_id));
+    log_error("Session generation failed");
     persist(
         request_action(
             "persist failure of",
@@ -815,6 +832,7 @@ void SessionController::shutdown() {
     if (shutdown_) {
         return;
     }
+    log_info("Session controller shutting down");
     shutdown_ = true;
     if (batch_) {
         batch_->abort_requested = true;

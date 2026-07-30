@@ -239,6 +239,7 @@ if(BUILD_TESTING)
 
     set(CHA_TEST_SOURCES
         tests/util/unit_environment.cpp
+        tests/util/unit_logging.cpp
         tests/util/unit_thread_pool.cpp
         tests/util/unit_concurrent_queue.cpp
         tests/util/unit_text.cpp
@@ -282,7 +283,9 @@ if(BUILD_TESTING)
 
     add_executable(cha_tests ${CHA_TEST_SOURCES})
     # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
-    target_link_libraries(cha_tests PRIVATE cha_core cha_sqlite3 GTest::gtest_main)
+    target_link_libraries(
+        cha_tests
+        PRIVATE cha_core cha_sqlite3 GTest::gtest_main)
     if(CHA_BUILD_TUI)
         target_link_libraries(cha_tests PRIVATE cha_tui)
     endif()

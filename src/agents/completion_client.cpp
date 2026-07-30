@@ -2,16 +2,19 @@
 
 #include "agents/agent.h"
 #include "agents/json_serialization.h"
+#include "util/logging.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -347,6 +350,28 @@ std::string sanitize_content_type(std::string_view content_type) {
     return result.empty() ? "unknown" : result;
 }
 
+double elapsed_milliseconds(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+}
+
+std::string http_event(
+    std::string_view event,
+    std::string_view endpoint,
+    long status,
+    std::string_view content_type,
+    std::size_t request_bytes,
+    std::size_t response_bytes,
+    double duration_ms) {
+    return "HTTP " + std::string(event)
+        + ": endpoint=" + std::string(endpoint)
+        + " status=" + std::to_string(status)
+        + " content_type=" + sanitize_content_type(content_type)
+        + " request_bytes=" + std::to_string(request_bytes)
+        + " response_bytes=" + std::to_string(response_bytes)
+        + " duration_ms=" + std::to_string(duration_ms);
+}
+
 std::string streaming_metadata(
     long status,
     std::string_view content_type,
@@ -439,61 +464,79 @@ CompletionClient::~CompletionClient() = default;
 
 void CompletionClient::discover_model() {
     ResponseContext response{.streaming = false};
-
-    curl_->reset();
     const std::string url = models_endpoint();
-    curl_->set(CURLOPT_URL, url.c_str(), "Failed to configure models request URL");
-    curl_->set(CURLOPT_HTTPGET, 1L, "Failed to configure models request");
-    curl_->set(CURLOPT_WRITEFUNCTION, receive_response, "Failed to configure models response callback");
-    curl_->set(CURLOPT_WRITEDATA, &response, "Failed to configure models response destination");
-    curl_->set(CURLOPT_CONNECTTIMEOUT, 10L, "Failed to configure models connection timeout");
-    // Model discovery is a small metadata request and must not block startup indefinitely.
-    curl_->set(CURLOPT_TIMEOUT, 10L, "Failed to configure models request timeout");
-    curl_->set(CURLOPT_NOSIGNAL, 1L, "Failed to configure libcurl signals");
-
-    curl_slist* raw_headers = nullptr;
-    raw_headers = curl_slist_append(raw_headers, "Accept: application/json");
-    if (!api_key_.empty()) {
-        raw_headers = curl_slist_append(
-            raw_headers,
-            ("Authorization: Bearer " + api_key_).c_str());
-    }
-    if (!raw_headers) {
-        throw std::runtime_error("Failed to create models request headers");
-    }
-    CurlHeaders headers(raw_headers);
-    curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure models request headers");
-
-    const CURLcode perform_result = curl_->perform();
-    if (response.error) {
-        std::rethrow_exception(response.error);
-    }
-    if (perform_result != CURLE_OK) {
-        throw std::runtime_error(
-            "Models request failed: "
-            + std::string(curl_easy_strerror(perform_result)));
-    }
-
-    const long status = curl_->response_code(
-        "Failed to read models response status");
-    if (status < 200 || status >= 300) {
-        throw std::runtime_error(
-            "Models request returned HTTP " + std::to_string(status)
-            + ": " + response_error(response.body));
-    }
-
+    const auto started_at = std::chrono::steady_clock::now();
+    log_info("Model discovery started: endpoint=" + url);
     try {
-        const Json value = Json::parse(response.body);
-        const Json::json_pointer model_pointer("/data/0/id");
-        if (!value.contains(model_pointer)
-            || !value.at(model_pointer).is_string()) {
-            throw std::runtime_error(
-                "Models response did not contain data[0].id");
+        curl_->reset();
+        curl_->set(CURLOPT_URL, url.c_str(), "Failed to configure models request URL");
+        curl_->set(CURLOPT_HTTPGET, 1L, "Failed to configure models request");
+        curl_->set(CURLOPT_WRITEFUNCTION, receive_response, "Failed to configure models response callback");
+        curl_->set(CURLOPT_WRITEDATA, &response, "Failed to configure models response destination");
+        curl_->set(CURLOPT_CONNECTTIMEOUT, 10L, "Failed to configure models connection timeout");
+        // Model discovery is a small metadata request and must not block startup indefinitely.
+        curl_->set(CURLOPT_TIMEOUT, 10L, "Failed to configure models request timeout");
+        curl_->set(CURLOPT_NOSIGNAL, 1L, "Failed to configure libcurl signals");
+
+        curl_slist* raw_headers = nullptr;
+        raw_headers = curl_slist_append(raw_headers, "Accept: application/json");
+        if (!api_key_.empty()) {
+            raw_headers = curl_slist_append(
+                raw_headers,
+                ("Authorization: Bearer " + api_key_).c_str());
         }
-        config_.model = value.at(model_pointer).get<std::string>();
-    } catch (const Json::exception& error) {
-        throw std::runtime_error(
-            "Failed to parse models response: " + std::string(error.what()));
+        if (!raw_headers) {
+            throw std::runtime_error("Failed to create models request headers");
+        }
+        CurlHeaders headers(raw_headers);
+        curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure models request headers");
+
+        const CURLcode perform_result = curl_->perform();
+        if (response.error) {
+            std::rethrow_exception(response.error);
+        }
+        if (perform_result != CURLE_OK) {
+            throw std::runtime_error(
+                "Models request failed: "
+                + std::string(curl_easy_strerror(perform_result)));
+        }
+
+        const long status = curl_->response_code(
+            "Failed to read models response status");
+        const std::string content_type = curl_->content_type(
+            "Failed to read models response content type");
+        if (status < 200 || status >= 300) {
+            throw std::runtime_error(
+                "Models request returned HTTP " + std::to_string(status)
+                + ": " + response_error(response.body));
+        }
+
+        try {
+            const Json value = Json::parse(response.body);
+            const Json::json_pointer model_pointer("/data/0/id");
+            if (!value.contains(model_pointer)
+                || !value.at(model_pointer).is_string()) {
+                throw std::runtime_error(
+                    "Models response did not contain data[0].id");
+            }
+            config_.model = value.at(model_pointer).get<std::string>();
+        } catch (const Json::exception& error) {
+            throw std::runtime_error(
+                "Failed to parse models response: " + std::string(error.what()));
+        }
+        log_info(
+            "Model discovery completed: endpoint=" + url
+            + " model=" + config_.model
+            + " status=" + std::to_string(status)
+            + " content_type=" + sanitize_content_type(content_type)
+            + " response_bytes=" + std::to_string(response.received_bytes)
+            + " duration_ms=" + std::to_string(elapsed_milliseconds(started_at)));
+    } catch (const std::exception&) {
+        log_error(
+            "Model discovery failed: endpoint=" + url
+            + " response_bytes=" + std::to_string(response.received_bytes)
+            + " duration_ms=" + std::to_string(elapsed_milliseconds(started_at)));
+        throw;
     }
 }
 
@@ -514,6 +557,7 @@ CompletionResult CompletionClient::perform(
     const CompletionDeltaSink& on_delta,
     const std::atomic_bool& cancellation) {
     if (cancellation.load(std::memory_order_acquire)) {
+        log_info("HTTP completion skipped because cancellation was already requested");
         return {CompletionOutcome::cancelled, {}};
     }
     if (config_.mode == Mode::test) {
@@ -533,6 +577,35 @@ CompletionResult CompletionClient::perform(
 
     curl_->reset();
     const std::string url = endpoint();
+    const auto started_at = std::chrono::steady_clock::now();
+    log_debug(
+        "HTTP request started: endpoint=" + url
+        + " request_bytes=" + std::to_string(request_body.size()));
+    const auto complete = [&response, &url, &request_body, started_at](
+                              CompletionResult result,
+                              long status,
+                              std::string_view content_type) {
+        const std::string message = http_event(
+            result.outcome == CompletionOutcome::completed
+                ? "request completed"
+                : result.outcome == CompletionOutcome::cancelled
+                ? "request cancelled"
+                : "request failed",
+            url,
+            status,
+            content_type,
+            request_body.size(),
+            response.received_bytes,
+            elapsed_milliseconds(started_at));
+        if (result.outcome == CompletionOutcome::completed) {
+            log_info(message);
+        } else if (result.outcome == CompletionOutcome::cancelled) {
+            log_info(message);
+        } else {
+            log_error(message);
+        }
+        return result;
+    };
     curl_->set(CURLOPT_URL, url.c_str(), "Failed to configure request URL");
     curl_->set(CURLOPT_POST, 1L, "Failed to configure POST request");
     curl_->set(CURLOPT_POSTFIELDS, request_body.data(), "Failed to configure request body");
@@ -572,18 +645,26 @@ CompletionResult CompletionClient::perform(
 
     const CURLcode perform_result = curl_->perform();
     if (response.error) {
+        log_error(http_event(
+            "response processing failed",
+            url,
+            0,
+            "unknown",
+            request_body.size(),
+            response.received_bytes,
+            elapsed_milliseconds(started_at)));
         std::rethrow_exception(response.error);
     }
     if (perform_result == CURLE_ABORTED_BY_CALLBACK
         && cancellation.load(std::memory_order_acquire)) {
-        return {CompletionOutcome::cancelled, {}};
+        return complete({CompletionOutcome::cancelled, {}}, 0, "unknown");
     }
     if (perform_result != CURLE_OK) {
-        return {
+        return complete({
             CompletionOutcome::transport_error,
             "HTTP request failed: "
                 + std::string(curl_easy_strerror(perform_result)),
-        };
+        }, 0, "unknown");
     }
 
     const long status = curl_->response_code(
@@ -591,11 +672,11 @@ CompletionResult CompletionClient::perform(
     const std::string content_type = curl_->content_type(
         "Failed to read HTTP content type");
     if (status < 200 || status >= 300) {
-        return {
+        return complete({
             CompletionOutcome::protocol_error,
             "Inference server returned HTTP " + std::to_string(status)
                 + ": " + response_error(response.body),
-        };
+        }, status, content_type);
     }
 
     if (config_.stream) {
@@ -604,17 +685,17 @@ CompletionResult CompletionClient::perform(
             response.pending.clear();
         }
         if (!response.protocol_error.empty()) {
-            return {
+            return complete({
                 CompletionOutcome::protocol_error,
                 response.protocol_error
                     + streaming_metadata(
                         status,
                         content_type,
                         response.received_bytes),
-            };
+            }, status, content_type);
         }
         if (!response.done) {
-            return {
+            return complete({
                 CompletionOutcome::protocol_error,
                 (response.received_output()
                     ? "Streaming response ended before [DONE]"
@@ -623,53 +704,53 @@ CompletionResult CompletionClient::perform(
                         status,
                         content_type,
                         response.received_bytes),
-            };
+            }, status, content_type);
         }
         if (!response.received_answer) {
-            return {
+            return complete({
                 CompletionOutcome::protocol_error,
                 "Streaming response completed without answer content",
-            };
+            }, status, content_type);
         }
-        return {CompletionOutcome::completed, {}};
+        return complete({CompletionOutcome::completed, {}}, status, content_type);
     }
 
     Json value;
     try {
         value = Json::parse(response.body);
     } catch (const Json::exception& error) {
-        return {
+        return complete({
             CompletionOutcome::protocol_error,
             "Inference server returned invalid JSON: "
                 + std::string(error.what()),
-        };
+        }, status, content_type);
     }
     const Json::json_pointer message_pointer(
         "/choices/0/message");
     if (!value.contains(message_pointer)
         || !value.at(message_pointer).is_object()) {
-        return {
+        return complete({
             CompletionOutcome::protocol_error,
             "Response did not contain choices[0].message",
-        };
+        }, status, content_type);
     }
     process_response_object(
         value.at(message_pointer),
         config_.reasoning_format,
         response);
     if (!response.protocol_error.empty()) {
-        return {
+        return complete({
             CompletionOutcome::protocol_error,
             response.protocol_error,
-        };
+        }, status, content_type);
     }
     if (!response.received_answer) {
-        return {
+        return complete({
             CompletionOutcome::protocol_error,
             "Response completed without answer content",
-        };
+        }, status, content_type);
     }
-    return {CompletionOutcome::completed, {}};
+    return complete({CompletionOutcome::completed, {}}, status, content_type);
 }
 
 AgentRuntimeInfo CompletionClient::info() const {

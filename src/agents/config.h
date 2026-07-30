@@ -45,7 +45,7 @@ struct Config {
 };
 
 // The typed connection configuration and initial template scope loaded from
-// one persona file. The optional base file supplies defaults to both.
+// one persona file. The optional defaults file supplies defaults to both.
 struct LoadedConfig {
     Config config;
     TemplateScope prompt_variables;

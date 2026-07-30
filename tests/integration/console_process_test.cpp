@@ -79,10 +79,13 @@ public:
         std::filesystem::create_directories(
             path_ / "forums" / "hall" / "sessions");
         write_file(
+            path_ / "app.toml",
+            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
+        write_file(
             path_ / "forums" / "hall" / "config.toml",
             "display_name = \"The Hall\"\n");
         write_file(
-            path_ / "forums" / "hall" / "personas" / "Ismael" / "config.toml",
+            path_ / "forums" / "hall" / "personas" / "Ismael" / "persona.toml",
             "display_name = \"Ismael\"\n");
         write_file(
             path_ / "forums" / "hall" / "personas" / "Ismael" / "SYSTEM.md",
@@ -99,7 +102,7 @@ public:
 
     void point_at(int port) const {
         write_file(
-            path_ / "forums" / "hall" / "personas" / "base_config.toml",
+            path_ / "forums" / "hall" / "personas" / "persona_defaults.toml",
             "host = \"127.0.0.1\"\n"
             "port = " + std::to_string(port) + "\n"
             "https = false\n"
@@ -483,7 +486,7 @@ TEST(ConsoleProcess, CheckValidatesWithoutCreatingASessionOrConnecting) {
     // --check neither initializes completion clients nor performs requests.
     write_file(
         workspace.path()
-            / "forums" / "hall" / "personas" / "base_config.toml",
+            / "forums" / "hall" / "personas" / "persona_defaults.toml",
         "host = \"127.0.0.1\"\n"
         "port = 9\n"
         "https = false\n"

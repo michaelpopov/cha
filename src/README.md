@@ -10,11 +10,11 @@ user-facing manual is the [top-level `README.md`](../README.md).
 ## System overview
 
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
-It runs inside a workspace containing persona definitions and forums. A persona
+It runs inside a workspace containing `app.toml`, persona definitions, and forums. A persona
 definition contains an identity, effective model configuration, and base
 system-prompt template. Its model configuration and prompt variables may
 inherit shared values from the
-selected forum's optional `personas/base_config.toml`; persona-specific values
+selected forum's optional `personas/persona_defaults.toml`; persona-specific values
 override them. A forum contains an ordered list of the personas participating in
 chats in that forum, together with a forum-specific system-prompt template.
 When the forum is loaded, the persona's expanded `SYSTEM.md` is followed by the

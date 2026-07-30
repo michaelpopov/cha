@@ -1,12 +1,10 @@
 #include "agents/agent_registry.h"
 
 #include "agents/completion_client.h"
+#include "util/logging.h"
 #include "util/text.h"
 
-#include <spdlog/spdlog.h>
-
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <exception>
 #include <mutex>
@@ -20,51 +18,6 @@
 
 namespace cha {
 namespace {
-
-using DiagnosticClock = std::chrono::steady_clock;
-
-template <typename... Args>
-void trace_registry(
-    spdlog::format_string_t<Args...> format,
-    Args&&... args) noexcept {
-    try {
-        if (const auto logger = spdlog::get("cha")) {
-            logger->trace(format, std::forward<Args>(args)...);
-        }
-    } catch (...) {
-        // Diagnostics must never affect request execution.
-    }
-}
-
-double elapsed_milliseconds(
-    DiagnosticClock::time_point start,
-    DiagnosticClock::time_point end = DiagnosticClock::now()) noexcept {
-    return std::chrono::duration<double, std::milli>(end - start).count();
-}
-
-std::string_view outcome_name(CompletionOutcome outcome) noexcept {
-    switch (outcome) {
-    case CompletionOutcome::completed:
-        return "completed";
-    case CompletionOutcome::cancelled:
-        return "cancelled";
-    case CompletionOutcome::protocol_error:
-        return "protocol_error";
-    case CompletionOutcome::transport_error:
-        return "transport_error";
-    }
-    return "unknown";
-}
-
-std::string_view delta_kind_name(CompletionDeltaKind kind) noexcept {
-    switch (kind) {
-    case CompletionDeltaKind::reasoning:
-        return "reasoning";
-    case CompletionDeltaKind::answer:
-        return "answer";
-    }
-    return "unknown";
-}
 
 std::vector<AgentRuntimeInfo> build_runtime_info(
     const std::vector<std::unique_ptr<CompletionBackend>>& backends) {
@@ -180,53 +133,22 @@ struct AgentRegistry::Impl {
         void execute() noexcept {
             const RequestId request_id = input.run.request_id;
             if (!gate->wait()) {
-                trace_registry(
-                    "request={} persona_id={} event=gate_cancelled",
-                    request_id,
-                    input.run.target.id);
+                log_info("Agent execution cancelled before start");
                 publish_terminal(AgentCancelled{request_id});
                 finish();
                 return;
             }
 
-            const auto admitted_at = DiagnosticClock::now();
-            trace_registry(
-                "request={} persona_id={} event=gate_released",
-                request_id,
-                input.run.target.id);
             try {
                 if (cancellation.load(std::memory_order_acquire)) {
-                    trace_registry(
-                        "request={} persona_id={} event=cancelled_before_prepare",
-                        request_id,
-                        input.run.target.id);
+                    log_info("Agent execution cancelled before preparation");
                     publish_terminal(AgentCancelled{request_id});
                 } else {
+                    log_info("Agent execution started");
                     RequestPayload payload = backend.prepare(input);
-                    const auto perform_started_at = DiagnosticClock::now();
-                    trace_registry(
-                        "request={} persona_id={} event=perform_start "
-                        "after_gate_ms={:.3f}",
-                        request_id,
-                        input.run.target.id,
-                        elapsed_milliseconds(admitted_at, perform_started_at));
-                    bool first_delta = true;
                     const CompletionResult result = backend.perform(
                         std::move(payload),
-                        [this,
-                         request_id,
-                         perform_started_at,
-                         &first_delta](CompletionDelta delta) {
-                            if (first_delta) {
-                                first_delta = false;
-                                trace_registry(
-                                    "request={} persona_id={} event=first_delta "
-                                    "kind={} after_perform_ms={:.3f}",
-                                    request_id,
-                                    input.run.target.id,
-                                    delta_kind_name(delta.kind),
-                                    elapsed_milliseconds(perform_started_at));
-                            }
+                        [this, request_id](CompletionDelta delta) {
                             publish_delta(AgentDelta{
                                 request_id,
                                 delta.kind,
@@ -234,32 +156,22 @@ struct AgentRegistry::Impl {
                             });
                         },
                         cancellation);
-                    trace_registry(
-                        "request={} persona_id={} event=perform_end outcome={} "
-                        "after_perform_ms={:.3f}",
-                        request_id,
-                        input.run.target.id,
-                        outcome_name(result.outcome),
-                        elapsed_milliseconds(perform_started_at));
                     if (result.outcome == CompletionOutcome::completed) {
+                        log_info("Agent execution completed");
                         publish_terminal(AgentCompleted{request_id});
                     } else if (result.outcome == CompletionOutcome::cancelled) {
+                        log_info("Agent execution cancelled");
                         publish_terminal(AgentCancelled{request_id});
                     } else {
+                        log_error("Agent execution failed");
                         publish_failure(request_id, result.message);
                     }
                 }
             } catch (const std::exception& error) {
-                trace_registry(
-                    "request={} persona_id={} event=exception",
-                    request_id,
-                    input.run.target.id);
+                log_error("Agent execution raised an exception");
                 publish_failure(request_id, error.what());
             } catch (...) {
-                trace_registry(
-                    "request={} persona_id={} event=exception",
-                    request_id,
-                    input.run.target.id);
+                log_error("Agent execution raised an unknown exception");
                 publish_failure(request_id, "Unknown agent execution failure");
             }
             finish();
@@ -305,6 +217,8 @@ struct AgentRegistry::Impl {
                 failure = AgentFailed{request_id, std::string(message)};
             } catch (...) {
                 // Keep the preallocated fallback if copying details allocates.
+                log_critical(
+                    "Agent failure details could not be preserved; using fallback");
             }
             publish_terminal(std::move(failure));
         }

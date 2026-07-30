@@ -1,11 +1,16 @@
 #include "agents/completion_client.h"
 #include "transcript/transcript.h"
 #include "support/mock_http_server.h"
+#include "util/logging.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -75,6 +80,35 @@ std::string status_response(
         + "\r\nContent-Length: " + std::to_string(body.size())
         + "\r\nConnection: close\r\n\r\n" + body;
 }
+
+class DiagnosticLogFile {
+public:
+    DiagnosticLogFile()
+        : directory_(std::filesystem::temp_directory_path()
+            / ("cha_completion_logging_"
+               + std::to_string(
+                   std::chrono::steady_clock::now().time_since_epoch().count()))),
+          path_(directory_ / "cha.log") {
+        shutdown_diagnostic_logging();
+        initialize_diagnostic_logging(path_, "info");
+    }
+
+    ~DiagnosticLogFile() {
+        shutdown_diagnostic_logging();
+        std::filesystem::remove_all(directory_);
+    }
+
+    std::string contents() const {
+        std::ifstream file(path_);
+        return {
+            std::istreambuf_iterator<char>(file),
+            std::istreambuf_iterator<char>()};
+    }
+
+private:
+    std::filesystem::path directory_;
+    std::filesystem::path path_;
+};
 
 TEST(CompletionClient, EchoesOnePromptInTestMode) {
     Config config;
@@ -227,6 +261,40 @@ TEST(CompletionClient, HandlesNonStreamingProviderResponse) {
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     EXPECT_EQ(output, "Answer");
     mock.join();
+}
+
+TEST(CompletionClient, LogsTransportMetadataWithoutPayloads) {
+    const std::string response_body =
+        R"({"choices":[{"message":{"content":"private response"}}]})";
+    MockHttpServer mock({http_response("application/json", response_body)});
+    mock.start();
+    DiagnosticLogFile log;
+    std::atomic_bool cancellation{false};
+    CompletionClient client({.config = network_config(mock.port(), false)});
+    Transcript transcript;
+    const CompletionInput request =
+        client_request(transcript, 77, "private prompt");
+
+    const CompletionResult result = complete(
+        client,
+        request,
+        transcript,
+        [](CompletionDelta) {},
+        cancellation);
+    mock.join();
+
+    EXPECT_EQ(result.outcome, CompletionOutcome::completed);
+    const std::string output = log.contents();
+    EXPECT_NE(output.find("HTTP request completed"), std::string::npos);
+    EXPECT_NE(output.find("status=200"), std::string::npos);
+    EXPECT_NE(
+        output.find("content_type=application/json"),
+        std::string::npos);
+    EXPECT_NE(output.find("request_bytes="), std::string::npos);
+    EXPECT_NE(output.find("response_bytes="), std::string::npos);
+    EXPECT_NE(output.find("duration_ms="), std::string::npos);
+    EXPECT_EQ(output.find("private prompt"), std::string::npos);
+    EXPECT_EQ(output.find("private response"), std::string::npos);
 }
 
 TEST(CompletionClient, ReportsProviderHttpFailure) {

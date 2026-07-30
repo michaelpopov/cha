@@ -2,6 +2,7 @@
 
 #include "agents/config.h"
 #include "agents/json_serialization.h"
+#include "util/logging.h"
 #include "util/text.h"
 #include "util/text_template.h"
 #include "util/utf8_path.h"
@@ -21,6 +22,29 @@ constexpr std::string_view shared_history_heading =
     "Shared chat history (JSONL):";
 constexpr std::string_view human_speaker_name = "User";
 
+std::string_view mode_name(Mode mode) noexcept {
+    return mode == Mode::net ? "net" : "test";
+}
+
+std::string_view authentication_source(const Config& config) noexcept {
+    if (!config.api_key_env.empty()) {
+        return "environment";
+    }
+    return config.api_key.empty() ? "none" : "config";
+}
+
+void log_persona_config(
+    const Config& config,
+    const std::filesystem::path& forum_directory) {
+    log_info(
+        "Persona configuration resolved: forum_id="
+        + utf8_path(forum_directory.filename())
+        + " persona_id=" + config.id
+        + " mode=" + std::string(mode_name(config.mode))
+        + " model=" + (config.model.empty() ? "discovery" : config.model)
+        + " authentication=" + std::string(authentication_source(config)));
+}
+
 AgentDefinition load_definition_files(
     const std::filesystem::path& persona_directory,
     const std::filesystem::path& forum_directory,
@@ -30,13 +54,14 @@ AgentDefinition load_definition_files(
     LoadedConfig loaded;
     try {
         loaded = load_config(
-            persona_directory / "config.toml", base_config_path);
+            persona_directory / "persona.toml", base_config_path);
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Persona '" + persona_name
             + "' has invalid configuration: " + error.what());
     }
     Config config = std::move(loaded.config);
+    log_persona_config(config, forum_directory);
 
     TemplateOptions options{
         .containment_root = forum_directory,

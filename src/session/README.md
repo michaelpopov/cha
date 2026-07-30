@@ -23,12 +23,12 @@ code.
 flowchart TD
     root --> forums["forums/"]
     root --> env[".env — optional"]
-    personas --> base["base_config.toml<br/>optional forum defaults + [prompt]"]
+    personas --> base["persona_defaults.toml<br/>optional forum defaults + [prompt]"]
     personas --> shared["shared prompt files<br/>e.g. character-voice.md"]
     forums --> forum["forum-name/ — distribution unit and template containment root"]
     forum --> config["config.toml — required display_name + optional [prompt]"]
     forum --> personas["personas/ — persona directories"]
-    personas --> persona["persona-name/config.toml<br/>SYSTEM.md + includes"]
+    personas --> persona["persona-name/persona.toml<br/>SYSTEM.md + includes"]
     forum --> user["USER.md — template-expanded forum prompt extension"]
     forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
 ```
@@ -49,7 +49,7 @@ containment root: includes in `SYSTEM.md` / `USER.md` cannot leave it, so a
 zipped forum stays self-contained when unpacked elsewhere.
 
 When a session is created or opened, `Workspace` checks for
-`personas/base_config.toml` within the selected forum and explicitly passes that optional path, the
+`personas/persona_defaults.toml` within the selected forum and explicitly passes that optional path, the
 forum directory, and the forum display name to the agent loaders along with each
 persona directory. The agent layer therefore applies shared configuration and
 template policy without knowing or inferring the workspace layout.
