@@ -1,5 +1,7 @@
 #pragma once
 
+#include <toml++/toml.hpp>
+
 #include <cstddef>
 #include <filesystem>
 #include <map>
@@ -25,6 +27,13 @@ struct TemplateOptions {
     TemplateScope initial_scope;  // shadowable by directory scopes
     TemplateLimits limits;
 };
+
+// Converts one TOML table to a template scope. Values in the selected table
+// must be scalar; keys outside the template-variable grammar are ignored.
+TemplateScope template_scope_from_toml(
+    const toml::table& document,
+    std::string_view table_name,
+    std::string_view file_label);
 
 // Reads one scope table: the named table of one TOML file, values rendered to
 // strings. Returns nullopt when the file does not exist; throws on parse errors

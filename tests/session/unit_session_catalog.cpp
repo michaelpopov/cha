@@ -2,6 +2,7 @@
 #include "session/session_database.h"
 #include "session/session_catalog.h"
 #include "session/workspace.h"
+#include "support/test_session_database.h"
 #include "util/utf8_path.h"
 
 #include <gtest/gtest.h>

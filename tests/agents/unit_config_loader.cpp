@@ -20,8 +20,7 @@ TEST(Config, LoadsHostAndPortFromToml) {
     {
         std::ofstream config_file(path);
         config_file
-            << "id = \"example-id\"\n"
-            << "name = \"Example\"\n"
+            << "display_name = \"Example\"\n"
             << "host = \"example.com\"\n"
             << "port = 8080\n"
             << "mode = \"net\"\n"
@@ -35,9 +34,9 @@ TEST(Config, LoadsHostAndPortFromToml) {
             << "https = true\n";
     }
 
-    const Config config = load_config(path);
+    const Config config = load_config(path).config;
 
-    EXPECT_EQ(config.id, "example-id");
+    EXPECT_EQ(config.id, utf8_path(path.parent_path().filename()));
     EXPECT_EQ(config.name, "Example");
     EXPECT_EQ(config.host, "example.com");
     EXPECT_EQ(config.port, 8080);
@@ -66,13 +65,14 @@ TEST(Config, LoadsTomlFromANonAsciiPath) {
     const auto path = directory / "config.toml";
     {
         std::ofstream config_file(path);
-        config_file << "id = \"example-id\"\n"
-                    << "name = \"Example\"\n"
+        config_file << "display_name = \"Example\"\n"
                     << "host = \"example.com\"\n"
                     << "port = 8080\n";
     }
 
-    EXPECT_EQ(load_config(path).id, "example-id");
+    EXPECT_EQ(
+        load_config(path).config.id,
+        utf8_path(path.parent_path().filename()));
     std::filesystem::remove_all(directory);
 }
 
@@ -84,19 +84,17 @@ TEST(Config, DefaultsAndValidatesReasoningFormat) {
            + ".toml");
     {
         std::ofstream config_file(path);
-        config_file << "id = \"example-id\"\n"
-                    << "name = \"Example\"\n"
+        config_file << "display_name = \"Example\"\n"
                     << "host = \"example.com\"\n"
                     << "port = 8080\n";
     }
     EXPECT_EQ(
-        load_config(path).reasoning_format,
+        load_config(path).config.reasoning_format,
         ReasoningFormat::automatic);
 
     {
         std::ofstream config_file(path);
-        config_file << "id = \"example-id\"\n"
-                    << "name = \"Example\"\n"
+        config_file << "display_name = \"Example\"\n"
                     << "host = \"example.com\"\n"
                     << "port = 8080\n"
                     << "reasoning_format = \"tags\"\n";
@@ -120,11 +118,11 @@ TEST(Config, AllowsMissingModel) {
         / ("cha_no_model_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".toml");
     {
         std::ofstream config_file(path);
-        config_file << "id = \"example-id\"\nname = \"Example\"\n"
+        config_file << "display_name = \"Example\"\n"
                     << "host = \"example.com\"\nport = 8080\n";
     }
 
-    const Config config = load_config(path);
+    const Config config = load_config(path).config;
 
     EXPECT_TRUE(config.model.empty());
     EXPECT_DOUBLE_EQ(config.temperature, 1.0);
@@ -137,8 +135,7 @@ TEST(Config, RejectsOutOfRangePort) {
     {
         std::ofstream config_file(path);
         config_file
-            << "id = \"example-id\"\n"
-            << "name = \"Example\"\n"
+            << "display_name = \"Example\"\n"
             << "host = \"example.com\"\n"
             << "port = 65536\n"
             << "model = \"example-model\"\n";
@@ -146,8 +143,8 @@ TEST(Config, RejectsOutOfRangePort) {
 
     EXPECT_THROW(
         {
-            const auto config = load_config(path);
-            (void)config;
+            const auto loaded = load_config(path);
+            (void)loaded;
         },
         std::runtime_error);
     std::filesystem::remove(path);
@@ -162,8 +159,7 @@ TEST(Config, RejectsOutOfRangeTemperature) {
     {
         std::ofstream config_file(path);
         config_file
-            << "id = \"example-id\"\n"
-            << "name = \"Example\"\n"
+            << "display_name = \"Example\"\n"
             << "host = \"example.com\"\n"
             << "port = 8080\n"
             << "temperature = 2.1\n";
@@ -183,7 +179,7 @@ TEST(Config, RejectsOutOfRangeTemperature) {
     std::filesystem::remove(path);
 }
 
-TEST(Config, RequiresStableIdentityAndDisplayName) {
+TEST(Config, RequiresDisplayName) {
     const auto path = std::filesystem::temp_directory_path()
         / ("cha_missing_identity_"
            + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
@@ -193,6 +189,32 @@ TEST(Config, RequiresStableIdentityAndDisplayName) {
         config_file << "host = \"example.com\"\nport = 8080\n";
     }
 
+    EXPECT_THROW((void)load_config(path), std::runtime_error);
+    std::filesystem::remove(path);
+}
+
+TEST(Config, RejectsRemovedIdentityFields) {
+    const auto path = std::filesystem::temp_directory_path()
+        / ("cha_removed_identity_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count())
+           + ".toml");
+    {
+        std::ofstream config_file(path);
+        config_file << "display_name = \"Example\"\n"
+                    << "id = \"old-id\"\n"
+                    << "host = \"example.com\"\n"
+                    << "port = 8080\n";
+    }
+    EXPECT_THROW((void)load_config(path), std::runtime_error);
+
+    {
+        std::ofstream config_file(path);
+        config_file << "display_name = \"Example\"\n"
+                    << "name = \"Old Example\"\n"
+                    << "host = \"example.com\"\n"
+                    << "port = 8080\n";
+    }
     EXPECT_THROW((void)load_config(path), std::runtime_error);
     std::filesystem::remove(path);
 }
@@ -218,15 +240,14 @@ TEST(Config, OverlaysPersonaValuesOnWorkspaceDefaults) {
              << "reasoning_effort = \"medium\"\n"
              << "reasoning_format = \"reasoning\"\n";
         std::ofstream persona(persona_path);
-        persona << "id = \"example-id\"\n"
-                << "name = \"Example\"\n"
+        persona << "display_name = \"Example\"\n"
                 << "model = \"persona-model\"\n"
                 << "stream = false\n";
     }
 
-    const Config config = load_config(persona_path, base_path);
+    const Config config = load_config(persona_path, base_path).config;
 
-    EXPECT_EQ(config.id, "example-id");
+    EXPECT_EQ(config.id, utf8_path(persona_path.parent_path().filename()));
     EXPECT_EQ(config.name, "Example");
     EXPECT_EQ(config.host, "shared.example");
     EXPECT_EQ(config.port, 443);
@@ -242,7 +263,7 @@ TEST(Config, OverlaysPersonaValuesOnWorkspaceDefaults) {
     std::filesystem::remove_all(directory);
 }
 
-TEST(Config, RejectsPersonaIdentityInWorkspaceDefaults) {
+TEST(Config, RejectsDisplayNameInWorkspaceDefaults) {
     const auto directory = std::filesystem::temp_directory_path()
         / ("cha_config_base_identity_"
            + std::to_string(
@@ -252,12 +273,11 @@ TEST(Config, RejectsPersonaIdentityInWorkspaceDefaults) {
     const auto persona_path = directory / "config.toml";
     {
         std::ofstream base(base_path);
-        base << "id = \"shared\"\n"
+        base << "display_name = \"Shared\"\n"
              << "host = \"shared.example\"\n"
              << "port = 443\n";
         std::ofstream persona(persona_path);
-        persona << "id = \"example-id\"\n"
-                << "name = \"Example\"\n";
+        persona << "display_name = \"Example\"\n";
     }
 
     try {
@@ -268,14 +288,14 @@ TEST(Config, RejectsPersonaIdentityInWorkspaceDefaults) {
             std::string(error.what()).find(utf8_path(base_path)),
             std::string::npos);
         EXPECT_NE(
-            std::string(error.what()).find("id"),
+            std::string(error.what()).find("display_name"),
             std::string::npos);
     }
 
     std::filesystem::remove_all(directory);
 }
 
-TEST(Config, LoadPromptVariablesOverlaysBaseThenPersona) {
+TEST(Config, LoadsPromptVariablesWithTheSameOverlayAsTheConnectionConfig) {
     const auto directory = std::filesystem::temp_directory_path()
         / ("cha_prompt_vars_"
            + std::to_string(
@@ -292,6 +312,8 @@ TEST(Config, LoadPromptVariablesOverlaysBaseThenPersona) {
              << "period = \"base-period\"\n";
         std::ofstream persona(persona_path);
         persona << "display_name = \"Example\"\n"
+                << "host = \"persona.example\"\n"
+                << "port = 8080\n"
                 << "[prompt]\n"
                 << "register = \"energetic\"\n";
     }
@@ -299,19 +321,22 @@ TEST(Config, LoadPromptVariablesOverlaysBaseThenPersona) {
     const auto persona_no_prompt = directory / "persona_no_prompt.toml";
     {
         std::ofstream file(persona_no_prompt);
-        file << "display_name = \"Example\"\n";
+        file << "display_name = \"Example\"\n"
+             << "host = \"persona.example\"\n"
+             << "port = 8080\n";
     }
 
     const TemplateScope only_base =
-        load_prompt_variables(persona_no_prompt, base_path);
+        load_config(persona_no_prompt, base_path).prompt_variables;
     EXPECT_EQ(only_base.at("register"), "measured");
     EXPECT_EQ(only_base.at("period"), "base-period");
 
-    const TemplateScope only_persona = load_prompt_variables(persona_path);
+    const TemplateScope only_persona = load_config(persona_path).prompt_variables;
     EXPECT_EQ(only_persona.at("register"), "energetic");
     EXPECT_EQ(only_persona.find("period"), only_persona.end());
 
-    const TemplateScope overlaid = load_prompt_variables(persona_path, base_path);
+    const TemplateScope overlaid =
+        load_config(persona_path, base_path).prompt_variables;
     EXPECT_EQ(overlaid.at("register"), "energetic");
     EXPECT_EQ(overlaid.at("period"), "base-period");
 
@@ -331,8 +356,7 @@ TEST(Config, IdentifiesInvalidWorkspaceDefaultSource) {
         base << "host = \"shared.example\"\n"
              << "port = 65536\n";
         std::ofstream persona(persona_path);
-        persona << "id = \"example-id\"\n"
-                << "name = \"Example\"\n";
+        persona << "display_name = \"Example\"\n";
     }
 
     try {

@@ -76,9 +76,16 @@ public:
     [[nodiscard]] SessionUpdate open_offrecord();
     [[nodiscard]] SessionUpdate extend_offrecord();
     [[nodiscard]] SessionUpdate restore_offrecord();
+    // Text frontends submit handles; resolution and all target validation stay
+    // here with the forum's authoritative persona set.
     [[nodiscard]] SessionUpdate start_multicast(
         std::string text,
-        std::vector<PersonaInfo> targets);
+        std::vector<std::string> handles);
+    // Programmatic clients, including the future HTTP API, submit stable
+    // persona IDs rather than user-facing handles.
+    [[nodiscard]] SessionUpdate start_multicast_by_ids(
+        std::string text,
+        std::vector<ParticipantId> ids);
     [[nodiscard]] SessionUpdate session_information();
     [[nodiscard]] SessionUpdate agent_information();
     [[nodiscard]] SessionUpdate set_default_agent(std::string_view handle);
@@ -126,6 +133,12 @@ private:
         std::vector<PersonaInfo> targets,
         SharedCompletionHistory history,
         SessionUpdate& update);
+    [[nodiscard]] SessionUpdate start_resolved_multicast(
+        std::string text,
+        std::vector<PersonaInfo> targets);
+    [[nodiscard]] SessionUpdate start_multicast_from_ids(
+        std::string text,
+        std::vector<ParticipantId> ids);
     void activate_current_run(SessionUpdate& update);
     void start_next_batch_run(SessionUpdate& update);
     void finish_batch_run(SessionUpdate& update);

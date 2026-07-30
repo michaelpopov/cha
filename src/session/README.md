@@ -41,9 +41,8 @@ name is checked with `require_path_component()` before it becomes a path.
 Each forum's `config.toml` must provide a non-empty string `display_name` for
 user-facing selection and listings; its directory name remains the stable ID.
 Each persona directory likewise supplies its stable ID, while its
-`config.toml` provides the required user-facing `display_name`. The agent
-loader retains compatibility with legacy persona-level `id` and `name` fields;
-new forum packages should use directory IDs and `display_name`.
+`config.toml` provides the required user-facing `display_name`. The loader
+rejects the removed persona-level `id` and `name` fields.
 
 The forum directory is both the distribution unit and the prompt-template
 containment root: includes in `SYSTEM.md` / `USER.md` cannot leave it, so a
@@ -250,7 +249,7 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success `render_needed` + `clear_input` and no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
-| `start_multicast(text, targets)` | Captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Starts the staged batch; terminal notices are retained until multicast completion or abort cleanup. |
+| `start_multicast(text, handles)` / `start_multicast_by_ids(text, ids)` | Resolves textual handles or stable IDs once, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Starts the staged batch; terminal notices are retained until multicast completion or abort cleanup. |
 | `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |

@@ -10,6 +10,7 @@
 #include "session/session_database.h"
 #include "session/workspace.h"
 #include "support/test_notifier.h"
+#include "support/test_session_database.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -47,17 +48,52 @@ struct ChatResult {
     std::size_t chunks{};
 };
 
+using IntegrationClock = std::chrono::steady_clock;
+using IntegrationDeadline = IntegrationClock::time_point;
+
+// Live providers may take several seconds before yielding their first stream
+// event. Keep the test finite, while allowing normal queueing and startup
+// latency. The deadline applies to the complete chat, not each individual
+// chunk.
+constexpr auto integration_chat_timeout = std::chrono::seconds(60);
+
+class AgentRunCleanup final {
+public:
+    AgentRunCleanup(AgentRegistry& registry, ThreadPool& pool)
+        : registry_(registry), pool_(pool) {
+    }
+
+    ~AgentRunCleanup() {
+        // curl's progress callback observes this cancellation while a live
+        // request is blocked, allowing clear_batch() and pool shutdown to join
+        // the worker safely even when the test exits through an exception.
+        registry_.cancel_batch();
+        registry_.clear_batch();
+        registry_.stop();
+        pool_.stop();
+    }
+
+    AgentRunCleanup(const AgentRunCleanup&) = delete;
+    AgentRunCleanup& operator=(const AgentRunCleanup&) = delete;
+
+private:
+    AgentRegistry& registry_;
+    ThreadPool& pool_;
+};
+
 Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
     Config config = load_config(
         workspace_directory / "forums" / "lobby" / "personas" / "Ismael" / "config.toml",
-        workspace_directory / "forums" / "lobby" / "personas" / "base_config.toml");
+        workspace_directory / "forums" / "lobby" / "personas" / "base_config.toml").config;
     config.stream = stream;
     return config;
 }
 
-AgentEvent wait_for_agent_event(AgentRegistry& registry) {
+AgentEvent wait_for_agent_event(
+    AgentRegistry& registry,
+    IntegrationDeadline deadline) {
     while (true) {
         const std::size_t observed = notifier().wake_count();
         AgentEvent event = AgentCompleted{};
@@ -69,11 +105,26 @@ AgentEvent wait_for_agent_event(AgentRegistry& registry) {
             throw std::runtime_error(
                 "Integration agent event queue closed unexpectedly");
         }
+
+        const auto now = IntegrationClock::now();
+        if (now >= deadline) {
+            registry.cancel_batch();
+            throw std::runtime_error(
+                "Timed out after 60 seconds waiting for an integration agent "
+                "event; cancelled the live request");
+        }
+        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - now);
+        if (remaining.count() == 0) {
+            remaining = std::chrono::milliseconds(1);
+        }
         if (!notifier().wait_for_wake(
                 observed,
-                std::chrono::seconds(5))) {
+                remaining)) {
+            registry.cancel_batch();
             throw std::runtime_error(
-                "Failed to wait for integration agent event");
+                "Timed out after 60 seconds waiting for an integration agent "
+                "event; cancelled the live request");
         }
     }
 }
@@ -93,6 +144,7 @@ ChatResult run_chat(bool stream) {
         std::move(definitions),
         notifier(),
         pool);
+    const AgentRunCleanup cleanup(registry, pool);
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     CompletionInput request{
@@ -107,8 +159,10 @@ ChatResult run_chat(bool stream) {
     start_agent_run(registry, std::move(request));
 
     ChatResult result;
+    const IntegrationDeadline deadline =
+        IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(registry);
+        const AgentEvent event = wait_for_agent_event(registry, deadline);
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
@@ -118,9 +172,6 @@ ChatResult run_chat(bool stream) {
         }
     }
 
-    registry.clear_batch();
-    registry.stop();
-    pool.stop();
     return result;
 }
 
@@ -134,6 +185,7 @@ ChatResult run_cancelled_chat() {
         std::move(definitions),
         notifier(),
         pool);
+    const AgentRunCleanup cleanup(registry, pool);
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     CompletionInput request{
@@ -148,8 +200,10 @@ ChatResult run_cancelled_chat() {
     start_agent_run(registry, std::move(request));
 
     ChatResult result;
+    const IntegrationDeadline deadline =
+        IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(registry);
+        const AgentEvent event = wait_for_agent_event(registry, deadline);
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
@@ -160,9 +214,6 @@ ChatResult run_cancelled_chat() {
         }
     }
 
-    registry.clear_batch();
-    registry.stop();
-    pool.stop();
     return result;
 }
 

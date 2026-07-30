@@ -2,6 +2,7 @@
 #include "agents/completion_backend.h"
 #include "session/session_database.h"
 #include "support/test_notifier.h"
+#include "support/test_session_database.h"
 #include "ui/tui/input_editor.h"
 #include "ui/tui/session_view.h"
 #include "support/test_backends.h"

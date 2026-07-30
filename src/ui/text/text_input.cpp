@@ -4,7 +4,6 @@
 #include "ui/text/mcast.h"
 #include "ui/text/mention.h"
 
-#include <unordered_set>
 #include <utility>
 
 namespace cha {
@@ -21,31 +20,8 @@ SessionUpdate handle_multicast_input(
     }
 
     MulticastInput input = std::get<MulticastInput>(std::move(parsed));
-    std::vector<PersonaInfo> targets;
-    if (input.handles.empty()) {
-        targets = controller.personas().all();
-    } else {
-        std::unordered_set<ParticipantId> resolved_ids;
-        targets.reserve(input.handles.size());
-        for (const std::string& handle : input.handles) {
-            const HandleResolution resolution =
-                controller.personas().resolve_handle(handle);
-            if (resolution.match != HandleMatch::resolved) {
-                update.notice = format_handle_resolution_notice(
-                    handle, resolution, controller.personas());
-                return update;
-            }
-            if (!resolved_ids.insert(resolution.persona->id).second) {
-                update.notice =
-                    format_duplicate_persona_notice(resolution.persona->name);
-                return update;
-            }
-            targets.push_back(*resolution.persona);
-        }
-    }
-
     SessionUpdate started = controller.start_multicast(
-        std::move(input.text), std::move(targets));
+        std::move(input.text), std::move(input.handles));
     started.clear_input = started.clear_input || update.clear_input;
     return started;
 }

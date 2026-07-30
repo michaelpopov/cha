@@ -27,19 +27,16 @@ AgentDefinition load_definition_files(
     std::string_view forum_display_name,
     std::optional<std::filesystem::path> base_config_path) {
     const std::string persona_name = utf8_path(persona_directory.filename());
-    Config config;
-    TemplateScope initial_scope;
+    LoadedConfig loaded;
     try {
-        config = load_config(
-            persona_directory / "config.toml",
-            base_config_path);
-        initial_scope = load_prompt_variables(
+        loaded = load_config(
             persona_directory / "config.toml", base_config_path);
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Persona '" + persona_name
             + "' has invalid configuration: " + error.what());
     }
+    Config config = std::move(loaded.config);
 
     TemplateOptions options{
         .containment_root = forum_directory,
@@ -51,7 +48,7 @@ AgentDefinition load_definition_files(
                 {"forum.id", utf8_path(forum_directory.filename())},
                 {"forum.display_name", std::string(forum_display_name)},
             },
-        .initial_scope = std::move(initial_scope),
+        .initial_scope = std::move(loaded.prompt_variables),
     };
 
     std::string persona_prompt;

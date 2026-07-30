@@ -17,8 +17,6 @@ namespace {
 
 struct ConfigPatch {
     std::optional<std::string> display_name;
-    std::optional<std::string> legacy_id;
-    std::optional<std::string> legacy_name;
     std::optional<std::string> host;
     std::optional<int> port;
     std::optional<Mode> mode;
@@ -30,6 +28,11 @@ struct ConfigPatch {
     std::optional<std::string> reasoning_effort;
     std::optional<ReasoningFormat> reasoning_format;
     std::optional<bool> https;
+};
+
+struct ParsedConfig {
+    ConfigPatch patch;
+    TemplateScope prompt_variables;
 };
 
 template<typename Value>
@@ -95,7 +98,7 @@ std::optional<ReasoningFormat> read_reasoning_format(
         + "' has unsupported reasoning_format '" + *value + "'");
 }
 
-ConfigPatch parse_config(
+ParsedConfig parse_config(
     const std::filesystem::path& path,
     bool base) {
     std::ifstream file(path, std::ios::binary);
@@ -104,33 +107,41 @@ ConfigPatch parse_config(
             "Failed to read config file '" + utf8_path(path) + "'");
     }
     const toml::table table = toml::parse(file, utf8_path(path));
-    if (base && (table.contains("display_name") || table.contains("id")
-                 || table.contains("name"))) {
+    if (table.contains("id") || table.contains("name")) {
+        throw std::runtime_error(
+            "Config file '" + utf8_path(path)
+            + "' uses removed identity field '"
+            + (table.contains("id") ? "id" : "name")
+            + "'; use the directory name and 'display_name'");
+    }
+    if (base && table.contains("display_name")) {
         throw std::runtime_error(
             "Base config file '" + utf8_path(path)
-            + "' cannot define persona identity");
+            + "' cannot define persona identity 'display_name'");
     }
 
     return {
-        .display_name = read_optional<std::string>(
-            table, path, "display_name", "string"),
-        .legacy_id = read_optional<std::string>(table, path, "id", "string"),
-        .legacy_name = read_optional<std::string>(table, path, "name", "string"),
-        .host = read_optional<std::string>(table, path, "host", "string"),
-        .port = read_optional<int>(table, path, "port", "integer"),
-        .mode = read_mode(table, path),
-        .model = read_optional<std::string>(table, path, "model", "string"),
-        .stream = read_optional<bool>(table, path, "stream", "boolean"),
-        .temperature =
-            read_optional<double>(table, path, "temperature", "numeric"),
-        .api_key =
-            read_optional<std::string>(table, path, "api_key", "string"),
-        .api_key_env =
-            read_optional<std::string>(table, path, "api_key_env", "string"),
-        .reasoning_effort = read_optional<std::string>(
-            table, path, "reasoning_effort", "string"),
-        .reasoning_format = read_reasoning_format(table, path),
-        .https = read_optional<bool>(table, path, "https", "boolean"),
+        .patch = {
+            .display_name = read_optional<std::string>(
+                table, path, "display_name", "string"),
+            .host = read_optional<std::string>(table, path, "host", "string"),
+            .port = read_optional<int>(table, path, "port", "integer"),
+            .mode = read_mode(table, path),
+            .model = read_optional<std::string>(table, path, "model", "string"),
+            .stream = read_optional<bool>(table, path, "stream", "boolean"),
+            .temperature =
+                read_optional<double>(table, path, "temperature", "numeric"),
+            .api_key =
+                read_optional<std::string>(table, path, "api_key", "string"),
+            .api_key_env =
+                read_optional<std::string>(table, path, "api_key_env", "string"),
+            .reasoning_effort = read_optional<std::string>(
+                table, path, "reasoning_effort", "string"),
+            .reasoning_format = read_reasoning_format(table, path),
+            .https = read_optional<bool>(table, path, "https", "boolean"),
+        },
+        .prompt_variables = template_scope_from_toml(
+            table, prompt_scope_table, utf8_path(path)),
     };
 }
 
@@ -157,15 +168,18 @@ void overlay(ConfigPatch& effective, const ConfigPatch& persona) {
     override_with(effective.https, persona.https);
 }
 
+void overlay(TemplateScope& effective, TemplateScope persona) {
+    for (auto& [key, value] : persona) {
+        effective.insert_or_assign(std::move(key), std::move(value));
+    }
+}
+
 Config build_config(
     ConfigPatch effective,
     const ConfigPatch& persona,
     const std::filesystem::path& persona_path,
     const std::optional<std::filesystem::path>& base_path) {
-    const std::optional<std::string>& name = persona.display_name
-        ? persona.display_name
-        : persona.legacy_name;
-    if (!name || name->empty()) {
+    if (!persona.display_name || persona.display_name->empty()) {
         throw std::runtime_error(
             "Persona config file '" + utf8_path(persona_path)
             + "' requires a non-empty string 'display_name' value");
@@ -194,9 +208,8 @@ Config build_config(
     }
 
     Config config;
-    config.id = persona.legacy_id.value_or(
-        utf8_path(persona_path.parent_path().filename()));
-    config.name = *name;
+    config.id = utf8_path(persona_path.parent_path().filename());
+    config.name = *persona.display_name;
     config.host = *effective.host;
     config.port = *effective.port;
     if (effective.mode) config.mode = *effective.mode;
@@ -217,36 +230,21 @@ Config build_config(
 
 } // namespace
 
-Config load_config(
+LoadedConfig load_config(
     const std::filesystem::path& persona_path,
     std::optional<std::filesystem::path> base_path) {
-    ConfigPatch effective;
+    ParsedConfig effective;
     if (base_path) {
         effective = parse_config(*base_path, true);
     }
-    const ConfigPatch persona = parse_config(persona_path, false);
-    overlay(effective, persona);
-    return build_config(
-        std::move(effective), persona, persona_path, base_path);
-}
-
-TemplateScope load_prompt_variables(
-    const std::filesystem::path& persona_path,
-    std::optional<std::filesystem::path> base_path) {
-    TemplateScope scope;
-    if (base_path) {
-        if (std::optional<TemplateScope> base =
-                load_template_scope(*base_path, prompt_scope_table)) {
-            scope = std::move(*base);
-        }
-    }
-    if (std::optional<TemplateScope> persona =
-            load_template_scope(persona_path, prompt_scope_table)) {
-        for (auto& [key, value] : *persona) {
-            scope.insert_or_assign(key, std::move(value));
-        }
-    }
-    return scope;
+    ParsedConfig persona = parse_config(persona_path, false);
+    overlay(effective.patch, persona.patch);
+    overlay(effective.prompt_variables, std::move(persona.prompt_variables));
+    return {
+        .config = build_config(
+            std::move(effective.patch), persona.patch, persona_path, base_path),
+        .prompt_variables = std::move(effective.prompt_variables),
+    };
 }
 
 } // namespace cha

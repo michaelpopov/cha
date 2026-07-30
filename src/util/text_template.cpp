@@ -169,24 +169,10 @@ std::string render_toml_scalar(
 // `file_label` is what appears in diagnostics. Callers under expansion pass a
 // path relative to the containment root; direct load_template_scope() callers
 // pass utf8_path(file).
-TemplateScope read_scope_table(
-    const std::filesystem::path& file,
+TemplateScope scope_from_toml(
+    const toml::table& table,
     std::string_view table_name,
     std::string_view file_label) {
-    std::ifstream stream(file, std::ios::binary);
-    if (!stream) {
-        throw std::runtime_error(
-            "cannot parse '" + std::string(file_label) + "': cannot open file");
-    }
-    toml::table table;
-    try {
-        table = toml::parse(stream, std::string(file_label));
-    } catch (const toml::parse_error& error) {
-        throw std::runtime_error(
-            "cannot parse '" + std::string(file_label) + "': "
-            + std::string(error.description()));
-    }
-
     const toml::node* node = table.get(table_name);
     if (node == nullptr) {
         return {};
@@ -221,6 +207,26 @@ TemplateScope read_scope_table(
         }
     }
     return scope;
+}
+
+TemplateScope read_scope_table(
+    const std::filesystem::path& file,
+    std::string_view table_name,
+    std::string_view file_label) {
+    std::ifstream stream(file, std::ios::binary);
+    if (!stream) {
+        throw std::runtime_error(
+            "cannot parse '" + std::string(file_label) + "': cannot open file");
+    }
+    toml::table table;
+    try {
+        table = toml::parse(stream, std::string(file_label));
+    } catch (const toml::parse_error& error) {
+        throw std::runtime_error(
+            "cannot parse '" + std::string(file_label) + "': "
+            + std::string(error.description()));
+    }
+    return scope_from_toml(table, table_name, file_label);
 }
 
 void overlay_scope(TemplateScope& destination, const TemplateScope& source) {
@@ -554,6 +560,13 @@ void expand_path(
 }
 
 } // namespace
+
+TemplateScope template_scope_from_toml(
+    const toml::table& document,
+    std::string_view table_name,
+    std::string_view file_label) {
+    return scope_from_toml(document, table_name, file_label);
+}
 
 std::optional<TemplateScope> load_template_scope(
     const std::filesystem::path& file,

@@ -211,18 +211,12 @@ struct AgentRegistry::Impl {
                         input.run.target.id,
                         elapsed_milliseconds(admitted_at, perform_started_at));
                     bool first_delta = true;
-                    std::size_t published_deltas{};
-                    std::size_t published_bytes{};
                     const CompletionResult result = backend.perform(
                         std::move(payload),
                         [this,
                          request_id,
                          perform_started_at,
-                         &first_delta,
-                         &published_deltas,
-                         &published_bytes](CompletionDelta delta) {
-                            ++published_deltas;
-                            published_bytes += delta.text.size();
+                         &first_delta](CompletionDelta delta) {
                             if (first_delta) {
                                 first_delta = false;
                                 trace_registry(
@@ -242,13 +236,11 @@ struct AgentRegistry::Impl {
                         cancellation);
                     trace_registry(
                         "request={} persona_id={} event=perform_end outcome={} "
-                        "after_perform_ms={:.3f} deltas={} bytes={}",
+                        "after_perform_ms={:.3f}",
                         request_id,
                         input.run.target.id,
                         outcome_name(result.outcome),
-                        elapsed_milliseconds(perform_started_at),
-                        published_deltas,
-                        published_bytes);
+                        elapsed_milliseconds(perform_started_at));
                     if (result.outcome == CompletionOutcome::completed) {
                         publish_terminal(AgentCompleted{request_id});
                     } else if (result.outcome == CompletionOutcome::cancelled) {

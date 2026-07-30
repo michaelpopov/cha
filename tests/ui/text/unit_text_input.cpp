@@ -197,7 +197,7 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
     controller->shutdown();
 }
 
-TEST(TextInput, ResolvesMulticastRecipientsBeforeStartingAnyChild) {
+TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
     TemporaryTextSession temporary;
     auto controller = SessionController::from_definitions(
         std::vector<AgentDefinition>{definition()},

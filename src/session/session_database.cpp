@@ -746,11 +746,6 @@ SessionRestore load_session_state(
     return result;
 }
 
-std::vector<TranscriptEntry> load_transcript_entries(
-    const std::filesystem::path& path) {
-    return load_session_state(path).entries;
-}
-
 class SessionJournal::Impl {
 public:
     explicit Impl(const std::filesystem::path& path)

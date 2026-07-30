@@ -498,10 +498,62 @@ SessionUpdate SessionController::restore_offrecord() {
 
 SessionUpdate SessionController::start_multicast(
     std::string text,
-    std::vector<PersonaInfo> targets) {
+    std::vector<std::string> handles) {
     if (busy()) {
         return busy_notice();
     }
+
+    std::vector<ParticipantId> ids;
+    ids.reserve(handles.size());
+    for (const std::string& handle : handles) {
+        const HandleResolution resolution = personas_.resolve_handle(handle);
+        if (resolution.match != HandleMatch::resolved) {
+            return {
+                .notice = format_handle_resolution_notice(
+                    handle, resolution, personas_),
+            };
+        }
+        ids.push_back(resolution.persona->id);
+    }
+    return start_multicast_from_ids(std::move(text), std::move(ids));
+}
+
+SessionUpdate SessionController::start_multicast_by_ids(
+    std::string text,
+    std::vector<ParticipantId> ids) {
+    if (busy()) {
+        return busy_notice();
+    }
+
+    return start_multicast_from_ids(std::move(text), std::move(ids));
+}
+
+SessionUpdate SessionController::start_multicast_from_ids(
+    std::string text,
+    std::vector<ParticipantId> ids) {
+    std::vector<PersonaInfo> targets;
+    if (ids.empty()) {
+        targets = personas_.all();
+    } else {
+        std::unordered_set<ParticipantId> distinct;
+        targets.reserve(ids.size());
+        for (const ParticipantId& id : ids) {
+            const PersonaInfo* target = personas_.find(id);
+            if (!target) {
+                return {.notice = "Unknown multicast target ID '" + id + "'"};
+            }
+            if (!distinct.insert(id).second) {
+                return {.notice = format_duplicate_persona_notice(target->name)};
+            }
+            targets.push_back(*target);
+        }
+    }
+    return start_resolved_multicast(std::move(text), std::move(targets));
+}
+
+SessionUpdate SessionController::start_resolved_multicast(
+    std::string text,
+    std::vector<PersonaInfo> targets) {
     if (text.empty()) {
         return {.notice = "Multicast prompt is empty"};
     }
@@ -509,16 +561,6 @@ SessionUpdate SessionController::start_multicast(
         return {.notice = "Multicast has no targets"};
     }
 
-    std::unordered_set<ParticipantId> ids;
-    for (const PersonaInfo& target : targets) {
-        const PersonaInfo* known = personas_.find(target.id);
-        if (!known || known->name != target.name) {
-            return {.notice = "Unknown multicast target @" + target.name};
-        }
-        if (!ids.insert(target.id).second) {
-            return {.notice = format_duplicate_persona_notice(target.name)};
-        }
-    }
     // Capture once so the off-record precondition and every child use the
     // same completion history.
     SharedCompletionHistory history =

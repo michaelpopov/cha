@@ -4,6 +4,7 @@
 #include "session/session_database.h"
 #include "support/test_backends.h"
 #include "support/test_notifier.h"
+#include "support/test_session_database.h"
 #include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
@@ -892,12 +893,9 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     auto controller = SessionController::from_backends_for_testing(
         std::move(backends), temporary.path, notifier());
 
-    const SessionUpdate started = controller->start_multicast(
+    const SessionUpdate started = controller->start_multicast_by_ids(
         "What time is it?",
-        {
-            {"one-id", "One"},
-            {"two-id", "Two"},
-        });
+        {"one-id", "two-id"});
     EXPECT_TRUE(started.clear_input);
     EXPECT_TRUE(controller->generation_status().active);
     EXPECT_EQ(
@@ -943,6 +941,38 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
         copy_entries(controller->transcript()));
 }
 
+TEST(SessionController, ResolvesMulticastIdsAndTreatsAnEmptyListAsAllPersonas) {
+    TemporaryJournal temporary;
+    auto one = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"One answer"}, false,
+        "one-id", "One");
+    auto two = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        "two-id", "Two");
+    ScriptedBackend* const one_view = one.get();
+    ScriptedBackend* const two_view = two.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(one));
+    backends.push_back(std::move(two));
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends), temporary.path, notifier());
+
+    EXPECT_EQ(
+        controller->start_multicast_by_ids("Question", {"missing-id"}).notice,
+        "Unknown multicast target ID 'missing-id'");
+    EXPECT_EQ(
+        controller->start_multicast_by_ids("Question", {"one-id", "one-id"}).notice,
+        "Multicast target @One is duplicated");
+    EXPECT_TRUE(controller->transcript().entries().empty());
+
+    const SessionUpdate started =
+        controller->start_multicast_by_ids("Question", {});
+    EXPECT_TRUE(started.clear_input);
+    receive_until_idle(*controller);
+    EXPECT_EQ(one_view->inputs.size(), 1U);
+    EXPECT_EQ(two_view->inputs.size(), 1U);
+}
+
 TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) {
     TemporaryJournal span_temporary;
     auto span_controller = SessionController::from_backends_for_testing(
@@ -951,7 +981,7 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
         notifier());
     (void)span_controller->open_offrecord();
     EXPECT_EQ(
-        span_controller->start_multicast("Question", {{"guide-id", "Guide"}}).notice,
+        span_controller->start_multicast_by_ids("Question", {"guide-id"}).notice,
         "Cannot start multicast while an off-record span is active");
 
     TemporaryJournal stop_temporary;
@@ -967,8 +997,8 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
     auto stop_controller = SessionController::from_backends_for_testing(
         std::move(backends), stop_temporary.path, notifier());
 
-    (void)stop_controller->start_multicast(
-        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    (void)stop_controller->start_multicast_by_ids(
+        "Question", {"one-id", "two-id"});
     EXPECT_EQ(stop_controller->submit_prompt("Another").notice,
               generation_in_progress_notice);
     EXPECT_EQ(stop_controller->clear_transcript().notice,
@@ -980,7 +1010,7 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
     EXPECT_EQ(stop_controller->restore_offrecord().notice,
               generation_in_progress_notice);
     EXPECT_EQ(
-        stop_controller->start_multicast("Again", {{"one-id", "One"}}).notice,
+        stop_controller->start_multicast_by_ids("Again", {"one-id"}).notice,
         generation_in_progress_notice);
     EXPECT_EQ(stop_controller->request_stop().notice, "Stopping generation...");
     const GenerationStatus stopping =
@@ -1016,8 +1046,7 @@ TEST(SessionController, CompletedForegroundWinsTheStopRace) {
     auto controller = SessionController::from_backends_for_testing(
         std::move(backends), temporary.path, notifier());
 
-    (void)controller->start_multicast(
-        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    (void)controller->start_multicast_by_ids("Question", {"one-id", "two-id"});
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!first_view->finished.load(std::memory_order_acquire)
@@ -1054,8 +1083,7 @@ TEST(SessionController, StopDoesNotWaitForCancelledBackgroundExecution) {
     auto controller = SessionController::from_backends_for_testing(
         std::move(backends), temporary.path, notifier());
 
-    (void)controller->start_multicast(
-        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    (void)controller->start_multicast_by_ids("Question", {"one-id", "two-id"});
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while ((!foreground_view->entered.load(std::memory_order_acquire)
@@ -1099,9 +1127,8 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     auto controller = SessionController::from_backends_for_testing(
         std::move(backends), temporary.path, notifier());
 
-    (void)controller->start_multicast(
-        "Question",
-        {{"one-id", "One"}, {"two-id", "Two"}, {"three-id", "Three"}});
+    (void)controller->start_multicast_by_ids(
+        "Question", {"one-id", "two-id", "three-id"});
     const SessionUpdate finished = receive_until_idle(*controller);
 
     EXPECT_EQ(finished.notice, "Generation failed\nGeneration stopped");
@@ -1130,8 +1157,7 @@ TEST(SessionController, StartsAllChildrenAndBuffersLaterOutputUntilForeground) {
     auto controller = SessionController::from_backends_for_testing(
         std::move(backends), temporary.path, notifier());
 
-    (void)controller->start_multicast(
-        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    (void)controller->start_multicast_by_ids("Question", {"one-id", "two-id"});
 
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -1176,8 +1202,7 @@ TEST(SessionController, DrainsLargeCompletedBackgroundBacklogInOrder) {
     auto controller = SessionController::from_backends_for_testing(
         std::move(backends), temporary.path, notifier());
 
-    (void)controller->start_multicast(
-        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    (void)controller->start_multicast_by_ids("Question", {"one-id", "two-id"});
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!second_view->finished.load(std::memory_order_acquire)
@@ -1271,16 +1296,16 @@ TEST(SessionController, FirstActivationFailureTearsDownEveryGatedExecution) {
         });
 
     EXPECT_THROW(
-        (void)controller->start_multicast(
-            "Question", {{"one-id", "One"}, {"two-id", "Two"}}),
+        (void)controller->start_multicast_by_ids(
+            "Question", {"one-id", "two-id"}),
         std::runtime_error);
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_TRUE(controller->transcript().entries().empty());
     EXPECT_TRUE(first_view->inputs.empty());
     EXPECT_TRUE(second_view->inputs.empty());
 
-    const SessionUpdate restarted = controller->start_multicast(
-        "Retry", {{"one-id", "One"}, {"two-id", "Two"}});
+    const SessionUpdate restarted = controller->start_multicast_by_ids(
+        "Retry", {"one-id", "two-id"});
     EXPECT_TRUE(restarted.clear_input);
     receive_until_idle(*controller);
     EXPECT_EQ(first_view->inputs.size(), 1U);
@@ -1313,8 +1338,7 @@ TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryExecution) 
             }
         });
 
-    (void)controller->start_multicast(
-        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    (void)controller->start_multicast_by_ids("Question", {"one-id", "two-id"});
     EXPECT_THROW(
         (void)receive_until_idle(*controller),
         std::runtime_error);
@@ -1325,8 +1349,8 @@ TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryExecution) 
     EXPECT_EQ(entries[0].addressed_to, "one-id");
     EXPECT_EQ(entries[1].text, "One answer");
 
-    const SessionUpdate restarted = controller->start_multicast(
-        "Retry", {{"one-id", "One"}, {"two-id", "Two"}});
+    const SessionUpdate restarted = controller->start_multicast_by_ids(
+        "Retry", {"one-id", "two-id"});
     EXPECT_TRUE(restarted.clear_input);
     receive_until_idle(*controller);
     EXPECT_GE(first_view->inputs.size(), 2U);

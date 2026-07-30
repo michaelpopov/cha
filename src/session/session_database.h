@@ -46,8 +46,6 @@ SessionDatabaseMetadata read_session_database_metadata(
     const std::filesystem::path& path);
 SessionRestore load_session_state(
     const std::filesystem::path& path);
-std::vector<TranscriptEntry> load_transcript_entries(
-    const std::filesystem::path& path);
 
 // The durable half of one session. It writes turn transitions — start, complete,
 // cancel, fail — to a single SQLite file as transactions, so a run that dies

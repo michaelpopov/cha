@@ -12,7 +12,7 @@ completion pool tasks.
 
 | Source | Responsibility |
 | --- | --- |
-| `config.*` | `Config` — identity, connection, model, streaming, auth, and reasoning settings — plus typed TOML overlays, field validation, and `load_prompt_variables()`. |
+| `config.*` | `LoadedConfig` — typed connection settings plus prompt variables from one TOML overlay, with field validation. |
 | `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
 | `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
 | `agent_registry.*` | Runtime metadata, gated pool executions, per-run event routing, cancellation, and batch cleanup. |
@@ -31,13 +31,10 @@ flowchart LR
         shared["shared prompt files under the forum"]
     end
 
-    base --> load["load_config<br/>typed overlay"]
+    base --> load["load_config<br/>one parsed overlay"]
     cfg --> load
-    load --> conf["Config"]
-    base --> vars["load_prompt_variables"]
-    cfg --> vars
+    load --> conf["Config + TemplateScope"]
     conf --> expand["expand_template_file<br/>SYSTEM.md and USER.md"]
-    vars --> expand
     sys --> expand
     usr --> expand
     shared --> expand
@@ -67,13 +64,9 @@ Configuration is a one-level overlay, not general inheritance. Built-in
 defaults are applied first, then the optional forum
 `personas/base_config.toml`, then the persona's own `config.toml`. An omitted
 field inherits the value below it. The persona directory name provides the ID,
-and each persona file must define `display_name`; the base file must not. Parsing and
-validation errors identify the file that supplied the invalid value.
-
-Legacy persona files may use `name` as a fallback for `display_name` and may
-override the directory-derived ID with `id`. The base file rejects all three
-identity fields. New definitions should use only the directory ID and
-`display_name`.
+and each persona file must define `display_name`; the base file must not. The
+removed `id` and `name` fields are rejected. Parsing and validation errors
+identify the file that supplied the invalid value.
 
 Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
 

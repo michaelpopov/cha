@@ -32,9 +32,9 @@ Mentions are recognized only at the start of a line, after leading whitespace.
 Trailing punctuation on a handle (`@Ada, hello`) is tolerated during resolution
 in `ForumPersonas`, not here.
 
-The parser never resolves a handle. It hands the text through and lets
-`SessionController` match it against `ForumPersonas`, so the grammar cannot go
-stale when the personas in a forum change.
+The parser never resolves a handle. It hands text and multicast handles through
+to `SessionController`, which matches them against `ForumPersonas`, so the
+grammar cannot go stale when the personas in a forum change.
 
 ## Dispatch
 
