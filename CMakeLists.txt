@@ -152,6 +152,7 @@ add_library(cha_core STATIC
     src/util/path_name.cpp
     src/util/text.cpp
     src/util/text_template.cpp
+    src/util/thread_pool.cpp
     src/util/utf8_path.cpp
     src/util/uv_event_loop.cpp
     src/transcript/transcript.cpp
@@ -238,6 +239,7 @@ if(BUILD_TESTING)
 
     set(CHA_TEST_SOURCES
         tests/util/unit_environment.cpp
+        tests/util/unit_thread_pool.cpp
         tests/util/unit_concurrent_queue.cpp
         tests/util/unit_text.cpp
         tests/util/unit_text_template.cpp

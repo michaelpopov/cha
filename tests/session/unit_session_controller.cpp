@@ -11,8 +11,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <future>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -26,6 +29,52 @@ test::TestNotifier& notifier() {
     static test::TestNotifier instance;
     return instance;
 }
+
+// Blocks the execution's final wake. This makes `execution_finished` true
+// while the worker task is still live, so shutdown must join the pool rather
+// than treating the registry's backend-safety barrier as full quiescence.
+class FinalWakeBlockingNotifier final : public WakeNotifier {
+public:
+    void block_final_wake() noexcept {
+        std::lock_guard lock(mutex_);
+        block_final_wake_ = true;
+    }
+
+    void wake() noexcept override {
+        std::unique_lock lock(mutex_);
+        ++wake_count_;
+        if (!block_final_wake_ || wake_count_ < 2) {
+            return;
+        }
+        final_wake_blocked_ = true;
+        changed_.notify_all();
+        changed_.wait(lock, [this] { return release_final_wake_; });
+    }
+
+    bool wait_for_final_wake(
+        std::chrono::milliseconds timeout = std::chrono::seconds(1)) {
+        std::unique_lock lock(mutex_);
+        return changed_.wait_for(lock, timeout, [this] {
+            return final_wake_blocked_;
+        });
+    }
+
+    void release_final_wake() noexcept {
+        {
+            std::lock_guard lock(mutex_);
+            release_final_wake_ = true;
+        }
+        changed_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    std::size_t wake_count_{};
+    bool block_final_wake_{};
+    bool final_wake_blocked_{};
+    bool release_final_wake_{};
+};
 
 std::vector<TranscriptEntry> copy_entries(const Transcript& transcript) {
     const std::span<const TranscriptEntry> entries = transcript.entries();
@@ -202,6 +251,50 @@ private:
     std::size_t delta_count_{1};
 };
 
+class CancellationBlockingBackend final : public CompletionBackend {
+public:
+    CancellationBlockingBackend(
+        std::string id,
+        std::string name,
+        std::atomic_bool& release)
+        : id_(std::move(id)), name_(std::move(name)), release_(release) {
+    }
+
+    RequestPayload prepare(const CompletionInput& input) override {
+        return {.bytes = input.run.prompt_text};
+    }
+
+    CompletionResult perform(
+        RequestPayload,
+        const CompletionDeltaSink&,
+        const std::atomic_bool& cancellation) override {
+        entered.store(true, std::memory_order_release);
+        while (!cancellation.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        while (!release_.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        return {CompletionOutcome::cancelled, {}};
+    }
+
+    AgentRuntimeInfo info() const override {
+        return {
+            .persona = {.id = id_, .name = name_},
+            .model = "test-model",
+            .api = "test://completion",
+            .streaming = true,
+        };
+    }
+
+    std::atomic_bool entered{};
+
+private:
+    std::string id_;
+    std::string name_;
+    std::atomic_bool& release_;
+};
+
 class ThrowingPrepareBackend final : public CompletionBackend {
 public:
     RequestPayload prepare(const CompletionInput&) override {
@@ -279,6 +372,20 @@ SessionRestore restore_with(
     };
 }
 
+TEST(SessionController, RejectsEmptyAgentConfigurationWithRegistryMessage) {
+    TemporaryJournal temporary;
+
+    try {
+        (void)SessionController::from_definitions(
+            {}, temporary.path, notifier());
+        FAIL() << "Expected empty-agent configuration rejection";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_EQ(
+            error.what(),
+            std::string("Agent registry requires at least one agent"));
+    }
+}
+
 TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     TemporaryJournal temporary;
     const TranscriptEntry earlier =
@@ -303,6 +410,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_TRUE(submitted.render_needed);
     const SessionUpdate completed =
         receive_until_idle(*controller);
+    EXPECT_FALSE(completed.end_session);
 
     ASSERT_EQ(backend_view->inputs.size(), 1U);
     const CompletionInput& request =
@@ -798,6 +906,7 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
 
     const SessionUpdate finished = receive_until_idle(*controller);
     EXPECT_TRUE(finished.render_needed);
+    EXPECT_FALSE(finished.end_session);
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_EQ(controller->transcript().offrecord_span(), OffrecordSpan{});
 
@@ -928,6 +1037,45 @@ TEST(SessionController, CompletedForegroundWinsTheStopRace) {
     EXPECT_EQ(entries[1].text, "One answer");
     EXPECT_EQ(entries[1].status, EntryStatus::complete);
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+}
+
+TEST(SessionController, StopDoesNotWaitForCancelledBackgroundExecution) {
+    TemporaryJournal temporary;
+    std::atomic_bool release_background{};
+    auto foreground = std::make_unique<ConcurrentBackend>(
+        "one-id", "One", "unused");
+    auto background = std::make_unique<CancellationBlockingBackend>(
+        "two-id", "Two", release_background);
+    ConcurrentBackend* foreground_view = foreground.get();
+    CancellationBlockingBackend* background_view = background.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(foreground));
+    backends.push_back(std::move(background));
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends), temporary.path, notifier());
+
+    (void)controller->start_multicast(
+        "Question", {{"one-id", "One"}, {"two-id", "Two"}});
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while ((!foreground_view->entered.load(std::memory_order_acquire)
+            || !background_view->entered.load(std::memory_order_acquire))
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    const bool both_entered =
+        foreground_view->entered.load(std::memory_order_acquire)
+        && background_view->entered.load(std::memory_order_acquire);
+
+    const auto started = std::chrono::steady_clock::now();
+    const SessionUpdate stopping = controller->request_stop();
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    release_background.store(true, std::memory_order_release);
+
+    EXPECT_TRUE(both_entered);
+    EXPECT_LT(elapsed, std::chrono::milliseconds(50));
+    EXPECT_EQ(stopping.notice, "Stopping generation...");
+    receive_until_idle(*controller);
 }
 
 TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
@@ -1096,7 +1244,7 @@ TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
     EXPECT_TRUE(backend_view->inputs.empty());
 }
 
-TEST(SessionController, FirstActivationFailureTearsDownEveryParkedRunner) {
+TEST(SessionController, FirstActivationFailureTearsDownEveryGatedExecution) {
     TemporaryJournal temporary;
     auto first = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"One answer"}, false,
@@ -1139,7 +1287,7 @@ TEST(SessionController, FirstActivationFailureTearsDownEveryParkedRunner) {
     EXPECT_EQ(second_view->inputs.size(), 1U);
 }
 
-TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryRunner) {
+TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryExecution) {
     TemporaryJournal temporary;
     auto first = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"One answer"}, false,
@@ -1367,6 +1515,7 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
     controller->shutdown();
 
     EXPECT_FALSE(controller->generation_status().active);
+    EXPECT_TRUE(controller->receive().end_session);
     const auto entries =
         load_transcript_entries(temporary.path);
     ASSERT_EQ(entries.size(), 2U);
@@ -1374,6 +1523,42 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
         entries.back().status,
         EntryStatus::cancelled);
     EXPECT_EQ(entries.back().text, "Partial");
+}
+
+TEST(SessionController, ShutdownJoinsPoolBeforeRegistryCanBeDestroyed) {
+    TemporaryJournal temporary;
+    FinalWakeBlockingNotifier shutdown_notifier;
+    auto backend = std::make_unique<ConcurrentBackend>(
+        "guide-id", "Guide", "unused");
+    ConcurrentBackend* backend_view = backend.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(backend));
+    auto controller = SessionController::from_backends_for_testing(
+        std::move(backends), temporary.path, shutdown_notifier);
+
+    (void)controller->submit_prompt("Question");
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!backend_view->entered.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_TRUE(backend_view->entered.load(std::memory_order_acquire));
+
+    shutdown_notifier.block_final_wake();
+    auto shutdown = std::async(std::launch::async, [&controller] {
+        controller->shutdown();
+    });
+
+    const bool final_wake_blocked = shutdown_notifier.wait_for_final_wake();
+    const std::future_status status = final_wake_blocked
+        ? shutdown.wait_for(std::chrono::milliseconds(50))
+        : std::future_status::deferred;
+    shutdown_notifier.release_final_wake();
+
+    ASSERT_TRUE(final_wake_blocked);
+    EXPECT_EQ(status, std::future_status::timeout);
+    shutdown.get();
 }
 
 } // namespace

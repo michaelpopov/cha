@@ -5,6 +5,7 @@
 #include "ui/render/transcript_writer.h"
 #include "ui/text/text_input.h"
 #include "util/environment.h"
+#include "util/thread_pool.h"
 #include "support/mock_http_server.h"
 #include "session/session_database.h"
 #include "session/workspace.h"
@@ -60,7 +61,7 @@ AgentEvent wait_for_agent_event(AgentRegistry& registry) {
     while (true) {
         const std::size_t observed = notifier().wake_count();
         AgentEvent event = AgentCompleted{};
-        const ChannelReadStatus status = registry.try_receive(event);
+        const ChannelReadStatus status = registry.try_receive(0, event);
         if (status == ChannelReadStatus::value) {
             return event;
         }
@@ -77,21 +78,9 @@ AgentEvent wait_for_agent_event(AgentRegistry& registry) {
     }
 }
 
-BatchId start_agent_run(
-    AgentRegistry& registry,
-    CompletionInput input) {
-    BatchId staged = registry.stage_batch(
-        std::vector<CompletionInput>{std::move(input)});
-    registry.set_foreground(staged, 0);
-    registry.open_batch_gate(staged);
-    return staged;
-}
-
-void retire_agent_run(
-    AgentRegistry& registry,
-    BatchId staged) {
-    registry.retire(staged, 0);
-    registry.retire_batch(staged);
+void start_agent_run(AgentRegistry& registry, CompletionInput input) {
+    registry.stage_batch(std::vector<CompletionInput>{std::move(input)});
+    registry.open_gate();
 }
 
 ChatResult run_chat(bool stream) {
@@ -99,9 +88,11 @@ ChatResult run_chat(bool stream) {
     Transcript transcript;
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
+    ThreadPool pool(1);
     AgentRegistry registry(
         std::move(definitions),
-        notifier());
+        notifier(),
+        pool);
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     CompletionInput request{
@@ -113,7 +104,7 @@ ChatResult run_chat(bool stream) {
             .prompt_text = input,
         },
     };
-    const BatchId staged = start_agent_run(registry, std::move(request));
+    start_agent_run(registry, std::move(request));
 
     ChatResult result;
     while (true) {
@@ -127,8 +118,9 @@ ChatResult run_chat(bool stream) {
         }
     }
 
-    retire_agent_run(registry, staged);
+    registry.clear_batch();
     registry.stop();
+    pool.stop();
     return result;
 }
 
@@ -137,9 +129,11 @@ ChatResult run_cancelled_chat() {
     Transcript transcript;
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
+    ThreadPool pool(1);
     AgentRegistry registry(
         std::move(definitions),
-        notifier());
+        notifier(),
+        pool);
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     CompletionInput request{
@@ -151,7 +145,7 @@ ChatResult run_cancelled_chat() {
             .prompt_text = input,
         },
     };
-    const BatchId staged = start_agent_run(registry, std::move(request));
+    start_agent_run(registry, std::move(request));
 
     ChatResult result;
     while (true) {
@@ -159,15 +153,16 @@ ChatResult run_cancelled_chat() {
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
-            registry.cancel_all();
+            registry.cancel_batch();
         } else {
             EXPECT_TRUE(std::holds_alternative<AgentCancelled>(event));
             break;
         }
     }
 
-    retire_agent_run(registry, staged);
+    registry.clear_batch();
     registry.stop();
+    pool.stop();
     return result;
 }
 
@@ -433,7 +428,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
             std::move(definitions),
             session.path,
             notifier());
-        ASSERT_EQ(controller->personas().first().id, "cheburashka");
+        ASSERT_EQ(controller->personas().first().id, "Cheburashka");
         EXPECT_TRUE(show_addressing(
             controller->personas(), controller->transcript().view()));
 
@@ -476,15 +471,15 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     const std::vector<TranscriptEntry> restored =
         load_transcript_entries(session.path);
     ASSERT_EQ(restored.size(), 4U);
-    EXPECT_EQ(restored[0].addressed_to, "cheburashka");
+    EXPECT_EQ(restored[0].addressed_to, "Cheburashka");
     EXPECT_EQ(restored[0].text, "Who are you?");
-    EXPECT_EQ(restored[1].participant_id, "cheburashka");
+    EXPECT_EQ(restored[1].participant_id, "Cheburashka");
     EXPECT_EQ(restored[1].text, "I am Cheburashka.");
-    EXPECT_EQ(restored[2].addressed_to, "ismael");
+    EXPECT_EQ(restored[2].addressed_to, "Ismael");
     EXPECT_EQ(restored[2].addressed_to_name, "Ismael");
     EXPECT_EQ(restored[2].text, "and you?")
         << "the mention is stripped from the stored prompt";
-    EXPECT_EQ(restored[3].participant_id, "ismael");
+    EXPECT_EQ(restored[3].participant_id, "Ismael");
     EXPECT_EQ(restored[3].display_name, "Ismael");
 }
 

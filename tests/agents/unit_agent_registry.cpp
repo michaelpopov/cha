@@ -1,4 +1,5 @@
 #include "agents/agent_registry.h"
+#include "support/test_backends.h"
 #include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
@@ -17,45 +18,67 @@
 namespace cha {
 namespace {
 
-class RegistryBackend final : public CompletionBackend {
+using namespace std::chrono_literals;
+
+test::TestNotifier& notifier() {
+    static test::TestNotifier instance;
+    return instance;
+}
+
+class RecordingBackend final : public CompletionBackend {
 public:
-    RegistryBackend(std::string id, std::string name)
-        : id_(std::move(id)), name_(std::move(name)) {
+    RecordingBackend(
+        std::string id,
+        std::string name,
+        std::string answer,
+        CompletionResult result = {})
+        : id_(std::move(id)),
+          name_(std::move(name)),
+          answer_(std::move(answer)),
+          result_(std::move(result)) {
     }
 
     RequestPayload prepare(const CompletionInput& input) override {
-        prepared_requests.push_back(input.run.request_id);
+        prepared.store(true, std::memory_order_release);
+        received = input;
         return {.bytes = input.run.prompt_text};
     }
 
     CompletionResult perform(
-        RequestPayload payload,
+        RequestPayload,
         const CompletionDeltaSink& on_delta,
         const std::atomic_bool&) override {
-        performed = true;
-        on_delta({
-            CompletionDeltaKind::answer,
-            name_ + ":" + payload.bytes,
-        });
-        return {};
+        performed.store(true, std::memory_order_release);
+        if (!answer_.empty()) {
+            on_delta({CompletionDeltaKind::answer, answer_});
+        }
+        return result_;
     }
 
     AgentRuntimeInfo info() const override {
         return {{id_, name_}, "model", "test://completion", true};
     }
 
-    std::vector<RequestId> prepared_requests;
-    bool performed{};
+    std::atomic_bool prepared{};
+    std::atomic_bool performed{};
+    CompletionInput received;
 
 private:
     std::string id_;
     std::string name_;
+    std::string answer_;
+    CompletionResult result_;
 };
 
-class BlockingRegistryBackend final : public CompletionBackend {
+struct BarrierState {
+    std::atomic_int entered{};
+    std::atomic_bool release{};
+};
+
+class BarrierBackend final : public CompletionBackend {
 public:
-    BlockingRegistryBackend(std::string id, std::string name)
-        : id_(std::move(id)), name_(std::move(name)) {
+    BarrierBackend(std::string id, std::string name, BarrierState& state)
+        : id_(std::move(id)), name_(std::move(name)), state_(state) {
     }
 
     RequestPayload prepare(const CompletionInput& input) override {
@@ -64,15 +87,11 @@ public:
     }
 
     CompletionResult perform(
-        RequestPayload payload,
-        const CompletionDeltaSink& on_delta,
+        RequestPayload,
+        const CompletionDeltaSink&,
         const std::atomic_bool& cancellation) override {
-        entered_perform.store(true, std::memory_order_release);
-        on_delta({
-            CompletionDeltaKind::answer,
-            name_ + ":" + payload.bytes,
-        });
-        while (!release.load(std::memory_order_acquire)
+        state_.entered.fetch_add(1, std::memory_order_acq_rel);
+        while (!state_.release.load(std::memory_order_acquire)
                && !cancellation.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
@@ -85,162 +104,15 @@ public:
         return {{id_, name_}, "model", "test://completion", true};
     }
 
-    std::atomic_bool entered_perform{false};
-    std::atomic_bool prepared{false};
-    std::atomic_bool release{false};
+    std::atomic_bool prepared{};
 
 private:
     std::string id_;
     std::string name_;
+    BarrierState& state_;
 };
 
-class AbortRegistryBackend final : public CompletionBackend {
-public:
-    AbortRegistryBackend(
-        std::string id,
-        std::string name,
-        const std::atomic_bool* release_after_cancel = nullptr)
-        : id_(std::move(id)),
-          name_(std::move(name)),
-          release_after_cancel_(release_after_cancel) {
-    }
-
-    RequestPayload prepare(const CompletionInput& input) override {
-        return {.bytes = input.run.prompt_text};
-    }
-
-    CompletionResult perform(
-        RequestPayload,
-        const CompletionDeltaSink&,
-        const std::atomic_bool& cancellation) override {
-        entered.store(true, std::memory_order_release);
-        while (!cancellation.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
-        while (release_after_cancel_
-               && !release_after_cancel_->load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
-        return {CompletionOutcome::cancelled, {}};
-    }
-
-    AgentRuntimeInfo info() const override {
-        return {{id_, name_}, "model", "test://completion", true};
-    }
-
-    std::atomic_bool entered{false};
-
-private:
-    std::string id_;
-    std::string name_;
-    const std::atomic_bool* release_after_cancel_{};
-};
-
-class ConfigurableBackend final : public CompletionBackend {
-public:
-    explicit ConfigurableBackend(
-        CompletionResult result = {},
-        std::vector<std::string> deltas = {},
-        bool wait_for_cancellation = false,
-        const std::atomic_bool* release_after_cancellation = nullptr)
-        : result_(std::move(result)),
-          deltas_(std::move(deltas)),
-          wait_for_cancellation_(wait_for_cancellation),
-          release_after_cancellation_(release_after_cancellation) {
-    }
-
-    RequestPayload prepare(const CompletionInput& input) override {
-        inputs.push_back(input);
-        histories.push_back(input.history->entries);
-        return {.bytes = input.run.prompt_text};
-    }
-
-    CompletionResult perform(
-        RequestPayload,
-        const CompletionDeltaSink& on_delta,
-        const std::atomic_bool& cancellation) override {
-        perform_calls.fetch_add(1, std::memory_order_relaxed);
-        for (const std::string& delta : deltas_) {
-            on_delta({delta_kind, delta});
-        }
-        if (wait_for_cancellation_) {
-            while (!cancellation.load(std::memory_order_acquire)) {
-                std::this_thread::yield();
-            }
-            while (release_after_cancellation_
-                   && !release_after_cancellation_->load(
-                       std::memory_order_acquire)) {
-                std::this_thread::yield();
-            }
-            return {CompletionOutcome::cancelled, {}};
-        }
-        return result_;
-    }
-
-    AgentRuntimeInfo info() const override {
-        return {
-            .persona = {
-                .id = id_,
-                .name = "Fake",
-            },
-            .model = "fake-model",
-            .api = "fake://completion",
-            .streaming = true,
-        };
-    }
-
-    std::vector<CompletionInput> inputs;
-    std::vector<std::vector<TranscriptEntry>> histories;
-    std::atomic_size_t perform_calls{};
-    CompletionDeltaKind delta_kind{CompletionDeltaKind::answer};
-
-private:
-    std::string id_{"assistant"};
-    CompletionResult result_;
-    std::vector<std::string> deltas_;
-    bool wait_for_cancellation_{};
-    const std::atomic_bool* release_after_cancellation_{};
-};
-
-class BoundaryBackend final : public CompletionBackend {
-public:
-    RequestPayload prepare(const CompletionInput& input) override {
-        captured_history = input.history->entries;
-        prepared.set_value();
-        return {.bytes = input.run.prompt_text};
-    }
-
-    CompletionResult perform(
-        RequestPayload,
-        const CompletionDeltaSink&,
-        const std::atomic_bool&) override {
-        while (!release.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
-        return {};
-    }
-
-    AgentRuntimeInfo info() const override {
-        return {
-            .persona = {
-                .id = id_,
-                .name = "Boundary",
-            },
-            .model = "fake",
-            .api = "fake://",
-            .streaming = true,
-        };
-    }
-
-    std::promise<void> prepared;
-    std::atomic_bool release{false};
-    std::vector<TranscriptEntry> captured_history;
-
-private:
-    std::string id_{"assistant"};
-};
-
-class ThrowingPrepareBackend final : public CompletionBackend {
+class ThrowingBackend final : public CompletionBackend {
 public:
     RequestPayload prepare(const CompletionInput&) override {
         throw std::runtime_error("preparation failed");
@@ -250,57 +122,20 @@ public:
         RequestPayload,
         const CompletionDeltaSink&,
         const std::atomic_bool&) override {
-        performed.store(true, std::memory_order_release);
         return {};
     }
 
     AgentRuntimeInfo info() const override {
-        return {
-            .persona = {
-                .id = id_,
-                .name = "Throwing",
-            },
-            .model = "fake",
-            .api = "fake://",
-            .streaming = true,
-        };
+        return {{"one-id", "One"}, "model", "test://completion", true};
     }
-
-    std::atomic_bool performed{false};
-
-private:
-    std::string id_{"assistant"};
 };
-
-test::TestNotifier& notifier() {
-    static test::TestNotifier instance;
-    return instance;
-}
-
-AgentEvent next_event(AgentRegistry& registry) {
-    while (true) {
-        const std::size_t observed = notifier().wake_count();
-        AgentEvent event = AgentCompleted{};
-        const ChannelReadStatus status = registry.try_receive(event);
-        if (status == ChannelReadStatus::value) {
-            return event;
-        }
-        if (status == ChannelReadStatus::closed) {
-            throw std::runtime_error(
-                "Registry event queue closed unexpectedly");
-        }
-        if (!notifier().wait_for_wake(observed)) {
-            throw std::runtime_error("Timed out waiting for registry event");
-        }
-    }
-}
 
 CompletionInput request(
     const Transcript& transcript,
     RequestId id,
     std::string target,
     std::string name,
-    std::string text) {
+    std::string text = "Question") {
     return {
         .history = std::make_shared<const CompletionHistory>(
             transcript.completion_history()),
@@ -312,436 +147,67 @@ CompletionInput request(
     };
 }
 
-BatchId start_run(
-    AgentRegistry& registry,
-    CompletionInput input) {
-    BatchId staged = registry.stage_batch(
-        std::vector<CompletionInput>{std::move(input)});
-    registry.set_foreground(staged, 0);
-    registry.open_batch_gate(staged);
-    return staged;
-}
-
-void retire_run(AgentRegistry& registry, BatchId staged) {
-    registry.retire(staged, 0);
-    registry.retire_batch(staged);
-}
-
-TEST(AgentRegistry, RoutesPromptTargetThroughTheForegroundQueue) {
-    Transcript transcript;
-    auto alpha = std::make_unique<RegistryBackend>("alpha-id", "Alpha");
-    auto beta = std::make_unique<RegistryBackend>("beta-id", "Beta");
-    RegistryBackend* alpha_view = alpha.get();
-    RegistryBackend* beta_view = beta.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(alpha));
-    backends.push_back(std::move(beta));
-    AgentRegistry registry(std::move(backends), notifier());
-
-    const BatchId staged = start_run(
-        registry,
-        request(transcript, 1, "beta-id", "Beta", "hello"));
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Beta:hello");
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 1U);
-    retire_run(registry, staged);
-    EXPECT_TRUE(alpha_view->prepared_requests.empty());
-    EXPECT_EQ(beta_view->prepared_requests, (std::vector<RequestId>{1}));
-
-    CompletionInput unknown = request(transcript, 2, "missing-id", "Missing", "nope");
-    EXPECT_THROW(
-        (void)start_run(registry, std::move(unknown)),
-        std::invalid_argument);
-    registry.stop();
-    AgentEvent event = AgentCompleted{};
-    EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
-}
-
-TEST(AgentRegistry, RejectsMissingHistoryBeforeStaging) {
-    Transcript transcript;
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::make_unique<ConfigurableBackend>());
-    AgentRegistry registry(std::move(backends), notifier());
-    CompletionInput invalid =
-        request(transcript, 1, "assistant", "Fake", "Invalid");
-    invalid.history.reset();
-
-    EXPECT_THROW((void)start_run(registry, std::move(invalid)), std::invalid_argument);
-    const BatchId staged = start_run(
-        registry,
-        request(transcript, 2, "assistant", "Fake", "Valid"));
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 2U);
-    retire_run(registry, staged);
-}
-
-TEST(AgentRegistry, RejectsDuplicateBatchTargetsBeforeAcquiringLeases) {
-    Transcript transcript;
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::make_unique<RegistryBackend>("alpha-id", "Alpha"));
-    AgentRegistry registry(std::move(backends), notifier());
-
-    EXPECT_THROW(
-        (void)registry.stage_batch({
-            request(transcript, 1, "alpha-id", "Alpha", "one"),
-            request(transcript, 2, "alpha-id", "Alpha", "two"),
-        }),
-        std::invalid_argument);
-
-    const BatchId staged = start_run(
-        registry,
-        request(transcript, 3, "alpha-id", "Alpha", "ordinary"));
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).request_id, 3U);
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 3U);
-    retire_run(registry, staged);
-}
-
-TEST(AgentRegistry, RejectsInvalidBackendMetadataAtTheRegistryBoundary) {
-    Transcript transcript;
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::make_unique<RegistryBackend>("bad-id", " Bad name"));
-    EXPECT_THROW(
-        AgentRegistry registry(
-            std::move(backends),
-            notifier()),
-        std::invalid_argument);
-}
-
-TEST(AgentRegistry, SerializesSingleRunBatchesAcrossBackends) {
-    Transcript transcript;
-    auto alpha = std::make_unique<BlockingRegistryBackend>("alpha-id", "Alpha");
-    auto beta = std::make_unique<BlockingRegistryBackend>("beta-id", "Beta");
-    BlockingRegistryBackend* alpha_view = alpha.get();
-    BlockingRegistryBackend* beta_view = beta.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(alpha));
-    backends.push_back(std::move(beta));
-    AgentRegistry registry(std::move(backends), notifier());
-
-    const BatchId first = start_run(
-        registry,
-        request(transcript, 1, "alpha-id", "Alpha", "one"));
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Alpha:one");
-    ASSERT_TRUE(alpha_view->entered_perform.load(std::memory_order_acquire));
-
-    EXPECT_THROW(
-        (void)start_run(
-            registry,
-            request(transcript, 2, "beta-id", "Beta", "two")),
-        std::runtime_error);
-    EXPECT_FALSE(beta_view->prepared.load(std::memory_order_acquire));
-    EXPECT_FALSE(beta_view->entered_perform.load(std::memory_order_acquire));
-
-    alpha_view->release.store(true, std::memory_order_release);
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 1U);
-    retire_run(registry, first);
-
-    const BatchId second = start_run(
-        registry,
-        request(transcript, 3, "beta-id", "Beta", "three"));
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Beta:three");
-    ASSERT_TRUE(beta_view->entered_perform.load(std::memory_order_acquire));
-    beta_view->release.store(true, std::memory_order_release);
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 3U);
-    retire_run(registry, second);
-
-    registry.stop();
-    AgentEvent event = AgentCompleted{};
-    EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
-}
-
-TEST(AgentRegistry, StagesDistinctBackendsConcurrentlyAndRoutesOnlyForeground) {
-    Transcript transcript;
-    auto alpha = std::make_unique<BlockingRegistryBackend>("alpha-id", "Alpha");
-    auto beta = std::make_unique<BlockingRegistryBackend>("beta-id", "Beta");
-    BlockingRegistryBackend* alpha_view = alpha.get();
-    BlockingRegistryBackend* beta_view = beta.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(alpha));
-    backends.push_back(std::move(beta));
-    AgentRegistry registry(std::move(backends), notifier());
-
-    BatchId staged = registry.stage_batch({
-        request(transcript, 1, "alpha-id", "Alpha", "one"),
-        request(transcript, 2, "beta-id", "Beta", "two"),
-    });
-    registry.set_foreground(staged, 0);
-    registry.open_batch_gate(staged);
-    registry.open_batch_gate(staged);
-
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while ((!alpha_view->entered_perform.load(std::memory_order_acquire)
-            || !beta_view->entered_perform.load(std::memory_order_acquire))
-           && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::yield();
-    }
-    ASSERT_TRUE(alpha_view->entered_perform.load(std::memory_order_acquire));
-    ASSERT_TRUE(beta_view->entered_perform.load(std::memory_order_acquire));
-
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Alpha:one");
-    alpha_view->release.store(true, std::memory_order_release);
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 1U);
-    registry.retire(staged, 0);
-
-    // The live batch remains the registry admission reservation after child 0
-    // returns its lease and worker execution.
-    EXPECT_THROW(
-        (void)start_run(
-            registry,
-            request(transcript, 3, "alpha-id", "Alpha", "ordinary")),
-        std::runtime_error);
-
-    registry.set_foreground(staged, 1);
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Beta:two");
-    beta_view->release.store(true, std::memory_order_release);
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 2U);
-    registry.retire(staged, 1);
-    registry.retire_batch(staged);
-
-    const BatchId reused = start_run(
-        registry,
-        request(transcript, 4, "alpha-id", "Alpha", "reused"));
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Alpha:reused");
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 4U);
-    retire_run(registry, reused);
-}
-
-TEST(AgentRegistry, RollsBackPartialThreadConstructionAndReleasesEveryLease) {
-    for (const std::size_t fail_on_start : {1U, 2U}) {
-        SCOPED_TRACE(fail_on_start);
-        Transcript transcript;
-        auto one = std::make_unique<RegistryBackend>("one-id", "One");
-        auto two = std::make_unique<RegistryBackend>("two-id", "Two");
-        auto three = std::make_unique<RegistryBackend>("three-id", "Three");
-        RegistryBackend* const one_view = one.get();
-        RegistryBackend* const two_view = two.get();
-        RegistryBackend* const three_view = three.get();
-        std::vector<std::unique_ptr<CompletionBackend>> backends;
-        backends.push_back(std::move(one));
-        backends.push_back(std::move(two));
-        backends.push_back(std::move(three));
-        std::size_t thread_starts{};
-        AgentRegistry registry(
-            std::move(backends),
-            notifier(),
-            [&thread_starts, fail_on_start] {
-                if (++thread_starts == fail_on_start) {
-                    throw std::runtime_error(
-                        "injected staged-thread construction failure");
-                }
-            });
-
-        EXPECT_THROW(
-            (void)registry.stage_batch({
-                request(transcript, 1, "one-id", "One", "one"),
-                request(transcript, 2, "two-id", "Two", "two"),
-                request(transcript, 3, "three-id", "Three", "three"),
-            }),
-            std::runtime_error);
-        EXPECT_TRUE(one_view->prepared_requests.empty());
-        EXPECT_TRUE(two_view->prepared_requests.empty());
-        EXPECT_TRUE(three_view->prepared_requests.empty());
-        EXPECT_FALSE(one_view->performed);
-        EXPECT_FALSE(two_view->performed);
-        EXPECT_FALSE(three_view->performed);
-
-        BatchId staged = registry.stage_batch({
-            request(transcript, 4, "one-id", "One", "one"),
-            request(transcript, 5, "two-id", "Two", "two"),
-            request(transcript, 6, "three-id", "Three", "three"),
-        });
-        registry.set_foreground(staged, 0);
-        registry.open_batch_gate(staged);
-        for (std::size_t index = 0; index < 3; ++index) {
-            if (index != 0) {
-                registry.set_foreground(staged, index);
-            }
-            EXPECT_TRUE(std::holds_alternative<AgentDelta>(
-                next_event(registry)));
-            EXPECT_TRUE(std::holds_alternative<AgentCompleted>(
-                next_event(registry)));
-            registry.retire(staged, index);
+AgentEvent next_event(AgentRegistry& registry, std::size_t index) {
+    const auto deadline = std::chrono::steady_clock::now() + 1s;
+    while (std::chrono::steady_clock::now() < deadline) {
+        AgentEvent event = AgentCompleted{};
+        if (registry.try_receive(index, event) == ChannelReadStatus::value) {
+            return event;
         }
-        registry.retire_batch(staged);
+        std::this_thread::yield();
     }
+    throw std::runtime_error("Timed out waiting for agent event");
 }
 
-TEST(AgentRegistry, OrdinaryRunUsesOnlyThePersistentRunner) {
-    Transcript transcript;
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(
-        std::make_unique<RegistryBackend>("one-id", "One"));
-    std::size_t temporary_thread_starts{};
-    AgentRegistry registry(
-        std::move(backends),
-        notifier(),
-        [&temporary_thread_starts] {
-            ++temporary_thread_starts;
-        });
-
-    const BatchId batch = start_run(
-        registry,
-        request(transcript, 1, "one-id", "One", "ordinary"));
-    EXPECT_EQ(temporary_thread_starts, 0U);
-    EXPECT_TRUE(std::holds_alternative<AgentDelta>(
-        next_event(registry)));
-    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(
-        next_event(registry)));
-    retire_run(registry, batch);
-}
-
-TEST(AgentRegistry, InteractiveAbortCleanupDoesNotJoinBackgroundOnCaller) {
-    Transcript transcript;
-    std::atomic_bool release_background{false};
-    auto foreground =
-        std::make_unique<AbortRegistryBackend>("one-id", "One");
-    auto background = std::make_unique<AbortRegistryBackend>(
-        "two-id", "Two", &release_background);
-    AbortRegistryBackend* foreground_view = foreground.get();
-    AbortRegistryBackend* background_view = background.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(foreground));
-    backends.push_back(std::move(background));
-    AgentRegistry registry(std::move(backends), notifier());
-
-    BatchId staged = registry.stage_batch({
-        request(transcript, 1, "one-id", "One", "one"),
-        request(transcript, 2, "two-id", "Two", "two"),
-    });
-    registry.set_foreground(staged, 0);
-    registry.open_batch_gate(staged);
-
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while ((!foreground_view->entered.load(std::memory_order_acquire)
-            || !background_view->entered.load(std::memory_order_acquire))
+bool wait_until_entered(const BarrierState& state, int expected) {
+    const auto deadline = std::chrono::steady_clock::now() + 1s;
+    while (state.entered.load(std::memory_order_acquire) < expected
            && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
-    ASSERT_TRUE(foreground_view->entered.load(std::memory_order_acquire));
-    ASSERT_TRUE(background_view->entered.load(std::memory_order_acquire));
-
-    const auto started = std::chrono::steady_clock::now();
-    registry.begin_abort_cleanup(
-        staged,
-        0);
-    EXPECT_LT(
-        std::chrono::steady_clock::now() - started,
-        std::chrono::milliseconds(50));
-    EXPECT_EQ(
-        registry.poll_abort_cleanup(staged),
-        CleanupStatus::pending);
-
-    EXPECT_EQ(std::get<AgentCancelled>(next_event(registry)).request_id, 1U);
-    registry.release_abort_foreground(staged, 0);
-    EXPECT_EQ(
-        registry.poll_abort_cleanup(staged),
-        CleanupStatus::pending);
-
-    release_background.store(true, std::memory_order_release);
-    CleanupStatus status = CleanupStatus::pending;
-    const auto cleanup_deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while ((status = registry.poll_abort_cleanup(staged))
-               == CleanupStatus::pending
-           && std::chrono::steady_clock::now() < cleanup_deadline) {
-        std::this_thread::yield();
-    }
-    EXPECT_EQ(status, CleanupStatus::complete);
+    return state.entered.load(std::memory_order_acquire) == expected;
 }
 
-TEST(AgentRegistry, ShutdownDuringAbortStopsWaitingForForegroundHandoff) {
-    Transcript transcript;
-    std::atomic_bool release_background{false};
-    auto foreground =
-        std::make_unique<AbortRegistryBackend>("one-id", "One");
-    auto background = std::make_unique<AbortRegistryBackend>(
-        "two-id", "Two", &release_background);
-    AbortRegistryBackend* foreground_view = foreground.get();
-    AbortRegistryBackend* background_view = background.get();
+TEST(AgentRegistry, RejectsBorrowedPoolWhoseWidthDiffersFromBackendCount) {
+    ThreadPool pool(1);
     std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(foreground));
-    backends.push_back(std::move(background));
-    AgentRegistry registry(std::move(backends), notifier());
+    backends.push_back(std::make_unique<RecordingBackend>(
+        "one-id", "One", "one"));
+    backends.push_back(std::make_unique<RecordingBackend>(
+        "two-id", "Two", "two"));
 
-    BatchId staged = registry.stage_batch({
-        request(transcript, 1, "one-id", "One", "one"),
-        request(transcript, 2, "two-id", "Two", "two"),
-    });
-    registry.set_foreground(staged, 0);
-    registry.open_batch_gate(staged);
-
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while ((!foreground_view->entered.load(std::memory_order_acquire)
-            || !background_view->entered.load(std::memory_order_acquire))
-           && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::yield();
-    }
-    ASSERT_TRUE(foreground_view->entered.load(std::memory_order_acquire));
-    ASSERT_TRUE(background_view->entered.load(std::memory_order_acquire));
-
-    registry.begin_abort_cleanup(
-        staged,
-        0);
-    std::future<void> stopped = std::async(
-        std::launch::async, [&registry] { registry.stop(); });
-    EXPECT_EQ(
-        stopped.wait_for(std::chrono::milliseconds(50)),
-        std::future_status::timeout);
-
-    release_background.store(true, std::memory_order_release);
-    stopped.get();
-
-    AgentEvent event = AgentCompleted{};
-    ASSERT_EQ(registry.try_receive(event), ChannelReadStatus::value);
-    EXPECT_EQ(std::get<AgentCancelled>(event).request_id, 1U);
-    EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
-}
-
-TEST(AgentRegistry, RejectsEmptyConstruction) {
-    Transcript transcript;
     EXPECT_THROW(
-        AgentRegistry registry(
-            std::vector<std::unique_ptr<CompletionBackend>>{},
-            notifier()),
+        (void)AgentRegistry(std::move(backends), notifier(), pool),
         std::invalid_argument);
 }
 
-TEST(AgentRegistry, RejectsNullBackend) {
-    Transcript transcript;
+TEST(AgentRegistry, RejectsEmptyAndNullBackendConstruction) {
+    ThreadPool pool(1);
+    EXPECT_THROW(
+        (void)AgentRegistry(
+            std::vector<std::unique_ptr<CompletionBackend>>{}, notifier(), pool),
+        std::invalid_argument);
+
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(nullptr);
     EXPECT_THROW(
-        AgentRegistry registry(
-            std::move(backends),
-            notifier()),
+        (void)AgentRegistry(std::move(backends), notifier(), pool),
         std::invalid_argument);
 }
 
-TEST(AgentRegistry, RejectsAnUnknownBatchOrRunPositionWithoutTerminating) {
-    Transcript transcript;
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::make_unique<ConfigurableBackend>());
-    AgentRegistry registry(std::move(backends), notifier());
-
-    const BatchId staged = registry.stage_batch({
-        request(transcript, 1, "assistant", "Fake", "Question"),
-    });
+TEST(AgentRegistry, RejectsInvalidBackendMetadataAtConstruction) {
+    ThreadPool pool(1);
     EXPECT_THROW(
-        registry.set_foreground(staged + 1, 0),
-        std::logic_error);
-    EXPECT_THROW(
-        registry.set_foreground(staged, 1),
-        std::logic_error);
-
-    registry.set_foreground(staged, 0);
-    registry.open_batch_gate(staged);
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 1U);
-    retire_run(registry, staged);
+        (void)AgentRegistry(
+            test::one_backend(std::make_unique<RecordingBackend>(
+                "valid-id", " Invalid name", "answer")),
+            notifier(),
+            pool),
+        std::invalid_argument);
 }
 
-TEST(AgentRegistry, IdentifiesThePersonaWhoseStartupFails) {
-    Transcript transcript;
+TEST(AgentRegistry, IdentifiesPersonaWhoseDefinitionStartupFails) {
+    ThreadPool pool(1);
     AgentDefinition definition{
         .config = {
             .id = "alpha-id",
@@ -752,278 +218,431 @@ TEST(AgentRegistry, IdentifiesThePersonaWhoseStartupFails) {
     };
 
     try {
-        AgentRegistry registry(
-            std::vector<AgentDefinition>{std::move(definition)},
-            notifier());
+        (void)AgentRegistry(
+            std::vector<AgentDefinition>{std::move(definition)}, notifier(), pool);
         FAIL() << "Expected startup failure";
     } catch (const std::runtime_error& error) {
-        EXPECT_NE(std::string(error.what()).find("Persona 'Alpha'"), std::string::npos);
-        EXPECT_NE(std::string(error.what()).find("alpha-id"), std::string::npos);
+        const std::string message = error.what();
+        EXPECT_NE(message.find("Persona 'Alpha'"), std::string::npos);
+        EXPECT_NE(message.find("alpha-id"), std::string::npos);
     }
 }
 
-TEST(AgentRegistry, StartsOnConstructionAndStopsIdempotently) {
+TEST(AgentRegistry, RejectsMissingHistoryWithoutLeavingABatch) {
     Transcript transcript;
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::make_unique<ConfigurableBackend>());
-    AgentRegistry registry(std::move(backends), notifier());
+    ThreadPool pool(1);
+    AgentRegistry registry(
+        test::one_backend(std::make_unique<RecordingBackend>(
+            "one-id", "One", "")),
+        notifier(),
+        pool);
+    CompletionInput invalid = request(transcript, 1, "one-id", "One");
+    invalid.history.reset();
 
-    const BatchId staged = start_run(
-        registry,
-        request(transcript, 1, "assistant", "Fake", "Question"));
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 1U);
-    registry.stop();
-    EXPECT_NO_THROW(registry.stop());
-    EXPECT_THROW(
-        (void)start_run(
-            registry,
-            request(
-                transcript,
-                2,
-                "assistant",
-                "Fake",
-                "Another question")),
-        std::runtime_error);
-    (void)staged;
-    AgentEvent event = AgentCompleted{};
-    EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
+    EXPECT_THROW(registry.stage_batch({std::move(invalid)}), std::invalid_argument);
+
+    registry.stage_batch({request(transcript, 2, "one-id", "One")});
+    registry.open_gate();
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 0)));
+    registry.clear_batch();
+    pool.stop();
 }
 
-TEST(AgentRegistry, MapsCompletionDeltasAndSuccessToIdentifiedEvents) {
+TEST(AgentRegistry, RejectsDuplicateTargetsWithoutLeavingABatch) {
     Transcript transcript;
-    transcript.add_entry(
-        make_human_entry(
-            1, "assistant", "Fake assistant", "Earlier question", 3));
-    auto backend = std::make_unique<ConfigurableBackend>(
-        CompletionResult{}, std::vector<std::string>{"Hello", " world"});
-    ConfigurableBackend* backend_view = backend.get();
-    backend_view->delta_kind = CompletionDeltaKind::reasoning;
+    ThreadPool pool(1);
+    AgentRegistry registry(
+        test::one_backend(std::make_unique<RecordingBackend>(
+            "one-id", "One", "")),
+        notifier(),
+        pool);
+
+    EXPECT_THROW(
+        registry.stage_batch({
+            request(transcript, 1, "one-id", "One"),
+            request(transcript, 2, "one-id", "One"),
+        }),
+        std::invalid_argument);
+
+    registry.stage_batch({request(transcript, 3, "one-id", "One")});
+    registry.open_gate();
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 0)));
+    registry.clear_batch();
+    pool.stop();
+}
+
+TEST(AgentRegistry, RejectsStagingIntoAStoppedPoolWithoutCallingABackend) {
+    Transcript transcript;
+    ThreadPool pool(1);
+    auto backend = std::make_unique<RecordingBackend>("one-id", "One", "");
+    RecordingBackend* view = backend.get();
+    AgentRegistry registry(test::one_backend(std::move(backend)), notifier(), pool);
+    pool.stop();
+
+    EXPECT_THROW(
+        registry.stage_batch({request(transcript, 1, "one-id", "One")}),
+        std::runtime_error);
+    EXPECT_FALSE(view->prepared.load(std::memory_order_acquire));
+    EXPECT_FALSE(view->performed.load(std::memory_order_acquire));
+    // The failed submission did not install a batch that would make the
+    // registry report "busy" instead of the pool admission failure.
+    EXPECT_THROW(
+        registry.stage_batch({request(transcript, 2, "one-id", "One")}),
+        std::runtime_error);
+}
+
+TEST(AgentRegistry, RollsBackPartialSubmissionWithoutLeavingABatch) {
+    Transcript transcript;
+    ThreadPool pool(2);
+    auto one = std::make_unique<RecordingBackend>("one-id", "One", "");
+    auto two = std::make_unique<RecordingBackend>("two-id", "Two", "");
+    RecordingBackend* one_view = one.get();
+    RecordingBackend* two_view = two.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(backend));
-    AgentRegistry registry(std::move(backends), notifier());
+    backends.push_back(std::move(one));
+    backends.push_back(std::move(two));
+    AgentRegistry registry(
+        std::move(backends),
+        notifier(),
+        pool,
+        [](std::size_t submission_index) {
+            if (submission_index == 1) {
+                throw std::runtime_error("injected submission failure");
+            }
+        });
 
-    const BatchId staged = start_run(
-        registry,
-        request(
-            transcript,
-            10,
-            "assistant",
-            "Fake",
-            "Current question"));
-    const AgentDelta first = std::get<AgentDelta>(next_event(registry));
-    const AgentDelta second = std::get<AgentDelta>(next_event(registry));
-    EXPECT_EQ(first.request_id, 10U);
-    EXPECT_EQ(first.kind, CompletionDeltaKind::reasoning);
-    EXPECT_EQ(first.text, "Hello");
-    EXPECT_EQ(second.request_id, 10U);
-    EXPECT_EQ(second.kind, CompletionDeltaKind::reasoning);
-    EXPECT_EQ(second.text, " world");
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 10U);
-    retire_run(registry, staged);
+    EXPECT_THROW(
+        registry.stage_batch({
+            request(transcript, 1, "one-id", "One"),
+            request(transcript, 2, "two-id", "Two"),
+        }),
+        std::runtime_error);
+    EXPECT_FALSE(one_view->prepared.load(std::memory_order_acquire));
+    EXPECT_FALSE(two_view->prepared.load(std::memory_order_acquire));
 
-    ASSERT_EQ(backend_view->inputs.size(), 1U);
-    EXPECT_EQ(
-        backend_view->inputs.front().run.prompt_text, "Current question");
-    ASSERT_EQ(backend_view->histories.front().size(), 1U);
-    EXPECT_EQ(backend_view->histories.front().front().text, "Earlier question");
-    EXPECT_EQ(registry.runtime_info().front().model, "fake-model");
+    registry.stage_batch({request(transcript, 3, "one-id", "One")});
+    registry.open_gate();
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 0)));
+    registry.clear_batch();
+    pool.stop();
+}
+
+TEST(AgentRegistry, CancellationBeforeStartDoesNotCallBackend) {
+    Transcript transcript;
+    ThreadPool pool(1);
+    auto backend = std::make_unique<RecordingBackend>("one-id", "One", "one");
+    RecordingBackend* view = backend.get();
+    AgentRegistry registry(test::one_backend(std::move(backend)), notifier(), pool);
+
+    registry.stage_batch({request(transcript, 1, "one-id", "One")});
+    registry.cancel_batch();
+
+    EXPECT_EQ(std::get<AgentCancelled>(next_event(registry, 0)).request_id, 1U);
+    EXPECT_FALSE(view->prepared.load(std::memory_order_acquire));
+    EXPECT_FALSE(view->performed.load(std::memory_order_acquire));
+    registry.clear_batch();
+    pool.stop();
+}
+
+TEST(AgentRegistry, StartsEveryConfiguredBackendAtFullPoolWidth) {
+    Transcript transcript;
+    BarrierState state;
+    ThreadPool pool(3);
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::make_unique<BarrierBackend>("one-id", "One", state));
+    backends.push_back(std::make_unique<BarrierBackend>("two-id", "Two", state));
+    backends.push_back(std::make_unique<BarrierBackend>("three-id", "Three", state));
+    AgentRegistry registry(std::move(backends), notifier(), pool);
+
+    registry.stage_batch({
+        request(transcript, 1, "one-id", "One"),
+        request(transcript, 2, "two-id", "Two"),
+        request(transcript, 3, "three-id", "Three"),
+    });
+    registry.open_gate();
+    const bool all_entered = wait_until_entered(state, 3);
+    state.release.store(true, std::memory_order_release);
+    EXPECT_TRUE(all_entered);
+    for (std::size_t index = 0; index < 3; ++index) {
+        EXPECT_TRUE(std::holds_alternative<AgentCompleted>(
+            next_event(registry, index)));
+    }
+    registry.clear_batch();
+    EXPECT_TRUE(registry.executions_finished());
+    pool.stop();
+}
+
+TEST(AgentRegistry, RoutesEachExecutionThroughItsStableIndex) {
+    Transcript transcript;
+    ThreadPool pool(2);
+    auto one = std::make_unique<RecordingBackend>("one-id", "One", "first");
+    auto two = std::make_unique<RecordingBackend>("two-id", "Two", "second");
+    RecordingBackend* one_view = one.get();
+    RecordingBackend* two_view = two.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(one));
+    backends.push_back(std::move(two));
+    AgentRegistry registry(std::move(backends), notifier(), pool);
+
+    registry.stage_batch({
+        request(transcript, 1, "one-id", "One", "One question"),
+        request(transcript, 2, "two-id", "Two", "Two question"),
+    });
+    registry.open_gate();
+
+    EXPECT_EQ(std::get<AgentDelta>(next_event(registry, 0)).text, "first");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry, 0)).request_id, 1U);
+    EXPECT_EQ(std::get<AgentDelta>(next_event(registry, 1)).text, "second");
+    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry, 1)).request_id, 2U);
+    registry.clear_batch();
+
+    EXPECT_EQ(one_view->received.run.prompt_text, "One question");
+    EXPECT_EQ(two_view->received.run.prompt_text, "Two question");
+    pool.stop();
+}
+
+TEST(AgentRegistry, RejectsAnotherBatchUntilTheLiveBatchIsCleared) {
+    Transcript transcript;
+    BarrierState state;
+    ThreadPool pool(2);
+    auto one = std::make_unique<BarrierBackend>("one-id", "One", state);
+    auto two = std::make_unique<BarrierBackend>("two-id", "Two", state);
+    BarrierBackend* two_view = two.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(one));
+    backends.push_back(std::move(two));
+    AgentRegistry registry(std::move(backends), notifier(), pool);
+
+    registry.stage_batch({request(transcript, 1, "one-id", "One")});
+    registry.open_gate();
+    EXPECT_TRUE(wait_until_entered(state, 1));
+
+    EXPECT_THROW(
+        registry.stage_batch({request(transcript, 2, "two-id", "Two")}),
+        std::runtime_error);
+    EXPECT_FALSE(two_view->prepared.load(std::memory_order_acquire));
+
+    state.release.store(true, std::memory_order_release);
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 0)));
+    registry.clear_batch();
+
+    registry.stage_batch({request(transcript, 3, "two-id", "Two")});
+    registry.open_gate();
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 0)));
+    registry.clear_batch();
+    pool.stop();
 }
 
 TEST(AgentRegistry, MapsCompletionFailureToAgentFailed) {
     Transcript transcript;
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::make_unique<ConfigurableBackend>(
-        CompletionResult{
-            CompletionOutcome::protocol_error, "malformed response"}));
-    AgentRegistry registry(std::move(backends), notifier());
+    ThreadPool pool(1);
+    AgentRegistry registry(
+        test::one_backend(std::make_unique<RecordingBackend>(
+            "one-id",
+            "One",
+            "",
+            CompletionResult{
+                CompletionOutcome::protocol_error,
+                "malformed response"})),
+        notifier(),
+        pool);
 
-    const BatchId staged = start_run(
-        registry,
-        request(transcript, 12, "assistant", "Fake", "Question"));
-    const AgentFailed failed = std::get<AgentFailed>(next_event(registry));
+    registry.stage_batch({request(transcript, 12, "one-id", "One")});
+    registry.open_gate();
+
+    const AgentFailed failed = std::get<AgentFailed>(next_event(registry, 0));
     EXPECT_EQ(failed.request_id, 12U);
     EXPECT_EQ(failed.message, "malformed response");
-    retire_run(registry, staged);
+    registry.clear_batch();
+    pool.stop();
 }
 
-TEST(AgentRegistry, CancelsTheActiveRegularExecution) {
+TEST(AgentRegistry, CancellationAfterGateOpenSkipsBackendPreparation) {
     Transcript transcript;
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::make_unique<ConfigurableBackend>(
-        CompletionResult{},
-        std::vector<std::string>{"Partial"},
-        true));
-    AgentRegistry registry(std::move(backends), notifier());
+    ThreadPool pool(1);
+    std::promise<void> blocker_entered;
+    std::future<void> blocker_ready = blocker_entered.get_future();
+    std::atomic_bool release_blocker{};
+    ASSERT_TRUE(pool.submit([&] {
+        blocker_entered.set_value();
+        while (!release_blocker.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    }));
+    ASSERT_EQ(blocker_ready.wait_for(1s), std::future_status::ready);
 
-    const BatchId staged = start_run(
-        registry,
-        request(transcript, 13, "assistant", "Fake", "Question"));
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Partial");
-    registry.cancel_all();
-    EXPECT_EQ(std::get<AgentCancelled>(next_event(registry)).request_id, 13U);
-    retire_run(registry, staged);
+    auto backend = std::make_unique<RecordingBackend>("one-id", "One", "");
+    RecordingBackend* view = backend.get();
+    AgentRegistry registry(test::one_backend(std::move(backend)), notifier(), pool);
+    registry.stage_batch({request(transcript, 14, "one-id", "One")});
+    registry.open_gate();
+    registry.cancel_batch();
+    release_blocker.store(true, std::memory_order_release);
+
+    EXPECT_EQ(std::get<AgentCancelled>(next_event(registry, 0)).request_id, 14U);
+    EXPECT_FALSE(view->prepared.load(std::memory_order_acquire));
+    EXPECT_FALSE(view->performed.load(std::memory_order_acquire));
+    registry.clear_batch();
+    pool.stop();
 }
 
-TEST(AgentRegistry, ClearsRegularRunnerCancellationBeforeReuse) {
+TEST(AgentRegistry, PreservesCapturedHistoryForEveryExecution) {
     Transcript transcript;
-    auto backend =
-        std::make_unique<BlockingRegistryBackend>("assistant", "Fake");
-    BlockingRegistryBackend* backend_view = backend.get();
+    transcript.add_entry(make_human_entry(
+        1, "one-id", "One", "Earlier question", 1));
+    ThreadPool pool(2);
+    auto one = std::make_unique<RecordingBackend>("one-id", "One", "");
+    auto two = std::make_unique<RecordingBackend>("two-id", "Two", "");
+    RecordingBackend* one_view = one.get();
+    RecordingBackend* two_view = two.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(backend));
-    AgentRegistry registry(std::move(backends), notifier());
+    backends.push_back(std::move(one));
+    backends.push_back(std::move(two));
+    AgentRegistry registry(std::move(backends), notifier(), pool);
 
-    const BatchId first = start_run(
-        registry,
-        request(transcript, 13, "assistant", "Fake", "First"));
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Fake:First");
-    registry.cancel_all();
-    EXPECT_EQ(std::get<AgentCancelled>(next_event(registry)).request_id, 13U);
-    retire_run(registry, first);
-
-    const BatchId second = start_run(
-        registry,
-        request(transcript, 14, "assistant", "Fake", "Second"));
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Fake:Second");
-    backend_view->release.store(true, std::memory_order_release);
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 14U);
-    retire_run(registry, second);
-}
-
-TEST(AgentRegistry, CancellationBeforePreparationSkipsBothBackendMethods) {
-    Transcript transcript;
-    auto backend = std::make_unique<ConfigurableBackend>(
-        CompletionResult{},
-        std::vector<std::string>{});
-    ConfigurableBackend* backend_view = backend.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(backend));
-    AgentRegistry registry(std::move(backends), notifier());
-
-    BatchId staged = registry.stage_batch(
-        std::vector<CompletionInput>{
-            request(transcript, 14, "assistant", "Fake", "Question"),
-        });
-    registry.set_foreground(staged, 0);
-    registry.cancel_all();
-    registry.open_batch_gate(staged);
-
-    const AgentCancelled cancelled =
-        std::get<AgentCancelled>(next_event(registry));
-    EXPECT_EQ(cancelled.request_id, 14U);
-    EXPECT_TRUE(backend_view->inputs.empty());
-    EXPECT_EQ(
-        backend_view->perform_calls.load(std::memory_order_relaxed),
-        0U);
-    registry.retire(staged, 0);
-    registry.retire_batch(staged);
-}
-
-TEST(AgentRegistry, CancelledGatePublishesTerminalWithoutCallingBackend) {
-    Transcript transcript;
-    auto backend = std::make_unique<ConfigurableBackend>();
-    ConfigurableBackend* backend_view = backend.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(backend));
-    AgentRegistry registry(std::move(backends), notifier());
-
-    const BatchId staged = registry.stage_batch({
-        request(transcript, 14, "assistant", "Fake", "Question"),
+    registry.stage_batch({
+        request(transcript, 1, "one-id", "One"),
+        request(transcript, 2, "two-id", "Two"),
     });
-    registry.set_foreground(staged, 0);
-    registry.stop();
-    EXPECT_THROW(
-        registry.set_foreground(staged, 0),
-        std::logic_error);
-
-    EXPECT_TRUE(backend_view->inputs.empty());
-    EXPECT_EQ(
-        backend_view->perform_calls.load(std::memory_order_relaxed),
-        0U);
-    AgentEvent event = AgentCompleted{};
-    ASSERT_EQ(registry.try_receive(event), ChannelReadStatus::value);
-    EXPECT_EQ(std::get<AgentCancelled>(event).request_id, 14U);
-    EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
-}
-
-TEST(AgentRegistry, StopCancelsJoinsAndLeavesTheTerminalEventDrainable) {
-    Transcript transcript;
-    std::atomic_bool release_after_cancellation{false};
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::make_unique<ConfigurableBackend>(
-        CompletionResult{},
-        std::vector<std::string>{"Partial"},
-        true,
-        &release_after_cancellation));
-    AgentRegistry registry(std::move(backends), notifier());
-
-    (void)start_run(
-        registry,
-        request(transcript, 15, "assistant", "Fake", "Question"));
-    EXPECT_EQ(std::get<AgentDelta>(next_event(registry)).text, "Partial");
-    // Use another thread only to prove stop() waits for the active backend.
-    // No registry control operation runs concurrently with this call.
-    std::future<void> stopped = std::async(
-        std::launch::async, [&registry] { registry.stop(); });
-    EXPECT_EQ(
-        stopped.wait_for(std::chrono::milliseconds(50)),
-        std::future_status::timeout);
-    release_after_cancellation.store(true, std::memory_order_release);
-    stopped.get();
-
-    AgentEvent event = AgentCompleted{};
-    EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::value);
-    EXPECT_EQ(std::get<AgentCancelled>(event).request_id, 15U);
-    EXPECT_EQ(registry.try_receive(event), ChannelReadStatus::closed);
-}
-
-TEST(AgentRegistry, UsesImmutableHistoryAfterTranscriptMutation) {
-    Transcript transcript;
-    transcript.add_entry(
-        make_human_entry(1, "assistant", "Boundary", "Earlier", 20));
-    auto backend = std::make_unique<BoundaryBackend>();
-    BoundaryBackend* backend_view = backend.get();
-    std::future<void> prepared = backend_view->prepared.get_future();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(backend));
-    AgentRegistry registry(std::move(backends), notifier());
-
-    const BatchId staged = start_run(
-        registry,
-        request(transcript, 21, "assistant", "Boundary", "Question"));
-    ASSERT_EQ(
-        prepared.wait_for(std::chrono::seconds(1)),
-        std::future_status::ready);
     transcript.clear();
+    registry.open_gate();
 
-    ASSERT_EQ(backend_view->captured_history.size(), 1U);
-    EXPECT_EQ(backend_view->captured_history.front().text, "Earlier");
-    backend_view->release.store(true, std::memory_order_release);
-    EXPECT_EQ(std::get<AgentCompleted>(next_event(registry)).request_id, 21U);
-    retire_run(registry, staged);
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 0)));
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 1)));
+    ASSERT_EQ(one_view->received.history->entries.size(), 1U);
+    ASSERT_EQ(two_view->received.history->entries.size(), 1U);
+    EXPECT_EQ(one_view->received.history->entries.front().text, "Earlier question");
+    EXPECT_EQ(two_view->received.history->entries.front().text, "Earlier question");
+    registry.clear_batch();
+    pool.stop();
 }
 
-TEST(AgentRegistry, FailingPreparationDoesNotPerform) {
+TEST(AgentRegistry, DeliversExactlyOneTerminalThenReportsEmpty) {
     Transcript transcript;
-    auto backend = std::make_unique<ThrowingPrepareBackend>();
-    ThrowingPrepareBackend* backend_view = backend.get();
+    ThreadPool pool(1);
+    AgentRegistry registry(
+        test::one_backend(std::make_unique<RecordingBackend>(
+            "one-id", "One", "delta")),
+        notifier(),
+        pool);
+
+    registry.stage_batch({request(transcript, 1, "one-id", "One")});
+    registry.open_gate();
+
+    EXPECT_TRUE(std::holds_alternative<AgentDelta>(next_event(registry, 0)));
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 0)));
+    AgentEvent event = AgentCompleted{};
+    EXPECT_EQ(registry.try_receive(0, event), ChannelReadStatus::empty);
+    registry.clear_batch();
+    pool.stop();
+}
+
+TEST(AgentRegistry, RejectsOutOfRangeRunIndexForALiveBatch) {
+    Transcript transcript;
+    ThreadPool pool(1);
+    AgentRegistry registry(
+        test::one_backend(std::make_unique<RecordingBackend>(
+            "one-id", "One", "")),
+        notifier(),
+        pool);
+
+    registry.stage_batch({request(transcript, 1, "one-id", "One")});
+    AgentEvent event = AgentCompleted{};
+    EXPECT_THROW((void)registry.try_receive(1, event), std::logic_error);
+    registry.clear_batch();
+    pool.stop();
+}
+
+TEST(AgentRegistry, CompletedAndCancelledBatchesPermitLaterBatches) {
+    Transcript transcript;
+    BarrierState state;
+    ThreadPool pool(1);
+    AgentRegistry registry(
+        test::one_backend(std::make_unique<BarrierBackend>(
+            "one-id", "One", state)),
+        notifier(),
+        pool);
+
+    registry.stage_batch({request(transcript, 1, "one-id", "One")});
+    registry.open_gate();
+    EXPECT_TRUE(wait_until_entered(state, 1));
+    state.release.store(true, std::memory_order_release);
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 0)));
+    registry.clear_batch();
+
+    state.release.store(false, std::memory_order_release);
+    registry.stage_batch({request(transcript, 2, "one-id", "One")});
+    registry.open_gate();
+    EXPECT_TRUE(wait_until_entered(state, 2));
+    registry.cancel_batch();
+    EXPECT_TRUE(std::holds_alternative<AgentCancelled>(next_event(registry, 0)));
+    registry.clear_batch();
+
+    state.release.store(true, std::memory_order_release);
+    registry.stage_batch({request(transcript, 3, "one-id", "One")});
+    registry.open_gate();
+    EXPECT_TRUE(std::holds_alternative<AgentCompleted>(next_event(registry, 0)));
+    registry.clear_batch();
+    pool.stop();
+}
+
+TEST(AgentRegistry, CancellationReachesEveryStartedBackend) {
+    Transcript transcript;
+    BarrierState state;
+    ThreadPool pool(2);
     std::vector<std::unique_ptr<CompletionBackend>> backends;
-    backends.push_back(std::move(backend));
-    AgentRegistry registry(std::move(backends), notifier());
+    backends.push_back(std::make_unique<BarrierBackend>("one-id", "One", state));
+    backends.push_back(std::make_unique<BarrierBackend>("two-id", "Two", state));
+    AgentRegistry registry(std::move(backends), notifier(), pool);
 
-    const BatchId staged = start_run(
-        registry,
-        request(transcript, 22, "assistant", "Throwing", "Question"));
-    const AgentFailed failed = std::get<AgentFailed>(next_event(registry));
-    EXPECT_EQ(failed.request_id, 22U);
-    EXPECT_NE(
-        failed.message.find("preparation failed"), std::string::npos);
-    EXPECT_FALSE(backend_view->performed.load(std::memory_order_acquire));
+    registry.stage_batch({
+        request(transcript, 1, "one-id", "One"),
+        request(transcript, 2, "two-id", "Two"),
+    });
+    registry.open_gate();
+    EXPECT_TRUE(wait_until_entered(state, 2));
+    registry.cancel_batch();
 
-    AgentEvent no_second_event = AgentCompleted{};
-    EXPECT_EQ(
-        registry.try_receive(no_second_event), ChannelReadStatus::empty);
-    retire_run(registry, staged);
+    EXPECT_TRUE(std::holds_alternative<AgentCancelled>(next_event(registry, 0)));
+    EXPECT_TRUE(std::holds_alternative<AgentCancelled>(next_event(registry, 1)));
+    registry.clear_batch();
+    pool.stop();
+}
+
+TEST(AgentRegistry, StopLeavesTerminalEventsDrainableThenReportsClosed) {
+    Transcript transcript;
+    BarrierState state;
+    ThreadPool pool(1);
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::make_unique<BarrierBackend>("one-id", "One", state));
+    AgentRegistry registry(std::move(backends), notifier(), pool);
+
+    registry.stage_batch({request(transcript, 1, "one-id", "One")});
+    registry.open_gate();
+    EXPECT_TRUE(wait_until_entered(state, 1));
+    registry.stop();
+
+    EXPECT_TRUE(std::holds_alternative<AgentCancelled>(next_event(registry, 0)));
+    AgentEvent event = AgentCompleted{};
+    EXPECT_EQ(registry.try_receive(0, event), ChannelReadStatus::closed);
+    registry.clear_batch();
+    pool.stop();
+}
+
+TEST(AgentRegistry, ConvertsBackendExceptionsToFailedTerminalEvents) {
+    Transcript transcript;
+    ThreadPool pool(1);
+    AgentRegistry registry(
+        test::one_backend(std::make_unique<ThrowingBackend>()), notifier(), pool);
+
+    registry.stage_batch({request(transcript, 1, "one-id", "One")});
+    registry.open_gate();
+
+    const AgentFailed failed = std::get<AgentFailed>(next_event(registry, 0));
+    EXPECT_EQ(failed.request_id, 1U);
+    EXPECT_NE(failed.message.find("preparation failed"), std::string::npos);
+    registry.clear_batch();
+    pool.stop();
 }
 
 } // namespace

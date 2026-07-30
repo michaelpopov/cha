@@ -16,6 +16,7 @@ belongs in that directory instead.
 | `environment.*` | `load_dotenv()` — optional `.env` loading that never overrides the real environment. |
 | `logging.*` | Opt-in, file-only spdlog initialization from `CHA_LOG_FILE`. |
 | `concurrent_queue.h` | `ConcurrentQueue<T>` — a portable typed thread-safe queue. |
+| `thread_pool.*` | `ThreadPool` — a fixed-size executor for session-scoped blocking work. |
 | `wake_notifier.h` | `WakeNotifier` — the event-loop wake interface used by producers. |
 | `uv_event_loop.*` | `UvEventLoop` — the portable libuv loop and cross-thread wake adapter used by the terminal frontends. |
 
@@ -132,6 +133,12 @@ Semantics worth knowing:
 frontend observes the async callback before draining the producer's queue.
 Notification is intentionally separate from storage: not every queue consumer
 needs an event-loop wake.
+
+`ThreadPool` builds a fixed number of workers around `ConcurrentQueue<Task>`.
+`submit()` is thread-safe, `stop()` closes admission, drains accepted tasks, and
+joins workers. Tasks that escape their exception boundary terminate the process;
+agent executions convert backend failures to `AgentFailed` before returning.
+The pool remains domain-neutral: cancellation is owned by its caller.
 
 ## Event-loop ownership
 

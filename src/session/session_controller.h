@@ -7,6 +7,7 @@
 #include "session/session_database.h"
 #include "transcript/transcript.h"
 #include "util/wake_notifier.h"
+#include "util/thread_pool.h"
 
 #include <filesystem>
 #include <functional>
@@ -99,7 +100,6 @@ private:
     struct ResponseBatch {
         SharedCompletionHistory history;
         std::vector<RunSpec> runs;
-        BatchId staged_batch_id{};
         std::size_t foreground_index{};
         bool abort_requested{};
         bool stop_notice_recorded{};
@@ -148,6 +148,10 @@ private:
 
     Transcript transcript_;
     SessionJournal journal_;
+    // Explicit shutdown joins this pool while registry_ is still alive.
+    // One worker per backend intentionally admits full-width multicast work.
+    // Declaration order is the fallback only for construction failures.
+    ThreadPool worker_pool_;
     AgentRegistry registry_;
     ForumPersonas personas_;
     ParticipantId default_agent_id_;

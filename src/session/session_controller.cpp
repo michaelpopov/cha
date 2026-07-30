@@ -76,6 +76,13 @@ std::string format_session_information(
     return text.str();
 }
 
+void require_agent_count(std::size_t count) {
+    if (count == 0) {
+        throw std::invalid_argument(
+            "Agent registry requires at least one agent");
+    }
+}
+
 } // namespace
 
 std::unique_ptr<SessionController> SessionController::from_definitions(
@@ -83,6 +90,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored) {
+    require_agent_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
         std::move(database_path),
@@ -96,6 +104,7 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     WakeNotifier& notifier,
     SessionRestore restored,
     ActivationHook before_activation) {
+    require_agent_count(backends.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(backends),
         std::move(database_path),
@@ -110,7 +119,8 @@ SessionController::SessionController(
     WakeNotifier& notifier,
     SessionRestore restored)
     : journal_(std::move(path)),
-      registry_(std::move(definitions), notifier),
+      worker_pool_(definitions.size()),
+      registry_(std::move(definitions), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),
       default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
@@ -123,7 +133,8 @@ SessionController::SessionController(
     SessionRestore restored,
     ActivationHook before_activation)
     : journal_(std::move(path)),
-      registry_(std::move(backends), notifier),
+      worker_pool_(backends.size()),
+      registry_(std::move(backends), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),
       default_agent_id_(personas_.first().id),
       before_activation_(std::move(before_activation)) {
@@ -257,8 +268,7 @@ void SessionController::start_batch(
     }
 
     try {
-        batch.staged_batch_id =
-            registry_.stage_batch(std::move(inputs));
+        (void)registry_.stage_batch(std::move(inputs));
     } catch (const std::runtime_error&) {
         update.clear_input = false;
         update.notice = "Request could not be dispatched";
@@ -268,11 +278,10 @@ void SessionController::start_batch(
     batch_ = std::move(batch);
     try {
         activate_current_run(update);
-        registry_.open_batch_gate(batch_->staged_batch_id);
+        registry_.open_gate();
     } catch (...) {
-        const BatchId batch_id = batch_->staged_batch_id;
         abandon_batch();
-        registry_.discard_batch(batch_id);
+        registry_.clear_batch();
         throw;
     }
 }
@@ -296,11 +305,6 @@ void SessionController::activate_current_run(SessionUpdate& update) {
         .phase = ResponsePhase::waiting,
     };
 
-    // Select the still-gated event channel before durable or active state.
-    // If the batch or position is stale, teardown remains side-effect free.
-    registry_.set_foreground(
-        batch_->staged_batch_id,
-        batch_->foreground_index);
     if (before_activation_) {
         before_activation_(batch_->foreground_index);
     }
@@ -350,9 +354,8 @@ void SessionController::start_next_batch_run(SessionUpdate& update) {
     try {
         activate_current_run(update);
     } catch (...) {
-        const BatchId batch_id = batch_->staged_batch_id;
         abandon_batch();
-        registry_.discard_batch(batch_id);
+        registry_.clear_batch();
         throw;
     }
 }
@@ -362,25 +365,16 @@ void SessionController::finish_batch_run(SessionUpdate& update) {
         return;
     }
     if (shutdown_) {
-        registry_.retire(
-            batch_->staged_batch_id,
-            batch_->foreground_index);
         finish_batch(update);
         return;
     }
 
     if (batch_->abort_requested) {
         append_batch_notice(update);
-        registry_.release_abort_foreground(
-            batch_->staged_batch_id,
-            batch_->foreground_index);
         poll_abort_cleanup(update);
         return;
     }
 
-    registry_.retire(
-        batch_->staged_batch_id,
-        batch_->foreground_index);
     if (batch_->foreground_index + 1 == batch_->runs.size()) {
         finish_batch(update);
         return;
@@ -396,7 +390,7 @@ void SessionController::finish_batch(SessionUpdate& update) {
     }
     append_batch_notice(update);
     const std::string terminal_notices = batch_->terminal_notices;
-    registry_.retire_batch(batch_->staged_batch_id);
+    registry_.clear_batch();
     abandon_batch();
     if (!terminal_notices.empty()) {
         update.notice = terminal_notices;
@@ -422,8 +416,8 @@ void SessionController::poll_abort_cleanup(SessionUpdate& update) {
     if (!batch_ || !batch_->abort_requested) {
         return;
     }
-    if (registry_.poll_abort_cleanup(batch_->staged_batch_id)
-        == CleanupStatus::complete) {
+    if (!active_ && registry_.executions_finished()) {
+        registry_.clear_batch();
         finish_aborted_batch(update);
     }
 }
@@ -601,13 +595,7 @@ SessionUpdate SessionController::request_stop() {
 
     if (!batch_->abort_requested) {
         batch_->abort_requested = true;
-        std::optional<std::size_t> retained_foreground;
-        if (active_) {
-            retained_foreground = batch_->foreground_index;
-        }
-        registry_.begin_abort_cleanup(
-            batch_->staged_batch_id,
-            retained_foreground);
+        registry_.cancel_batch();
     }
     if (!active_) {
         poll_abort_cleanup(update);
@@ -764,14 +752,15 @@ bool SessionController::matches(RequestId request_id) const {
 
 SessionUpdate SessionController::receive() {
     SessionUpdate update;
+    if (shutdown_ && !batch_) {
+        update.end_session = true;
+        return update;
+    }
     AgentEvent event = AgentCompleted{};
-    while (true) {
-        const ChannelReadStatus status = registry_.try_receive(event);
-        if (status == ChannelReadStatus::empty) {
-            break;
-        }
-        if (status == ChannelReadStatus::closed) {
-            update.end_session = true;
+    while (batch_ && active_) {
+        const ChannelReadStatus status = registry_.try_receive(
+            batch_->foreground_index, event);
+        if (status != ChannelReadStatus::value) {
             break;
         }
         merge_update(update, handle_agent_event(std::move(event)));
@@ -788,14 +777,24 @@ void SessionController::shutdown() {
     if (batch_) {
         batch_->abort_requested = true;
     }
-    registry_.cancel_all();
-    registry_.stop();
-    (void)receive();
-    if (batch_) {
-        registry_.discard_batch(batch_->staged_batch_id);
+    try {
+        registry_.cancel_batch();
+        registry_.stop();
+        (void)receive();
+        if (batch_) {
+            registry_.clear_batch();
+        }
+        active_.reset();
+        abandon_batch();
+    } catch (...) {
+        // `execution_finished` allows a task to issue its final wake after
+        // registry stop() returns. Join the pool while the registry and its
+        // borrowed notifier are still alive even when terminal persistence
+        // fails.
+        worker_pool_.stop();
+        throw;
     }
-    active_.reset();
-    abandon_batch();
+    worker_pool_.stop();
 }
 
 } // namespace cha

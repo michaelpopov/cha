@@ -1,12 +1,12 @@
 # Agent runtime
 
 `agents/` owns everything about configured chat agents: loading a persona,
-projecting the transcript into model context, running completions on
-registry-owned threads, and speaking the provider's HTTP protocol. The ordered
+projecting the transcript into model context, running completions as
+registry-owned pool tasks, and speaking the provider's HTTP protocol. The ordered
 personas in a forum and `@handle` resolution belong to `session/`.
 
 It is the only layer that talks to a model server, and the only one that owns
-completion runner threads.
+completion pool tasks.
 
 ## Contents
 
@@ -15,7 +15,7 @@ completion runner threads.
 | `config.*` | `Config` — identity, connection, model, streaming, auth, and reasoning settings — plus typed TOML overlays, field validation, and `load_prompt_variables()`. |
 | `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
 | `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
-| `agent_registry.*` | Runtime metadata, backend leases, staged regular/temporary runners, foreground event routing, cancellation, and abort cleanup. |
+| `agent_registry.*` | Runtime metadata, gated pool executions, per-run event routing, cancellation, and batch cleanup. |
 | `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
 | `completion_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
 
@@ -88,90 +88,67 @@ Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
 `ForumPersonas` in `session/` separately owns the ordered identity-only view used
 for lookup and handle resolution.
 
-## Execution: staged runners and foreground routing
+## Execution: staged pool tasks and foreground routing
 
 `AgentRegistry` exists so slow providers never block the UI. It owns one
-backend per forum persona, one persistent regular runner, and temporary
-one-shot runners used only by concurrent multicast batches. Every runner has
-its own cancellation flag and event queue. The queue buffers deltas in its
-deque and reserves separate storage for one final event supplied when it closes.
+backend per forum persona and borrows the session's fixed-size `ThreadPool`.
+Every execution has its own cancellation flag and event queue. The queue buffers
+deltas and reserves separate storage for one final event supplied when it closes.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant M as Main thread
     participant R as AgentRegistry
-    participant W0 as Regular runner
-    participant WN as Temporary runners
+    participant P as ThreadPool
+    participant W as Pool workers
     participant B as Backends
 
     M->>R: stage_batch(CompletionInput[])
-    R->>R: acquire one lease per distinct backend
-    R->>W0: stage child 0 behind closed gate
-    R->>WN: stage remaining children behind closed gate
-    W0-->>R: parked
-    WN-->>R: all parked
-    R-->>M: BatchId; positions match input order
-    M->>R: set_foreground(BatchId, position 0)
-    M->>R: open_batch_gate
-    par every runner
-        W0->>B: prepare then perform
+    R->>P: submit one gated task per child
+    R-->>M: staged; positions match input order
+    M->>R: open_gate
+    par available workers
+        P->>W: run child 0
+        W->>B: prepare then perform
     and
-        WN->>B: prepare then perform
+        P->>W: run other children
+        W->>B: prepare then perform
     end
-    B-->>W0: deltas and terminal
-    B-->>WN: deltas and terminal
-    W0-->>M: foreground channel through try_receive
-    Note over WN: background channels remain buffered
-    M->>R: retire position 0, select position 1
-    WN-->>M: drain child 1 channel
+    W-->>M: foreground channel through try_receive(index)
+    Note over W: background channels remain buffered
+    M->>R: clear_batch after the final terminal
 ```
-
-When `CHA_LOG_FILE` enables diagnostics, the registry emits one trace at the
-gate, backend start, first delta, backend end, and each foreground selection.
-These are observation points only: logging failures are suppressed so a
-diagnostic sink cannot change execution. The `foreground_set` event reports
-how many deltas were already buffered, which separates provider/transport
-serialization from a frontend-drain problem without logging response content.
 
 Rules that fall out of this design:
 
 - **One operation, several backends.** The controller still admits one user
-  operation, while a multicast may lease several distinct backends at once.
+  operation, while a multicast may target several distinct backends at once.
 - **One explicit batch.** The registry stores at most one `BatchRecord`, not a
-  collection keyed by batch ID. Its fixed vector of run slots follows input
-  order; retirement or cleanup empties a slot without shifting later
-  positions. The returned `BatchId` is only a generation guard against stale
-  controller calls.
-- **Lease exclusivity.** A backend lease lasts from staging until its run is
-  retired. Input validation precedes acquisition; staging rollback releases
-  every acquired lease. Normal retirement and abort cleanup release a lease
-  only after the worker is joined or the regular runner is reset.
-- **Failure-atomic staging.** `stage_batch()` returns only after every runner is
-  parked. A construction failure cancels the unopened gate, joins temporary
-  workers, resets the regular runner, and releases every lease.
+  collection keyed by batch ID. Its fixed vector of executions follows input
+  order for the full batch lifetime.
+- **Backend exclusivity.** One live batch and distinct validated targets ensure
+  a backend is never called concurrently with itself.
+- **Failure-atomic staging.** Input and task construction complete before
+  submission. A partial submission cancels the unopened gate and waits only
+  for the accepted tasks to finish.
 - **One start decision.** Opening or cancelling the shared gate is idempotent;
-  the first transition wins. Parked workers wait on a condition variable and a
-  cancelled unopened gate produces `AgentCancelled` without calling the
-  backend.
+  the first transition wins. Queued tasks observe an already-open or cancelled
+  gate when they receive a worker; cancellation produces `AgentCancelled`
+  without calling the backend.
 - **Foreground-only consumption.** `try_receive()` exposes only the selected
-  runner. A temporary runner is retained until its terminal event is consumed
-  and committed.
+  execution at the controller-selected index. Executions remain owned by the
+  batch until whole-batch cleanup.
 - **Guaranteed terminal delivery.** Allocating delta storage may fail and
   becomes an execution failure, but every launched execution—including one
   cancelled before `perform()`—publishes exactly one terminal event through
   the queue's allocation-free `close_with()` operation.
-- **Batch reservation.** Child 0 uses the regular runner. After it retires the
-  worker may be execution-idle, but admission of another batch remains refused
-  until the entire batch retires.
 - **Cancellation is per execution.** It is checked before preparation and by
-  the transport. `/stop` cancels every live batch runner; unactivated channels
-  are discarded only by abort cleanup.
+  the transport. `/stop` cancels every live execution and returns immediately.
 - **Abort cleanup is event-loop driven.** `/stop` only cancels the executions
   and marks the batch aborting. Each execution wakes the main loop after
-  becoming fully done; `poll_abort_cleanup()` then resets or joins only those
-  finished runners and releases their leases. No cleanup thread is created,
-  and polling never waits for an unfinished backend.
+  becoming done; the controller clears the batch only after its foreground
+  terminal was committed and all executions are done.
 - **Background buffering is lossless and unbounded.** There is no artificial
   queue cap or silent dropping in this version. Memory use is proportional to
   the total delta data and queue overhead buffered by children that have not
@@ -184,25 +161,8 @@ Rules that fall out of this design:
   this in-flight work.
 - **Exceptions become events.** Anything thrown on the worker is converted to
   `AgentFailed`, so an accepted request always has an observable outcome.
-- **Shutdown is ordered.** `stop()` reconciles abort cleanup, joins every
-  runner, retains and drains the foreground event channel, and only then makes
-  the registry receive source report `closed`.
-
-The abort and shutdown ownership states are:
-
-| State | UI | Foreground channel | Cleanup/reaping | Regular runner |
-| --- | --- | --- | --- | --- |
-| Batch executing | Busy | Registry-selected foreground | None | Batch-owned; may run child 0 |
-| Stopping, foreground not terminal | `stopping` with agent name | Retained and drained through terminal commit | Main-loop polls and reaps finished non-foreground runs | Live or done if it owns the foreground |
-| Stopping, foreground committed | Still busy | Released for reaping | Main-loop finishes reaping as workers report done | Reset after it reports done if it owned child 0 |
-| Abort complete | Idle | None | Batch retired | Idle and reusable |
-| Shutdown during a batch | Ending | Retained until its execution finishes, then drained | `stop()` synchronously joins non-foreground runners | Joined by registry shutdown |
-
-The regular worker can become execution-idle after child 0 retires, but it
-remains structurally batch-owned: the live batch record prevents admission of a
-new batch until every child retires. Reuse receives a new `Execution`, so
-cancellation state and the prior backend lease cannot carry into a later
-request.
+- **Shutdown is ordered.** The registry cancels and waits for its executions;
+  the controller then stops and joins the pool before returning from shutdown.
 
 ## The backend seam
 
@@ -321,7 +281,7 @@ from its answer.
 | `tests/agents/unit_config_loader.cpp` | TOML fields, defaults, and rejection of malformed values. |
 | `tests/agents/unit_agent_definition_loader.cpp` | Persona and forum prompt expansion, composition, scopes, and load errors. |
 | `tests/session/unit_forum_personas.cpp` | Forum-persona validation and every handle-resolution branch. |
-| `tests/agents/unit_agent_registry.cpp` | Batch gating, terminal delivery, staging rollback, backend leases, cancellation, foreground routing, and shutdown ordering. |
+| `tests/agents/unit_agent_registry.cpp` | Pool-width validation, batch gating, terminal delivery, cancellation, indexed routing, and shutdown closure. |
 | `tests/agents/unit_agent_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
 | `tests/agents/unit_json_serialization.cpp` | Context-specific invalid-UTF-8 diagnostics for JSON serialization. |
 | `tests/agents/unit_completion_client.cpp` | Request bodies, SSE and JSON parsing, reasoning formats, and the error taxonomy, driven by `tests/support/mock_http_server.h`. |

@@ -254,9 +254,9 @@ read-only state, and commands that return `SessionUpdate` side effects.
 | `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
-| `request_stop()` | Cancels every live batch runner and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
-| `receive()` | Drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged updates; `end_session` when the registry receive source is closed. |
-| `shutdown()` | Reconciles abort cleanup, joins all runners, and commits the retained foreground terminal state. | — |
+| `request_stop()` | Cancels every live execution and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
+| `receive()` | Drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged updates; after shutdown drains its batch, `end_session` is true. |
+| `shutdown()` | Cancels executions, commits the retained foreground terminal state, and joins the session pool. | — |
 
 Every command except `request_stop()` and `receive()` is refused while a turn or
 multicast is active, with the shared in-progress notice. The controller and its
@@ -286,29 +286,24 @@ Starting a batch, in order:
 1. Resolve and deduplicate every target, then capture one immutable pre-batch
    history and build every complete `CompletionInput`, including its moved run
    specification.
-2. Stage all runners behind a closed gate. A staging failure opens no gate,
-   calls no backend, releases every lease, and creates no durable turn.
+2. Stage all pool tasks behind a closed gate. A staging failure opens no gate,
+   calls no backend, waits for any already-submitted task, and creates no
+   durable turn.
    Expected runtime refusals are reported as
    `Request could not be dispatched` and preserve the user's draft; invalid
-   inputs are controller bugs and propagate. The returned `BatchId` guards the
-   one live registry batch, and each run's stable registry position is its
-   index in the controller's existing `runs` vector.
-3. Select the first foreground run while the gate is still closed. Selection
-   occurs before journal, transcript, or `active_` mutation, so a selection
-   failure cannot leave the controller permanently busy or a journal turn
-   non-terminal.
-4. Persist `start_turn()`, add the human entry, and install the active response.
+   inputs are controller bugs and propagate. The one live registry batch keeps
+   each run at its stable controller index.
+3. Persist `start_turn()`, add the human entry, and install the active response.
    If in-memory activation fails after the journal write, the controller
-   compensates with `fail_turn()` and discards the parked batch.
-5. Open the gate once. Every staged backend may now begin concurrently, while
+   compensates with `fail_turn()` and discards the gated batch.
+4. Open the gate once. Every staged backend may now begin concurrently, while
    only the foreground child's events are applied to the transcript. The
    background work remains intentionally volatile until each child becomes
    foreground, as described in the reviewed durability tradeoff above.
 
-After a foreground terminal event is committed, the controller retires that
-run, selects the next child, activates its turn, and drains its already-buffered
-events in the same controller turn. It never relies on a later wakeup to
-advance a multicast.
+After a foreground terminal event is committed, the controller selects the next
+child, activates its turn, and drains its already-buffered events in the same
+controller turn. It clears the whole batch after its final terminal event.
 
 Applying events:
 
@@ -329,8 +324,8 @@ what makes a cancelled turn's late fragments harmless.
 `ResponsePhase` is monotonic during normal generation:
 `waiting` → `reasoning` → `answering`. The separate `stopping` phase is an
 abort-cleanup overlay. It keeps the foreground agent name visible while the
-registry commits that child's terminal event and joins or resets all remaining
-runners. A foreground completion already queued when `/stop` is processed wins
+registry commits that child's terminal event and waits for all remaining
+executions. A foreground completion already queued when `/stop` is processed wins
 the race and is committed normally.
 
 ## Failure policy

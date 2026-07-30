@@ -5,6 +5,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
@@ -12,7 +13,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <thread>
+#include <string_view>
 #include <type_traits>
 #include <unordered_set>
 #include <utility>
@@ -28,9 +29,7 @@ void trace_registry(
     Args&&... args) noexcept {
     try {
         if (const auto logger = spdlog::get("cha")) {
-            logger->trace(
-                format,
-                std::forward<Args>(args)...);
+            logger->trace(format, std::forward<Args>(args)...);
         }
     } catch (...) {
         // Diagnostics must never affect request execution.
@@ -86,13 +85,13 @@ std::vector<AgentRuntimeInfo> build_runtime_info(
         validate_persona_name(info.persona.name);
         if (!ids.insert(info.persona.id).second) {
             throw std::invalid_argument(
-                "Agent registry has duplicate persona ID '"
-                + info.persona.id + "'");
+                "Agent registry has duplicate persona ID '" + info.persona.id
+                + "'");
         }
         if (!names.insert(fold_ascii(info.persona.name)).second) {
             throw std::invalid_argument(
-                "Agent registry has duplicate persona name '"
-                + info.persona.name + "'");
+                "Agent registry has duplicate persona name '" + info.persona.name
+                + "'");
         }
         infos.push_back(std::move(info));
     }
@@ -121,6 +120,12 @@ std::vector<std::unique_ptr<CompletionBackend>> build_backends(
 } // namespace
 
 struct AgentRegistry::Impl {
+    enum class StopState {
+        running,
+        stopping,
+        stopped,
+    };
+
     enum class GateState {
         closed,
         open,
@@ -128,31 +133,16 @@ struct AgentRegistry::Impl {
     };
 
     struct StartGate {
-        bool arrive_and_wait() {
+        [[nodiscard]] bool wait() noexcept {
             std::unique_lock lock(mutex);
-            ++parked;
-            parked_changed.notify_one();
-            changed.wait(lock, [this] {
-                return state != GateState::closed;
-            });
+            changed.wait(lock, [this] { return state != GateState::closed; });
             return state == GateState::open;
         }
 
-        void wait_until_parked(std::size_t expected) {
-            std::unique_lock lock(mutex);
-            parked_changed.wait(lock, [this, expected] {
-                return parked == expected;
-            });
-        }
+        void open() noexcept { transition(GateState::open); }
+        void cancel() noexcept { transition(GateState::cancelled); }
 
-        void open() noexcept {
-            transition(GateState::open);
-        }
-
-        void cancel() noexcept {
-            transition(GateState::cancelled);
-        }
-
+    private:
         void transition(GateState next) noexcept {
             {
                 std::lock_guard lock(mutex);
@@ -166,20 +156,16 @@ struct AgentRegistry::Impl {
 
         std::mutex mutex;
         std::condition_variable changed;
-        std::condition_variable parked_changed;
         GateState state{GateState::closed};
-        std::size_t parked{};
     };
 
     struct Execution {
         Execution(
-            BatchId owned_batch_id,
             CompletionInput owned_input,
             CompletionBackend& owned_backend,
             std::shared_ptr<StartGate> start_gate,
             WakeNotifier& wake_notifier)
-            : batch_id(owned_batch_id),
-              input(std::move(owned_input)),
+            : input(std::move(owned_input)),
               backend(owned_backend),
               gate(std::move(start_gate)),
               notifier(wake_notifier),
@@ -193,10 +179,9 @@ struct AgentRegistry::Impl {
 
         void execute() noexcept {
             const RequestId request_id = input.run.request_id;
-            if (!gate->arrive_and_wait()) {
+            if (!gate->wait()) {
                 trace_registry(
-                    "batch={} request={} persona_id={} event=gate_cancelled",
-                    batch_id,
+                    "request={} persona_id={} event=gate_cancelled",
                     request_id,
                     input.run.target.id);
                 publish_terminal(AgentCancelled{request_id});
@@ -204,111 +189,86 @@ struct AgentRegistry::Impl {
                 return;
             }
 
-            const DiagnosticClock::time_point admitted_at =
-                DiagnosticClock::now();
+            const auto admitted_at = DiagnosticClock::now();
             trace_registry(
-                "batch={} request={} persona_id={} event=gate_released",
-                batch_id,
+                "request={} persona_id={} event=gate_released",
                 request_id,
                 input.run.target.id);
-            bool performing = false;
             try {
                 if (cancellation.load(std::memory_order_acquire)) {
                     trace_registry(
-                        "batch={} request={} persona_id={} "
-                        "event=cancelled_before_prepare",
-                        batch_id,
+                        "request={} persona_id={} event=cancelled_before_prepare",
                         request_id,
                         input.run.target.id);
                     publish_terminal(AgentCancelled{request_id});
-                    finish();
-                    return;
-                }
-                RequestPayload payload = backend.prepare(input);
-                const DiagnosticClock::time_point perform_started_at =
-                    DiagnosticClock::now();
-                performing = true;
-                trace_registry(
-                    "batch={} request={} persona_id={} event=perform_start "
-                    "after_gate_ms={:.3f}",
-                    batch_id,
-                    request_id,
-                    input.run.target.id,
-                    elapsed_milliseconds(
-                        admitted_at,
-                        perform_started_at));
-                bool first_delta = true;
-                const CompletionResult result = backend.perform(
-                    std::move(payload),
-                    [this,
-                     request_id,
-                     perform_started_at,
-                     &first_delta](CompletionDelta delta) {
-                        published_deltas.fetch_add(
-                            1,
-                            std::memory_order_relaxed);
-                        published_bytes.fetch_add(
-                            delta.text.size(),
-                            std::memory_order_relaxed);
-                        if (first_delta) {
-                            first_delta = false;
-                            trace_registry(
-                                "batch={} request={} persona_id={} "
-                                "event=first_delta kind={} "
-                                "after_perform_ms={:.3f}",
-                                batch_id,
-                                request_id,
-                                input.run.target.id,
-                                delta_kind_name(delta.kind),
-                                elapsed_milliseconds(
-                                    perform_started_at));
-                        }
-                        publish_delta(AgentDelta{
-                            request_id,
-                            delta.kind,
-                            std::move(delta.text),
-                        });
-                    },
-                    cancellation);
-                trace_registry(
-                    "batch={} request={} persona_id={} event=perform_end "
-                    "outcome={} after_perform_ms={:.3f} deltas={} bytes={}",
-                    batch_id,
-                    request_id,
-                    input.run.target.id,
-                    outcome_name(result.outcome),
-                    elapsed_milliseconds(perform_started_at),
-                    published_deltas.load(std::memory_order_relaxed),
-                    published_bytes.load(std::memory_order_relaxed));
-                if (result.outcome == CompletionOutcome::completed) {
-                    publish_terminal(AgentCompleted{request_id});
-                } else if (result.outcome == CompletionOutcome::cancelled) {
-                    publish_terminal(AgentCancelled{request_id});
                 } else {
-                    publish_terminal(AgentFailed{request_id, result.message});
+                    RequestPayload payload = backend.prepare(input);
+                    const auto perform_started_at = DiagnosticClock::now();
+                    trace_registry(
+                        "request={} persona_id={} event=perform_start "
+                        "after_gate_ms={:.3f}",
+                        request_id,
+                        input.run.target.id,
+                        elapsed_milliseconds(admitted_at, perform_started_at));
+                    bool first_delta = true;
+                    std::size_t published_deltas{};
+                    std::size_t published_bytes{};
+                    const CompletionResult result = backend.perform(
+                        std::move(payload),
+                        [this,
+                         request_id,
+                         perform_started_at,
+                         &first_delta,
+                         &published_deltas,
+                         &published_bytes](CompletionDelta delta) {
+                            ++published_deltas;
+                            published_bytes += delta.text.size();
+                            if (first_delta) {
+                                first_delta = false;
+                                trace_registry(
+                                    "request={} persona_id={} event=first_delta "
+                                    "kind={} after_perform_ms={:.3f}",
+                                    request_id,
+                                    input.run.target.id,
+                                    delta_kind_name(delta.kind),
+                                    elapsed_milliseconds(perform_started_at));
+                            }
+                            publish_delta(AgentDelta{
+                                request_id,
+                                delta.kind,
+                                std::move(delta.text),
+                            });
+                        },
+                        cancellation);
+                    trace_registry(
+                        "request={} persona_id={} event=perform_end outcome={} "
+                        "after_perform_ms={:.3f} deltas={} bytes={}",
+                        request_id,
+                        input.run.target.id,
+                        outcome_name(result.outcome),
+                        elapsed_milliseconds(perform_started_at),
+                        published_deltas,
+                        published_bytes);
+                    if (result.outcome == CompletionOutcome::completed) {
+                        publish_terminal(AgentCompleted{request_id});
+                    } else if (result.outcome == CompletionOutcome::cancelled) {
+                        publish_terminal(AgentCancelled{request_id});
+                    } else {
+                        publish_failure(request_id, result.message);
+                    }
                 }
             } catch (const std::exception& error) {
                 trace_registry(
-                    "batch={} request={} persona_id={} event=exception "
-                    "phase={} after_gate_ms={:.3f}",
-                    batch_id,
+                    "request={} persona_id={} event=exception",
                     request_id,
-                    input.run.target.id,
-                    performing ? "perform" : "prepare",
-                    elapsed_milliseconds(admitted_at));
+                    input.run.target.id);
                 publish_failure(request_id, error.what());
             } catch (...) {
                 trace_registry(
-                    "batch={} request={} persona_id={} event=exception "
-                    "phase={} after_gate_ms={:.3f}",
-                    batch_id,
+                    "request={} persona_id={} event=exception",
                     request_id,
-                    input.run.target.id,
-                    performing ? "perform" : "prepare",
-                    elapsed_milliseconds(admitted_at));
-                publish_failure(
-                    request_id,
-                    "Unknown agent execution failure");
+                    input.run.target.id);
+                publish_failure(request_id, "Unknown agent execution failure");
             }
             finish();
         }
@@ -317,27 +277,21 @@ struct AgentRegistry::Impl {
             cancellation.store(true, std::memory_order_release);
         }
 
-        void wait() noexcept {
-            std::unique_lock lock(done_mutex);
-            done_changed.wait(lock, [this] { return done; });
+        void wait_until_finished() noexcept {
+            std::unique_lock lock(finished_mutex);
+            finished_changed.wait(lock, [this] { return execution_finished; });
         }
 
-        bool is_done() noexcept {
-            std::lock_guard lock(done_mutex);
-            return done;
+        [[nodiscard]] bool is_finished() const noexcept {
+            std::lock_guard lock(finished_mutex);
+            return execution_finished;
         }
 
         ChannelReadStatus try_receive(AgentEvent& event) {
-            const ChannelReadStatus status = events.try_get(event);
-            if (status == ChannelReadStatus::value
-                && std::holds_alternative<AgentDelta>(event)) {
-                delivered_deltas.fetch_add(
-                    1,
-                    std::memory_order_relaxed);
-            }
-            return status;
+            return events.try_get(event);
         }
 
+    private:
         void publish_delta(AgentEvent event) {
             if (!events.push(std::move(event))) {
                 throw std::logic_error(
@@ -348,7 +302,6 @@ struct AgentRegistry::Impl {
 
         void publish_terminal(AgentEvent event) noexcept {
             events.close_with(std::move(event));
-            terminal_published.store(true, std::memory_order_release);
             notifier.wake();
         }
 
@@ -357,30 +310,25 @@ struct AgentRegistry::Impl {
             std::string_view message) noexcept {
             AgentEvent failure = std::move(fallback_terminal);
             try {
-                AgentEvent detailed = AgentFailed{
-                    request_id,
-                    std::string(message),
-                };
-                failure = std::move(detailed);
+                failure = AgentFailed{request_id, std::string(message)};
             } catch (...) {
-                // Keep the preallocated failure when copying details allocates.
+                // Keep the preallocated fallback if copying details allocates.
             }
             publish_terminal(std::move(failure));
         }
 
         void finish() noexcept {
             {
-                std::lock_guard lock(done_mutex);
-                done = true;
+                std::lock_guard lock(finished_mutex);
+                execution_finished = true;
             }
-            done_changed.notify_all();
-            // Terminal publication may wake and be consumed before execute()
-            // reaches this point. Abort polling needs a later wake once it is
-            // safe to reset or join this runner without waiting on a backend.
+            finished_changed.notify_all();
+            // This can occur after a waiter observes execution_finished.  The
+            // flag guarantees backend safety, while ThreadPool::stop() is the
+            // stronger task-quiescence boundary used at shutdown.
             notifier.wake();
         }
 
-        BatchId batch_id{};
         CompletionInput input;
         CompletionBackend& backend;
         std::shared_ptr<StartGate> gate;
@@ -388,131 +336,39 @@ struct AgentRegistry::Impl {
         ConcurrentQueue<AgentEvent> events;
         AgentEvent fallback_terminal;
         std::atomic_bool cancellation{false};
-        std::mutex done_mutex;
-        std::condition_variable done_changed;
-        bool done{};
-        std::atomic_size_t published_deltas{};
-        std::atomic_size_t delivered_deltas{};
-        std::atomic_size_t published_bytes{};
-        std::atomic_bool terminal_published{false};
-    };
-
-    class RegularRunner {
-    public:
-        RegularRunner()
-            : thread_(&RegularRunner::dialog, this) {
-        }
-
-        ~RegularRunner() noexcept {
-            stop();
-        }
-
-        bool stage(const std::shared_ptr<Execution>& execution) {
-            std::lock_guard lock(mutex_);
-            if (stopping_ || current_) {
-                return false;
-            }
-            current_ = execution;
-            pending_ = execution;
-            changed_.notify_one();
-            return true;
-        }
-
-        void reset(const std::shared_ptr<Execution>& execution) noexcept {
-            execution->wait();
-            std::lock_guard lock(mutex_);
-            if (current_ == execution) {
-                current_.reset();
-            }
-        }
-
-        void stop() noexcept {
-            {
-                std::lock_guard lock(mutex_);
-                if (stopping_) {
-                    return;
-                }
-                stopping_ = true;
-            }
-            changed_.notify_all();
-            if (thread_.joinable()) {
-                try {
-                    thread_.join();
-                } catch (...) {
-                    std::terminate();
-                }
-            }
-        }
-
-    private:
-        void dialog() noexcept {
-            while (true) {
-                std::shared_ptr<Execution> execution;
-                {
-                    std::unique_lock lock(mutex_);
-                    changed_.wait(lock, [this] {
-                        return stopping_ || pending_;
-                    });
-                    if (stopping_ && !pending_) {
-                        break;
-                    }
-                    execution = std::move(pending_);
-                }
-                execution->execute();
-            }
-        }
-
-        std::mutex mutex_;
-        std::condition_variable changed_;
-        std::shared_ptr<Execution> current_;
-        std::shared_ptr<Execution> pending_;
-        bool stopping_{};
-        std::thread thread_;
-    };
-
-    struct RunRecord {
-        std::size_t backend_index{};
-        bool regular{};
-        bool started{};
-        std::shared_ptr<Execution> execution;
-        std::thread thread;
+        mutable std::mutex finished_mutex;
+        std::condition_variable finished_changed;
+        bool execution_finished{};
     };
 
     struct BatchRecord {
-        BatchId id{};
-        std::vector<std::unique_ptr<RunRecord>> runs;
-        std::optional<std::size_t> foreground;
         std::shared_ptr<StartGate> gate;
-        bool aborting{};
+        std::vector<std::shared_ptr<Execution>> executions;
     };
 
     Impl(
         std::vector<std::unique_ptr<CompletionBackend>> owned_backends,
         WakeNotifier& wake_notifier,
-        std::function<void()> stage_thread_hook)
+        ThreadPool& borrowed_pool,
+        BeforeSubmitHook submission_hook)
         : backends(std::move(owned_backends)),
           runtime_info(build_runtime_info(backends)),
-          leased(backends.size(), false),
           notifier(wake_notifier),
-          before_stage_thread_start(std::move(stage_thread_hook)) {
+          worker_pool(borrowed_pool),
+          before_submit(std::move(submission_hook)) {
+        // Exact equality is deliberate: this pool runs only agent work, and
+        // one worker per backend guarantees full-width fan-out.
+        if (worker_pool.worker_count() != backends.size()) {
+            throw std::invalid_argument(
+                "Agent registry requires one pool worker per backend");
+        }
     }
 
     ~Impl() noexcept {
-        try {
-            stop();
-        } catch (...) {
-        }
-        std::optional<BatchId> remaining;
-        {
-            std::lock_guard lock(state_mutex);
-            if (batch) {
-                remaining = batch->id;
-            }
-        }
-        if (remaining) {
-            discard_batch(*remaining);
-        }
-        regular.stop();
+        // stop() already waits for execution completion; clear_batch() only
+        // releases the retained batch and event queues.
+        stop();
+        clear_batch();
     }
 
     std::size_t backend_index(std::string_view id) const {
@@ -524,43 +380,7 @@ struct AgentRegistry::Impl {
         return runtime_info.size();
     }
 
-    void release_lease(std::size_t index) noexcept {
-        std::lock_guard lock(state_mutex);
-        if (index < leased.size()) {
-            leased[index] = false;
-        }
-    }
-
-    void cleanup_record(std::unique_ptr<RunRecord> record) noexcept {
-        if (!record) {
-            return;
-        }
-        record->execution->request_cancel();
-        record->execution->wait();
-        if (record->regular) {
-            regular.reset(record->execution);
-        } else if (record->thread.joinable()) {
-            try {
-                record->thread.join();
-            } catch (...) {
-                std::terminate();
-            }
-        }
-        release_lease(record->backend_index);
-    }
-
-    void rollback_staging(BatchRecord& candidate) noexcept {
-        candidate.gate->cancel();
-        for (std::unique_ptr<RunRecord>& record : candidate.runs) {
-            if (record && record->started) {
-                cleanup_record(std::move(record));
-            } else if (record) {
-                release_lease(record->backend_index);
-            }
-        }
-    }
-
-    BatchId stage_batch(std::vector<CompletionInput> inputs) {
+    void stage_batch(std::vector<CompletionInput> inputs) {
         if (inputs.empty()) {
             throw std::invalid_argument(
                 "Staged batch requires at least one completion input");
@@ -571,475 +391,232 @@ struct AgentRegistry::Impl {
         std::unordered_set<std::size_t> distinct;
         for (const CompletionInput& input : inputs) {
             if (!input.history) {
-                throw std::invalid_argument(
-                    "Completion input requires history");
+                throw std::invalid_argument("Completion input requires history");
             }
-            const std::size_t index =
-                backend_index(input.run.target.id);
+            const std::size_t index = backend_index(input.run.target.id);
             if (index == runtime_info.size()) {
-                throw std::invalid_argument(
-                    "Completion input has unknown target");
+                throw std::invalid_argument("Completion input has unknown target");
             }
             if (!distinct.insert(index).second) {
-                throw std::invalid_argument(
-                    "Staged batch has duplicate targets");
+                throw std::invalid_argument("Staged batch has duplicate targets");
             }
             backend_indices.push_back(index);
         }
 
-        const BatchId batch_id = next_batch_id++;
         BatchRecord candidate;
-        candidate.id = batch_id;
         candidate.gate = std::make_shared<StartGate>();
-        candidate.runs.reserve(inputs.size());
-
-        std::vector<RunRecord*> record_views;
-        record_views.reserve(inputs.size());
+        candidate.executions.reserve(inputs.size());
         for (std::size_t index = 0; index < inputs.size(); ++index) {
-            auto record = std::make_unique<RunRecord>();
-            record->backend_index = backend_indices[index];
-            record->regular = index == 0;
-            record->execution = std::make_shared<Execution>(
-                batch_id,
+            candidate.executions.push_back(std::make_shared<Execution>(
                 std::move(inputs[index]),
                 *backends[backend_indices[index]],
                 candidate.gate,
-                notifier);
-            record_views.push_back(record.get());
-            candidate.runs.push_back(std::move(record));
+                notifier));
         }
 
-        std::vector<std::size_t> claimed;
-        claimed.reserve(backend_indices.size());
+        const std::shared_ptr<StartGate> gate = candidate.gate;
+        std::vector<std::shared_ptr<Execution>> submitted;
+        submitted.reserve(candidate.executions.size());
         std::unique_lock state_lock(state_mutex);
-        if (stopping || stopped || batch) {
+        if (stop_state != StopState::running || batch) {
             throw std::runtime_error("Agent registry is busy");
         }
-        for (const std::size_t index : backend_indices) {
-            if (leased[index]) {
-                for (const std::size_t rollback : claimed) {
-                    leased[rollback] = false;
-                }
-                throw std::runtime_error("Agent backend is already leased");
-            }
-            leased[index] = true;
-            claimed.push_back(index);
-        }
-
         try {
-            if (!regular.stage(record_views.front()->execution)) {
-                throw std::runtime_error("Regular agent runner is unavailable");
-            }
-            record_views.front()->started = true;
-            for (std::size_t index = 1; index < record_views.size(); ++index) {
-                RunRecord& record = *record_views[index];
-                if (before_stage_thread_start) {
-                    before_stage_thread_start();
+            for (const auto& execution : candidate.executions) {
+                if (before_submit) {
+                    before_submit(submitted.size());
                 }
-                record.thread = std::thread(
-                    [execution = record.execution] {
-                        execution->execute();
-                    });
-                record.started = true;
+                if (!worker_pool.submit([execution] { execution->execute(); })) {
+                    throw std::runtime_error("Agent worker pool is unavailable");
+                }
+                submitted.push_back(execution);
             }
-            candidate.gate->wait_until_parked(record_views.size());
+            batch.emplace(std::move(candidate));
         } catch (...) {
             state_lock.unlock();
-            rollback_staging(candidate);
+            gate->cancel();
+            for (const auto& execution : submitted) {
+                execution->wait_until_finished();
+            }
             throw;
         }
-
-        static_assert(std::is_nothrow_move_constructible_v<BatchRecord>);
-        batch.emplace(std::move(candidate));
-        trace_registry(
-            "batch={} event=staged runs={}",
-            batch_id,
-            record_views.size());
-        return batch_id;
     }
 
-    void set_foreground(BatchId batch_id, std::size_t run_index) {
-        std::shared_ptr<Execution> execution;
-        {
-            std::lock_guard lock(state_mutex);
-            if (stopped || !batch || batch->id != batch_id
-                || run_index >= batch->runs.size()
-                || !batch->runs[run_index]) {
-                throw std::logic_error(
-                    "Foreground run is not live in the agent registry");
-            }
-            batch->foreground = run_index;
-            execution = batch->runs[run_index]->execution;
-        }
-        const std::size_t published =
-            execution->published_deltas.load(std::memory_order_relaxed);
-        const std::size_t delivered =
-            execution->delivered_deltas.load(std::memory_order_relaxed);
-        trace_registry(
-            "batch={} request={} persona_id={} event=foreground_set "
-            "run_index={} buffered_deltas={} published_bytes={} terminal={}",
-            batch_id,
-            execution->input.run.request_id,
-            execution->input.run.target.id,
-            run_index,
-            published - delivered,
-            execution->published_bytes.load(std::memory_order_relaxed),
-            execution->terminal_published.load(std::memory_order_acquire));
-    }
-
-    void open_batch_gate(BatchId batch_id) noexcept {
+    void open_gate() noexcept {
         std::shared_ptr<StartGate> gate;
         {
             std::lock_guard lock(state_mutex);
-            if (batch && batch->id == batch_id) {
+            if (batch) {
                 gate = batch->gate;
             }
         }
         if (gate) {
-            trace_registry(
-                "batch={} event=gate_open",
-                batch_id);
             gate->open();
         }
     }
 
-    void retire(BatchId batch_id, std::size_t run_index) {
-        std::unique_ptr<RunRecord> record;
-        {
-            std::lock_guard lock(state_mutex);
-            if (!batch || batch->id != batch_id
-                || run_index >= batch->runs.size()
-                || !batch->runs[run_index]) {
-                return;
-            }
-            if (batch->foreground == run_index) {
-                batch->foreground.reset();
-            }
-            record = std::move(batch->runs[run_index]);
-        }
-        cleanup_record(std::move(record));
-    }
-
-    void retire_batch(BatchId batch_id) noexcept {
-        std::lock_guard lock(state_mutex);
-        if (!batch || batch->id != batch_id) {
-            return;
-        }
-        for (const std::unique_ptr<RunRecord>& run : batch->runs) {
-            if (run) {
-                return;
-            }
-        }
-        batch.reset();
-    }
-
-    void cancel_all() noexcept {
-        std::lock_guard lock(state_mutex);
-        if (!batch) {
-            return;
-        }
-        for (const std::unique_ptr<RunRecord>& run : batch->runs) {
-            if (run) {
-                run->execution->request_cancel();
-            }
-        }
-    }
-
-    void discard_batch(BatchId batch_id) noexcept {
-        std::optional<BatchRecord> discarded;
-        {
-            std::lock_guard lock(state_mutex);
-            if (!batch || batch->id != batch_id) {
-                return;
-            }
-            discarded.emplace(std::move(*batch));
-            batch.reset();
-        }
-        discarded->gate->cancel();
-        for (std::unique_ptr<RunRecord>& record : discarded->runs) {
-            cleanup_record(std::move(record));
-        }
-    }
-
-    void begin_abort_cleanup(
-        BatchId batch_id,
-        std::optional<std::size_t> retained_foreground) noexcept {
-        std::lock_guard lock(state_mutex);
-        if (!batch || batch->id != batch_id) {
-            return;
-        }
-        for (const std::unique_ptr<RunRecord>& run : batch->runs) {
-            if (run) {
-                run->execution->request_cancel();
-            }
-        }
-        batch->gate->cancel();
-        batch->aborting = true;
-        const bool retain =
-            retained_foreground
-            && *retained_foreground < batch->runs.size()
-            && batch->runs[*retained_foreground];
-        if (retain) {
-            batch->foreground = *retained_foreground;
-        } else {
-            batch->foreground.reset();
-        }
-    }
-
-    void release_abort_foreground(
-        BatchId batch_id,
-        std::size_t run_index) noexcept {
-        std::lock_guard lock(state_mutex);
-        if (!batch || batch->id != batch_id || !batch->aborting
-            || run_index >= batch->runs.size()
-            || !batch->runs[run_index]) {
-            return;
-        }
-        if (batch->foreground == run_index) {
-            batch->foreground.reset();
-        }
-    }
-
-    CleanupStatus poll_abort_cleanup(BatchId batch_id) noexcept {
-        while (true) {
-            std::unique_ptr<RunRecord> ready;
-            bool complete = false;
-            {
-                std::lock_guard lock(state_mutex);
-                if (!batch || batch->id != batch_id
-                    || !batch->aborting) {
-                    return CleanupStatus::none;
-                }
-                bool any_live = false;
-                for (std::size_t index = 0;
-                     index < batch->runs.size();
-                     ++index) {
-                    if (!batch->runs[index]) {
-                        continue;
-                    }
-                    any_live = true;
-                    if (batch->foreground == index) {
-                        continue;
-                    }
-                    if (batch->runs[index]->execution->is_done()) {
-                        ready = std::move(batch->runs[index]);
-                        break;
-                    }
-                }
-                complete = !any_live;
-            }
-            if (ready) {
-                cleanup_record(std::move(ready));
-                continue;
-            }
-            if (!complete) {
-                return CleanupStatus::pending;
-            }
-            retire_batch(batch_id);
-            return CleanupStatus::complete;
-        }
-    }
-
-    ChannelReadStatus try_receive(AgentEvent& event) {
+    ChannelReadStatus try_receive(std::size_t run_index, AgentEvent& event) {
         std::shared_ptr<Execution> execution;
         bool is_stopped = false;
         {
             std::lock_guard lock(state_mutex);
-            is_stopped = stopped;
-            if (batch && batch->foreground
-                && *batch->foreground < batch->runs.size()
-                && batch->runs[*batch->foreground]) {
-                execution =
-                    batch->runs[*batch->foreground]->execution;
+            is_stopped = stop_state == StopState::stopped;
+            if (batch && run_index >= batch->executions.size()) {
+                throw std::logic_error("Agent registry run index is out of range");
+            }
+            if (batch) {
+                execution = batch->executions[run_index];
             }
         }
         if (!execution) {
-            return is_stopped
-                ? ChannelReadStatus::closed
-                : ChannelReadStatus::empty;
+            return is_stopped ? ChannelReadStatus::closed : ChannelReadStatus::empty;
         }
-
         const ChannelReadStatus status = execution->try_receive(event);
         if (status == ChannelReadStatus::value) {
-            return ChannelReadStatus::value;
+            return status;
         }
-        return is_stopped
-            ? ChannelReadStatus::closed
-            : ChannelReadStatus::empty;
+        return is_stopped ? ChannelReadStatus::closed : ChannelReadStatus::empty;
     }
 
-    void stop() {
-        std::optional<BatchId> batch_id;
-        std::optional<std::size_t> retained;
+    void cancel_batch() noexcept {
+        std::shared_ptr<StartGate> gate;
+        std::vector<std::shared_ptr<Execution>> executions;
         {
             std::lock_guard lock(state_mutex);
-            if (stopped) {
+            if (!batch) {
                 return;
             }
-            if (stopping) {
+            gate = batch->gate;
+            executions = batch->executions;
+        }
+        for (const auto& execution : executions) {
+            execution->request_cancel();
+        }
+        gate->cancel();
+    }
+
+    bool executions_finished() const noexcept {
+        std::vector<std::shared_ptr<Execution>> executions;
+        {
+            std::lock_guard lock(state_mutex);
+            if (!batch) {
+                return true;
+            }
+            executions = batch->executions;
+        }
+        for (const auto& execution : executions) {
+            if (!execution->is_finished()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void clear_batch() noexcept {
+        std::optional<BatchRecord> cleared;
+        {
+            std::lock_guard lock(state_mutex);
+            if (!batch) {
                 return;
             }
-            stopping = true;
+            cleared.emplace(std::move(*batch));
+            batch.reset();
+        }
+        cleared->gate->cancel();
+        for (const auto& execution : cleared->executions) {
+            execution->request_cancel();
+            execution->wait_until_finished();
+        }
+    }
+
+    void stop() noexcept {
+        std::vector<std::shared_ptr<Execution>> executions;
+        std::shared_ptr<StartGate> gate;
+        {
+            std::lock_guard lock(state_mutex);
+            if (stop_state != StopState::running) {
+                return;
+            }
+            stop_state = StopState::stopping;
             if (batch) {
-                batch_id = batch->id;
-                retained = batch->foreground;
+                gate = batch->gate;
+                executions = batch->executions;
             }
         }
-
-        if (batch_id) {
-            begin_abort_cleanup(*batch_id, retained);
-            while (true) {
-                std::unique_ptr<RunRecord> record;
-                {
-                    std::lock_guard lock(state_mutex);
-                    if (!batch || batch->id != *batch_id) {
-                        break;
-                    }
-                    for (std::size_t index = 0;
-                         index < batch->runs.size();
-                         ++index) {
-                        if (retained == index) {
-                            continue;
-                        }
-                        if (batch->runs[index]) {
-                            record = std::move(batch->runs[index]);
-                            break;
-                        }
-                    }
-                }
-                if (!record) {
-                    break;
-                }
-                cleanup_record(std::move(record));
-            }
+        for (const auto& execution : executions) {
+            execution->request_cancel();
         }
-
-        std::shared_ptr<Execution> foreground_execution;
-        std::thread foreground_thread;
+        if (gate) {
+            gate->cancel();
+        }
+        for (const auto& execution : executions) {
+            execution->wait_until_finished();
+        }
         {
             std::lock_guard lock(state_mutex);
-            if (batch_id && batch && batch->id == *batch_id
-                && retained && *retained < batch->runs.size()
-                && batch->runs[*retained]) {
-                RunRecord& record = *batch->runs[*retained];
-                foreground_execution = record.execution;
-                if (!record.regular) {
-                    foreground_thread = std::move(record.thread);
-                }
-            }
-        }
-        if (foreground_execution) {
-            foreground_execution->request_cancel();
-            foreground_execution->wait();
-            if (foreground_thread.joinable()) {
-                foreground_thread.join();
-            }
-        }
-        regular.stop();
-
-        bool discard_empty_batch = false;
-        {
-            std::lock_guard lock(state_mutex);
-            stopped = true;
-            discard_empty_batch =
-                batch_id && batch && !batch->foreground;
-        }
-        if (discard_empty_batch) {
-            retire_batch(*batch_id);
+            stop_state = StopState::stopped;
         }
         notifier.wake();
     }
 
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     std::vector<AgentRuntimeInfo> runtime_info;
-    std::vector<bool> leased;
     WakeNotifier& notifier;
-    std::function<void()> before_stage_thread_start;
-    RegularRunner regular;
+    ThreadPool& worker_pool;
+    BeforeSubmitHook before_submit;
 
-    std::mutex state_mutex;
+    mutable std::mutex state_mutex;
     std::optional<BatchRecord> batch;
-    BatchId next_batch_id{1};
-    bool stopping{};
-    bool stopped{};
+    // Staging is allowed only while running; stop() advances this state once.
+    StopState stop_state{StopState::running};
 };
 
 AgentRegistry::AgentRegistry(
     std::vector<AgentDefinition> definitions,
-    WakeNotifier& notifier)
-    : AgentRegistry(
-          build_backends(std::move(definitions)),
-          notifier,
-          {}) {
+    WakeNotifier& notifier,
+    ThreadPool& worker_pool)
+    : AgentRegistry(build_backends(std::move(definitions)), notifier, worker_pool) {
 }
 
 AgentRegistry::AgentRegistry(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     WakeNotifier& notifier,
-    StageThreadHook before_stage_thread_start)
+    ThreadPool& worker_pool,
+    BeforeSubmitHook before_submit)
     : impl_(std::make_unique<Impl>(
-          std::move(backends),
-          notifier,
-          std::move(before_stage_thread_start))) {
+          std::move(backends), notifier, worker_pool, std::move(before_submit))) {
 }
 
 AgentRegistry::~AgentRegistry() noexcept = default;
 
-const std::vector<AgentRuntimeInfo>&
-AgentRegistry::runtime_info() const noexcept {
+const std::vector<AgentRuntimeInfo>& AgentRegistry::runtime_info() const noexcept {
     return impl_->runtime_info;
 }
 
-BatchId AgentRegistry::stage_batch(
-    std::vector<CompletionInput> inputs) {
-    return impl_->stage_batch(std::move(inputs));
+void AgentRegistry::stage_batch(std::vector<CompletionInput> inputs) {
+    impl_->stage_batch(std::move(inputs));
 }
 
-void AgentRegistry::set_foreground(
-    BatchId batch,
-    std::size_t run_index) {
-    impl_->set_foreground(batch, run_index);
+void AgentRegistry::open_gate() noexcept {
+    impl_->open_gate();
 }
 
-void AgentRegistry::open_batch_gate(BatchId batch) noexcept {
-    impl_->open_batch_gate(batch);
+ChannelReadStatus AgentRegistry::try_receive(
+    std::size_t run_index,
+    AgentEvent& event) {
+    return impl_->try_receive(run_index, event);
 }
 
-void AgentRegistry::retire(BatchId batch, std::size_t run_index) {
-    impl_->retire(batch, run_index);
+void AgentRegistry::cancel_batch() noexcept {
+    impl_->cancel_batch();
 }
 
-void AgentRegistry::retire_batch(BatchId batch) noexcept {
-    impl_->retire_batch(batch);
+bool AgentRegistry::executions_finished() const noexcept {
+    return impl_->executions_finished();
 }
 
-void AgentRegistry::cancel_all() noexcept {
-    impl_->cancel_all();
-}
-
-void AgentRegistry::discard_batch(BatchId batch) noexcept {
-    impl_->discard_batch(batch);
-}
-
-void AgentRegistry::begin_abort_cleanup(
-    BatchId batch,
-    std::optional<std::size_t> retained_foreground) noexcept {
-    impl_->begin_abort_cleanup(batch, retained_foreground);
-}
-
-void AgentRegistry::release_abort_foreground(
-    BatchId batch,
-    std::size_t run_index) noexcept {
-    impl_->release_abort_foreground(batch, run_index);
-}
-
-CleanupStatus AgentRegistry::poll_abort_cleanup(
-    BatchId batch) noexcept {
-    return impl_->poll_abort_cleanup(batch);
-}
-
-ChannelReadStatus AgentRegistry::try_receive(AgentEvent& event) {
-    return impl_->try_receive(event);
+void AgentRegistry::clear_batch() noexcept {
+    impl_->clear_batch();
 }
 
 void AgentRegistry::stop() {

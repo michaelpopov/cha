@@ -3,45 +3,36 @@
 #include "agents/agent.h"
 #include "agents/completion_backend.h"
 #include "util/concurrent_queue.h"
+#include "util/thread_pool.h"
 #include "util/wake_notifier.h"
 
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <vector>
 
 namespace cha {
 
-using BatchId = std::uint64_t;
-
-enum class CleanupStatus {
-    none,
-    pending,
-    complete,
-};
-
-// Owns every configured backend and coordinates one reusable regular runner
-// plus temporary runners for concurrent multicast batches. Runners prepare
-// exclusively from owned CompletionInput values and retain separate event
-// channels whose queues reserve terminal delivery; only the selected
-// foreground channel is visible to the controller. Exactly one batch may be
-// live, and its fixed run positions match the input order for the batch's full
-// lifetime.
+// Owns every configured backend and submits one gated pool task per execution.
+// Exactly one batch may be live, and its fixed run positions match input order
+// for the batch's full lifetime.
 class AgentRegistry {
 public:
-    // Optional fault-injection seam invoked immediately before each temporary
-    // staging thread is constructed.
-    using StageThreadHook = std::function<void()>;
+    // Test-only fault injection immediately before each pool submission. The
+    // argument is the zero-based submission index and exceptions abort staging.
+    using BeforeSubmitHook = std::function<void(std::size_t)>;
 
+    // The caller owns the pool and must join it while this registry and its
+    // notifier remain alive.
     AgentRegistry(
         std::vector<AgentDefinition> definitions,
-        WakeNotifier& notifier);
+        WakeNotifier& notifier,
+        ThreadPool& worker_pool);
     AgentRegistry(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         WakeNotifier& notifier,
-        StageThreadHook before_stage_thread_start = {});
+        ThreadPool& worker_pool,
+        BeforeSubmitHook before_submit = {});
     ~AgentRegistry() noexcept;
 
     AgentRegistry(const AgentRegistry&) = delete;
@@ -49,35 +40,23 @@ public:
 
     const std::vector<AgentRuntimeInfo>& runtime_info() const noexcept;
 
-    // Strong guarantee: on success, every input and backend lease belongs to a
-    // runner parked at the returned batch's unopened start gate. Run positions
-    // are the corresponding input indices. On failure, no backend is called
-    // and no lease or runner remains live.
-    BatchId stage_batch(std::vector<CompletionInput> inputs);
-    void set_foreground(BatchId batch, std::size_t run_index);
-    void open_batch_gate(BatchId batch) noexcept;
-    void retire(BatchId batch, std::size_t run_index);
-    void retire_batch(BatchId batch) noexcept;
+    // Strong guarantee: on success every task was accepted by the pool but is
+    // held behind an unopened start gate. On failure no backend is called and
+    // no task remains live.
+    void stage_batch(std::vector<CompletionInput> inputs);
+    void open_gate() noexcept;
+    [[nodiscard]] ChannelReadStatus try_receive(
+        std::size_t run_index,
+        AgentEvent& event);
+    void cancel_batch() noexcept;
+    [[nodiscard]] bool executions_finished() const noexcept;
+    // Synchronously cancels any remaining work, waits until no execution can
+    // access a backend, then releases the one live batch.
+    void clear_batch() noexcept;
 
-    void cancel_all() noexcept;
-
-    // Exceptional, synchronous teardown for a batch whose foreground
-    // activation failed. Interactive /stop uses the non-blocking cleanup API.
-    void discard_batch(BatchId batch) noexcept;
-    void begin_abort_cleanup(
-        BatchId batch,
-        std::optional<std::size_t> retained_foreground) noexcept;
-    // The controller has committed the retained foreground terminal. Clear
-    // its selection so subsequent abort polling may reap that run.
-    void release_abort_foreground(
-        BatchId batch,
-        std::size_t run_index) noexcept;
-    CleanupStatus poll_abort_cleanup(BatchId batch) noexcept;
-
-    [[nodiscard]] ChannelReadStatus try_receive(AgentEvent& event);
-
-    // Cancels and joins every worker. The foreground event channel remains
-    // drainable; once drained, try_receive() reports closed.
+    // Cancels and waits until execution state can no longer access a backend.
+    // It retains terminal event queues for shutdown draining. The controller
+    // must then join the pool before destroying the registry.
     void stop();
 
 private:

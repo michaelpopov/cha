@@ -16,7 +16,7 @@ enum class ChannelReadStatus {
     closed,
 };
 
-// A small unbounded queue for the application's one-consumer channels.
+// A small unbounded queue for the application's concurrent channels.
 // Closing wakes blocked readers and preserves values that were already queued.
 // close_with() additionally reserves one final value without appending it to
 // the potentially allocating deque; readers receive it after queued values.
