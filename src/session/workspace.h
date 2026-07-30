@@ -39,6 +39,8 @@ struct CreatedSession {
 
 // Process-wide settings stored in the workspace's app.toml.
 struct ApplicationConfig {
+    std::string host;
+    int port{};
     std::filesystem::path log_file;
     std::string log_level;
 };

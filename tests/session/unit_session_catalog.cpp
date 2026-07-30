@@ -28,7 +28,9 @@ protected:
         std::filesystem::create_directories(root / "forums" / "lobby" / "sessions");
         {
             std::ofstream file(root / "app.toml");
-            file << "[logging]\n"
+            file << "host = \"127.0.0.1\"\n"
+                 << "port = 8080\n"
+                 << "[logging]\n"
                  << "file = \"logs/cha.log\"\n"
                  << "level = \"off\"\n";
         }

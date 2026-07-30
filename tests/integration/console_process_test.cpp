@@ -80,6 +80,7 @@ public:
             path_ / "forums" / "hall" / "sessions");
         write_file(
             path_ / "app.toml",
+            "host = \"127.0.0.1\"\nport = 8080\n"
             "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
         write_file(
             path_ / "forums" / "hall" / "config.toml",

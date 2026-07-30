@@ -79,11 +79,18 @@ orderly EOF, `/exit`, or idle Ctrl-C returns 0. Before a successful chat return,
 the console explicitly finalizes sanitizer state and checks the last stdout
 flush; destruction does not perform hidden output.
 
+## `web_main.cpp`
+
+The `chaweb` executable is the placeholder composition root for the future web
+frontend. It intentionally has no behavior yet.
+
 ## Dependencies
 
 A composition root may depend on any concrete component it needs to assemble a
 program. `tui_main.cpp` uses `session/`, `ui/tui/`, and `util/`.
 `console_main.cpp` uses `session/`, `ui/console/`, `ui/render/`, and `util/`.
+`web_main.cpp` links `cha_core` and `cpp-httplib`, but does not instantiate
+components from either yet.
 
 Nothing depends on `apps/`.
 

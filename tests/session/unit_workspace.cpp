@@ -30,7 +30,9 @@ protected:
             root_ / "forums" / "lobby" / "personas" / "guide");
         {
             std::ofstream app_config(root_ / "app.toml");
-            app_config << "[logging]\n"
+            app_config << "host = \"127.0.0.1\"\n"
+                       << "port = 8080\n"
+                       << "[logging]\n"
                        << "file = \"logs/cha.log\"\n"
                        << "level = \"off\"\n";
         }
@@ -73,6 +75,8 @@ TEST_F(ApplicationWorkspaceTest, ListsForumsAndSessionsAsApplicationValues) {
 
     EXPECT_EQ(workspace.forums(), (std::vector<std::string>{"lobby"}));
     EXPECT_TRUE(workspace.sessions("lobby").empty());
+    EXPECT_EQ(workspace.app_config().host, "127.0.0.1");
+    EXPECT_EQ(workspace.app_config().port, 8080);
     EXPECT_EQ(workspace.app_config().log_file, root_ / "logs" / "cha.log");
     EXPECT_EQ(workspace.app_config().log_level, "off");
 }
@@ -88,6 +92,27 @@ TEST_F(ApplicationWorkspaceTest, RequiresApplicationConfiguration) {
             std::string(error.what()).find("app.toml"),
             std::string::npos);
     }
+}
+
+TEST_F(ApplicationWorkspaceTest, RequiresValidWebListenerConfiguration) {
+    {
+        std::ofstream app_config(root_ / "app.toml");
+        app_config << "port = 8080\n"
+                   << "[logging]\n"
+                   << "file = \"logs/cha.log\"\n"
+                   << "level = \"off\"\n";
+    }
+    EXPECT_THROW((void)load_application_config(root_), std::runtime_error);
+
+    {
+        std::ofstream app_config(root_ / "app.toml");
+        app_config << "host = \"127.0.0.1\"\n"
+                   << "port = 65536\n"
+                   << "[logging]\n"
+                   << "file = \"logs/cha.log\"\n"
+                   << "level = \"off\"\n";
+    }
+    EXPECT_THROW((void)load_application_config(root_), std::runtime_error);
 }
 
 TEST_F(ApplicationWorkspaceTest, ChecksAForumWithoutCreatingASession) {

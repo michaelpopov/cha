@@ -81,6 +81,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
+FetchContent_Declare(
+    cpp_httplib
+    URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.51.0.zip
+)
+FetchContent_MakeAvailable(cpp_httplib)
+
 set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
@@ -323,3 +329,8 @@ add_executable(chacon_app src/apps/console_main.cpp)
 target_link_libraries(chacon_app PRIVATE cha_core)
 set_target_properties(chacon_app PROPERTIES OUTPUT_NAME chacon)
 cha_enable_warnings(chacon_app)
+
+add_executable(chaweb_app src/apps/web_main.cpp)
+target_link_libraries(chaweb_app PRIVATE cha_core httplib::httplib)
+set_target_properties(chaweb_app PROPERTIES OUTPUT_NAME chaweb)
+cha_enable_warnings(chaweb_app)

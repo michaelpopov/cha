@@ -110,6 +110,19 @@ ApplicationConfig load_application_config(const std::filesystem::path& root) {
             "Failed to read application config '" + utf8_path(path) + "'");
     }
     const toml::table table = toml::parse(file, utf8_path(path));
+    const std::optional<std::string> host =
+        table["host"].value<std::string>();
+    if (!host || host->empty()) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(path)
+            + "' requires a non-empty string 'host'");
+    }
+    const std::optional<int> port = table["port"].value<int>();
+    if (!port || *port < 1 || *port > 65535) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(path)
+            + "' requires an integer 'port' between 1 and 65535");
+    }
     const toml::table* logging = table["logging"].as_table();
     if (!logging) {
         throw std::runtime_error(
@@ -135,7 +148,12 @@ ApplicationConfig load_application_config(const std::filesystem::path& root) {
     if (log_path.is_relative()) {
         log_path = root / log_path;
     }
-    return {.log_file = std::move(log_path), .log_level = *log_level};
+    return {
+        .host = *host,
+        .port = *port,
+        .log_file = std::move(log_path),
+        .log_level = *log_level,
+    };
 }
 
 Workspace::Workspace(std::filesystem::path root)

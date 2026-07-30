@@ -31,6 +31,7 @@ public:
         std::filesystem::create_directories(sessions);
         write(
             root / "app.toml",
+            "host = \"127.0.0.1\"\nport = 8080\n"
             "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n");
         write(forum / "config.toml", "display_name = \"The Hall\"\n");
         write(forum / "USER.md", "Forum instructions\n");

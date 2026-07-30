@@ -12,11 +12,16 @@ lexicographic name order. At `cha` startup, a terminal selector lets you choose
 a forum and then an existing session or **New session**. `chacon` makes the same
 selection through command-line options.
 
-`app.toml` configures application-wide behavior. Its logging section requires
-a log file and level; relative log paths are resolved from the workspace root.
+`app.toml` configures application-wide behavior. Its top-level `host` and
+`port` settings define the web frontend's listener address. The logging section
+requires a log file and level; relative log paths are resolved from the
+workspace root.
 
 ```toml
 # app.toml
+host = "127.0.0.1"
+port = 8080
+
 [logging]
 file = "logs/cha.log"
 level = "info"
@@ -283,7 +288,7 @@ stdout flush, so a late output failure still produces exit code 1.
 The build uses an installed libcurl development package when available.
 Otherwise CMake downloads and builds a pinned libcurl automatically. It also
 downloads a pinned libuv for portable console input, signal handling, and
-cross-thread wakeups.
+cross-thread wakeups, and cpp-httplib for the web frontend.
 
 ```bash
 make
