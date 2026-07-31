@@ -46,6 +46,7 @@ they need.
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
 | `ui/tui/` | Curses lifecycle, startup selection, input editing, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
 | `ui/console/` | CLI selection, line input, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
+| `ui/web/` | HTTP/SSE transport, owning web protocol values, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
 | `session/` | Workspace and session operations, `ForumPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
@@ -60,9 +61,10 @@ may include headers only from those listed beside it.
 
 | Directory | May include |
 | --- | --- |
-| `apps/` | `ui/tui/`, `ui/console/`, `ui/render/`, `session/`, `transcript/`, `util/` |
+| `apps/` | `ui/tui/`, `ui/console/`, `ui/web/`, `ui/render/`, `session/`, `transcript/`, `util/` |
 | `ui/tui/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
 | `ui/console/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
+| `ui/web/` | `session/`, `transcript/`, `util/`, and its HTTP transport dependency |
 | `ui/render/` | `session/`, `transcript/` |
 | `ui/text/` | `session/`, `util/` |
 | `session/` | `agents/`, `transcript/`, `util/` |

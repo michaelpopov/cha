@@ -208,6 +208,16 @@ target_link_libraries(
 )
 cha_enable_warnings(cha_core)
 
+add_library(cha_web STATIC
+    src/ui/web/http_response.cpp
+    src/ui/web/json.cpp
+    src/ui/web/protocol.cpp
+)
+target_compile_features(cha_web PUBLIC cxx_std_20)
+target_include_directories(cha_web PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(cha_web PUBLIC cha_core httplib::httplib)
+cha_enable_warnings(cha_web)
+
 if(CHA_BUILD_TUI)
     add_library(cha_tui STATIC
         src/ui/tui/input_editor.cpp
@@ -318,6 +328,14 @@ if(BUILD_TESTING)
     endif()
     cha_enable_warnings(cha_tests)
 
+    add_executable(
+        cha_web_tests
+        tests/ui/web/unit_protocol.cpp
+        tests/support/test_workspace.cpp)
+    target_link_libraries(cha_web_tests PRIVATE cha_web GTest::gtest_main)
+    target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    cha_enable_warnings(cha_web_tests)
+
     if(NOT WIN32)
         # These integration harnesses currently use POSIX sockets and
         # fork/exec. They test the portable console implementation on Linux
@@ -343,6 +361,7 @@ if(BUILD_TESTING)
 
     include(GoogleTest)
     gtest_discover_tests(cha_tests)
+    gtest_discover_tests(cha_web_tests)
     if(TARGET console_tests)
         gtest_discover_tests(console_tests)
     endif()
@@ -354,6 +373,6 @@ set_target_properties(chacon_app PROPERTIES OUTPUT_NAME chacon)
 cha_enable_warnings(chacon_app)
 
 add_executable(chaweb_app src/apps/web_main.cpp)
-target_link_libraries(chaweb_app PRIVATE cha_core httplib::httplib)
+target_link_libraries(chaweb_app PRIVATE cha_web)
 set_target_properties(chaweb_app PROPERTIES OUTPUT_NAME chaweb)
 cha_enable_warnings(chaweb_app)
