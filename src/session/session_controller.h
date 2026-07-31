@@ -64,6 +64,7 @@ public:
     const Transcript& transcript() const { return transcript_; }
     [[nodiscard]] bool is_generating() const noexcept;
     GenerationStatus generation_status() const;
+    GenerationStatusView generation_status_view() const noexcept;
     const ForumPersonas& personas() const { return personas_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
 

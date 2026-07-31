@@ -116,7 +116,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         },
         .notice = std::string{"<notice>"},
         .lifecycle = SessionLifecycle::stopping,
-        .shutdown_reason = ShutdownReason::fatal_error,
+        .shutdown_reason = ShutdownReason::session_failed,
     };
 
     const auto value = nlohmann::json(SnapshotEvent{std::move(snapshot)});
@@ -137,7 +137,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         {"personas", {{{"display_name", "Guide"}, {"id", "guide"}}}},
         {"session_id", "session"},
         {"session_label", "Label"},
-        {"shutdown_reason", "fatal_error"},
+        {"shutdown_reason", "session_failed"},
         {"transcript",
          {{
              {"addressed_to", ""},
@@ -230,7 +230,7 @@ TEST(WebProtocol, DefinesEveryEnumSpelling) {
     });
     expect_spellings<ShutdownReason>({
         {ShutdownReason::browser_disconnected, "browser_disconnected"},
-        {ShutdownReason::fatal_error, "fatal_error"},
+        {ShutdownReason::session_failed, "session_failed"},
         {ShutdownReason::server_stopping, "server_stopping"},
     });
     expect_spellings<ErrorCode>({

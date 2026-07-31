@@ -15,7 +15,7 @@ enum class TranscriptKind { human, agent, notice, error };
 enum class TranscriptStatus { complete, streaming, cancelled, failed };
 enum class GenerationPhase { waiting, reasoning, answering, stopping };
 enum class SessionLifecycle { starting, running, stopping };
-enum class ShutdownReason { browser_disconnected, fatal_error, server_stopping };
+enum class ShutdownReason { browser_disconnected, session_failed, server_stopping };
 enum class ErrorCode {
     not_found, bad_request, body_too_large, forbidden_origin, internal_error,
     session_busy, session_stopping, session_limit_reached, session_open_timeout,
@@ -26,6 +26,7 @@ enum class ErrorCode {
 struct ForumSummary {
     std::string id;
     std::string display_name;
+    bool operator==(const ForumSummary&) const = default;
 };
 
 struct SessionListing {
@@ -37,6 +38,7 @@ struct SessionListing {
 struct PersonaSummary {
     std::string id;
     std::string display_name;
+    bool operator==(const PersonaSummary&) const = default;
 };
 
 struct TranscriptEntry {
@@ -49,6 +51,7 @@ struct TranscriptEntry {
     std::string text;
     TranscriptStatus status{TranscriptStatus::complete};
     std::optional<std::uint64_t> request_id;
+    bool operator==(const TranscriptEntry&) const = default;
 };
 
 struct GenerationState {
@@ -58,6 +61,7 @@ struct GenerationState {
     std::string agent_name;
     GenerationPhase phase{GenerationPhase::waiting};
     std::string reasoning_text;
+    bool operator==(const GenerationState&) const = default;
 };
 
 struct SessionSnapshot {
@@ -71,6 +75,7 @@ struct SessionSnapshot {
     std::optional<std::string> notice;
     SessionLifecycle lifecycle{SessionLifecycle::starting};
     std::optional<ShutdownReason> shutdown_reason;
+    bool operator==(const SessionSnapshot&) const = default;
 };
 
 struct RawCommand {

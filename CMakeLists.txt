@@ -336,7 +336,8 @@ if(BUILD_TESTING)
         tests/ui/web/unit_protocol.cpp
         tests/ui/web/unit_web_session_runtime.cpp
         tests/support/test_workspace.cpp)
-    target_link_libraries(cha_web_tests PRIVATE cha_web GTest::gtest_main)
+    target_link_libraries(
+        cha_web_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
     target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     cha_enable_warnings(cha_web_tests)
 

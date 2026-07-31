@@ -205,19 +205,39 @@ void SessionController::initialize(SessionRestore restored) {
 }
 
 GenerationStatus SessionController::generation_status() const {
+    const GenerationStatusView view = generation_status_view();
+    return {
+        .active = view.active,
+        .request_id = view.request_id,
+        .agent_id = std::string(view.agent_id),
+        .agent_name = std::string(view.agent_name),
+        .phase = view.phase,
+        .reasoning_text = std::string(view.reasoning_text),
+    };
+}
+
+GenerationStatusView SessionController::generation_status_view() const noexcept {
     if (batch_ && batch_->abort_requested) {
         const RunSpec& run = batch_->runs[batch_->foreground_index];
         return {
             .active = true,
+            .request_id = run.request_id,
+            .agent_id = run.target.id,
             .agent_name = run.target.name,
             .phase = ResponsePhase::stopping,
         };
     }
     return {
         .active = busy(),
-        .agent_name = active_ ? active_->agent_name : "",
+        .request_id = active_ ? std::optional<RequestId>(active_->request_id)
+                              : std::nullopt,
+        .agent_id = active_ ? std::string_view(active_->agent_id)
+                            : std::string_view{},
+        .agent_name = active_ ? std::string_view(active_->agent_name)
+                              : std::string_view{},
         .phase = active_ ? active_->phase : ResponsePhase::waiting,
-        .reasoning_text = active_ ? active_->reasoning_text : "",
+        .reasoning_text = active_ ? std::string_view(active_->reasoning_text)
+                                  : std::string_view{},
     };
 }
 
