@@ -103,12 +103,32 @@ void require_agent_count(std::size_t count) {
 std::unique_ptr<SessionController> SessionController::from_definitions(
     std::vector<AgentDefinition> definitions,
     std::filesystem::path database_path,
+    SessionLease lease,
+    WakeNotifier& notifier,
+    SessionRestore restored) {
+    require_agent_count(definitions.size());
+    if (!lease.active()) {
+        throw std::invalid_argument(
+            "Production session controllers require an active session lease");
+    }
+    return std::unique_ptr<SessionController>(new SessionController(
+        std::move(definitions),
+        std::move(database_path),
+        std::move(lease),
+        notifier,
+        std::move(restored)));
+}
+
+std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
+    std::vector<AgentDefinition> definitions,
+    std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored) {
     require_agent_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
         std::move(database_path),
+        SessionLease::inactive_for_testing(),
         notifier,
         std::move(restored)));
 }
@@ -131,9 +151,11 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
 SessionController::SessionController(
     std::vector<AgentDefinition> definitions,
     std::filesystem::path path,
+    SessionLease lease,
     WakeNotifier& notifier,
     SessionRestore restored)
-    : journal_(std::move(path)),
+    : lease_(std::move(lease)),
+      journal_(std::move(path)),
       worker_pool_(definitions.size()),
       registry_(std::move(definitions), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),
@@ -147,7 +169,8 @@ SessionController::SessionController(
     WakeNotifier& notifier,
     SessionRestore restored,
     ActivationHook before_activation)
-    : journal_(std::move(path)),
+    : lease_(SessionLease::inactive_for_testing()),
+      journal_(std::move(path)),
       worker_pool_(backends.size()),
       registry_(std::move(backends), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),

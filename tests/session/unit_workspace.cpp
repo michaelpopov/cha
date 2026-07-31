@@ -1,8 +1,11 @@
 #include "session/session_controller.h"
+#include "session/session_lease.h"
 #include "session/workspace.h"
 #include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
+
+#include <sqlite3.h>
 
 #include <chrono>
 #include <filesystem>
@@ -10,6 +13,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include "support/lease_test_process.h"
+#endif
 
 namespace cha {
 namespace {
@@ -208,6 +215,69 @@ TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     EXPECT_TRUE(reopened->transcript().entries().empty());
     reopened->shutdown();
 }
+
+#ifndef _WIN32
+TEST_F(ApplicationWorkspaceTest, HoldsTheLeaseThroughExplicitShutdown) {
+    Workspace workspace(root_);
+    CreatedSession created =
+        workspace.create_session("lobby", "Shutdown lease", notifier());
+    const std::string session_id = created.id;
+    created.controller->shutdown();
+    created.controller.reset();
+
+    std::unique_ptr<SessionController> controller =
+        workspace.open_session("lobby", session_id, notifier());
+    const std::filesystem::path database =
+        root_ / "forums" / "lobby" / "sessions"
+        / (session_id + ".sqlite3");
+
+    controller->shutdown();
+    EXPECT_EQ(
+        test::probe_lease(database),
+        test::LeaseProbeResult::busy);
+
+    controller.reset();
+    EXPECT_EQ(
+        test::probe_lease(database),
+        test::LeaseProbeResult::acquired);
+}
+
+TEST_F(ApplicationWorkspaceTest, ReportsContentionBeforeRestoringSessionState) {
+    Workspace workspace(root_);
+    CreatedSession created = workspace.create_session("lobby", "Leased", notifier());
+    const std::string session_id = created.id;
+    created.controller.reset();
+    const std::filesystem::path database =
+        root_ / "forums" / "lobby" / "sessions" / (session_id + ".sqlite3");
+
+    sqlite3* handle{};
+    ASSERT_EQ(sqlite3_open_v2(
+                  database.string().c_str(),
+                  &handle,
+                  SQLITE_OPEN_READWRITE,
+                  nullptr),
+              SQLITE_OK);
+    // Keep a restorable-looking database whose next entry ID is invalid. If
+    // open_session restores before acquiring the lease, unsigned_id() rejects
+    // this value with std::runtime_error instead of the expected busy error.
+    // Disabling CHECK constraints is what makes that ordering sentinel possible.
+    ASSERT_EQ(sqlite3_exec(
+                  handle,
+                  "PRAGMA ignore_check_constraints = ON; "
+                  "UPDATE state SET next_entry_id = 0 WHERE singleton = 1",
+                  nullptr,
+                  nullptr,
+                  nullptr),
+              SQLITE_OK);
+    ASSERT_EQ(sqlite3_close(handle), SQLITE_OK);
+
+    test::LeaseHolderProcess holder(database);
+
+    EXPECT_THROW(
+        (void)workspace.open_session("lobby", session_id, notifier()),
+        SessionBusyError);
+}
+#endif
 
 TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedPersonaConfig) {
     std::filesystem::remove(

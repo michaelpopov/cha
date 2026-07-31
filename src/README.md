@@ -132,10 +132,10 @@ Ownership is a strict tree, and destruction order matters:
   `SystemConsole` and `TranscriptEmitter`.
 - `run_user()` owns the TUI chat state. `ConsoleSession::run()` owns the
   console queue and EOF lifecycle.
-- `SessionController` owns the `Transcript`, `ForumPersonas`, the
-  `SessionJournal`, the `AgentRegistry`, the current default agent, and the
-  state of the in-flight response batch. It captures immutable completion
-  history before activating any run.
+- `SessionController` owns the cross-process `SessionLease`, `Transcript`,
+  `ForumPersonas`, the `SessionJournal`, the `AgentRegistry`, the current
+  default agent, and the state of the in-flight response batch. It captures
+  immutable completion history before activating any run.
 - `AgentRegistry` owns runtime information and a backend for each forum persona,
   one reusable regular runner, temporary multicast runners, and one optional
   live batch whose fixed run slots follow input order. It also owns per-runner

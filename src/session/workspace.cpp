@@ -5,6 +5,7 @@
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "session/session_catalog.h"
+#include "session/session_lease.h"
 #include "util/path_name.h"
 #include "util/text.h"
 #include "util/logging.h"
@@ -236,11 +237,14 @@ CreatedSession Workspace::create_session(
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
 
     const Session session = catalog.create(std::move(label));
+    const std::filesystem::path database_path = catalog.database_path(session.id);
+    SessionLease lease = SessionLease::acquire(database_path);
     log_info("Session created");
     return {
         .controller = SessionController::from_definitions(
             std::move(definitions),
-            catalog.database_path(session.id),
+            database_path,
+            std::move(lease),
             notifier),
         .id = session.id,
     };
@@ -251,17 +255,19 @@ std::unique_ptr<SessionController> Workspace::open_session(
     const std::string& session_id,
     WakeNotifier& notifier) const {
     const Forum forum = load_forum(forum_name);
-    std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "persona_defaults.toml");
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
 
     const std::filesystem::path database_path =
         catalog.open_database_path(session_id);
+    SessionLease lease = SessionLease::acquire(database_path);
     SessionRestore restored = load_session_state(database_path);
+    std::vector<AgentDefinition> definitions = load_definitions(
+        forum, forum.directory / "personas" / "persona_defaults.toml");
     log_info("Session opened");
     return SessionController::from_definitions(
         std::move(definitions),
         database_path,
+        std::move(lease),
         notifier,
         std::move(restored));
 }

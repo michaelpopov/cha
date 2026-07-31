@@ -5,6 +5,7 @@
 #include "session/generation_status.h"
 #include "session/forum_personas.h"
 #include "session/session_database.h"
+#include "session/session_lease.h"
 #include "transcript/transcript.h"
 #include "util/wake_notifier.h"
 #include "util/thread_pool.h"
@@ -43,6 +44,14 @@ public:
     using ActivationHook = std::function<void(std::size_t)>;
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions(
+        std::vector<AgentDefinition> definitions,
+        std::filesystem::path database_path,
+        SessionLease lease,
+        WakeNotifier& notifier,
+        SessionRestore restored = {});
+    // Test-only counterpart for controller tests that intentionally do not
+    // claim a fixture database's production lease.
+    [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
@@ -116,6 +125,7 @@ private:
     SessionController(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
+        SessionLease lease,
         WakeNotifier& notifier,
         SessionRestore restored);
     SessionController(
@@ -159,6 +169,9 @@ private:
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
+    // lease_ is declared before journal_ so reverse destruction keeps the lock
+    // through journal destruction and explicit controller shutdown.
+    SessionLease lease_;
     Transcript transcript_;
     SessionJournal journal_;
     // Explicit shutdown joins this pool while registry_ is still alive.

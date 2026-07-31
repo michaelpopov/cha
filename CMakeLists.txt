@@ -170,6 +170,7 @@ add_library(cha_core STATIC
     src/session/session_catalog.cpp
     src/session/session_controller.cpp
     src/session/session_database.cpp
+    src/session/session_lease.cpp
     src/session/workspace.cpp
     src/ui/text/command.cpp
     src/ui/text/mcast.cpp
@@ -261,6 +262,7 @@ if(BUILD_TESTING)
         tests/session/unit_forum_personas.cpp
         tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
+        tests/session/unit_session_lease.cpp
         tests/session/unit_workspace.cpp
         tests/ui/text/unit_command.cpp
         tests/ui/text/unit_mcast.cpp
@@ -285,6 +287,16 @@ if(BUILD_TESTING)
         # The socket fixture used by these transport tests is POSIX-only.
         list(APPEND CHA_TEST_SOURCES
             tests/agents/unit_completion_client.cpp)
+
+        # Lease tests use a fresh executable rather than running C++ code in a
+        # forked copy of the potentially threaded GoogleTest process.
+        add_executable(
+            cha_lease_test_helper
+            tests/support/lease_test_helper.cpp)
+        target_link_libraries(cha_lease_test_helper PRIVATE cha_core)
+        target_include_directories(
+            cha_lease_test_helper PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        cha_enable_warnings(cha_lease_test_helper)
     endif()
 
     add_executable(cha_tests ${CHA_TEST_SOURCES})
@@ -296,6 +308,13 @@ if(BUILD_TESTING)
         target_link_libraries(cha_tests PRIVATE cha_tui)
     endif()
     target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    if(TARGET cha_lease_test_helper)
+        target_compile_definitions(
+            cha_tests
+            PRIVATE
+                CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
+        add_dependencies(cha_tests cha_lease_test_helper)
+    endif()
     cha_enable_warnings(cha_tests)
 
     if(NOT WIN32)
@@ -313,8 +332,11 @@ if(BUILD_TESTING)
         target_include_directories(console_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         target_compile_definitions(
             console_tests
-            PRIVATE CHA_CONSOLE_BINARY="$<TARGET_FILE:chacon_app>")
-        add_dependencies(console_tests chacon_app)
+            PRIVATE
+                CHA_CONSOLE_BINARY="$<TARGET_FILE:chacon_app>"
+                CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
+        add_dependencies(
+            console_tests chacon_app cha_lease_test_helper)
         cha_enable_warnings(console_tests)
     endif()
 

@@ -3,9 +3,8 @@
 ## Purpose
 
 The harness executes the implementation blocks in [web-plan.md](web-plan.md)
-with three coding agents. Codex implements each block, Grok performs the first
-independent review, Pi performs the second independent review, and Codex repairs
-the findings after each review.
+with two coding agents. Codex implements each block, Grok performs an
+independent review, and Codex repairs the findings after that review.
 
 The harness is deliberately outside the repository at `~/var/cha`. Agents edit
 the repository worktree, while prompts, reviews, diffs, build logs, and run
@@ -83,16 +82,13 @@ One invocation follows this sequence:
 | Check | Harness | Snapshots the change and independently builds/tests it | `changes-after-implement.diff`, `build-after-implement.log` |
 | 2 | Grok | Reviews the complete diff, specification, and build log | `review-grok.md` |
 | 3 | Codex | Repairs every genuine Grok finding | `03-fix-grok.log` |
-| Check | Harness | Snapshots and independently builds/tests the repaired tree | `changes-after-grok-fixes.diff`, `build-after-grok-fixes.log` |
-| 4 | Pi | Checks the Grok findings and performs a fresh review | `review-pi.md` |
-| 5 | Codex | Repairs every genuine Pi finding | `05-fix-pi.log` |
-| Gate | Harness | Snapshots, then runs the final required build and tests | `changes-after-pi-fixes.diff`, `build-final.log`, `changes-final.diff` |
+| Gate | Harness | Snapshots, then runs the final required build and tests | `changes-after-grok-fixes.diff`, `build-final.log`, `changes-final.diff` |
 
-The two intermediate build/test checks are diagnostic. A failure is recorded
-and passed to the next reviewer so the following repair stage can address it.
-The final build/test execution is a hard gate: any failure makes the harness
-exit nonzero. The implementation and final snapshots must also be nonempty, so
-an unchanged baseline cannot be accepted as a completed block.
+The intermediate build/test check after implementation is diagnostic. A failure
+is recorded and passed to the reviewer so the repair stage can address it. The
+final build/test execution is a hard gate: any failure makes the harness exit
+nonzero. The implementation and final snapshots must also be nonempty, so an
+unchanged baseline cannot be accepted as a completed block.
 
 Each Codex repair prompt explicitly says that a review finding is not
 automatically correct. Codex must reject findings that contradict
@@ -109,10 +105,9 @@ The implementation prompt requires Codex to read, in order:
 4. [src/README.md](../src/README.md) for dependency boundaries.
 5. The current contents of every file it intends to change.
 
-Both reviewers receive the relevant plan section, the authoritative design,
+The reviewer receives the relevant plan section, the authoritative design,
 the full diff including new files, and the latest independently captured build
-log. Pi additionally receives the Grok review and must determine whether each
-earlier finding was fixed, incorrectly fixed, or justifiably rejected.
+log.
 
 The prompts keep the agents within the current block. Work from a later block
 must not be implemented merely to make a future interface convenient.
@@ -123,14 +118,12 @@ Preflight runs before a run directory is created or an agent is started. It
 checks:
 
 - `git`, `cmake`, `ctest`, `codex`, `grok`, and GNU `timeout` are available.
-- Pi can be resolved and started with a compatible Node runtime.
 - `REPO` names the root of a valid Git worktree with a valid `HEAD`.
 - `docs/web-plan.md` and `docs/web-design.md` exist.
 - The CMake `console` configure preset exists.
 - The worktree is clean unless `ALLOW_DIRTY=1` was explicitly supplied.
 - Codex is authenticated.
 - Grok is authenticated and the configured Grok model is available.
-- Pi can start and the configured Pi model is in its model catalog.
 - The block's `latest` path is absent or is a symlink, so it cannot overwrite a
   real file or directory.
 
@@ -180,22 +173,6 @@ cross-session memory, and web access are disabled. Grok can inspect the
 repository and harness artifacts but cannot execute shell commands or modify
 files.
 
-### Pi
-
-Pi defaults to `openrouter/moonshotai/kimi-k3` with `high` thinking. It runs
-without session persistence, extensions, skills, prompt templates, or context
-file discovery. Its tool allowlist is `read`, `grep`, `find`, and `ls`, so it
-cannot execute shell commands or modify files.
-
-The Pi launcher uses `#!/usr/bin/env node`. The harness first uses `PI_BIN` or
-the `pi` found on `PATH`; if neither resolves, it searches
-`~/.local/share/pi-node/node-*/bin/pi`. It prepends the launcher's own `bin`
-directory to `PATH` when invoking Pi so the launcher uses its adjacent Node
-runtime instead of an incompatible system Node.
-
-Pi's `--approve` option trusts project-local files for the invocation. It does
-not expand the read-only tool allowlist.
-
 ## Baseline and snapshots
 
 Every diff is relative to the state that existed when the harness started, not
@@ -244,7 +221,7 @@ Focused labels are added by the block wrappers:
 | 14 | `web_process`, `web_stress` |
 
 The same commands are included in the Codex prompts and are executed again by
-the harness after implementation, after the Grok repair, and at the final gate.
+the harness after implementation and at the final gate.
 
 Block 14 also requires the available platform and sanitizer verification
 described by `web-plan.md`. The shared runner cannot create unavailable macOS or
@@ -276,15 +253,9 @@ A complete successful run normally contains:
 | `build-after-implement.log` | Independent build/test output after implementation |
 | `review-grok.md` | Grok's Markdown review |
 | `02-review-grok.log` | Grok diagnostic output |
-| `03-fix-grok.log` | Captured first Codex repair-stage output |
+| `03-fix-grok.log` | Captured Codex repair-stage output |
 | `03-fix-grok.final.txt` | Final Codex response used for stage-completion validation |
-| `changes-after-grok-fixes.diff` | Diff after the first repair |
-| `build-after-grok-fixes.log` | Independent build/test output supplied to Pi |
-| `review-pi.md` | Pi's Markdown review |
-| `04-review-pi.log` | Pi diagnostic output |
-| `05-fix-pi.log` | Captured second Codex repair-stage output |
-| `05-fix-pi.final.txt` | Final Codex response used for stage-completion validation |
-| `changes-after-pi-fixes.diff` | Diff preserved before the final gate |
+| `changes-after-grok-fixes.diff` | Diff preserved before the final gate |
 | `build-final.log` | Final gating build/test output |
 | `changes-final.diff` | Successful final diff against the original baseline |
 | `status.txt` | Status from the most recent snapshot |
@@ -293,9 +264,9 @@ A complete successful run normally contains:
 Each named diff also has a sibling `.status` file containing the status at that
 snapshot.
 
-Review output must be nonempty. An empty `review-grok.md` or `review-pi.md` is
-treated as a stage failure rather than as a successful review with no findings.
-A reviewer that finds no defects should say so plainly.
+Review output must be nonempty. An empty `review-grok.md` is treated as a stage
+failure rather than as a successful review with no findings. A reviewer that
+finds no defects should say so plainly.
 
 Each Codex prompt requires a completion marker in the separately captured final
 response. The marker means Codex could inspect the workspace, perform the
@@ -315,7 +286,6 @@ Agent time limits default to:
 
 - Codex: 120 minutes per invocation.
 - Grok: 60 minutes.
-- Pi: 60 minutes.
 
 `SIGINT` exits with status 130 and `SIGTERM` exits with status 143. On any
 failure after the baseline has been established, the exit handler attempts to
@@ -341,15 +311,10 @@ Configuration is supplied through environment variables:
 | `CODEX_MODEL` | `gpt-5.6-terra` | Codex implementation/repair model |
 | `CODEX_EFFORT` | `medium` | Codex reasoning effort |
 | `CODEX_SANDBOX` | `danger-full-access` | Codex command sandbox (`danger-full-access` or `workspace-write`) |
-| `GROK_MODEL` | `grok-4.5` | First-review model |
+| `GROK_MODEL` | `grok-4.5` | Review model |
 | `GROK_EFFORT` | `high` | Grok reasoning effort |
-| `PI_BIN` | resolved automatically | Pi executable name or path |
-| `PI_PROVIDER` | `openrouter` | Pi provider |
-| `PI_MODEL` | `moonshotai/kimi-k3` | Second-review model |
-| `PI_THINKING` | `high` | Pi thinking level |
 | `CODEX_TIMEOUT` | `120m` | Timeout for each Codex stage |
 | `GROK_TIMEOUT` | `60m` | Timeout for the Grok stage |
-| `PI_TIMEOUT` | `60m` | Timeout for the Pi stage |
 | `ALLOW_DIRTY` | `0` | Permit and baseline a dirty worktree when set to `1` |
 | `CHECK_ONLY` | `0` | Run preflight and exit when set to `1` |
 
@@ -364,14 +329,11 @@ CODEX_EFFORT=high CODEX_TIMEOUT=180m ./block.sh
 
 # Use Codex filesystem sandboxing on a host with working bubblewrap support.
 CODEX_SANDBOX=workspace-write ./block.sh
-
-# Select another configured Pi model.
-PI_PROVIDER=openrouter PI_MODEL=anthropic/claude-sonnet-4.6 ./block.sh
 ```
 
 Model overrides must identify models available to the corresponding account.
-Preflight rejects unavailable Grok and Pi model names. Codex validates its model
-when the first Codex stage starts.
+Preflight rejects unavailable Grok model names. Codex validates its model when
+the first Codex stage starts.
 
 ## Adding or changing a block wrapper
 
@@ -417,15 +379,6 @@ If preflight reports a dirty worktree, inspect `git status`, then commit or stas
 the changes. Use `ALLOW_DIRTY=1` only when the existing changes are intentional
 and must remain in the baseline.
 
-If Pi is installed but cannot start, run:
-
-```bash
-PI_BIN=/absolute/path/to/pi CHECK_ONLY=1 ./block.sh
-```
-
-The runner will place that launcher's directory first on `PATH` so an adjacent
-Node binary is selected.
-
 If an agent times out, inspect `latest/result.txt`, its stage log, and
 `latest/changes-on-failure.diff`. Increase only the relevant timeout before
 starting a new run. A new invocation creates a new run directory; it does not
@@ -437,6 +390,6 @@ as `workspace-write`, then start a new run. A missing completion marker now
 turns this condition into a harness failure instead of allowing reviews and
 baseline tests to continue.
 
-If an intermediate build fails but the run continues, inspect the corresponding
+If the intermediate build fails but the run continues, inspect the corresponding
 build log together with the following review and repair log. This continuation
 is intentional. Only the final build/test execution is the hard gate.

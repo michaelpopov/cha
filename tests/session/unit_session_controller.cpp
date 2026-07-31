@@ -377,7 +377,7 @@ TEST(SessionController, RejectsEmptyAgentConfigurationWithRegistryMessage) {
     TemporaryJournal temporary;
 
     try {
-        (void)SessionController::from_definitions(
+        (void)SessionController::from_definitions_for_testing(
             {}, temporary.path, notifier());
         FAIL() << "Expected empty-agent configuration rejection";
     } catch (const std::invalid_argument& error) {

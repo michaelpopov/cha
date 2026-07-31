@@ -108,7 +108,7 @@ private:
 
 TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     TemporaryTextSession temporary;
-    auto controller = SessionController::from_definitions(
+    auto controller = SessionController::from_definitions_for_testing(
         std::vector<AgentDefinition>{definition()},
         temporary.path,
         notifier());
@@ -178,7 +178,7 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
 
 TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
     TemporaryTextSession temporary;
-    auto controller = SessionController::from_definitions(
+    auto controller = SessionController::from_definitions_for_testing(
         std::vector<AgentDefinition>{
             definition(),
             definition("ismael-id", "Ismael"),
@@ -199,7 +199,7 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
 
 TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
     TemporaryTextSession temporary;
-    auto controller = SessionController::from_definitions(
+    auto controller = SessionController::from_definitions_for_testing(
         std::vector<AgentDefinition>{definition()},
         temporary.path,
         notifier());

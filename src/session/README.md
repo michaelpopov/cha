@@ -12,6 +12,7 @@ code.
 | --- | --- |
 | `workspace.*` | Resolve the workspace layout, list and validate forums and sessions, load a forum's agent definitions, and build a controller; creation also returns the assigned session ID. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
+| `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
 | `forum_personas.*` | The ordered persona identities in a forum, including validation, lookup, and handle resolution. |
 | `session_controller.*` | Own one live session: commands, the in-flight response batch, agent events, default agent, notices, and shutdown. |
@@ -86,6 +87,7 @@ sequenceDiagram
     participant WS as Workspace
     participant AG as agents/
     participant SC as SessionCatalog
+    participant SL as SessionLease
     participant DB as Session database
     participant CC as SessionController
 
@@ -96,16 +98,18 @@ sequenceDiagram
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
     SC->>DB: build hidden temporary sibling, then link into place
+    WS->>SL: acquire `<database>.cha-lock`
     WS->>CC: from_definitions with fresh database
     WS-->>UI: CreatedSession with controller and assigned id
 
     Note over UI,CC: Opening a session
     UI->>WS: open_session forum, id
-    WS->>AG: load_agent_definitions
     WS->>SC: open_database_path id
     SC->>DB: read metadata, check id and forum match
+    WS->>SL: acquire `<database>.cha-lock` without waiting
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
+    WS->>AG: load_agent_definitions
     WS->>CC: from_definitions with restore
     CC->>CC: repair interrupted turns, then install entries
     CC-->>UI: controller
@@ -119,6 +123,23 @@ show it instead of hiding a broken session. `Workspace::create_session()`
 returns a `CreatedSession` containing both the ready controller and the exact ID
 that won publication; front ends can therefore report or retain the ID without
 rescanning the catalog.
+
+Session paths are resolved only by `SessionCatalog`. Its `database_path()` and
+`open_database_path()` require the session ID to be one safe path component
+before appending `.sqlite3` beneath the forum's `sessions/` directory, so an
+absolute path, `..`, or an ID containing a directory separator cannot escape
+that directory.
+
+Every live controller holds a `SessionLease` on `<database>.cha-lock`. The
+companion file may remain after a run; only its non-blocking exclusive operating
+system lock means the session is active. `Workspace` acquires the lease after
+resolving a database but before restore, then moves it into `SessionController`.
+The controller keeps it through explicit shutdown and journal destruction, so
+`cha`, `chacon`, and future frontends fail immediately with `SessionBusyError`
+when another process owns that stored session. Test-only controller factories
+use an explicitly inactive lease instead of locking fixture databases.
+On Windows, the companion handle intentionally omits `FILE_SHARE_DELETE`, so
+the lock file cannot be deleted or renamed while its controller is alive.
 
 ## Persistence
 
