@@ -3,6 +3,7 @@
 #include "util/logging.h"
 
 #include <exception>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -666,6 +667,22 @@ SessionUpdate SessionController::set_default_agent(std::string_view handle) {
     return update;
 }
 
+SessionUpdate SessionController::set_default_agent_by_id(std::string_view id) {
+    if (busy()) {
+        return busy_notice();
+    }
+    // This typed action submits no editor text, so it never clears a draft.
+    SessionUpdate update;
+    const PersonaInfo* persona = personas_.find(id);
+    if (!persona) {
+        update.notice = "Unknown agent";
+        return update;
+    }
+    default_agent_id_ = persona->id;
+    update.notice = "Default agent is now " + persona->name;
+    return update;
+}
+
 SessionUpdate SessionController::request_stop() {
     SessionUpdate update;
     if (!batch_) {
@@ -832,23 +849,36 @@ bool SessionController::matches(RequestId request_id) const {
     return active_ && active_->request_id == request_id;
 }
 
-SessionUpdate SessionController::receive() {
+SessionEventBatch SessionController::receive_events(std::size_t max_events) {
+    if (max_events == 0) {
+        throw std::invalid_argument("Agent event batch size must be positive");
+    }
     SessionUpdate update;
     if (shutdown_ && !batch_) {
         update.end_session = true;
-        return update;
+        return {.update = std::move(update)};
     }
     AgentEvent event = AgentCompleted{};
-    while (batch_ && active_) {
+    std::size_t processed = 0;
+    while (batch_ && active_ && processed < max_events) {
         const ChannelReadStatus status = registry_.try_receive(
             batch_->foreground_index, event);
         if (status != ChannelReadStatus::value) {
             break;
         }
         merge_update(update, handle_agent_event(std::move(event)));
+        ++processed;
     }
     poll_abort_cleanup(update);
-    return update;
+    return {
+        .update = std::move(update),
+        .full = processed == max_events,
+    };
+}
+
+SessionUpdate SessionController::receive() {
+    return std::move(
+        receive_events(std::numeric_limits<std::size_t>::max()).update);
 }
 
 void SessionController::shutdown() {

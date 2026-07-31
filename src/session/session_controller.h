@@ -6,10 +6,12 @@
 #include "session/forum_personas.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
+#include "session/session_update.h"
 #include "transcript/transcript.h"
 #include "util/wake_notifier.h"
 #include "util/thread_pool.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -19,17 +21,6 @@
 #include <vector>
 
 namespace cha {
-
-// The side effects one controller command leaves for the front end to apply: redraw, clear the
-// input, show a notice, end the session. Returning them keeps every UI type out of the controller.
-struct SessionUpdate {
-    bool render_needed{};
-    bool end_session{};
-    bool clear_input{};
-    // nullopt leaves the frontend's current notice unchanged, an empty string
-    // clears it, and a non-empty string replaces it.
-    std::optional<std::string> notice;
-};
 
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, forum personas, default agent, generation status) and
@@ -98,8 +89,10 @@ public:
     [[nodiscard]] SessionUpdate session_information();
     [[nodiscard]] SessionUpdate agent_information();
     [[nodiscard]] SessionUpdate set_default_agent(std::string_view handle);
+    [[nodiscard]] SessionUpdate set_default_agent_by_id(std::string_view id);
     [[nodiscard]] SessionUpdate request_stop();
     [[nodiscard]] SessionUpdate handle_agent_event(AgentEvent event);
+    [[nodiscard]] SessionEventBatch receive_events(std::size_t max_events);
     [[nodiscard]] SessionUpdate receive();
     void shutdown();
 

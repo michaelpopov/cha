@@ -13,6 +13,8 @@ struct WebSettings {
     std::size_t http_thread_pool_size{16};
     std::size_t http_pending_request_limit{32};
     std::size_t command_queue_capacity{64};
+    std::size_t command_batch_size{8};
+    std::size_t event_batch_size{64};
     std::chrono::milliseconds open_deadline{10000};
     std::chrono::milliseconds command_deadline{30000};
     std::chrono::milliseconds sse_heartbeat_interval{15000};

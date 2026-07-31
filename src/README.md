@@ -64,7 +64,7 @@ may include headers only from those listed beside it.
 | `apps/` | `ui/tui/`, `ui/console/`, `ui/web/`, `ui/render/`, `session/`, `transcript/`, `util/` |
 | `ui/tui/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
 | `ui/console/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
-| `ui/web/` | `session/`, `transcript/`, `util/`, and its HTTP transport dependency |
+| `ui/web/` | `ui/text/`, `session/`, `transcript/`, `util/`, and its HTTP transport dependency |
 | `ui/render/` | `session/`, `transcript/` |
 | `ui/text/` | `session/`, `util/` |
 | `session/` | `agents/`, `transcript/`, `util/` |
@@ -415,6 +415,7 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | Reasoning exists only while a response is active; it never enters the transcript, persistence, or projection. | `ActiveResponse`, `GenerationStatus`, `TranscriptEntry` shape |
 | Front ends never open storage or call backends. | Include rules above |
 | N controllers may run on N owner threads when no domain object is shared between them. `Workspace` is the deliberate exception: it is immutable, cache-free, and safe to share for concurrent `const` calls. | Session ownership, `Workspace` construction, session-local SQLite and completion clients |
+| A web runtime has one permanent owner thread; HTTP threads exchange only owning commands and results with it. | `ui/web/WebSessionRuntime` |
 
 The process-wide logger is the only intentionally shared domain-adjacent sink
 and is thread-safe. Signal state belongs to composition roots, never to a

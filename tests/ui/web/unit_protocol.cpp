@@ -314,6 +314,8 @@ TEST(WebProtocol, ParsesBodiesAndBuildsJsonResponses) {
 TEST(WebSettings, DefaultsRespectCoupledResourceAndLifetimeLimits) {
     const WebSettings settings;
     EXPECT_GT(settings.http_thread_pool_size, settings.session_limit);
+    EXPECT_GT(settings.command_batch_size, 0U);
+    EXPECT_GT(settings.event_batch_size, 0U);
     EXPECT_GE(settings.orphan_limit, settings.idle_grace);
 }
 

@@ -209,9 +209,12 @@ target_link_libraries(
 cha_enable_warnings(cha_core)
 
 add_library(cha_web STATIC
+    src/ui/web/command_queue.cpp
     src/ui/web/http_response.cpp
     src/ui/web/json.cpp
     src/ui/web/protocol.cpp
+    src/ui/web/wake_notifier.cpp
+    src/ui/web/web_session_runtime.cpp
 )
 target_compile_features(cha_web PUBLIC cxx_std_20)
 target_include_directories(cha_web PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -331,6 +334,7 @@ if(BUILD_TESTING)
     add_executable(
         cha_web_tests
         tests/ui/web/unit_protocol.cpp
+        tests/ui/web/unit_web_session_runtime.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(cha_web_tests PRIVATE cha_web GTest::gtest_main)
     target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")

@@ -440,6 +440,39 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
+TEST(SessionController, BoundsAgentEventDrains) {
+    TemporaryJournal temporary;
+    auto backend = std::make_unique<ScriptedBackend>(
+        CompletionResult{},
+        std::vector<std::string>{"one", "two", "three"});
+    auto controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        temporary.path,
+        notifier());
+
+    const std::size_t observed_wakes = notifier().wake_count();
+    (void)controller->submit_prompt("Question");
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (notifier().wake_count() < observed_wakes + 4
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_GE(notifier().wake_count(), observed_wakes + 4);
+
+    const SessionEventBatch first = controller->receive_events(2);
+    EXPECT_TRUE(first.full);
+    EXPECT_TRUE(controller->generation_status().active);
+    EXPECT_EQ(controller->transcript().entries().back().text, "onetwo");
+
+    const SessionEventBatch second = controller->receive_events(2);
+    EXPECT_TRUE(second.full);
+    EXPECT_FALSE(controller->generation_status().active);
+    EXPECT_EQ(controller->transcript().entries().back().text, "onetwothree");
+
+    EXPECT_FALSE(controller->receive_events(2).full);
+}
+
 TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedTranscript) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
@@ -1494,6 +1527,20 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumPerso
     receive_until_idle(*controller);
     ASSERT_EQ(guide_view->inputs.size(), 1U);
     EXPECT_EQ(guide_view->inputs.front().run.target.id, "guide-id");
+
+    const SessionUpdate stable_id_changed =
+        controller->set_default_agent_by_id("ismael-id");
+    EXPECT_FALSE(stable_id_changed.clear_input);
+    EXPECT_EQ(stable_id_changed.notice, "Default agent is now Ismael");
+    (void)controller->submit_prompt("by stable ID");
+    receive_until_idle(*controller);
+    ASSERT_EQ(ismael_view->inputs.size(), 2U);
+    EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
+
+    const SessionUpdate unknown_id =
+        controller->set_default_agent_by_id("unknown-id");
+    EXPECT_FALSE(unknown_id.clear_input);
+    EXPECT_EQ(unknown_id.notice, "Unknown agent");
 
     const std::size_t entries_before_rejection = controller->transcript().entries().size();
     const SessionUpdate rejected =
