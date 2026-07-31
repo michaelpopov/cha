@@ -2,7 +2,7 @@
 
 Status: proposed design, ready to guide implementation.
 
-Last updated: 2026-07-30.
+Last updated: 2026-07-31.
 
 This document defines the process, ownership, HTTP, streaming, locking, and
 lifecycle design for `chaweb`. It follows the architecture and dependency rules
@@ -28,12 +28,18 @@ visual design are intentionally out of scope. They require a separate decision.
   channel.
 - Once the worker reports readiness, the lobby redirects the browser to the
   worker's port and forgets the worker's session identity and port. It retains
-  only generic process and control-channel handles needed for supervision,
-  reaping, and shutdown.
+  only its control-channel endpoint, which it passively watches for EOF.
+- Session workers are fire-and-forget processes. On POSIX, the lobby enables
+  automatic child reaping with `SA_NOCLDWAIT` and launches workers with
+  `posix_spawn()`. On Windows, it launches with `CreateProcessW()` and
+  `CREATE_NO_WINDOW`, then closes the returned process and thread handles
+  immediately. Session workers never create or display console windows; lobby
+  mode may use its normal console. The lobby retains no worker PID or process
+  handle, receives no exit status, and never waits for, reaps, or
+  force-terminates a worker.
 - The worker-control channel remains open after startup. If the lobby stops or
   crashes, the operating system closes the lobby endpoint; the worker observes
-  EOF and performs orderly session shutdown. Session workers therefore do not
-  outlive the lobby that created them.
+  EOF and is responsible for performing orderly session shutdown and exiting.
 - A companion file next to the session database carries an operating-system
   lock for the complete lifetime of the live session. The lock, not the file's
   existence, means that the session is in use.
@@ -68,9 +74,9 @@ The design has the following goals:
 2. Keep `SessionController`, `Transcript`, and `SessionJournal` single-owner
    objects without making them generally thread-safe.
 3. Keep the lobby free of session-to-process and session-to-port routing state
-   after redirect; retain only generic worker-supervision handles.
-4. Make clean lobby shutdown and unexpected lobby loss stop all session
-   workers created by that lobby.
+   after redirect; retain only generic worker-control endpoints.
+4. Make clean lobby shutdown and unexpected lobby loss cause each session
+   worker to shut itself down through control-channel EOF.
 5. Enforce exclusive access to each stored session across all application
    frontends and processes.
 6. Support several active sessions at once by running several independent
@@ -79,7 +85,8 @@ The design has the following goals:
 8. Support one browser page per session worker with a lightweight active-SSE
    guard, clear conflict reporting, and practical reload/reconnect behavior.
 9. Preserve the existing slash-command, multicast, and `@mention` behavior in
-   the web input box.
+   the web input box except that web input rejects `/exit` without ending the
+   worker.
 10. Stream model output to the browser while continuing to drain and persist
    agent events during temporary browser disconnection.
 11. Work when the lobby is reached from another trusted device on the local
@@ -100,6 +107,10 @@ The first design does not include:
   redirect to an already running worker.
 - Session workers that intentionally survive shutdown or failure of the lobby
   that created them.
+- Lobby-side worker exit-status collection, waiting, reaping, or forced
+  termination.
+- A web close command, close button, `POST /api/v1/close`, or `/exit`-driven
+  worker shutdown.
 - An integrated chat page that switches among projects, forums, or sessions.
 - A reverse proxy from the lobby to workers.
 - A single public port for every active worker.
@@ -121,7 +132,7 @@ The first design does not include:
 | Session worker | A child `chaweb` process serving exactly one stored session. |
 | Session lease | The operating-system lock held on the session's companion lock file. |
 | Worker-control channel | A per-worker duplex libuv pipe stream. The worker reports `ready`, `busy`, or `error` on it; after `ready`, its continued existence represents the lifetime of the lobby. |
-| Worker supervision record | The lobby's generic process handle and control-channel endpoint for one worker. It contains no session identity, port, or browser routing information after redirect. |
+| Worker control record | The lobby's control-channel endpoint for one worker. It contains no PID, process handle, session identity, port, or browser routing information after redirect. |
 | Active browser stream | The single SSE connection currently accepted by a session worker. It is lightweight connection bookkeeping, not a browser identity or authorization credential. |
 | Owner thread | The worker thread that exclusively accesses the live `SessionController` and all borrowed session state. |
 | HTTP worker | A cpp-httplib request-processing thread. It does not own domain state. |
@@ -165,8 +176,9 @@ flowchart TD
 Browser traffic goes directly to each worker; the lobby is not an HTTP proxy
 and retains no session routing after redirect. The duplex control channel is
 the only lobby-to-worker runtime connection. It carries no chat traffic and
-normally carries no messages after readiness. Its open/closed state supervises
-worker lifetime: lobby endpoint closure causes that worker to shut down.
+normally carries no messages after readiness. Its open/closed state couples the
+worker lifetime to the lobby: lobby endpoint closure causes that worker to shut
+itself down.
 
 ## 6. Executable modes
 
@@ -189,8 +201,9 @@ It:
 5. Binds the configured lobby address and port.
 6. Serves browser assets and lobby endpoints.
 7. Launches workers on demand.
-8. On a process shutdown signal, stops accepting requests, shuts down all
-   supervised workers, and exits.
+8. On a process shutdown signal, stops accepting requests, closes all retained
+   worker-control endpoints, and exits. Each worker is responsible for
+   detecting EOF and cleaning itself up.
 
 Lobby mode never opens a live session and never constructs a
 `SessionController`.
@@ -204,8 +217,8 @@ chaweb --session-worker <forum-id> <session-id> <control-channel>
 ```
 
 The actual representation of the inherited control channel is internal to the
-launcher and libuv spawn setup. It must not be a user-facing command-line
-feature.
+launcher and platform process-spawn setup. It must not be a user-facing
+command-line feature.
 
 The worker:
 
@@ -220,8 +233,8 @@ The worker:
 6. Reports readiness and the bound port through the control channel.
 7. Starts serving the chat page, REST operations, and SSE events.
 8. Watches the control channel for lobby EOF while serving.
-9. Owns the session until explicit close, idle termination, fatal failure, or
-   lobby loss.
+9. Owns the session until browser-disconnection policy ends it, idle
+   termination, fatal failure, a process signal, or lobby loss.
 10. Shuts down the controller, releases the lease, and exits.
 
 All failures before readiness are reported through the control channel when
@@ -312,25 +325,45 @@ would create another session.
 
 ### 8.1 Launching
 
-The lobby initializes a dedicated duplex `uv_pipe_t` and uses `uv_spawn()` to
-launch a fresh executable image. The control stream is created with both the
-child-readable and child-writable pipe flags. Libuv implements this as an
-appropriate local stream on each supported platform, including Unix socket
-pairs and Windows named pipes. The launcher must not duplicate the already
-multithreaded lobby address space and continue it as a worker.
+Before it creates any worker, the POSIX lobby installs `SA_NOCLDWAIT` for
+`SIGCHLD` with the default signal disposition. Terminated workers therefore do
+not become zombies, and their exit status is unavailable to `wait()` or
+`waitpid()`. This is a permanent process-wide policy: lobby code must not
+launch any child whose exit status it needs. The design adds no worker-side
+`SIGCHLD` setup because session workers do not launch child processes.
 
-The child inherits only its endpoint of its control channel and the process
-resources explicitly required for startup. The lobby retains its endpoint and
-the `uv_process_t` until the worker exits. Neither process inherits unrelated
-worker channels, and a later worker must not inherit an endpoint belonging to
-an earlier worker. Otherwise an unintended duplicate handle could delay EOF
-and prevent parent-loss detection.
+The lobby initializes a dedicated duplex control stream and uses a small
+utility-layer `FireAndForgetProcessSpawner` to launch a fresh executable image.
+The POSIX backend uses `posix_spawn()` rather than duplicating the already
+multithreaded lobby with application-level `fork()` logic. The Windows backend
+uses `CreateProcessW()` with `CREATE_NO_WINDOW`, an extended startup-info
+structure, and an explicit inherited-handle list. It must not combine
+`CREATE_NO_WINDOW` with `CREATE_NEW_CONSOLE` or `DETACHED_PROCESS`, and worker
+mode must not call `AllocConsole()`. The backend closes the returned process
+and primary-thread handles as soon as process creation succeeds. Neither
+backend returns or retains a PID or process handle after launch. These rules
+apply only to session-worker launches; the lobby may keep its normal console.
 
-For each spawn, the child stdio/handle specification contains only the
-standard streams intentionally retained and that child's control endpoint.
-All other lobby descriptors and handles are non-inheritable or close-on-exec,
-and each process closes the control-channel end it does not own immediately
-after the spawn completes.
+The child inherits only its endpoint of its control channel and the resources
+explicitly required for startup. The lobby retains only its endpoint. Neither
+process inherits unrelated worker channels, and a later worker must not
+inherit an endpoint belonging to an earlier worker. Otherwise an unintended
+duplicate handle could delay EOF and prevent lobby-loss or worker-exit
+detection.
+
+For each spawn, the child descriptor/handle specification contains only the
+resources intentionally retained and that child's control endpoint. A Windows
+worker does not inherit the lobby's console input, output, or error handles;
+unused standard streams are directed to `NUL`, and any intentionally retained
+diagnostic stream must be a non-console file or pipe. All other lobby
+descriptors and handles are non-inheritable or close-on-exec, and each process
+closes the control-channel end it does not own immediately after the spawn
+completes.
+
+`FireAndForgetProcessSpawner` belongs in `src/util/` and is responsible only for
+creating a process with an explicit argument vector and explicit inherited
+descriptor/handle set. Session identifiers, startup records, ports, timeouts,
+and control-channel policy remain in the web layer.
 
 The worker acquires the companion lock itself, through the session-opening
 operation in `Workspace`. The lobby does not acquire and transfer a lock,
@@ -368,9 +401,11 @@ The startup record protocol must:
 
 For `busy` and `error`, the record is terminal: the worker closes its endpoint
 and exits. For `ready`, the record completes only the startup phase. The
-channel remains open, the lobby stops expecting startup data, and the worker
-starts or continues an asynchronous read for lobby-lifetime EOF. No heartbeat
-or periodic liveness message is required.
+channel remains open, neither side sends further messages, and both sides keep
+an asynchronous read active solely to detect peer EOF. The worker watches for
+lobby-lifetime EOF. The lobby watches for worker EOF so it can close its local
+endpoint and remove the control record. No heartbeat or periodic liveness
+message is required, and EOF conveys no process exit status.
 
 The lobby applies a startup timeout. On timeout it closes its endpoint and
 returns an error to the browser. A worker that cannot report readiness, or
@@ -411,12 +446,12 @@ control characters, malformed brackets, and ambiguous unbracketed IPv6. An
 explicit advertised hostname can be added to configuration if deployments
 cannot derive a usable address from the request.
 
-### 8.4 Forgetting routing while supervising workers
+### 8.4 Forgetting the worker process after readiness
 
 After reading `ready` and sending the redirect, the lobby removes the session
-identity, worker port, and browser request from the launch state. It retains a
-generic supervision record containing only the process handle, control-channel
-endpoint, and shutdown/reaping state. Consequences:
+identity, worker port, browser request, PID, and any temporary native process
+resources from the launch state. It retains a generic control record containing
+only its control-channel endpoint and EOF/close state. Consequences:
 
 - A running worker belongs to the lobby that created it and begins shutdown
   when that lobby's control endpoint closes.
@@ -426,29 +461,29 @@ endpoint, and shutdown/reaping state. Consequences:
   to the existing worker. A brief busy interval may remain while an old worker
   completes shutdown and releases its lease.
 - Losing the worker URL means waiting for that worker to terminate before the
-  session can be reopened, or stopping the lobby to terminate all of its
-  workers.
+  session can be reopened, or stopping the lobby to make all of its workers
+  observe EOF and shut themselves down.
 
-The process exit callback reaps the worker, closes the process and control
-handles, and removes the supervision record. This is process hygiene and
-lifetime supervision, not worker routing: no session identity, port, or
-browser map is retained after redirect.
+Worker EOF causes the lobby to close its endpoint and remove the control
+record. The kernel automatically discards POSIX child exit status; on Windows
+the lobby already closed the native process handles after creation. This is
+control-channel cleanup, not process supervision or worker routing.
 
-### 8.5 Lobby supervisor ownership
+### 8.5 Lobby control-loop ownership
 
-One lobby supervisor loop/thread owns every lobby-side `uv_process_t`,
-`uv_pipe_t`, startup timer, and supervision record. cpp-httplib request threads
-do not create, read, close, or reap these handles directly.
+One lobby control loop/thread owns every lobby-side control stream, startup
+timer, launch record, and ready-worker control record. cpp-httplib request
+threads do not create, read, or close these resources directly.
 
-An HTTP open/create handler sends a typed launch request to the supervisor and
-waits for the bounded startup result. The supervisor performs `uv_spawn()`,
-reads the startup record, enforces the timeout, and returns the ready port or
-error. After the handler sends its redirect, the supervisor discards the
-launch routing metadata and retains only the generic supervision record.
+An HTTP open/create handler sends a typed launch request to the control loop
+and waits for the bounded startup result. The control loop invokes the platform
+spawn utility, reads the startup record, enforces the timeout, and returns the
+ready port or error. After the handler sends its redirect, the control loop
+discards the launch routing metadata and retains only the generic control
+record.
 
 Lobby shutdown is also submitted to this loop so closing control endpoints,
-receiving exit callbacks, applying the forced-stop deadline, and destroying
-libuv handles have one serialized owner.
+observing EOF, and destroying channel handles have one serialized owner.
 
 ## 9. Session worker ownership and threading
 
@@ -604,7 +639,6 @@ does not repeat the create request automatically.
 | `POST /api/v1/actions/offrecord/restore` | Restore the off-record span. |
 | `POST /api/v1/actions/default-agent` | Change the run-local default agent. |
 | `GET /api/v1/events` | Open or reconnect the worker's SSE stream. |
-| `POST /api/v1/close` | Explicitly end the session worker. |
 
 ### 11.1 Raw input
 
@@ -616,16 +650,17 @@ the terminal frontends:
 - Leading `@Name` addressing.
 - Escaped leading `@@`.
 - `/mcast`.
-- `/clear`, off-record commands, `/info`, `/agents`, `/stop`, and `/exit`.
+- `/clear`, off-record commands, `/info`, `/agents`, and `/stop`.
 - `/@Name` default-agent selection.
 
-`/exit` is a frontend operation. When `handle_text_input()` returns
-`end_session`, the worker atomically marks itself stopping so later commands
-are rejected, but completes the HTTP command response before teardown begins.
-It then publishes `session-ended` on a best-effort basis subject to the bounded
-final-SSE drain described in Section 19.2. The browser must also treat EOF after
-a successful `/exit` response as normal completion; delivery of the final SSE
-event is not guaranteed.
+Bare `/exit` is deliberately unsupported in the web frontend. Before calling
+`handle_text_input()`, the web adapter recognizes that command and returns a
+non-applied result, clears the submitted input, and supplies the notice
+“`/exit` is not supported in the web interface. Close the browser tab to leave
+the session.” This applies whether or not generation is active. The adapter
+does not start worker shutdown, expose `end_session`, or forward `/exit` as a
+model prompt. Web command help, autocomplete, and unknown-command notices omit
+`/exit`. Terminal and TUI `/exit` behavior remains unchanged.
 
 ### 11.2 Typed operations
 
@@ -655,7 +690,6 @@ may contain:
 
 - Whether the command was applied.
 - Whether the input should be cleared.
-- Whether the worker should end.
 - An optional notice.
 - The current presentation revision needed by the browser.
 
@@ -841,17 +875,14 @@ stateDiagram-v2
     Starting --> Exiting: busy or startup error
     Starting --> Exiting: lobby gone, clean partial startup
     AwaitingClient --> Connected: SSE accepted
-    AwaitingClient --> Stopping: startup idle timeout
-    AwaitingClient --> Stopping: lobby gone
+    AwaitingClient --> Stopping: startup idle timeout, fatal error, signal, or lobby gone
     Connected --> ReconnectGrace: active SSE closes
     ReconnectGrace --> Connected: SSE accepted
-    ReconnectGrace --> Stopping: grace expired and idle
     ReconnectGrace --> OrphanGeneration: grace expired and generation active
     OrphanGeneration --> Connected: SSE accepted
-    OrphanGeneration --> Stopping: generation ends or hard limit
-    Connected --> Stopping: explicit close, /exit, or lobby gone
-    ReconnectGrace --> Stopping: fatal error or lobby gone
-    OrphanGeneration --> Stopping: fatal error or lobby gone
+    Connected --> Stopping: fatal error, signal, or lobby gone
+    ReconnectGrace --> Stopping: grace expired while idle, fatal error, signal, or lobby gone
+    OrphanGeneration --> Stopping: generation ends, hard limit, fatal error, signal, or lobby gone
     Stopping --> Exiting: controller shutdown complete
     Exiting --> [*]
 ```
@@ -899,21 +930,19 @@ If EOF occurs before the worker reports readiness, it cleans up any partially
 constructed controller, listener, and acquired lease and exits without
 starting service.
 
-### 14.6 Explicit close
+### 14.6 No explicit web close operation
 
-An accepted explicit close or `/exit`:
+The web interface has no close endpoint, Close control, or `/exit` shutdown
+command. Closing a tab, navigating away, reloading, browser termination,
+network loss, and device suspension all appear to the worker as SSE
+disconnection; the server cannot reliably distinguish the user's reason.
 
-1. Atomically marks the worker stopping and rejects new session commands.
-2. Completes the successful response to the initiating HTTP request.
-3. Publishes `session-ended` if a stream is connected and gives the SSE writer
-   a bounded opportunity to flush it.
-4. Stops the worker HTTP listener.
-5. Calls `SessionController::shutdown()` on the owner thread.
-6. Destroys the controller and releases the companion lock.
-7. Exits the process.
-
-Failure to deliver `session-ended` does not prevent or fail the close
-operation.
+The browser does not use `unload`, `beforeunload`, `pagehide`, `sendBeacon()`,
+or a keepalive request as an authoritative close signal. The worker relies on
+the ordinary reconnect and orphan-generation policy in Section 14.4. If no
+page reconnects, it shuts down after the applicable grace behavior and releases
+the session lease. Closing a tab therefore does not promise immediate release,
+and a return to the lobby may briefly find that session busy.
 
 ## 15. Network and trust model
 
@@ -986,8 +1015,9 @@ alone do not make text safe for insertion as browser markup.
 | Persistence fails | Worker treats it as fatal, shuts down, and exits. |
 | Worker crashes | OS releases the companion lock; browser loses the connection and the lobby can later launch a replacement. |
 | Lobby exits or crashes | OS closes every lobby control endpoint; each worker observes EOF, performs orderly shutdown, releases its lease, and exits. |
+| Web input is bare `/exit` | Worker returns a non-applied result with a close-the-tab notice; it remains running. |
 | Final `session-ended` cannot be flushed | The bounded final-SSE drain expires and shutdown continues; final-event delivery is best effort. |
-| Worker misses the clean-shutdown deadline | During clean lobby shutdown, the supervisor force-terminates that worker and reaps it. |
+| Worker does not react to lobby EOF | The lobby cannot safely force-terminate a fire-and-forget worker and exits without waiting for it. A defective live worker may retain its listener and session lease until it exits or is stopped externally. |
 
 Error responses sent to browsers contain a stable error code and a
 presentation-safe message. Internal paths, secrets, provider credentials, and
@@ -1038,8 +1068,9 @@ A likely responsibility split is:
 | --- | --- |
 | `web_main.cpp` | Parse lobby/worker mode, top-level error handling, and wire concrete components. |
 | `LobbyServer` | Lobby routes, assets, and launch responses; uses `Workspace` for forum/session navigation and the session layer's create-only operation, and never constructs a `SessionController`. |
-| `SessionProcessLauncher` | `uv_spawn()` child creation, duplex control-channel setup, and explicit handle inheritance. |
-| Worker supervisor | Lobby-owned generic process/control records, startup deadlines, exit callbacks, clean-stop coordination, and forced-stop deadline; it retains no routing information after redirect. |
+| `FireAndForgetProcessSpawner` | Utility-layer `posix_spawn()`/`CreateProcessW()` wrapper that creates a process with an explicit inherited descriptor/handle set, uses `CREATE_NO_WINDOW` for Windows workers, and retains no PID or process handle. |
+| `SessionProcessLauncher` | Worker arguments, duplex control-channel setup, startup protocol, and startup deadline; it delegates process creation to the platform spawner. |
+| Worker control registry | Lobby-owned generic control endpoints and EOF/close state; it retains no process, session, port, or browser-routing information after redirect. |
 | `SessionWorkerServer` | Session routes, lightweight single-stream policy, SSE connection, and process lifetime. |
 | Parent-lifetime watcher | Worker-side control-channel read that converts EOF into an owner-loop `LobbyGone` event; it may be part of `WebSessionRuntime`. |
 | Browser connection state | Current server-local SSE connection ID, reconnect grace, orphan-generation, and idle timers; it may be part of `WebSessionRuntime`. |
@@ -1062,44 +1093,41 @@ No web source belongs in `cha_core`, and reusable policy must not accumulate in
 
 The lobby:
 
-1. Marks the supervisor stopping and rejects new worker launches.
+1. Marks the control loop stopping and rejects new worker launches.
 2. Stops accepting new HTTP requests and causes launch requests already waiting
    for startup to fail with a bounded shutdown response.
 3. Closes the lobby endpoint of every starting and ready worker-control
    channel. EOF is the graceful shutdown request; no separate message is
    required.
-4. Keeps the libuv process handles alive and waits for worker exit callbacks
-   until a bounded clean-shutdown deadline.
-5. Force-terminates any worker that has not exited by the deadline.
-6. Reaps every completed child and closes its process/control handles.
-7. Stops the remaining lobby event-loop and logging resources and exits.
+4. Closes its remaining control-loop, HTTP, and logging resources and exits
+   without waiting for worker process termination.
 
-The generic supervision records are sufficient for this procedure. The lobby
-does not need to recover session identities or ports in order to stop workers.
-Closing a control endpoint is also safe during startup: an unready worker
-observes EOF or fails its readiness write and cleans up.
+The worker-control records are sufficient for this procedure. The lobby does
+not retain process identities, inspect exit status, wait, reap, or
+force-terminate. Closing a control endpoint is also safe during startup: an
+unready worker observes EOF or fails its readiness write and cleans itself up.
+The operating system also closes all lobby endpoints if the lobby crashes.
 
 ### 19.2 Worker shutdown
 
-Worker shutdown may be initiated by explicit browser close, `/exit`, idle or
-orphan timeout, fatal failure, a process shutdown signal, or lobby-control EOF.
+Worker shutdown may be initiated by awaiting-client or reconnect idle expiry,
+orphan completion or timeout, fatal failure, a process shutdown signal, or
+lobby-control EOF.
 Every trigger converges on one idempotent sequence:
 
 1. Atomically marks itself stopping and rejects new commands and SSE
    connections.
-2. For an accepted browser `/exit` or close, completes the initiating HTTP
-   response before starting transport teardown.
-3. Publishes `session-ended` with a presentation-safe reason when possible,
+2. Publishes `session-ended` with a presentation-safe reason when possible,
    gives the SSE writer its permitted drain opportunity, then ends or closes
    SSE output.
-4. Stops its HTTP listener.
-5. Wakes the owner loop.
-6. Calls `SessionController::shutdown()` on the owner thread.
-7. Joins its HTTP and owner threads in a defined order.
-8. Destroys the controller.
-9. Releases the session lease.
-10. Closes its worker-control endpoint and remaining libuv handles.
-11. Flushes logging and exits.
+3. Stops its HTTP listener.
+4. Wakes the owner loop.
+5. Calls `SessionController::shutdown()` on the owner thread.
+6. Joins its HTTP and owner threads in a defined order.
+7. Destroys the controller.
+8. Releases the session lease.
+9. Closes its worker-control endpoint and remaining libuv handles.
+10. Flushes logging and exits.
 
 The notifier must outlive the controller and all agent workers that may call
 it. The session lease must outlive the journal.
@@ -1113,11 +1141,9 @@ drain wait when prompt teardown is required.
 Lobby-control EOF never waits for browser reconnect grace or for an active
 model response to finish normally. `SessionController::shutdown()` applies the
 existing cancellation and join policy so persisted state reaches a defined
-terminal condition before the lease is released. The lobby's forced-stop
-deadline is a last resort for a worker that cannot complete this cooperative
-path. Forced termination may lose uncommitted model/session updates and final
-diagnostic records, but the operating system releases the companion lock and
-SQLite applies its ordinary crash-recovery guarantees.
+terminal condition before the lease is released. Cleanup is entirely the
+worker's responsibility. The lobby has no forced-stop fallback if a defective
+worker does not react to EOF.
 
 ## 20. Testing strategy
 
@@ -1136,7 +1162,8 @@ SQLite applies its ordinary crash-recovery guarantees.
 
 - Ready, busy, and error startup records.
 - EOF before a record.
-- Ready leaves the duplex control channel open for lifetime supervision.
+- Ready leaves the duplex control channel open for lifetime coupling and EOF
+  detection on both sides.
 - `busy` and `error` close the channel and terminate the worker.
 - Oversized or malformed record.
 - Startup timeout.
@@ -1145,21 +1172,31 @@ SQLite applies its ordinary crash-recovery guarantees.
   one another's endpoints.
 - Unrelated lobby descriptors/handles are non-inheritable or close-on-exec, and
   both processes close the control-channel end they do not own.
-- Concurrent HTTP launch requests perform all libuv process/control operations
-  on the single supervisor loop.
+- POSIX lobby startup enables `SA_NOCLDWAIT`; terminated workers leave no
+  zombies and have no waitable exit status.
+- The platform spawn utility retains no PID or native process handle after a
+  successful launch. The Windows backend closes both handles returned by
+  `CreateProcessW()` immediately.
+- A Windows session worker is created with `CREATE_NO_WINDOW`, is not created
+  with `CREATE_NEW_CONSOLE` or `DETACHED_PROCESS`, inherits no console standard
+  handles, and reports that it has no attached console. Lobby mode may retain
+  and use its own console.
+- Concurrent HTTP launch requests perform all control-channel operations on
+  the single control loop.
 - Closing the lobby endpoint before and after readiness produces worker EOF.
 - Lobby shutdown racing with startup closes the channel, fails the launch
-  request, and leaves no worker or supervision handle behind.
-- Completed children are reaped and removed from the generic supervisor
-  without retaining session or port routing.
-- Clean supervisor shutdown waits for cooperative exits and force-terminates a
-  deliberately unresponsive test child after the deadline.
+  request, and leaves no lobby-side control handle behind.
+- Worker exit before or after readiness produces lobby EOF; the lobby closes
+  its endpoint and removes the generic control record.
+- Sibling workers never inherit one another's control endpoints, so a peer
+  cannot delay EOF detection.
 
 ### 20.3 Worker runtime tests
 
 - Commands and `receive()` run only on the owner thread.
 - Borrowed transcript values never escape into HTTP/SSE state.
-- Raw input preserves slash-command and `@mention` behavior.
+- Raw input preserves slash-command and `@mention` behavior except that bare
+  `/exit` returns the unsupported web notice and leaves the worker running.
 - Typed actions call the expected controller operations.
 - Agent events drain without a connected SSE client.
 - Persistence completes after mid-generation disconnect.
@@ -1198,7 +1235,8 @@ SQLite applies its ordinary crash-recovery guarantees.
   reports active generation and Stop remains effective.
 - Reload succeeds after the prior SSE handler closes.
 - A reload that briefly races the old handler succeeds through bounded retry.
-- Worker releases the lock after explicit close, idle exit, and fatal failure.
+- Worker releases the lock after disconnect-driven idle exit, orphan
+  completion/limit, and fatal failure.
 - Phone-like pause/reconnect behavior is covered with simulated connection
   loss.
 - Lobby and worker processes derive distinct log filenames from the same
@@ -1221,8 +1259,8 @@ SQLite applies its ordinary crash-recovery guarantees.
   presentation revisions.
 - SSE output contains no protocol `id:` fields; reconnect does not request or
   perform event replay.
-- Explicit close completes its HTTP response first; final `session-ended`
-  delivery either flushes within the deadline or shutdown proceeds without it.
+- `/api/v1/close` is absent, and bare `/exit` produces the unsupported web
+  notice without changing lifecycle state.
 - Body and prompt limits.
 - Same-origin mutation policy.
 - Untrusted transcript text remains data in serialized responses.
@@ -1232,6 +1270,10 @@ SQLite applies its ordinary crash-recovery guarantees.
 These tests exercise browser platform behavior without depending on the
 eventual UI framework:
 
+- Closing the tab is represented as SSE disconnection; no explicit close,
+  unload, page-lifecycle, beacon, or keepalive request is required.
+- A disconnected idle worker exits only after reconnect grace, while a
+  disconnected generating worker follows the bounded orphan-generation policy.
 - An ordinary reload retries briefly if the old SSE handler has not closed,
   then resumes from a full snapshot.
 - A skipped or out-of-order presentation revision causes the page to replace
@@ -1248,12 +1290,12 @@ eventual UI framework:
    frontends with process-level tests.
 2. **Create-only workspace operation.** Allow the lobby to create a stored
    session without constructing a controller.
-3. **Dual executable modes and worker supervision.** Add lobby and worker
-   composition roots inside `web_main.cpp`, duplex libuv control channels,
-   the lobby supervisor loop, startup records, explicit handle inheritance,
-   generic supervision records, control-EOF shutdown, exit callbacks, and the
-   bounded forced-stop fallback.
-4. **Lobby service.** Add forum/session listing, create/open, supervised worker
+3. **Dual executable modes and worker launch.** Add lobby and worker
+   composition roots inside `web_main.cpp`, the utility-layer fire-and-forget
+   process spawner, duplex control channels, the lobby control loop, startup
+   records, explicit handle inheritance, automatic POSIX child reaping,
+   generic control records, and control-EOF shutdown.
+4. **Lobby service.** Add forum/session listing, create/open, worker
    launch, and redirect behavior.
 5. **Worker runtime.** Add the owner loop, command queue, one controller, full
    snapshot, raw input, typed actions, and orderly shutdown.
@@ -1261,10 +1303,11 @@ eventual UI framework:
    heartbeats, and disconnect-independent draining.
 7. **Browser connection and lifetime policy.** Add the lightweight one-stream
    guard, server-local stream bookkeeping, bounded reload retry, reconnect
-   grace, startup idle timeout, orphan-generation limit, and explicit close.
+   grace, startup idle timeout, orphan-generation limit, disconnect-driven
+   shutdown, and web `/exit` rejection.
 8. **Network and process hardening.** Add limits, validated redirect host,
    worker-port/firewall documentation, logging isolation, handle-inheritance
-   tests, and forced-stop behavior.
+   tests, hidden Windows-worker console tests, and automatic-reaping tests.
 9. **Browser implementation.** Select and implement the browser technology in
    a separate design and delivery effort.
 
@@ -1274,8 +1317,7 @@ The architecture does not depend on selecting these values now:
 
 - Worker startup timeout.
 - Owner command-queue deadline.
-- Clean lobby-shutdown deadline before a worker is force-terminated.
-- Final SSE drain deadline during browser-initiated shutdown.
+- Final SSE drain deadline during worker shutdown while a stream is writable.
 - Time allowed for the first browser connection.
 - Browser reconnect grace period.
 - Reload conflict retry interval.
@@ -1324,8 +1366,8 @@ ports invisible and make later integrated navigation easier.
 It was rejected because the lobby would have to retain worker routing state,
 proxy long-lived streaming responses, handle worker failure, and remain in the
 data path after selection. Direct redirect lets the lobby forget session and
-port routing while retaining only the generic handles needed to supervise the
-worker's lifetime.
+port routing while retaining only a generic control endpoint that couples the
+worker's lifetime to the lobby.
 
 ### 23.4 Lobby worker registry and rediscovery
 
@@ -1334,10 +1376,10 @@ worker, or workers could publish descriptor files that a restarted lobby
 discovers.
 
 It was rejected for the initial design. A locked session is simply unavailable
-from the lobby until its worker exits. The generic supervision set is not a
-registry: it has no session identity, port, or redirect capability. A restarted
-lobby does not rediscover a predecessor's workers because loss of their
-original lobby causes them to shut down.
+from the lobby until its worker exits. The generic control set is not a
+registry: it has no process handle, session identity, port, or redirect
+capability. A restarted lobby does not rediscover a predecessor's workers
+because loss of their original lobby causes them to shut down.
 
 ### 23.5 Application lock on the SQLite database
 
@@ -1407,7 +1449,6 @@ Linux `PR_SET_PDEATHSIG`, macOS process notification APIs, Windows parent
 process handles, and Windows Job Objects can also detect or enforce parent
 death. They were rejected as the primary design because they require
 platform-specific policy, and hard-kill mechanisms can bypass orderly
-controller and journal shutdown. A duplex libuv control channel already
-provides the required clean-exit and crash-EOF semantics on all supported
-platforms. Platform-specific hard termination remains confined to the
-supervisor's bounded forced-stop fallback.
+controller and journal shutdown. A duplex control channel already provides the
+required clean-exit and crash-EOF semantics on all supported platforms. The
+lobby deliberately retains no platform-specific forced-termination facility.

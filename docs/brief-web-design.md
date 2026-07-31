@@ -2,7 +2,7 @@
 
 Status: proposed design, ready to guide implementation.
 
-Last updated: 2026-07-30.
+Last updated: 2026-07-31.
 
 This document summarizes the intended behavior and public shape of `chaweb`.
 The detailed design is available in [`web-design.md`](web-design.md).
@@ -37,7 +37,16 @@ The lobby provides:
 - Creation of stored sessions without opening them in the lobby.
 - Launching a worker for a new or existing session.
 - Redirecting the browser only after the worker is ready.
-- Supervision and shutdown of all workers it created.
+- Retaining each ready worker's control-pipe endpoint so both processes can
+  detect peer exit.
+
+Workers are fire-and-forget processes. On POSIX, the lobby requests automatic
+child reaping and starts workers with `posix_spawn()`. On Windows, it starts
+workers with `CreateProcessW()` and `CREATE_NO_WINDOW`, then immediately closes
+the returned native process handles. Session workers never open visible console
+windows or inherit the lobby's console streams; lobby mode may use its normal
+console. The lobby retains no worker PID or process handle and never waits for,
+reaps, or force-terminates a worker.
 
 The session worker provides:
 
@@ -48,7 +57,7 @@ The session worker provides:
   and default-agent selection.
 - Live transcript and generation updates through Server-Sent Events (SSE).
 - Reconnection and state resynchronization.
-- Explicit session close and automatic lifecycle management.
+- Disconnect-driven and automatic lifecycle management.
 
 ## Expected behavior
 
@@ -94,7 +103,11 @@ to the browser over SSE.
 
 `POST /api/v1/input` accepts the same text grammar as the terminal frontends,
 including ordinary prompts, leading `@Name` addressing, `/mcast`, `/clear`,
-off-record commands, `/stop`, `/exit`, and default-agent selection.
+off-record commands, `/stop`, and default-agent selection. Bare `/exit` is the
+one exception: the web worker returns a notice directing the user to close the
+tab, remains running, and never forwards `/exit` as a model prompt. Terminal
+and TUI `/exit` behavior is unchanged. Web command help, autocomplete, and
+unknown-command notices do not advertise `/exit`.
 
 Browser buttons use typed action endpoints but invoke the same session
 operations as equivalent text commands.
@@ -120,9 +133,15 @@ A worker remains tied to the lobby that created it. If the lobby shuts down or
 crashes, its workers detect the lost control connection, stop their sessions,
 release their locks, and exit.
 
+After startup, neither side sends control messages. Both sides keep an
+asynchronous read active only to detect EOF. Worker EOF lets the lobby close
+its local endpoint and forget the control record. Lobby EOF makes the worker
+responsible for orderly cleanup and exit. A defective worker that does not
+react to EOF cannot be force-terminated by the lobby and may remain alive until
+it exits or is stopped externally.
+
 A worker may also stop because:
 
-- The browser explicitly closes the session or submits `/exit`.
 - No browser connects within the startup idle period.
 - A disconnected browser does not return within the allowed grace period.
 - Unattended generation reaches its time limit.
@@ -132,6 +151,12 @@ A worker may also stop because:
 During an ordinary browser disconnect, active generation and persistence
 continue for a bounded period so the page can reconnect. Lobby loss triggers
 shutdown immediately rather than waiting for browser grace periods.
+
+The web interface has no close endpoint or Close control. Closing the tab is
+observed only as SSE disconnection, which is indistinguishable from reload,
+navigation, browser failure, network loss, or device suspension. The worker
+therefore ends only after the reconnect/orphan-generation policy permits it;
+tab closure does not guarantee immediate release of the session lock.
 
 ## HTTP API structure
 
@@ -165,11 +190,10 @@ never used directly as filesystem paths.
 | `POST /api/v1/actions/offrecord/restore` | Restore the off-record span. |
 | `POST /api/v1/actions/default-agent` | Change the run-local default agent. |
 | `GET /api/v1/events` | Open or reconnect the SSE update stream. |
-| `POST /api/v1/close` | End the session worker. |
 
 Command responses use owning JSON values and may report whether the operation
-was applied, whether the input should be cleared, whether the worker should
-end, an optional notice, and the current presentation revision.
+was applied, whether the input should be cleared, an optional notice, and the
+current presentation revision.
 
 ### SSE events
 
@@ -232,7 +256,9 @@ Web code belongs in `src/ui/web/`, with `src/apps/web_main.cpp` acting as the
 composition root. The main responsibilities are:
 
 - Lobby routes and browser assets.
-- Worker launch and supervision.
+- Platform process spawning with explicit descriptor/handle inheritance and
+  no retained process identity.
+- Worker launch, startup handshake, and control-pipe EOF tracking.
 - Session-worker routes, SSE, and lifecycle.
 - The single-owner session runtime and command queue.
 - Session snapshots, request/response types, errors, and event serialization.

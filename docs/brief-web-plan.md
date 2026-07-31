@@ -1,7 +1,7 @@
 # chaweb implementation plan — brief
 
 Status: proposed execution plan  
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 This is a condensed guide to [`web-plan.md`](web-plan.md), which turns
 [`web-design.md`](web-design.md) into 14 implementation blocks. The full plan
@@ -45,14 +45,20 @@ preserve portable Linux, macOS, and Windows interfaces.
   transcript, journal, registry, and agent pool.
 - Only the worker owner thread may use the live controller or borrowed session
   values. HTTP and SSE code receives owning copies.
-- The lobby never creates a session controller. One supervisor thread owns all
-  lobby-side libuv process and control handles.
+- The lobby never creates a session controller. One control-loop thread owns
+  all lobby-side control channels and launch timers.
+- Workers are fire-and-forget processes. The POSIX lobby enables automatic
+  child reaping; the Windows lobby uses `CREATE_NO_WINDOW` for session workers
+  and immediately closes native process/thread handles. Workers inherit no
+  console streams and create no console windows; lobby mode may use its normal
+  console. The lobby retains no PID or process handle and never waits for,
+  reaps, or force-terminates a worker.
 - A session lease is acquired before restore and held until controller and
   journal shutdown complete.
 - A worker sends exactly one startup result. Its control channel then ties its
   lifetime to the lobby.
 - After redirect, the lobby forgets session and routing identity while keeping
-  only generic resources needed to stop and reap the worker.
+  only a generic control endpoint so both sides can detect EOF.
 - HTTP mutations go through a serialized owner queue. A request cancelled
   before claim must never execute; a claimed request completes with its real
   domain result.
@@ -77,8 +83,8 @@ preserve portable Linux, macOS, and Windows interfaces.
 | 1 | Cross-process session lease for every frontend | Existing session layer |
 | 2 | Create a stored session without opening it | 1 |
 | 3 | Web library, tests, protocol types, and shared fixtures | Existing build |
-| 4 | Startup protocol and portable worker launcher | 3 |
-| 5 | Single-owner lobby worker supervisor | 4 |
+| 4 | Startup protocol and portable fire-and-forget worker launcher | 3 |
+| 5 | Single-owner lobby worker control loop | 4 |
 | 6 | Lobby REST service and validated redirects | 2, 3, 5 |
 | 7 | Worker owner runtime and cancellable command queue | 1, 3 |
 | 8 | Worker snapshot and command REST API | 7 |
@@ -137,32 +143,35 @@ builds with TUI disabled.
 
 ## Block 4 — Worker startup protocol and process launcher
 
-**Purpose:** Start a child worker portably and receive one bounded startup
-result.
+**Purpose:** Start a fire-and-forget worker portably and receive one bounded
+startup result.
 
 **Work:** Define newline-framed JSON startup records: `ready(port)`, `busy`,
-and safe `error`. Implement a libuv launcher with one duplex control pipe,
-explicit handle inheritance, startup timeout, and deterministic cleanup.
-Create a test child covering success, fragmentation, malformed/oversized
-records, EOF, hangs, and forced termination.
+and safe `error`. Add a utility-layer `posix_spawn()`/`CreateProcessW()` wrapper
+that accepts an explicit inherited descriptor/handle set and retains no process
+identity. Enable POSIX `SA_NOCLDWAIT`, close Windows process/thread handles
+immediately, and use `CREATE_NO_WINDOW` with no inherited console streams for
+Windows workers. Add a web launcher with one duplex control pipe and startup
+timeout. Create a deterministic test worker covering success, fragmentation,
+malformed/oversized records, EOF, parent loss, and Windows console absence.
 
 **Done when:** The launcher handles fragmented and invalid input, retains
-generic process/control resources after readiness, avoids sibling handle
-inheritance, and closes and reaps every failure path.
+only the control endpoint after readiness, avoids sibling handle inheritance,
+and leaves no zombie, waitable status, PID, or native process handle.
 
-## Block 5 — Lobby worker supervisor
+## Block 5 — Lobby worker control loop
 
-**Purpose:** Keep all lobby-side libuv process operations on one owner thread
+**Purpose:** Keep all lobby-side control-channel operations on one owner thread
 while serving concurrent launch requests safely.
 
-**Work:** Add `WorkerSupervisor` with a dedicated loop, thread-safe bounded
-request completion, race-safe callbacks, and orderly shutdown. After a worker
-is ready, erase all session and redirect identity and retain only generic
-process/control state.
+**Work:** Add `WorkerControlLoop` with a dedicated loop, thread-safe bounded
+request completion, race-safe EOF callbacks, and orderly channel teardown.
+After a worker is ready, erase all session, redirect, and temporary spawn data
+and retain only generic control-endpoint state.
 
 **Done when:** Concurrent launches deliver exactly one result each; shutdown
-resolves waiters, closes control pipes, gives workers a clean-stop deadline,
-force-terminates only when needed, reaps all children, and joins its thread.
+resolves waiters, closes control pipes, does not wait for worker termination,
+and joins its thread. Cooperative workers independently observe EOF and exit.
 
 ## Block 6 — Lobby HTTP service
 
@@ -187,7 +196,11 @@ owner thread.
 projection, and an owning publication interface. Reuse the owner event loop to
 drain commands and agent notifications. Implement atomic
 `pending → claimed/completed` or `pending → cancelled` request transitions so
-cancelled work never runs and claimed work returns its real result.
+cancelled work never runs and claimed work returns its real result. Recognize
+bare `/exit` before shared input handling and return a web-specific non-applied
+close-the-tab notice without exposing `end_session` or initiating shutdown,
+whether the worker is idle or generating. Web command help and unknown-command
+notices omit `/exit` without changing terminal/TUI behavior.
 
 **Done when:** Every controller operation and destruction occurs on the owner
 thread; borrowed data never escapes; concurrent callers serialize correctly;
@@ -199,10 +212,10 @@ agent events persist without a browser; and shutdown releases all waiters.
 domain ownership into HTTP threads.
 
 **Work:** Add worker health and snapshot routes plus raw input, stop, clear,
-off-record, default-agent, and close mutations. Define strict JSON requests,
-same-origin checks, task/body/prompt/socket limits, and stable error mapping.
-Map pre-claim cancellation to `owner_queue_timeout`; do not retry commands
-whose outcome may already be committed.
+off-record, and default-agent mutations. Do not add a close route. Define
+strict JSON requests, same-origin checks, task/body/prompt/socket limits, and
+stable error mapping. Map pre-claim cancellation to `owner_queue_timeout`; do
+not retry commands whose outcome may already be committed.
 
 **Done when:** A loopback client can inspect and mutate a fake-backed session,
 invalid input receives exact safe errors, domain refusals remain domain
@@ -232,9 +245,11 @@ shutdown behavior.
 `OrphanGeneration`, `Stopping`, and `Exiting`. Permit one active SSE stream,
 support snapshot-based reconnect, continue and persist generation while
 temporarily disconnected, and enforce awaiting-client and orphan limits.
-Unify close, `/exit`, fatal errors, and expiry under one idempotent shutdown
-coordinator with explicit response, SSE drain, listener, owner, journal, and
-lease ordering.
+Treat tab close, reload, navigation, browser failure, network loss, and device
+suspension uniformly as SSE disconnection; use no close endpoint or
+unload/beacon signal. Unify disconnect expiry, fatal errors, lobby loss, and
+process signals under one idempotent shutdown coordinator with SSE drain,
+listener, owner, journal, and lease ordering.
 
 **Done when:** Injected-time tests cover reconnects, stale stream callbacks,
 idle expiry, unattended generation, hard cancellation, concurrent shutdown
@@ -261,11 +276,11 @@ and leases.
 lobby-to-worker flow.
 
 **Work:** Compose configuration, role-specific logging, `Workspace`,
-`WorkerSupervisor`, and `LobbyServer`; locate and spawn the executable
+`WorkerControlLoop`, and `LobbyServer`; locate and spawn the executable
 portably; redirect only after true worker readiness; support different
-sessions concurrently; and shut down workers in close, wait, force, reap
-order. Document LAN binding, firewall/ephemeral ports, trusted-network
-exposure, and temporary worker URLs.
+sessions concurrently; and close every worker-control endpoint during lobby
+shutdown without waiting for worker processes. Document LAN binding,
+firewall/ephemeral ports, trusted-network exposure, and temporary worker URLs.
 
 **Done when:** Real-process tests cover list, create, open, redirect, snapshot,
 SSE, commands, same-session races, multiple workers, clean and abrupt lobby
@@ -277,7 +292,8 @@ loss, worker crashes and reopen, IPv6-style hosts, and separate log files.
 under failure and load.
 
 **Work:** Map the design checklist to tests; audit every lease, process,
-control pipe, libuv handle, HTTP/SSE resource, queue item, waiter, and thread.
+control pipe, temporary spawn resource, libuv handle, HTTP/SSE resource, queue
+item, waiter, and thread.
 Stress reduced limits and all startup/shutdown races. Add a deterministic fake
 provider process test proving generation completes and persists after SSE
 disconnect. Use existing sanitizer or dynamic-analysis targets where
@@ -296,10 +312,11 @@ boundaries.
 **Work:** Audit authority/origin validation, CORS absence, request limits,
 asset safety, untrusted text handling, and response disclosure. Verify useful
 but non-sensitive role/process logging. Build and test POSIX and Win32 locking,
-inheritance, pipes, termination, self-location, and unusual paths on available
-Linux, macOS, and Windows runners. Reconcile all architecture and user
-documentation with actual limits, networking, ports, lifecycle, errors, and
-deferred features.
+inheritance, pipes, POSIX automatic child disposal, immediate Windows process
+handle closure, hidden Windows worker creation, self-location, and unusual
+paths on available Linux, macOS, and Windows runners. Reconcile all
+architecture and user documentation with actual limits, networking, ports,
+lifecycle, errors, and deferred features.
 
 **Done when:** The design checklist is fully linked to evidence, available
 platform tests pass, unexecuted native coverage is recorded honestly, CTest
@@ -318,7 +335,10 @@ That work must consume the established contracts rather than redesign them:
 - Revision-gap detection followed by snapshot replacement.
 - Bounded retry for temporary `browser_stream_in_use` conflicts.
 - Disabled controls and a clear message while another stream remains active.
-- Stop, explicit close, and return-to-lobby behavior.
+- Stop, tab-close/disconnect expiry, and return-to-lobby behavior, with no
+  Close control or unload/beacon close request.
+- Command help and autocomplete omit `/exit`; submitting it shows the
+  close-the-tab notice without ending the worker.
 - Safe rendering of all server-provided text as untrusted data.
 
 Test fixture assets are not a product UI and should not become an accidental
