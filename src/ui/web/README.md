@@ -22,4 +22,13 @@ entries against the configured bound, and owns the owner threads. It publishes
 only running runtimes through owning `SessionHandle` values, and sweeps finished
 entries in two phases so joins and runtime destruction occur outside its mutex.
 Routes and actual SSE writing remain later blocks.
+`LobbyRoutes` is the HTTP boundary for stored-session discovery, create-only,
+and registry-backed open/reattach. It validates route identifiers before either
+the registry or session storage is consulted; creation reaches only the shared,
+immutable `Workspace`, while opening first asks the registry for a disk-free
+reattach and validates stored metadata only before a new open. `AssetHandler`
+separately owns the root HTML/asset boundary and currently serves only a
+framework-neutral lobby placeholder. `configure_http_server()` owns the
+server-global request pool, payload limit, and fallback error/exception
+handlers so route installers cannot silently replace one another's policy.
 `web_main.cpp` is only the composition root for the one server listener.

@@ -291,6 +291,20 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     EXPECT_THROW(
         (void)parse_default_agent_command({}),
         std::invalid_argument);
+
+    EXPECT_EQ(parse_create_session_label({{"label", "Notes"}}), "Notes");
+    EXPECT_THROW(
+        (void)parse_create_session_label({}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_create_session_label({{"label", "Notes"}, {"extra", true}}),
+        std::invalid_argument);
+
+    EXPECT_NO_THROW(parse_empty_object(nlohmann::json::object()));
+    EXPECT_THROW(parse_empty_object(nullptr), std::invalid_argument);
+    EXPECT_THROW(
+        parse_empty_object({{"unexpected", true}}),
+        std::invalid_argument);
 }
 
 TEST(WebProtocol, ParsesBodiesAndBuildsJsonResponses) {

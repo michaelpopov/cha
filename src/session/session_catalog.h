@@ -1,5 +1,7 @@
 #pragma once
 
+#include "session/not_found_error.h"
+
 #include <ctime>
 #include <filesystem>
 #include <functional>
@@ -38,6 +40,7 @@ public:
     [[nodiscard]] Session create(std::string label) const;
     std::filesystem::path database_path(const std::string& session_id) const;
     // Revalidates the embedded identity before returning the selected database.
+    // Absence is reported separately from storage or metadata failures.
     std::filesystem::path open_database_path(const std::string& session_id) const;
 
 private:

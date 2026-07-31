@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -43,6 +44,11 @@ using RegistryOpenResult = std::variant<OpenSessionSuccess, Error>;
 using RegistryControllerFactory = std::function<std::unique_ptr<WebSessionController>(
     const SessionKey&, WakeNotifier&)>;
 
+struct RegistrySnapshot {
+    std::size_t live_entry_count{};
+    std::vector<SessionKey> running_sessions;
+};
+
 // The registry is the sole authority for in-process session liveness.  The
 // supplied factory is deliberately the small test seam; production may use
 // from_workspace(), which keeps path validation and leasing in Workspace.
@@ -59,7 +65,15 @@ public:
     [[nodiscard]] RegistryOpenResult open(
         SessionKey key,
         std::chrono::milliseconds deadline);
+    // Answers reattach and shutdown cases entirely from registry state. An
+    // empty result means the caller must validate storage before open().
+    [[nodiscard]] std::optional<RegistryOpenResult> try_reattach(
+        const SessionKey& key);
     [[nodiscard]] SessionHandle lookup(const SessionKey& key);
+    // A point-in-time view for lobby listings and health. Starting and
+    // stopping entries count against the bound but only running entries are
+    // returned as reattachable sessions.
+    [[nodiscard]] RegistrySnapshot snapshot();
 
     // Begins process shutdown without writing startup results.  It wakes open
     // waiters and asks only already-published runtimes to stop.

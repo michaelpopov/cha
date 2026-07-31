@@ -1,4 +1,9 @@
 #include "session/workspace.h"
+#include "ui/web/asset_handler.h"
+#include "ui/web/http_server.h"
+#include "ui/web/lobby_routes.h"
+#include "ui/web/session_registry.h"
+#include "ui/web/web_settings.h"
 #include "util/environment.h"
 #include "util/logging.h"
 
@@ -15,8 +20,14 @@ int main() {
         cha::load_dotenv();
         const cha::ApplicationConfig config = cha::load_application_config();
         cha::initialize_diagnostic_logging(config.log_file, config.log_level);
-        cha::Workspace workspace(".", config);
+        auto workspace = std::make_shared<const cha::Workspace>(".", config);
+        cha::web::WebSettings settings;
+        cha::web::SessionRegistry registry = cha::web::SessionRegistry::from_workspace(
+            settings, workspace);
         httplib::Server server;
+        cha::web::configure_http_server(server, settings);
+        cha::web::AssetHandler().install(server);
+        cha::web::LobbyRoutes(workspace, registry, settings).install(server);
         cha::log_info("Web server listener starting");
         // The initial skeleton has no readiness protocol or signal-driven stop;
         // production lifecycle handling arrives with the server-process block.

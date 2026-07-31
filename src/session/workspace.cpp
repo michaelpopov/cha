@@ -62,8 +62,7 @@ SessionSummary summarize(const Session& stored) {
 }
 
 std::vector<std::string> subdirectory_names(
-    const std::filesystem::path& directory,
-    std::string_view kind) {
+    const std::filesystem::path& directory) {
     std::vector<std::string> result;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(directory)) {
@@ -75,11 +74,6 @@ std::vector<std::string> subdirectory_names(
         result.push_back(name);
     }
     std::sort(result.begin(), result.end());
-    if (result.empty()) {
-        throw std::runtime_error(
-            std::string(kind) + " directory '" + utf8_path(directory)
-            + "' does not contain an entry");
-    }
     return result;
 }
 
@@ -178,16 +172,21 @@ const ApplicationConfig& Workspace::app_config() const {
 
 std::vector<std::string> Workspace::forums() const {
     const std::filesystem::path forums_directory = root_ / "forums";
-    return subdirectory_names(forums_directory, "Forums");
+    return subdirectory_names(forums_directory);
 }
 
 Forum Workspace::load_forum(const std::string& name) const {
     const std::filesystem::path directory = forum_directory(name);
     if (!std::filesystem::is_directory(directory)) {
-        throw std::runtime_error("Forum '" + name + "' does not exist");
+        throw ForumNotFoundError("Forum '" + name + "' does not exist");
     }
     const std::vector<std::string> persona_names = subdirectory_names(
-        directory / "personas", "Personas");
+        directory / "personas");
+    if (persona_names.empty()) {
+        throw std::runtime_error(
+            "Personas directory '" + utf8_path(directory / "personas")
+            + "' does not contain an entry");
+    }
     return {name, load_display_name(directory), persona_names, directory};
 }
 
@@ -225,6 +224,13 @@ std::vector<SessionSummary> Workspace::sessions(
         result.push_back(summarize(session));
     }
     return result;
+}
+
+void Workspace::check_session(
+    const std::string& forum_name,
+    const std::string& session_id) const {
+    const SessionCatalog catalog = session_catalog(*this, forum_name);
+    (void)catalog.open_database_path(session_id);
 }
 
 SessionSummary Workspace::create_stored_session(

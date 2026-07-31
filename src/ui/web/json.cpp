@@ -89,4 +89,13 @@ SetDefaultAgentCommand parse_default_agent_command(
     return {required_string(json, "persona_id")};
 }
 
+std::string parse_create_session_label(const nlohmann::json& json) {
+    exact_keys(json, {"label"});
+    return required_string(json, "label");
+}
+
+void parse_empty_object(const nlohmann::json& json) {
+    exact_keys(json, {});
+}
+
 } // namespace cha::web

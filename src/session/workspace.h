@@ -1,5 +1,7 @@
 #pragma once
 
+#include "session/not_found_error.h"
+
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -69,6 +71,12 @@ public:
     // completion providers. Returns its resolved metadata on success.
     Forum check_forum(const std::string& name) const;
     std::vector<SessionSummary> sessions(const std::string& forum_name) const;
+    // Validates a stored session identity and its on-disk metadata without
+    // acquiring a lease, constructing a controller, or restoring a session.
+    // The web lobby uses this before asking its live-session registry to open.
+    void check_session(
+        const std::string& forum_name,
+        const std::string& session_id) const;
     // Validates the forum and atomically publishes a stored session database.
     // It deliberately does not acquire a SessionLease, initialize providers,
     // or construct a SessionController; callers open the returned identity

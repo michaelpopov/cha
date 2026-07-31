@@ -148,7 +148,7 @@ std::filesystem::path SessionCatalog::open_database_path(
 
     const std::filesystem::path path = database_path(session_id);
     if (!std::filesystem::is_regular_file(path)) {
-        throw std::runtime_error(
+        throw SessionNotFoundError(
             "Session '" + session_id + "' does not have a database");
     }
     const SessionDatabaseMetadata metadata =

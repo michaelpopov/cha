@@ -186,6 +186,27 @@ RegistryOpenResult SessionRegistry::open(
     return Error{ErrorCode::internal_error, "Session could not be opened."};
 }
 
+std::optional<RegistryOpenResult> SessionRegistry::try_reattach(
+    const SessionKey& key) {
+    RetiredEntries retired;
+    std::optional<RegistryOpenResult> result;
+    {
+        std::lock_guard lock(mutex_);
+        retired = sweep_locked();
+        if (stopping_) {
+            result = Error{ErrorCode::server_stopping, "Server is stopping."};
+        } else {
+            const auto found = entries_.find(key);
+            if (found != entries_.end()
+                && found->second->state == Entry::State::running) {
+                result = OpenSessionSuccess{path_for(key)};
+            }
+        }
+    }
+    reap(std::move(retired));
+    return result;
+}
+
 SessionHandle SessionRegistry::lookup(const SessionKey& key) {
     RetiredEntries retired;
     SessionHandle result;
@@ -195,6 +216,23 @@ SessionHandle SessionRegistry::lookup(const SessionKey& key) {
         const auto found = entries_.find(key);
         if (found != entries_.end() && found->second->state == Entry::State::running) {
             result = SessionHandle(found->second->runtime);
+        }
+    }
+    reap(std::move(retired));
+    return result;
+}
+
+RegistrySnapshot SessionRegistry::snapshot() {
+    RetiredEntries retired;
+    RegistrySnapshot result;
+    {
+        std::lock_guard lock(mutex_);
+        retired = sweep_locked();
+        result.live_entry_count = entries_.size();
+        for (const auto& [key, entry] : entries_) {
+            if (entry->state == Entry::State::running) {
+                result.running_sessions.push_back(key);
+            }
         }
     }
     reap(std::move(retired));

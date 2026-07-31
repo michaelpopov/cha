@@ -112,6 +112,13 @@ TEST_F(WorkspaceTest, EnumeratesForumSubdirectoriesInNameOrder) {
         (std::vector<std::string>{"alpha", "lobby"}));
 }
 
+TEST_F(WorkspaceTest, AllowsTheForumDirectoryToBeTemporarilyEmpty) {
+    std::filesystem::remove_all(root / "forums" / "lobby");
+    Workspace workspace(root);
+
+    EXPECT_TRUE(workspace.forums().empty());
+}
+
 TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
     const std::filesystem::path saved =
         create_database("saved", "Saved session");
@@ -246,6 +253,16 @@ TEST_F(WorkspaceTest, RejectsMismatchedSessionMetadataWhenOpening) {
     EXPECT_THROW(
         (void)sessions.open_database_path("wrong-forum"),
         std::runtime_error);
+}
+
+TEST_F(WorkspaceTest, DistinguishesAMissingSessionFromInvalidStorage) {
+    Workspace workspace(root);
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+
+    EXPECT_THROW(
+        (void)sessions.open_database_path("missing"),
+        SessionNotFoundError);
 }
 
 TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {

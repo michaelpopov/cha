@@ -209,9 +209,12 @@ target_link_libraries(
 cha_enable_warnings(cha_core)
 
 add_library(cha_web STATIC
+    src/ui/web/asset_handler.cpp
     src/ui/web/command_queue.cpp
     src/ui/web/http_response.cpp
+    src/ui/web/http_server.cpp
     src/ui/web/json.cpp
+    src/ui/web/lobby_routes.cpp
     src/ui/web/protocol.cpp
     src/ui/web/session_registry.cpp
     src/ui/web/wake_notifier.cpp
@@ -335,6 +338,7 @@ if(BUILD_TESTING)
     add_executable(
         cha_web_tests
         tests/ui/web/unit_protocol.cpp
+        tests/ui/web/unit_lobby_routes.cpp
         tests/ui/web/unit_session_registry.cpp
         tests/ui/web/unit_web_session_runtime.cpp
         tests/support/test_workspace.cpp)

@@ -39,6 +39,7 @@ TEST(PathName, RejectsEmptySpecialAndNestedPaths) {
     EXPECT_THROW(require_path_component(".", source), std::runtime_error);
     EXPECT_THROW(require_path_component("..", source), std::runtime_error);
     EXPECT_THROW(require_path_component("nested/forum", source), std::runtime_error);
+    EXPECT_THROW(require_path_component("nested\\forum", source), std::runtime_error);
     EXPECT_THROW(require_path_component("/absolute", source), std::runtime_error);
 }
 

@@ -119,6 +119,7 @@ TEST(SessionRegistry, ReusesRunningSessionAndReturnsHandle) {
         return std::make_unique<IdleController>();
     });
     const SessionKey key{"forum", "session"};
+    EXPECT_FALSE(registry.try_reattach(key));
 
     const auto first = registry.open(key, 500ms);
     const auto second = registry.open(key, 500ms);
@@ -127,8 +128,17 @@ TEST(SessionRegistry, ReusesRunningSessionAndReturnsHandle) {
     EXPECT_EQ(std::get<OpenSessionSuccess>(first).path, "/s/forum/session/");
     EXPECT_EQ(starts, 1);
     EXPECT_TRUE(registry.lookup(key));
+    const auto reattached = registry.try_reattach(key);
+    ASSERT_TRUE(reattached);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(*reattached));
+    EXPECT_EQ(
+        std::get<OpenSessionSuccess>(*reattached).path,
+        "/s/forum/session/");
 
     registry.begin_shutdown();
+    const auto stopping = registry.try_reattach(key);
+    ASSERT_TRUE(stopping);
+    EXPECT_EQ(code_of(*stopping), ErrorCode::server_stopping);
     registry.sweep();
 }
 

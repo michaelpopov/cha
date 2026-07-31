@@ -35,10 +35,10 @@ flowchart TD
 ```
 
 `Workspace` refuses to construct unless `forums/` exists.
-The `forums/` directory must contain at least one forum subdirectory; its names
-are sorted before presentation. Each forum's `personas/` directory must contain
-at least one persona subdirectory, also sorted before loading. Every directory
-name is checked with `require_path_component()` before it becomes a path.
+The `forums/` directory may be temporarily empty; its forum names are sorted
+before presentation. Each forum's `personas/` directory must contain at least
+one persona subdirectory, also sorted before loading. Every directory name is
+checked with `require_path_component()` before it becomes a path.
 Each forum's `config.toml` must provide a non-empty string `display_name` for
 user-facing selection and listings; its directory name remains the stable ID.
 Each persona directory likewise supplies its stable ID, while its
@@ -61,6 +61,13 @@ display names, and uniqueness, giving the console's `--check` mode the same
 static validation a real session receives before provider initialization. It
 does not inspect the optional `sessions/` directory or resolve provider
 credentials and models.
+
+`Workspace::check_session()` validates the selected stored session's identity
+and metadata without acquiring its lease, restoring it, or constructing a
+controller. It distinguishes an absent session from invalid or unreadable
+storage so front ends can map only absence to not-found. Web lobby routes skip
+this disk validation when their separate live-session registry can reattach
+directly, and otherwise use it before asking the registry to open a session.
 
 ## Forum personas
 
