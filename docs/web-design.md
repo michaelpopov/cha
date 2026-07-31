@@ -108,6 +108,9 @@ The first design does not include:
 - Selection of browser implementation technologies.
 - Exact visual layout, styling, accessibility treatment, or mobile interaction
   details.
+- A global maximum live-worker count, per-client launch quota, or worker-launch
+  rate limit. The initial trusted-LAN application relies on the operator to
+  avoid unbounded session launches.
 
 ## 4. Terminology
 
