@@ -30,8 +30,8 @@ struct SessionSummary {
     bool operator==(const SessionSummary&) const = default;
 };
 
-// A session just created on disk: the controller ready to run, and the ID the session was given so
-// a front end can show it or store it to reopen the session later.
+// A session just created and opened for a terminal front end: the controller
+// ready to run and the ID assigned to its stored database.
 struct CreatedSession {
     std::unique_ptr<SessionController> controller;
     std::string id;
@@ -69,6 +69,13 @@ public:
     // completion providers. Returns its resolved metadata on success.
     Forum check_forum(const std::string& name) const;
     std::vector<SessionSummary> sessions(const std::string& forum_name) const;
+    // Validates the forum and atomically publishes a stored session database.
+    // It deliberately does not acquire a SessionLease, initialize providers,
+    // or construct a SessionController; callers open the returned identity
+    // separately through open_session().
+    [[nodiscard]] SessionSummary create_stored_session(
+        const std::string& forum_name,
+        std::string label) const;
     [[nodiscard]] CreatedSession create_session(
         const std::string& forum_name,
         std::string label,

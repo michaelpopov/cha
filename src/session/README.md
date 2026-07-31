@@ -10,7 +10,7 @@ code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, list and validate forums and sessions, load a forum's agent definitions, and build a controller; creation also returns the assigned session ID. |
+| `workspace.*` | Resolve the workspace layout, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
@@ -91,15 +91,19 @@ sequenceDiagram
     participant DB as Session database
     participant CC as SessionController
 
-    Note over UI,CC: Creating a session
-    UI->>WS: create_session forum, label
+    Note over UI,DB: Creating a stored session
+    UI->>WS: create_stored_session forum, label
     WS->>WS: load_forum, enumerate personas/ directories
     WS->>AG: load_agent_definitions
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
     SC->>DB: build hidden temporary sibling, then link into place
-    WS->>SL: acquire `<database>.cha-lock`
-    WS->>CC: from_definitions with fresh database
+    WS-->>UI: SessionSummary with assigned ID and effective label
+
+    Note over UI,CC: Terminal create and open convenience
+    UI->>WS: create_session forum, label
+    WS->>WS: create_stored_session
+    WS->>WS: open_session with assigned ID
     WS-->>UI: CreatedSession with controller and assigned id
 
     Note over UI,CC: Opening a session
@@ -115,14 +119,29 @@ sequenceDiagram
     CC-->>UI: controller
 ```
 
-Creation publishes with `link(2)`, which fails rather than overwriting, so a
-half-written database is never visible under a real session name and a collision
-simply retries with the next numeric suffix. Listing is tolerant: a file that
-fails validation still appears, with its error attached, so the selector can
-show it instead of hiding a broken session. `Workspace::create_session()`
-returns a `CreatedSession` containing both the ready controller and the exact ID
-that won publication; front ends can therefore report or retain the ID without
-rescanning the catalog.
+`Workspace::create_stored_session()` is the creation primitive. It first
+performs the same complete forum validation as `check_forum()`, then delegates
+publication to `SessionCatalog`. Publication uses `link(2)`, which fails rather
+than overwriting, so a half-written database is never visible under a real
+session name and a collision simply retries with the next numeric suffix. The
+operation returns only a `SessionSummary`: it neither acquires a session lease
+nor constructs a controller or provider. Web callers create and open in
+separate operations, so an open failure leaves the successfully stored session
+available for a later ordinary open.
+
+`Workspace::create_session()` is the terminal convenience operation. It calls
+`create_stored_session()`, then passes the assigned ID through the ordinary
+`open_session()` path described below, and returns the controller with that ID.
+This deliberately validates and parses the forum twice: create-only enumerates
+personas and loads their configuration and prompt files before publication,
+while the ordinary open repeats `load_forum()` and `load_agent_definitions()`
+after revalidating the stored identity. The duplicated parsing is an accepted
+startup cost for a handful of small files and avoids coupling the two operations
+through prevalidated state. Terminal creation deliberately replaces the former
+single `Session created` log with `Session stored` followed by `Session opened`.
+
+Listing is tolerant: a file that fails validation still appears, with its error
+attached, so the selector can show it instead of hiding a broken session.
 
 Session paths are resolved only by `SessionCatalog`. Its `database_path()` and
 `open_database_path()` require the session ID to be one safe path component

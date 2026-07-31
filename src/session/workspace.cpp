@@ -227,26 +227,26 @@ std::vector<SessionSummary> Workspace::sessions(
     return result;
 }
 
+SessionSummary Workspace::create_stored_session(
+    const std::string& forum_name,
+    std::string label) const {
+    const Forum forum = check_forum(forum_name);
+    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
+    const Session session = catalog.create(std::move(label));
+    log_info("Session stored");
+    return summarize(session);
+}
+
 CreatedSession Workspace::create_session(
     const std::string& forum_name,
     std::string label,
     WakeNotifier& notifier) const {
-    const Forum forum = load_forum(forum_name);
-    std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "persona_defaults.toml");
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-
-    const Session session = catalog.create(std::move(label));
-    const std::filesystem::path database_path = catalog.database_path(session.id);
-    SessionLease lease = SessionLease::acquire(database_path);
-    log_info("Session created");
+    const SessionSummary created = create_stored_session(
+        forum_name,
+        std::move(label));
     return {
-        .controller = SessionController::from_definitions(
-            std::move(definitions),
-            database_path,
-            std::move(lease),
-            notifier),
-        .id = session.id,
+        .controller = open_session(forum_name, created.id, notifier),
+        .id = created.id,
     };
 }
 

@@ -303,6 +303,12 @@ TEST(WorkspaceConcurrency, SharesWorkspaceWhileCatalogPublishesCollidingSessions
         EXPECT_FALSE(session.id.empty());
         EXPECT_TRUE(created_ids.insert(session.id).second)
             << "duplicate published session ID: " << session.id;
+        const std::filesystem::path database =
+            layout.forum / "sessions" / (session.id + ".sqlite3");
+        EXPECT_TRUE(std::filesystem::is_regular_file(database));
+        EXPECT_EQ(
+            read_session_database_metadata(database).label,
+            session.label);
     }
     EXPECT_EQ(created_ids.size(), creator_count);
 
@@ -310,8 +316,6 @@ TEST(WorkspaceConcurrency, SharesWorkspaceWhileCatalogPublishesCollidingSessions
     ASSERT_EQ(sessions.size(), creator_count);
     for (const SessionSummary& session : sessions) {
         EXPECT_TRUE(session.error.empty());
-        EXPECT_TRUE(std::filesystem::is_regular_file(
-            layout.forum / "sessions" / (session.id + ".sqlite3")));
     }
 }
 
