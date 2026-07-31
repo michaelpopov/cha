@@ -5,33 +5,32 @@ Status: proposed execution plan.
 Last updated: 2026-07-31.
 
 This document turns [`web-design.md`](web-design.md) into bounded implementation
-blocks. Each numbered block is intended to fit in one Codex session and to leave
-the repository building and tested. The blocks are deliberately smaller than
-the delivery steps in the design where process management, concurrency, or
-streaming would otherwise create too much context for one session.
+blocks. Each numbered block is intended to fit in one Codex session and leave the
+repository building and tested. The blocks are smaller than the design's
+delivery steps where concurrency, streaming, or lifecycle work would otherwise
+create too much context for one session.
 
 The design document remains authoritative. If this plan and the design differ,
-follow the design and update this plan as part of the same change.
+follow the design and update this plan in the same change.
 
 ## 1. How to execute this plan
 
-A request such as “execute block 4” means:
+A request such as “execute block 5” means:
 
 1. Read this introduction, the complete requested block, the named sections of
-   `web-design.md`, and the current versions of all files the block will touch.
-2. Check which preceding blocks are already present. Do not assume that the
-   repository exactly matches the file suggestions below.
+   `web-design.md`, and the current versions of every file the block will touch.
+2. Check which preceding blocks are already present. Do not assume the repository
+   exactly matches the file suggestions below.
 3. Implement the block completely, including production code, focused tests,
    build changes, and directly affected architecture documentation.
 4. Preserve the dependency boundaries in `src/README.md`: session policy stays
    in `session/`, web transport stays in `ui/web/`, and `web_main.cpp` remains a
    small composition root.
 5. Do not implement later blocks merely because a placeholder or interface is
-   needed. Add the smallest test seam or stub that gives the current block a
-   real, tested boundary.
-6. Run the focused tests for the block, then build and run the ordinary
-   non-TUI test suite. Web process and stress tests are run separately through
-   their CTest labels so the ordinary suite remains fast:
+   needed. Add the smallest tested seam that gives the current block a real
+   boundary.
+6. Run the focused tests for the block, then build and run the ordinary non-TUI
+   suite:
 
    ```bash
    cmake --preset console
@@ -40,7 +39,7 @@ A request such as “execute block 4” means:
        -LE "web_process|web_stress"
    ```
 
-   When the block adds or changes a web process/stress test, also run its
+   When the block adds or changes a web process or stress test, also run its
    focused target or label, for example:
 
    ```bash
@@ -48,1598 +47,1212 @@ A request such as “execute block 4” means:
    ```
 
    Existing configured build directories may be reused when appropriate.
-7. Report the files changed, behavioral result, tests run, and any remaining
-   limitation that belongs to a later block.
+7. Report the files changed, behavioral result, tests run, and any limitation
+   intentionally left to a later block.
 
-Every block must keep warnings enabled and must work with `CHA_BUILD_TUI=OFF`.
-Platform-specific code must be isolated behind a portable interface and compile
-on Linux, macOS, and Windows. A block may add a platform-conditional test when
-the repository's existing process test harness is not portable, but it must not
-silently make the product feature platform-specific.
+Every block must keep warnings enabled and work with `CHA_BUILD_TUI=OFF`.
+Platform-specific code must stay behind a portable interface and compile on
+Linux, macOS, and Windows. A platform-conditional test is acceptable when the
+repository's process-test harness is not portable, but the feature itself must
+not silently become platform-specific.
 
 When development has only a Linux host, a successful Linux build plus the
 applicable Linux unit/process tests is the minimum local completion bar for
-Blocks 1–13. Code must still preserve the portable interfaces and native
-backends required by the design. Block 14 adds or exercises macOS and Windows
-verification where runners exist and explicitly records any backend not run.
+Blocks 1–13. Code must still preserve the portable abstractions required by the
+design. Block 14 exercises macOS and Windows verification where runners exist
+and records any platform that was not run.
 
-Do not select a browser framework, language, component library, bundler, or CSS
+Do not choose a browser framework, language, component library, bundler, or CSS
 system while executing this plan. The actual lobby and chat browser
-implementations require a separate design and plan. The server-side asset
-boundary, REST API, and SSE contract are included here because that future
-browser implementation depends on them.
+implementations need a separate design and plan. The server-side asset boundary,
+REST API, SSE protocol, and framework-independent browser lifecycle contract are
+included because that later implementation depends on them.
 
 ## 2. Global implementation rules
 
-These rules apply to every block and need not be repeated in an execution
-request:
+These rules apply to every block:
 
-- One session worker process owns one live `SessionController`, `Transcript`,
-  `SessionJournal`, `AgentRegistry`, and agent thread pool.
-- Only the worker owner thread calls the live controller or reads borrowed
-  session values. HTTP and SSE threads receive owning values.
-- The lobby never constructs a `SessionController`.
-- The lobby owns all lobby-side control channels and launch timers on one
-  control-loop thread. It retains no worker PID or process handle.
-- On POSIX the lobby enables automatic child reaping with `SA_NOCLDWAIT`; on
-  Windows it launches session workers with `CREATE_NO_WINDOW` and closes the
-  process and thread handles returned by `CreateProcessW()` immediately. A
-  worker inherits no console standard handles and never opens a console window;
-  lobby mode may use its normal console. The lobby never waits for, reaps, or
-  force-terminates a worker.
-- The companion-file session lease is acquired before session restore and
-  remains held until after controller and journal shutdown.
-- A worker reports exactly one startup result. A successful control channel
-  remains open so worker lifetime is tied to lobby lifetime.
-- The lobby forgets session identity and worker port after returning the ready
-  response. It retains only a generic control endpoint and EOF/close state.
-- HTTP mutations are serialized through the owner queue. An accepted command
-  has one generous completion deadline; expiry has unknown outcome and starts
-  worker shutdown rather than cancelling the queued command.
-- Every SSE connection begins with a full snapshot. There is no replay log, no
-  SSE `id:` field, and no `Last-Event-ID` behavior.
+- `chaweb` is one process with one configured listener and one origin. It has no
+  internal worker mode, child-process launcher, control channel, per-session
+  listener, or ready-port protocol.
+- The lobby is the root page and routes of that server. Lobby routes may use the
+  shared immutable `Workspace` and the session registry but never construct or
+  access a live `SessionController`.
+- Each live session has one runtime and one permanent owner thread. Only that
+  thread calls controller commands, calls `receive()`, reads borrowed session
+  state, constructs owning transport state from it, or shuts the controller
+  down.
+- HTTP request threads have no session affinity. They resolve an owning session
+  handle, enqueue owning commands or connection notifications, and receive only
+  owning results.
+- The registry is the sole authority on in-process liveness. Its map contains
+  `starting`, `running`, and `stopping` entries; every entry counts against the
+  configured limit.
+- The registry mutex protects only map state, lifecycle transitions, the global
+  stopping flag, and the `finished` flag. Lease acquisition, controller work,
+  socket I/O, shutdown, thread joins, and runtime destruction never run while it
+  is held.
+- Finished entries are swept in two phases: remove them under the registry mutex,
+  then join threads and drop runtime references after unlocking.
+- A companion-file session lease is acquired before restore and remains held
+  through controller and journal shutdown. The registry prevents duplicate
+  opens inside `chaweb`; the lease prevents them across processes and frontends.
+- `Workspace` remains immutable and safe for concurrent calls. Session-layer,
+  agent, and transcript code may not introduce process-global mutable state that
+  makes independent controllers interfere.
+- Web creation and opening are separate operations. Creation returns a stored
+  session identity and starts no runtime. Only the open route acquires a lease or
+  constructs a controller.
+- A startup result has one writer: the owner thread. At its commit point it reads
+  the registry stopping flag and publishes either `running`/`ready` or
+  `shutting_down`, never both.
+- HTTP mutations are serialized through a bounded per-session command queue. A
+  `command_timeout` has unknown outcome and does not cancel the command or shut
+  down the session. Queue-full, session-stopping, and process-stopping failures
+  prove the command did not execute.
+- Every accepted SSE connection begins with a full snapshot. There is no replay
+  log, SSE `id:` field, `Last-Event-ID`, or presentation revision.
 - `snapshot` and target-aware `append` are the only state-bearing SSE events.
-  The writer has one immutable in-flight payload and at most one replaceable
-  pending payload; the owner never waits for network output.
-- One active SSE stream is supported per worker. This is a lightweight usage
-  guard, not authentication and not a strict tab-identity protocol.
+  Appends use a per-target sequence counter, not a byte or string offset.
+- The SSE writer has at most one immutable in-flight payload and one replaceable
+  pending payload. The owner thread never waits for network output.
+- One active SSE stream is supported per live session. This is a lightweight
+  usage guard, not authentication or a strict tab-identity protocol.
+- Browser absence is governed only by `disconnected_since`, `is_generating()`,
+  `idle_grace`, and `orphan_limit`. There is no explicit close route or separate
+  browser-lifetime state machine.
+- A thrown fatal session error tears down that session only. Undefined behavior,
+  abort/terminate paths, and unrecoverable allocation failure remain
+  process-fatal.
+- Process shutdown is bounded. It prevents new opens, wakes startup waiters,
+  requests owner-thread shutdown, joins within one grace period, and exits
+  immediately without destructors if a thread remains stuck.
 - No permissive CORS behavior or authentication is added. Mutations still
   validate content type and same-origin browser requests.
-- Tests must use fake controllers, clocks, timers, launchers, or child helpers
-  where needed. They must not call a real LLM provider or depend on long
+- Error responses use the common envelope, stable machine codes, and
+  presentation-safe messages. Paths, exceptions, credentials, prompts, and
+  answers are neither exposed nor logged by default.
+- Tests use fake controllers, clocks, notifiers, providers, and socket writers
+  where appropriate. They do not call a real LLM provider or depend on long
   wall-clock sleeps.
-- Process tests against a real worker must use non-generating commands such as
-  `/info`, `/agents`, an empty prompt, or an invalid slash command. A process
-  test that needs generation must install a deterministic fake provider through
-  a test-only workspace/configuration seam.
-- Web process and longer stress tests use separate CTest labels
-  (`web_process` and `web_stress`) or equivalent non-default targets. Unit
-  tests remain in the fast ordinary suite.
-- The initial trusted-LAN application has no global maximum worker count,
-  per-client launch quota, or launch-rate limit. Resource tests verify bounded
-  per-worker behavior and reliable cleanup; they must not introduce worker
-  admission control as an incidental hardening change.
-- Error responses use stable machine codes and presentation-safe messages.
-  Internal paths, exceptions, credentials, prompts, and answers are not exposed
-  or logged by default.
+- Real-server tests use non-generating commands such as `/info`, `/agents`, an
+  empty prompt, or an invalid slash command. A test that needs generation must
+  install a deterministic fake provider through a test-only workspace/config
+  seam.
+- Unit tests stay in the fast ordinary suite. Real-server and longer concurrency
+  tests use `web_process` and `web_stress` labels or equivalent non-default
+  targets.
 
 ## 3. Block overview and dependencies
 
 | Block | Result | Depends on |
 | --- | --- | --- |
-| 1 | Cross-process session lease used by all frontends | Existing session layer |
-| 2 | Create-only stored-session operation | Block 1 |
-| 3 | `cha_web` library, web test target, and owning protocol types | Existing build |
-| 4 | Bounded startup protocol and portable fire-and-forget worker launcher | Block 3 |
-| 5 | Single-owner lobby worker control loop | Block 4 |
-| 6 | Lobby HTTP service and ready-port responses | Blocks 2, 3, 5 |
-| 7 | Session worker owner runtime and bounded command queue | Blocks 1, 3 |
-| 8 | Worker snapshot and command HTTP API | Block 7 |
-| 9 | Snapshot/append SSE with latest-state mailbox | Blocks 7, 8 |
-| 10 | Browser-stream and worker lifetime | Block 9 |
-| 11 | Complete internal session-worker process mode | Blocks 4, 8, 9, 10 |
-| 12 | Complete lobby process mode and end-to-end launch flow | Blocks 5, 6, 11 |
-| 13 | Design conformance, resource ownership, races, and stress | Blocks 1–12 |
-| 14 | Network, logging, platform, and documentation audit | Block 13 |
+| 1 | Cross-process session lease used by every frontend | Existing session layer |
+| 2 | Proven concurrent-controller and shared-workspace invariants | Block 1 |
+| 3 | Create-only stored-session operation | Blocks 1–2 |
+| 4 | `cha_web` library, protocol types, settings, and single-mode server skeleton | Existing build; Block 3 for integration |
+| 5 | Per-session owner runtime, notifier, and bounded command queue | Blocks 1, 2, 4 |
+| 6 | Controller integration, snapshots, containment, and idempotent session shutdown | Block 5 |
+| 7 | Session registry, open protocol, handles, sweeping, and capacity bound | Blocks 5–6 |
+| 8 | Lobby routes, create/open flow, listing, and same-origin paths | Blocks 3, 4, 7 |
+| 9 | Path-scoped session command and snapshot API | Blocks 6–8 |
+| 10 | SSE framing, sequencing, mailbox, heartbeat, and write bounds | Blocks 6, 9 |
+| 11 | Single-stream guard and disconnect-driven session lifetime | Blocks 7, 10 |
+| 12 | Complete server composition and bounded process shutdown | Blocks 7–11 |
+| 13 | Resource, network, logging, race, and conformance hardening | Blocks 1–12 |
+| 14 | Platform, sanitizer, documentation, and final design audit | Block 13 |
 
-The recommended order is numerical. Blocks 1–2 and Block 3 begin separate
-dependency branches, but executing them out of order saves little and makes
-integration reviews harder.
+The recommended order is numerical. Blocks 1–3 establish domain invariants;
+Block 4 establishes the web boundary; Blocks 5–7 build session ownership;
+Blocks 8–11 expose it over HTTP/SSE; Blocks 12–14 integrate and harden the
+complete server.
 
 ## 4. Block 1 — Cross-process session lease
 
 ### Objective
 
 Add the companion-file operating-system lock and make every controller-opening
-path use it. At the end of this block, `cha`, `chacon`, and future chaweb
-workers fail immediately and clearly when another process owns the selected
-session.
+path use it. At completion, `cha`, `chacon`, and future `chaweb` runtimes fail
+immediately and clearly when another process owns the selected session.
 
 ### Read first
 
 - `web-design.md` Sections 7.1–7.3, 16, and 20.1.
-- `src/session/workspace.*`, `session_catalog.*`,
-  `session_controller.*`, and `session_database.*`.
+- `src/session/workspace.*`, `session_catalog.*`, `session_controller.*`, and
+  `session_database.*`.
 - TUI and console startup paths and their tests.
 
 ### Required work
 
 1. Add a move-only `SessionLease` in `src/session/`.
-   - Derive its companion path deterministically by appending `.cha-lock` to
-     the complete database filename.
-   - Open or create the companion file without using its existence as state.
-   - Attempt an exclusive lock without waiting.
-   - Keep the native file descriptor or handle open for the full object
-     lifetime.
-   - Release the lock and close the native resource in the destructor.
-   - Isolate POSIX and Win32 details in implementation files or small private
-     backends. Linux and macOS may use a non-blocking whole-file `flock`;
-     Windows may use `LockFileEx` with
-     `LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY`.
-   - Treat “already locked” separately from I/O, permission, or malformed-path
-     failures.
-2. Add a typed `SessionBusyError` or an equivalent typed result that the
-   worker can later map to startup status `busy` without parsing an English
-   exception message. Its public message should identify the session as in use
-   without exposing implementation details.
-3. Change `Workspace::open_session()` so it performs this order:
-   validate forum and session identifiers; resolve and validate the database;
-   acquire the lease; restore state; load definitions as needed; construct the
-   controller while moving lease ownership into it.
-4. Change `Workspace::create_session()` so a newly created database is leased
-   before its controller is constructed. A later failure leaves the valid
-   stored database in the catalog but releases the lease.
-5. Make `SessionController` own the production lease. Its declaration and
-   destruction order must guarantee that the lease outlives
-   `SessionJournal`. Test-only controller factories may use an explicitly
-   inactive lease rather than locking an unrelated file.
-6. Preserve existing frontend APIs where practical. TUI and console may still
-   use their current top-level exception handling, but their user-facing error
-   for a busy session must be immediate and clear.
-7. Document the new type and ownership order in `src/session/README.md` and any
-   affected invariant in `src/README.md`.
+   - Derive the companion path by appending `.cha-lock` to the complete database
+     filename.
+   - Open or create the file without treating existence as state.
+   - Acquire an exclusive whole-file lock without waiting.
+   - Keep the native descriptor or handle open for the object lifetime.
+   - Release the lock and native resource through RAII.
+   - Keep POSIX and Win32 details behind one portable interface.
+   - Distinguish contention from permission, I/O, and malformed-path failures.
+2. Add `SessionBusyError` or an equivalent typed result so later web code can map
+   contention without parsing English text.
+3. Make `Workspace::open_session()` validate and resolve the session, acquire the
+   lease, restore state, load definitions, and construct the controller in that
+   order.
+4. Preserve the terminal create-and-open operation, but acquire the new
+   session's lease before constructing its controller.
+5. Move the lease into `SessionController`. Declaration/destruction order must
+   make it outlive `SessionJournal` and explicit controller shutdown.
+6. Permit test-only controllers to use an explicitly inactive lease rather than
+   locking unrelated files.
+7. Update the relevant session and architecture ownership documentation.
 
 ### Likely files
 
 - `src/session/session_lease.h`
-- `src/session/session_lease.cpp`, possibly platform-specific implementation
-  files
-- `src/session/workspace.h`
-- `src/session/workspace.cpp`
-- `src/session/session_controller.h`
-- `src/session/session_controller.cpp`
+- `src/session/session_lease.cpp` and optional platform backends
+- `src/session/workspace.*`
+- `src/session/session_controller.*`
 - `tests/session/unit_session_lease.cpp`
 - `tests/session/unit_workspace.cpp`
-- a small process test/helper for genuine inter-process contention
+- a small multi-process lease helper/test
 - `CMakeLists.txt`
-
-The names are suggestions; preserve local naming conventions if the current
-tree has evolved.
 
 ### Tests and validation
 
-- Acquire an unused lease and verify the companion filename.
-- Reject a second acquisition while the first process holds the lease.
-- Acquire successfully after orderly release.
-- Terminate a helper process holding a lease and verify OS cleanup permits a
-  new acquisition.
-- Verify an existing but unlocked companion file is harmless.
-- Verify lease I/O failures are not misreported as “busy.”
-- Verify session restore is not attempted after lease contention. Use an
-  injected seam or a deliberately broken database to prove ordering.
-- Verify both create-and-open and open-existing controller lifetimes hold the
-  lease.
-- Verify existing TUI/console-facing startup code reports the new busy
-  condition.
+- Acquire an unused lease and verify its companion filename.
+- Reject a second process while the first holds the lease.
+- Acquire after orderly release and after forced owner-process termination.
+- Treat an existing but unlocked companion file as available.
+- Do not misreport lease I/O failures as contention.
+- Prove restore is not attempted after contention.
+- Hold several independent session leases in one process and release one without
+  affecting the others.
+- Verify TUI and console opening paths report contention immediately and clearly.
 
 ### Completion criteria
 
-- No production path can construct a live controller for a stored session
-  without first acquiring its companion lease.
-- The lease remains held through explicit controller shutdown and journal
-  destruction.
-- Contention behavior is proven with at least one multi-process test.
-- All pre-existing tests continue to pass.
+- No production path constructs a live controller without first acquiring its
+  companion lease.
+- The lease survives through controller and journal shutdown.
+- Genuine inter-process contention is covered by a process test.
+- Existing tests continue to pass.
 
 ### Not in this block
 
-- Lobby create-only behavior.
-- Worker startup `busy` serialization.
-- Browser or HTTP error mapping.
+- In-process registry exclusivity.
+- Create-only behavior.
+- HTTP error mapping.
 
-## 5. Block 2 — Create a stored session without opening it
+## 5. Block 2 — Concurrent-controller and workspace invariants
 
 ### Objective
 
-Give the lobby a session-layer operation that creates and returns catalog
-metadata without initializing providers, acquiring a live-session lease, or
-constructing a controller.
+Prove that several independent controllers may run concurrently inside one
+process and document the invariants on process-global state and shared
+`Workspace` access before `chaweb` depends on them.
 
 ### Read first
 
-- `web-design.md` Sections 7.4, 10, and 20.4.
-- The Block 1 implementation.
-- `Workspace`, `SessionCatalog`, forum validation, and workspace unit tests.
+- `web-design.md` Sections 9.7–9.8 and 20.4.
+- `src/README.md` and ownership documentation under `src/session/`, `src/agents/`,
+  and `src/transcript/`.
+- Completion-client initialization, session catalog naming, logging, SQLite
+  connection setup, and signal handling.
 
 ### Required work
 
-1. Add a clearly named create-only operation such as:
-
-   ```cpp
-   [[nodiscard]] SessionSummary create_stored_session(
-       const std::string& forum_name,
-       std::string label) const;
-   ```
-
-2. The operation must:
-   - Validate and load the forum metadata required by catalog creation.
-   - Validate the forum's static persona definitions if that is part of the
-     established definition of a usable forum, but not initialize completion
-     clients or providers.
-   - Create the database through `SessionCatalog` using its existing atomic
-     no-overwrite behavior.
-   - Return the created ID and effective label in `SessionSummary`.
-   - Not construct `SessionController`, `AgentRegistry`, `ThreadPool`, or
-     `WakeNotifier`, and not leave a session lease held.
-3. Refactor `Workspace::create_session()` to share the catalog-creation logic
-   without changing terminal frontend behavior. It should create the stored
-   session, then follow the ordinary leased open path.
-4. Preserve the race defined by the design: another process may acquire the
-   new session after create-only returns and before a future worker opens it.
-   Do not add a hidden lease handoff or rollback mechanism.
-5. Update `src/session/README.md` to distinguish create-only from
-   create-and-open.
+1. State in `src/README.md` that N controllers on N owner threads are supported
+   when no domain object is shared between them.
+2. Audit process-global mutable state:
+   - Keep libcurl initialization thread-safe and one-time.
+   - Keep each completion backend/easy handle session-local.
+   - Preserve serialization around non-thread-safe time conversion.
+   - Keep each SQLite connection and statement on one owner thread.
+   - Confirm the shared logger is thread-safe.
+   - Keep signal state outside session/controller objects.
+3. Confirm that `Workspace` is immutable after construction, every public
+   operation used by the web server is `const`, and calls do not share lazy
+   mutable caches.
+4. Preserve session creation's atomic publish-or-retry behavior. Do not replace
+   it with a check-then-create sequence.
+5. Add focused concurrency seams and tests using distinct session databases and
+   deterministic fake providers.
+6. If the audit finds mutable global or shared state, remove it or make it
+   construction-time immutable rather than adding a global web mutex.
 
 ### Likely files
 
-- `src/session/workspace.h`
-- `src/session/workspace.cpp`
+- `src/README.md`
+- affected files under `src/session/` and `src/agents/`
+- `tests/session/unit_concurrent_controllers.cpp`
+- `tests/session/unit_workspace.cpp`
+- `tests/support/` concurrency/provider fixtures as needed
+
+### Tests and validation
+
+- Construct two controllers concurrently and initialize their completion clients
+  without a race.
+- Run independent deterministic generations and verify transcripts, journals,
+  request IDs, and shutdown do not cross.
+- Call workspace listing/open operations concurrently on one `Workspace`.
+- Create several sessions in one forum with the clock fixed to one timestamp
+  second and verify every database is unique and none is lost.
+- List concurrently with creation and observe either a complete database or no
+  database, never a partial one.
+- Run the focused tests under ThreadSanitizer when available.
+
+### Completion criteria
+
+- The supported concurrent-controller invariant is explicit and tested.
+- `Workspace` can be shared read-only by lobby and owner threads.
+- No process-global mutable domain state serializes otherwise independent
+  sessions.
+
+### Not in this block
+
+- Web owner threads or registry code.
+- General caching of workspace/forum metadata.
+
+## 6. Block 3 — Create a stored session without opening it
+
+### Objective
+
+Give the lobby a session-layer operation that atomically creates and returns a
+stored session without acquiring a live-session lease, initializing providers,
+or constructing a controller.
+
+### Read first
+
+- `web-design.md` Sections 7.5, 9.8, 10, 16.2, and the creation cases in
+  Sections 20.4–20.5.
+- The Block 1 lease path and Block 2 workspace invariants.
+- `Workspace`, `SessionCatalog`, forum validation, and workspace tests.
+
+### Required work
+
+1. Add a clearly named create-only operation returning `SessionSummary`.
+2. The operation must:
+   - Validate and load the forum metadata required for creation.
+   - Create through `SessionCatalog` using atomic no-overwrite publication and
+     collision retry.
+   - Return the created ID and effective label.
+   - Avoid provider/client initialization, `WakeNotifier`, `AgentRegistry`,
+     `ThreadPool`, `SessionController`, and session lease acquisition.
+3. Refactor the existing terminal create-and-open operation to call create-only
+   and then the ordinary leased open path without changing frontend behavior.
+4. Do not add lease handoff, rollback, or a composite web create-and-open result.
+5. Document the distinction between create-only and create-and-open.
+
+### Likely files
+
+- `src/session/workspace.*`
+- `src/session/session_catalog.*` if a small seam is needed
 - `tests/session/unit_workspace.cpp`
 - `src/session/README.md`
 
 ### Tests and validation
 
-- Create-only returns the stored ID and effective label.
-- The session appears exactly once in `Workspace::sessions()`.
-- Empty labels receive the same effective generated label as the existing
-  create path.
-- Invalid forums and invalid definitions fail without creating a database.
-- A provider configuration that would fail during provider initialization does
-  not prevent create-only if static validation succeeds.
-- The returned session can subsequently be opened normally.
-- Holding its lease between creation and open causes the later open to report
-  busy while the stored session remains present.
-- Existing TUI/console create-and-open tests still pass.
+- Return the stored ID and effective label and list it exactly once.
+- Preserve generated-label behavior for empty labels.
+- Fail invalid forums/definitions without publishing a database.
+- Do not initialize a provider during create-only.
+- Open the returned session normally in a separate step.
+- If another process leases it before open, report ordinary busy while retaining
+  the stored session.
+- Concurrent same-second creates produce distinct complete databases.
+- Existing terminal create-and-open tests still pass.
 
 ### Completion criteria
 
-- The lobby can create persistent session metadata using only `Workspace` and
-  without a notifier or live controller.
-- Existing create-and-open semantics are unchanged apart from the global lease.
+- Creation has an all-or-nothing stored-session result and never starts a live
+  lifecycle.
+- The caller always receives the identity of a successfully published session.
+- Existing terminal behavior remains intact.
 
 ### Not in this block
 
-- Launching a worker after creation.
-- Returning `session_created_but_busy` over HTTP.
+- HTTP routes.
+- Automatic opening after web creation.
 
-## 6. Block 3 — Web library and protocol foundation
+## 7. Block 4 — Web library, protocol, and server skeleton
 
 ### Objective
 
-Create the reusable `cha_web` library and its focused test target, then define
-the owning, presentation-neutral request/response types shared by the lobby,
-worker runtime, HTTP routes, and SSE code.
+Create the reusable `cha_web` library, owning protocol types, injectable
+settings, and a single-mode `chaweb` composition skeleton with one HTTP listener.
 
 ### Read first
 
-- `web-design.md` Sections 4, 10–13, 16, and 18.
-- `src/ui/README.md`, JSON conventions in `src/agents/`, and current CMake test
-  organization.
+- `web-design.md` Sections 4–6, 10–13, 16, 18, and 22.
+- `src/ui/README.md`, JSON conventions, CMake targets, and current app entry
+  points.
 
 ### Required work
 
-1. Create `src/ui/web/` and a short `README.md` describing its dependency and
-   ownership boundaries.
-2. Add a `cha_web` static library:
-   - Link it publicly or privately as appropriate to `cha_core` and
-     `httplib::httplib`.
-   - Apply C++20 and the repository warning settings.
-   - Link `chaweb_app` to `cha_web`; keep `web_main.cpp` a placeholder in this
-     block.
-3. Add a focused `cha_web_tests` target linked to `cha_web` and GoogleTest.
-   Register it with CTest. Web tests should not make every core unit test
-   depend on cpp-httplib.
-4. Define owning protocol values for:
-   - Forum and session summaries.
-   - Persona summaries.
-   - Transcript entries.
-   - Generation status.
-   - Complete session snapshot, including configured `lobby_port`, current
-     notice, optional foreground request identity, and coarse worker lifecycle
-     phase.
-   - Web command result.
-   - Stable error response.
-   - The `snapshot`/`append` SSE event names and owning payload union.
-5. Do not place `TranscriptView`, `std::span`, string views into controller
-   storage, references, or raw domain pointers in these types. It is acceptable
-   to reuse scalar domain IDs and enums where their semantics are already
-   stable, but JSON mappings must remain explicit.
-6. Define explicit enum-to-JSON spellings and a common error envelope. Use one
-   stable shape throughout later blocks, for example:
-
-   ```json
-   {"error":{"code":"session_busy","message":"Session is already in use"}}
-   ```
-
-7. Add small HTTP helpers for JSON content type and response serialization,
-   but do not add actual routes yet.
-8. Define named limits and deadline settings in one injectable settings value.
-   Defaults may initially be implementation constants. Tests in later blocks
-   must be able to substitute short durations and small capacities.
-9. Add a shared temporary test-workspace builder under `tests/support/`. It
-   must be able to create a minimal valid `app.toml`, forum metadata, persona
-   definitions, sessions directory, and stored sessions in a unique temporary
-   root. Let callers override configuration and persona/provider fixtures so
-   later real-process tests can install a deterministic fake provider without
-   copying workspace setup.
-10. Do not define framework-specific browser models or generated client code.
+1. Create `src/ui/web/` with a short boundary/ownership README.
+2. Add a `cha_web` static library linked to `cha_core` and cpp-httplib, with C++20
+   and repository warning settings.
+3. Link `chaweb_app` to `cha_web`; keep `web_main.cpp` a small single-invocation
+   skeleton. Add no private mode flags or child-process arguments.
+4. Add a focused `cha_web_tests` target without making core unit tests depend on
+   cpp-httplib.
+5. Define owning protocol types for:
+   - Forum, session, and persona summaries.
+   - Transcript entries and generation state.
+   - Complete snapshots, current notice, and lifecycle/shutdown reason.
+   - Raw/typed web commands and command results.
+   - Open/create success bodies and the common error envelope.
+   - `snapshot` and target-aware `append` payloads.
+6. Snapshots must contain no host, port, absolute URL, or lobby address. The
+   return path is `/`.
+7. Define exact enum/code JSON spellings. An error object contains exactly
+   string `code` and `message`; successful bodies contain no `error` field.
+   Include the transport codes of Section 16.1 alongside the lifecycle ones:
+   `not_found`, `bad_request`, `body_too_large` with `413 Content Too Large`,
+   `forbidden_origin`, and `internal_error`.
+8. Add reusable JSON/content-type/response helpers, but no production routes.
+9. Define injectable settings for the session limit, HTTP pool/pending bounds,
+   command-queue capacity, open/command deadlines, SSE heartbeat/write/drain
+   deadlines, disconnect limits, reload retry, request/prompt limits, and the
+   process shutdown grace period. Every one of them must be settable by a test;
+   Blocks 11–13 depend on shortening deadlines rather than sleeping through
+   production values.
+10. Add a shared temporary test-workspace builder with deterministic fake-provider
+    configuration support.
 
 ### Likely files
 
 - `src/ui/web/README.md`
-- `src/ui/web/protocol.h`
-- `src/ui/web/protocol.cpp`
-- `src/ui/web/json.h`
-- `src/ui/web/json.cpp`
+- `src/ui/web/protocol.*`
+- `src/ui/web/json.*`
 - `src/ui/web/http_response.*`
 - `src/ui/web/web_settings.h`
-- `tests/support/test_workspace.*`
+- `src/apps/web_main.cpp`
 - `tests/ui/web/unit_protocol.cpp`
+- `tests/support/test_workspace.*`
 - `CMakeLists.txt`
 
 ### Tests and validation
 
-- Every protocol enum has a stable documented JSON spelling.
-- Snapshots and errors serialize to exact contract fixtures.
-- The initial snapshot fixture contains `lobby_port`, current notice, optional
-  foreground request identity, and coarse worker lifecycle phase.
-- Arbitrary transcript and notice strings are escaped as JSON data.
-- Owning protocol objects remain valid after the source transcript mutates or
-  is destroyed.
-- Invalid or unknown request enum values fail as client input rather than
-  falling through to a default operation.
-- The shared workspace builder creates isolated valid roots and removes them
-  through existing test cleanup conventions.
-- The new library and test target build with TUI disabled.
+- Serialize exact creation, open, command-result, snapshot, append, and error
+  fixtures.
+- Omit an absent command-result notice and preserve an explicitly empty notice.
+- Escape arbitrary transcript/notice/provider strings as data.
+- Prove protocol objects outlive mutation/destruction of their source state.
+- Reject invalid enum/input values rather than selecting defaults.
+- Verify snapshots and open responses contain no host, port, or absolute URL.
+- Build the library and application with TUI disabled.
 
 ### Completion criteria
 
-- Later blocks can depend on `cha_web` without placing web files in
+- Later blocks can use one owning web protocol without adding web types to
   `cha_core`.
-- Protocol types are owning and have exact serialization tests.
-- Later web and process tests have one shared workspace builder instead of
-  private copies of forum/persona/app configuration fixtures.
-- No browser technology has been selected.
+- `chaweb` has one mode and one listener-shaped composition root.
+- Protocol and settings seams are exact and unit tested.
 
 ### Not in this block
 
-- Session-to-snapshot projection.
-- HTTP listeners or route registration.
-- Process launching.
+- Live runtimes, registry, or production routes.
+- Browser framework or generated client.
 
-## 7. Block 4 — Worker startup protocol and process launcher
-
-### Objective
-
-Implement the bounded startup record, a utility-layer platform process spawner,
-and a web launcher that starts one fire-and-forget worker with one duplex
-control channel and explicitly controlled descriptor/handle inheritance.
-
-### Read first
-
-- `web-design.md` Sections 6.2, 8.1–8.3, 16, 19.1, 20.2, and 23.10.
-- The Block 3 web library.
-- `UvEventLoop`, existing platform utilities, and integration-test
-  conventions.
-
-### Required work
-
-1. Define `WorkerStartupRecord` with exactly three variants:
-   - `ready` with a valid TCP port.
-   - `busy` with no internal details.
-   - `error` with a bounded presentation-safe message.
-2. Use one explicit framing rule for the startup channel. A newline-terminated
-   UTF-8 JSON object with a small fixed maximum such as 4 KiB is suitable.
-   The decoder must handle fragmented reads, reject an oversized record,
-   reject malformed JSON or invalid fields, reject EOF before the delimiter,
-   and stop after exactly one record.
-3. Add `FireAndForgetProcessSpawner` in `src/util/`, whose only
-   responsibility is to create a process from an executable, argument vector,
-   and explicit inherited descriptor/handle set:
-   - On POSIX, use `posix_spawn()` for each launch.
-   - On Windows, use `CreateProcessW()` with an explicit inherited-handle list
-     and `CREATE_NO_WINDOW`; do not specify `CREATE_NEW_CONSOLE` or
-     `DETACHED_PROCESS`. Use extended startup information, direct unused
-     standard streams to `NUL`, and do not inherit the lobby's console handles.
-     Close the returned process and primary-thread handles immediately.
-   - Do not expose or retain a PID, native process handle, exit callback, or
-     exit status after a successful launch.
-   - Keep session identifiers, control protocol, ports, and timeouts out of the
-     utility.
-4. As lobby composition policy, install POSIX `SA_NOCLDWAIT` with the default
-   `SIGCHLD` disposition before any worker is launched. Do not put session or
-   worker lifecycle policy into `FireAndForgetProcessSpawner`.
-5. Add `SessionProcessLauncher` as a control-loop-owned web primitive. A launch
-   request contains the executable path, workspace root, forum ID, session ID,
-   and the inherited control endpoint data the worker needs. It does not carry
-   a browser hostname, advertised origin, or full lobby URL.
-6. Create one duplex control channel per worker and expose the worker endpoint
-   only through an internal inherited descriptor/handle. Use an internal
-   argument only to identify that inherited endpoint; do not make it a general
-   user-facing feature.
-7. Pass only intentionally retained standard streams and that worker's control
-   endpoint to the process-spawn utility. Mark unrelated handles
-   non-inheritable or close-on-exec and close the unused channel end in each
-   process immediately after spawn. A later worker must never inherit an
-   earlier worker's endpoint.
-8. After `ready`, retain only the lobby control endpoint. For `busy`, `error`,
-   malformed record, EOF, or timeout, close the lobby endpoint. The worker is
-   responsible for detecting EOF, cleaning up, and exiting; POSIX disposes of
-   its status automatically.
-9. Do not let request threads call this primitive. The launcher API may assert
-   or document that all methods run on one control-loop thread; Block 5
-   supplies that thread.
-10. Add a dedicated test-worker executable rather than requiring a real session
-   worker. It must support deterministic modes: ready with a selected port,
-   ready then exit immediately, busy, error, fragmented record, malformed
-   record, oversized record, EOF before record, hang until parent closes, and
-   report whether it observed parent EOF.
-11. Do not send chat data, heartbeats, or periodic status over the channel
-    after readiness. Both endpoints keep an asynchronous read active solely to
-    detect EOF.
-
-### Likely files
-
-- `src/util/process_spawner.*`
-- `src/ui/web/worker_startup_protocol.*`
-- `src/ui/web/session_process_launcher.*`
-- `tests/ui/web/unit_worker_startup_protocol.cpp`
-- `tests/ui/web/worker_test_child.cpp`
-- `tests/ui/web/process_launcher_test.cpp`
-- `CMakeLists.txt`
-
-### Tests and validation
-
-- Encode/decode all three records, including fragmented input.
-- Reject invalid ports, missing fields, unknown statuses, extra startup
-  records, malformed UTF-8/JSON, and records beyond the limit.
-- Report EOF-before-record and startup timeout distinctly.
-- Preserve only the lobby control endpoint after ready.
-- Exercise a worker that writes `ready` and exits immediately; the
-  ready-record/EOF race must complete once without a leaked or reused channel
-  handle.
-- Close terminal busy/error control endpoints; on POSIX verify the exited
-  workers leave no zombie and no waitable status.
-- Launch two siblings and prove neither inherits the other's endpoint.
-- Close the lobby endpoint and prove the ready test child observes EOF.
-- Ensure a delayed or late callback cannot use a destroyed launch record.
-- Exercise paths and arguments containing spaces.
-- On Windows, verify the process and primary-thread handles returned during
-  creation are closed immediately.
-- On Windows, verify a session worker has no attached console or console
-  standard handles and that no new console window is created. Also verify that
-  the spawner does not request `CREATE_NEW_CONSOLE` or `DETACHED_PROCESS` and
-  that worker mode never calls `AllocConsole()`.
-
-### Completion criteria
-
-- A test lobby can portably launch and handshake with the deterministic worker.
-- Ready returns a port while retaining only the live control endpoint.
-- All failure paths close lobby-owned channel and temporary spawn resources;
-  the lobby never waits for or reaps a worker.
-
-### Not in this block
-
-- Concurrent launch requests.
-- A real `--session-worker` mode.
-- Lobby HTTP routing.
-
-## 8. Block 5 — Lobby worker control loop
+## 8. Block 5 — Owner runtime, notifier, and command queue
 
 ### Objective
 
-Put all lobby-side control-channel operations on one dedicated loop and expose
-a thread-safe, bounded launch API to future HTTP handlers.
+Implement the thread-confinement core of `WebSessionRuntime`: one permanent owner
+thread, a condition-variable wake notifier, a bounded command queue, owning
+completions, and fair command/agent-event scheduling.
 
 ### Read first
 
-- `web-design.md` Sections 8.4–8.5, 9.2, 16, 19.1, and 20.2.
-- The Block 4 launcher and test child.
-- `ConcurrentQueue`, `UvEventLoop`, and their tests.
+- `web-design.md` Sections 9.1–9.4, 9.6, 11.1–11.3, and 20.3.
+- Block 4 protocol/settings types.
+- `SessionController`, `SessionUpdate`, `WakeNotifier`, and terminal owner-loop
+  patterns.
 
 ### Required work
 
-1. Add a `WorkerControlLoop` whose dedicated thread owns:
-   - Its libuv loop and cross-thread wake mechanism.
-   - Every lobby-side control pipe and startup timer.
-   - Starting launch state and ready generic control records.
-2. Expose a thread-safe typed request that an HTTP thread can wait on for a
-   bounded startup result: ready port, busy, safe error, timeout, or control loop
-   stopping.
-3. Queue launch requests to the control loop. A caller timeout or disconnect
-   must not cause the control thread to dereference caller-owned state.
-   Results should use shared owning completion state, promise/future, or an
-   equivalent lifetime-safe mechanism.
-4. Serialize all spawn, read, timeout, EOF, and close transitions on the
-   control loop. Callbacks must be idempotent under races among startup
-   completion, EOF, timer expiration, and lobby shutdown.
-5. After delivering a ready result, erase forum ID, session ID, port, request
-   completion state, and any temporary spawn data. Retain only a generic record
-   containing the control endpoint and EOF/close state.
-6. Continue an asynchronous read after readiness. EOF closes the local
-   endpoint and removes the generic control record; no exit status is expected.
-7. Implement clean control-loop shutdown:
-   - Reject new launches.
-   - Resolve waiting launches with a bounded stopping result.
-   - Close every starting and ready lobby control endpoint.
-   - Close the loop's remaining channel/timer resources and join without
-     waiting for worker termination.
-8. Ensure destruction either performs this shutdown or requires an explicit
-   completed shutdown with a debug assertion. No joinable thread or libuv
-   handle may escape.
-
-### Likely files
-
-- `src/ui/web/worker_control_loop.h`
-- `src/ui/web/worker_control_loop.cpp`
-- `tests/ui/web/unit_worker_control_loop.cpp`
-- `tests/ui/web/process_worker_control_test.cpp`
-
-### Tests and validation
-
-- Concurrent callers launch several deterministic children while all libuv
-  control operations occur on the single control-loop thread.
-- Ready, busy, error, malformed, EOF, and startup timeout results reach the
-  correct caller once.
-- A ready-then-immediate-exit worker may race result delivery with EOF, but its
-  local endpoint is closed exactly once and leaves no control record.
-- Lobby shutdown racing with an unready worker resolves the request and leaves
-  no lobby-owned channel handle behind.
-- Generic ready records contain no routing identity or port.
-- Clean lobby shutdown closes every control endpoint; cooperative workers exit
-  on EOF, independently of control-loop teardown.
-- The control-loop thread joins without waiting for worker process completion.
-
-### Completion criteria
-
-- Future cpp-httplib handlers need no direct knowledge of libuv objects.
-- The lobby can forget both routing and process identity while retaining only
-  the pipe lifetime coupling required by workers.
-
-### Not in this block
-
-- HTTP endpoints.
-- Signal handling in `web_main.cpp`.
-- Launching a real session worker.
-
-## 9. Block 6 — Lobby HTTP service
-
-### Objective
-
-Implement the lobby REST service, worker ready-port responses, same-origin
-mutation checks, and an asset-serving boundary without selecting the actual
-browser technology.
-
-### Read first
-
-- `web-design.md` Sections 6.1, 8.3–8.5, 10, 15, 16, and 18.
-- Blocks 2, 3, and 5.
-- cpp-httplib server tests/examples already available in the fetched version.
-
-### Required work
-
-1. Add `LobbyServer` with injected `Workspace`, `WorkerControlLoop`, web
-   settings, and an asset provider/root abstraction. Do not construct a
-   controller.
-2. Implement:
-   - `GET /health`
-   - `GET /api/v1/forums`
-   - `GET /api/v1/forums/{forum}/sessions`
-   - `POST /api/v1/forums/{forum}/sessions`
-   - `POST /api/v1/forums/{forum}/sessions/{session}/open`
-3. Validate forum/session route values through `Workspace`; never concatenate
-   them into filesystem paths in the route layer.
-4. Define and test exact request and response JSON for listing and creation.
-   Require JSON content type and bounded bodies for mutating routes. A
-   successful open/create launch response contains exactly one validated
-   worker port, `{"port":<worker-port>}`.
-5. On open, submit a launch request and wait for its bounded startup result.
-   Map outcomes as follows:
-   - ready: `200 OK` with `{"port":<worker-port>}`.
-   - busy: `409 Conflict` with stable code `session_busy`.
-   - invalid forum/session: a validation-oriented 4xx.
-   - launch/startup/internal failure: presentation-safe 5xx.
-6. On create, call the create-only operation exactly once, then launch that
-   stored session. If the worker reports busy, return `409 Conflict` with code
-   `session_created_but_busy` and include the created `SessionSummary`. Do not
-   delete it and do not retry creation.
-7. Validate the ready port as an integer in the range 1–65535 before
-   serialization. Do not return `Location`, construct a URL from `Host`, add an
-   advertised-host setting, or pass an external lobby URL to the worker.
-8. Retain the independent same-origin mutation policy. Do not emit permissive
-   CORS headers. When an `Origin` header is present, validate the request
-   `Host`/`Origin` pair and require a match. Reject malformed values, but never
-   use either header to construct a navigation URL.
-9. Add an asset handler interface that can serve a future lobby entry point
-    with correct MIME types, no path traversal, and an explicit not-found
-    response. Tests may use tiny fixture assets; do not select or scaffold a
-    browser framework.
-10. Bound cpp-httplib worker count, pending requests where the library permits,
-    payload size, and relevant socket timeouts through web settings.
-
-### Likely files
-
-- `src/ui/web/lobby_server.*`
-- `src/ui/web/asset_handler.*`
-- `tests/ui/web/unit_lobby_server.cpp`
-- `tests/ui/web/fixtures/`
-
-### Tests and validation
-
-- List forums and sessions with exact JSON.
-- Create once and return the ready port after fake worker readiness.
-- Reproduce create-then-open contention and verify
-  `session_created_but_busy` includes the one created session.
-- Map worker busy and startup errors correctly.
-- Reject invalid route identifiers without path access.
-- Verify a ready result produces exactly `{"port":<worker-port>}` and rejects
-  an invalid startup port; no response contains `Location`.
-- Verify malformed and mismatched `Host`/`Origin` pairs, content type, and body
-  limits for mutations without implementing navigation-URL construction.
-- Verify fixture asset serving and traversal rejection.
-- Verify `/health` never exposes worker or session routing state.
-
-### Completion criteria
-
-- `LobbyServer` can be tested in-process with a fake worker control loop and over a
-  loopback cpp-httplib client.
-- No controller or live-session object exists in the lobby service.
-- Actual browser implementation remains undecided.
-
-### Not in this block
-
-- Wiring the listener in `web_main.cpp`.
-- Real worker process readiness.
-- Lobby shutdown signals.
-
-## 10. Block 7 — Worker owner runtime and command queue
-
-### Objective
-
-Create the single-owner session runtime independently of HTTP. It must open and
-own one controller on its dedicated thread, serialize commands and agent
-notifications, copy all borrowed state, and implement the command-completion
-deadline and unknown-outcome shutdown contract.
-
-### Read first
-
-- `web-design.md` Sections 9, 11.1–11.3, 12, 16, and 20.3.
-- Blocks 1 and 3.
-- `SessionController`, `handle_text_input()`, `UvEventLoop`,
-  `ConcurrentQueue`, transcript ownership documentation, and console session
-  behavior.
-
-### Required work
-
-1. Add `WebSessionRuntime` with a permanent owner thread. Controller creation,
-   use, shutdown, and destruction all occur on that thread.
-2. Supply the runtime with the workspace root, forum/session IDs, the
-   configured lobby port, settings, and a controller factory seam. Production
-   uses `Workspace::open_session()`; tests use deterministic fake
-   backends/controllers without network access.
-3. Reuse the owner thread's `UvEventLoop` as the `WakeNotifier` passed to the
-   controller. Its wake processing must drain both queued web work and
-   `SessionController::receive()` so agent events continue even with no
-   browser. Use bounded batches or equivalent fair interleaving so a sustained
-   agent-event stream cannot starve commands.
-4. Define owner-runtime web commands for:
-   - Raw text through `handle_text_input()`.
-   - Stop.
-   - Change default persona.
-   - Obtain a full snapshot.
-   - Internal shutdown/lobby-gone notifications needed by later blocks.
-   Clear and off-record browser controls go through the raw-text command as
-   `/clear`, `/hide-on`, `/hide`, and `/hide-off`; do not add separate runtime
-   commands for them.
-5. If the typed default-persona operation only has a stable persona ID while
-   the controller only accepts a display handle, add an ID-based controller
-   operation with session-layer tests. Keep text `/@Name` behavior unchanged
-   and delegate both paths to one authoritative validation implementation.
-6. Give every accepted HTTP-originated envelope an owning completion object
-   shared by the handler and queue. The handler waits through one generous,
-   injectable deadline covering queue delay and command execution. On expiry:
-   - Do not cancel or remove the command; its outcome is unknown.
-   - Return `503 Service Unavailable` with `worker_unresponsive` when the
-     connection remains writable.
-   - Invoke the idempotent shutdown coordinator and reject new work.
-   - Permit late owner completion without accessing handler-owned state.
-   Immediate enqueue rejection while stopping or at queue capacity remains a
-   known not-accepted result.
-7. Wake the loop after a successful enqueue. Reject new work once stopping
-   begins. Close/drain queues in an order that cannot strand a waiting caller.
-8. Convert each command's `SessionUpdate` into an owning `WebCommandResult`.
-   Preserve `clear_input` and notice. Do not add an `applied`, accepted, or
-   refusal field, and do not derive one from `clear_input`, `render_needed`, or
-   notice text.
-   Apply notice null/empty/value semantics to runtime-owned current notice
-   before completing the command, and publish its change as a structural
-   snapshot. The later browser treats response notices as request-scoped only;
-   they never overwrite snapshot-owned notice state.
-9. Build session snapshots only on the owner thread by copying forum/session
-   metadata, personas, transcript entries, default persona, generation status
-   with an optional stable foreground request ID, current notice, and worker
-   lifecycle phase into owning protocol values. The web runtime owns the
-   current notice implied by `SessionUpdate`'s null/empty/value semantics.
-10. Add an event-publication interface for later SSE work. In this block a
-    recording test sink is sufficient; it must accept only owning values.
-11. Record the owner thread ID in test/debug builds or expose an injected
-    assertion seam so tests prove all controller calls occur on it.
+1. Add `WebSessionRuntime` and a construction/factory seam suitable for real and
+   fake controllers.
+2. Give it one owner thread and assert/test owner-thread affinity for every
+   controller-facing operation.
+3. Implement a condition-variable notifier supporting cross-thread wake and
+   timed wait without a per-session libuv loop or descriptor.
+4. Implement a bounded multi-producer/one-consumer command queue carrying owning
+   typed commands and shared owning completion objects.
+5. Support raw input, typed Stop, and stable-ID default-agent commands. Keep
+   Clear/off-record controls as exact raw grammar strings.
+6. Apply `SessionUpdate.notice` to runtime-owned notice state before completing a
+   command; never infer an `applied` result from existing update flags/text.
+7. Map enqueue outcomes precisely:
+   - Full queue: `command_queue_full`, nothing executed.
+   - Runtime became stopping before enqueue: `session_not_live`, nothing
+     executed.
+   - Accepted command: wait within the request deadline.
+   - Wait expiry: `command_timeout`, unknown outcome, no cancellation.
+8. Keep late completion safe after the HTTP waiter releases its reference.
+9. Drain controller notifications even with no browser and interleave bounded
+   command/event batches so neither starves the other.
+10. Define, but do not yet expose, owner-serialized SSE connect/disconnect
+    notification types with internal connection IDs.
 
 ### Likely files
 
 - `src/ui/web/web_session_runtime.*`
 - `src/ui/web/web_command.*`
-- `src/ui/web/session_snapshot.*`
-- `tests/ui/web/unit_web_command.cpp`
+- `src/ui/web/wake_notifier.*`
+- `src/ui/web/command_queue.*`
 - `tests/ui/web/unit_web_session_runtime.cpp`
-- possibly `src/session/session_controller.*` for ID-based default selection
+- `tests/ui/web/fake_session_controller.*`
 
 ### Tests and validation
 
-- Controller construction, every command, `receive()`, state reads, shutdown,
-  and destruction occur on one owner thread.
-- Raw input preserves ordinary prompt, `@mention`, `/mcast`, and the documented
-  slash-command semantics.
-- Raw `/clear`, `/hide-on`, `/hide`, and `/hide-off` reach the controller
-  operations used by the corresponding browser controls.
-- Typed Stop and stable-ID default-persona actions use the same authoritative
-  session semantics as their text equivalents.
-- A delayed HTTP command response cannot overwrite current notice or other
-  state delivered by a later snapshot.
-- An accepted command that misses its deadline reports unknown outcome,
-  requests shutdown exactly once, and remains safe if it completes after the
-  handler returns.
-- Immediate enqueue rejection is reported as not accepted and cannot execute.
-- Several submitter threads are serialized by the owner.
-- Sustained agent events do not starve an accepted command.
-- A caller disappearing after enqueue does not cancel or automatically retry
-  the command.
-- Agent events are drained and persisted with no connected output consumer.
-- An owning snapshot remains valid after later transcript mutation.
-- Stopping rejects new commands and releases all waiters.
+- Every controller command and `receive()` call occurs on the owner thread.
+- Raw grammar and typed actions reach the correct controller semantics.
+- Completion objects remain valid after request timeout/disconnect.
+- Full-queue and stopping rejection execute nothing and carry the required code.
+- `command_timeout` leaves the command queued/running and the session alive.
+- Sustained agent notifications do not starve commands; sustained commands do not
+  prevent event draining/persistence.
+- Two independent runtimes make progress concurrently without sharing queues or
+  notifiers.
 
 ### Completion criteria
 
-- No borrowed transcript/persona/generation value crosses the owner-thread
-  boundary.
-- The runtime works and is thoroughly testable without cpp-httplib.
-- Command timeouts deterministically initiate shutdown and report unknown
-  outcome.
+- No borrowed domain state crosses the owner-thread boundary.
+- Command execution and completion semantics match the design.
+- Owner-loop progress does not depend on an HTTP server or browser.
 
 ### Not in this block
 
-- HTTP status mapping.
-- SSE socket writing or latest-state mailbox behavior.
-- Browser disconnect timers.
+- Full snapshot construction.
+- Registry or routes.
+- Network SSE writer.
 
-## 11. Block 8 — Worker snapshot and command HTTP API
+## 9. Block 6 — Controller integration, snapshots, containment, and session shutdown
 
 ### Objective
 
-Expose the owner runtime through bounded cpp-httplib routes, while keeping HTTP
-threads transport-only and preserving unknown-outcome semantics after an
-accepted mutation.
+Complete the runtime's real controller ownership, owning snapshot construction,
+fatal-error containment, and one idempotent owner-thread shutdown sequence.
 
 ### Read first
 
-- `web-design.md` Sections 9.2, 10–12, 15.2–15.4, 16, and 20.5.
-- Blocks 3 and 7.
-- Current cpp-httplib version's bind/listen and task-pool APIs.
+- `web-design.md` Sections 9.3–9.5, 12, 14.4, 16, 19.2, and runtime/containment
+  tests in Sections 20.3–20.4.
+- Block 5 runtime and protocol types.
+- `TranscriptView`, generation/request state, `SessionJournal`, and controller
+  shutdown behavior.
 
 ### Required work
 
-1. Add `SessionWorkerServer` with injected runtime, settings, and asset
-   provider.
-2. Implement these non-streaming routes:
+1. Integrate runtime construction with a real controller produced on the owner
+   thread by the workspace open path.
+2. Convert every borrowed session value into an owning, presentation-neutral
+   snapshot on the owner thread.
+3. Include forum/session metadata, personas, default agent, transcript entries,
+   generation/request/phase/reasoning state, current notice, and lifecycle state.
+4. Classify changes as structural versus safe text append. Build a full snapshot
+   whenever a safe append cannot be proved.
+5. Put the owner loop inside a top-level exception boundary. On a thrown fatal
+   session error, log session identity and enter session-local shutdown with
+   reason `session_failed`, without affecting other runtimes.
+6. Implement one idempotent shutdown sequence:
+   - Mark runtime/registry lifecycle stopping through an injected registry hook.
+   - Reject new work.
+   - Publish a final stopping snapshot when possible through an abstract sink,
+     then wait up to the configured final-drain deadline for that sink to report
+     the payload written. A successful write, a sink failure, or expiry ends the
+     wait; a fatal session error or process shutdown may skip it. Final-state
+     delivery is best effort and shutdown never waits longer than the deadline.
+   - Complete an executing command normally; fail queued unstarted commands with
+     `session_not_live` or `server_stopping` according to the trigger.
+   - Call `SessionController::shutdown()`.
+   - Destroy the controller and release its lease.
+   - Signal finished through a registry hook.
+7. Guard teardown substeps so one exception does not prevent controller
+   destruction, lease release, or owner-thread return where recovery is possible.
+8. Make the notifier outlive all agent workers and the lease outlive the journal.
+
+### Likely files
+
+- `src/ui/web/web_session_runtime.*`
+- `src/ui/web/session_snapshot.*`
+- `src/ui/web/protocol.*`
+- `tests/ui/web/unit_web_session_runtime.cpp`
+- `tests/ui/web/unit_session_snapshot.cpp`
+
+### Tests and validation
+
+- Snapshot values remain valid after transcript/controller mutation and teardown.
+- Notice absent/clear/replace semantics survive reconnect snapshots.
+- Structural changes produce snapshots; established text changes can produce
+  append candidates.
+- Agent events drain and persist with no presentation sink attached.
+- A stalled sink lets the final-drain deadline expire and shutdown continues; a
+  sink that reports the write ends the wait immediately; a fatal-error teardown
+  skips the wait altogether.
+- Persistence failure tears down only the failing runtime and releases only its
+  lease.
+- Fatal errors during open handoff, event processing, and shutdown converge on
+  the same idempotent path.
+- Concurrent shutdown triggers execute teardown once.
+- A deliberately blocked owner is not killed or falsely marked failed.
+
+### Completion criteria
+
+- The controller is constructed, used, and destroyed on one owner thread.
+- A thrown fatal error is session-local.
+- Shutdown leaves no controller, journal, agent worker, or lease alive.
+
+### Not in this block
+
+- Registry map implementation.
+- Actual SSE socket writes or disconnect deadlines.
+
+## 10. Block 7 — Session registry and open lifecycle
+
+### Objective
+
+Implement the process-wide registry, serialized open protocol, session handles,
+capacity accounting, two-phase finished-entry sweep, and shutdown coordination.
+
+### Read first
+
+- `web-design.md` Section 8, Sections 9.2 and 19, and registry/server lifecycle
+  tests in Sections 20.2 and 20.6.
+- Blocks 5–6 runtime lifecycle hooks.
+- `Workspace::open_session()` and typed busy/error results.
+
+### Required work
+
+1. Add a registry map keyed by validated forum/session identity. Each entry owns
+   lifecycle state, runtime reference when published, owner `std::thread`, shared
+   startup result, and mutex-protected `finished` flag.
+2. Add one registry-wide stopping flag, written/read only under the registry
+   mutex.
+3. Count every map entry toward the configured limit. Check capacity and insert
+   `starting` under one mutex acquisition.
+4. Implement open behavior:
+   - `running`: return its existing stable path.
+   - `starting`: attach to the same startup result.
+   - `stopping`: return `session_stopping`.
+   - Absent at limit: return `session_limit_reached`.
+   - Absent with capacity: insert and start exactly one owner thread.
+5. Give each waiter its own full open deadline. Timeout fails only that request;
+   it neither removes the entry nor cancels the owner.
+6. Make the owner thread the startup result's only writer. At the one commit
+   point under the registry mutex:
+   - If not stopping, publish runtime, set `running`, resolve `ready`.
+   - If globally stopping, publish nothing, resolve `shutting_down`, and tear the
+     new controller down.
+7. Map startup results to `ready`, `session_busy`, `internal_error`,
+   `server_stopping`, and `session_open_timeout` without parsing messages.
+8. Return owning session handles only for `running` entries. The owner thread
+   must never own a handle to its own runtime.
+9. Let the owner transition itself to `stopping` and set `finished` under the
+   registry mutex as its final action.
+10. Sweep at the head of every registry operation — open, lookup, and shutdown —
+    in two phases: move finished entries out under the mutex, then join threads
+    and release references after unlocking. Phase 1 must share its mutex
+    acquisition with the capacity check of item 3, so an entry swept by an open
+    frees its slot for that same open.
+11. Expose process-shutdown operations that set the global flag, wake startup
+    waiters, request all running runtimes to stop, and enumerate unfinished
+    owners without completing startup results from the shutdown thread.
+
+### Likely files
+
+- `src/ui/web/session_registry.*`
+- `src/ui/web/session_handle.*`
+- `src/ui/web/startup_result.*`
+- `tests/ui/web/unit_session_registry.cpp`
+
+### Tests and validation
+
+- Cover every lifecycle branch and exact error code.
+- Concurrent same-key opens start one owner and share one result.
+- Concurrent different-key opens proceed independently up to the bound.
+- `starting` and `stopping` entries consume capacity.
+- An open that sweeps a finished entry admits in that same operation instead of
+  reporting `session_limit_reached` against a slot nothing holds.
+- Simultaneous distinct opens at the limit never exceed the owner-thread bound.
+- Each waiter receives its own open deadline; one timeout does not affect others.
+- A timed-out open may later be found `running`.
+- A handle keeps a runtime alive after map removal and observes only stopping.
+- Sweep joins once, outside the mutex, and permits a same-key reopen after lease
+  release even while the old thread is being joined.
+- Shutdown racing every open stage yields exactly one owner-written startup
+  result and never publishes `running` after the stopping flag.
+
+### Completion criteria
+
+- The registry is the sole in-process liveness authority.
+- Duplicate controllers and over-capacity owner threads are impossible.
+- No blocking work or runtime destruction occurs under the registry mutex.
+
+### Not in this block
+
+- HTTP routes.
+- Network listener/process shutdown mechanics.
+
+## 11. Block 8 — Lobby routes and explicit create/open flow
+
+### Objective
+
+Expose the lobby page/asset boundary, health, forum/session listing, create-only,
+and open/reattach routes on the one configured listener.
+
+### Read first
+
+- `web-design.md` Sections 6, 10, 15.2–15.4, 16, and lobby contract tests in
+  Section 20.5.
+- Blocks 3–4 protocol/create support and Block 7 registry.
+- cpp-httplib routing, body-limit, and thread-pool extension points.
+
+### Required work
+
+1. Add `LobbyRoutes` using the shared immutable `Workspace` and registry.
+2. Register:
+   - `GET /`
    - `GET /health`
-   - `GET /api/v1/session`
-   - `POST /api/v1/input`
-   - `POST /api/v1/actions/stop`
-   - `POST /api/v1/actions/default-agent`
-3. Define exact JSON request shapes. `input` carries one raw string; default
-   agent carries a stable persona ID. Reject missing, wrong-type, unknown, and
-   extra security-sensitive fields consistently.
-4. A handler may parse, bound, enqueue, wait for the runtime result, and
-   serialize an owning result. It must never call the controller or retain
-   `TranscriptView`.
-5. Apply one generous command-completion deadline after successful enqueue.
-   Expiry returns `503 Service Unavailable` with `worker_unresponsive` when
-   possible, reports unknown outcome, and initiates worker shutdown through
-   the injected coordinator. Domain refusals remain successful command
-   responses with structured outcome data.
-6. If a network connection disappears after enqueue, permit the runtime
-   command to finish. Add no automatic server retry and no idempotency fiction.
-7. Require expected JSON content type for mutations. Validate an optional
-   browser `Origin` against the worker request's validated `Host`; emit no
-   permissive CORS headers.
-8. Apply payload, prompt, header, connection, task-pool, and socket timeout
-   bounds. Ensure the configured HTTP task pool will later have capacity for
-   one long-lived SSE request plus normal commands and health/snapshot calls.
-9. Add chat asset handling through the framework-neutral asset abstraction.
-   Fixture assets are enough until the separate browser plan.
-10. Keep `/health` presentation-safe. It may initially report starting/ready
-    and will gain detailed connection states in Block 10.
-11. Do not register `/api/v1/close`.
+   - `GET /api/v1/forums`
+   - `GET /api/v1/forums/{forum}/sessions`
+   - `POST /api/v1/forums/{forum}/sessions`
+   - `POST /api/v1/forums/{forum}/sessions/{session}/open`
+3. Validate route identifiers through application/domain validation before any
+   registry or filesystem use.
+4. Make create return `201 Created` carrying only the created session's `id` and
+   `label`, per Section 16.2. Serialize those two fields explicitly rather than
+   emitting `SessionSummary` wholesale, whose `error` field does not belong in
+   this body. It must not call the registry or return open-lifecycle errors.
+5. Make open call only the registry and return a relative session path after
+   `ready`. Reattach to `running` returns the same path.
+6. Mark sessions live in listings from a registry snapshot, while treating that
+   marker as advisory and the open route as authoritative.
+7. Add the HTML/static-asset boundary and a minimal lobby placeholder without
+   choosing the eventual browser stack.
+8. Return `/health` process readiness and bounded live-entry count without
+   exposing forum/session names or transcript data.
+9. Use the common success/error serializers and exact statuses/codes.
 
 ### Likely files
 
-- `src/ui/web/session_worker_server.*`
-- `src/ui/web/request_validation.*`
-- `tests/ui/web/unit_session_worker_server.cpp`
+- `src/ui/web/lobby_routes.*`
+- `src/ui/web/asset_handler.*`
+- `src/ui/web/http_server.*`
+- `tests/ui/web/unit_lobby_routes.cpp`
+- `tests/ui/web/http_test_client.*`
 
 ### Tests and validation
 
-- Every route parses valid JSON and returns exact response fixtures.
-- Raw input, including the four browser-control strings `/clear`, `/hide-on`,
-  `/hide`, and `/hide-off`, reaches the expected runtime command. Typed Stop
-  and stable-ID default-agent requests reach their expected runtime commands.
-- `/api/v1/close` is not registered.
-- Full snapshot contains owning transcript/persona/generation data, optional
-  foreground request identity, current notice, coarse lifecycle phase, and
-  configured `lobby_port`.
-- Malformed JSON, wrong content type, excessive body/prompt, and invalid
-  persona ID receive stable client errors.
-- Accepted-command timeout returns `worker_unresponsive`, reports unknown
-  outcome, and invokes shutdown once; late command completion is safe.
-- Immediate enqueue rejection reports that the command was not accepted and
-  cannot execute.
-- Domain refusal is not mapped to transport failure.
-- Same-origin policy accepts a matching Origin, rejects a mismatched one, and
-  permits non-browser clients with no Origin under the trusted-LAN design.
-- Concurrent handler tests prove controller calls remain on the owner thread.
-- Fixture assets cannot escape their root and untrusted transcript text stays
-  JSON data.
+- Route/method/content-type/identifier validation.
+- Create returns identity, opens nothing, and leaves no registry entry.
+- Create never returns `session_busy`, `session_limit_reached`, or
+  `session_open_timeout`.
+- Create followed by each possible open failure retains the created session and
+  supports retrying open without repeating create.
+- Open returns a relative path with no host, port, or absolute URL.
+- Opening a running session does not construct/acquire again.
+- Listings mark live sessions but tolerate state changing before open.
+- Every JSON error has exactly the common envelope.
+- `/health` exposes no session identity or content.
 
 ### Completion criteria
 
-- A loopback client can inspect and mutate a fake-backed worker session through
-  the documented REST API.
-- HTTP threads contain no domain ownership or session-thread assumptions.
+- The lobby starts no controller except through the registry's open operation.
+- Creation and opening are observably separate and recoverable.
+- All navigation output is same-origin path data.
 
 ### Not in this block
 
-- `GET /api/v1/events`.
-- SSE payloads, latest-state mailbox behavior, heartbeats, or reconnect.
-- Worker lifecycle and final-SSE drain sequencing.
+- Session command/SSE routes.
+- Final lobby browser implementation.
 
-## 12. Block 9 — Snapshot/append SSE and latest-state mailbox
+## 12. Block 9 — Path-scoped session HTTP API
 
 ### Objective
 
-Add live Server-Sent Events without blocking the owner thread, using exactly
-two state-bearing payloads, a single replaceable pending mailbox, UTF-8 append
-continuity checks, and heartbeats.
+Expose the chat-page boundary, snapshot route, raw input, typed Stop, and typed
+default-agent action under `/s/{forum}/{session}/`, with all work resolved through
+owning registry handles.
 
 ### Read first
 
-- `web-design.md` Sections 9.3–9.4, 12, 13, 16, and 20.3/20.5.
-- Blocks 7 and 8.
-- cpp-httplib chunked content-provider behavior in the pinned version.
+- `web-design.md` Sections 8.3, 11, 12, 16, and relevant Section 20.5 tests.
+- Blocks 5–8 runtime, protocol, and route helpers.
 
 ### Required work
 
-1. Define exactly two owning state-bearing payloads:
-   - `snapshot`: the complete Section 12 state.
-   - `append`: a target (`entry_id` for an answer or active `request_id` for
-     reasoning), text, and `length_before` measured in UTF-8 bytes.
-   Extend the controller's presentation-facing generation status with its
-   active request ID if necessary; do not infer target identity from an agent
-   display name.
-2. Publish a snapshot for every structural change: entry start/finish/cancel/
-   failure/discard, transcript clear, default-agent or notice change,
-   generation activation/target/phase change, and worker lifecycle change.
-   The first answer or reasoning delta establishes its target through such a
-   snapshot. Only later text for the same established target may be an append.
-   If append safety is unclear, build a current owning snapshot rather than
-   maintaining a general-purpose diff projector.
-3. Add an owner-to-SSE latest-state mailbox:
-   - The writer may hold one immutable in-flight payload; the mailbox holds at
-     most one replaceable pending owning payload.
-   - With no pending payload, store the new payload.
-   - Any update while a snapshot is pending rebuilds that pending snapshot
-     from current owner state.
-   - Compatible appends to the same target with continuous UTF-8 offsets merge
-     by concatenating text and retaining the first `length_before`.
-   - A structural change, incompatible target, or discontinuous append replaces
-     a pending append with a fresh snapshot.
-   - With no connected stream, retain no presentation backlog.
-   The owner never writes to a socket or waits for the browser.
-4. Register `GET /api/v1/events` using cpp-httplib's streaming/chunked response
-   support. Set `text/event-stream`, disable inappropriate buffering/caching,
-   write a full snapshot first, then drain mailbox payloads until closure.
-5. Emit only named `snapshot` and `append` SSE events with JSON `data:`
-   records. Never emit an SSE `id:` field and ignore `Last-Event-ID` rather
-   than treating it as a replay request. Serialize no presentation revision or
-   `resync` instruction.
-6. Send comment heartbeats at an injectable interval. A failed write closes
-   the stream and reports the disconnect to runtime state without blocking
-   controller draining.
-7. Specify browser recovery for a target or `length_before` mismatch: discard
-   and close the old EventSource, then use the ordinary bounded reconnect path
-   whose first payload is a snapshot. Do not fetch a REST snapshot concurrently
-   with continued delivery from the old stream.
-8. Use a server-local stream ID so a late close callback can be distinguished
-   from a newer connection. Do not send this ID to the browser.
-9. Keep `TranscriptView::revision` internal. It may avoid unnecessary snapshot
-   work, but it is not a web protocol field because it does not cover notice,
-   default-agent, generation-only, or lifecycle changes.
+1. Add `SessionRoutes` for:
+   - `GET /s/{forum}/{session}/`
+   - `GET /s/{forum}/{session}/api/v1/session`
+   - `POST /s/{forum}/{session}/api/v1/input`
+   - `POST /s/{forum}/{session}/api/v1/actions/stop`
+   - `POST /s/{forum}/{session}/api/v1/actions/default-agent`
+2. Reserve the events route shape for Block 10 without opening a stream yet.
+3. Validate identifiers, resolve a running session handle once per request, and
+   retain it until the handler completes.
+4. Serve a not-open HTML page with a `/` link for a non-live page request;
+   return `session_not_live` for non-live JSON/API requests.
+5. Bound and parse request bodies before enqueue. Enforce expected JSON content
+   types on every mutation.
+6. Map runtime outcomes exactly:
+   - Successful command result with `clear_input` and optional notice.
+   - `command_queue_full` for safe-to-retry non-admission.
+   - `session_not_live` for stopping-before-execution.
+   - `server_stopping` for shutdown-drained commands.
+   - `command_timeout` for unknown outcome, without runtime shutdown.
+7. Never update snapshot state from an HTTP result. Keep any returned notice
+   request-scoped.
+8. Add a minimal chat-page/static-asset boundary without selecting browser
+   technology.
+9. Do not add a per-session health/status or close route.
 
 ### Likely files
 
-- `src/ui/web/sse_payload.*`
+- `src/ui/web/session_routes.*`
+- `src/ui/web/http_server.*`
+- `src/ui/web/asset_handler.*`
+- `tests/ui/web/unit_session_routes.cpp`
+
+### Tests and validation
+
+- Exact path/method/validation behavior, including encoded traversal rejection.
+- Non-live page versus non-live API behavior.
+- Raw grammar commands and typed controls preserve their distinct editor
+  semantics.
+- Successful results carry no `applied` inference and omit an absent notice.
+- Queue-full/stopping/server-shutdown failures execute nothing.
+- `command_timeout` does not remove the command or stop the session.
+- Client disconnect after enqueue may still complete safely.
+- `/api/v1/close` and per-session health/status routes do not exist.
+
+### Completion criteria
+
+- Every session request reaches domain state only through a running handle and
+  the owner queue.
+- HTTP response ordering cannot overwrite authoritative snapshot state.
+- The path-scoped non-SSE API matches the design.
+
+### Not in this block
+
+- SSE body streaming.
+- Active-browser guard and disconnect lifetime.
+
+## 13. Block 10 — SSE protocol and latest-state mailbox
+
+### Objective
+
+Implement the session events route, exact SSE framing, full-snapshot reconnect,
+target/sequence-aware appends, a one-pending latest-state mailbox, heartbeats,
+and bounded network writes.
+
+### Read first
+
+- `web-design.md` Section 13, snapshot cost discussion in Section 12, and SSE
+  contract tests in Section 20.5.
+- Blocks 6 and 9 snapshot/runtime/route integration.
+- cpp-httplib streaming response and socket timeout behavior.
+
+### Required work
+
+1. Implement `GET /s/{forum}/{session}/api/v1/events` using a streaming response
+   suitable for consumption by `fetch`, not assumptions specific to
+   `EventSource`.
+2. Emit only blank-line-terminated records containing:
+   - `event: snapshot` or `event: append` plus one single-line JSON `data:`.
+   - `:` comment heartbeats with no state.
+   - No `id:`, `retry:`, or other fields.
+3. Send a fresh full snapshot as the first payload of every accepted stream.
+4. Implement append targets for answer `entry_id` and reasoning `request_id`.
+5. Maintain a per-target `seq` counter:
+   - Snapshot establishes expected sequence 0.
+   - A newly pending append consumes one sequence value.
+   - Merging compatible pending appends consumes no additional value.
+6. If an update is structural, changes target, or cannot maintain continuity,
+   replace the pending append with a current snapshot.
+7. Implement one immutable in-flight payload plus at most one replaceable pending
+   payload per runtime. Never mutate in-flight data or block the owner on the
+   writer.
+8. Retain no presentation backlog with no connected stream.
+9. Add periodic comment heartbeats and a bounded lack-of-write-progress timeout.
+   A slow reader making progress must remain connected even during a large
+   snapshot.
+10. Treat write failure/timeout as ordinary stream closure. Do not stop generation
+    or controller draining.
+11. Implement the sink the Block 6 shutdown sequence drains against: report when
+    a published payload has been written, so a final lifecycle snapshot can be
+    awaited up to the final-drain deadline and no longer.
+
+### Likely files
+
+- `src/ui/web/sse_stream.*`
 - `src/ui/web/sse_mailbox.*`
-- `src/ui/web/sse_channel.*`
-- `src/ui/web/sse_writer.*`
-- updates to `web_session_runtime.*` and `session_worker_server.*`
-- possibly `src/session/generation_status.h` and `session_controller.*` for
-  stable active request identity
+- `src/ui/web/session_routes.*`
+- `src/ui/web/web_session_runtime.*`
 - `tests/ui/web/unit_sse_mailbox.cpp`
-- `tests/ui/web/unit_sse_channel.cpp`
-- `tests/ui/web/sse_contract_test.cpp`
+- `tests/ui/web/unit_sse_stream.cpp`
 
 ### Tests and validation
 
-- Every connection begins with a full snapshot.
-- `snapshot` and target-aware `append` encodings are exact; no other
-  state-bearing event name is emitted.
-- Answer and reasoning appends identify stable targets and use UTF-8 byte
-  offsets, including multibyte test data.
-- Entry start/finish, clear, generation phase, notice, default-agent, and
-  lifecycle changes produce snapshots.
-- Compatible pending appends merge. A pending snapshot is rebuilt on later
-  change, and structural/incompatible/discontinuous changes replace a pending
-  append with a snapshot.
-- At most one payload is in flight and one is pending while owner-side agent
-  draining continues under a blocked writer.
-- Output contains no `id:` lines and reconnect performs no replay.
-- A `Last-Event-ID` header has no protocol effect.
-- Output contains no presentation revision or `resync` payload.
-- Heartbeats are comments and carry no state.
-- Disconnect wakes the runtime promptly and a duplicate late-close callback
-  cannot detach a stream with a different internal ID.
-- Untrusted multiline text is encoded correctly as SSE JSON data.
+- Exact framing, event names, one-line JSON, comments, and absence of `id:`.
+- Every connection starts with a full current snapshot and ignores
+  `Last-Event-ID`.
+- Answer/reasoning appends start at sequence 0 and increment as delivered.
+- Compatible appends merge byte-for-byte, including multibyte text, while
+  consuming one sequence number.
+- Structural/incompatible/discontinuous changes collapse to a snapshot.
+- The writer never owns more than one in-flight and one pending payload.
+- Slow/disconnected output never blocks command or agent-event processing.
+- A non-reading peer releases its request thread within the write timeout; a
+  slowly progressing peer does not.
+- A final lifecycle snapshot written to a reading peer completes the shutdown
+  drain wait; one written to a peer that has stopped reading expires it, and
+  shutdown proceeds either way.
 
 ### Completion criteria
 
-- Streaming model changes can reach a client while persistence and controller
-  progress remain independent of network speed.
-- The fixed mailbox shape bounds queued payload count, and snapshot replacement
-  or reconnect always provides a recovery path from an unsafe append.
+- The stream is recoverable solely by reconnecting for a snapshot.
+- Presentation buffering is bounded in count and session-local.
+- Network I/O never runs on the owner thread.
 
 ### Not in this block
 
-- Rejecting a second simultaneous stream.
-- Browser-disconnection deadline timing or idle worker exit.
-- Actual browser SSE code.
+- Rejecting a second active stream.
+- Disconnect unload deadlines or browser retry implementation.
 
-## 13. Block 10 — Browser-stream and worker lifetime
+## 14. Block 11 — Browser-stream guard and disconnect lifetime
 
 ### Objective
 
-Implement the supported one-page guard, snapshot-based reconnect, the single
-browser-disconnection deadline rule, and one idempotent worker shutdown
-coordinator.
+Add the one-active-stream policy, connection-ID-safe close handling, bounded
+reload conflict behavior at the contract level, and the single disconnect
+deadline that unloads idle/orphaned sessions.
 
 ### Read first
 
-- `web-design.md` Sections 11.4, 13.1, 14, 16, 19.2, and
-  20.3–20.6.
-- Blocks 7–9.
+- `web-design.md` Sections 11.4, 14, 19.2, and Sections 20.3, 20.6, and 20.7.
+- Blocks 7 and 10 registry/runtime/SSE behavior.
 
 ### Required work
 
-1. Keep only coarse startup, running, and stopping lifecycle phases, or
-   equivalent flags, for readiness and ordered teardown. Do not turn browser
-   connection/timing conditions or completed teardown into lifecycle states.
-   All decisions that inspect controller state occur on the owner thread.
-2. Enforce one active SSE stream:
-   - Accept the first stream.
-   - Reject another active stream with `409 Conflict` and code
-     `browser_stream_in_use`.
-   - Clear the slot only for the matching internal stream ID.
-   - Do not add attachment tokens, epochs, browser storage, takeover, or REST
-     authorization by stream identity.
-3. Track only the optional active stream ID, whose presence defines
-   `stream_active`, optional `disconnected_since`, and one rearmable timer. Set
-   `disconnected_since` at worker readiness and on closure of the matching
-   active stream. Clear it and cancel the timer whenever a stream is accepted.
-   A rejected stream or stale close callback changes none of these values.
-4. Apply one rule whenever no stream is active:
+1. Serialize SSE accept/close notifications through the owner loop.
+2. Accept the first stream and reject another active stream with `409` and
+   `browser_stream_in_use` before starting an SSE body.
+3. Assign every accepted stream an internal session-local connection ID. Only a
+   matching close clears the active slot; rejected, duplicate, and stale closes
+   change nothing.
+4. On runtime publication, set `disconnected_since` and arm `idle_grace` for
+   initial browser arrival.
+5. On successful stream acceptance, clear the timestamp and cancel the deadline.
+   On matching close, record the current time and rearm.
+6. While disconnected, compute the only deadline as:
 
    ```text
-   deadline = is_generating() ? orphan_limit : idle_grace
-   if now - disconnected_since >= deadline: begin_shutdown()
+   is_generating() ? orphan_limit : idle_grace
    ```
 
-   Use the same `idle_grace` for initial browser arrival and reconnect. Define
-   `orphan_limit` as an absolute duration since `disconnected_since`, require
-   it to be at least `idle_grace`, and do not add the two durations together.
-5. Reevaluate and rearm the rule at readiness, matching stream close,
-   successful connection, every generation-state transition, and timer expiry.
-   If generation ends after idle grace has elapsed, begin shutdown promptly;
-   otherwise retain the remaining idle grace.
-6. Continue receiving and persisting agent events while disconnected. Accept a
-   reconnect before shutdown, cancel the timer, send a full snapshot showing
-   active generation when applicable, and restore Stop. At `orphan_limit`,
-   cancel through ordinary controller shutdown.
-7. Add no close endpoint, close command, unload handler, beacon, or keepalive
-   close request. Browser tab close, reload, navigation, browser failure,
-   network loss, and device suspension all set the same disconnected timestamp.
-   Only the single deadline rule decides whether browser loss becomes worker
-   shutdown.
-8. Add a single idempotent shutdown coordinator used by disconnect-deadline
-   expiry, command-completion deadline expiry, fatal runtime failure, future
-   lobby EOF, and process shutdown.
-9. Define join and lifetime order:
-   - Mark stopping and reject work.
-   - Publish a final snapshot with lifecycle `stopping` and a safe reason, and
-     give it a bounded write opportunity.
-   - Stop the HTTP listener.
-   - Wake and shut down the owner controller on its owner thread.
-   - Join HTTP and owner threads in a non-self-joining order.
-   - Destroy controller/journal before releasing the lease.
-10. Make all timers injectable or manually advanceable in tests. Do not use
-    long sleeps to test phone-like suspension.
+   Both are measured from the same `disconnected_since`; `orphan_limit` is not an
+   additional period and must be at least `idle_grace`.
+7. Rearm whenever stream presence, `disconnected_since`, or generation state
+   changes. If generation ends after idle grace has elapsed, begin shutdown
+   promptly.
+8. Continue receive/persistence during disconnection until the absolute deadline.
+9. On expiry, request the ordinary owner-thread shutdown sequence; do not add an
+   explicit close route, browser unload beacon, or takeover protocol.
+10. Specify framework-independent page behavior for later implementation:
+    controls enable only after accepted stream plus initial snapshot; a conflict
+    retries briefly and then displays the already-open message; target/sequence
+    mismatch closes and reconnects rather than racing a REST snapshot.
 
 ### Likely files
 
-- `src/ui/web/worker_lifecycle.*`
-- `src/ui/web/worker_shutdown.*`
-- updates to runtime, SSE, and worker server files
-- `tests/ui/web/unit_worker_lifecycle.cpp`
-- `tests/ui/web/worker_lifecycle_test.cpp`
+- `src/ui/web/web_session_runtime.*`
+- `src/ui/web/browser_connection_state.*`
+- `src/ui/web/session_routes.*`
+- `tests/ui/web/unit_browser_connection_state.cpp`
+- `tests/ui/web/unit_session_lifetime.cpp`
 
 ### Tests and validation
 
-- First stream accepted; simultaneous second stream gets
-  `browser_stream_in_use` without changing the active stream or disconnect
-  timestamp.
-- Matching close records `disconnected_since`; duplicate/late close cannot
-  clear a newer stream or reset its timestamp.
-- Initial browser absence and a later idle disconnect use the same
-  `idle_grace`; reconnect before expiry succeeds with a full snapshot.
-- Active generation continues and persists until the absolute `orphan_limit`.
-- Starting or finishing generation while disconnected recomputes the deadline;
-  finishing after idle grace initiates shutdown promptly.
-- `orphan_limit` invokes controller shutdown and is never added to idle grace.
-- `/api/v1/close` is not registered.
-- Concurrent disconnect expiry, fatal error, and lobby/process shutdown invoke
-  shutdown exactly once.
-- A writable stream receives a final lifecycle `stopping` snapshot when
-  possible; a blocked writer cannot extend shutdown beyond the final drain
-  deadline.
-- New commands and streams are rejected after stopping starts.
-- No path blocks the owner thread on SSE or joins the current thread.
+- First stream accepted; second same-session stream rejected; different-session
+  streams accepted concurrently.
+- Rejected streams do not change active ID or disconnect deadline.
+- Stale/duplicate close cannot detach a newer stream.
+- Opened-but-never-visited sessions unload after `idle_grace`.
+- Idle disconnected sessions and generating disconnected sessions unload at the
+  correct absolute limits from `disconnected_since`.
+- Generation completion reevaluates the deadline immediately.
+- Reconnect before shutdown cancels the deadline and starts with a fresh
+  snapshot.
+- No close endpoint, page-lifecycle signal, browser ID, or takeover mechanism is
+  introduced.
 
 ### Completion criteria
 
-- The complete worker browser/session lifetime rule is deterministic under
-  races and tested with virtual or injected time.
-- The implementation remains deliberately lightweight: one stream slot, no
-  browser identity protocol.
+- Each live session supports exactly one active interactive stream without
+  affecting other sessions.
+- Browser absence releases runtime resources and leases under the one documented
+  rule.
+- Reload/reconnect recovery requires no event replay or browser identity.
 
 ### Not in this block
 
-- Parent/lobby EOF wiring.
-- Process signals and executable exit codes.
-- Browser-side retry code.
+- Actual JavaScript retry UI.
+- Process-wide shutdown orchestration.
 
-## 14. Block 11 — Internal session-worker process mode
-
-### Objective
-
-Compose the real worker mode inside `chaweb`: open one leased session, bind an
-available port, report readiness, watch lobby lifetime, serve REST/SSE, and
-exit cleanly.
-
-### Read first
-
-- `web-design.md` Sections 6.2, 8.1–8.3, 9.5, 14.5, 15, 17, and 19.2.
-- Blocks 1, 4, and 7–10.
-- The shared test-workspace builder introduced in Block 3.
-- `src/apps/console_main.cpp` for configuration/logging/signal composition
-  conventions.
-
-### Required work
-
-1. Add a private worker-mode argument parser. It must accept only the internal
-   data produced by `SessionProcessLauncher`: workspace root, forum/session
-   IDs, and inherited control endpoint. Invalid internal invocations fail
-   safely without opening a session. The documented private invocation and
-   parser must both include the workspace root explicitly.
-2. Derive a distinct worker log filename from
-   `ApplicationConfig.log_file` before initializing logging. Include role and
-   process ID in the name; include forum/session IDs as structured log context,
-   not raw prompt/answer bodies.
-3. Start the control endpoint on the worker owner loop early enough that lobby
-   EOF during partial startup is observed. Convert EOF into an ordered
-   `LobbyGone` runtime event.
-4. Perform startup in the design order:
-   - Load application configuration from the supplied workspace root and
-     initialize worker logging.
-   - Construct runtime/event-loop infrastructure.
-   - Validate identifiers and open the session, acquiring its lease before
-     restore.
-   - Construct the controller.
-   - Bind cpp-httplib on the configured interface using an OS-assigned port
-     (`bind_to_any_port` or equivalent).
-   - Report one `ready` record with the actual port.
-   - Keep the control endpoint open and start/continue serving.
-   - Expose `ApplicationConfig.port` as `lobby_port` in session snapshots so
-     the browser can construct its return link from the worker page URL.
-   The initial implementation makes one atomic OS-assigned-port bind attempt.
-   It does not retry a general bind failure; configured port-range iteration
-   remains deferred.
-5. Map `SessionBusyError` to startup `busy`. Map all other pre-ready failures
-   to one bounded, presentation-safe `error` record where possible. Never send
-   exception internals or paths.
-6. If the control channel closes before readiness, or the readiness write
-   fails, clean partial startup: stop any listener, shut down/destroy any
-   controller, release the lease, and exit.
-7. After readiness, control EOF immediately enters the same idempotent shutdown
-   path as other triggers. It preempts the browser-disconnection deadline and
-   may skip the final SSE drain for prompt teardown.
-8. Add process signal handling that submits the same ordered shutdown request;
-   do not call controller methods from a signal callback.
-9. Close the worker control endpoint only after controller shutdown and lease
-   release are complete. Return stable process exit codes for orderly shutdown,
-   bad internal invocation, startup failure, and fatal runtime failure.
-10. Keep `web_main.cpp` limited to mode selection, configuration/logging
-    setup, component construction, top-level exception mapping, and exit code.
-
-### Likely files
-
-- `src/ui/web/worker_application.*`
-- `src/ui/web/parent_lifetime_watcher.*`
-- `src/ui/web/web_arguments.*`
-- `src/apps/web_main.cpp`
-- `tests/ui/web/session_worker_process_test.cpp`
-- updates to `src/apps/README.md` and `src/ui/web/README.md`
-
-### Tests and validation
-
-- A harness launches a real worker, receives ready/port, calls health and
-  snapshot, opens SSE, sends a non-generating command such as `/info`, and
-  closes it. It must not contact a real completion provider.
-- A held lease returns `busy` and no listener remains.
-- Invalid session, configuration, or bind failure returns safe `error` and
-  releases resources.
-- EOF during each partial-startup phase exits without a leaked process or
-  lease.
-- Specifically inject EOF after lease acquisition but before controller
-  construction, then prove another process can immediately acquire the lease;
-  companion-file existence alone must not affect the assertion.
-- EOF after ready shuts down the worker and releases the lease without waiting
-  for the browser-disconnection deadline.
-- Closing the SSE connection and allowing the applicable disconnect deadline
-  to expire shuts down the worker and releases the lease.
-- Worker log path differs from the configured base and includes role/process
-  identity.
-- Worker arguments and workspace paths containing spaces are handled.
-- Snapshot `lobby_port` matches the application configuration loaded from the
-  supplied workspace root; no external lobby URL is accepted or retained.
-
-### Completion criteria
-
-- The launcher can replace its deterministic child with a real session worker.
-- A worker treats loss of the control endpoint supplied by its parent as an
-  unconditional shutdown trigger.
-- All live session objects remain confined to the worker owner thread/process.
-
-### Not in this block
-
-- Normal lobby-mode listener.
-- Full create/open ready-port response from an end-user request.
-- Actual browser assets.
-
-## 15. Block 12 — Lobby process mode and end-to-end flow
+## 15. Block 12 — Complete server composition and bounded process shutdown
 
 ### Objective
 
-Compose the normal `chaweb` lobby process and prove the complete
-lobby → worker → ready-port response → REST/SSE flow with multiple
-different sessions.
+Wire the workspace, registry, routes, HTTP pool, signal notification, session
+runtimes, and one configured listener into the complete `chaweb` server, then
+implement bounded orderly process shutdown.
 
 ### Read first
 
-- `web-design.md` Sections 5, 6.1, 8, 10, 15–19, and 20.4.
-- Blocks 5, 6, and 11.
-- The shared test-workspace builder introduced in Block 3; extend it instead of
-  creating a second end-to-end workspace fixture.
-- Existing application composition roots and integration-test harnesses.
+- `web-design.md` Sections 5–6, 8.6, 14.5, 18–19, and Section 20.6.
+- Blocks 7–11.
+- Existing application configuration, logging, signal, and cpp-httplib server
+  setup.
 
 ### Required work
 
-1. Implement normal no-worker-flag lobby mode in `web_main.cpp` or a composed
-   `LobbyApplication`:
-   - Load environment and application configuration.
-   - Derive a lobby-specific role/process log filename and initialize logging.
-   - Construct `Workspace`.
-   - Configure automatic POSIX child reaping and start `WorkerControlLoop`.
-   - Construct and bind `LobbyServer` to configured host/port.
-   - Serve until a process shutdown signal or fatal lobby failure.
-2. Ensure the executable can reliably locate and spawn its own executable image
-   on Linux, macOS, and Windows. Do not assume the current working directory
-   contains `chaweb`.
-   - Windows lobby mode may retain its normal console, but every internal
-     session-worker launch must use the no-console policy from Block 4.
-3. Pass the worker the same workspace root, selected identifiers, and inherited
-   control endpoint. Pass no browser hostname or external lobby URL.
-4. Return `200 OK` with `{"port":<worker-port>}` only after the real worker has
-   acquired the lease, constructed its controller, bound its listener, and
-   reported ready.
-5. Immediately after the response is formed, ensure control-loop state for that
-   worker contains no session ID, worker port, browser request data, or URL.
-6. Support concurrent workers for different sessions. Racing attempts for the
-   same session may spawn two processes, but exactly one acquires the lease and
-   the other returns busy.
-7. Implement lobby shutdown in the required order:
-   - Reject launches.
-   - Stop the lobby HTTP listener.
-   - Close all starting/ready control endpoints.
-   - Close remaining control-loop resources and join its thread without
-     waiting for worker process termination.
-   - Stop logging and exit. Each worker detects EOF and is independently
-     responsible for cleanup and termination.
-8. Make unexpected lobby termination testable by using a parent harness that
-   can terminate the lobby and observe its worker independently.
-9. Update top-level README/app documentation with:
-   - How to launch `chaweb`.
-   - Required LAN/wildcard bind for phone access.
-   - Need to permit lobby and worker ports through the desktop firewall.
-   - The initial implementation uses unrestricted OS-assigned worker ports, so
-     firewall policy may need to permit the platform's ephemeral port range.
-     A configured worker-port range remains a deferred design parameter.
-   - Ephemeral worker URL behavior and return-to-lobby limitation.
-   - Trusted-network/no-auth warning.
-   - The fact that actual bundled browser UI remains a separate delivery item
-     if it has not yet been selected.
+1. Keep `web_main.cpp` limited to configuration/logging, `Workspace`, registry,
+   routes/server, signal notification, and top-level error handling.
+2. Run one invocation with one listener on `ApplicationConfig.host` and
+   `ApplicationConfig.port`. Remove/avoid internal mode flags and all
+   session-specific listener behavior.
+3. Size the cpp-httplib request pool and pending-request bound together with the
+   maximum registry-entry count, leaving documented headroom beyond maximum SSE
+   occupancy.
+4. Install process-level signal handling once. Use a safe notification path into
+   normal shutdown code; do not perform complex work in a signal handler.
+5. Implement shutdown order:
+   - Set the registry stopping flag and reject new opens.
+   - Stop accepting new requests and wake startup waiters.
+   - Request every running runtime's idempotent shutdown.
+   - Let opening owners reach their single commit point and resolve
+     `shutting_down` themselves.
+   - Drain executing commands; fail queued unstarted commands with
+     `server_stopping`.
+   - Join all owner threads under one process-wide grace deadline.
+   - On expiry, log unfinished session identities and terminate without running
+     destructors.
+   - Otherwise close/join the HTTP server and destroy registry, workspace, and
+     logging resources.
+6. Ensure clean and forced process exit both release all companion locks through
+   ordinary RAII or operating-system process cleanup.
+7. Add real-server fixtures using temporary workspaces and no real provider.
 
 ### Likely files
 
-- `src/ui/web/lobby_application.*`
 - `src/apps/web_main.cpp`
-- `tests/ui/web/chaweb_process_test.cpp`
-- `README.md`
-- `src/apps/README.md`
-- `src/ui/web/README.md`
+- `src/ui/web/http_server.*`
+- `src/ui/web/session_registry.*`
+- `src/ui/web/server_shutdown.*`
+- `tests/ui/web/process_web_server.cpp`
+- `tests/support/web_server_process.*`
 - `CMakeLists.txt`
 
 ### Tests and validation
 
-- Start lobby, list forums/sessions, open one, read the returned port, obtain
-  the worker snapshot, connect SSE, submit only non-generating input such as
-  `/info`, and close. This path must not contact a real completion provider.
-- Create a session, use its returned port, and verify it exists exactly once.
-- Exercise `session_created_but_busy`.
-- Run two different sessions concurrently on different worker ports.
-- Open the same session concurrently and observe one ready/one busy. Verify the
-  losing worker exits, leaves no zombie or control record, and does not retain
-  the session lease.
-- Verify second active SSE stream receives `browser_stream_in_use`.
-- Clean lobby shutdown closes all control endpoints and exits without waiting;
-  independently verify every cooperative worker observes EOF, exits, and
-  releases its lease.
-- Abrupt lobby loss makes every worker observe EOF and exit.
-- Make a ready test worker terminate abruptly through a worker-local test seam,
-  verify the lobby observes control EOF and its OS lease is released, then
-  reopen the same session successfully. Production lobby state must never gain
-  a child process handle or PID.
-- A replacement lobby can reopen after predecessor workers complete shutdown.
-- No-browser startup timeout exits an abandoned worker.
-- Ready responses contain only the worker port and never a `Location` header.
-- Worker snapshots contain the configured lobby port for the browser's return
-  link.
-- Lobby and worker log files do not collide.
+- Start one real server, use lobby/create/open/session routes, and verify every
+  URL stays on the configured origin.
+- Run two live sessions concurrently through one listener.
+- Clean shutdown stops sessions, joins owners/request threads, and releases
+  leases.
+- Shutdown racing an open never publishes `running` after the stopping flag and
+  returns `server_stopping` to waiters promptly, even for a wedged open.
+- Only the owner thread completes each startup result exactly once.
+- Shutdown during generation invokes ordinary controller cancellation/join.
+- A deliberately blocked owner causes process exit within the grace period and
+  is logged by identity.
+- Restart opens sessions previously leased by the terminated server.
 
 ### Completion criteria
 
-- The complete server-side chaweb architecture works as designed through real
-  processes and real loopback HTTP/SSE.
-- Several different sessions can run concurrently while one session remains
-  exclusive.
-- Stopping the lobby stops its workers.
+- `chaweb` is a usable one-process, one-listener server with several independent
+  live sessions.
+- Normal shutdown is orderly and stuck-thread shutdown is bounded.
+- No child process, per-session port, or control-channel implementation exists.
 
 ### Not in this block
 
-- Choosing or implementing the actual browser UI.
-- Worker rediscovery, reverse proxying, authentication, or stable/bookmarkable
-  worker URLs.
+- Internet-facing authentication/TLS.
+- Production browser application.
 
-## 16. Block 13 — Resource, race, and design-conformance audit
+## 16. Block 13 — Resource, network, logging, race, and conformance hardening
 
 ### Objective
 
-Prove that the completed server-side flow satisfies the design under resource
-pressure, process/thread races, and every shutdown phase, without leaking or
-double-closing native resources.
+Exercise the complete server under contention and enforce the resource, trust,
+observability, error, and isolation guarantees that are easy to miss in isolated
+feature blocks.
 
 ### Read first
 
-- The complete `web-design.md`, especially Sections 7–9, 13–14, 16, 19, and
-  20.
-- Blocks 1–12 and all current web/session/process tests.
-- Native-resource and shutdown documentation for the libuv and cpp-httplib
-  versions pinned by the build.
+- `web-design.md` Sections 8.6, 9.7–9.8, 15–17, and all of Section 20.
+- Blocks 1–12 and their tests.
+- cpp-httplib limit/timeout facilities and project logging conventions.
 
 ### Required work
 
-1. Create a design-conformance checklist from `web-design.md`
-   Sections 20.1–20.6. For the resource, concurrency, process, SSE, and
-   lifecycle items in this block, point each item to an existing test or add
-   the missing test. Leave network/logging/platform/documentation items marked
-   for Block 14 rather than expanding this block.
-2. Audit the lifetime of every native or concurrent resource:
-   - Session lock descriptor/handle.
-   - Temporary process/thread handles used only during platform spawn.
-   - Both endpoints of every worker-control channel.
-   - libuv loop, timer, async, and pipe handles.
-   - HTTP listener, task-pool work, SSE writer, and socket state.
-   - Owner command envelopes, result waiters, SSE in-flight/pending mailbox
-     payloads, owner thread, and lobby control-loop thread.
-   Prove that every normal, exception, timeout, race, and shutdown path releases
-   each resource once and wakes every waiter.
-3. Validate handle inheritance with more than one simultaneous worker. On
-   POSIX, audit close-on-exec and stdio-slot behavior. Keep the Win32
-   inheritable-handle review for Block 14's platform pass, but retain
-   platform-neutral regression tests here.
-4. Stress bounded resources using injectable reduced limits:
-   - HTTP body/prompt limits.
-   - HTTP task/connection pressure with one long-lived SSE stream.
-   - Owner command timeouts, late completion, fair scheduling, and idempotent
-     shutdown.
-   - SSE blocked-writer mailbox replacement, append merging, snapshot rebuild,
-     mismatch recovery, and disconnect.
-   - Worker startup, browser disconnection, and final-SSE-drain deadlines.
-   Register longer cases with the `web_stress` CTest label.
-   This stress work is per worker and per launch lifecycle; do not add a global
-   worker cap or launch-rate limiter, which the design explicitly leaves out of
-   the initial trusted-LAN application.
-5. Exercise shutdown and callback races repeatedly:
-   - Lobby shutdown during spawn, lease acquisition, restore, controller
-     construction, bind, and readiness write.
-   - A worker that reports ready and exits before or during ready-result
-     delivery.
-   - Browser disconnect expiry concurrent with lobby EOF and process signal.
-   - Worker crash followed by automatic child disposal, control EOF, and lease
-     reacquisition.
-   - SSE close callback after a replacement stream.
-   - Agent completion changing the disconnect deadline while a timer or
-     controller shutdown is concurrent.
-   - Owner command timeout and late completion concurrent with global shutdown.
-6. Add one named real-process test using the shared test workspace and a
-   deterministic fake provider:
-   - Launch a real worker and connect its SSE stream.
-   - Submit a real prompt and wait until fake streamed generation is active.
-   - Disconnect SSE before the fake provider finishes.
-   - Release the fake provider to complete the response while no browser is
-     connected.
-   - Verify the terminal result is persisted.
-   - Reconnect during the permitted lifetime or reopen after unattended worker
-     shutdown, then verify the authoritative snapshot contains the completed
-     response.
-   Register the test as `web_process` or `web_stress`. It must not contain
-   credentials, use the network, or fall back to a real completion provider.
-7. Add counters, debug assertions, or test-only observers where needed to
-   prove one-time transitions and cleanup. Do not expose a production worker
-   registry or browser attachment protocol merely for testing.
-8. Run an existing sanitizer or dynamic-analysis preset when the repository
-   provides one. Focus on callbacks retaining destroyed launch records,
-   command-result waiters, HTTP shutdown, thread joins, SSE mailbox payloads,
-   and libuv handle closure. If no such preset exists, record that fact in the
-   completion report; adding general sanitizer/CI infrastructure is optional
-   and its absence does not block this block.
-9. Fix every correctness or cleanup defect found. Update directly affected
-   architecture documentation when implementation details change, but leave
-   the final cross-document reconciliation to Block 14.
+1. Enforce request-body, prompt, header, connection, pending-request, queue, and
+   timeout limits before expensive parsing or enqueue.
+2. Require expected content types on mutations and reject a present mismatched
+   `Origin`/`Host` with `403 forbidden_origin`. Emit no permissive CORS headers
+   and add no Host allowlist.
+3. Treat transcript, reasoning, notices, labels, and provider messages as
+   untrusted serialized text.
+4. Verify pool sizing under the maximum number of connected SSE streams; normal
+   requests must continue making progress.
+5. Add server-scoped logging for startup, the bound address, and the configured
+   limits, and session-tagged logging for open outcomes, registry transitions,
+   lease lifecycle, reattach, SSE connect/disconnect/conflict/collapse counts,
+   generation terminal state, deadlines, fatal containment, limit rejection,
+   shutdown, and stuck owners.
+6. Exclude prompt/answer bodies and secrets from default logs. Distinguish
+   server-scoped records from session-scoped ones.
+7. Audit all JSON routes against the one error envelope and exact stable codes.
+8. Add adversarial races:
+   - Same-key and different-key opens at/around the limit.
+   - Open versus unload/reopen/sweep.
+   - Command enqueue versus session/process stopping.
+   - SSE replace versus stale close.
+   - Disconnect deadline versus reconnect/generation transition.
+   - Fatal error in one session while another generates.
+9. Add load tests for multiple sessions, independent queues/mailboxes/leases, and
+   concurrent create/list/open/command/unload.
+10. Keep long tests behind `web_stress`; keep deterministic focused versions in
+    the ordinary suite.
 
 ### Likely files
 
-Changes may span prior web/session implementation files, test helpers, process
-and stress tests, sanitizer configuration, and narrowly affected architecture
-documentation. Do not introduce new product features.
+- route/server/runtime/registry files from Blocks 5–12
+- `tests/ui/web/process_web_server.cpp`
+- `tests/ui/web/stress_web_sessions.cpp`
+- logging/test-support helpers
+- `CMakeLists.txt`
 
 ### Tests and validation
 
-Run the fast suite and the focused process/stress labels separately:
-
-```bash
-cmake --preset console
-cmake --build --preset console
-ctest --test-dir build/console --output-on-failure \
-    -LE "web_process|web_stress"
-ctest --test-dir build/console --output-on-failure -L web_process
-ctest --test-dir build/console --output-on-failure -L web_stress
-```
-
-Also run an existing applicable sanitizer or dynamic-analysis target. If none
-exists, record “not available” rather than treating the block as incomplete.
-Record any native backend that cannot be exercised on the current host for
-Block 14.
+- Every JSON failure has status >=400 and exactly `error.code`/`error.message`.
+- Invalid and nonexistent identifiers share `404 not_found` and cannot traverse
+  through raw or percent-encoded paths.
+- Cross-origin mutation checks behave exactly as designed for loopback, LAN, and
+  mDNS authorities.
+- Maximum connected streams do not starve health, lobby, snapshot, or command
+  requests.
+- A stalled SSE reader releases its HTTP thread within the write timeout.
+- Fatal persistence failure unloads one session and leaves others usable and
+  reopenable.
+- Artificial owner blocking causes timeouts only for that session until released
+  or the process restarts.
+- Concurrent logging carries correct identities and no prompt/answer content.
+- Repeated open/unload cycles leave no leaked owner, agent, HTTP, descriptor,
+  handle, lease, or registry entry.
 
 ### Completion criteria
 
-- Every resource/concurrency/lifecycle item from the design checklist points to
-  a passing test.
-- No known leaked process, lease, thread, socket, waiter, queue item, or libuv
-  handle remains.
-- Race tests demonstrate idempotent shutdown, EOF callback handling, and
-  automatic POSIX child disposal.
-- The ordinary unit suite remains fast; longer tests are isolated by label.
-- The fake-provider disconnect/persist process test passes without external
-  network or credentials.
-- Existing sanitizer/dynamic-analysis targets pass, or their absence is
-  explicitly recorded without blocking completion.
+- Resource use is bounded by documented settings and one payload-size caveat,
+  not by request arrival rate.
+- Cross-session isolation holds under race and load tests.
+- Network/error/logging behavior matches the trusted-LAN design exactly.
 
 ### Not in this block
 
-- Final network-security, log-content, native-platform, or documentation audit.
-- Browser technology, authentication, reverse proxying, worker rediscovery, or
-  multi-page support.
+- Authentication, TLS, DNS-rebinding defense, quotas, or per-client rate limits.
+- Whole-transcript paging/windowing.
 
-## 17. Block 14 — Network, logging, platform, and documentation audit
+## 17. Block 14 — Platform, sanitizer, documentation, and final audit
 
 ### Objective
 
-Complete the design-conformance checklist at the external and operational
-boundaries, verify all supported native backends as far as the available
-environment permits, and reconcile documentation with the implementation.
+Verify portable lease/server behavior, run available sanitizers and platform
+builds, reconcile documentation with implementation, and close every remaining
+design-conformance gap without expanding scope.
 
 ### Read first
 
-- The complete `web-design.md`, especially Sections 8.3, 15–18, 20, and 22.
-- The Block 13 conformance checklist and its report of unexecuted native
-  backends.
-- Current platform CI configuration, if present.
-- All user and architecture documentation describing configuration, logging,
-  networking, and executable behavior.
+- `web-design.md` Sections 18–23 and the complete testing strategy.
+- This complete plan and all changes from Blocks 1–13.
+- `src/README.md`, component READMEs, build documentation, and CI definitions.
 
 ### Required work
 
-1. Complete the remaining `web-design.md` Section 20 checklist entries and
-   resolve any gap rather than merely documenting it.
-2. Audit the network boundary:
-   - Exact ready-port JSON and rejection of invalid ports.
-   - Malformed and mismatched `Host`/`Origin` rejection and origin comparison
-     for mutations.
-   - Absence of permissive CORS behavior.
-   - Content-type, body, header, connection, and timeout limits.
-   - Safe MIME types and asset traversal protection.
-   - Untrusted labels, transcript text, reasoning, notices, and provider
-     errors remain inert data.
-   - Health and error responses disclose no sensitive state.
-3. Audit diagnostic logging:
-   - Lobby and every worker derive unique role/process-specific files.
-   - Records include PID, role, and worker forum/session context where useful.
-   - Launch/startup, control EOF, lease, bind, stream, lifecycle, fatal error,
-     and shutdown events are diagnosable.
-   - Prompts, answers, reasoning, credentials, secrets, internal paths, and
-     raw exception bodies are absent by default.
-4. Build and test on Linux, macOS, and Windows where runners are available.
-   Specifically audit:
-   - POSIX lock and Win32 `LockFileEx` behavior.
-   - POSIX close-on-exec and Win32 explicit inherited-handle lists.
-   - Duplex libuv child-pipe behavior and parent EOF on every platform.
-   - POSIX `SA_NOCLDWAIT` behavior with no zombies or waitable worker status.
-   - Windows `CREATE_NO_WINDOW` worker creation, absence of inherited console
-     standard handles, and immediate closure of process/primary-thread handles.
-     Confirm that lobby mode may continue using its own console without any
-     worker opening an additional console window.
-   - Executable self-location and paths containing spaces/non-ASCII text.
-5. If the current environment offers only one platform, add or update CI-ready
-   platform jobs and compile-time coverage. Clearly list which native tests
-   were not executed locally; do not claim cross-platform runtime verification
-   without evidence.
-6. Reconcile `README.md`, `src/README.md`, `src/session/README.md`,
-   `src/ui/web/README.md`, `src/apps/README.md`, `web-design.md`, and this plan.
-   Record:
-   - Concrete timeout, capacity, and size defaults and whether each is constant
-     or configuration.
-   - Trusted-network/no-auth exposure.
-   - LAN bind and firewall requirements.
-   - The use of unrestricted OS-assigned worker ports and possible need to
-     permit the platform's ephemeral range.
-   - The configured worker-port range as deferred work, if still unimplemented.
-   - Ephemeral worker URLs, no rediscovery, and return-to-lobby limitations.
-   - Browser implementation as a separate remaining delivery item.
-7. Confirm CTest labels and documented commands keep unit, web process, and
-   web stress tests selectable independently.
-8. Update the conformance checklist with final test/file references and leave
-   no unexplained difference between implemented behavior and
-   `web-design.md`.
+1. Run the complete ordinary, `web_process`, and `web_stress` suites on Linux.
+2. Run AddressSanitizer/UndefinedBehaviorSanitizer and ThreadSanitizer builds where
+   supported, emphasizing concurrent open, command, generation, SSE, unload, and
+   shutdown.
+3. Build and test the native companion-file lease backend on macOS and Windows
+   runners where available.
+4. Verify `chaweb` has one invocation, one listener, no worker-process mode, and
+   no platform-specific console/process-launch code left from the rejected
+   architecture.
+5. Audit ownership and destruction order for runtime, notifier, controller,
+   journal, lease, mailbox, session handle, registry entry, and HTTP pool.
+6. Audit every design test bullet against an automated test or an explicitly
+   documented manual/platform verification.
+7. Update `src/README.md`, relevant component READMEs, user/build documentation,
+   and CMake/CI labels to describe the implemented composition and tests.
+8. Check that configuration exposes only values operators genuinely need; keep
+   the rest as documented implementation constants. Ensure session limit and
+   request-pool sizing cannot drift into unsafe independent defaults.
+9. Remove obsolete process-per-session terminology, launch/control artifacts,
+   per-session port settings, and stale error codes from source, tests, and the
+   web documentation set.
+10. Record any platform or sanitizer not exercised; do not claim unrun coverage.
 
 ### Likely files
 
-Changes may span network/logging helpers, native platform backends, CMake/CI
-configuration, contract tests, and documentation. Do not use the audit to
-introduce a new architecture or browser stack.
+- code/tests from prior blocks as findings require
+- `src/README.md` and component READMEs
+- `docs/web-design.md`, `docs/brief-web-design.md`, and this plan
+- `CMakeLists.txt`, presets, and CI workflows
 
 ### Tests and validation
 
-Run the fast suite and both web labels on each available platform:
-
-```bash
-cmake --preset console
-cmake --build --preset console
-ctest --test-dir build/console --output-on-failure \
-    -LE "web_process|web_stress"
-ctest --test-dir build/console --output-on-failure -L web_process
-ctest --test-dir build/console --output-on-failure -L web_stress
-```
-
-Add focused native-backend and network-contract commands when they are not
-covered by those labels. Record platform results in the completion report.
+- Full Linux configure/build/test plus labeled suites.
+- Available macOS and Windows builds/tests.
+- Available ASan/UBSan/TSan runs.
+- Search for obsolete process/port/control terminology and unsupported routes.
+- Verify TUI and console behavior remains unchanged except for explicit session
+  lease contention.
+- Verify documentation route tables, codes, lifecycle states, and ownership
+  statements match production code and tests.
 
 ### Completion criteria
 
-- Every bullet in `web-design.md` Section 20 points to a passing test or to the
-  separately deferred browser implementation where the design explicitly
-  places it.
-- Network and logging boundaries satisfy the trusted-LAN design without
-  leaking sensitive information.
-- All supported platforms compile, and runtime results are recorded for every
-  available runner.
-- Code and documentation agree on limits, ports, logging, exposure, lifecycle,
-  errors, and unsupported scenarios.
-- The backend is ready for the separately selected browser implementation.
+- All automated tests pass on available platforms and sanitizers.
+- No known ownership race, leak, cross-session state, or design contradiction
+  remains.
+- The repository documentation consistently describes the thread-per-session
+  server and records any verification not run.
+- Browser implementation remains the only intentionally deferred product work.
 
 ### Not in this block
 
-- React, TypeScript, or any other browser technology decision.
-- Authentication, TLS termination, reverse proxying, worker rediscovery,
-  multi-page session support, or an integrated multi-session chat shell.
+- New product behavior or redesign prompted only by hypothetical future scale.
+- Browser framework selection or UI implementation.
 
 ## 18. Deferred browser implementation
 
-The numbered blocks intentionally stop at a complete and tested server-side
-application boundary. A separate browser-design discussion must decide how to
-implement the lobby and chat pages using a technology that LLMs can generate
-and maintain reliably.
+The server completed by Blocks 1–14 exposes the asset boundary, REST API, SSE
+contract, and framework-independent browser behavior required by the detailed
+design. A separate design and plan must choose and implement:
 
-That later plan must consume, rather than redesign, these established
-contracts:
+- Browser language/framework/build tooling.
+- Lobby and chat page component structure.
+- The two-step create-then-open interaction and retry presentation.
+- Streaming `fetch`/SSE parsing, bounded conflict retry, target/sequence mismatch
+  reconnect, and control enablement after the initial snapshot.
+- Prompt-editor draft behavior, typed Stop/default-agent controls, and
+  request-scoped command feedback.
+- Transcript/reasoning rendering, untrusted-text handling, styling,
+  accessibility, responsive layout, and mobile behavior.
 
-- Lobby listing, create, open, ready-port, and error routes.
-- On a successful open/create response, construct a fresh URL from the lobby
-  page URL, replace only its port with the returned port through the URL API,
-  clear lobby path/query/fragment state, and navigate with `location.assign()`;
-  test hostname, IPv4, and bracketed IPv6 page URLs.
-- Worker snapshot, raw-input, typed Stop, and stable-ID default-agent routes.
-  Clear and off-record controls submit `/clear`, `/hide-on`, `/hide`, and
-  `/hide-off` as synthetic raw input without replacing or clearing the editor
-  draft.
-- One active SSE stream with full-snapshot reconnect.
-- Apply answer and reasoning appends only when their target and UTF-8
-  `length_before` match. On mismatch, close the old stream and use bounded
-  reconnect for a fresh snapshot rather than racing a REST fetch against it.
-- Bounded retry for a reload that briefly receives
-  `browser_stream_in_use`.
-- Disabled controls and a clear conflict message when another stream remains.
-- Stop, tab-close/disconnect expiry, and return-to-lobby behavior; there is no
-  Close control or unload/beacon close request.
-- A normal return link constructed through the URL API from the worker page's
-  current URL and snapshot `lobby_port`.
-- Safe rendering of all server-provided text as untrusted data.
-
-Until that decision is made, fixture assets used by server tests are not a
-product UI and must not grow into an accidental framework choice.
+That future work must consume the contracts in `web-design.md`; it must not
+reopen controller ownership, registry lifecycle, session exclusivity, or the
+single-origin architecture merely to accommodate a UI choice.

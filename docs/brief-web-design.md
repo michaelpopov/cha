@@ -12,21 +12,22 @@ The detailed design is available in [`web-design.md`](web-design.md).
 `chaweb` is a trusted-network web interface for browsing forums, opening stored
 chat sessions, and interacting with agents.
 
-It uses two kinds of processes:
+It runs as one server process with one configured listener and one browser
+origin. The lobby is the server's root page and routes, not a separate process.
+Each live session has an independent runtime and a permanent owner thread that
+exclusively owns its `SessionController`, transcript, journal, wake notifier,
+browser connection state, and SSE mailbox. The controller continues to own its
+session-local agent workers.
 
-- A **lobby process** serves the starting page, lists forums and sessions,
-  creates sessions, and launches workers.
-- A **session worker process** serves one active chat session and owns its
-  controller, transcript, persistence, agent activity, and web API.
+A process-wide session registry maps `forum/session` identities to live
+runtimes. It serializes opening and unloading, prevents duplicate in-process
+controllers, and makes an already-live session reachable again. Several
+different sessions can be live concurrently, but each stored session can be
+open in only one application process at a time.
 
-Each worker listens on an available port. After a worker is ready, the lobby
-returns that port as JSON. The lobby page replaces the port in its current URL
-through the browser URL API and navigates to the worker. Browser traffic then
-goes directly to that worker; the lobby does not proxy chat requests or retain
-session routing information.
-
-Several sessions can be active at once because each has an independent worker.
-A single stored session can be open in only one application process at a time.
+Every page and API is served from the same host and port. Session pages use
+stable paths such as `/s/{forum}/{session}/`; opening returns that path and the
+browser navigates without changing origin or reconstructing a URL.
 
 The browser technology, component system, styling, and visual design are
 defined separately.
@@ -35,265 +36,345 @@ defined separately.
 
 The lobby provides:
 
-- Forum and stored-session discovery.
-- Creation of stored sessions without opening them in the lobby.
-- Launching a worker for a new or existing session.
-- Returning a worker port only after the worker is ready.
-- Retaining each ready worker's control-pipe endpoint so both processes can
-  detect peer exit.
+- Forum and stored-session discovery, including advisory live-session marking.
+- Creation of a stored session without opening it.
+- Explicit opening of a new or existing stored session.
+- Reattachment to a session already live in this server process.
+- Same-origin navigation to the session's stable path after it is ready.
 
-Workers are fire-and-forget processes. On POSIX, the lobby requests automatic
-child reaping and starts workers with `posix_spawn()`. On Windows, it starts
-workers with `CreateProcessW()` and `CREATE_NO_WINDOW`, then immediately closes
-the returned native process handles. Session workers never open visible console
-windows or inherit the lobby's console streams; lobby mode may use its normal
-console. The lobby retains no worker PID or process handle and never waits for,
-reaps, or force-terminates a worker. The private worker invocation receives the
-workspace root explicitly so it loads the same application configuration and
-session data as the lobby.
-
-The session worker provides:
+A live session provides:
 
 - A complete session snapshot for initial display or recovery.
-- Submission of ordinary prompts, slash commands, and `@` addressing using the
-  shared text-input grammar.
+- Submission of ordinary prompts, slash commands, and `@` addressing through
+  the shared text-input grammar.
 - Typed controls for Stop and stable-ID default-agent selection. Clear and
   off-record controls use the shared text-input grammar.
 - Live transcript and generation updates through Server-Sent Events (SSE).
-- Reconnection and state resynchronization.
-- Disconnect-driven and automatic lifecycle management.
+- Reconnection and authoritative state resynchronization.
+- Continued agent-event processing and persistence while the browser is slow or
+  disconnected.
+- Disconnect-driven unloading and session-local fatal-error containment.
 
 ## Expected behavior
 
-### Opening and creating sessions
+### Creating and opening sessions
 
-The lobby launches a new worker for each open request. The worker acquires the
-session, restores its state, starts its listener, and reports readiness. Only
-then does the lobby return `{"port":<worker-port>}` to the browser for
-navigation.
+Creating and opening are separate lobby operations. Creation atomically
+publishes a stored session and returns `201 Created` with its identity. It does
+not initialize providers, acquire a session lease, construct a controller, or
+start a live runtime.
 
-Creating a session stores it first and then launches its worker. If another
-process opens the newly created session first, the session remains created and
-the lobby reports that it could not be opened. It does not create a replacement
-session automatically.
+The page keeps the returned identity and then submits an ordinary open request.
+If opening fails, the session remains stored and visible in the listing; the
+page may retry the open but must not repeat creation. This ensures that no
+failure leaves behind a session whose identity was never returned to the
+browser.
+
+Opening goes through the session registry:
+
+- A `running` entry returns its existing session path.
+- A `starting` entry shares the same startup result with all waiters.
+- A `stopping` entry reports a conflict until teardown finishes.
+- An absent entry reserves capacity and starts one owner thread.
+
+The owner thread acquires the cross-process lease, restores the session, and
+constructs the controller before publishing the runtime as `running`. An open
+deadline bounds each HTTP request, not the underlying open; a timed-out open may
+still complete and be found by a later request.
+
+Navigating directly to a session URL never opens it. If its runtime is no longer
+live, the page explains that the session is not open and links back to the
+lobby.
 
 ### Session exclusivity
 
-Every stored session has a companion lock file. An operating-system lock held
-on that file means the session is in use; the file's mere existence does not.
+Every stored session has a deterministic companion lock file. An exclusive
+operating-system lock held on that file means the session is in use; the file's
+mere existence does not.
 
-The lock applies to all frontends, including `cha`, `chacon`, and `chaweb`.
-Opening an active session fails immediately with a clear “session already in
-use” result. The operating system releases the lock if the owning process
-exits or crashes.
+The lease applies to `cha`, `chacon`, and `chaweb`. It is acquired before
+restoring session state, held through controller shutdown, and released
+automatically if the process exits or crashes. A held lease makes another
+process fail immediately with a clear `session_busy` result.
+
+Within `chaweb`, the registry is the first line of exclusivity. It inserts a
+`starting` entry before slow open work begins, so concurrent requests for the
+same session can never construct two runtimes. The operating-system lease is the
+backstop against other processes.
+
+### Thread ownership and registry lifetime
+
+HTTP request threads have no session affinity and never access a controller
+directly. They resolve an owning session handle, enqueue an owning typed command,
+wake the session's owner loop, and wait within a bounded completion deadline.
+Borrowed transcript views, spans, and domain references never cross the owner
+thread boundary.
+
+The registry tracks `starting`, `running`, and `stopping` entries. Every entry
+counts against the configured session limit because all three states still own
+or are acquiring significant resources. A session handle keeps a runtime alive
+for an in-flight request even after registry removal.
+
+Finished entries are reclaimed in two phases: the registry removes them under
+its mutex, then joins their threads and releases runtime references after
+unlocking. No controller call, socket write, shutdown, thread join, or runtime
+destruction occurs while the registry mutex is held.
+
+The number of registry entries is bounded. The cpp-httplib request pool is sized
+to that limit plus headroom for commands, snapshots, lobby requests, and assets,
+because each connected SSE stream occupies one request thread.
 
 ### Browser usage
 
-A worker supports one interactive browser page at a time. The first SSE stream
-is accepted; another is rejected while it remains active. A rejected page
-disables its controls and explains that the session is already open elsewhere.
+One interactive browser page per live session is the supported model. The first
+SSE stream is accepted; another is rejected with `browser_stream_in_use` while
+the first remains active. A rejected page disables its controls and explains
+that the session is already open elsewhere.
 
 This is a lightweight usage rule for a personal application, not an
-authentication or browser-identity system.
+authentication or browser-identity system. REST requests carry no attachment
+IDs, page IDs, epochs, or browser-storage credentials.
 
-Reloading or reconnecting may briefly race with cleanup of the previous SSE
-connection. The browser retries for a short, bounded period. Each accepted
-connection starts with a full current snapshot, so reconnecting does not depend
-on replaying old events.
+The page consumes SSE with `fetch` and a streaming reader rather than
+`EventSource`, allowing it to read a rejected stream's HTTP status and error
+body and to own reconnection behavior. Reloading or reconnecting may briefly
+race with cleanup of the previous stream, so the page retries for a short,
+bounded interval. Every accepted connection starts with a full snapshot.
 
 ### Commands and updates
 
 Commands use ordinary HTTP requests. Model output and session changes are sent
-to the browser over SSE.
+to the browser over the session's SSE stream.
 
-`POST /api/v1/input` accepts the supported text grammar shared with the
-terminal frontends, including ordinary prompts, leading `@Name` addressing,
-`/mcast`, `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/stop`, and
-default-agent selection.
+The raw-input route accepts the supported grammar shared with the terminal
+frontends, including ordinary prompts, leading `@Name` addressing, escaped
+`@@`, `/mcast`, `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/info`, `/agents`,
+`/stop`, and `/@Name` default-agent selection.
 
-Clear and off-record buttons submit `/clear`, `/hide-on`, `/hide`, and
-`/hide-off` through the raw-input endpoint without replacing or clearing an
-existing prompt draft. Stop remains a typed action so cancellation is
-out-of-band from input submission. Default-agent selection remains typed and
-uses a stable persona ID because valid multi-word display names cannot always
-be represented by the whitespace-delimited `/@Name` command. Both typed
-actions use the same authoritative session semantics as text commands.
+Clear and off-record buttons submit their exact grammar strings without
+replacing or clearing an existing prompt draft. Stop remains a typed action so
+cancellation is independent of editor input. Default-agent selection remains
+typed and uses a stable persona ID because valid multi-word display names cannot
+always be represented by the whitespace-delimited `/@Name` command.
 
-The worker continues processing and persisting agent events while the browser
-is disconnected or slow. If the browser misses updates, it replaces its local
-state from a new snapshot.
+A command accepted by the queue has an owning completion object. If its response
+deadline expires, the server returns `command_timeout` but does not cancel the
+command or stop the session. The outcome is unknown, so the browser must not
+retry automatically. In contrast, `command_queue_full`, `session_not_live`, and
+`server_stopping` prove that a rejected or drained command did not execute.
 
-### State consistency
+Command responses may contain `clear_input` and an optional request-scoped
+notice. They do not invent an `applied` field. The snapshot stream is the only
+source of the page's current notice and all other session state, so a delayed
+HTTP response cannot overwrite a newer snapshot.
 
-Snapshots contain owning, presentation-oriented data rather than database or
-internal C++ structures. They include session and forum information, personas,
-the default agent, transcript entries, generation state with an optional stable
-foreground request ID and streamed reasoning, the current notice, worker
-coarse lifecycle phase, and the configured lobby port for a return link.
+### State consistency and SSE
 
-SSE uses only complete `snapshot` payloads and text `append` payloads. An
-append targets an established answer entry or reasoning stream and carries its
-UTF-8 byte length before the new text. A mismatch closes the old stream and
-reconnects for a fresh snapshot. SSE heartbeats do not change session state.
+Snapshots contain owning, presentation-neutral data rather than database or
+borrowed C++ structures. They include forum and session identity, personas, the
+default agent, transcript entries, generation state with a stable request ID and
+streamed reasoning when active, the current notice, and coarse lifecycle state.
+They contain no host, port, or lobby address; return-to-lobby is the path `/`.
 
-### Worker lifetime
+SSE has exactly two state-bearing event types:
 
-A worker remains tied to the lobby that created it. If the lobby shuts down or
-crashes, its workers detect the lost control connection, stop their sessions,
-release their locks, and exit.
+| Event | Meaning |
+| --- | --- |
+| `snapshot` | Complete replacement state, sent on connection and every structural change. |
+| `append` | Text appended to an established answer entry or reasoning stream. |
 
-After startup, neither side sends control messages. Both sides keep an
-asynchronous read active only to detect EOF. Worker EOF lets the lobby close
-its local endpoint and forget the control record. Lobby EOF makes the worker
-responsible for orderly cleanup and exit. A defective worker that does not
-react to EOF cannot be force-terminated by the lobby and may remain alive until
-it exits or is stopped externally.
+An append identifies its answer-entry or reasoning target and carries `text`
+plus a per-target `seq` counter. A snapshot resets the target counter to zero.
+If the target or sequence does not match, the browser discards the stream and
+uses the ordinary reconnect path to obtain a fresh snapshot. The sequence is
+not a byte offset, avoiding UTF-8 versus JavaScript UTF-16 length mismatches.
 
-A worker may also stop because:
+The SSE writer may hold one immutable in-flight payload, while the per-session
+mailbox holds at most one replaceable pending payload. Compatible appends merge;
+structural or ambiguous changes replace pending state with a current snapshot.
+The owner thread never waits for network output, and no presentation backlog is
+retained while disconnected.
 
-- Its browser-disconnection deadline expires.
-- An accepted command misses its generous completion deadline.
-- A fatal persistence or runtime failure occurs.
-- The application receives a shutdown signal.
+SSE comment heartbeats help detect dead idle connections. Socket writes use a
+bounded lack-of-progress timeout so a browser that stops reading cannot occupy a
+request thread or the session's stream slot indefinitely. No event IDs, replay
+log, or `Last-Event-ID` behavior is used.
 
-Browser absence uses no multi-state lifetime machine. At worker readiness or a
-matching SSE close, the worker records `disconnected_since`. While disconnected
-it applies one rule:
+### Session lifetime and failures
+
+When a runtime becomes `running`, it starts disconnected and records
+`disconnected_since`. Accepting its SSE stream clears that timestamp. Closure of
+the matching stream records a new timestamp; duplicate or stale close callbacks
+cannot detach a newer stream because connection IDs are session-local.
+
+While disconnected, one rule determines unloading:
 
 ```text
 deadline = is_generating() ? orphan_limit : idle_grace
+if now - disconnected_since >= deadline: begin_shutdown()
 ```
 
-Both limits are measured from `disconnected_since`; `orphan_limit` must be at
-least `idle_grace`. The worker reevaluates the rule whenever generation state
-changes. Active generation and persistence continue until the applicable
-deadline so the page can reconnect. Lobby loss triggers shutdown immediately.
+Both limits are absolute durations from `disconnected_since`, and
+`orphan_limit` is at least `idle_grace`. Generation and persistence continue
+while disconnected until the applicable deadline. A reconnect before shutdown
+begins cancels the deadline and receives a fresh snapshot.
 
-When orderly shutdown begins while SSE remains writable, the worker sends a
-best-effort final snapshot with lifecycle `stopping` and a safe reason. A slow
-browser cannot delay shutdown beyond the bounded final drain deadline.
+The web interface has no close endpoint or Close control. Tab closure, reload,
+navigation, browser failure, network loss, and device suspension all appear as
+SSE disconnection, so closing a tab does not promise immediate lease release.
 
-The web interface has no close endpoint or Close control. Closing the tab is
-observed only as SSE disconnection, which is indistinguishable from reload,
-navigation, browser failure, network loss, or device suspension. The worker
-therefore ends only after the disconnect lifetime rule permits it; tab closure
-does not guarantee immediate release of the session lock.
+A thrown fatal session error is caught at the owner-thread boundary. That
+session publishes a best-effort stopping snapshot, shuts down its controller,
+releases its lease, and unloads; other live sessions continue. Undefined
+behavior, `std::terminate`, `std::abort`, and unrecoverable heap exhaustion remain
+process-fatal.
+
+An owner thread that stops responding cannot be killed safely in process. Its
+session remains live and leased, and later commands time out until `chaweb` is
+restarted. Process shutdown has a bounded grace period and exits immediately if
+such a thread cannot be joined, ensuring that restart remains available.
 
 ## HTTP API structure
 
-The API is versioned under `/api/v1`. The bundled browser and server are
-released together, so the first version is not a stable third-party API.
+The bundled browser and server are released together, so the first API version
+is not a stable third-party contract.
 
 ### Lobby API
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /health` | Report lobby liveness. |
+| `GET /` | Serve the lobby page. |
+| `GET /health` | Report server liveness and the live-session count. |
 | `GET /api/v1/forums` | List forums and display metadata. |
-| `GET /api/v1/forums/{forum}/sessions` | List stored sessions in a forum. |
-| `POST /api/v1/forums/{forum}/sessions` | Create a session, launch its worker, and return its ready port. |
-| `POST /api/v1/forums/{forum}/sessions/{session}/open` | Launch a worker for an existing session and return its ready port. |
+| `GET /api/v1/forums/{forum}/sessions` | List stored sessions and mark which are live. |
+| `POST /api/v1/forums/{forum}/sessions` | Create a stored session and return its identity without opening it. |
+| `POST /api/v1/forums/{forum}/sessions/{session}/open` | Open or reattach to a session and return its path. |
 
 Forum and session identifiers are validated as application identifiers and are
-never used directly as filesystem paths.
+never treated as filesystem paths. Creation returns an owning session summary;
+opening returns `{"path":"/s/{forum}/{session}/"}` only after the runtime is
+published as `running`.
 
-### Session-worker API
+### Session API
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /health` | Report worker readiness, coarse lifecycle phase, and stream presence. |
-| `GET /api/v1/session` | Return the complete current snapshot. |
-| `POST /api/v1/input` | Submit one line through the shared input grammar. |
-| `POST /api/v1/actions/stop` | Stop active generation. |
-| `POST /api/v1/actions/default-agent` | Change the run-local default agent. |
-| `GET /api/v1/events` | Open or reconnect the SSE update stream. |
+| `GET /s/{forum}/{session}/` | Serve the live session's chat page. |
+| `GET /s/{forum}/{session}/api/v1/session` | Return the complete current snapshot. |
+| `POST /s/{forum}/{session}/api/v1/input` | Submit one line through the shared input grammar. |
+| `POST /s/{forum}/{session}/api/v1/actions/stop` | Request cancellation of active generation. |
+| `POST /s/{forum}/{session}/api/v1/actions/default-agent` | Change the run-local default agent. |
+| `GET /s/{forum}/{session}/api/v1/events` | Open or reconnect the SSE update stream. |
 
-Command responses use owning JSON values and may report whether the submitted
-input should be cleared and an optional notice. They do not invent an
-`applied` field that is absent from `SessionUpdate`. Snapshots are authoritative
-for the page's current notice; a delayed HTTP response notice is request-scoped
-and cannot overwrite newer snapshot state.
+There is no per-session health or status route. A non-live page route serves the
+not-open page; non-live API and SSE requests return `session_not_live`.
 
-### SSE events
+### Responses and errors
 
-The update stream may emit:
+Creation succeeds with `201 Created` and the session identity:
 
-| Event | Meaning |
-| --- | --- |
-| `snapshot` | Complete replacement state. |
-| `append` | Text was appended to an established answer entry or reasoning stream. |
+```json
+{"id":"2026-07-31-14-02-11-session","label":"Notes"}
+```
 
-Every new SSE connection begins with `snapshot`. The service does not maintain
-an event replay log. The writer holds at most one immutable in-flight payload
-and one replaceable pending payload. Compatible appends merge; every structural
-or ambiguous change collapses the pending state to a fresh snapshot. The owner
-thread never waits for network output.
+Opening succeeds with a same-origin path:
 
-### Errors
+```json
+{"path":"/s/{forum}/{session}/"}
+```
 
-Browser-facing errors contain a stable code and a safe message. Important
-cases include:
+Every JSON error response has one shape:
 
-- `409 Conflict` when a session is already in use.
-- `409 Conflict` with `session_created_but_busy` when creation succeeded but
-  the new session could not be opened.
-- `409 Conflict` with `browser_stream_in_use` when another SSE stream is
-  active.
-- `503 Service Unavailable` with `worker_unresponsive` when an accepted command
-  misses its generous completion deadline. Its outcome is unknown and the
-  worker begins orderly shutdown.
-- Validation errors for malformed input or unknown identifiers.
-- Server errors for worker startup, listener, persistence, or fatal runtime
-  failures.
+```json
+{"error":{"code":"session_busy","message":"That session is open in another program."}}
+```
 
-If a command times out or the client disconnects after enqueue, the command may
-still have applied. The browser resynchronizes from a snapshot and must not
-automatically repeat non-idempotent commands. A completion that arrives after
-the HTTP handler leaves is harmless because the completion state is owned
-independently of that handler.
+Important stable errors include:
+
+- `session_busy` when another process holds the session lease.
+- `session_stopping` while an earlier runtime is tearing down.
+- `session_limit_reached` when the registry has no capacity.
+- `session_open_timeout` when an open request's deadline expires.
+- `server_stopping` when process shutdown prevents an open or command.
+- `session_not_live` when a session route cannot resolve a running runtime.
+- `browser_stream_in_use` when another SSE stream is active.
+- `command_queue_full` when a command was not admitted and is safe to retry.
+- `command_timeout` when an accepted command has an unknown outcome and must not
+  be retried automatically.
+- Transport errors such as `not_found`, `bad_request`, `body_too_large`,
+  `forbidden_origin`, and `internal_error`.
+
+Messages are presentation-safe and never expose internal paths, credentials, or
+exception details. Browser behavior depends on codes and status, never English
+message text.
 
 ## Network and trust model
 
 `chaweb` is intended for a trusted local network. It has no accounts,
 authentication, authorization, built-in TLS termination, or Internet-facing
-hardening. Any device that can reach the configured listeners can view and
+hardening. Any device that can reach the configured listener can view and
 operate sessions.
 
-The lobby and workers bind to the configured interface. Workers serve their
-chat page and API from the same origin. Successful create/open responses return
-only a validated port. Browser code constructs worker and return-to-lobby URLs
-with the URL API, preserving the hostname through which the browser reached the
-application. The lobby does not emit permissive CORS headers.
+The configured host and port form the only listener. Lobby pages, session pages,
+assets, REST routes, and SSE streams share that origin. Successful opens return
+only a path, so loopback, LAN-address, and mDNS access all preserve the authority
+the browser originally used. No permissive CORS headers are emitted.
 
-Requests and connections have bounded sizes, queues, and timeouts. Mutating
-requests require the expected content type and same-origin browser requests.
-Transcript content, labels, notices, and provider errors are treated as
-untrusted text by the browser.
+Mutating requests require the expected content type. Requests carrying an
+`Origin` header must match their own `Host`; failures return
+`forbidden_origin`. This is an accidental cross-site request check, not an
+authentication boundary, and the design explicitly does not resist DNS
+rebinding.
+
+Requests and connections have bounded bodies, prompts, headers, queues, and
+timeouts. Transcript content, streamed reasoning, labels, notices, and provider
+errors are untrusted text and must not be inserted as executable markup without
+an explicit sanitization boundary.
+
+## Process shutdown
+
+On shutdown, the server sets a registry-wide stopping flag, rejects new opens,
+stops accepting requests, and wakes requests waiting on session startup. An
+owner thread reaching its startup commit point observes that flag and tears down
+instead of publishing `running`.
+
+Every running session is asked to execute its idempotent owner-thread shutdown
+sequence. Accepted commands already executing complete; queued commands that
+have not begun are failed without execution. Sessions send a best-effort final
+stopping snapshot, end SSE, shut down their controller, release their lease, and
+finish.
+
+The server joins all owner threads under one bounded grace period. On expiry it
+logs the sessions that did not finish and exits without running destructors. On
+ordinary completion it joins the HTTP request pool and destroys the registry,
+workspace, and logging resources. No live state survives a process restart.
 
 ## Code organization
 
-Web code belongs in `src/ui/web/`, with `src/apps/web_main.cpp` acting as the
-composition root. The main responsibilities are:
+Web code belongs in `src/ui/web/`, with `src/apps/web_main.cpp` as the composition
+root. The main responsibilities are:
 
-- Lobby routes and browser assets.
-- Platform process spawning with explicit descriptor/handle inheritance and
-  no retained process identity.
-- Worker launch, startup handshake, and control-pipe EOF tracking.
-- Session-worker routes, SSE, and lifecycle.
-- The single-owner session runtime and command queue.
-- Session snapshots, request/response types, errors, and event serialization.
-- Cross-frontend session locking in the session layer.
+- Lobby routes, browser assets, forum/session listing, create, and open.
+- A process-wide session registry with lifecycle states, capacity accounting,
+  startup coordination, owning session handles, and finished-entry sweeping.
+- Path-scoped session routes and SSE connection handling.
+- A per-session owner runtime, wake notifier, command queue, controller,
+  snapshot builder, SSE mailbox, containment boundary, and shutdown coordinator.
+- Owning web request, response, snapshot, error, and SSE payload types.
+- Cross-frontend `SessionLease` support in the session layer.
 
 The web implementation should build as a separate `cha_web` library linked by
-the `chaweb` application. Web transport dependencies remain outside the core
-session, agent, and transcript layers.
+the `chaweb` application. It links `cha_core` and cpp-httplib while keeping web
+transport dependencies out of the core session, agent, transcript, and terminal
+frontend code.
 
 ## Scope limits
 
 The initial design does not provide authentication, collaborative sessions,
-multiple viewers of one session, worker rediscovery after lobby restart, a
-single public port for all workers, an integrated session-switching chat shell,
-or a stable public client API.
+multiple simultaneous viewers or writers for one session, direct-URL opening,
+live-session recovery after a process restart, an explicit web close operation,
+an integrated session-switching chat shell, Internet-facing hardening, or a
+stable public client API.
 
 Browser implementation technology and detailed visual, accessibility, and
 mobile interaction design remain separate work.
