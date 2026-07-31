@@ -16,5 +16,10 @@ a sequence number; the future mailbox assigns sequence values only to payloads
 it actually stores. Its idempotent owner-thread teardown
 uses registry hooks only for lifecycle notifications, drains a final snapshot
 for a bounded interval, and contains controller failures to that runtime.
-Routes, the registry map, and actual SSE writing remain later blocks.
+`SessionRegistry` is the sole process-local liveness authority. It serializes
+open requests by validated forum/session identity, counts starting and stopping
+entries against the configured bound, and owns the owner threads. It publishes
+only running runtimes through owning `SessionHandle` values, and sweeps finished
+entries in two phases so joins and runtime destruction occur outside its mutex.
+Routes and actual SSE writing remain later blocks.
 `web_main.cpp` is only the composition root for the one server listener.

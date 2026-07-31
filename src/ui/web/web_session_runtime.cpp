@@ -314,7 +314,26 @@ WebSessionRuntime::WebSessionRuntime(
       metadata_(std::move(metadata)),
       sink_(std::move(sink)),
       hooks_(std::move(hooks)),
-      owner_(&WebSessionRuntime::owner_loop, this, std::move(factory)) {}
+      owner_([this, factory = std::move(factory)]() mutable {
+          try {
+              owner_loop(factory(notifier_));
+          } catch (const std::bad_alloc&) {
+              std::terminate();
+          } catch (...) {
+              owner_loop(nullptr);
+          }
+      }) {}
+
+WebSessionRuntime::WebSessionRuntime(
+    WebSettings settings,
+    WebSessionMetadata metadata,
+    std::shared_ptr<WebSnapshotSink> sink,
+    WebRuntimeHooks hooks)
+    : settings_(validate_runtime_settings(std::move(settings))),
+      commands_(settings_.command_queue_capacity),
+      metadata_(std::move(metadata)),
+      sink_(std::move(sink)),
+      hooks_(std::move(hooks)) {}
 
 WebSessionRuntime::~WebSessionRuntime() {
     request_shutdown();
@@ -349,12 +368,16 @@ void WebSessionRuntime::request_shutdown(ShutdownReason reason) {
     notifier_.wake();
 }
 
-void WebSessionRuntime::owner_loop(WebControllerFactory factory) {
-    std::unique_ptr<WebSessionController> controller;
+void WebSessionRuntime::run_with_controller(
+    std::unique_ptr<WebSessionController> controller) {
+    owner_loop(std::move(controller));
+}
+
+void WebSessionRuntime::owner_loop(
+    std::unique_ptr<WebSessionController> controller) {
     ShutdownReason reason = ShutdownReason::browser_disconnected;
     bool fatal = false;
     try {
-        controller = factory(notifier_);
         if (!controller) throw std::runtime_error("Web controller factory returned null");
         publish_change(*controller);
         while (true) {

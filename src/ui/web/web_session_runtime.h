@@ -93,6 +93,14 @@ public:
         WebSessionMetadata metadata = {},
         std::shared_ptr<WebSnapshotSink> sink = {},
         WebRuntimeHooks hooks = {});
+    // Registry-owned runtimes are constructed and opened on the registry's
+    // owner thread, then published before this loop starts.  This keeps the
+    // controller and its permanent owner thread the same thread.
+    WebSessionRuntime(
+        WebSettings settings,
+        WebSessionMetadata metadata = {},
+        std::shared_ptr<WebSnapshotSink> sink = {},
+        WebRuntimeHooks hooks = {});
     // No submit() call may overlap destruction. The production session-handle
     // layer must enforce that lifetime and confirm owner exit within the
     // process shutdown grace before allowing this final join.
@@ -105,9 +113,11 @@ public:
         std::chrono::milliseconds deadline);
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
+    [[nodiscard]] WakeNotifier& notifier_for_owner() noexcept { return notifier_; }
+    void run_with_controller(std::unique_ptr<WebSessionController> controller);
 
 private:
-    void owner_loop(WebControllerFactory factory);
+    void owner_loop(std::unique_ptr<WebSessionController> controller);
     void execute(WebSessionController& controller, OwnerCommand command);
     void apply_notice(const SessionUpdate& update);
     [[nodiscard]] ShutdownReason mark_stopping(ShutdownReason reason);
