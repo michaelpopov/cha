@@ -91,7 +91,8 @@ One invocation follows this sequence:
 The two intermediate build/test checks are diagnostic. A failure is recorded
 and passed to the next reviewer so the following repair stage can address it.
 The final build/test execution is a hard gate: any failure makes the harness
-exit nonzero.
+exit nonzero. The implementation and final snapshots must also be nonempty, so
+an unchanged baseline cannot be accepted as a completed block.
 
 Each Codex repair prompt explicitly says that a review finding is not
 automatically correct. Codex must reject findings that contradict
@@ -152,16 +153,24 @@ Codex defaults to `gpt-5.6-terra` with `medium` reasoning effort. It runs with:
 
 ```text
 approval policy: never
-sandbox: workspace-write
+sandbox: danger-full-access
 configuration validation: strict
 session persistence: ephemeral
 terminal color: disabled
 ```
 
-Codex can read the review artifacts and modify the repository worktree. Its
-tool commands cannot write outside the workspace sandbox. Because approval is
-`never`, a command outside the sandbox policy fails instead of asking the user
-for permission.
+Codex can read the review artifacts and modify the repository worktree. The
+default `danger-full-access` mode avoids a dependency on bubblewrap and does not
+restrict Codex commands to the worktree. Those commands have the same host
+permissions as the user running the harness. Approval is `never`, so Codex does
+not stop to ask for command permission. Use a dedicated worktree and run the
+harness only with credentials and filesystem access appropriate for autonomous
+execution.
+
+`CODEX_SANDBOX=workspace-write` restores filesystem sandboxing on a host where
+the Codex bubblewrap sandbox is known to work. It is not the default because a
+sandbox setup failure can otherwise prevent every Codex tool command from
+starting.
 
 ### Grok
 
@@ -262,16 +271,19 @@ A complete successful run normally contains:
 | `baseline.txt` | Baseline Git object ID |
 | `status-initial.txt` | Worktree status at the start |
 | `01-implement.log` | Captured Codex implementation-stage output |
+| `01-implement.final.txt` | Final Codex response used for stage-completion validation |
 | `changes-after-implement.diff` | Diff after initial implementation |
 | `build-after-implement.log` | Independent build/test output after implementation |
 | `review-grok.md` | Grok's Markdown review |
 | `02-review-grok.log` | Grok diagnostic output |
 | `03-fix-grok.log` | Captured first Codex repair-stage output |
+| `03-fix-grok.final.txt` | Final Codex response used for stage-completion validation |
 | `changes-after-grok-fixes.diff` | Diff after the first repair |
 | `build-after-grok-fixes.log` | Independent build/test output supplied to Pi |
 | `review-pi.md` | Pi's Markdown review |
 | `04-review-pi.log` | Pi diagnostic output |
 | `05-fix-pi.log` | Captured second Codex repair-stage output |
+| `05-fix-pi.final.txt` | Final Codex response used for stage-completion validation |
 | `changes-after-pi-fixes.diff` | Diff preserved before the final gate |
 | `build-final.log` | Final gating build/test output |
 | `changes-final.diff` | Successful final diff against the original baseline |
@@ -285,10 +297,19 @@ Review output must be nonempty. An empty `review-grok.md` or `review-pi.md` is
 treated as a stage failure rather than as a successful review with no findings.
 A reviewer that finds no defects should say so plainly.
 
+Each Codex prompt requires a completion marker in the separately captured final
+response. The marker means Codex could inspect the workspace, perform the
+requested implementation or repair work, and attempt the requested validation.
+It is deliberately absent when Codex reports an environment, permission,
+authentication, quota, or tool blocker. A missing response or marker fails the
+stage even if the Codex process itself exits with status zero. An empty initial
+or final diff also fails the run.
+
 ## Failure and interruption behavior
 
 The runner uses Bash strict mode (`set -euo pipefail`). A failed agent command,
-timeout, empty review, or final build/test failure causes a nonzero exit.
+timeout, missing Codex completion marker, empty implementation or final diff,
+empty review, or final build/test failure causes a nonzero exit.
 
 Agent time limits default to:
 
@@ -319,6 +340,7 @@ Configuration is supplied through environment variables:
 | `RUN_ROOT` | `<block>/runs` | Parent directory for per-run artifacts |
 | `CODEX_MODEL` | `gpt-5.6-terra` | Codex implementation/repair model |
 | `CODEX_EFFORT` | `medium` | Codex reasoning effort |
+| `CODEX_SANDBOX` | `danger-full-access` | Codex command sandbox (`danger-full-access` or `workspace-write`) |
 | `GROK_MODEL` | `grok-4.5` | First-review model |
 | `GROK_EFFORT` | `high` | Grok reasoning effort |
 | `PI_BIN` | resolved automatically | Pi executable name or path |
@@ -339,6 +361,9 @@ REPO=/work/cha-web RUN_ROOT=/work/cha-runs ./block.sh
 
 # Give complex Codex stages more reasoning and time.
 CODEX_EFFORT=high CODEX_TIMEOUT=180m ./block.sh
+
+# Use Codex filesystem sandboxing on a host with working bubblewrap support.
+CODEX_SANDBOX=workspace-write ./block.sh
 
 # Select another configured Pi model.
 PI_PROVIDER=openrouter PI_MODEL=anthropic/claude-sonnet-4.6 ./block.sh
@@ -405,6 +430,12 @@ If an agent times out, inspect `latest/result.txt`, its stage log, and
 `latest/changes-on-failure.diff`. Increase only the relevant timeout before
 starting a new run. A new invocation creates a new run directory; it does not
 resume the interrupted conversation.
+
+If a Codex stage reports a bubblewrap error such as `Failed RTM_NEWADDR`, use
+the default `danger-full-access` mode. Check that `CODEX_SANDBOX` is not exported
+as `workspace-write`, then start a new run. A missing completion marker now
+turns this condition into a harness failure instead of allowing reviews and
+baseline tests to continue.
 
 If an intermediate build fails but the run continues, inspect the corresponding
 build log together with the following review and repair log. This continuation
