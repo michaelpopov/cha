@@ -20,8 +20,10 @@ It uses two kinds of processes:
   controller, transcript, persistence, agent activity, and web API.
 
 Each worker listens on an available port. After a worker is ready, the lobby
-redirects the browser to it. Browser traffic then goes directly to that worker;
-the lobby does not proxy chat requests or retain session routing information.
+returns that port as JSON. The lobby page replaces the port in its current URL
+through the browser URL API and navigates to the worker. Browser traffic then
+goes directly to that worker; the lobby does not proxy chat requests or retain
+session routing information.
 
 Several sessions can be active at once because each has an independent worker.
 A single stored session can be open in only one application process at a time.
@@ -36,7 +38,7 @@ The lobby provides:
 - Forum and stored-session discovery.
 - Creation of stored sessions without opening them in the lobby.
 - Launching a worker for a new or existing session.
-- Redirecting the browser only after the worker is ready.
+- Returning a worker port only after the worker is ready.
 - Retaining each ready worker's control-pipe endpoint so both processes can
   detect peer exit.
 
@@ -46,15 +48,17 @@ workers with `CreateProcessW()` and `CREATE_NO_WINDOW`, then immediately closes
 the returned native process handles. Session workers never open visible console
 windows or inherit the lobby's console streams; lobby mode may use its normal
 console. The lobby retains no worker PID or process handle and never waits for,
-reaps, or force-terminates a worker.
+reaps, or force-terminates a worker. The private worker invocation receives the
+workspace root explicitly so it loads the same application configuration and
+session data as the lobby.
 
 The session worker provides:
 
 - A complete session snapshot for initial display or recovery.
 - Submission of ordinary prompts, slash commands, and `@` addressing using the
   shared text-input grammar.
-- Typed controls for common actions such as Stop, Clear, off-record operations,
-  and default-agent selection.
+- Typed controls for Stop and stable-ID default-agent selection. Clear and
+  off-record controls use the shared text-input grammar.
 - Live transcript and generation updates through Server-Sent Events (SSE).
 - Reconnection and state resynchronization.
 - Disconnect-driven and automatic lifecycle management.
@@ -65,7 +69,8 @@ The session worker provides:
 
 The lobby launches a new worker for each open request. The worker acquires the
 session, restores its state, starts its listener, and reports readiness. Only
-then does the lobby redirect the browser.
+then does the lobby return `{"port":<worker-port>}` to the browser for
+navigation.
 
 Creating a session stores it first and then launches its worker. If another
 process opens the newly created session first, the session remains created and
@@ -101,16 +106,18 @@ on replaying old events.
 Commands use ordinary HTTP requests. Model output and session changes are sent
 to the browser over SSE.
 
-`POST /api/v1/input` accepts the same text grammar as the terminal frontends,
-including ordinary prompts, leading `@Name` addressing, `/mcast`, `/clear`,
-off-record commands, `/stop`, and default-agent selection. Bare `/exit` is the
-one exception: the web worker returns a notice directing the user to close the
-tab, remains running, and never forwards `/exit` as a model prompt. Terminal
-and TUI `/exit` behavior is unchanged. Web command help, autocomplete, and
-unknown-command notices do not advertise `/exit`.
+`POST /api/v1/input` accepts the supported text grammar shared with the
+terminal frontends, including ordinary prompts, leading `@Name` addressing,
+`/mcast`, `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/stop`, and
+default-agent selection.
 
-Browser buttons use typed action endpoints but invoke the same session
-operations as equivalent text commands.
+Clear and off-record buttons submit `/clear`, `/hide-on`, `/hide`, and
+`/hide-off` through the raw-input endpoint without replacing or clearing an
+existing prompt draft. Stop remains a typed action so cancellation is
+out-of-band from input submission. Default-agent selection remains typed and
+uses a stable persona ID because valid multi-word display names cannot always
+be represented by the whitespace-delimited `/@Name` command. Both typed
+actions use the same authoritative session semantics as text commands.
 
 The worker continues processing and persisting agent events while the browser
 is disconnected or slow. If the browser misses updates, it replaces its local
@@ -120,12 +127,14 @@ state from a new snapshot.
 
 Snapshots contain owning, presentation-oriented data rather than database or
 internal C++ structures. They include session and forum information, personas,
-the default agent, transcript entries, generation state, and a worker-local
-presentation revision.
+the default agent, transcript entries, generation state with an optional stable
+foreground request ID and streamed reasoning, the current notice, worker
+coarse lifecycle phase, and the configured lobby port for a return link.
 
-State-bearing updates also carry revisions. If the browser detects a missing
-or out-of-order update, it obtains a full snapshot. SSE heartbeats do not
-change session state.
+SSE uses only complete `snapshot` payloads and text `append` payloads. An
+append targets an established answer entry or reasoning stream and carries its
+UTF-8 byte length before the new text. A mismatch closes the old stream and
+reconnects for a fresh snapshot. SSE heartbeats do not change session state.
 
 ### Worker lifetime
 
@@ -142,21 +151,33 @@ it exits or is stopped externally.
 
 A worker may also stop because:
 
-- No browser connects within the startup idle period.
-- A disconnected browser does not return within the allowed grace period.
-- Unattended generation reaches its time limit.
+- Its browser-disconnection deadline expires.
+- An accepted command misses its generous completion deadline.
 - A fatal persistence or runtime failure occurs.
 - The application receives a shutdown signal.
 
-During an ordinary browser disconnect, active generation and persistence
-continue for a bounded period so the page can reconnect. Lobby loss triggers
-shutdown immediately rather than waiting for browser grace periods.
+Browser absence uses no multi-state lifetime machine. At worker readiness or a
+matching SSE close, the worker records `disconnected_since`. While disconnected
+it applies one rule:
+
+```text
+deadline = is_generating() ? orphan_limit : idle_grace
+```
+
+Both limits are measured from `disconnected_since`; `orphan_limit` must be at
+least `idle_grace`. The worker reevaluates the rule whenever generation state
+changes. Active generation and persistence continue until the applicable
+deadline so the page can reconnect. Lobby loss triggers shutdown immediately.
+
+When orderly shutdown begins while SSE remains writable, the worker sends a
+best-effort final snapshot with lifecycle `stopping` and a safe reason. A slow
+browser cannot delay shutdown beyond the bounded final drain deadline.
 
 The web interface has no close endpoint or Close control. Closing the tab is
 observed only as SSE disconnection, which is indistinguishable from reload,
 navigation, browser failure, network loss, or device suspension. The worker
-therefore ends only after the reconnect/orphan-generation policy permits it;
-tab closure does not guarantee immediate release of the session lock.
+therefore ends only after the disconnect lifetime rule permits it; tab closure
+does not guarantee immediate release of the session lock.
 
 ## HTTP API structure
 
@@ -170,8 +191,8 @@ released together, so the first version is not a stable third-party API.
 | `GET /health` | Report lobby liveness. |
 | `GET /api/v1/forums` | List forums and display metadata. |
 | `GET /api/v1/forums/{forum}/sessions` | List stored sessions in a forum. |
-| `POST /api/v1/forums/{forum}/sessions` | Create a session, launch its worker, and redirect. |
-| `POST /api/v1/forums/{forum}/sessions/{session}/open` | Launch a worker for an existing session and redirect. |
+| `POST /api/v1/forums/{forum}/sessions` | Create a session, launch its worker, and return its ready port. |
+| `POST /api/v1/forums/{forum}/sessions/{session}/open` | Launch a worker for an existing session and return its ready port. |
 
 Forum and session identifiers are validated as application identifiers and are
 never used directly as filesystem paths.
@@ -180,20 +201,18 @@ never used directly as filesystem paths.
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /health` | Report worker readiness and lifecycle state. |
+| `GET /health` | Report worker readiness, coarse lifecycle phase, and stream presence. |
 | `GET /api/v1/session` | Return the complete current snapshot. |
 | `POST /api/v1/input` | Submit one line through the shared input grammar. |
 | `POST /api/v1/actions/stop` | Stop active generation. |
-| `POST /api/v1/actions/clear` | Clear the transcript. |
-| `POST /api/v1/actions/offrecord/open` | Open an off-record span. |
-| `POST /api/v1/actions/offrecord/extend` | Extend or close the current off-record span. |
-| `POST /api/v1/actions/offrecord/restore` | Restore the off-record span. |
 | `POST /api/v1/actions/default-agent` | Change the run-local default agent. |
 | `GET /api/v1/events` | Open or reconnect the SSE update stream. |
 
-Command responses use owning JSON values and may report whether the operation
-was applied, whether the input should be cleared, an optional notice, and the
-current presentation revision.
+Command responses use owning JSON values and may report whether the submitted
+input should be cleared and an optional notice. They do not invent an
+`applied` field that is absent from `SessionUpdate`. Snapshots are authoritative
+for the page's current notice; a delayed HTTP response notice is request-scoped
+and cannot overwrite newer snapshot state.
 
 ### SSE events
 
@@ -202,17 +221,13 @@ The update stream may emit:
 | Event | Meaning |
 | --- | --- |
 | `snapshot` | Complete replacement state. |
-| `entry-added` | A transcript entry was added. |
-| `entry-appended` | Streaming text was appended. |
-| `entry-finished` | A streaming entry completed or was cancelled. |
-| `transcript-reset` | The transcript was cleared. |
-| `generation` | Generation state or phase changed. |
-| `notice` | A command or agent produced a user-facing notice. |
-| `session-ended` | The worker is ending the session. |
-| `resync` | The browser must obtain a fresh snapshot. |
+| `append` | Text was appended to an established answer entry or reasoning stream. |
 
 Every new SSE connection begins with `snapshot`. The service does not maintain
-an event replay log.
+an event replay log. The writer holds at most one immutable in-flight payload
+and one replaceable pending payload. Compatible appends merge; every structural
+or ambiguous change collapses the pending state to a fresh snapshot. The owner
+thread never waits for network output.
 
 ### Errors
 
@@ -224,15 +239,18 @@ cases include:
   the new session could not be opened.
 - `409 Conflict` with `browser_stream_in_use` when another SSE stream is
   active.
-- `503 Service Unavailable` with `owner_queue_timeout` when a queued command
-  expires before execution; that command will not run later.
+- `503 Service Unavailable` with `worker_unresponsive` when an accepted command
+  misses its generous completion deadline. Its outcome is unknown and the
+  worker begins orderly shutdown.
 - Validation errors for malformed input or unknown identifiers.
 - Server errors for worker startup, listener, persistence, or fatal runtime
   failures.
 
-If a client disconnects after a command begins, the command may still have
-applied. The browser resynchronizes from a snapshot and must not automatically
-repeat non-idempotent commands.
+If a command times out or the client disconnects after enqueue, the command may
+still have applied. The browser resynchronizes from a snapshot and must not
+automatically repeat non-idempotent commands. A completion that arrives after
+the HTTP handler leaves is harmless because the completion state is owned
+independently of that handler.
 
 ## Network and trust model
 
@@ -242,8 +260,10 @@ hardening. Any device that can reach the configured listeners can view and
 operate sessions.
 
 The lobby and workers bind to the configured interface. Workers serve their
-chat page and API from the same origin. The lobby validates redirect hosts and
-does not emit permissive CORS headers.
+chat page and API from the same origin. Successful create/open responses return
+only a validated port. Browser code constructs worker and return-to-lobby URLs
+with the URL API, preserving the hostname through which the browser reached the
+application. The lobby does not emit permissive CORS headers.
 
 Requests and connections have bounded sizes, queues, and timeouts. Mutating
 requests require the expected content type and same-origin browser requests.

@@ -57,14 +57,16 @@ preserve portable Linux, macOS, and Windows interfaces.
   journal shutdown complete.
 - A worker sends exactly one startup result. Its control channel then ties its
   lifetime to the lobby.
-- After redirect, the lobby forgets session and routing identity while keeping
-  only a generic control endpoint so both sides can detect EOF.
-- HTTP mutations go through a serialized owner queue. A request cancelled
-  before claim must never execute; a claimed request completes with its real
-  domain result.
+- After returning a ready port, the lobby forgets session and routing identity
+  while keeping only a generic control endpoint so both sides can detect EOF.
+- HTTP mutations go through a serialized owner queue. An accepted command has
+  one generous completion deadline; expiry has unknown outcome and starts
+  worker shutdown rather than cancelling the queued command.
 - Every SSE connection starts with a full snapshot. There is no replay log,
   SSE `id`, or `Last-Event-ID` behavior.
-- Presentation revisions are worker-local and are not journal revisions.
+- `snapshot` and target-aware `append` are the only state-bearing SSE events.
+  The writer has one immutable in-flight payload and at most one replaceable
+  pending payload; the owner never waits for it.
 - Only one SSE stream is supported per worker. This is a usage guard, not
   authentication or browser identity.
 - The initial application targets a trusted LAN: no authentication,
@@ -85,11 +87,11 @@ preserve portable Linux, macOS, and Windows interfaces.
 | 3 | Web library, tests, protocol types, and shared fixtures | Existing build |
 | 4 | Startup protocol and portable fire-and-forget worker launcher | 3 |
 | 5 | Single-owner lobby worker control loop | 4 |
-| 6 | Lobby REST service and validated redirects | 2, 3, 5 |
-| 7 | Worker owner runtime and cancellable command queue | 1, 3 |
+| 6 | Lobby REST service and ready-port responses | 2, 3, 5 |
+| 7 | Worker owner runtime and bounded command queue | 1, 3 |
 | 8 | Worker snapshot and command REST API | 7 |
-| 9 | Revisioned SSE with bounded backpressure | 7, 8 |
-| 10 | Browser-stream and worker-lifetime state machine | 9 |
+| 9 | Snapshot/append SSE with latest-state mailbox | 7, 8 |
+| 10 | Browser-stream and worker lifetime | 9 |
 | 11 | Complete internal session-worker process mode | 4, 8–10 |
 | 12 | Complete lobby process and end-to-end flow | 5, 6, 11 |
 | 13 | Resource, race, stress, and conformance audit | 1–12 |
@@ -132,10 +134,11 @@ can later be opened or independently become busy.
 listeners or routes.
 
 **Work:** Create `cha_web` and `cha_web_tests`; define owning JSON protocol
-types for summaries, personas, transcript entries, generation, snapshots,
-commands, errors, and SSE events. Add shared settings, JSON/HTTP helpers, and a
-temporary test-workspace builder. Keep `chaweb_app` thin and avoid selecting a
-browser stack.
+types for summaries, personas, transcript entries, generation, snapshots
+including `lobby_port`, current notice, optional foreground request identity,
+and coarse lifecycle phase, commands, errors, and snapshot/append SSE payloads.
+Add shared settings, JSON/HTTP helpers, and a temporary test-workspace builder.
+Keep `chaweb_app` thin and avoid selecting a browser stack.
 
 **Done when:** Exact JSON fixtures and enum spellings are tested, protocol
 objects outlive their source data, test workspaces are reusable, and everything
@@ -166,8 +169,8 @@ while serving concurrent launch requests safely.
 
 **Work:** Add `WorkerControlLoop` with a dedicated loop, thread-safe bounded
 request completion, race-safe EOF callbacks, and orderly channel teardown.
-After a worker is ready, erase all session, redirect, and temporary spawn data
-and retain only generic control-endpoint state.
+After a worker is ready, erase all session, worker-port, request-completion,
+and temporary spawn data and retain only generic control-endpoint state.
 
 **Done when:** Concurrent launches deliver exactly one result each; shutdown
 resolves waiters, closes control pipes, does not wait for worker termination,
@@ -175,32 +178,36 @@ and joins its thread. Cooperative workers independently observe EOF and exit.
 
 ## Block 6 — Lobby HTTP service
 
-**Purpose:** Expose lobby operations and redirect clients to ready workers.
+**Purpose:** Expose lobby operations and return ready worker ports to clients.
 
 **Work:** Add health, forum/session listing, create, and open routes. Validate
 route identifiers, JSON, body limits, content type, `Host`, and same-origin
 mutations. Map startup results to stable HTTP responses, including
-`session_created_but_busy`. Construct safe hostname, IPv4, and bracketed IPv6
-redirects. Add a framework-neutral asset-serving boundary.
+`session_created_but_busy`. Return `{"port":<worker-port>}` on success; do not
+return `Location`, construct navigation URLs from `Host`, or add an advertised
+hostname. Keep `Host`/`Origin` validation only for same-origin mutations. Add a
+framework-neutral asset-serving boundary.
 
-**Done when:** In-process and loopback tests cover exact contracts, safe
-redirects, creation races, errors, origin policy, and asset traversal. The
-lobby still owns no live session object.
+**Done when:** In-process and loopback tests cover exact port JSON, invalid
+ports, creation races, errors, origin policy, and asset traversal. The lobby
+still owns no live session object.
 
 ## Block 7 — Worker owner runtime and command queue
 
 **Purpose:** Confine one live session and all domain access to a permanent
 owner thread.
 
-**Work:** Add `WebSessionRuntime`, typed commands, owner-thread snapshot
-projection, and an owning publication interface. Reuse the owner event loop to
-drain commands and agent notifications. Implement atomic
-`pending → claimed/completed` or `pending → cancelled` request transitions so
-cancelled work never runs and claimed work returns its real result. Recognize
-bare `/exit` before shared input handling and return a web-specific non-applied
-close-the-tab notice without exposing `end_session` or initiating shutdown,
-whether the worker is idle or generating. Web command help and unknown-command
-notices omit `/exit` without changing terminal/TUI behavior.
+**Work:** Add `WebSessionRuntime`, raw-input plus typed Stop and stable-ID
+default-agent commands, owner-thread snapshot projection, and an owning
+publication interface. Clear and off-record controls use `/clear`, `/hide-on`,
+`/hide`, and `/hide-off` through raw input rather than distinct runtime
+commands. Reuse the owner event loop to drain commands and agent notifications.
+Use an owning completion object and one generous deadline from successful
+enqueue through command completion. Expiry has unknown outcome, returns
+`worker_unresponsive` when possible, and initiates idempotent worker shutdown;
+late completion must be harmless. Fairly interleave commands and agent events.
+Make snapshots authoritative for current notice; HTTP response notices remain
+request-scoped and cannot overwrite newer snapshot state.
 
 **Done when:** Every controller operation and destruction occurs on the owner
 thread; borrowed data never escapes; concurrent callers serialize correctly;
@@ -211,59 +218,72 @@ agent events persist without a browser; and shutdown releases all waiters.
 **Purpose:** Provide bounded REST access to the owner runtime without moving
 domain ownership into HTTP threads.
 
-**Work:** Add worker health and snapshot routes plus raw input, stop, clear,
-off-record, and default-agent mutations. Do not add a close route. Define
-strict JSON requests, same-origin checks, task/body/prompt/socket limits, and
-stable error mapping. Map pre-claim cancellation to `owner_queue_timeout`; do
-not retry commands whose outcome may already be committed.
+**Work:** Add worker health and snapshot routes plus raw input and typed Stop
+and stable-ID default-agent mutations. Clear and off-record browser controls
+submit their shared slash-command strings through raw input; do not add
+separate routes for them. Do not add a close route. Define strict JSON
+requests, same-origin checks, task/body/prompt/socket limits, and stable error
+mapping. Apply one generous command-completion deadline after enqueue. Expiry
+reports `worker_unresponsive` with unknown outcome and initiates idempotent
+shutdown; do not retry the command automatically. Snapshots include current
+notice, optional foreground request identity, coarse lifecycle phase, and
+`lobby_port` without a presentation revision.
 
 **Done when:** A loopback client can inspect and mutate a fake-backed session,
 invalid input receives exact safe errors, domain refusals remain domain
 results, and concurrent handlers never call the controller directly.
 
-## Block 9 — Revisioned SSE and bounded presentation output
+## Block 9 — Snapshot/append SSE and latest-state mailbox
 
 **Purpose:** Stream live presentation updates without letting network speed
 block session progress.
 
-**Work:** Add an owner-to-SSE channel, state projector, worker-local revisions,
-named events, full-snapshot connection start, and comment heartbeats.
-Coalesce compatible updates before assigning revisions. On overflow, resync
-with a snapshot or close the stream; never create an unbounded queue. Use
-internal stream IDs to ignore stale close callbacks.
+**Work:** Define complete `snapshot` and target-aware `append` payloads for
+answer and reasoning text, with `length_before` measured in UTF-8 bytes. Publish
+snapshots for structural or ambiguous changes. Give the writer one immutable
+in-flight payload and one replaceable pending payload: merge compatible
+appends, rebuild a pending snapshot after later changes, and replace any unsafe
+append with a snapshot. Add full-snapshot connection start, comment heartbeats,
+and internal stream IDs. Serialize no presentation revision or `resync`.
 
-**Done when:** Contract tests prove exact events, consecutive revisions,
-snapshot recovery, no SSE `id` or replay behavior, safe multiline data, prompt
-disconnect handling, and continued owner progress under slow consumers.
+**Done when:** Contract tests prove the two exact event types, UTF-8 continuity,
+mailbox replacement under a blocked writer, no SSE `id` or replay behavior,
+safe multiline data, prompt disconnect handling, and continued owner progress.
 
-## Block 10 — Browser-stream and worker-lifetime state machine
+## Block 10 — Browser-stream and worker lifetime
 
-**Purpose:** Define single-page connection, reconnect, idle, generation, and
-shutdown behavior.
+**Purpose:** Define single-page connection, reconnect, disconnect timing,
+generation, and shutdown behavior.
 
-**Work:** Model `Starting`, `AwaitingClient`, `Connected`, `ReconnectGrace`,
-`OrphanGeneration`, `Stopping`, and `Exiting`. Permit one active SSE stream,
-support snapshot-based reconnect, continue and persist generation while
-temporarily disconnected, and enforce awaiting-client and orphan limits.
-Treat tab close, reload, navigation, browser failure, network loss, and device
-suspension uniformly as SSE disconnection; use no close endpoint or
-unload/beacon signal. Unify disconnect expiry, fatal errors, lobby loss, and
-process signals under one idempotent shutdown coordinator with SSE drain,
-listener, owner, journal, and lease ordering.
+**Work:** Keep only coarse startup, running, and stopping phases. Track an
+optional active stream ID, whose presence defines `stream_active`, optional
+`disconnected_since`, and one rearmable timer. At readiness and matching stream
+close, record the disconnect time; an accepted stream clears it. While
+disconnected, use `idle_grace` when idle and the absolute `orphan_limit` when
+generating, both measured from the same timestamp. Reevaluate on every
+generation transition and require `orphan_limit >= idle_grace`. Treat tab
+close, reload, navigation, browser failure, network loss, and device suspension
+identically; use no close endpoint or unload/beacon signal. Unify deadline
+expiry, fatal errors, lobby loss, and process signals under one idempotent
+shutdown coordinator with bounded final snapshot drain and ordered listener,
+owner, journal, and lease teardown.
 
-**Done when:** Injected-time tests cover reconnects, stale stream callbacks,
-idle expiry, unattended generation, hard cancellation, concurrent shutdown
-triggers, and rejection of new work after stopping.
+**Done when:** Injected-time tests cover initial arrival, reconnects, stale
+stream callbacks, idle and generating deadlines, generation transitions, hard
+cancellation, concurrent shutdown triggers, and rejection of new work after
+stopping.
 
 ## Block 11 — Internal session-worker process mode
 
 **Purpose:** Compose a real worker process inside `chaweb`.
 
-**Work:** Parse private launcher arguments, initialize a unique worker log,
-watch the lobby control channel, open one leased session, bind an OS-assigned
-port, report exactly one startup record, and serve REST/SSE. Map lease
-contention to `busy`, sanitize other startup errors, route control EOF and
-signals into ordered shutdown, and use stable exit codes.
+**Work:** Parse private launcher arguments including the explicit workspace
+root, initialize a unique worker log, watch the lobby control channel, open one
+leased session, bind an OS-assigned port, report exactly one startup record,
+and serve REST/SSE. Load the same application configuration through that root
+and expose its port as snapshot `lobby_port`; pass no external lobby URL. Map
+lease contention to `busy`, sanitize other startup errors, route control EOF
+and signals into ordered shutdown, and use stable exit codes.
 
 **Done when:** A real-process harness can start a worker, use health/snapshot/
 SSE and a non-generating command, then close it without contacting an LLM.
@@ -277,14 +297,14 @@ lobby-to-worker flow.
 
 **Work:** Compose configuration, role-specific logging, `Workspace`,
 `WorkerControlLoop`, and `LobbyServer`; locate and spawn the executable
-portably; redirect only after true worker readiness; support different
+portably; return a worker port only after true readiness; support different
 sessions concurrently; and close every worker-control endpoint during lobby
 shutdown without waiting for worker processes. Document LAN binding,
 firewall/ephemeral ports, trusted-network exposure, and temporary worker URLs.
 
-**Done when:** Real-process tests cover list, create, open, redirect, snapshot,
-SSE, commands, same-session races, multiple workers, clean and abrupt lobby
-loss, worker crashes and reopen, IPv6-style hosts, and separate log files.
+**Done when:** Real-process tests cover list, create, open, ready-port response,
+snapshot, SSE, commands, same-session races, multiple workers, clean and abrupt
+lobby loss, worker crashes and reopen, and separate log files.
 
 ## Block 13 — Resource, race, and design-conformance audit
 
@@ -309,12 +329,12 @@ test requires neither credentials nor network access.
 **Purpose:** Finish conformance at external, operational, and native-platform
 boundaries.
 
-**Work:** Audit authority/origin validation, CORS absence, request limits,
-asset safety, untrusted text handling, and response disclosure. Verify useful
-but non-sensitive role/process logging. Build and test POSIX and Win32 locking,
-inheritance, pipes, POSIX automatic child disposal, immediate Windows process
-handle closure, hidden Windows worker creation, self-location, and unusual
-paths on available Linux, macOS, and Windows runners. Reconcile all
+**Work:** Audit ready-port JSON, Host/Origin mutation validation, CORS absence,
+request limits, asset safety, untrusted text handling, and response disclosure.
+Verify useful but non-sensitive role/process logging. Build and test POSIX and
+Win32 locking, inheritance, pipes, POSIX automatic child disposal, immediate
+Windows process handle closure, hidden Windows worker creation, self-location,
+and unusual paths on available Linux, macOS, and Windows runners. Reconcile all
 architecture and user documentation with actual limits, networking, ports,
 lifecycle, errors, and deferred features.
 
@@ -329,16 +349,24 @@ design must choose and implement the browser technology.
 
 That work must consume the established contracts rather than redesign them:
 
-- Lobby list, create, open, redirect, and error routes.
-- Worker snapshot and typed/raw command routes.
+- Lobby list, create, open, ready-port, and error routes. On success, construct
+  a URL from the lobby page URL, replace its port through the URL API, clear
+  lobby path/query/fragment state, and navigate with `location.assign()`; test
+  hostname, IPv4, and bracketed IPv6 page URLs.
+- Worker snapshot, raw-input, typed Stop, and stable-ID default-agent routes.
+  Clear and off-record controls submit `/clear`, `/hide-on`, `/hide`, and
+  `/hide-off` as synthetic raw input without replacing or clearing the editor
+  draft.
 - One active SSE stream and full-snapshot reconnect.
-- Revision-gap detection followed by snapshot replacement.
+- Apply answer and reasoning appends only when their target and UTF-8
+  `length_before` match; otherwise close the old stream and reconnect for a
+  snapshot without a concurrent REST refetch.
 - Bounded retry for temporary `browser_stream_in_use` conflicts.
 - Disabled controls and a clear message while another stream remains active.
 - Stop, tab-close/disconnect expiry, and return-to-lobby behavior, with no
   Close control or unload/beacon close request.
-- Command help and autocomplete omit `/exit`; submitting it shows the
-  close-the-tab notice without ending the worker.
+- Construct the return-to-lobby link through the URL API from the worker page
+  URL and snapshot `lobby_port`.
 - Safe rendering of all server-provided text as untrusted data.
 
 Test fixture assets are not a product UI and should not become an accidental
