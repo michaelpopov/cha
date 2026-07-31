@@ -22,6 +22,9 @@ struct Session {
 // on disk. It lists them, checking the identity embedded in each against the file it came from,
 // creates new ones without ever overwriting an existing destination, and resolves a session ID to
 // the database path used to open it. The clock is injectable to keep generated names testable.
+// After construction, one catalog may receive concurrent calls when its injected Clock is itself
+// safe for concurrent invocation. Concurrent create() calls publish atomically and retry filename
+// collisions; the catalog holds no mutable cache.
 class SessionCatalog {
 public:
     using Clock = std::function<std::time_t()>;

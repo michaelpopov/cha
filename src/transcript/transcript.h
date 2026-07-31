@@ -124,11 +124,11 @@ void require_terminal_transcript_entry(const TranscriptEntry& entry);
 // Applies the terminal-entry contract at the persistence boundary.
 void require_storable_transcript_entry(const TranscriptEntry& entry);
 
-// The main-thread-owned live transcript of one session. It is not thread-safe:
-// all reads and mutations must happen on its owning thread. It allows at most
-// one open streaming entry. Presentation borrows call-scoped views; completion
-// workers receive owning immutable histories. It depends on nothing beyond the
-// entry model declared above.
+// The owner-thread-confined live transcript of one session. It is not
+// thread-safe: all reads and mutations must happen on its owning thread. It
+// allows at most one open streaming entry. Presentation borrows call-scoped
+// views; completion workers receive owning immutable histories. It depends on
+// nothing beyond the entry model declared above.
 class Transcript {
 public:
     Transcript() = default;

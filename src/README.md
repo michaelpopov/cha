@@ -50,7 +50,7 @@ they need.
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
 | `session/` | Workspace and session operations, `ForumPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
 | `agents/` | Persona config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
-| `transcript/` | The transcript model: entry types, validation, and the main-thread-owned live `Transcript`. | Storage, providers, frontends. |
+| `transcript/` | The transcript model: entry types, validation, and the owner-thread-owned live `Transcript`. | Storage, providers, frontends. |
 | `util/` | Leaf helpers: text and path rules, `.env`, a portable concurrent queue, and the libuv wake loop. | Anything above it. |
 
 ## Dependency direction
@@ -87,22 +87,24 @@ Three rules keep this direction honest:
 
 ## Runtime structure
 
-One process has one main thread plus registry-owned worker threads. The main
-thread owns all transcript and database mutation. The registry keeps one
-persistent regular runner and creates one-shot runners only for the additional
-targets in a multicast batch. Abort cleanup is driven by main-thread polling;
-it creates no thread and never waits for an unfinished worker.
+A process may host one or more session owner threads plus registry-owned worker
+threads. Each session's owner thread exclusively owns its live transcript and
+database mutation; `cha` and `chacon` use the process main thread as their one
+session owner. The registry keeps one persistent regular runner and creates
+one-shot runners only for the additional targets in a multicast batch. Abort
+cleanup is driven by owner-thread polling; it creates no thread and never waits
+for an unfinished worker.
 
 ```mermaid
 flowchart LR
-    subgraph mainthread["Main thread — UI, state, persistence"]
+    subgraph ownerthread["Session owner thread — UI/API, state, persistence"]
         frontend["TUI UserSession or<br/>ConsoleSession"]
         presentation["Tui screen or<br/>console stream"]
         controller["SessionController"]
         conv["Transcript"]
         personas["ForumPersonas"]
         journal["SessionJournal<br/>SQLite"]
-        registry["AgentRegistry<br/>main-thread handle"]
+        registry["AgentRegistry<br/>owner-thread handle"]
     end
 
     subgraph agentthreads["Runner threads — one per staged target"]
@@ -220,11 +222,13 @@ sequenceDiagram
     main->>controller: run_user
 ```
 
-Persona loading happens here, on the main thread: each `CompletionClient` is
-constructed — including optional `/v1/models` discovery when `model` is unset —
-*before* completion runners start. After that point a backend is touched only
-by the runner holding its exclusive lease, which is why the clients need no
-internal locking.
+Persona loading happens synchronously on the caller. During session
+construction that caller is the session's owner thread (the process main thread
+in `cha` and `chacon`); a forum check uses its composition or lobby thread. Each
+`CompletionClient` is constructed — including optional `/v1/models` discovery
+when `model` is unset — *before* completion runners start. After that point a
+backend is touched only by the runner holding its exclusive lease, which is why
+the clients need no internal locking.
 
 ## Lifecycle: one turn
 
@@ -402,12 +406,25 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | `ForumPersonas` is non-empty, with unique IDs and unique case-folded names. | `ForumPersonas` constructor |
 | At most one user operation and one foreground turn are active, while one multicast may run distinct backends concurrently. | `SessionController::busy`, batch reservation, backend leases |
 | Every launched run, including one cancelled at an unopened gate, yields exactly one terminal `AgentEvent` through its queue's reserved closing slot. | Per-runner execution and shutdown order |
-| Only the main thread accesses the live `Transcript` or mutates the journal. Presentation views are call-scoped; only completion histories own copied entries. | `SessionController`, `TranscriptView`, `CompletionHistory` |
+| Only the session's owner thread accesses its live `Transcript` or mutates its journal. Presentation views are call-scoped; only completion histories own copied entries. | `SessionController`, `TranscriptView`, `CompletionHistory` |
 | At most one streaming entry is open at a time. | `Transcript` |
 | Entry and request IDs are positive and strictly increasing. | `Transcript::require_next_id`, `state` table |
 | Durable writes precede visible ones. | `SessionController` |
 | Reasoning exists only while a response is active; it never enters the transcript, persistence, or projection. | `ActiveResponse`, `GenerationStatus`, `TranscriptEntry` shape |
 | Front ends never open storage or call backends. | Include rules above |
+| N controllers may run on N owner threads when no domain object is shared between them. `Workspace` is the deliberate exception: it is immutable, cache-free, and safe to share for concurrent `const` calls. | Session ownership, `Workspace` construction, session-local SQLite and completion clients |
+
+The process-wide logger is the only intentionally shared domain-adjacent sink
+and is thread-safe. Signal state belongs to composition roots, never to a
+controller. libcurl initialization is one-time and thread-safe; each completion
+client owns its own easy handle. SQLite connections and statements remain on
+their session owner thread. Session timestamp generation serializes cha's calls
+to `std::localtime` and copies the `std::tm` while holding that mutex; it cannot
+serialize another library's concurrent `localtime` or `gmtime` call against the
+shared C time buffer, so such a caller can still race with catalog conversion.
+Session catalog creation publishes complete databases atomically and retries
+collisions, so concurrent listing sees a complete database or no database,
+never a partially written one.
 
 ## Failure policy
 

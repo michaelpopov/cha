@@ -54,7 +54,9 @@ ApplicationConfig load_application_config(
 // the layout (personas, forums), lists forums and their sessions, and on create or open loads the
 // forum's AgentDefinition values, resolves the session file through SessionCatalog, restores the
 // stored transcript, and returns a SessionController ready to use. Front ends call it instead of
-// touching persona files or session storage themselves.
+// touching persona files or session storage themselves. A Workspace is immutable
+// after construction and has no lazy caches, so one instance may be shared by
+// concurrent callers.
 class Workspace {
 public:
     explicit Workspace(std::filesystem::path root = ".");

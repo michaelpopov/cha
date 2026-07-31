@@ -36,10 +36,11 @@ directory decides only how it looks and how input reaches it.
 
 ## The event loop
 
-The TUI, controller, transcript, and persistence side runs on the main thread,
-blocked in one libuv loop containing a Linux stdin poll handle, a resize-signal
-handle, and the agent async wake handle. Provider completions and abort cleanup
-run on registry-owned threads. There are no timers and no polling intervals.
+The TUI's session owner thread is the process main thread. It owns the
+controller, transcript, and persistence side while blocked in one libuv loop
+containing a Linux stdin poll handle, a resize-signal handle, and the agent async
+wake handle. Provider completions and abort cleanup run on registry-owned
+threads. There are no timers and no polling intervals.
 
 ```mermaid
 flowchart TD

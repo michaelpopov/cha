@@ -259,6 +259,7 @@ if(BUILD_TESTING)
         tests/agents/unit_agent_registry.cpp
         tests/agents/unit_config_loader.cpp
         tests/agents/unit_json_serialization.cpp
+        tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_forum_personas.cpp
         tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
