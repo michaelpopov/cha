@@ -812,6 +812,7 @@ owning registry handles.
 ### Likely files
 
 - `src/ui/web/session_routes.*`
+- `src/ui/web/route_support.*`
 - `src/ui/web/http_server.*`
 - `src/ui/web/asset_handler.*`
 - `tests/ui/web/unit_session_routes.cpp`

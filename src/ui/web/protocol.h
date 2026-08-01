@@ -88,7 +88,15 @@ struct SetDefaultAgentCommand {
     std::string persona_id;
 };
 
-using WebCommand = std::variant<RawCommand, StopCommand, SetDefaultAgentCommand>;
+// A snapshot request shares the owner queue with mutations so HTTP threads
+// never read controller-owned state directly.
+struct SnapshotCommand {};
+
+using WebCommand = std::variant<
+    RawCommand,
+    StopCommand,
+    SetDefaultAgentCommand,
+    SnapshotCommand>;
 
 struct CommandResult {
     bool clear_input{};

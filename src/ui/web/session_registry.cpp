@@ -62,8 +62,13 @@ SessionHandle::operator bool() const noexcept { return static_cast<bool>(runtime
 
 WebSessionRuntime& SessionHandle::runtime() const { return *runtime_; }
 
-SessionRegistry::SessionRegistry(WebSettings settings, RegistryControllerFactory factory)
-    : settings_(std::move(settings)), factory_(std::move(factory)) {
+SessionRegistry::SessionRegistry(
+    WebSettings settings,
+    RegistryControllerFactory factory,
+    RegistryMetadataFactory metadata_factory)
+    : settings_(std::move(settings)),
+      factory_(std::move(factory)),
+      metadata_factory_(std::move(metadata_factory)) {
     if (!factory_) throw std::invalid_argument("Session registry needs a controller factory");
     if (settings_.session_limit == 0) {
         throw std::invalid_argument("Web session limit must be positive");
@@ -74,11 +79,25 @@ SessionRegistry SessionRegistry::from_workspace(
     WebSettings settings,
     std::shared_ptr<const Workspace> workspace) {
     if (!workspace) throw std::invalid_argument("Session registry needs a workspace");
+    const auto controller_workspace = workspace;
     return SessionRegistry(
         std::move(settings),
-        [workspace = std::move(workspace)](const SessionKey& key, WakeNotifier& notifier) {
+        [controller_workspace](const SessionKey& key, WakeNotifier& notifier) {
             return adapt_session_controller(
-                workspace->open_session(key.forum, key.session_id, notifier));
+                controller_workspace->open_session(key.forum, key.session_id, notifier));
+        },
+        [workspace = std::move(workspace)](const SessionKey& key) {
+            const Forum forum = workspace->load_forum(key.forum);
+            for (const SessionSummary& session : workspace->sessions(key.forum)) {
+                if (session.id == key.session_id) {
+                    return WebSessionMetadata{
+                        .forum = {forum.name, forum.display_name},
+                        .session_id = session.id,
+                        .session_label = session.label,
+                    };
+                }
+            }
+            throw std::runtime_error("Session metadata is unavailable");
         });
 }
 
@@ -315,8 +334,12 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
     WebSessionRuntime* runtime_view = nullptr;
     try {
         WebSessionMetadata metadata;
-        metadata.forum.id = key.forum;
-        metadata.session_id = key.session_id;
+        if (metadata_factory_) {
+            metadata = metadata_factory_(key);
+        } else {
+            metadata.forum.id = key.forum;
+            metadata.session_id = key.session_id;
+        }
         runtime = std::make_shared<WebSessionRuntime>(settings_, std::move(metadata), nullptr,
             WebRuntimeHooks{
                 .mark_registry_stopping = [this, key] {

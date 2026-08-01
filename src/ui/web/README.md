@@ -21,7 +21,10 @@ open requests by validated forum/session identity, counts starting and stopping
 entries against the configured bound, and owns the owner threads. It publishes
 only running runtimes through owning `SessionHandle` values, and sweeps finished
 entries in two phases so joins and runtime destruction occur outside its mutex.
-Routes and actual SSE writing remain later blocks.
+`SessionRoutes` resolves path-scoped live handles and uses their owner queue
+for snapshots and commands; it never reaches a controller directly. It serves
+the minimal chat/not-open page boundary and the non-SSE session API. SSE route
+installation and browser-stream lifetime remain later blocks.
 `LobbyRoutes` is the HTTP boundary for stored-session discovery, create-only,
 and registry-backed open/reattach. It validates route identifiers before either
 the registry or session storage is consulted; creation reaches only the shared,

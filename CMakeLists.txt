@@ -216,6 +216,8 @@ add_library(cha_web STATIC
     src/ui/web/json.cpp
     src/ui/web/lobby_routes.cpp
     src/ui/web/protocol.cpp
+    src/ui/web/route_support.cpp
+    src/ui/web/session_routes.cpp
     src/ui/web/session_registry.cpp
     src/ui/web/wake_notifier.cpp
     src/ui/web/web_session_runtime.cpp
@@ -339,6 +341,7 @@ if(BUILD_TESTING)
         cha_web_tests
         tests/ui/web/unit_protocol.cpp
         tests/ui/web/unit_lobby_routes.cpp
+        tests/ui/web/unit_session_routes.cpp
         tests/ui/web/unit_session_registry.cpp
         tests/ui/web/unit_web_session_runtime.cpp
         tests/support/test_workspace.cpp)

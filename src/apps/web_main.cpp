@@ -2,6 +2,7 @@
 #include "ui/web/asset_handler.h"
 #include "ui/web/http_server.h"
 #include "ui/web/lobby_routes.h"
+#include "ui/web/session_routes.h"
 #include "ui/web/session_registry.h"
 #include "ui/web/web_settings.h"
 #include "util/environment.h"
@@ -28,6 +29,7 @@ int main() {
         cha::web::configure_http_server(server, settings);
         cha::web::AssetHandler().install(server);
         cha::web::LobbyRoutes(workspace, registry, settings).install(server);
+        cha::web::SessionRoutes(registry, settings).install(server);
         cha::log_info("Web server listener starting");
         // The initial skeleton has no readiness protocol or signal-driven stop;
         // production lifecycle handling arrives with the server-process block.

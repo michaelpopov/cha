@@ -43,6 +43,7 @@ private:
 using RegistryOpenResult = std::variant<OpenSessionSuccess, Error>;
 using RegistryControllerFactory = std::function<std::unique_ptr<WebSessionController>(
     const SessionKey&, WakeNotifier&)>;
+using RegistryMetadataFactory = std::function<WebSessionMetadata(const SessionKey&)>;
 
 struct RegistrySnapshot {
     std::size_t live_entry_count{};
@@ -54,7 +55,10 @@ struct RegistrySnapshot {
 // from_workspace(), which keeps path validation and leasing in Workspace.
 class SessionRegistry {
 public:
-    SessionRegistry(WebSettings settings, RegistryControllerFactory factory);
+    SessionRegistry(
+        WebSettings settings,
+        RegistryControllerFactory factory,
+        RegistryMetadataFactory metadata_factory = {});
     static SessionRegistry from_workspace(
         WebSettings settings,
         std::shared_ptr<const Workspace> workspace);
@@ -96,6 +100,7 @@ private:
 
     WebSettings settings_;
     RegistryControllerFactory factory_;
+    RegistryMetadataFactory metadata_factory_;
     std::mutex mutex_;
     std::map<SessionKey, std::unique_ptr<Entry>, std::less<>> entries_;
     bool stopping_{};

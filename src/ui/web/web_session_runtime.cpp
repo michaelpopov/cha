@@ -299,7 +299,7 @@ private:
     std::optional<std::size_t> snapshot_revision_;
 };
 
-static_assert(std::variant_size_v<WebCommand> == 3);
+static_assert(std::variant_size_v<WebCommand> == 4);
 
 } // namespace
 
@@ -357,6 +357,11 @@ CommandSubmitResult WebSessionRuntime::submit(
     if (wake_owner) notifier_.wake();
     if (auto result = completion->wait_for(deadline)) return std::move(*result);
     return ErrorCode::command_timeout;
+}
+
+CommandSubmitResult WebSessionRuntime::snapshot(
+    std::chrono::milliseconds deadline) {
+    return submit(SnapshotCommand{}, deadline);
 }
 
 void WebSessionRuntime::request_shutdown(ShutdownReason reason) {
@@ -427,12 +432,18 @@ void WebSessionRuntime::owner_loop(
 }
 
 void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand command) {
+    if (std::holds_alternative<SnapshotCommand>(command.command)) {
+        command.completion->complete(make_snapshot(controller));
+        return;
+    }
     SessionUpdate update = std::visit([&controller](auto&& value) -> SessionUpdate {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) return controller.handle_raw_input(std::move(value.text));
         else if constexpr (std::is_same_v<T, StopCommand>) return controller.request_stop();
         else if constexpr (std::is_same_v<T, SetDefaultAgentCommand>) {
             return controller.set_default_agent_id(value.persona_id);
+        } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
+            throw std::logic_error("Snapshot command handled before dispatch");
         } else {
             static_assert(unsupported_web_command<T>);
         }
@@ -448,6 +459,17 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
         // evidence that the browser initiated the controller's terminal event.
         (void)mark_stopping(ShutdownReason::browser_disconnected);
     }
+}
+
+SessionSnapshot WebSessionRuntime::make_snapshot(WebSessionController& controller) {
+    SessionSnapshot current = controller.snapshot();
+    current.forum = metadata_.forum;
+    current.session_id = metadata_.session_id;
+    current.session_label = metadata_.session_label;
+    current.notice = notice_;
+    current.lifecycle = SessionLifecycle::running;
+    current.shutdown_reason.reset();
+    return current;
 }
 
 void WebSessionRuntime::apply_notice(const SessionUpdate& update) {
@@ -474,13 +496,7 @@ void WebSessionRuntime::publish_change(
         }
     }
 
-    SessionSnapshot current = controller.snapshot();
-    current.forum = metadata_.forum;
-    current.session_id = metadata_.session_id;
-    current.session_label = metadata_.session_label;
-    current.notice = notice_;
-    current.lifecycle = SessionLifecycle::running;
-    current.shutdown_reason.reset();
+    SessionSnapshot current = make_snapshot(controller);
     if (last_snapshot_) {
         if (current == *last_snapshot_) return;
         for (std::size_t i = 0; i < current.transcript.size() && i < last_snapshot_->transcript.size(); ++i) {

@@ -4,9 +4,9 @@
 #include "ui/web/http_response.h"
 #include "ui/web/json.h"
 #include "ui/web/protocol.h"
+#include "ui/web/route_support.h"
 #include "ui/web/session_registry.h"
 #include "util/logging.h"
-#include "util/path_name.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -15,7 +15,6 @@
 #include <new>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -23,69 +22,8 @@
 namespace cha::web {
 namespace {
 
-constexpr std::string_view not_found_message = "That forum or session was not found.";
-
-void set_not_found(httplib::Response& response) {
-    set_error_response(response, 404, {ErrorCode::not_found, std::string(not_found_message)});
-}
-
 void set_internal_error(httplib::Response& response) {
     set_error_response(response, 500, {ErrorCode::internal_error, "The request could not be completed."});
-}
-
-bool has_matching_origin(const httplib::Request& request) {
-    if (!request.has_header("Origin")) return true;
-    const std::string origin = request.get_header_value("Origin");
-    constexpr std::string_view prefix = "http://";
-    constexpr std::string_view secure_prefix = "https://";
-    std::string_view authority(origin);
-    if (authority.starts_with(prefix)) authority.remove_prefix(prefix.size());
-    else if (authority.starts_with(secure_prefix)) authority.remove_prefix(secure_prefix.size());
-    else return false;
-    return authority == request.get_header_value("Host");
-}
-
-bool validate_mutation(const httplib::Request& request, httplib::Response& response) {
-    if (!is_json_content_type(request.get_header_value("Content-Type"))) {
-        set_error_response(response, 400, {ErrorCode::bad_request, "Expected a JSON request body."});
-        return false;
-    }
-    if (!has_matching_origin(request)) {
-        set_error_response(response, 403, {ErrorCode::forbidden_origin, "Request origin is not allowed."});
-        return false;
-    }
-    return true;
-}
-
-bool validate_component(std::string_view component) {
-    try {
-        require_path_component(component, "route identifier");
-        return true;
-    } catch (const std::exception&) {
-        return false;
-    }
-}
-
-bool validate_open_body(
-    const httplib::Request& request,
-    httplib::Response& response,
-    std::size_t maximum_bytes) {
-    try {
-        parse_empty_object(parse_json_body(request.body, maximum_bytes));
-        return true;
-    } catch (const std::length_error&) {
-        set_error_response(
-            response,
-            413,
-            {ErrorCode::body_too_large, "Request body is too large."});
-        return false;
-    } catch (const std::invalid_argument&) {
-        set_error_response(
-            response,
-            400,
-            {ErrorCode::bad_request, "Invalid JSON request body."});
-        return false;
-    }
 }
 
 bool is_running(const RegistrySnapshot& snapshot, const SessionKey& key) {
@@ -158,7 +96,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, registry](const httplib::Request& request, httplib::Response& response) {
         const std::string forum = request.matches[1];
-        if (!validate_component(forum)) return set_not_found(response);
+        if (!is_valid_route_component(forum)) return set_route_not_found(response);
         try {
             const RegistrySnapshot snapshot = registry->snapshot();
             std::vector<SessionListing> sessions;
@@ -167,7 +105,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             }
             set_json_response(response, 200, nlohmann::json(sessions));
         } catch (const ForumNotFoundError&) {
-            set_not_found(response);
+            set_route_not_found(response);
         } catch (const std::exception&) {
             set_internal_error(response);
         }
@@ -175,31 +113,28 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     server.Post(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, settings](const httplib::Request& request, httplib::Response& response) {
         const std::string forum = request.matches[1];
-        if (!validate_component(forum)) return set_not_found(response);
-        if (!validate_mutation(request, response)) return;
+        if (!is_valid_route_component(forum)) return set_route_not_found(response);
+        if (!validate_json_mutation(request, response)) return;
         try {
             (void)workspace->load_forum(forum);
         } catch (const ForumNotFoundError&) {
-            return set_not_found(response);
+            return set_route_not_found(response);
         } catch (const std::exception&) {
             return set_internal_error(response);
         }
         std::string label;
-        try {
-            label = parse_create_session_label(
-                parse_json_body(request.body, settings.request_body_limit));
-        } catch (const std::length_error&) {
-            set_error_response(response, 413, {ErrorCode::body_too_large, "Request body is too large."});
-            return;
-        } catch (const std::invalid_argument&) {
-            set_error_response(response, 400, {ErrorCode::bad_request, "Invalid JSON request body."});
-            return;
-        }
+        if (!parse_route_json_body(
+                request,
+                response,
+                settings.request_body_limit,
+                [&label](const nlohmann::json& json) {
+                    label = parse_create_session_label(json);
+                })) return;
         try {
             const SessionSummary created = workspace->create_stored_session(forum, std::move(label));
             set_json_response(response, 201, nlohmann::json(CreateSessionSuccess{created.id, created.label}));
         } catch (const ForumNotFoundError&) {
-            set_not_found(response);
+            set_route_not_found(response);
         } catch (const std::exception&) {
             set_internal_error(response);
         }
@@ -207,18 +142,25 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     server.Post(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/open)", [workspace, registry, settings](const httplib::Request& request, httplib::Response& response) {
         const SessionKey key{request.matches[1], request.matches[2]};
-        if (!validate_component(key.forum) || !validate_component(key.session_id)) return set_not_found(response);
-        if (!validate_mutation(request, response)) return;
-        if (!validate_open_body(request, response, settings.request_body_limit)) return;
+        if (!is_valid_route_component(key.forum)
+            || !is_valid_route_component(key.session_id)) {
+            return set_route_not_found(response);
+        }
+        if (!validate_json_mutation(request, response)) return;
+        if (!parse_route_json_body(
+                request,
+                response,
+                settings.request_body_limit,
+                [](const nlohmann::json& json) { parse_empty_object(json); })) return;
         if (const auto reattached = registry->try_reattach(key)) {
             return set_open_result(response, *reattached);
         }
         try {
             workspace->check_session(key.forum, key.session_id);
         } catch (const ForumNotFoundError&) {
-            return set_not_found(response);
+            return set_route_not_found(response);
         } catch (const SessionNotFoundError&) {
-            return set_not_found(response);
+            return set_route_not_found(response);
         } catch (const std::exception&) {
             return set_internal_error(response);
         }

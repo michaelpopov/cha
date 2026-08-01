@@ -111,6 +111,8 @@ public:
     [[nodiscard]] CommandSubmitResult submit(
         WebCommand command,
         std::chrono::milliseconds deadline);
+    [[nodiscard]] CommandSubmitResult snapshot(
+        std::chrono::milliseconds deadline);
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
     [[nodiscard]] WakeNotifier& notifier_for_owner() noexcept { return notifier_; }
@@ -119,6 +121,7 @@ public:
 private:
     void owner_loop(std::unique_ptr<WebSessionController> controller);
     void execute(WebSessionController& controller, OwnerCommand command);
+    [[nodiscard]] SessionSnapshot make_snapshot(WebSessionController& controller);
     void apply_notice(const SessionUpdate& update);
     [[nodiscard]] ShutdownReason mark_stopping(ShutdownReason reason);
     void publish_change(

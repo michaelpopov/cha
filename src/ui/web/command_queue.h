@@ -14,7 +14,7 @@
 
 namespace cha::web {
 
-using CommandSubmitResult = std::variant<CommandResult, ErrorCode>;
+using CommandSubmitResult = std::variant<CommandResult, SessionSnapshot, ErrorCode>;
 
 class CommandCompletion {
 public:
