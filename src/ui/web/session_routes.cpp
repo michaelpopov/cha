@@ -5,6 +5,7 @@
 #include "ui/web/json.h"
 #include "ui/web/route_support.h"
 #include "ui/web/session_registry.h"
+#include "ui/web/sse_stream.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -102,6 +103,33 @@ void SessionRoutes::install(httplib::Server& server) const {
         } else {
             set_error_response(response, 500, {ErrorCode::internal_error, "The request could not be completed."});
         }
+    });
+    server.Get(std::string(base) + R"(/api/v1/events)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
+        SessionHandle handle = resolve(request, response, *registry, false);
+        if (!handle) return;
+        CommandSubmitResult result = handle.runtime().connect_sse(settings.command_deadline);
+        const auto* connection = std::get_if<SseConnectResult>(&result);
+        if (!connection) {
+            if (const auto* error = std::get_if<ErrorCode>(&result)) {
+                set_submission_error(response, *error);
+            } else {
+                set_error_response(response, 500, {ErrorCode::internal_error, "The event stream could not be opened."});
+            }
+            return;
+        }
+        response.set_header("Cache-Control", "no-cache");
+        response.set_header("X-Accel-Buffering", "no");
+        response.set_chunked_content_provider(
+            "text/event-stream",
+            [mailbox = connection->mailbox, stream = connection->stream,
+             interval = settings.sse_heartbeat_interval](
+                std::size_t,
+                httplib::DataSink& sink) mutable {
+                return SseStreamWriter(mailbox, stream, interval).write(sink);
+            },
+            [mailbox = connection->mailbox, stream = connection->stream](bool) {
+                mailbox->end_stream(stream);
+            });
     });
     server.Post(std::string(base) + R"(/api/v1/input)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
         const std::optional<SessionKey> key = validate_key(request, response);

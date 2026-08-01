@@ -18,7 +18,9 @@ struct WebSettings {
     std::chrono::milliseconds open_deadline{10000};
     std::chrono::milliseconds command_deadline{30000};
     std::chrono::milliseconds sse_heartbeat_interval{15000};
-    std::chrono::milliseconds sse_write_timeout{5000};
+    // cpp-httplib configures this server-wide even though stalled SSE writes
+    // are the reason the application needs an explicit bound.
+    std::chrono::milliseconds http_write_timeout{5000};
     std::chrono::milliseconds sse_drain_deadline{1000};
     std::chrono::milliseconds idle_grace{30000};
     // Runtime configuration validation must require orphan_limit >= idle_grace.

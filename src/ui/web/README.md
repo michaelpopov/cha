@@ -10,9 +10,9 @@ notifier, and a bounded multi-producer command queue. HTTP-facing callers get
 only owning command results; the owner thread alone reaches a controller and
 continues draining agent notifications without a browser connection. It copies
 controller state into owning, presentation-neutral snapshots and publishes
-them through a small abstract sink, so a future SSE writer never borrows
-controller state or blocks the owner. Append candidates cross that seam without
-a sequence number; the future mailbox assigns sequence values only to payloads
+them through a small abstract sink, so the SSE writer never borrows controller
+state or blocks the owner. Append candidates cross that seam without a sequence
+number; the mailbox assigns sequence values only to payloads
 it actually stores. Its idempotent owner-thread teardown
 uses registry hooks only for lifecycle notifications, drains a final snapshot
 for a bounded interval, and contains controller failures to that runtime.
@@ -23,8 +23,12 @@ only running runtimes through owning `SessionHandle` values, and sweeps finished
 entries in two phases so joins and runtime destruction occur outside its mutex.
 `SessionRoutes` resolves path-scoped live handles and uses their owner queue
 for snapshots and commands; it never reaches a controller directly. It serves
-the minimal chat/not-open page boundary and the non-SSE session API. SSE route
-installation and browser-stream lifetime remain later blocks.
+the minimal chat/not-open page boundary, session API, and chunked SSE route.
+`SseMailbox` holds at most one immutable in-flight payload and one replaceable
+pending payload; its writer is the HTTP thread, never the session owner. Each
+stream begins with a fresh snapshot, then receives only snapshot or
+target/sequence-aware append events plus comment heartbeats. Stream guarding
+and browser disconnect lifetime remain later blocks.
 `LobbyRoutes` is the HTTP boundary for stored-session discovery, create-only,
 and registry-backed open/reattach. It validates route identifiers before either
 the registry or session storage is consulted; creation reaches only the shared,

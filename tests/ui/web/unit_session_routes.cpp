@@ -16,6 +16,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -33,6 +34,7 @@ struct Calls {
     bool input_entered{};
     bool release_input{};
     int completed_inputs{};
+    std::string transcript_text{"hello"};
     std::condition_variable input_changed;
 };
 
@@ -52,6 +54,10 @@ public:
         }
         ++calls_->completed_inputs;
         calls_->input_changed.notify_all();
+        if (calls_->input == "append") {
+            calls_->transcript_text.append(" world");
+            return {.render_needed = true, .clear_input = true};
+        }
         return {.clear_input = true, .notice = "input accepted"};
     }
     SessionUpdate request_stop() override {
@@ -66,14 +72,16 @@ public:
     }
     SessionEventBatch receive(std::size_t) override { return {}; }
     SessionSnapshot snapshot() override {
+        std::lock_guard lock(calls_->mutex);
         return {
             .personas = {{"guide", "Guide"}},
             .default_persona_id = "guide",
             .transcript = {{
                 .id = 1,
-                .kind = TranscriptKind::human,
-                .display_name = "You",
-                .text = "hello",
+                .kind = TranscriptKind::agent,
+                .display_name = "Guide",
+                .text = calls_->transcript_text,
+                .status = TranscriptStatus::streaming,
             }},
         };
     }
@@ -165,6 +173,156 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
         EXPECT_EQ(calls->input, "/@Guide");
         EXPECT_EQ(calls->stops, 1);
         EXPECT_EQ(calls->agent, "guide");
+    }
+    registry.begin_shutdown();
+}
+
+TEST(SessionRoutes, EventsStartWithASnapshotAndIgnoreLastEventId) {
+    const auto calls = std::make_shared<Calls>();
+    SessionRegistry registry({.session_limit = 1}, [calls](const SessionKey&, WakeNotifier&) {
+        return std::make_unique<RouteController>(calls);
+    });
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open({"lobby", "one"}, 1s)));
+    RouteServer server(registry);
+
+    int status{};
+    std::string content;
+    const httplib::Headers headers{{"Last-Event-ID", "999"}};
+    (void)server.client().Get(
+        "/s/lobby/one/api/v1/events", headers,
+        [&status](const httplib::Response& response) {
+            status = response.status;
+            return true;
+        },
+        [&content](const char* data, std::size_t size) {
+            content.append(data, size);
+            return false; // Close after the initial record.
+        });
+    EXPECT_EQ(status, 200);
+    EXPECT_TRUE(content.starts_with("event: snapshot\n"));
+    EXPECT_NE(content.find("data: "), std::string::npos);
+    const std::size_t record_end = content.find("\n\n");
+    ASSERT_NE(record_end, std::string::npos);
+    std::istringstream record(content.substr(0, record_end));
+    for (std::string line; std::getline(record, line);) {
+        EXPECT_TRUE(line.starts_with("event: ") || line.starts_with("data: "));
+    }
+    registry.begin_shutdown();
+}
+
+TEST(SessionRoutes, EventsDeliverAppendWithSequenceOverHttp) {
+    const auto calls = std::make_shared<Calls>();
+    SessionRegistry registry(
+        {.session_limit = 1},
+        [calls](const SessionKey&, WakeNotifier&) {
+            return std::make_unique<RouteController>(calls);
+        });
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        registry.open({"lobby", "one"}, 1s)));
+    RouteServer server(registry);
+
+    std::mutex stream_mutex;
+    std::condition_variable stream_changed;
+    std::string content;
+    auto stream_request = std::async(std::launch::async, [&] {
+        auto client = server.client();
+        client.set_read_timeout(2s);
+        return client.Get(
+            "/s/lobby/one/api/v1/events",
+            [](const httplib::Response& response) {
+                return response.status == 200;
+            },
+            [&](const char* data, std::size_t size) {
+                std::lock_guard lock(stream_mutex);
+                content.append(data, size);
+                stream_changed.notify_all();
+                return content.find("event: append\n") == std::string::npos;
+            });
+    });
+    {
+        std::unique_lock lock(stream_mutex);
+        ASSERT_TRUE(stream_changed.wait_for(lock, 1s, [&] {
+            return content.find("event: snapshot\n") != std::string::npos;
+        }));
+    }
+
+    const auto input = server.client().Post(
+        "/s/lobby/one/api/v1/input",
+        R"({"text":"append"})",
+        "application/json");
+    ASSERT_TRUE(input);
+    EXPECT_EQ(input->status, 200);
+    ASSERT_EQ(stream_request.wait_for(1s), std::future_status::ready);
+    (void)stream_request.get();
+
+    std::lock_guard lock(stream_mutex);
+    const std::size_t append_record = content.find("event: append\n");
+    ASSERT_NE(append_record, std::string::npos);
+    const std::size_t data = content.find("data: ", append_record);
+    const std::size_t end = content.find("\n\n", data);
+    ASSERT_NE(data, std::string::npos);
+    ASSERT_NE(end, std::string::npos);
+    const nlohmann::json append =
+        nlohmann::json::parse(content.substr(data + 6, end - data - 6));
+    EXPECT_EQ(append["seq"], 0);
+    EXPECT_EQ(append["text"], " world");
+    EXPECT_EQ(append["target"], nlohmann::json({
+        {"kind", "entry"}, {"entry_id", 1}}));
+    registry.begin_shutdown();
+}
+
+TEST(SessionRoutes, DeliberateStreamCloseFinishesChunkedResponse) {
+    const auto calls = std::make_shared<Calls>();
+    SessionRegistry registry(
+        {.session_limit = 1},
+        [calls](const SessionKey&, WakeNotifier&) {
+            return std::make_unique<RouteController>(calls);
+        });
+    const SessionKey key{"lobby", "one"};
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        registry.open(key, 1s)));
+    SessionHandle handle = registry.lookup(key);
+    ASSERT_TRUE(handle);
+    RouteServer server(registry);
+
+    std::mutex stream_mutex;
+    std::condition_variable stream_changed;
+    std::string content;
+    auto stream_request = std::async(std::launch::async, [&] {
+        auto client = server.client();
+        client.set_read_timeout(2s);
+        return client.Get(
+            "/s/lobby/one/api/v1/events",
+            [](const httplib::Response& response) {
+                return response.status == 200;
+            },
+            [&](const char* data, std::size_t size) {
+                std::lock_guard lock(stream_mutex);
+                content.append(data, size);
+                stream_changed.notify_all();
+                return true;
+            });
+    });
+    {
+        std::unique_lock lock(stream_mutex);
+        ASSERT_TRUE(stream_changed.wait_for(lock, 1s, [&] {
+            return content.find("event: snapshot\n") != std::string::npos;
+        }));
+    }
+
+    handle.runtime().request_shutdown();
+    ASSERT_EQ(stream_request.wait_for(2s), std::future_status::ready);
+    const httplib::Result result = stream_request.get();
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->status, 200);
+    {
+        std::lock_guard lock(stream_mutex);
+        EXPECT_NE(
+            content.find(R"("lifecycle":"stopping")"),
+            std::string::npos);
+        EXPECT_NE(
+            content.find(R"("shutdown_reason":"browser_disconnected")"),
+            std::string::npos);
     }
     registry.begin_shutdown();
 }

@@ -107,6 +107,20 @@ std::string_view to_string(ErrorCode value) {
         });
 }
 
+std::optional<AppendTarget> snapshot_append_target(
+    const SessionSnapshot& snapshot) {
+    for (const TranscriptEntry& entry : snapshot.transcript) {
+        if (entry.status == TranscriptStatus::streaming) {
+            return AppendTargetEntry{entry.id};
+        }
+    }
+    if (snapshot.generation.active && snapshot.generation.request_id
+        && snapshot.generation.phase == GenerationPhase::reasoning) {
+        return AppendTargetReasoning{*snapshot.generation.request_id};
+    }
+    return std::nullopt;
+}
+
 void to_json(nlohmann::json& json, const ForumSummary& value) {
     json = {
         {"id", value.id},

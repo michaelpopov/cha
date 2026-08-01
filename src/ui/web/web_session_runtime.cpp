@@ -1,5 +1,7 @@
 #include "ui/web/web_session_runtime.h"
 
+#include "ui/web/sse_mailbox.h"
+
 #include "session/session_controller.h"
 #include "transcript/transcript.h"
 #include "ui/text/text_input.h"
@@ -299,7 +301,7 @@ private:
     std::optional<std::size_t> snapshot_revision_;
 };
 
-static_assert(std::variant_size_v<WebCommand> == 4);
+static_assert(std::variant_size_v<WebCommand> == 5);
 
 } // namespace
 
@@ -313,6 +315,7 @@ WebSessionRuntime::WebSessionRuntime(
       commands_(settings_.command_queue_capacity),
       metadata_(std::move(metadata)),
       sink_(std::move(sink)),
+      sse_mailbox_(std::dynamic_pointer_cast<SseMailbox>(sink_)),
       hooks_(std::move(hooks)),
       owner_([this, factory = std::move(factory)]() mutable {
           try {
@@ -333,6 +336,7 @@ WebSessionRuntime::WebSessionRuntime(
       commands_(settings_.command_queue_capacity),
       metadata_(std::move(metadata)),
       sink_(std::move(sink)),
+      sse_mailbox_(std::dynamic_pointer_cast<SseMailbox>(sink_)),
       hooks_(std::move(hooks)) {}
 
 WebSessionRuntime::~WebSessionRuntime() {
@@ -362,6 +366,11 @@ CommandSubmitResult WebSessionRuntime::submit(
 CommandSubmitResult WebSessionRuntime::snapshot(
     std::chrono::milliseconds deadline) {
     return submit(SnapshotCommand{}, deadline);
+}
+
+CommandSubmitResult WebSessionRuntime::connect_sse(
+    std::chrono::milliseconds deadline) {
+    return submit(SseConnectCommand{}, deadline);
 }
 
 void WebSessionRuntime::request_shutdown(ShutdownReason reason) {
@@ -436,6 +445,21 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
         command.completion->complete(make_snapshot(controller));
         return;
     }
+    if (std::holds_alternative<SseConnectCommand>(command.command)) {
+        if (!sse_mailbox_) {
+            command.completion->complete(ErrorCode::internal_error);
+        } else {
+            // Establish the exact snapshot sent on connect as the runtime's
+            // append base. This keeps later candidates relative to what the
+            // browser actually received even if a controller changed without
+            // first emitting a render hint.
+            publish_snapshot(make_snapshot(controller));
+            const SseMailbox::Stream stream =
+                sse_mailbox_->begin_stream({*last_snapshot_});
+            command.completion->complete(SseConnectResult{sse_mailbox_, stream});
+        }
+        return;
+    }
     SessionUpdate update = std::visit([&controller](auto&& value) -> SessionUpdate {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) return controller.handle_raw_input(std::move(value.text));
@@ -444,6 +468,8 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
             return controller.set_default_agent_id(value.persona_id);
         } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
             throw std::logic_error("Snapshot command handled before dispatch");
+        } else if constexpr (std::is_same_v<T, SseConnectCommand>) {
+            throw std::logic_error("SSE connect handled before dispatch");
         } else {
             static_assert(unsupported_web_command<T>);
         }
@@ -509,11 +535,9 @@ void WebSessionRuntime::publish_change(
                 const AppendTarget target = AppendTargetEntry{after.id};
                 if (append_target_
                     && same_target(*append_target_, target)) {
-                    sink_->publish(WebAppendCandidate{
-                        target,
-                        after.text.substr(before.text.size()),
-                    });
+                    const std::string text = after.text.substr(before.text.size());
                     last_snapshot_ = std::move(current);
+                    sink_->publish_append({target, text}, *last_snapshot_);
                     return;
                 }
             }
@@ -528,12 +552,10 @@ void WebSessionRuntime::publish_change(
                 AppendTargetReasoning{*current.generation.request_id};
             if (append_target_
                 && same_target(*append_target_, target)) {
-                sink_->publish(WebAppendCandidate{
-                    target,
-                    current.generation.reasoning_text.substr(
-                        last_snapshot_->generation.reasoning_text.size()),
-                });
+                const std::string text = current.generation.reasoning_text.substr(
+                    last_snapshot_->generation.reasoning_text.size());
                 last_snapshot_ = std::move(current);
+                sink_->publish_append({target, text}, *last_snapshot_);
                 return;
             }
         }
@@ -564,31 +586,28 @@ bool WebSessionRuntime::publish_append(WebAppendCandidate candidate) {
         }
         last_snapshot_->generation.reasoning_text.append(candidate.text);
     }
-    sink_->publish(std::move(candidate));
+    sink_->publish_append(std::move(candidate), *last_snapshot_);
     return true;
 }
 
 void WebSessionRuntime::publish_snapshot(SessionSnapshot snapshot) {
     sink_->publish(SnapshotEvent{snapshot});
     last_snapshot_ = std::move(snapshot);
-    append_target_.reset();
+    append_target_ = snapshot_append_target(*last_snapshot_);
     append_entry_index_.reset();
-    for (std::size_t index = 0;
-         index != last_snapshot_->transcript.size();
-         ++index) {
-        const TranscriptEntry& entry = last_snapshot_->transcript[index];
-        if (entry.status == TranscriptStatus::streaming) {
-            append_target_ = AppendTargetEntry{entry.id};
-            append_entry_index_ = index;
-            return;
+    if (append_target_) {
+        if (const auto* target =
+                std::get_if<AppendTargetEntry>(&*append_target_)) {
+            for (std::size_t index = 0;
+                 index != last_snapshot_->transcript.size();
+                 ++index) {
+                if (last_snapshot_->transcript[index].id
+                    == target->entry_id) {
+                    append_entry_index_ = index;
+                    break;
+                }
+            }
         }
-    }
-    if (last_snapshot_->generation.active
-        && last_snapshot_->generation.request_id
-        && last_snapshot_->generation.phase == GenerationPhase::reasoning) {
-        append_target_ = AppendTargetReasoning{
-            *last_snapshot_->generation.request_id,
-        };
     }
 }
 

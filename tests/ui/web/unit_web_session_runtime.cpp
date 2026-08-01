@@ -1,5 +1,7 @@
 #include "ui/web/web_session_runtime.h"
 
+#include "ui/web/sse_mailbox.h"
+
 #include "agents/agent.h"
 #include "session/session_controller.h"
 #include "session/session_database.h"
@@ -45,6 +47,7 @@ struct FakeState {
     bool receive_entered{};
     bool receive_released{};
     bool flood_notifications{};
+    bool render_on_receive{};
     bool end_on_receive{};
     bool shutdown{};
     bool throw_receive{};
@@ -123,6 +126,7 @@ public:
     }
     SessionEventBatch receive(std::size_t) override {
         bool full = false;
+        bool render_needed = false;
         bool end_session = false;
         {
             std::unique_lock lock(state_->mutex);
@@ -139,6 +143,8 @@ public:
                 throw std::runtime_error("injected receive failure");
             }
             full = state_->flood_notifications;
+            render_needed = state_->render_on_receive;
+            state_->render_on_receive = false;
             end_session = state_->end_on_receive;
             state_->end_on_receive = false;
         }
@@ -152,7 +158,12 @@ public:
                 .full = true,
             };
         }
-        return {.update = {.end_session = end_session}};
+        return {
+            .update = {
+                .render_needed = render_needed,
+                .end_session = end_session,
+            },
+        };
     }
     void shutdown() override {
         std::lock_guard lock(state_->mutex);
@@ -174,6 +185,7 @@ public:
         std::lock_guard lock(state_->mutex);
         check_owner();
         ++state_->append_candidate_calls;
+        state_->entered.notify_all();
         if (!state_->fast_append_candidates) return std::nullopt;
         const SessionSnapshot& after = state_->snapshot;
         if (!before.transcript.empty()
@@ -217,31 +229,34 @@ private:
 
 class FakeSnapshotSink final : public WebSnapshotSink {
 public:
-    void publish(WebSnapshotUpdate update) override {
+    void publish(SnapshotEvent snapshot) override {
         {
             std::lock_guard lock(mutex);
-            if (auto* snapshot = std::get_if<SnapshotEvent>(&update)) {
-                payloads.push_back(std::move(*snapshot));
-                next_append_seq = 0;
-            } else {
-                WebAppendCandidate candidate = std::move(
-                    std::get<WebAppendCandidate>(update));
-                if (merge_pending_appends && !payloads.empty()) {
-                    if (auto* pending =
-                            std::get_if<AppendEvent>(&payloads.back());
-                        pending && same_append_target(
-                            pending->target, candidate.target)) {
-                        pending->text.append(candidate.text);
-                        changed.notify_all();
-                        return;
-                    }
+            payloads.push_back(std::move(snapshot));
+            next_append_seq = 0;
+        }
+        changed.notify_all();
+    }
+    void publish_append(
+        WebAppendCandidate candidate,
+        const SessionSnapshot&) override {
+        {
+            std::lock_guard lock(mutex);
+            if (merge_pending_appends && !payloads.empty()) {
+                if (auto* pending =
+                        std::get_if<AppendEvent>(&payloads.back());
+                    pending && same_append_target(
+                        pending->target, candidate.target)) {
+                    pending->text.append(candidate.text);
+                    changed.notify_all();
+                    return;
                 }
-                payloads.push_back(AppendEvent{
-                    std::move(candidate.target),
-                    std::move(candidate.text),
-                    next_append_seq++,
-                });
             }
+            payloads.push_back(AppendEvent{
+                std::move(candidate.target),
+                std::move(candidate.text),
+                next_append_seq++,
+            });
         }
         changed.notify_all();
     }
@@ -801,6 +816,87 @@ TEST(WebSessionRuntime, ProvenAppendBypassesFullSnapshotConstruction) {
     EXPECT_TRUE(std::holds_alternative<AppendEvent>(sink->payloads.back()));
 }
 
+TEST(WebSessionRuntime, ConnectSnapshotBecomesAppendBaseWhileWriterIsStalled) {
+    auto state = std::make_shared<FakeState>();
+    state->fast_append_candidates = true;
+    auto mailbox = std::make_shared<SseMailbox>();
+    WebSessionRuntime runtime(
+        fake_factory(state), test_settings(4), {}, mailbox);
+    {
+        std::unique_lock lock(state->mutex);
+        ASSERT_TRUE(state->entered.wait_for(lock, 1s, [&] {
+            return state->receive_entered;
+        }));
+        // Simulate a controller mutation that failed to issue a render hint.
+        // The connect snapshot must still become the base for later deltas.
+        state->snapshot.transcript[0].text = "one hidden";
+    }
+
+    CommandSubmitResult connected = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<SseConnectResult>(connected));
+    SseConnectResult connection =
+        std::move(std::get<SseConnectResult>(connected));
+    const SseMailbox::Next initial =
+        connection.mailbox->next(connection.stream, 10ms);
+    ASSERT_TRUE(initial.payload);
+    const auto* snapshot =
+        std::get_if<SnapshotEvent>(initial.payload.get());
+    ASSERT_NE(snapshot, nullptr);
+    EXPECT_EQ(snapshot->snapshot.transcript[0].text, "one hidden");
+
+    // Keep the initial payload in flight. Publishing and command completion on
+    // the owner must continue without waiting for this simulated slow writer.
+    {
+        std::lock_guard lock(state->mutex);
+        state->snapshot.transcript[0].text = "one hidden more";
+    }
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        runtime.submit(RawCommand{"append"}, 1s)));
+    {
+        std::lock_guard lock(state->mutex);
+        state->snapshot.transcript[0].text = "one hidden more again";
+        state->render_on_receive = true;
+    }
+    runtime.notifier_for_owner().wake();
+    {
+        std::unique_lock lock(state->mutex);
+        ASSERT_TRUE(state->entered.wait_for(lock, 1s, [&] {
+            return state->append_candidate_calls >= 2;
+        }));
+    }
+    // Candidate construction is observed under the fake controller lock;
+    // queue a later owner command to ensure the candidate has also reached the
+    // mailbox before releasing the in-flight payload.
+    EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
+
+    connection.mailbox->written(connection.stream);
+    const SseMailbox::Next next =
+        connection.mailbox->next(connection.stream, 10ms);
+    ASSERT_TRUE(next.payload);
+    const auto* append = std::get_if<AppendEvent>(next.payload.get());
+    ASSERT_NE(append, nullptr);
+    EXPECT_EQ(append->text, " more again");
+    EXPECT_EQ(append->seq, 0U);
+    connection.mailbox->end_stream(connection.stream);
+}
+
+TEST(WebSessionRuntime, ConnectWithNonStreamingSinkReportsInternalError) {
+    auto state = std::make_shared<FakeState>();
+    auto sink = std::make_shared<FakeSnapshotSink>();
+    WebSessionRuntime runtime(
+        fake_factory(state), test_settings(2), {}, sink);
+    {
+        std::unique_lock lock(sink->mutex);
+        ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] {
+            return !sink->payloads.empty();
+        }));
+    }
+
+    const CommandSubmitResult result = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<ErrorCode>(result));
+    EXPECT_EQ(std::get<ErrorCode>(result), ErrorCode::internal_error);
+}
+
 TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
     auto state = std::make_shared<FakeState>();
     auto sink = std::make_shared<FakeSnapshotSink>();
@@ -894,6 +990,36 @@ TEST(WebSessionRuntime, FinalSnapshotUsesBoundedDrainAndHooks) {
     ASSERT_EQ(finished_future.wait_for(1s), std::future_status::ready);
     EXPECT_EQ(stopping, 1);
     EXPECT_EQ(finished, 1);
+}
+
+TEST(WebSessionRuntime, StoppedMailboxReaderExpiresFinalSnapshotDrain) {
+    auto state = std::make_shared<FakeState>();
+    std::promise<void> finished_signal;
+    auto finished = finished_signal.get_future();
+    WebSettings settings = test_settings(2);
+    settings.sse_drain_deadline = 10ms;
+    auto mailbox = std::make_shared<SseMailbox>();
+    WebSessionRuntime runtime(
+        fake_factory(state), settings, {}, mailbox,
+        {.mark_finished = [&] { finished_signal.set_value(); }});
+
+    CommandSubmitResult connected = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<SseConnectResult>(connected));
+    SseConnectResult connection =
+        std::move(std::get<SseConnectResult>(connected));
+    // Take the initial payload but never acknowledge it, matching a reader
+    // that stopped after the server began the write.
+    ASSERT_TRUE(
+        connection.mailbox->next(connection.stream, 10ms).payload);
+
+    const auto started = std::chrono::steady_clock::now();
+    runtime.request_shutdown();
+    ASSERT_EQ(finished.wait_for(1s), std::future_status::ready);
+    EXPECT_GE(
+        std::chrono::steady_clock::now() - started,
+        settings.sse_drain_deadline);
+    EXPECT_FALSE(
+        connection.mailbox->next(connection.stream, 1ms).open);
 }
 
 TEST(WebSessionRuntime, WrittenFinalSnapshotEndsDrainImmediately) {

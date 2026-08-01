@@ -25,6 +25,8 @@ class SessionController;
 
 namespace cha::web {
 
+class SseMailbox;
+
 // An owner-observed delta has no sequence number. The sink/mailbox assigns one
 // only when it stores a new append payload; merging a pending candidate must
 // consume no additional value.
@@ -32,8 +34,6 @@ struct WebAppendCandidate {
     AppendTarget target;
     std::string text;
 };
-
-using WebSnapshotUpdate = std::variant<SnapshotEvent, WebAppendCandidate>;
 
 // Minimal controller boundary: it keeps fakes out of session/ and ensures all
 // controller work remains on the runtime's permanent owner thread.
@@ -72,7 +72,13 @@ struct WebSessionMetadata {
 class WebSnapshotSink {
 public:
     virtual ~WebSnapshotSink() = default;
-    virtual void publish(WebSnapshotUpdate update) = 0;
+    virtual void publish(SnapshotEvent snapshot) = 0;
+    // A pending snapshot cannot safely coexist with a later append. Concrete
+    // sinks borrow the latest state and copy it only if they actually need to
+    // collapse the append to a replacement snapshot.
+    virtual void publish_append(
+        WebAppendCandidate candidate,
+        const SessionSnapshot& fallback_snapshot) = 0;
     virtual bool wait_for_written(std::chrono::milliseconds deadline) = 0;
     virtual void close() noexcept = 0;
 };
@@ -112,6 +118,8 @@ public:
         WebCommand command,
         std::chrono::milliseconds deadline);
     [[nodiscard]] CommandSubmitResult snapshot(
+        std::chrono::milliseconds deadline);
+    [[nodiscard]] CommandSubmitResult connect_sse(
         std::chrono::milliseconds deadline);
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
@@ -153,6 +161,7 @@ private:
     bool fatal_logged_{};
     WebSessionMetadata metadata_;
     std::shared_ptr<WebSnapshotSink> sink_;
+    std::shared_ptr<SseMailbox> sse_mailbox_;
     WebRuntimeHooks hooks_;
     // This must be last: starting the owner thread before the state it uses is
     // constructed would let it observe partially constructed runtime state.

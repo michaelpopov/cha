@@ -906,8 +906,9 @@ and bounded network writes.
 - Structural/incompatible/discontinuous changes collapse to a snapshot.
 - The writer never owns more than one in-flight and one pending payload.
 - Slow/disconnected output never blocks command or agent-event processing.
-- A non-reading peer releases its request thread within the write timeout; a
-  slowly progressing peer does not.
+- Unit-test the write-progress deadline independently of socket buffering. Defer
+  the real-socket proof for both a non-reading peer and a slowly progressing
+  peer to Block 13's `web_process` fixture.
 - A final lifecycle snapshot written to a reading peer completes the shutdown
   drain wait; one written to a peer that has stopped reading expires it, and
   shutdown proceeds either way.
@@ -922,6 +923,8 @@ and bounded network writes.
 
 - Rejecting a second active stream.
 - Disconnect unload deadlines or browser retry implementation.
+- Process-level write-timeout coverage with real stalled/progressing sockets;
+  Block 13 owns that `web_process` fixture.
 
 ## 14. Block 11 — Browser-stream guard and disconnect lifetime
 
@@ -1128,6 +1131,10 @@ feature blocks.
    concurrent create/list/open/command/unload.
 10. Keep long tests behind `web_stress`; keep deterministic focused versions in
     the ordinary suite.
+11. Add a `web_process` fixture that uses real client sockets to defeat
+    in-process buffering: a peer that stops reading must release its SSE request
+    thread within the write timeout, while a peer that continues making slow
+    write progress must remain connected.
 
 ### Likely files
 
@@ -1146,7 +1153,9 @@ feature blocks.
   mDNS authorities.
 - Maximum connected streams do not starve health, lobby, snapshot, or command
   requests.
-- A stalled SSE reader releases its HTTP thread within the write timeout.
+- The real-socket `web_process` fixture proves that a stalled SSE reader releases
+  its HTTP thread within the write timeout and a slowly progressing reader does
+  not time out.
 - Fatal persistence failure unloads one session and leaves others usable and
   reopenable.
 - Artificial owner blocking causes timeouts only for that session until released

@@ -3,6 +3,7 @@
 #include "session/session_lease.h"
 #include "session/session_controller.h"
 #include "session/workspace.h"
+#include "ui/web/sse_mailbox.h"
 
 #include <condition_variable>
 #include <exception>
@@ -340,7 +341,8 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
             metadata.forum.id = key.forum;
             metadata.session_id = key.session_id;
         }
-        runtime = std::make_shared<WebSessionRuntime>(settings_, std::move(metadata), nullptr,
+        auto mailbox = std::make_shared<SseMailbox>();
+        runtime = std::make_shared<WebSessionRuntime>(settings_, std::move(metadata), mailbox,
             WebRuntimeHooks{
                 .mark_registry_stopping = [this, key] {
                     std::lock_guard lock(mutex_);

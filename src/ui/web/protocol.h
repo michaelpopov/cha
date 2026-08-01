@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -10,6 +11,8 @@
 #include <nlohmann/json_fwd.hpp>
 
 namespace cha::web {
+
+class SseMailbox;
 
 enum class TranscriptKind { human, agent, notice, error };
 enum class TranscriptStatus { complete, streaming, cancelled, failed };
@@ -91,12 +94,23 @@ struct SetDefaultAgentCommand {
 // A snapshot request shares the owner queue with mutations so HTTP threads
 // never read controller-owned state directly.
 struct SnapshotCommand {};
+struct SseConnectCommand {};
+
+struct SseStreamToken {
+    std::uint64_t id{};
+};
+
+struct SseConnectResult {
+    std::shared_ptr<SseMailbox> mailbox;
+    SseStreamToken stream;
+};
 
 using WebCommand = std::variant<
     RawCommand,
     StopCommand,
     SetDefaultAgentCommand,
-    SnapshotCommand>;
+    SnapshotCommand,
+    SseConnectCommand>;
 
 struct CommandResult {
     bool clear_input{};
@@ -126,6 +140,12 @@ struct AppendTargetReasoning {
 };
 
 using AppendTarget = std::variant<AppendTargetEntry, AppendTargetReasoning>;
+
+// The snapshot is the authoritative base for later append events. Keep target
+// selection shared by the runtime cache and transport mailbox so they cannot
+// establish different delta bases.
+[[nodiscard]] std::optional<AppendTarget> snapshot_append_target(
+    const SessionSnapshot& snapshot);
 
 // Owning payload moved from a session owner thread into the SSE mailbox.
 // Keeping the snapshot by value prevents the writer from borrowing live state.
