@@ -33,7 +33,18 @@ int main() {
         cha::web::SessionRoutes(registry, settings).install(server);
         cha::web::ProcessShutdownSignal signals;
         cha::web::ServerShutdownCoordinator shutdown(registry, server);
-        cha::log_info("Web server listener starting");
+        cha::log_info(
+            "web server event=startup session_limit="
+            + std::to_string(settings.session_limit)
+            + " http_thread_pool_size=" + std::to_string(settings.http_thread_pool_size)
+            + " http_pending_request_limit=" + std::to_string(settings.http_pending_request_limit)
+            + " command_queue_capacity=" + std::to_string(settings.command_queue_capacity)
+            + " request_body_limit=" + std::to_string(settings.request_body_limit)
+            + " prompt_limit=" + std::to_string(settings.prompt_limit)
+            + " http_read_timeout_ms=" + std::to_string(settings.http_read_timeout.count())
+            + " http_write_timeout_ms=" + std::to_string(settings.http_write_timeout.count())
+            + " open_deadline_ms=" + std::to_string(settings.open_deadline.count())
+            + " command_deadline_ms=" + std::to_string(settings.command_deadline.count()));
         if (!server.bind_to_port(config.host, config.port)) {
             const std::string message =
                 "Could not listen on " + config.host + ':'
@@ -42,6 +53,9 @@ int main() {
             std::cerr << "Failed: " << message << '\n';
             return 1;
         }
+        cha::log_info(
+            "web server event=bound address=" + config.host
+            + ':' + std::to_string(config.port));
         std::thread listener([&server] { server.listen_after_bind(); });
         server.wait_until_ready();
         shutdown.wait_and_shutdown(signals, listener, settings.shutdown_grace);

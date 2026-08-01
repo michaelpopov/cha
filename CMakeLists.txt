@@ -357,6 +357,16 @@ if(BUILD_TESTING)
     target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     cha_enable_warnings(cha_web_tests)
 
+    add_executable(
+        cha_web_stress_tests
+        tests/ui/web/stress_web_sessions.cpp
+        tests/support/test_workspace.cpp)
+    target_link_libraries(
+        cha_web_stress_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
+    target_include_directories(
+        cha_web_stress_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    cha_enable_warnings(cha_web_stress_tests)
+
     if(NOT WIN32)
         # These integration harnesses currently use POSIX sockets and
         # fork/exec. They test the portable console implementation on Linux
@@ -397,6 +407,7 @@ if(BUILD_TESTING)
     include(GoogleTest)
     gtest_discover_tests(cha_tests)
     gtest_discover_tests(cha_web_tests)
+    gtest_discover_tests(cha_web_stress_tests PROPERTIES LABELS web_stress)
     if(TARGET console_tests)
         gtest_discover_tests(console_tests)
     endif()

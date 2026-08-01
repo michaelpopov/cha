@@ -32,7 +32,10 @@ private:
     std::optional<CommandSubmitResult> result_;
 };
 
-struct SseDisconnectNotification { std::uint64_t connection_id{}; };
+struct SseDisconnectNotification {
+    std::uint64_t connection_id{};
+    std::size_t collapsed_payloads{};
+};
 using OwnerNotification = SseDisconnectNotification;
 
 struct OwnerCommand {

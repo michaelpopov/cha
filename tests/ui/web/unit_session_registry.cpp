@@ -576,5 +576,43 @@ TEST(SessionRegistry, ReopensSameKeyWhileFinishedOwnerIsBeingJoined) {
     registry.begin_shutdown();
 }
 
+TEST(SessionRegistry, RepeatedOpenUnloadCyclesReapOwnersAndReleaseCapacity) {
+    constexpr int cycles = 40;
+    std::atomic<bool> lease_held{};
+    std::atomic<int> starts{};
+    std::atomic<int> lease_conflicts{};
+    SessionRegistry registry(
+        {.session_limit = 1},
+        [&](const SessionKey&, WakeNotifier&) {
+            ++starts;
+            if (lease_held.exchange(true)) {
+                ++lease_conflicts;
+                throw SessionBusyError("simulated leaked lease");
+            }
+            return std::make_unique<LeaseTrackingController>(lease_held);
+        });
+    const SessionKey key{"forum", "cycled"};
+
+    for (int cycle = 0; cycle != cycles; ++cycle) {
+        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+            registry.open(key, 500ms)));
+        SessionHandle handle = registry.lookup(key);
+        ASSERT_TRUE(handle);
+        handle.runtime().request_shutdown();
+        handle = {};
+
+        const auto deadline = std::chrono::steady_clock::now() + 500ms;
+        while (registry.snapshot().live_entry_count != 0
+            && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(1ms);
+        }
+        EXPECT_EQ(registry.snapshot().live_entry_count, 0U);
+        EXPECT_FALSE(lease_held);
+    }
+
+    EXPECT_EQ(starts, cycles);
+    EXPECT_EQ(lease_conflicts, 0);
+}
+
 } // namespace
 } // namespace cha::web

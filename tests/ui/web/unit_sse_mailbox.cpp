@@ -53,6 +53,8 @@ TEST(SseMailbox, MergesCompatibleAppendsWithoutConsumingSequence) {
     const auto* following = std::get_if<AppendEvent>(&*next.payload);
     ASSERT_NE(following, nullptr);
     EXPECT_EQ(following->seq, 1U);
+    mailbox.written(stream);
+    EXPECT_EQ(mailbox.end_stream(stream), 1U);
 }
 
 TEST(SseMailbox, StructuralOrPendingSnapshotAppendCollapsesToSnapshot) {
@@ -77,6 +79,8 @@ TEST(SseMailbox, StructuralOrPendingSnapshotAppendCollapsesToSnapshot) {
     mailbox.publish_append({AppendTargetReasoning{7}, "think"}, streaming_snapshot("ab"));
     const SseMailbox::Next incompatible = mailbox.next(stream, 1ms);
     EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(*incompatible.payload));
+    mailbox.written(stream);
+    EXPECT_EQ(mailbox.end_stream(stream), 1U);
 }
 
 TEST(SseMailbox, ReturnedPayloadRemainsImmutableAfterWriterAcknowledgement) {
@@ -121,6 +125,21 @@ TEST(SseMailbox, FinalDrainCompletesWhenStreamEnds) {
     });
     mailbox.end_stream(stream);
     EXPECT_TRUE(drained.get());
+}
+
+TEST(SseMailbox, NewStreamStartsCollapseCountAfterItsInitialSnapshot) {
+    SseMailbox mailbox;
+    const SseMailbox::Stream replaced =
+        mailbox.begin_stream({streaming_snapshot("old")});
+    mailbox.publish(SnapshotEvent{streaming_snapshot("older")});
+
+    // Replacing an active stream is not a production transition, but it
+    // exercises the ordering invariant directly: pre-existing pending state
+    // must not contribute to the new stream's disconnect count.
+    const SseMailbox::Stream current =
+        mailbox.begin_stream({streaming_snapshot("current")});
+    EXPECT_NE(replaced.id, current.id);
+    EXPECT_EQ(mailbox.end_stream(current), 0U);
 }
 
 } // namespace

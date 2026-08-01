@@ -22,6 +22,9 @@ SseMailbox::Stream SseMailbox::begin_stream(SnapshotEvent snapshot) {
     active_stream_ = stream.id;
     in_flight_.reset();
     publish_snapshot_locked(std::move(snapshot));
+    // The initial snapshot starts the new stream's accounting window. Reset
+    // after publishing so correctness does not depend on pending_ being empty.
+    collapsed_payloads_ = 0;
     changed_.notify_all();
     return stream;
 }
@@ -51,13 +54,15 @@ void SseMailbox::written(Stream stream) noexcept {
     changed_.notify_all();
 }
 
-void SseMailbox::end_stream(Stream stream) noexcept {
+std::size_t SseMailbox::end_stream(Stream stream) noexcept {
     std::lock_guard lock(mutex_);
-    if (active_stream_ != stream.id) return;
+    if (active_stream_ != stream.id) return 0;
+    const std::size_t collapsed = collapsed_payloads_;
     active_stream_ = 0;
     in_flight_.reset();
     pending_.reset();
     changed_.notify_all();
+    return collapsed;
 }
 
 void SseMailbox::publish(SnapshotEvent snapshot) {
@@ -96,6 +101,7 @@ void SseMailbox::close() noexcept {
 }
 
 void SseMailbox::publish_snapshot_locked(SnapshotEvent snapshot) {
+    if (pending_) ++collapsed_payloads_;
     target_ = snapshot_append_target(snapshot.snapshot);
     next_sequence_ = 0;
     pending_ = std::make_shared<const SsePayload>(std::move(snapshot));
@@ -112,6 +118,7 @@ void SseMailbox::publish_append_locked(
             ? std::get_if<AppendEvent>(pending_.get())
             : nullptr) {
         if (same_target(pending->target, candidate.target)) {
+            ++collapsed_payloads_;
             pending_ = std::make_shared<const SsePayload>(AppendEvent{
                 pending->target, pending->text + candidate.text, pending->seq});
             return;

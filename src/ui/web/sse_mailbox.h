@@ -29,7 +29,7 @@ public:
         Stream stream,
         std::chrono::milliseconds heartbeat_interval);
     void written(Stream stream) noexcept;
-    void end_stream(Stream stream) noexcept;
+    std::size_t end_stream(Stream stream) noexcept;
 
     void publish(SnapshotEvent snapshot) override;
     void publish_append(
@@ -54,6 +54,7 @@ private:
     std::shared_ptr<const SsePayload> pending_;
     std::optional<AppendTarget> target_;
     std::uint64_t next_sequence_{};
+    std::size_t collapsed_payloads_{};
 };
 
 } // namespace cha::web

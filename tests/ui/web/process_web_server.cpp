@@ -5,15 +5,23 @@
 #include "ui/web/http_server.h"
 #include "ui/web/lobby_routes.h"
 #include "ui/web/server_shutdown.h"
+#include "ui/web/session_routes.h"
 #include "util/logging.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <cerrno>
 #include <csignal>
+#include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
@@ -21,11 +29,14 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace cha::web {
 namespace {
@@ -213,6 +224,266 @@ public:
     void shutdown() override {}
 };
 
+class RawHttpSocket {
+public:
+    RawHttpSocket(int port, int receive_buffer = 0) {
+        descriptor_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (descriptor_ == -1) {
+            throw std::runtime_error("Could not create raw HTTP test socket");
+        }
+        if (receive_buffer > 0
+            && ::setsockopt(
+                descriptor_, SOL_SOCKET, SO_RCVBUF,
+                &receive_buffer, sizeof(receive_buffer)) != 0) {
+            close();
+            throw std::runtime_error("Could not bound raw HTTP receive buffer");
+        }
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = htons(static_cast<std::uint16_t>(port));
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (::connect(
+                descriptor_, reinterpret_cast<const sockaddr*>(&address),
+                sizeof(address)) != 0) {
+            close();
+            throw std::runtime_error("Could not connect raw HTTP test socket");
+        }
+    }
+
+    ~RawHttpSocket() { close(); }
+    RawHttpSocket(const RawHttpSocket&) = delete;
+    RawHttpSocket& operator=(const RawHttpSocket&) = delete;
+
+    void send_bytes(std::string_view bytes) {
+        std::size_t offset = 0;
+        while (offset != bytes.size()) {
+            const ssize_t sent = ::send(
+                descriptor_, bytes.data() + offset, bytes.size() - offset, 0);
+            if (sent > 0) {
+                offset += static_cast<std::size_t>(sent);
+                continue;
+            }
+            if (sent == -1 && errno == EINTR) continue;
+            throw std::runtime_error("Could not write raw HTTP test request");
+        }
+    }
+
+    void send_get(std::string_view path) {
+        send_bytes(
+            "GET " + std::string(path)
+            + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    }
+
+    [[nodiscard]] int read_status(
+        std::chrono::milliseconds timeout = 1s) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        std::string response;
+        std::array<char, 1024> bytes{};
+        while (response.find("\r\n\r\n") == std::string::npos
+            && std::chrono::steady_clock::now() < deadline) {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now());
+            pollfd descriptor{descriptor_, POLLIN | POLLHUP | POLLERR, 0};
+            const int ready = ::poll(
+                &descriptor, 1, static_cast<int>(std::max(left, 1ms).count()));
+            if (ready == -1 && errno == EINTR) continue;
+            if (ready <= 0) return 0;
+            const ssize_t count = ::recv(
+                descriptor_, bytes.data(), bytes.size(), 0);
+            if (count <= 0) return 0;
+            response.append(bytes.data(), static_cast<std::size_t>(count));
+        }
+        const std::size_t first_space = response.find(' ');
+        if (first_space == std::string::npos || response.size() < first_space + 4) {
+            return 0;
+        }
+        return std::stoi(response.substr(first_space + 1, 3));
+    }
+
+    [[nodiscard]] std::size_t read_some(
+        std::size_t maximum,
+        std::chrono::milliseconds timeout) {
+        pollfd descriptor{descriptor_, POLLIN | POLLHUP | POLLERR, 0};
+        int ready{};
+        do {
+            ready = ::poll(&descriptor, 1, static_cast<int>(timeout.count()));
+        } while (ready == -1 && errno == EINTR);
+        if (ready <= 0) return 0;
+        std::vector<char> bytes(maximum);
+        const ssize_t count = ::recv(
+            descriptor_, bytes.data(), bytes.size(), 0);
+        return count > 0 ? static_cast<std::size_t>(count) : 0;
+    }
+
+    void close() noexcept {
+        if (descriptor_ == -1) return;
+        (void)::close(descriptor_);
+        descriptor_ = -1;
+    }
+
+private:
+    int descriptor_{-1};
+};
+
+class LargeSnapshotController final : public WebSessionController {
+public:
+    explicit LargeSnapshotController(std::size_t text_size)
+        : text_(text_size, 'x') {}
+
+    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate request_stop() override { return {}; }
+    SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
+    SessionEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] bool is_generating() const override { return false; }
+    SessionSnapshot snapshot() override {
+        return {
+            .transcript = {{
+                .id = 1,
+                .kind = TranscriptKind::agent,
+                .text = text_,
+                .status = TranscriptStatus::complete,
+            }},
+        };
+    }
+    void shutdown() override {}
+
+private:
+    std::string text_;
+};
+
+class RealSocketSseServer {
+public:
+    static constexpr std::chrono::milliseconds write_timeout{150};
+
+    RealSocketSseServer()
+        : settings_(make_settings()),
+          registry_(settings_, [](const SessionKey&, WakeNotifier&) {
+              return std::make_unique<LargeSnapshotController>(8U * 1024U * 1024U);
+          }) {
+        configure_http_server(server_, settings_);
+        server_.set_socket_options([](int socket) {
+            const int send_buffer = 16 * 1024;
+            (void)::setsockopt(
+                socket, SOL_SOCKET, SO_SNDBUF,
+                &send_buffer, sizeof(send_buffer));
+        });
+        SessionRoutes(registry_, settings_).install(server_);
+        if (!std::holds_alternative<OpenSessionSuccess>(
+                registry_.open({"forum", "session"}, 1s))) {
+            throw std::runtime_error("Could not open real-socket SSE fixture session");
+        }
+        port_ = server_.bind_to_any_port("127.0.0.1");
+        if (port_ <= 0) {
+            throw std::runtime_error("Could not bind real-socket SSE fixture");
+        }
+        listener_ = std::thread([this] { server_.listen_after_bind(); });
+        server_.wait_until_ready();
+    }
+
+    ~RealSocketSseServer() {
+        ServerShutdownCoordinator(registry_, server_)
+            .shutdown_now(listener_, 2s);
+    }
+
+    [[nodiscard]] int port() const noexcept { return port_; }
+    static constexpr std::string_view events_path =
+        "/s/forum/session/api/v1/events";
+
+private:
+    static WebSettings make_settings() {
+        WebSettings settings;
+        settings.session_limit = 1;
+        settings.http_request_headroom = 2;
+        settings.http_thread_pool_size = 3;
+        settings.http_pending_request_limit = 3;
+        settings.http_write_timeout = write_timeout;
+        settings.sse_heartbeat_interval = 25ms;
+        return settings;
+    }
+
+    WebSettings settings_;
+    SessionRegistry registry_;
+    httplib::Server server_;
+    int port_{};
+    std::thread listener_;
+};
+
+int request_status(int port, std::string_view path) {
+    RawHttpSocket socket(port);
+    socket.send_get(path);
+    return socket.read_status();
+}
+
+TEST(WebServerSocketLimits, RejectsARequestThatExceedsInjectedReadTimeout) {
+    WebSettings settings;
+    settings.session_limit = 1;
+    settings.http_request_headroom = 1;
+    settings.http_thread_pool_size = 2;
+    settings.http_pending_request_limit = 2;
+    settings.http_read_timeout = 100ms;
+    httplib::Server server;
+    configure_http_server(server, settings);
+    server.Get("/health", [](const httplib::Request&, httplib::Response& response) {
+        response.set_content("ok", "text/plain");
+    });
+    const int port = server.bind_to_any_port("127.0.0.1");
+    ASSERT_GT(port, 0);
+    std::thread listener([&server] { server.listen_after_bind(); });
+    server.wait_until_ready();
+
+    RawHttpSocket client(port);
+    client.send_bytes(
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Half-Sent:");
+    const auto started = std::chrono::steady_clock::now();
+    EXPECT_EQ(client.read_status(1s), 400);
+    EXPECT_LT(std::chrono::steady_clock::now() - started, 1s);
+
+    server.stop();
+    listener.join();
+}
+
+TEST(WebServerSocketLimits, StalledSseReaderReleasesStreamAfterWriteTimeout) {
+    RealSocketSseServer server;
+    RawHttpSocket stalled(server.port(), 4096);
+    stalled.send_get(RealSocketSseServer::events_path);
+    ASSERT_EQ(stalled.read_status(), 200);
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto deadline = started + 1500ms;
+    int status = 409;
+    while (status == 409 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(20ms);
+        status = request_status(
+            server.port(), RealSocketSseServer::events_path);
+    }
+    EXPECT_EQ(status, 200);
+    // Allow scheduler and owner-notification latency around the configured
+    // no-progress timeout while still proving this is not the library's 5s
+    // default or an indefinitely pinned request worker.
+    EXPECT_LT(
+        std::chrono::steady_clock::now() - started,
+        RealSocketSseServer::write_timeout + 500ms);
+}
+
+TEST(WebServerSocketLimits, SlowProgressingSseReaderStaysConnected) {
+    RealSocketSseServer server;
+    RawHttpSocket slow(server.port(), 64U * 1024U);
+    slow.send_get(RealSocketSseServer::events_path);
+    ASSERT_EQ(slow.read_status(), 200);
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto duration = RealSocketSseServer::write_timeout * 5;
+    std::size_t reads{};
+    while (std::chrono::steady_clock::now() - started < duration) {
+        if (slow.read_some(64U * 1024U, 100ms) != 0) ++reads;
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_GT(reads, 2U);
+    EXPECT_EQ(
+        request_status(server.port(), RealSocketSseServer::events_path),
+        409);
+}
+
 void run_blocked_shutdown(const std::filesystem::path& log_path) {
     // A policy regression must fail this death test quickly instead of
     // inheriting ctest's much larger timeout.
@@ -254,34 +525,41 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     ASSERT_EQ(forums->status, 200);
     expect_same_origin_payload(nlohmann::json::parse(forums->body));
 
-    const std::string first = create_session(client, "First");
-    const std::string second = create_session(client, "Second");
-    ASSERT_FALSE(first.empty());
-    ASSERT_FALSE(second.empty());
+    constexpr std::size_t session_limit = 8;
+    std::vector<std::string> session_ids;
+    session_ids.reserve(session_limit);
+    for (std::size_t index = 0; index != session_limit; ++index) {
+        session_ids.push_back(create_session(
+            client, "Session " + std::to_string(index)));
+        ASSERT_FALSE(session_ids.back().empty());
+    }
     const auto sessions = client.Get("/api/v1/forums/lobby/sessions");
     ASSERT_TRUE(sessions);
     ASSERT_EQ(sessions->status, 200);
     expect_same_origin_payload(nlohmann::json::parse(sessions->body));
-    const std::string first_path = open_session(client, first);
-    const std::string second_path = open_session(client, second);
-    ASSERT_EQ(first_path, "/s/lobby/" + first + "/");
-    ASSERT_EQ(second_path, "/s/lobby/" + second + "/");
+    std::vector<std::string> session_paths;
+    std::vector<std::unique_ptr<StreamingRequest>> streams;
+    session_paths.reserve(session_limit);
+    streams.reserve(session_limit);
+    for (const std::string& id : session_ids) {
+        session_paths.push_back(open_session(client, id));
+        ASSERT_EQ(session_paths.back(), "/s/lobby/" + id + "/");
+        streams.push_back(std::make_unique<StreamingRequest>(
+            port, session_paths.back() + "api/v1/events"));
+    }
+    for (const auto& stream : streams) {
+        ASSERT_TRUE(stream->wait_for_snapshot());
+    }
 
-    StreamingRequest first_stream(
-        port, first_path + "api/v1/events");
-    StreamingRequest second_stream(
-        port, second_path + "api/v1/events");
-    ASSERT_TRUE(first_stream.wait_for_snapshot());
-    ASSERT_TRUE(second_stream.wait_for_snapshot());
-
-    const auto snapshot = client.Get(first_path + "api/v1/session");
+    const auto snapshot = client.Get(
+        session_paths.front() + "api/v1/session");
     ASSERT_TRUE(snapshot);
     EXPECT_EQ(snapshot->status, 200);
     EXPECT_EQ(
         nlohmann::json::parse(snapshot->body).at("forum").at("id"),
         "lobby");
     expect_same_origin_payload(nlohmann::json::parse(snapshot->body));
-    const auto page = client.Get(first_path);
+    const auto page = client.Get(session_paths.front());
     ASSERT_TRUE(page);
     EXPECT_EQ(page->status, 200);
     EXPECT_EQ(page->body.find("://"), std::string::npos);
@@ -295,14 +573,15 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     EXPECT_EQ(health->status, 200);
     EXPECT_EQ(
         nlohmann::json::parse(health->body).at("live_session_count"),
-        2);
+        session_limit);
     expect_same_origin_payload(nlohmann::json::parse(health->body));
 
     const test::ProcessExit stopped = server.stop(SIGINT);
     EXPECT_FALSE(stopped.timed_out) << server.errors();
     EXPECT_EQ(stopped.exit_code, 0) << server.errors();
-    EXPECT_TRUE(first_stream.wait_for_end());
-    EXPECT_TRUE(second_stream.wait_for_end());
+    for (const auto& stream : streams) {
+        EXPECT_TRUE(stream->wait_for_end());
+    }
 }
 
 TEST(WebServerProcess, RestartReopensLeasesAfterCleanAndForcedExit) {
@@ -342,6 +621,82 @@ TEST(WebServerProcess, RestartReopensLeasesAfterCleanAndForcedExit) {
         const test::ProcessExit stopped = third.stop(SIGINT);
         EXPECT_FALSE(stopped.timed_out) << third.errors();
         EXPECT_EQ(stopped.exit_code, 0) << third.errors();
+    }
+}
+
+TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
+    test::TestWorkspace workspace;
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    workspace.write_app_config(port, "info");
+    test::WebServerProcess server(workspace.root(), port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    httplib::Client client = web_client(port);
+    const std::string id = create_session(client, "Observable");
+    const std::string other_id = create_session(client, "Concurrent");
+    ASSERT_FALSE(id.empty());
+    ASSERT_FALSE(other_id.empty());
+    const std::string path = open_session(client, id);
+    const std::string other_path = open_session(client, other_id);
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(other_path.empty());
+    ASSERT_EQ(open_session(client, id), path);
+    {
+        StreamingRequest stream(port, path + "api/v1/events");
+        ASSERT_TRUE(stream.wait_for_snapshot());
+    }
+    // The stream destructor waits for its close callback. Queueing a snapshot
+    // afterwards makes the owner observe that disconnect before shutdown.
+    ASSERT_TRUE(client.Get(path + "api/v1/session"));
+    constexpr std::string_view prompt = "very-secret-prompt-body";
+    constexpr std::string_view other_prompt = "another-secret-prompt-body";
+    auto submit = [port](std::string route, std::string_view text) {
+        httplib::Client concurrent_client = web_client(port);
+        return concurrent_client.Post(
+            std::move(route),
+            std::string(R"({"text":")") + std::string(text) + R"("})",
+            "application/json");
+    };
+    auto first_submission = std::async(
+        std::launch::async, submit, path + "api/v1/input", prompt);
+    auto second_submission = std::async(
+        std::launch::async, submit, other_path + "api/v1/input", other_prompt);
+    const httplib::Result submitted = first_submission.get();
+    const httplib::Result other_submitted = second_submission.get();
+    ASSERT_TRUE(submitted);
+    ASSERT_TRUE(other_submitted);
+    ASSERT_EQ(submitted->status, 200) << submitted->body;
+    ASSERT_EQ(other_submitted->status, 200) << other_submitted->body;
+
+    const test::ProcessExit stopped = server.stop(SIGINT);
+    ASSERT_FALSE(stopped.timed_out) << server.errors();
+    ASSERT_EQ(stopped.exit_code, 0) << server.errors();
+    std::ifstream log(workspace.root() / "logs" / "cha.log");
+    const std::string contents{
+        std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
+    EXPECT_NE(contents.find("web server event=startup"), std::string::npos);
+    EXPECT_NE(contents.find("web server event=bound"), std::string::npos);
+    EXPECT_NE(contents.find("web server event=shutdown"), std::string::npos);
+    EXPECT_NE(contents.find("event=registry_running"), std::string::npos);
+    EXPECT_NE(contents.find("event=reattached"), std::string::npos);
+    EXPECT_NE(contents.find("event=registry_stopping"), std::string::npos);
+    EXPECT_NE(contents.find("event=registry_sweep_joined"), std::string::npos);
+    EXPECT_NE(contents.find("event=sse_connected"), std::string::npos);
+    EXPECT_NE(contents.find("event=sse_disconnected collapsed_payloads="), std::string::npos);
+    EXPECT_NE(contents.find("forum_id=lobby session_id=" + id), std::string::npos);
+    EXPECT_EQ(contents.find(prompt), std::string::npos);
+    EXPECT_EQ(contents.find(other_prompt), std::string::npos);
+
+    std::istringstream lines(contents);
+    for (std::string line; std::getline(lines, line);) {
+        if (line.find("web session ") == std::string::npos) continue;
+        EXPECT_NE(line.find("forum_id=lobby"), std::string::npos) << line;
+        const bool first_identity = line.find(
+            "session_id=" + id + " event=") != std::string::npos;
+        const bool second_identity = line.find(
+            "session_id=" + other_id + " event=") != std::string::npos;
+        EXPECT_NE(first_identity, second_identity) << line;
     }
 }
 

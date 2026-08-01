@@ -7,6 +7,8 @@ namespace cha::web {
 
 // Public fields deliberately make every deadline and bound injectable by tests.
 struct WebSettings {
+    // Request-target length, header-line length, and header count remain
+    // bounded by cpp-httplib's compile-time limits (8192, 8192, and 100).
     std::size_t session_limit{8};
     // Reserve request workers beyond one long-lived SSE writer per allowed
     // registry entry.  Pool and pending-request values are validated together
@@ -23,6 +25,8 @@ struct WebSettings {
     std::chrono::milliseconds open_deadline{10000};
     std::chrono::milliseconds command_deadline{30000};
     std::chrono::milliseconds sse_heartbeat_interval{15000};
+    // Bounds a peer that connects but does not finish sending a request.
+    std::chrono::milliseconds http_read_timeout{5000};
     // cpp-httplib configures this server-wide even though stalled SSE writes
     // are the reason the application needs an explicit bound.
     std::chrono::milliseconds http_write_timeout{5000};

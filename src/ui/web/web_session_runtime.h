@@ -91,6 +91,7 @@ struct WebRuntimeHooks {
     // Passing metadata makes session identity part of the logging contract;
     // registry wiring does not have to capture and duplicate it correctly.
     std::function<void(const WebSessionMetadata&)> log_fatal;
+    std::function<void(const WebSessionMetadata&, std::string_view)> log_event;
 };
 
 // Owner-thread monotonic time seam; an empty function selects steady_clock.
@@ -129,7 +130,9 @@ public:
         std::chrono::milliseconds deadline);
     [[nodiscard]] CommandSubmitResult connect_sse(
         std::chrono::milliseconds deadline);
-    void disconnect_sse(std::uint64_t connection_id) noexcept;
+    void disconnect_sse(
+        std::uint64_t connection_id,
+        std::size_t collapsed_payloads) noexcept;
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
     [[nodiscard]] WakeNotifier& notifier_for_owner() noexcept { return notifier_; }
@@ -149,6 +152,7 @@ private:
     void publish_snapshot(SessionSnapshot snapshot);
     void publish_final(WebSessionController& controller, ShutdownReason reason);
     void log_fatal_once() noexcept;
+    void log_event(std::string_view event) noexcept;
     void teardown(
         std::unique_ptr<WebSessionController>& controller,
         ShutdownReason reason,
@@ -170,6 +174,7 @@ private:
     std::optional<std::size_t> append_entry_index_;
     bool fatal_logged_{};
     BrowserConnectionState browser_connection_;
+    bool has_connected_sse_{};
     WebSessionMetadata metadata_;
     std::shared_ptr<WebSnapshotSink> sink_;
     std::shared_ptr<SseMailbox> sse_mailbox_;

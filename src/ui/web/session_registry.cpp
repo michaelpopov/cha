@@ -4,6 +4,7 @@
 #include "session/session_controller.h"
 #include "session/workspace.h"
 #include "ui/web/sse_mailbox.h"
+#include "util/logging.h"
 
 #include <condition_variable>
 #include <exception>
@@ -12,6 +13,14 @@
 #include <utility>
 
 namespace cha::web {
+namespace {
+
+std::string session_log(const SessionKey& key, std::string_view event) {
+    return "web session forum_id=" + key.forum + " session_id=" + key.session_id
+        + " event=" + std::string(event);
+}
+
+} // namespace
 
 struct SessionRegistry::StartupResult {
     enum class Value { ready, busy, error, shutting_down };
@@ -54,6 +63,11 @@ struct SessionRegistry::Entry {
     std::thread owner;
     std::shared_ptr<StartupResult> startup;
     bool finished{};
+};
+
+struct SessionRegistry::RetiredEntry {
+    SessionKey key;
+    std::unique_ptr<Entry> entry;
 };
 
 SessionHandle::SessionHandle(std::shared_ptr<WebSessionRuntime> runtime)
@@ -127,8 +141,10 @@ std::string SessionRegistry::path_for(const SessionKey& key) {
 RegistryOpenResult SessionRegistry::open(
     SessionKey key,
     std::chrono::milliseconds deadline) {
+    log_info(session_log(key, "open_requested"));
     RetiredEntries retired;
     std::shared_ptr<StartupResult> startup;
+    std::string deferred_event;
     {
         std::unique_lock lock(mutex_);
         retired = sweep_locked();
@@ -142,11 +158,13 @@ RegistryOpenResult SessionRegistry::open(
             if (found->second->state == Entry::State::running) {
                 const std::string path = path_for(key);
                 lock.unlock();
+                log_info(session_log(key, "reattached"));
                 reap(std::move(retired));
                 return OpenSessionSuccess{path};
             }
             if (found->second->state == Entry::State::stopping) {
                 lock.unlock();
+                log_warn(session_log(key, "open_rejected_stopping"));
                 reap(std::move(retired));
                 return Error{ErrorCode::session_stopping, "Session is stopping."};
             }
@@ -154,10 +172,12 @@ RegistryOpenResult SessionRegistry::open(
         } else {
             if (entries_.size() >= settings_.session_limit) {
                 lock.unlock();
+                log_warn(session_log(key, "open_rejected_limit"));
                 reap(std::move(retired));
                 return Error{ErrorCode::session_limit_reached, "Session limit reached."};
             }
             auto entry = std::make_unique<Entry>();
+            deferred_event = "registry_starting";
             startup = std::make_shared<StartupResult>();
             entry->startup = startup;
             auto [position, inserted] = entries_.emplace(key, std::move(entry));
@@ -187,10 +207,12 @@ RegistryOpenResult SessionRegistry::open(
             }
         }
     }
+    if (!deferred_event.empty()) log_info(session_log(key, deferred_event));
     reap(std::move(retired));
 
     const auto outcome = startup->wait_for(deadline);
     if (!outcome) {
+        log_warn(session_log(key, "open_deadline_expired"));
         std::lock_guard lock(mutex_);
         return stopping_
             ? RegistryOpenResult{Error{ErrorCode::server_stopping, "Server is stopping."}}
@@ -224,6 +246,13 @@ std::optional<RegistryOpenResult> SessionRegistry::try_reattach(
         }
     }
     reap(std::move(retired));
+    if (result) {
+        if (std::holds_alternative<OpenSessionSuccess>(*result)) {
+            log_info(session_log(key, "reattached"));
+        } else {
+            log_warn(session_log(key, "open_rejected_server_stopping"));
+        }
+    }
     return result;
 }
 
@@ -335,7 +364,7 @@ SessionRegistry::RetiredEntries SessionRegistry::sweep_locked() {
     RetiredEntries retired;
     for (auto it = entries_.begin(); it != entries_.end();) {
         if (it->second->finished) {
-            retired.push_back(std::move(it->second));
+            retired.push_back({it->first, std::move(it->second)});
             it = entries_.erase(it);
         } else {
             ++it;
@@ -345,9 +374,15 @@ SessionRegistry::RetiredEntries SessionRegistry::sweep_locked() {
 }
 
 void SessionRegistry::reap(RetiredEntries retired) {
-    for (auto& entry : retired) {
-        if (entry->owner.joinable()) entry->owner.join();
-        entry->runtime.reset();
+    for (auto& retired_entry : retired) {
+        if (retired_entry.entry->owner.joinable()) {
+            retired_entry.entry->owner.join();
+        }
+        retired_entry.entry->runtime.reset();
+        // Completion is recorded after join so a wedged owner can never look
+        // like a successfully reaped session. Retaining the map key alongside
+        // the retired entry keeps this registry transition session-scoped.
+        log_info(session_log(retired_entry.key, "registry_sweep_joined"));
     }
 }
 
@@ -370,9 +405,17 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
         runtime = std::make_shared<WebSessionRuntime>(settings_, std::move(metadata), mailbox,
             WebRuntimeHooks{
                 .mark_registry_stopping = [this, key] {
-                    std::lock_guard lock(mutex_);
-                    const auto found = entries_.find(key);
-                    if (found != entries_.end()) found->second->state = Entry::State::stopping;
+                    bool transitioned = false;
+                    {
+                        std::lock_guard lock(mutex_);
+                        const auto found = entries_.find(key);
+                        if (found != entries_.end()
+                            && found->second->state != Entry::State::stopping) {
+                            found->second->state = Entry::State::stopping;
+                            transitioned = true;
+                        }
+                    }
+                    if (transitioned) log_info(session_log(key, "registry_stopping"));
                 },
                 .mark_finished = [this, key] {
                     {
@@ -382,11 +425,18 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
                     }
                     lifecycle_changed_.notify_all();
                 },
+                .log_fatal = [key](const WebSessionMetadata&) {
+                    log_error(session_log(key, "fatal_contained"));
+                },
+                .log_event = [key](const WebSessionMetadata&, std::string_view event) {
+                    log_info(session_log(key, event));
+                },
             });
         runtime_view = runtime.get();
         std::unique_ptr<WebSessionController> controller =
             factory_(key, runtime_view->notifier_for_owner());
         bool stop_now = false;
+        bool registry_running = false;
         {
             std::lock_guard lock(mutex_);
             const auto found = entries_.find(key);
@@ -407,11 +457,13 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
             found->second->runtime = std::move(runtime);
             if (!stop_now) {
                 found->second->state = Entry::State::running;
+                registry_running = true;
                 startup->complete(StartupResult::Value::ready);
             } else {
                 startup->complete(StartupResult::Value::shutting_down);
             }
         }
+        if (registry_running) log_info(session_log(key, "registry_running"));
         if (stop_now) {
             runtime_view->request_shutdown(ShutdownReason::server_stopping);
         }
@@ -419,6 +471,7 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
     } catch (const std::bad_alloc&) {
         std::terminate();
     } catch (const SessionBusyError&) {
+        log_warn(session_log(key, "lease_busy"));
         {
             std::lock_guard lock(mutex_);
             startup->complete(StartupResult::Value::busy);
@@ -431,6 +484,7 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
         }
         lifecycle_changed_.notify_all();
     } catch (...) {
+        log_error(session_log(key, "startup_failed"));
         {
             std::lock_guard lock(mutex_);
             startup->complete(StartupResult::Value::error);

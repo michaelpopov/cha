@@ -76,6 +76,7 @@ void configure_http_server(httplib::Server& server, WebSettings settings) {
             settings.http_pending_request_limit);
     };
     server.set_payload_max_length(settings.request_body_limit);
+    server.set_read_timeout(settings.http_read_timeout);
     // cpp-httplib waits for writability before every content-provider write,
     // so this bounds lack of progress rather than total stream duration.
     server.set_write_timeout(settings.http_write_timeout);

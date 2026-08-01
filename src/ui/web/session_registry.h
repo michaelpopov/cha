@@ -99,8 +99,9 @@ public:
 
 private:
     struct Entry;
+    struct RetiredEntry;
     struct StartupResult;
-    using RetiredEntries = std::vector<std::unique_ptr<Entry>>;
+    using RetiredEntries = std::vector<RetiredEntry>;
 
     [[nodiscard]] RetiredEntries sweep_locked();
     static void reap(RetiredEntries retired);

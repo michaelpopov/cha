@@ -944,7 +944,14 @@ TEST(WebSessionRuntime, ConnectWithNonStreamingSinkReportsInternalError) {
 TEST(WebSessionRuntime, OneActiveStreamRejectsConflictsAndIgnoresStaleCloses) {
     auto state = std::make_shared<FakeState>();
     auto mailbox = std::make_shared<SseMailbox>();
-    WebSessionRuntime runtime(fake_factory(state), test_settings(4), {}, mailbox);
+    std::mutex events_mutex;
+    std::vector<std::string> events;
+    WebSessionRuntime runtime(
+        fake_factory(state), test_settings(4), {}, mailbox,
+        {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+            std::lock_guard lock(events_mutex);
+            events.emplace_back(event);
+        }});
 
     const auto first = runtime.connect_sse(1s);
     ASSERT_TRUE(std::holds_alternative<SseConnectResult>(first));
@@ -961,23 +968,29 @@ TEST(WebSessionRuntime, OneActiveStreamRejectsConflictsAndIgnoresStaleCloses) {
     EXPECT_TRUE(std::holds_alternative<SseConnectResult>(other_connection));
 
     first_connection.mailbox->end_stream(first_connection.stream);
-    runtime.disconnect_sse(first_connection.connection_id);
+    runtime.disconnect_sse(first_connection.connection_id, 0);
     const auto second = runtime.connect_sse(1s);
     ASSERT_TRUE(std::holds_alternative<SseConnectResult>(second));
     const SseConnectResult second_connection = std::get<SseConnectResult>(second);
     EXPECT_NE(second_connection.connection_id, first_connection.connection_id);
+    {
+        std::lock_guard lock(events_mutex);
+        EXPECT_NE(
+            std::find(events.begin(), events.end(), "sse_reconnected"),
+            events.end());
+    }
 
-    runtime.disconnect_sse(first_connection.connection_id);
+    runtime.disconnect_sse(first_connection.connection_id, 0);
     const auto still_rejected = runtime.connect_sse(1s);
     ASSERT_TRUE(std::holds_alternative<ErrorCode>(still_rejected));
     EXPECT_EQ(
         std::get<ErrorCode>(still_rejected), ErrorCode::browser_stream_in_use);
     second_connection.mailbox->end_stream(second_connection.stream);
-    runtime.disconnect_sse(second_connection.connection_id);
+    runtime.disconnect_sse(second_connection.connection_id, 0);
     if (const auto* accepted =
             std::get_if<SseConnectResult>(&other_connection)) {
         accepted->mailbox->end_stream(accepted->stream);
-        other.disconnect_sse(accepted->connection_id);
+        other.disconnect_sse(accepted->connection_id, 0);
     }
 }
 
@@ -1016,7 +1029,7 @@ TEST(WebSessionRuntime, TimedOutSseConnectReleasesItsUnclaimedStream) {
     ASSERT_TRUE(std::holds_alternative<SseConnectResult>(fresh));
     const SseConnectResult connection = std::get<SseConnectResult>(fresh);
     connection.mailbox->end_stream(connection.stream);
-    runtime.disconnect_sse(connection.connection_id);
+    runtime.disconnect_sse(connection.connection_id, 0);
 }
 
 TEST(WebSessionRuntime, InitialIdleDeadlineUnloadsAnUnvisitedSession) {
@@ -1064,7 +1077,7 @@ TEST(WebSessionRuntime, GenerationCompletionReevaluatesDisconnectDeadline) {
     ASSERT_TRUE(std::holds_alternative<SseConnectResult>(connected));
     const SseConnectResult connection = std::get<SseConnectResult>(connected);
     connection.mailbox->end_stream(connection.stream);
-    runtime.disconnect_sse(connection.connection_id);
+    runtime.disconnect_sse(connection.connection_id, 0);
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
 
     const std::size_t at_idle_deadline = clock->advance(10ms);
@@ -1097,7 +1110,7 @@ TEST(WebSessionRuntime, GeneratingDisconnectUsesOrphanLimitFromDisconnection) {
     ASSERT_TRUE(std::holds_alternative<SseConnectResult>(connected));
     const SseConnectResult connection = std::get<SseConnectResult>(connected);
     connection.mailbox->end_stream(connection.stream);
-    runtime.disconnect_sse(connection.connection_id);
+    runtime.disconnect_sse(connection.connection_id, 0);
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
 
     const std::size_t before_orphan_limit = clock->advance(99ms);
@@ -1122,7 +1135,7 @@ TEST(WebSessionRuntime, ReconnectCancelsDeadlineAndStartsWithSnapshot) {
     ASSERT_TRUE(std::holds_alternative<SseConnectResult>(first));
     const SseConnectResult first_connection = std::get<SseConnectResult>(first);
     first_connection.mailbox->end_stream(first_connection.stream);
-    runtime.disconnect_sse(first_connection.connection_id);
+    runtime.disconnect_sse(first_connection.connection_id, 0);
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
 
     const auto second = runtime.connect_sse(1s);
@@ -1133,7 +1146,7 @@ TEST(WebSessionRuntime, ReconnectCancelsDeadlineAndStartsWithSnapshot) {
     EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(*next.payload));
 
     second_connection.mailbox->end_stream(second_connection.stream);
-    runtime.disconnect_sse(second_connection.connection_id);
+    runtime.disconnect_sse(second_connection.connection_id, 0);
     runtime.request_shutdown();
 }
 
@@ -1174,6 +1187,96 @@ TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
     std::unique_lock lock(sink->mutex);
     ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 5U; }));
     EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(sink->payloads.back()));
+}
+
+TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
+    for (const TranscriptStatus status : {
+             TranscriptStatus::complete,
+             TranscriptStatus::cancelled,
+             TranscriptStatus::failed,
+         }) {
+        auto state = std::make_shared<FakeState>();
+        auto sink = std::make_shared<FakeSnapshotSink>();
+        std::mutex events_mutex;
+        std::vector<std::string> events;
+        {
+            WebSessionRuntime runtime(
+                fake_factory(state), test_settings(2), {}, sink,
+                {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+                    std::lock_guard lock(events_mutex);
+                    events.emplace_back(event);
+                }});
+            {
+                std::unique_lock lock(sink->mutex);
+                ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] {
+                    return !sink->payloads.empty();
+                }));
+            }
+            {
+                std::lock_guard lock(state->mutex);
+                state->snapshot.generation.active = false;
+                state->snapshot.transcript[0].status = status;
+                if (status == TranscriptStatus::failed) {
+                    state->snapshot.transcript[0].kind = TranscriptKind::error;
+                }
+            }
+            ASSERT_TRUE(std::holds_alternative<CommandResult>(
+                runtime.submit(RawCommand{"snapshot"}, 1s)));
+            runtime.request_shutdown();
+        }
+
+        const std::string expected =
+            "generation_terminal request_id=3 status="
+            + std::string(to_string(status));
+        std::lock_guard lock(events_mutex);
+        EXPECT_NE(std::find(events.begin(), events.end(), expected), events.end());
+    }
+}
+
+TEST(WebSessionRuntime, ReasoningOnlyCancellationLogsCancelledStatus) {
+    auto state = std::make_shared<FakeState>();
+    state->snapshot.transcript = {{
+        .id = 1,
+        .kind = TranscriptKind::human,
+        .participant_id = "human",
+        .display_name = "You",
+        .addressed_to = "guide",
+        .addressed_to_name = "Guide",
+        .text = "question",
+        .status = TranscriptStatus::complete,
+        .request_id = 3,
+    }};
+    auto sink = std::make_shared<FakeSnapshotSink>();
+    std::mutex events_mutex;
+    std::vector<std::string> events;
+    {
+        WebSessionRuntime runtime(
+            fake_factory(state), test_settings(2), {}, sink,
+            {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+                std::lock_guard lock(events_mutex);
+                events.emplace_back(event);
+            }});
+        {
+            std::unique_lock lock(sink->mutex);
+            ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] {
+                return !sink->payloads.empty();
+            }));
+        }
+        {
+            std::lock_guard lock(state->mutex);
+            state->snapshot.generation.active = false;
+        }
+        ASSERT_TRUE(std::holds_alternative<CommandResult>(
+            runtime.submit(RawCommand{"snapshot"}, 1s)));
+        runtime.request_shutdown();
+    }
+
+    std::lock_guard lock(events_mutex);
+    EXPECT_NE(
+        std::find(
+            events.begin(), events.end(),
+            "generation_terminal request_id=3 status=cancelled"),
+        events.end());
 }
 
 TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {

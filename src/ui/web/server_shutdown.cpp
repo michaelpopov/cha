@@ -68,6 +68,7 @@ void ServerShutdownCoordinator::shutdown_now(
     // is safe to do that only after every owner is within the bounded grace;
     // otherwise a stuck HTTP worker could suppress the forced process exit.
     if (listener.joinable()) listener.join();
+    log_info("web server event=shutdown");
 }
 
 } // namespace cha::web

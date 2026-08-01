@@ -167,6 +167,31 @@ bool differs_only_by_reasoning_text(
         && before.shutdown_reason == after.shutdown_reason;
 }
 
+std::string_view generation_terminal_status(
+    const SessionSnapshot& snapshot,
+    const std::optional<std::uint64_t>& request_id) {
+    if (!request_id) return "unknown";
+    bool has_prompt = false;
+    for (auto entry = snapshot.transcript.rbegin();
+         entry != snapshot.transcript.rend(); ++entry) {
+        if (entry->request_id != request_id) continue;
+        if (entry->kind == TranscriptKind::human) {
+            has_prompt = true;
+        } else if ((entry->kind == TranscriptKind::agent
+                       || entry->kind == TranscriptKind::error)
+            && entry->status != TranscriptStatus::streaming) {
+            return to_string(entry->status);
+        }
+    }
+    // A cancelled response may end before producing answer text, in which
+    // case the completed prompt is the request's only transcript entry.
+    if (has_prompt) return to_string(TranscriptStatus::cancelled);
+    // A production terminal transition has a transcript entry for its request.
+    // Keep an explicit diagnostic value for malformed controller snapshots
+    // instead of reporting a made-up successful outcome.
+    return "unknown";
+}
+
 bool same_generation_structure(
     const GenerationStatusView& current,
     const GenerationState& before) {
@@ -365,15 +390,24 @@ CommandSubmitResult WebSessionRuntime::submit(
     std::chrono::milliseconds deadline) {
     auto completion = std::make_shared<CommandCompletion>();
     bool wake_owner = false;
+    std::optional<ErrorCode> rejection;
     {
         std::lock_guard lock(state_mutex_);
-        if (stopping_) return ErrorCode::session_not_live;
-        const CommandEnqueueResult enqueued = commands_.try_push({std::move(command), completion});
-        if (!enqueued.accepted) return ErrorCode::command_queue_full;
-        wake_owner = enqueued.wake_owner;
+        if (stopping_) {
+            rejection = ErrorCode::session_not_live;
+        } else {
+            const CommandEnqueueResult enqueued = commands_.try_push({std::move(command), completion});
+            if (!enqueued.accepted) {
+                rejection = ErrorCode::command_queue_full;
+            } else {
+                wake_owner = enqueued.wake_owner;
+            }
+        }
     }
+    if (rejection) return *rejection;
     if (wake_owner) notifier_.wake();
     if (auto result = completion->wait_for(deadline)) return std::move(*result);
+    log_event("command_deadline_expired");
     return ErrorCode::command_timeout;
 }
 
@@ -387,8 +421,11 @@ CommandSubmitResult WebSessionRuntime::connect_sse(
     return submit(SseConnectCommand{}, deadline);
 }
 
-void WebSessionRuntime::disconnect_sse(std::uint64_t connection_id) noexcept {
-    if (commands_.push_notification(SseDisconnectNotification{connection_id})) {
+void WebSessionRuntime::disconnect_sse(
+    std::uint64_t connection_id,
+    std::size_t collapsed_payloads) noexcept {
+    if (commands_.push_notification(
+            SseDisconnectNotification{connection_id, collapsed_payloads})) {
         notifier_.wake();
     }
 }
@@ -413,6 +450,7 @@ void WebSessionRuntime::owner_loop(
     bool fatal = false;
     try {
         if (!controller) throw std::runtime_error("Web controller factory returned null");
+        log_event("lease_acquired_owner_started");
         browser_connection_.published(clock_());
         publish_change(*controller);
         while (true) {
@@ -456,6 +494,7 @@ void WebSessionRuntime::owner_loop(
                 controller->is_generating(), settings_.idle_grace,
                 settings_.orphan_limit);
             if (deadline && clock_() >= *deadline) {
+                log_event("disconnect_deadline_expired");
                 reason = mark_stopping(ShutdownReason::browser_disconnected);
                 break;
             }
@@ -484,6 +523,7 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
         } else {
             const auto connection_id = browser_connection_.accept();
             if (!connection_id) {
+                log_event("sse_conflict");
                 (void)command.completion->complete(
                     ErrorCode::browser_stream_in_use);
                 return;
@@ -501,6 +541,11 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
                 // an unclaimed connect must not retain its exclusive slot.
                 sse_mailbox_->end_stream(stream);
                 (void)browser_connection_.close(*connection_id, clock_());
+            } else {
+                log_event(has_connected_sse_
+                    ? "sse_reconnected"
+                    : "sse_connected");
+                has_connected_sse_ = true;
             }
         }
         return;
@@ -536,7 +581,11 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
 }
 
 void WebSessionRuntime::apply_notification(OwnerNotification notification) {
-    (void)browser_connection_.close(notification.connection_id, clock_());
+    if (browser_connection_.close(notification.connection_id, clock_())) {
+        log_event(
+            "sse_disconnected collapsed_payloads="
+            + std::to_string(notification.collapsed_payloads));
+    }
 }
 
 SessionSnapshot WebSessionRuntime::make_snapshot(WebSessionController& controller) {
@@ -575,6 +624,22 @@ void WebSessionRuntime::publish_change(
     }
 
     SessionSnapshot current = make_snapshot(controller);
+    if ((!last_snapshot_ || !last_snapshot_->generation.active)
+        && current.generation.active) {
+        log_event("generation_started request_id="
+            + (current.generation.request_id
+                ? std::to_string(*current.generation.request_id)
+                : std::string("none")));
+    } else if (last_snapshot_ && last_snapshot_->generation.active
+        && !current.generation.active) {
+        log_event("generation_terminal request_id="
+            + (last_snapshot_->generation.request_id
+                ? std::to_string(*last_snapshot_->generation.request_id)
+                : std::string("none"))
+            + " status="
+            + std::string(generation_terminal_status(
+                current, last_snapshot_->generation.request_id)));
+    }
     if (last_snapshot_) {
         if (current == *last_snapshot_) return;
         for (std::size_t i = 0; i < current.transcript.size() && i < last_snapshot_->transcript.size(); ++i) {
@@ -683,6 +748,11 @@ void WebSessionRuntime::log_fatal_once() noexcept {
     }
 }
 
+void WebSessionRuntime::log_event(std::string_view event) noexcept {
+    if (!hooks_.log_event) return;
+    (void)run_guarded([this, event] { hooks_.log_event(metadata_, event); });
+}
+
 void WebSessionRuntime::teardown(
     std::unique_ptr<WebSessionController>& controller,
     ShutdownReason reason,
@@ -699,6 +769,7 @@ void WebSessionRuntime::teardown(
     if (hooks_.mark_registry_stopping) {
         (void)run_guarded([this] { hooks_.mark_registry_stopping(); });
     }
+    log_event("runtime_stopping reason=" + std::string(to_string(reason)));
     if (controller) {
         (void)run_guarded([&] {
             publish_final(*controller, reason);
@@ -728,6 +799,7 @@ void WebSessionRuntime::teardown(
             log_fatal_once();
         }
         controller.reset();
+        log_event("lease_released_owner_finished");
     }
     if (hooks_.mark_finished) {
         (void)run_guarded([this] { hooks_.mark_finished(); });

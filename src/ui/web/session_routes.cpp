@@ -132,8 +132,8 @@ void SessionRoutes::install(httplib::Server& server) const {
             },
             [handle, mailbox = connection->mailbox, stream = connection->stream,
              connection_id = connection->connection_id](bool) {
-                mailbox->end_stream(stream);
-                handle.runtime().disconnect_sse(connection_id);
+                handle.runtime().disconnect_sse(
+                    connection_id, mailbox->end_stream(stream));
             });
     });
     server.Post(std::string(base) + R"(/api/v1/input)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
