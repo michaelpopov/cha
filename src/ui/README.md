@@ -16,6 +16,7 @@ same behavior? If yes, it belongs below `ui/`.
 | `render/` | Shared transcript labels, attributes, and writing operations. |
 | `tui/` | The ncurses front end: terminal lifecycle, startup selection, input editing, screen layout, and redraw planning. |
 | `console/` | The line-oriented frontend: CLI selection, non-blocking input, queued dispatch, signals, and append-only output. |
+| `web/` | The HTTP/SSE frontend boundary: owning protocol values and transport helpers; later blocks add routes and runtimes. |
 
 `text/` and `render/` are separate from the frontends because neither the
 command language nor transcript labels are curses concepts. A new input box or

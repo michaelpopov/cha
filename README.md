@@ -15,7 +15,11 @@ selection through command-line options.
 `app.toml` configures application-wide behavior. Its top-level `host` and
 `port` settings define the web frontend's listener address. The logging section
 requires a log file and level; relative log paths are resolved from the
-workspace root.
+workspace root. `chaweb` also uses that host and port as its allowed browser
+authority to prevent DNS rebinding; loopback configurations additionally allow
+`localhost`, `127.0.0.1`, and `[::1]` with the configured port. For network
+access, configure the concrete address or hostname clients will use rather than
+a wildcard listener address.
 
 ```toml
 # app.toml
@@ -31,7 +35,7 @@ Supported levels are `trace`, `debug`, `info`, `warn`, `error`, `critical`,
 and `off`. When logging is enabled, missing parent directories for `file` are
 created automatically. Logs rotate at 10 MiB and retain three files.
 
-Each forum has `config.toml` with a required `display_name` string, a `personas/` directory with one or more persona subdirectories, and `USER.md`. The directory name is the stable forum ID used by `chacon --forum`; the display name is shown in the UI and forum listings. A forum is also the unit of distribution: it can be zipped and unpacked into another workspace. Each persona is loaded from `forums/<forum>/personas/<persona>/persona.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (expanded `SYSTEM.md`, followed by expanded `USER.md`, followed by generated forum context that identifies the agent and the forum's other personas). Persona directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
+Each forum has `config.toml` with a required `display_name` string, a `personas/` directory with one or more persona subdirectories, and `USER.md`. The directory name is the stable forum ID used by `chacon --forum`; it may contain only RFC 3986 unreserved ASCII characters (letters, digits, `-`, `.`, `_`, and `~`), excluding the complete names `.` and `..`. The display name is shown in the UI and forum listings and is not subject to the ID restriction. A forum is also the unit of distribution: it can be zipped and unpacked into another workspace. Each persona is loaded from `forums/<forum>/personas/<persona>/persona.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (expanded `SYSTEM.md`, followed by expanded `USER.md`, followed by generated forum context that identifies the agent and the forum's other personas). Persona directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
 Each persona directory's name is its stable ID and identifies transcript entries;
 its `display_name` is the visible `@mention` handle. Display names cannot start
@@ -45,7 +49,7 @@ other speaker's first-person statements as quoted history rather than its own
 identity. A session stores only its forum and transcript, so it can be reopened
 even if the forum's personas changed.
 
-Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Its embedded version, ID, and forum must match the selected forum before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
+Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Session IDs use the same URL-safe character set as forum IDs; files whose stems do not follow that rule are ignored. Its embedded version, ID, and forum must match the selected forum before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database and is not subject to the ID restriction. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
 
 `forums/<forum>/personas/persona_defaults.toml` may define configuration shared by every persona in
 that forum. A persona's own `persona.toml` overrides it field by field. The
@@ -314,6 +318,41 @@ ctest --test-dir build/console
 The `console` preset explicitly sets `CHA_BUILD_TUI=OFF`, making it the
 appropriate preset for console-only CI on every platform.
 
+`chaweb` is built by the same preset as one process with the configured
+`app.toml` host and port. It has one listener and no child-session or
+per-session-port mode. The ordinary suite excludes the socket/process and
+long-concurrency groups; run all three groups for web changes:
+
+```bash
+ctest --test-dir build/console --output-on-failure -LE "web_process|web_stress"
+ctest --test-dir build/console --output-on-failure -L web_process
+ctest --test-dir build/console --output-on-failure -L web_stress
+```
+
+GNU- and Clang-family toolchains also provide reproducible hardening presets,
+which take the same three test groups:
+
+```bash
+cmake --preset console-asan-ubsan
+cmake --build --preset console-asan-ubsan
+ctest --test-dir build/console-asan-ubsan --output-on-failure -LE "web_process|web_stress"
+
+cmake --preset console-tsan
+cmake --build --preset console-tsan
+ctest --test-dir build/console-tsan --output-on-failure -LE "web_process|web_stress"
+```
+
+The sanitizer presets require a compiler that supports the selected runtime and
+are intentionally off by default. They instrument the fetched dependencies as
+well as this project, because ThreadSanitizer reports false races against
+synchronization it cannot see. The native companion-file lease backend is
+exercised by the portable unit tests on every supported platform; the POSIX
+process harness adds cross-process crash-release coverage on Linux and macOS.
+
+[`docs/web-verification.md`](docs/web-verification.md) records which design
+test bullets each suite covers, the two deliberate differences in instrumented
+builds, and which platforms and sanitizers were and were not exercised.
+
 On macOS and Windows the TUI option defaults to off, so the default build
 produces the console frontend only. The ncurses TUI remains Linux-only.
 
@@ -329,4 +368,5 @@ The source tree is documented from the inside out, with diagrams:
 | [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
 | [`src/ui/README.md`](src/ui/README.md) | The UI contract, with shared [`render/`](src/ui/render/README.md) and [`text/`](src/ui/text/README.md), plus the [`tui/`](src/ui/tui/README.md) and [`console/`](src/ui/console/README.md) frontends. |
 | [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |
+| [`src/ui/web/README.md`](src/ui/web/README.md) | The one-listener web transport, session ownership, SSE, and shutdown boundary. |
 | [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including prompt-template expansion, the concurrent queue, and wake adapters. |

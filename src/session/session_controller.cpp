@@ -3,6 +3,7 @@
 #include "util/logging.h"
 
 #include <exception>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -103,12 +104,32 @@ void require_agent_count(std::size_t count) {
 std::unique_ptr<SessionController> SessionController::from_definitions(
     std::vector<AgentDefinition> definitions,
     std::filesystem::path database_path,
+    SessionLease lease,
+    WakeNotifier& notifier,
+    SessionRestore restored) {
+    require_agent_count(definitions.size());
+    if (!lease.active()) {
+        throw std::invalid_argument(
+            "Production session controllers require an active session lease");
+    }
+    return std::unique_ptr<SessionController>(new SessionController(
+        std::move(definitions),
+        std::move(database_path),
+        std::move(lease),
+        notifier,
+        std::move(restored)));
+}
+
+std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
+    std::vector<AgentDefinition> definitions,
+    std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored) {
     require_agent_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
         std::move(database_path),
+        SessionLease::inactive_for_testing(),
         notifier,
         std::move(restored)));
 }
@@ -131,9 +152,11 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
 SessionController::SessionController(
     std::vector<AgentDefinition> definitions,
     std::filesystem::path path,
+    SessionLease lease,
     WakeNotifier& notifier,
     SessionRestore restored)
-    : journal_(std::move(path)),
+    : lease_(std::move(lease)),
+      journal_(std::move(path)),
       worker_pool_(definitions.size()),
       registry_(std::move(definitions), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),
@@ -147,7 +170,8 @@ SessionController::SessionController(
     WakeNotifier& notifier,
     SessionRestore restored,
     ActivationHook before_activation)
-    : journal_(std::move(path)),
+    : lease_(SessionLease::inactive_for_testing()),
+      journal_(std::move(path)),
       worker_pool_(backends.size()),
       registry_(std::move(backends), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),
@@ -181,19 +205,39 @@ void SessionController::initialize(SessionRestore restored) {
 }
 
 GenerationStatus SessionController::generation_status() const {
+    const GenerationStatusView view = generation_status_view();
+    return {
+        .active = view.active,
+        .request_id = view.request_id,
+        .agent_id = std::string(view.agent_id),
+        .agent_name = std::string(view.agent_name),
+        .phase = view.phase,
+        .reasoning_text = std::string(view.reasoning_text),
+    };
+}
+
+GenerationStatusView SessionController::generation_status_view() const noexcept {
     if (batch_ && batch_->abort_requested) {
         const RunSpec& run = batch_->runs[batch_->foreground_index];
         return {
             .active = true,
+            .request_id = run.request_id,
+            .agent_id = run.target.id,
             .agent_name = run.target.name,
             .phase = ResponsePhase::stopping,
         };
     }
     return {
         .active = busy(),
-        .agent_name = active_ ? active_->agent_name : "",
+        .request_id = active_ ? std::optional<RequestId>(active_->request_id)
+                              : std::nullopt,
+        .agent_id = active_ ? std::string_view(active_->agent_id)
+                            : std::string_view{},
+        .agent_name = active_ ? std::string_view(active_->agent_name)
+                              : std::string_view{},
         .phase = active_ ? active_->phase : ResponsePhase::waiting,
-        .reasoning_text = active_ ? active_->reasoning_text : "",
+        .reasoning_text = active_ ? std::string_view(active_->reasoning_text)
+                                  : std::string_view{},
     };
 }
 
@@ -643,6 +687,22 @@ SessionUpdate SessionController::set_default_agent(std::string_view handle) {
     return update;
 }
 
+SessionUpdate SessionController::set_default_agent_by_id(std::string_view id) {
+    if (busy()) {
+        return busy_notice();
+    }
+    // This typed action submits no editor text, so it never clears a draft.
+    SessionUpdate update;
+    const PersonaInfo* persona = personas_.find(id);
+    if (!persona) {
+        update.notice = "Unknown agent";
+        return update;
+    }
+    default_agent_id_ = persona->id;
+    update.notice = "Default agent is now " + persona->name;
+    return update;
+}
+
 SessionUpdate SessionController::request_stop() {
     SessionUpdate update;
     if (!batch_) {
@@ -809,23 +869,36 @@ bool SessionController::matches(RequestId request_id) const {
     return active_ && active_->request_id == request_id;
 }
 
-SessionUpdate SessionController::receive() {
+SessionEventBatch SessionController::receive_events(std::size_t max_events) {
+    if (max_events == 0) {
+        throw std::invalid_argument("Agent event batch size must be positive");
+    }
     SessionUpdate update;
     if (shutdown_ && !batch_) {
         update.end_session = true;
-        return update;
+        return {.update = std::move(update)};
     }
     AgentEvent event = AgentCompleted{};
-    while (batch_ && active_) {
+    std::size_t processed = 0;
+    while (batch_ && active_ && processed < max_events) {
         const ChannelReadStatus status = registry_.try_receive(
             batch_->foreground_index, event);
         if (status != ChannelReadStatus::value) {
             break;
         }
         merge_update(update, handle_agent_event(std::move(event)));
+        ++processed;
     }
     poll_abort_cleanup(update);
-    return update;
+    return {
+        .update = std::move(update),
+        .full = processed == max_events,
+    };
+}
+
+SessionUpdate SessionController::receive() {
+    return std::move(
+        receive_events(std::numeric_limits<std::size_t>::max()).update);
 }
 
 void SessionController::shutdown() {

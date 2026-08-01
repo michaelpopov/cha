@@ -10,8 +10,9 @@ code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, list and validate forums and sessions, load a forum's agent definitions, and build a controller; creation also returns the assigned session ID. |
+| `workspace.*` | Resolve the workspace layout, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
+| `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
 | `forum_personas.*` | The ordered persona identities in a forum, including validation, lookup, and handle resolution. |
 | `session_controller.*` | Own one live session: commands, the in-flight response batch, agent events, default agent, notices, and shutdown. |
@@ -34,10 +35,13 @@ flowchart TD
 ```
 
 `Workspace` refuses to construct unless `forums/` exists.
-The `forums/` directory must contain at least one forum subdirectory; its names
-are sorted before presentation. Each forum's `personas/` directory must contain
-at least one persona subdirectory, also sorted before loading. Every directory
-name is checked with `require_path_component()` before it becomes a path.
+The `forums/` directory may be temporarily empty; its valid forum names are
+sorted before presentation. Forum IDs and session database stems may contain
+only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and
+`..`; invalid entries are ignored during discovery and rejected on direct use.
+Each forum's `personas/` directory must contain at least one persona
+subdirectory, also sorted before loading. Persona directory names are checked
+with `require_path_component()` before they become paths.
 Each forum's `config.toml` must provide a non-empty string `display_name` for
 user-facing selection and listings; its directory name remains the stable ID.
 Each persona directory likewise supplies its stable ID, while its
@@ -60,6 +64,14 @@ display names, and uniqueness, giving the console's `--check` mode the same
 static validation a real session receives before provider initialization. It
 does not inspect the optional `sessions/` directory or resolve provider
 credentials and models.
+
+`Workspace::session_summary()` reads one selected stored session's identity,
+label, and metadata directly, without scanning the other session databases or
+acquiring its lease. `Workspace::check_session()` is the validation-only form.
+Both distinguish an absent session from invalid or unreadable storage so front
+ends can map only absence to not-found. Web lobby routes skip this disk
+validation when their separate live-session registry can reattach directly,
+and otherwise use it before asking the registry to open a session.
 
 ## Forum personas
 
@@ -86,44 +98,89 @@ sequenceDiagram
     participant WS as Workspace
     participant AG as agents/
     participant SC as SessionCatalog
+    participant SL as SessionLease
     participant DB as Session database
     participant CC as SessionController
 
-    Note over UI,CC: Creating a session
-    UI->>WS: create_session forum, label
+    Note over UI,DB: Creating a stored session
+    UI->>WS: create_stored_session forum, label
     WS->>WS: load_forum, enumerate personas/ directories
     WS->>AG: load_agent_definitions
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
     SC->>DB: build hidden temporary sibling, then link into place
-    WS->>CC: from_definitions with fresh database
+    WS-->>UI: SessionSummary with assigned ID and effective label
+
+    Note over UI,CC: Terminal create and open convenience
+    UI->>WS: create_session forum, label
+    WS->>WS: create_stored_session
+    WS->>WS: open_session with assigned ID
     WS-->>UI: CreatedSession with controller and assigned id
 
     Note over UI,CC: Opening a session
     UI->>WS: open_session forum, id
-    WS->>AG: load_agent_definitions
     WS->>SC: open_database_path id
     SC->>DB: read metadata, check id and forum match
+    WS->>SL: acquire `<database>.cha-lock` without waiting
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
+    WS->>AG: load_agent_definitions
     WS->>CC: from_definitions with restore
     CC->>CC: repair interrupted turns, then install entries
     CC-->>UI: controller
 ```
 
-Creation publishes with `link(2)`, which fails rather than overwriting, so a
-half-written database is never visible under a real session name and a collision
-simply retries with the next numeric suffix. Listing is tolerant: a file that
-fails validation still appears, with its error attached, so the selector can
-show it instead of hiding a broken session. `Workspace::create_session()`
-returns a `CreatedSession` containing both the ready controller and the exact ID
-that won publication; front ends can therefore report or retain the ID without
-rescanning the catalog.
+`Workspace::create_stored_session()` is the creation primitive. It first
+performs the same complete forum validation as `check_forum()`, then delegates
+publication to `SessionCatalog`. Publication uses `link(2)`, which fails rather
+than overwriting, so a half-written database is never visible under a real
+session name and a collision simply retries with the next numeric suffix. The
+operation returns only a `SessionSummary`: it neither acquires a session lease
+nor constructs a controller or provider. Web callers create and open in
+separate operations, so an open failure leaves the successfully stored session
+available for a later ordinary open.
+
+`Workspace::create_session()` is the terminal convenience operation. It calls
+`create_stored_session()`, then passes the assigned ID through the ordinary
+`open_session()` path described below, and returns the controller with that ID.
+This deliberately validates and parses the forum twice: create-only enumerates
+personas and loads their configuration and prompt files before publication,
+while the ordinary open repeats `load_forum()` and `load_agent_definitions()`
+after revalidating the stored identity. The duplicated parsing is an accepted
+startup cost for a handful of small files and avoids coupling the two operations
+through prevalidated state. Terminal creation deliberately replaces the former
+single `Session created` log with `Session stored` followed by `Session opened`.
+
+Listing is tolerant: a file that fails validation still appears, with its error
+attached, so the selector can show it instead of hiding a broken session.
+
+Session paths are resolved only by `SessionCatalog`. Its `database_path()` and
+`open_database_path()` require the session ID to be one safe path component
+before appending `.sqlite3` beneath the forum's `sessions/` directory, so an
+absolute path, `..`, or an ID containing a directory separator cannot escape
+that directory.
+
+Every live controller holds a `SessionLease` on `<database>.cha-lock`. The
+companion file may remain after a run; only its non-blocking exclusive operating
+system lock means the session is active. `Workspace` acquires the lease after
+resolving a database but before restore, then moves it into `SessionController`.
+The controller keeps it through explicit shutdown and journal destruction, so
+`cha`, `chacon`, and future frontends fail immediately with `SessionBusyError`
+when another process owns that stored session. Test-only controller factories
+use an explicitly inactive lease instead of locking fixture databases.
+On Windows, the companion handle intentionally omits `FILE_SHARE_DELETE`, so
+the lock file cannot be deleted or renamed while its controller is alive.
 
 ## Persistence
 
 One session is one self-contained SQLite file. Its `application_id` and
 `user_version` are checked before anything else is read.
+
+Opening a database initializes the SQLite library once, under `std::call_once`,
+before the first connection is created. SQLite performs that setup lazily on
+first use and writes its configuration globals and the unix VFS's process-id
+record without full synchronization, so concurrent first opens from several
+session owner threads would otherwise race on them.
 
 ```mermaid
 erDiagram
@@ -350,6 +407,7 @@ session continues.
 | `tests/session/unit_workspace.cpp` | Layout resolution, forum loading and checking, session create/open. |
 | `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics. |
 | `tests/session/unit_session_controller.cpp` | Command behavior, concurrent staging, ordered foreground drain, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
+| `tests/session/unit_concurrent_controllers.cpp` | Independent owner-thread controllers, concurrent workspace/catalog access, and atomic catalog publication while listing. |
 | `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
 
 Those database tests link `cha_sqlite3` directly, so they can assert on the

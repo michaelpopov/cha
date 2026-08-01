@@ -81,16 +81,21 @@ flush; destruction does not perform hidden output.
 
 ## `web_main.cpp`
 
-The `chaweb` executable is the placeholder composition root for the future web
-frontend. It intentionally has no behavior yet.
+`chaweb` is the one-process web composition root. It loads configuration and
+logging, assembles one immutable `Workspace`, `SessionRegistry`, route set, and
+HTTP listener, then bridges process signals into normal bounded shutdown. It
+never constructs a `SessionController`: those live only on registry owner
+threads. A shutdown signal stops new HTTP acceptance, wakes open waiters,
+requests every live owner to stop, and waits for one configured grace period.
+If an owner remains stuck, the process logs its identity and exits without
+destructors so operating-system lease cleanup can proceed.
 
 ## Dependencies
 
 A composition root may depend on any concrete component it needs to assemble a
 program. `tui_main.cpp` uses `session/`, `ui/tui/`, and `util/`.
 `console_main.cpp` uses `session/`, `ui/console/`, `ui/render/`, and `util/`.
-`web_main.cpp` links `cha_core` and `cpp-httplib`, but does not instantiate
-components from either yet.
+`web_main.cpp` links `cha_web`; HTTP/SSE policy remains in `ui/web/`.
 
 Nothing depends on `apps/`.
 

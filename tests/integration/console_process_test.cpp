@@ -1,4 +1,5 @@
 #include "support/mock_http_server.h"
+#include "support/lease_test_process.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -148,7 +149,8 @@ void make_nonblocking(int descriptor) {
 ChildProcess launch_console(
     const TemporaryWorkspace& workspace,
     const std::filesystem::path& input_path = {},
-    bool check_forum = false) {
+    bool check_forum = false,
+    std::string session_id = {}) {
     int input_pipe[2]{-1, -1};
     int output_pipe[2]{};
     int error_pipe[2]{};
@@ -200,6 +202,16 @@ ChildProcess launch_console(
                 "--forum",
                 "hall",
                 "--check",
+                static_cast<char*>(nullptr));
+        } else if (!session_id.empty()) {
+            ::execl(
+                CHA_CONSOLE_BINARY,
+                CHA_CONSOLE_BINARY,
+                "--forum",
+                "hall",
+                "--session",
+                session_id.c_str(),
+                "--color=never",
                 static_cast<char*>(nullptr));
         } else {
             ::execl(
@@ -326,6 +338,27 @@ bool wait_for_session(
         std::this_thread::sleep_for(5ms);
     }
     return false;
+}
+
+std::string only_session_id(const TemporaryWorkspace& workspace) {
+    const std::filesystem::path sessions =
+        workspace.path() / "forums" / "hall" / "sessions";
+    std::filesystem::path database;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(sessions)) {
+        if (entry.path().extension() != ".sqlite3") {
+            continue;
+        }
+        if (!database.empty()) {
+            throw std::runtime_error(
+                "Console process created more than one session");
+        }
+        database = entry.path();
+    }
+    if (database.empty()) {
+        throw std::runtime_error("Console process did not create a session");
+    }
+    return database.stem().string();
 }
 
 bool wait_for_output(
@@ -503,6 +536,32 @@ TEST(ConsoleProcess, CheckValidatesWithoutCreatingASessionOrConnecting) {
     EXPECT_EQ(result.output, "Forum 'hall' is valid (1 persona).\n");
     EXPECT_TRUE(result.errors.empty());
     EXPECT_FALSE(workspace.has_session());
+}
+
+// The console and TUI share Workspace's leased open path; no TUI process
+// harness exists in the console-only build, so this exercises that path here.
+TEST(ConsoleProcess, ReportsSessionLeaseContentionClearly) {
+    TemporaryWorkspace workspace;
+    workspace.point_at(9);
+    ChildProcess creator = launch_console(workspace);
+    ASSERT_TRUE(wait_for_session(workspace));
+    ASSERT_EQ(::kill(creator.pid, SIGINT), 0);
+    const ProcessResult created = run_to_completion(creator, 2s);
+    ASSERT_FALSE(created.timed_out);
+    ASSERT_EQ(created.exit_code, 0) << created.errors;
+
+    const std::string session_id = only_session_id(workspace);
+    const std::filesystem::path database =
+        workspace.path() / "forums" / "hall" / "sessions"
+        / (session_id + ".sqlite3");
+    test::LeaseHolderProcess lease_holder(database);
+    ChildProcess contender = launch_console(workspace, {}, false, session_id);
+    close_descriptor(contender.input);
+
+    const ProcessResult result = run_to_completion(contender, 2s);
+    EXPECT_FALSE(result.timed_out);
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_NE(result.errors.find("Session already in use"), std::string::npos);
 }
 
 TEST(ConsoleProcess, RedirectedRegularFileCompletes) {

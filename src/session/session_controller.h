@@ -5,10 +5,13 @@
 #include "session/generation_status.h"
 #include "session/forum_personas.h"
 #include "session/session_database.h"
+#include "session/session_lease.h"
+#include "session/session_update.h"
 #include "transcript/transcript.h"
 #include "util/wake_notifier.h"
 #include "util/thread_pool.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -18,17 +21,6 @@
 #include <vector>
 
 namespace cha {
-
-// The side effects one controller command leaves for the front end to apply: redraw, clear the
-// input, show a notice, end the session. Returning them keeps every UI type out of the controller.
-struct SessionUpdate {
-    bool render_needed{};
-    bool end_session{};
-    bool clear_input{};
-    // nullopt leaves the frontend's current notice unchanged, an empty string
-    // clears it, and a non-empty string replaces it.
-    std::optional<std::string> notice;
-};
 
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, forum personas, default agent, generation status) and
@@ -43,6 +35,14 @@ public:
     using ActivationHook = std::function<void(std::size_t)>;
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions(
+        std::vector<AgentDefinition> definitions,
+        std::filesystem::path database_path,
+        SessionLease lease,
+        WakeNotifier& notifier,
+        SessionRestore restored = {});
+    // Test-only counterpart for controller tests that intentionally do not
+    // claim a fixture database's production lease.
+    [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
@@ -64,6 +64,7 @@ public:
     const Transcript& transcript() const { return transcript_; }
     [[nodiscard]] bool is_generating() const noexcept;
     GenerationStatus generation_status() const;
+    GenerationStatusView generation_status_view() const noexcept;
     const ForumPersonas& personas() const { return personas_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
 
@@ -89,8 +90,10 @@ public:
     [[nodiscard]] SessionUpdate session_information();
     [[nodiscard]] SessionUpdate agent_information();
     [[nodiscard]] SessionUpdate set_default_agent(std::string_view handle);
+    [[nodiscard]] SessionUpdate set_default_agent_by_id(std::string_view id);
     [[nodiscard]] SessionUpdate request_stop();
     [[nodiscard]] SessionUpdate handle_agent_event(AgentEvent event);
+    [[nodiscard]] SessionEventBatch receive_events(std::size_t max_events);
     [[nodiscard]] SessionUpdate receive();
     void shutdown();
 
@@ -116,6 +119,7 @@ private:
     SessionController(
         std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
+        SessionLease lease,
         WakeNotifier& notifier,
         SessionRestore restored);
     SessionController(
@@ -159,6 +163,9 @@ private:
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
+    // lease_ is declared before journal_ so reverse destruction keeps the lock
+    // through journal destruction and explicit controller shutdown.
+    SessionLease lease_;
     Transcript transcript_;
     SessionJournal journal_;
     // Explicit shutdown joins this pool while registry_ is still alive.

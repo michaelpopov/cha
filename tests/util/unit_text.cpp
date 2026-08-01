@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <string>
 
 namespace cha {
 namespace {
@@ -39,7 +40,28 @@ TEST(PathName, RejectsEmptySpecialAndNestedPaths) {
     EXPECT_THROW(require_path_component(".", source), std::runtime_error);
     EXPECT_THROW(require_path_component("..", source), std::runtime_error);
     EXPECT_THROW(require_path_component("nested/forum", source), std::runtime_error);
+    EXPECT_THROW(require_path_component("nested\\forum", source), std::runtime_error);
     EXPECT_THROW(require_path_component("/absolute", source), std::runtime_error);
+}
+
+TEST(PathName, AcceptsOnlyUrlUnreservedAsciiIdentifiers) {
+    EXPECT_TRUE(is_url_safe_identifier("AZaz09-._~"));
+    EXPECT_NO_THROW(require_url_safe_identifier("forum-1", "forums"));
+
+    EXPECT_FALSE(is_url_safe_identifier(""));
+    EXPECT_FALSE(is_url_safe_identifier("."));
+    EXPECT_FALSE(is_url_safe_identifier(".."));
+    EXPECT_FALSE(is_url_safe_identifier("has space"));
+    EXPECT_FALSE(is_url_safe_identifier("has#fragment"));
+    EXPECT_FALSE(is_url_safe_identifier("has?query"));
+    EXPECT_FALSE(is_url_safe_identifier("has%escape"));
+    EXPECT_FALSE(is_url_safe_identifier("has/slash"));
+    EXPECT_FALSE(is_url_safe_identifier("has\\backslash"));
+    EXPECT_FALSE(is_url_safe_identifier("na\xc3\xafve"));
+    EXPECT_FALSE(is_url_safe_identifier(std::string{"nul\0byte", 8}));
+    EXPECT_THROW(
+        require_url_safe_identifier("has#fragment", "forums"),
+        std::runtime_error);
 }
 
 } // namespace

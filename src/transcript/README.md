@@ -68,9 +68,10 @@ terminal transcript entry is currently storable.
 ## The live transcript
 
 `Transcript` is the live mutable transcript state. It has a
-single-thread-owned design: the main thread exclusively reads and mutates it.
-The class is not thread-safe, and callers must not share a live instance
-across threads.
+single-thread-owned design: the session's owner thread exclusively reads and
+mutates it. That owner is the process main thread in `cha` and `chacon`. The
+class is not thread-safe, and callers must not share a live instance across
+threads.
 Completion runners never read it; the controller captures an immutable
 `CompletionHistory` before staging a batch.
 
@@ -159,7 +160,8 @@ entry vector through `std::span`, and any transcript mutation may invalidate
 the span, its entries, and their strings. Renderers therefore consume it before
 returning and retain only scalar positions such as an entry ID, entry count, or
 text length. `CompletionHistory` is the sole owning point-in-time copy because
-workers genuinely need immutable state after the main thread continues.
+workers genuinely need immutable state after the session owner thread
+continues.
 
 The direct entry accessor is also a borrowed span for narrow same-thread reads.
 `size()` answers count-only questions without constructing a view. Accessors for

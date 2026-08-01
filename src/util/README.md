@@ -11,7 +11,7 @@ belongs in that directory instead.
 | --- | --- |
 | `text.*` | Byte-oriented whitespace tests, trimming, and ASCII case folding. |
 | `text_template.*` | Prompt template expansion: `$$(path)` includes, `$${name}` variables, and `[prompt]` scope loading. |
-| `path_name.*` | `require_path_component()` — a configured name must be one safe path component. |
+| `path_name.*` | Safe filesystem-component and URL-identifier validation. |
 | `utf8_path.*` | Converts between UTF-8 application text and native filesystem paths. |
 | `environment.*` | `load_dotenv()` — optional `.env` loading that never overrides the real environment. |
 | `logging.*` | File-only spdlog initialization from workspace application settings. |
@@ -30,10 +30,15 @@ the ASCII range, which is exactly what the agent-name rules allow.
 ## Path safety
 
 `require_path_component()` rejects empty names, absolute paths, anything with a
-separator, and `.` / `..`. Every workspace-controlled name — a forum directory,
-a persona directory, a session ID derived from a
-filename — passes through it before it is joined onto a path. That chokepoint
-keeps configured names from addressing anything outside the workspace.
+separator, and `.` / `..`. It protects general workspace-controlled components,
+including persona directory names, before they are joined onto a path.
+
+Forum and session IDs use the stricter `is_url_safe_identifier()` check before
+discovery or direct use. Its accepted character set is itself path-safe and
+contains only RFC 3986 unreserved ASCII characters: letters, digits, `-`, `.`,
+`_`, and `~`, with `.` and `..` still rejected. Display names and session labels
+are presentation text rather than route identifiers and are not restricted by
+this rule.
 
 Prompt-template includes need a second rule. An include path is resolved relative
 to the including file and may leave a persona directory to reach shared forum

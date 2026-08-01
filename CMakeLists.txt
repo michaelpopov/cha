@@ -36,6 +36,42 @@ else()
     find_package(OpenSSL REQUIRED)
 endif()
 
+# Keep sanitizer instrumentation opt-in so ordinary release-like builds stay
+# portable, while CI and local hardening runs use named, reproducible presets.
+# This must precede FetchContent so the fetched dependencies are instrumented
+# too: ThreadSanitizer reports false races when synchronization inside
+# uninstrumented libraries — libuv and the HTTP transport in particular — is
+# invisible to it.
+set(
+    CHA_SANITIZER "none" CACHE STRING
+    "Instrumentation: none, address-undefined, or thread")
+set_property(CACHE CHA_SANITIZER PROPERTY STRINGS none address-undefined thread)
+if(NOT CHA_SANITIZER STREQUAL "none")
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        message(FATAL_ERROR
+            "CHA_SANITIZER=${CHA_SANITIZER} requires a GNU or Clang-family compiler")
+    endif()
+    if(CHA_SANITIZER STREQUAL "address-undefined")
+        set(CHA_SANITIZER_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer)
+    elseif(CHA_SANITIZER STREQUAL "thread")
+        set(CHA_SANITIZER_FLAGS -fsanitize=thread -fno-omit-frame-pointer)
+    else()
+        message(FATAL_ERROR
+            "Unknown CHA_SANITIZER: ${CHA_SANITIZER}")
+    endif()
+    add_compile_options(${CHA_SANITIZER_FLAGS})
+    add_link_options(${CHA_SANITIZER_FLAGS})
+
+    # cpp-httplib's non-blocking resolver calls glibc getaddrinfo_a, which
+    # services requests on threads created inside libanl rather than through
+    # pthread_create. ThreadSanitizer cannot intercept those, and every test
+    # that issues an HTTP request dies on a null dereference before it runs.
+    # The blocking resolver is behaviourally equivalent here: chaweb resolves
+    # one bind address at startup, and no production code path uses the
+    # cpp-httplib client. Instrumented builds therefore use it.
+    set(HTTPLIB_USE_NON_BLOCKING_GETADDRINFO OFF CACHE BOOL "" FORCE)
+endif()
+
 include(FetchContent)
 
 # Keep fetched runtime dependencies inside the executables. In particular,
@@ -170,6 +206,7 @@ add_library(cha_core STATIC
     src/session/session_catalog.cpp
     src/session/session_controller.cpp
     src/session/session_database.cpp
+    src/session/session_lease.cpp
     src/session/workspace.cpp
     src/ui/text/command.cpp
     src/ui/text/mcast.cpp
@@ -206,6 +243,29 @@ target_link_libraries(
         spdlog::spdlog
 )
 cha_enable_warnings(cha_core)
+
+add_library(cha_web STATIC
+    src/ui/web/asset_handler.cpp
+    src/ui/web/browser_connection_state.cpp
+    src/ui/web/command_queue.cpp
+    src/ui/web/http_response.cpp
+    src/ui/web/http_server.cpp
+    src/ui/web/json.cpp
+    src/ui/web/lobby_routes.cpp
+    src/ui/web/protocol.cpp
+    src/ui/web/route_support.cpp
+    src/ui/web/server_shutdown.cpp
+    src/ui/web/session_routes.cpp
+    src/ui/web/session_registry.cpp
+    src/ui/web/sse_mailbox.cpp
+    src/ui/web/sse_stream.cpp
+    src/ui/web/wake_notifier.cpp
+    src/ui/web/web_session_runtime.cpp
+)
+target_compile_features(cha_web PUBLIC cxx_std_20)
+target_include_directories(cha_web PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(cha_web PUBLIC cha_core httplib::httplib)
+cha_enable_warnings(cha_web)
 
 if(CHA_BUILD_TUI)
     add_library(cha_tui STATIC
@@ -258,9 +318,11 @@ if(BUILD_TESTING)
         tests/agents/unit_agent_registry.cpp
         tests/agents/unit_config_loader.cpp
         tests/agents/unit_json_serialization.cpp
+        tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_forum_personas.cpp
         tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
+        tests/session/unit_session_lease.cpp
         tests/session/unit_workspace.cpp
         tests/ui/text/unit_command.cpp
         tests/ui/text/unit_mcast.cpp
@@ -285,6 +347,16 @@ if(BUILD_TESTING)
         # The socket fixture used by these transport tests is POSIX-only.
         list(APPEND CHA_TEST_SOURCES
             tests/agents/unit_completion_client.cpp)
+
+        # Lease tests use a fresh executable rather than running C++ code in a
+        # forked copy of the potentially threaded GoogleTest process.
+        add_executable(
+            cha_lease_test_helper
+            tests/support/lease_test_helper.cpp)
+        target_link_libraries(cha_lease_test_helper PRIVATE cha_core)
+        target_include_directories(
+            cha_lease_test_helper PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        cha_enable_warnings(cha_lease_test_helper)
     endif()
 
     add_executable(cha_tests ${CHA_TEST_SOURCES})
@@ -296,7 +368,40 @@ if(BUILD_TESTING)
         target_link_libraries(cha_tests PRIVATE cha_tui)
     endif()
     target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    if(TARGET cha_lease_test_helper)
+        target_compile_definitions(
+            cha_tests
+            PRIVATE
+                CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
+        add_dependencies(cha_tests cha_lease_test_helper)
+    endif()
     cha_enable_warnings(cha_tests)
+
+    add_executable(
+        cha_web_tests
+        tests/ui/web/unit_protocol.cpp
+        tests/ui/web/unit_browser_connection_state.cpp
+        tests/ui/web/unit_lobby_routes.cpp
+        tests/ui/web/unit_session_routes.cpp
+        tests/ui/web/unit_session_registry.cpp
+        tests/ui/web/unit_sse_mailbox.cpp
+        tests/ui/web/unit_sse_stream.cpp
+        tests/ui/web/unit_web_session_runtime.cpp
+        tests/support/test_workspace.cpp)
+    target_link_libraries(
+        cha_web_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
+    target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    cha_enable_warnings(cha_web_tests)
+
+    add_executable(
+        cha_web_stress_tests
+        tests/ui/web/stress_web_sessions.cpp
+        tests/support/test_workspace.cpp)
+    target_link_libraries(
+        cha_web_stress_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
+    target_include_directories(
+        cha_web_stress_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    cha_enable_warnings(cha_web_stress_tests)
 
     if(NOT WIN32)
         # These integration harnesses currently use POSIX sockets and
@@ -313,15 +418,55 @@ if(BUILD_TESTING)
         target_include_directories(console_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         target_compile_definitions(
             console_tests
-            PRIVATE CHA_CONSOLE_BINARY="$<TARGET_FILE:chacon_app>")
-        add_dependencies(console_tests chacon_app)
+            PRIVATE
+                CHA_CONSOLE_BINARY="$<TARGET_FILE:chacon_app>"
+                CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
+        add_dependencies(
+            console_tests chacon_app cha_lease_test_helper)
         cha_enable_warnings(console_tests)
+
+        add_executable(
+            cha_web_process_tests
+            tests/ui/web/process_web_server.cpp
+            tests/support/test_workspace.cpp
+            tests/support/web_server_process.cpp)
+        target_link_libraries(cha_web_process_tests PRIVATE cha_web GTest::gtest_main)
+        target_include_directories(
+            cha_web_process_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        target_compile_definitions(
+            cha_web_process_tests
+            PRIVATE CHA_WEB_BINARY="$<TARGET_FILE:chaweb_app>")
+        add_dependencies(cha_web_process_tests chaweb_app)
+        cha_enable_warnings(cha_web_process_tests)
     endif()
+
+    # Every test binary carries the sanitizer suppression list. The file is
+    # empty unless the build is instrumented, so this costs ordinary builds
+    # nothing, and compiling it in avoids relying on the runner to export
+    # TSAN_OPTIONS.
+    foreach(cha_test_target IN ITEMS
+            cha_tests
+            cha_web_tests
+            cha_web_stress_tests
+            itest
+            console_tests
+            cha_web_process_tests)
+        if(TARGET ${cha_test_target})
+            target_sources(
+                ${cha_test_target}
+                PRIVATE tests/support/sanitizer_suppressions.cpp)
+        endif()
+    endforeach()
 
     include(GoogleTest)
     gtest_discover_tests(cha_tests)
+    gtest_discover_tests(cha_web_tests)
+    gtest_discover_tests(cha_web_stress_tests PROPERTIES LABELS web_stress)
     if(TARGET console_tests)
         gtest_discover_tests(console_tests)
+    endif()
+    if(TARGET cha_web_process_tests)
+        gtest_discover_tests(cha_web_process_tests PROPERTIES LABELS web_process)
     endif()
 endif()
 
@@ -331,6 +476,6 @@ set_target_properties(chacon_app PROPERTIES OUTPUT_NAME chacon)
 cha_enable_warnings(chacon_app)
 
 add_executable(chaweb_app src/apps/web_main.cpp)
-target_link_libraries(chaweb_app PRIVATE cha_core httplib::httplib)
+target_link_libraries(chaweb_app PRIVATE cha_web)
 set_target_properties(chaweb_app PROPERTIES OUTPUT_NAME chaweb)
 cha_enable_warnings(chaweb_app)

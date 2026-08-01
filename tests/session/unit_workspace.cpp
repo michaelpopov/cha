@@ -1,8 +1,11 @@
 #include "session/session_controller.h"
+#include "session/session_lease.h"
 #include "session/workspace.h"
 #include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
+
+#include <sqlite3.h>
 
 #include <chrono>
 #include <filesystem>
@@ -10,6 +13,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include "support/lease_test_process.h"
+#endif
 
 namespace cha {
 namespace {
@@ -208,6 +215,134 @@ TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     EXPECT_TRUE(reopened->transcript().entries().empty());
     reopened->shutdown();
 }
+
+TEST_F(ApplicationWorkspaceTest, CreatesAStoredSessionWithoutOpeningIt) {
+    {
+        std::ofstream base_config(
+            root_ / "forums" / "lobby" / "personas" / "persona_defaults.toml");
+        base_config << "host = \"127.0.0.1\"\n"
+                    << "port = 1\n"
+                    << "mode = \"net\"\n";
+    }
+    Workspace workspace(root_);
+
+    const SessionSummary created = workspace.create_stored_session("lobby", "");
+
+    EXPECT_FALSE(created.id.empty());
+    EXPECT_EQ(created.label, created.id);
+    EXPECT_TRUE(created.error.empty());
+    EXPECT_EQ(workspace.sessions("lobby"),
+              (std::vector<SessionSummary>{created}));
+
+    // A network-mode provider with no configured model would discover one
+    // during controller construction. Creation succeeded without that work.
+}
+
+TEST_F(ApplicationWorkspaceTest, ReadsOneStoredSessionSummaryDirectly) {
+    Workspace workspace(root_);
+    const SessionSummary created =
+        workspace.create_stored_session("lobby", "Selected session");
+
+    EXPECT_EQ(
+        workspace.session_summary("lobby", created.id),
+        created);
+    EXPECT_THROW(
+        (void)workspace.session_summary("lobby", "missing"),
+        SessionNotFoundError);
+}
+
+TEST_F(ApplicationWorkspaceTest, CreateStoredSessionValidatesBeforePublishing) {
+    std::filesystem::remove(
+        root_ / "forums" / "lobby" / "personas" / "persona_defaults.toml");
+    // guide/persona.toml supplies only display_name, so removing the shared
+    // defaults leaves the persona without the required host or port.
+    Workspace workspace(root_);
+
+    EXPECT_THROW(
+        (void)workspace.create_stored_session("lobby", "Invalid forum"),
+        std::runtime_error);
+    EXPECT_THROW(
+        (void)workspace.create_stored_session("../missing", "Invalid forum"),
+        std::runtime_error);
+    EXPECT_TRUE(workspace.sessions("lobby").empty());
+}
+
+TEST_F(ApplicationWorkspaceTest, OpensAStoredSessionInASeparateStep) {
+    Workspace workspace(root_);
+    const SessionSummary created =
+        workspace.create_stored_session("lobby", "Stored first");
+
+    std::unique_ptr<SessionController> opened = workspace.open_session(
+        "lobby", created.id, notifier());
+
+    EXPECT_TRUE(opened->transcript().entries().empty());
+    opened->shutdown();
+}
+
+#ifndef _WIN32
+TEST_F(ApplicationWorkspaceTest, HoldsTheLeaseThroughExplicitShutdown) {
+    Workspace workspace(root_);
+    CreatedSession created =
+        workspace.create_session("lobby", "Shutdown lease", notifier());
+    const std::string session_id = created.id;
+    created.controller->shutdown();
+    created.controller.reset();
+
+    std::unique_ptr<SessionController> controller =
+        workspace.open_session("lobby", session_id, notifier());
+    const std::filesystem::path database =
+        root_ / "forums" / "lobby" / "sessions"
+        / (session_id + ".sqlite3");
+
+    controller->shutdown();
+    EXPECT_EQ(
+        test::probe_lease(database),
+        test::LeaseProbeResult::busy);
+
+    controller.reset();
+    EXPECT_EQ(
+        test::probe_lease(database),
+        test::LeaseProbeResult::acquired);
+}
+
+TEST_F(ApplicationWorkspaceTest, ReportsContentionBeforeRestoringSessionState) {
+    Workspace workspace(root_);
+    const SessionSummary created =
+        workspace.create_stored_session("lobby", "Leased");
+    const std::string session_id = created.id;
+    const std::filesystem::path database =
+        root_ / "forums" / "lobby" / "sessions" / (session_id + ".sqlite3");
+
+    sqlite3* handle{};
+    ASSERT_EQ(sqlite3_open_v2(
+                  database.string().c_str(),
+                  &handle,
+                  SQLITE_OPEN_READWRITE,
+                  nullptr),
+              SQLITE_OK);
+    // Keep a restorable-looking database whose next entry ID is invalid. If
+    // open_session restores before acquiring the lease, unsigned_id() rejects
+    // this value with std::runtime_error instead of the expected busy error.
+    // Disabling CHECK constraints is what makes that ordering sentinel possible.
+    ASSERT_EQ(sqlite3_exec(
+                  handle,
+                  "PRAGMA ignore_check_constraints = ON; "
+                  "UPDATE state SET next_entry_id = 0 WHERE singleton = 1",
+                  nullptr,
+                  nullptr,
+                  nullptr),
+              SQLITE_OK);
+    ASSERT_EQ(sqlite3_close(handle), SQLITE_OK);
+
+    test::LeaseHolderProcess holder(database);
+
+    EXPECT_THROW(
+        (void)workspace.open_session("lobby", session_id, notifier()),
+        SessionBusyError);
+    EXPECT_EQ(workspace.sessions("lobby"),
+              (std::vector<SessionSummary>{created}));
+}
+#endif
 
 TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedPersonaConfig) {
     std::filesystem::remove(

@@ -5,6 +5,7 @@
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "session/session_catalog.h"
+#include "session/session_lease.h"
 #include "util/path_name.h"
 #include "util/text.h"
 #include "util/logging.h"
@@ -60,9 +61,11 @@ SessionSummary summarize(const Session& stored) {
     };
 }
 
+enum class SubdirectoryNameKind { path_component, url_identifier };
+
 std::vector<std::string> subdirectory_names(
     const std::filesystem::path& directory,
-    std::string_view kind) {
+    SubdirectoryNameKind kind) {
     std::vector<std::string> result;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(directory)) {
@@ -70,15 +73,19 @@ std::vector<std::string> subdirectory_names(
             continue;
         }
         const std::string name = entry.path().filename().string();
-        require_path_component(name, directory);
+        if (kind == SubdirectoryNameKind::url_identifier) {
+            if (!is_url_safe_identifier(name)) {
+                log_warn(
+                    "Invalid forum directory ignored: path="
+                    + utf8_path(entry.path()));
+                continue;
+            }
+        } else {
+            require_path_component(name, directory);
+        }
         result.push_back(name);
     }
     std::sort(result.begin(), result.end());
-    if (result.empty()) {
-        throw std::runtime_error(
-            std::string(kind) + " directory '" + utf8_path(directory)
-            + "' does not contain an entry");
-    }
     return result;
 }
 
@@ -177,16 +184,24 @@ const ApplicationConfig& Workspace::app_config() const {
 
 std::vector<std::string> Workspace::forums() const {
     const std::filesystem::path forums_directory = root_ / "forums";
-    return subdirectory_names(forums_directory, "Forums");
+    return subdirectory_names(
+        forums_directory,
+        SubdirectoryNameKind::url_identifier);
 }
 
 Forum Workspace::load_forum(const std::string& name) const {
     const std::filesystem::path directory = forum_directory(name);
     if (!std::filesystem::is_directory(directory)) {
-        throw std::runtime_error("Forum '" + name + "' does not exist");
+        throw ForumNotFoundError("Forum '" + name + "' does not exist");
     }
     const std::vector<std::string> persona_names = subdirectory_names(
-        directory / "personas", "Personas");
+        directory / "personas",
+        SubdirectoryNameKind::path_component);
+    if (persona_names.empty()) {
+        throw std::runtime_error(
+            "Personas directory '" + utf8_path(directory / "personas")
+            + "' does not contain an entry");
+    }
     return {name, load_display_name(directory), persona_names, directory};
 }
 
@@ -209,7 +224,7 @@ Forum Workspace::check_forum(const std::string& name) const {
 
 std::filesystem::path Workspace::forum_directory(
     const std::string& name) const {
-    require_path_component(name, root_ / "forums");
+    require_url_safe_identifier(name, root_ / "forums");
     return root_ / "forums" / path_from_utf8(name);
 }
 
@@ -226,23 +241,39 @@ std::vector<SessionSummary> Workspace::sessions(
     return result;
 }
 
+SessionSummary Workspace::session_summary(
+    const std::string& forum_name,
+    const std::string& session_id) const {
+    const SessionCatalog catalog = session_catalog(*this, forum_name);
+    return summarize(catalog.session(session_id));
+}
+
+void Workspace::check_session(
+    const std::string& forum_name,
+    const std::string& session_id) const {
+    (void)session_summary(forum_name, session_id);
+}
+
+SessionSummary Workspace::create_stored_session(
+    const std::string& forum_name,
+    std::string label) const {
+    const Forum forum = check_forum(forum_name);
+    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
+    const Session session = catalog.create(std::move(label));
+    log_info("Session stored");
+    return summarize(session);
+}
+
 CreatedSession Workspace::create_session(
     const std::string& forum_name,
     std::string label,
     WakeNotifier& notifier) const {
-    const Forum forum = load_forum(forum_name);
-    std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "persona_defaults.toml");
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-
-    const Session session = catalog.create(std::move(label));
-    log_info("Session created");
+    const SessionSummary created = create_stored_session(
+        forum_name,
+        std::move(label));
     return {
-        .controller = SessionController::from_definitions(
-            std::move(definitions),
-            catalog.database_path(session.id),
-            notifier),
-        .id = session.id,
+        .controller = open_session(forum_name, created.id, notifier),
+        .id = created.id,
     };
 }
 
@@ -251,17 +282,19 @@ std::unique_ptr<SessionController> Workspace::open_session(
     const std::string& session_id,
     WakeNotifier& notifier) const {
     const Forum forum = load_forum(forum_name);
-    std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "persona_defaults.toml");
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
 
     const std::filesystem::path database_path =
         catalog.open_database_path(session_id);
+    SessionLease lease = SessionLease::acquire(database_path);
     SessionRestore restored = load_session_state(database_path);
+    std::vector<AgentDefinition> definitions = load_definitions(
+        forum, forum.directory / "personas" / "persona_defaults.toml");
     log_info("Session opened");
     return SessionController::from_definitions(
         std::move(definitions),
         database_path,
+        std::move(lease),
         notifier,
         std::move(restored));
 }

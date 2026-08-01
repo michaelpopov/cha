@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -45,12 +46,43 @@ static_assert(static_cast<std::int64_t>(TurnState::failed) == 3);
 
 class Statement;
 
+// SQLite runs one-time library initialization on the first open, and that path
+// writes its configuration globals before the mutex protecting them exists.
+// Two session owner threads creating their first database concurrently
+// therefore race, which ThreadSanitizer reports against sqlite3Config inside
+// sqlite3MutexInit. SQLite's own guidance is to initialize once before any
+// other interface is used; call_once both serializes the first call and gives
+// every later thread the happens-before edge the library's fast path omits.
+void initialize_sqlite_once() {
+    static std::once_flag flag;
+    static int status = SQLITE_OK;
+    std::call_once(flag, [] {
+        status = sqlite3_initialize();
+        if (status != SQLITE_OK) return;
+        // The unix VFS records the owning process id the first time it draws
+        // randomness, and every open re-checks it to detect a fork. Left
+        // unseeded, concurrent first opens both see the stale value and both
+        // write it, which SQLite documents as a harmless race but which is
+        // still a race. Drawing one byte here, while call_once still
+        // serializes us, leaves every later open with a read-only check.
+        // The zero-length form would return before reaching the VFS.
+        unsigned char seed = 0;
+        sqlite3_randomness(1, &seed);
+    });
+    if (status != SQLITE_OK) {
+        throw std::runtime_error(
+            std::string("Failed to initialize SQLite: ")
+            + sqlite3_errstr(status));
+    }
+}
+
 class Database {
 public:
     enum class Mode { read_only, read_write, read_write_create };
 
     Database(const std::filesystem::path& path, Mode mode)
         : path_(utf8_path(path)) {
+        initialize_sqlite_once();
         int flags = mode == Mode::read_only ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE;
         if (mode == Mode::read_write_create) {
             flags |= SQLITE_OPEN_CREATE;

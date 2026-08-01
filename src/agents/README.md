@@ -56,9 +56,10 @@ that inherited scope for its template directory and descendants; reserved
 loader values always win. The generated section names the current agent, lists
 the other current personas, and defines how quoted shared history is encoded.
 It is added even for a single-agent forum, because restored history can still
-mention a persona that has left. Loading happens on the main thread during
-session construction or a forum check: `session/` decides *which* directories
-to load, `agents/` decides *how*.
+mention a persona that has left. During session construction, loading happens
+on the session's owner thread (the process main thread in `cha` and `chacon`);
+a forum check loads synchronously on its calling thread. `session/` decides
+*which* directories to load, `agents/` decides *how*.
 
 Configuration is a one-level overlay, not general inheritance. Built-in
 defaults are applied first, then the optional forum
@@ -91,7 +92,7 @@ deltas and reserves separate storage for one final event supplied when it closes
 ```mermaid
 sequenceDiagram
     autonumber
-    participant M as Main thread
+    participant M as Session owner thread
     participant R as AgentRegistry
     participant P as ThreadPool
     participant W as Pool workers

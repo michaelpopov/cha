@@ -1,5 +1,7 @@
 #pragma once
 
+#include "session/not_found_error.h"
+
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -30,8 +32,8 @@ struct SessionSummary {
     bool operator==(const SessionSummary&) const = default;
 };
 
-// A session just created on disk: the controller ready to run, and the ID the session was given so
-// a front end can show it or store it to reopen the session later.
+// A session just created and opened for a terminal front end: the controller
+// ready to run and the ID assigned to its stored database.
 struct CreatedSession {
     std::unique_ptr<SessionController> controller;
     std::string id;
@@ -54,7 +56,9 @@ ApplicationConfig load_application_config(
 // the layout (personas, forums), lists forums and their sessions, and on create or open loads the
 // forum's AgentDefinition values, resolves the session file through SessionCatalog, restores the
 // stored transcript, and returns a SessionController ready to use. Front ends call it instead of
-// touching persona files or session storage themselves.
+// touching persona files or session storage themselves. A Workspace is immutable
+// after construction and has no lazy caches, so one instance may be shared by
+// concurrent callers.
 class Workspace {
 public:
     explicit Workspace(std::filesystem::path root = ".");
@@ -67,6 +71,24 @@ public:
     // completion providers. Returns its resolved metadata on success.
     Forum check_forum(const std::string& name) const;
     std::vector<SessionSummary> sessions(const std::string& forum_name) const;
+    // Reads one stored session's validated metadata directly, without listing
+    // or reading any other session in the forum.
+    [[nodiscard]] SessionSummary session_summary(
+        const std::string& forum_name,
+        const std::string& session_id) const;
+    // Validates a stored session identity and its on-disk metadata without
+    // acquiring a lease, constructing a controller, or restoring a session.
+    // The web lobby uses this before asking its live-session registry to open.
+    void check_session(
+        const std::string& forum_name,
+        const std::string& session_id) const;
+    // Validates the forum and atomically publishes a stored session database.
+    // It deliberately does not acquire a SessionLease, initialize providers,
+    // or construct a SessionController; callers open the returned identity
+    // separately through open_session().
+    [[nodiscard]] SessionSummary create_stored_session(
+        const std::string& forum_name,
+        std::string label) const;
     [[nodiscard]] CreatedSession create_session(
         const std::string& forum_name,
         std::string label,

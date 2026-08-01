@@ -7,13 +7,17 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <array>
+#include <barrier>
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -130,6 +134,44 @@ TEST(CompletionClient, EchoesOnePromptInTestMode) {
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     EXPECT_EQ(deltas, (std::vector<std::string>{"hello"}));
+}
+
+TEST(CompletionClient, ConstructsSessionLocalNetworkClientsConcurrently) {
+    // This file is POSIX-only. The cross-platform construction coverage is the
+    // ConcurrentControllers counterpart; this duplicate is order-dependent
+    // smoke coverage because an earlier curl user may already have initialized
+    // curl_global()'s magic static. C++ guarantees thread-safe initialization.
+    std::barrier start(3);
+    std::array<AgentRuntimeInfo, 2> infos;
+    std::array<std::exception_ptr, 2> failures;
+    std::array<std::thread, 2> threads;
+
+    for (std::size_t index = 0; index < threads.size(); ++index) {
+        threads[index] = std::thread([&, index] {
+            try {
+                Config config = network_config(9);
+                config.id = "assistant-" + std::to_string(index);
+                config.name = "Assistant " + std::to_string(index);
+                start.arrive_and_wait();
+                CompletionClient client({.config = std::move(config)});
+                infos[index] = client.info();
+            } catch (...) {
+                failures[index] = std::current_exception();
+            }
+        });
+    }
+    start.arrive_and_wait();
+    for (std::thread& thread : threads) {
+        thread.join();
+    }
+
+    for (const std::exception_ptr& failure : failures) {
+        if (failure) {
+            std::rethrow_exception(failure);
+        }
+    }
+    EXPECT_EQ(infos[0].persona.id, "assistant-0");
+    EXPECT_EQ(infos[1].persona.id, "assistant-1");
 }
 
 TEST(CompletionClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {

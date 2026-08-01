@@ -2,7 +2,10 @@
 
 #include <arpa/inet.h>
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <exception>
+#include <mutex>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdexcept>
@@ -87,7 +90,11 @@ public:
             try {
                 for (const std::string& response : responses_) {
                     const int client = accept_connection();
-                    requests_.push_back(read_request(client));
+                    {
+                        std::lock_guard lock(requests_mutex_);
+                        requests_.push_back(read_request(client));
+                    }
+                    requests_changed_.notify_all();
                     send_all(client, response);
                     if (wait_for_client_close_) {
                         wait_for_client_close(client);
@@ -112,6 +119,16 @@ public:
 
     [[nodiscard]] const std::vector<std::string>& requests() const {
         return requests_;
+    }
+
+    [[nodiscard]] bool wait_for_requests(
+        std::size_t count,
+        std::chrono::milliseconds timeout) {
+        std::unique_lock lock(requests_mutex_);
+        return requests_changed_.wait_for(
+            lock,
+            timeout,
+            [this, count] { return requests_.size() >= count; });
     }
 
 private:
@@ -206,6 +223,8 @@ private:
     int port_{};
     std::vector<std::string> responses_;
     bool wait_for_client_close_{};
+    std::mutex requests_mutex_;
+    std::condition_variable requests_changed_;
     std::vector<std::string> requests_;
     std::exception_ptr error_;
     std::thread thread_;

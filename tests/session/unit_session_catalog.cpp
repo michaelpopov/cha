@@ -112,6 +112,25 @@ TEST_F(WorkspaceTest, EnumeratesForumSubdirectoriesInNameOrder) {
         (std::vector<std::string>{"alpha", "lobby"}));
 }
 
+TEST_F(WorkspaceTest, RejectsForumDirectoryNamesThatAreNotUrlSafe) {
+    std::filesystem::create_directories(root / "forums" / "bad#fragment");
+    std::filesystem::create_directories(root / "forums" / "bad%escape");
+    std::filesystem::create_directories(root / "forums" / "bad space");
+    Workspace workspace(root);
+
+    EXPECT_EQ(workspace.forums(), (std::vector<std::string>{"lobby"}));
+    EXPECT_THROW((void)workspace.load_forum("bad#fragment"), std::runtime_error);
+    EXPECT_THROW((void)workspace.load_forum("bad%escape"), std::runtime_error);
+    EXPECT_THROW((void)workspace.load_forum("bad space"), std::runtime_error);
+}
+
+TEST_F(WorkspaceTest, AllowsTheForumDirectoryToBeTemporarilyEmpty) {
+    std::filesystem::remove_all(root / "forums" / "lobby");
+    Workspace workspace(root);
+
+    EXPECT_TRUE(workspace.forums().empty());
+}
+
 TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
     const std::filesystem::path saved =
         create_database("saved", "Saved session");
@@ -131,9 +150,28 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
     EXPECT_EQ(
         sessions.list(),
         (std::vector<Session>{{"saved", "Saved session"}}));
+    EXPECT_EQ(sessions.session("saved"), (Session{"saved", "Saved session"}));
+    EXPECT_THROW((void)sessions.session("missing"), SessionNotFoundError);
     EXPECT_EQ(
         load_transcript_entries(sessions.open_database_path("saved")),
         (std::vector<TranscriptEntry>{prompt}));
+}
+
+TEST_F(WorkspaceTest, RejectsSessionAndForumIdsThatAreNotUrlSafe) {
+    (void)create_database("unsafe#fragment", "Unsafe session");
+    const std::filesystem::path saved = create_database("saved", "Saved session");
+    Workspace workspace(root);
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+
+    EXPECT_EQ(sessions.list(), (std::vector<Session>{{"saved", "Saved session"}}));
+    EXPECT_EQ(sessions.database_path("saved"), saved);
+    EXPECT_THROW(
+        (void)sessions.database_path("unsafe#fragment"),
+        std::runtime_error);
+    EXPECT_THROW(
+        (void)SessionCatalog(forum.directory / "sessions", "bad?forum"),
+        std::runtime_error);
 }
 
 TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
@@ -195,7 +233,7 @@ TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) 
     EXPECT_TRUE(std::regex_match(session.id, std::regex("[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-session")));
 }
 
-TEST_F(WorkspaceTest, ReportsAnInvalidDatabaseWithoutHidingHealthySessions) {
+TEST_F(WorkspaceTest, ReportsInvalidDatabasesButOmitsInvalidSessionIds) {
     Workspace workspace(root);
     const Forum forum = workspace.load_forum("lobby");
     SessionCatalog sessions(forum.directory / "sessions", forum.name);
@@ -215,22 +253,16 @@ TEST_F(WorkspaceTest, ReportsAnInvalidDatabaseWithoutHidingHealthySessions) {
     }
 
     const std::vector<Session> listed = sessions.list();
-    ASSERT_EQ(listed.size(), 3U);
+    ASSERT_EQ(listed.size(), 2U);
     const auto broken_result = std::find_if(listed.begin(), listed.end(), [&](const Session& candidate) {
         return candidate.id == broken.id;
     });
     const auto valid = std::find_if(listed.begin(), listed.end(), [&](const Session& candidate) {
         return candidate.id == healthy.id;
     });
-    const auto malformed = std::find_if(
-        listed.begin(),
-        listed.end(),
-        [](const Session& candidate) { return candidate.id == "."; });
     ASSERT_NE(broken_result, listed.end());
     ASSERT_NE(valid, listed.end());
-    ASSERT_NE(malformed, listed.end());
     EXPECT_FALSE(broken_result->error.empty());
-    EXPECT_FALSE(malformed->error.empty());
     EXPECT_TRUE(valid->error.empty());
 }
 
@@ -246,6 +278,16 @@ TEST_F(WorkspaceTest, RejectsMismatchedSessionMetadataWhenOpening) {
     EXPECT_THROW(
         (void)sessions.open_database_path("wrong-forum"),
         std::runtime_error);
+}
+
+TEST_F(WorkspaceTest, DistinguishesAMissingSessionFromInvalidStorage) {
+    Workspace workspace(root);
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+
+    EXPECT_THROW(
+        (void)sessions.open_database_path("missing"),
+        SessionNotFoundError);
 }
 
 TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
