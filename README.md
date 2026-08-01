@@ -314,6 +314,41 @@ ctest --test-dir build/console
 The `console` preset explicitly sets `CHA_BUILD_TUI=OFF`, making it the
 appropriate preset for console-only CI on every platform.
 
+`chaweb` is built by the same preset as one process with the configured
+`app.toml` host and port. It has one listener and no child-session or
+per-session-port mode. The ordinary suite excludes the socket/process and
+long-concurrency groups; run all three groups for web changes:
+
+```bash
+ctest --test-dir build/console --output-on-failure -LE "web_process|web_stress"
+ctest --test-dir build/console --output-on-failure -L web_process
+ctest --test-dir build/console --output-on-failure -L web_stress
+```
+
+GNU- and Clang-family toolchains also provide reproducible hardening presets,
+which take the same three test groups:
+
+```bash
+cmake --preset console-asan-ubsan
+cmake --build --preset console-asan-ubsan
+ctest --test-dir build/console-asan-ubsan --output-on-failure -LE "web_process|web_stress"
+
+cmake --preset console-tsan
+cmake --build --preset console-tsan
+ctest --test-dir build/console-tsan --output-on-failure -LE "web_process|web_stress"
+```
+
+The sanitizer presets require a compiler that supports the selected runtime and
+are intentionally off by default. They instrument the fetched dependencies as
+well as this project, because ThreadSanitizer reports false races against
+synchronization it cannot see. The native companion-file lease backend is
+exercised by the portable unit tests on every supported platform; the POSIX
+process harness adds cross-process crash-release coverage on Linux and macOS.
+
+[`docs/web-verification.md`](docs/web-verification.md) records which design
+test bullets each suite covers, the two deliberate differences in instrumented
+builds, and which platforms and sanitizers were and were not exercised.
+
 On macOS and Windows the TUI option defaults to off, so the default build
 produces the console frontend only. The ncurses TUI remains Linux-only.
 
@@ -329,4 +364,5 @@ The source tree is documented from the inside out, with diagrams:
 | [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
 | [`src/ui/README.md`](src/ui/README.md) | The UI contract, with shared [`render/`](src/ui/render/README.md) and [`text/`](src/ui/text/README.md), plus the [`tui/`](src/ui/tui/README.md) and [`console/`](src/ui/console/README.md) frontends. |
 | [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |
+| [`src/ui/web/README.md`](src/ui/web/README.md) | The one-listener web transport, session ownership, SSE, and shutdown boundary. |
 | [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including prompt-template expansion, the concurrent queue, and wake adapters. |

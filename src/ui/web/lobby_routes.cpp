@@ -84,7 +84,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
                     throw;
                 } catch (const std::exception& error) {
                     log_warn(
-                        "Forum omitted from lobby listing: forum_id=" + name
+                        "web server event=forum_omitted forum_id=" + name
                         + " reason=" + error.what());
                 }
             }

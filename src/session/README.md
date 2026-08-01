@@ -172,6 +172,12 @@ the lock file cannot be deleted or renamed while its controller is alive.
 One session is one self-contained SQLite file. Its `application_id` and
 `user_version` are checked before anything else is read.
 
+Opening a database initializes the SQLite library once, under `std::call_once`,
+before the first connection is created. SQLite performs that setup lazily on
+first use and writes its configuration globals and the unix VFS's process-id
+record without full synchronization, so concurrent first opens from several
+session owner threads would otherwise race on them.
+
 ```mermaid
 erDiagram
     session {

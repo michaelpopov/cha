@@ -36,6 +36,42 @@ else()
     find_package(OpenSSL REQUIRED)
 endif()
 
+# Keep sanitizer instrumentation opt-in so ordinary release-like builds stay
+# portable, while CI and local hardening runs use named, reproducible presets.
+# This must precede FetchContent so the fetched dependencies are instrumented
+# too: ThreadSanitizer reports false races when synchronization inside
+# uninstrumented libraries — libuv and the HTTP transport in particular — is
+# invisible to it.
+set(
+    CHA_SANITIZER "none" CACHE STRING
+    "Instrumentation: none, address-undefined, or thread")
+set_property(CACHE CHA_SANITIZER PROPERTY STRINGS none address-undefined thread)
+if(NOT CHA_SANITIZER STREQUAL "none")
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        message(FATAL_ERROR
+            "CHA_SANITIZER=${CHA_SANITIZER} requires a GNU or Clang-family compiler")
+    endif()
+    if(CHA_SANITIZER STREQUAL "address-undefined")
+        set(CHA_SANITIZER_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer)
+    elseif(CHA_SANITIZER STREQUAL "thread")
+        set(CHA_SANITIZER_FLAGS -fsanitize=thread -fno-omit-frame-pointer)
+    else()
+        message(FATAL_ERROR
+            "Unknown CHA_SANITIZER: ${CHA_SANITIZER}")
+    endif()
+    add_compile_options(${CHA_SANITIZER_FLAGS})
+    add_link_options(${CHA_SANITIZER_FLAGS})
+
+    # cpp-httplib's non-blocking resolver calls glibc getaddrinfo_a, which
+    # services requests on threads created inside libanl rather than through
+    # pthread_create. ThreadSanitizer cannot intercept those, and every test
+    # that issues an HTTP request dies on a null dereference before it runs.
+    # The blocking resolver is behaviourally equivalent here: chaweb resolves
+    # one bind address at startup, and no production code path uses the
+    # cpp-httplib client. Instrumented builds therefore use it.
+    set(HTTPLIB_USE_NON_BLOCKING_GETADDRINFO OFF CACHE BOOL "" FORCE)
+endif()
+
 include(FetchContent)
 
 # Keep fetched runtime dependencies inside the executables. In particular,
@@ -403,6 +439,24 @@ if(BUILD_TESTING)
         add_dependencies(cha_web_process_tests chaweb_app)
         cha_enable_warnings(cha_web_process_tests)
     endif()
+
+    # Every test binary carries the sanitizer suppression list. The file is
+    # empty unless the build is instrumented, so this costs ordinary builds
+    # nothing, and compiling it in avoids relying on the runner to export
+    # TSAN_OPTIONS.
+    foreach(cha_test_target IN ITEMS
+            cha_tests
+            cha_web_tests
+            cha_web_stress_tests
+            itest
+            console_tests
+            cha_web_process_tests)
+        if(TARGET ${cha_test_target})
+            target_sources(
+                ${cha_test_target}
+                PRIVATE tests/support/sanitizer_suppressions.cpp)
+        endif()
+    endforeach()
 
     include(GoogleTest)
     gtest_discover_tests(cha_tests)

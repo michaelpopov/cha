@@ -65,6 +65,17 @@ TEST_F(SessionLeaseTest, HoldsIndependentLeasesWithoutCrossRelease) {
 #endif
 }
 
+TEST_F(SessionLeaseTest, ReleasesTheNativeLockWhenTheOwnerIsDestroyed) {
+    const std::filesystem::path database = database_path();
+    {
+        SessionLease owner = SessionLease::acquire(database);
+        EXPECT_TRUE(owner.active());
+    }
+
+    SessionLease reacquired = SessionLease::acquire(database);
+    EXPECT_TRUE(reacquired.active());
+}
+
 TEST_F(SessionLeaseTest, ReportsOpenFailuresWithoutCallingThemBusy) {
     const std::filesystem::path impossible =
         directory_ / "missing" / "session.sqlite3";

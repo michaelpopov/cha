@@ -56,7 +56,15 @@ Keeping that ordering in the coordinator makes the forced path directly
 testable and prevents a stuck HTTP worker from suppressing it.
 `ProcessShutdownSignal` is the portable signal bridge; its handler only records
 `sig_atomic_t` state and normal code performs the shutdown work.
-`web_main.cpp` is only the composition root for the one server listener.
+`web_main.cpp` is only the composition root for the one server listener. It
+destroys the registry and `Workspace` in an inner scope so their teardown
+records still reach the sink, and shuts logging down only afterwards, which is
+the order Section 19.1 step 7 requires.
 Server-scoped log records use `web server`, while session-scoped records always
 carry `forum_id` and `session_id`; neither form includes prompt, answer,
-transcript, provider-message, or credential text.
+transcript, provider-message, or credential text. Route exceptions are recorded
+with their message so a 500 stays diagnosable, and the response itself always
+uses the common error envelope, which carries no exception detail.
+
+`docs/web-verification.md` maps the design's Section 20 test bullets onto these
+suites and records what has not been exercised.

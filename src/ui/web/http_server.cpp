@@ -46,9 +46,15 @@ void set_exception_error(
     try {
         if (exception) std::rethrow_exception(exception);
     } catch (const std::exception& error) {
-        log_error(error.what());
+        // An unhandled route exception is the only record an operator gets of
+        // why a request became a 500, so it keeps its message. Section 17
+        // withholds prompt, answer, transcript, provider-message, and
+        // credential text from logs; it does not withhold diagnostics.
+        log_error(
+            std::string("web server event=route_exception detail=")
+            + error.what());
     } catch (...) {
-        log_error("Unhandled non-standard exception in HTTP route");
+        log_error("web server event=route_exception detail=non-standard exception");
     }
     set_error_response(
         response,

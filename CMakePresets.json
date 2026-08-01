@@ -15,6 +15,24 @@
       "cacheVariables": {
         "CHA_BUILD_TUI": "OFF"
       }
+    },
+    {
+      "name": "console-asan-ubsan",
+      "displayName": "Console (AddressSanitizer and UBSan)",
+      "inherits": "console",
+      "binaryDir": "${sourceDir}/build/console-asan-ubsan",
+      "cacheVariables": {
+        "CHA_SANITIZER": "address-undefined"
+      }
+    },
+    {
+      "name": "console-tsan",
+      "displayName": "Console (ThreadSanitizer)",
+      "inherits": "console",
+      "binaryDir": "${sourceDir}/build/console-tsan",
+      "cacheVariables": {
+        "CHA_SANITIZER": "thread"
+      }
     }
   ],
   "buildPresets": [
@@ -25,6 +43,14 @@
     {
       "name": "console",
       "configurePreset": "console"
+    },
+    {
+      "name": "console-asan-ubsan",
+      "configurePreset": "console-asan-ubsan"
+    },
+    {
+      "name": "console-tsan",
+      "configurePreset": "console-tsan"
     }
   ]
 }

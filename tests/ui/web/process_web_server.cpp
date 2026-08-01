@@ -351,9 +351,36 @@ private:
     std::string text_;
 };
 
+// Instrumented builds run the server several times slower, which starves the
+// absolute socket timings these fixtures depend on. Scaling one constant keeps
+// the ratios each test actually asserts on unchanged, and keeps the assertions
+// tight for ordinary builds instead of loosening them for everyone. The scale
+// stays well under cpp-httplib's 5s default write timeout, which is what these
+// tests exist to distinguish the configured timeout from.
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer)
+#    define CHA_SOCKET_TIMING_INSTRUMENTED 1
+#  endif
+#endif
+#if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__)
+#  define CHA_SOCKET_TIMING_INSTRUMENTED 1
+#endif
+
+#if defined(CHA_SOCKET_TIMING_INSTRUMENTED)
+constexpr int socket_timing_scale = 4;
+// Release latency measured under ThreadSanitizer is the configured timeout
+// plus roughly two seconds of instrumentation overhead, which is additive
+// rather than proportional, so it is not folded into the scale above.
+constexpr std::chrono::milliseconds socket_release_margin{2500};
+#else
+constexpr int socket_timing_scale = 1;
+constexpr std::chrono::milliseconds socket_release_margin{500};
+#endif
+
 class RealSocketSseServer {
 public:
-    static constexpr std::chrono::milliseconds write_timeout{150};
+    static constexpr std::chrono::milliseconds write_timeout{
+        150 * socket_timing_scale};
 
     RealSocketSseServer()
         : settings_(make_settings()),
@@ -448,8 +475,16 @@ TEST(WebServerSocketLimits, StalledSseReaderReleasesStreamAfterWriteTimeout) {
     stalled.send_get(RealSocketSseServer::events_path);
     ASSERT_EQ(stalled.read_status(), 200);
 
+    // Allow scheduler and owner-notification latency around the configured
+    // no-progress timeout while still proving this is not the library's 5s
+    // default or an indefinitely pinned request worker. The poll loop and the
+    // assertion share the margin so the loop can never give up before the
+    // bound it is measuring against.
+    constexpr auto release_margin = socket_release_margin;
+    const auto bound = RealSocketSseServer::write_timeout + release_margin;
+
     const auto started = std::chrono::steady_clock::now();
-    const auto deadline = started + 1500ms;
+    const auto deadline = started + bound;
     int status = 409;
     while (status == 409 && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(20ms);
@@ -457,12 +492,7 @@ TEST(WebServerSocketLimits, StalledSseReaderReleasesStreamAfterWriteTimeout) {
             server.port(), RealSocketSseServer::events_path);
     }
     EXPECT_EQ(status, 200);
-    // Allow scheduler and owner-notification latency around the configured
-    // no-progress timeout while still proving this is not the library's 5s
-    // default or an indefinitely pinned request worker.
-    EXPECT_LT(
-        std::chrono::steady_clock::now() - started,
-        RealSocketSseServer::write_timeout + 500ms);
+    EXPECT_LT(std::chrono::steady_clock::now() - started, bound);
 }
 
 TEST(WebServerSocketLimits, SlowProgressingSseReaderStaysConnected) {
