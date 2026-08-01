@@ -1,4 +1,4 @@
-.PHONY: build build-web test itest run run-console run-web
+.PHONY: build build-web test itest run run-console run-web clean-san
 
 build:
 	cmake --preset ninja
@@ -22,3 +22,6 @@ run-console: build
 
 run-web: build-web
 	cd workspace && ../build/ninja/chaweb
+
+clean-san:
+	rm -rf build/console-asan-ubsan build/console-tsan
