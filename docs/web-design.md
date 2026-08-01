@@ -868,7 +868,10 @@ together, so this is not initially a third-party compatibility contract.
 | `POST /api/v1/forums/{forum}/sessions/{session}/open` | Open a stored session, or route to it if it is already live, and return its path. |
 
 The lobby validates forum and session identifiers through `Workspace`; route
-text is never treated as a filesystem path.
+text is never treated as a filesystem path. Both stable IDs contain only RFC
+3986 unreserved ASCII characters (letters, digits, `-`, `.`, `_`, and `~`),
+excluding the complete names `.` and `..`. Display names and session labels are
+presentation text and do not inherit that restriction.
 
 Creating and opening are deliberately separate operations rather than one
 route that does both. Creation returns `201 Created` with the new session's
@@ -927,7 +930,7 @@ whether or not the page retries at all.
 ## 11. Session HTTP interface
 
 All session routes are scoped by path. `{forum}` and `{session}` are validated
-identifiers, and the pair is the registry key.
+URL-safe identifiers, and the pair is the registry key.
 
 | Method and path | Purpose |
 | --- | --- |
@@ -1694,7 +1697,8 @@ Logs should record:
   what separates a slow browser from a slow server when the page feels laggy.
   It is one counter reported once at close, not a sampled rate.
 - Generation start and terminal status, without prompt or answer bodies by
-  default.
+  default. An active-to-active request-ID change records the old request's
+  terminal event before the new request's start event.
 - Disconnect-deadline expiry and the resulting unload.
 - Fatal session errors, including the containment outcome.
 - Command-deadline expiry, which is the only signal that a session may be

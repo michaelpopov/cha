@@ -1233,6 +1233,57 @@ TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
     }
 }
 
+TEST(WebSessionRuntime, GenerationRequestChangeLogsTerminalThenNextStart) {
+    auto state = std::make_shared<FakeState>();
+    auto sink = std::make_shared<FakeSnapshotSink>();
+    std::mutex events_mutex;
+    std::vector<std::string> events;
+    {
+        WebSessionRuntime runtime(
+            fake_factory(state), test_settings(2), {}, sink,
+            {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+                std::lock_guard lock(events_mutex);
+                events.emplace_back(event);
+            }});
+        {
+            std::unique_lock lock(sink->mutex);
+            ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] {
+                return !sink->payloads.empty();
+            }));
+        }
+        {
+            std::lock_guard lock(state->mutex);
+            state->snapshot.transcript[0].status = TranscriptStatus::complete;
+            state->snapshot.transcript.push_back({
+                .id = 8,
+                .kind = TranscriptKind::agent,
+                .participant_id = "reviewer",
+                .display_name = "Reviewer",
+                .status = TranscriptStatus::streaming,
+                .request_id = 4,
+            });
+            state->snapshot.generation.request_id = 4;
+            state->snapshot.generation.agent_id = "reviewer";
+            state->snapshot.generation.agent_name = "Reviewer";
+            state->snapshot.generation.phase = GenerationPhase::waiting;
+        }
+        ASSERT_TRUE(std::holds_alternative<CommandResult>(
+            runtime.submit(RawCommand{"snapshot"}, 1s)));
+        runtime.request_shutdown();
+    }
+
+    std::lock_guard lock(events_mutex);
+    const auto terminal = std::find(
+        events.begin(), events.end(),
+        "generation_terminal request_id=3 status=complete");
+    const auto started = std::find(
+        events.begin(), events.end(),
+        "generation_started request_id=4");
+    ASSERT_NE(terminal, events.end());
+    ASSERT_NE(started, events.end());
+    EXPECT_LT(terminal, started);
+}
+
 TEST(WebSessionRuntime, ReasoningOnlyCancellationLogsCancelledStatus) {
     auto state = std::make_shared<FakeState>();
     state->snapshot.transcript = {{

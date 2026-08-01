@@ -69,9 +69,18 @@ SessionCatalog::SessionCatalog(
     : directory_(std::move(directory)),
       forum_name_(std::move(forum_name)),
       clock_(std::move(clock)) {
+    require_url_safe_identifier(forum_name_, directory_.parent_path());
     if (!clock_) {
         clock_ = [] { return std::time(nullptr); };
     }
+}
+
+Session SessionCatalog::validated_session(
+    const std::filesystem::path& path,
+    const std::string& session_id) const {
+    const SessionDatabaseMetadata metadata = read_session_database_metadata(path);
+    validate_metadata(path, session_id, forum_name_, metadata);
+    return {session_id, metadata.label};
 }
 
 std::vector<Session> SessionCatalog::list() const {
@@ -89,19 +98,17 @@ std::vector<Session> SessionCatalog::list() const {
             continue;
         }
         const std::string id = utf8_path(entry.path().stem());
+        if (!is_url_safe_identifier(id)) {
+            log_warn(
+                "Invalid session database ignored: path=" + utf8_path(entry.path())
+                + " reason=session ID is not URL-safe");
+            continue;
+        }
 
         std::string label = id;
         std::string error;
         try {
-            require_path_component(id, directory_);
-            const SessionDatabaseMetadata metadata =
-                read_session_database_metadata(entry.path());
-            validate_metadata(
-                entry.path(),
-                id,
-                forum_name_,
-                metadata);
-            label = metadata.label;
+            label = validated_session(entry.path(), id).label;
         } catch (const std::exception& exception) {
             error = exception.what();
             log_warn(
@@ -115,6 +122,15 @@ std::vector<Session> SessionCatalog::list() const {
         return left.id < right.id;
     });
     return result;
+}
+
+Session SessionCatalog::session(const std::string& session_id) const {
+    const std::filesystem::path path = database_path(session_id);
+    if (!std::filesystem::is_regular_file(path)) {
+        throw SessionNotFoundError(
+            "Session '" + session_id + "' does not have a database");
+    }
+    return validated_session(path, session_id);
 }
 
 Session SessionCatalog::create(std::string label) const {
@@ -139,7 +155,7 @@ Session SessionCatalog::create(std::string label) const {
 
 std::filesystem::path SessionCatalog::database_path(
     const std::string& session_id) const {
-    require_path_component(session_id, directory_);
+    require_url_safe_identifier(session_id, directory_);
     return directory_ / path_from_utf8(session_id + ".sqlite3");
 }
 
@@ -151,13 +167,7 @@ std::filesystem::path SessionCatalog::open_database_path(
         throw SessionNotFoundError(
             "Session '" + session_id + "' does not have a database");
     }
-    const SessionDatabaseMetadata metadata =
-        read_session_database_metadata(path);
-    validate_metadata(
-        path,
-        session_id,
-        forum_name_,
-        metadata);
+    (void)validated_session(path, session_id);
     return path;
 }
 

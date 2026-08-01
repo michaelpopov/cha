@@ -419,6 +419,8 @@ TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLook
     EXPECT_NE(page->body.find("href=\"/\""), std::string::npos);
     expect_error(server.client().Get("/s/lobby/missing/api/v1/session"), 409, "session_not_live");
     expect_error(server.client().Get("/s/%2e%2e/missing/api/v1/session"), 404, "not_found");
+    expect_error(server.client().Get("/s/lobby/missing%23fragment/api/v1/session"), 404, "not_found");
+    expect_error(server.client().Get("/s/lobby/missing%00suffix/api/v1/session"), 404, "not_found");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/input", "{}", "text/plain"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/input", R"({"text":"123456789"})", "application/json"), 413, "body_too_large");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/stop", R"({"extra":true})", "application/json"), 400, "bad_request");

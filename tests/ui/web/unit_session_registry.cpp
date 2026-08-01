@@ -145,6 +145,26 @@ TEST(SessionRegistry, ReusesRunningSessionAndReturnsHandle) {
     registry.sweep();
 }
 
+TEST(SessionRegistry, RejectsUrlUnsafeKeysBeforeStartingAnOwner) {
+    std::atomic<int> starts{};
+    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionKey&, WakeNotifier&) {
+        ++starts;
+        return std::make_unique<IdleController>();
+    });
+
+    EXPECT_EQ(
+        code_of(registry.open({"bad#forum", "session"}, 500ms)),
+        ErrorCode::not_found);
+    EXPECT_EQ(
+        code_of(registry.open({"forum", "bad?session"}, 500ms)),
+        ErrorCode::not_found);
+    const auto reattached = registry.try_reattach({"forum", "bad%session"});
+    ASSERT_TRUE(reattached);
+    EXPECT_EQ(code_of(*reattached), ErrorCode::not_found);
+    EXPECT_FALSE(registry.lookup({"forum", "bad session"}));
+    EXPECT_EQ(starts, 0);
+}
+
 TEST(SessionRegistry, BusyAndLimitHaveStableErrors) {
     std::atomic<int> busy_attempts{};
     SessionRegistry busy({.session_limit = 1}, [&](const SessionKey&, WakeNotifier&) {

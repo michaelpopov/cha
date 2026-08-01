@@ -27,8 +27,8 @@ purpose rather than folded into it.
 | Design section | Automated by | Tests |
 | --- | --- | --- |
 | 20.1 Session lease | `tests/session/unit_session_lease.cpp`, `tests/integration/console_process_test.cpp`, `tests/support/lease_test_helper.cpp` | 7 unit, plus `ConsoleProcess.ReportsSessionLeaseContentionClearly` |
-| 20.2 Session registry | `tests/ui/web/unit_session_registry.cpp` | 15 |
-| 20.3 Session runtime | `tests/ui/web/unit_web_session_runtime.cpp`, `unit_sse_mailbox.cpp`, `unit_sse_stream.cpp`, `unit_browser_connection_state.cpp` | 53 |
+| 20.2 Session registry | `tests/ui/web/unit_session_registry.cpp` | 16 |
+| 20.3 Session runtime | `tests/ui/web/unit_web_session_runtime.cpp`, `unit_sse_mailbox.cpp`, `unit_sse_stream.cpp`, `unit_browser_connection_state.cpp` | 54 |
 | 20.4 Concurrency and containment | `tests/session/unit_concurrent_controllers.cpp`, `tests/ui/web/stress_web_sessions.cpp` | 4 + 5 (`web_stress`) |
 | 20.5 HTTP/SSE contract | `tests/ui/web/unit_lobby_routes.cpp`, `unit_session_routes.cpp`, `unit_protocol.cpp`, `process_web_server.cpp` | 40 + socket-limit cases |
 | 20.6 Server lifecycle | `tests/ui/web/process_web_server.cpp` | 9 (`web_process`) |
@@ -93,9 +93,9 @@ in that file can hide a race in cha's own code.
 
 | Check | Result |
 | --- | --- |
-| Linux `console`, all three groups | 443 / 9 / 5 pass |
-| Linux `console-asan-ubsan`, all three groups | 443 / 9 / 5 pass |
-| Linux `console-tsan`, all three groups | 443 / 9 / 5 pass |
+| Linux `console`, all three groups | 449 / 9 / 5 pass |
+| Linux `console-asan-ubsan`, all three groups | 449 / 9 / 5 pass |
+| Linux `console-tsan`, all three groups | 449 / 9 / 5 pass |
 | macOS build and tests | **Not run** — no runner available |
 | Windows build and tests | **Not run** — no runner available |
 | MemorySanitizer | **Not run** — needs an instrumented libc++ |

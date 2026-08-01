@@ -42,7 +42,8 @@ snapshot against the old stream.
 and registry-backed open/reattach. It validates route identifiers before either
 the registry or session storage is consulted; creation reaches only the shared,
 immutable `Workspace`, while opening first asks the registry for a disk-free
-reattach and validates stored metadata only before a new open. `AssetHandler`
+reattach and directly reads only the selected session's stored metadata before
+a new open. `AssetHandler`
 separately owns the root HTML/asset boundary and currently serves only a
 framework-neutral lobby placeholder. `configure_http_server()` owns the
 server-global request pool, read/write timeouts, payload limit, and fallback error/exception
@@ -65,6 +66,9 @@ carry `forum_id` and `session_id`; neither form includes prompt, answer,
 transcript, provider-message, or credential text. Route exceptions are recorded
 with their message so a 500 stays diagnosable, and the response itself always
 uses the common error envelope, which carries no exception detail.
+Generation logging treats an active request-ID change as a terminal event for
+the old request followed by a start event for the new request, covering
+multicast handoffs that never pass through an inactive snapshot.
 
 `docs/web-verification.md` maps the design's Section 20 test bullets onto these
 suites and records what has not been exercised.

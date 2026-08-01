@@ -35,10 +35,13 @@ flowchart TD
 ```
 
 `Workspace` refuses to construct unless `forums/` exists.
-The `forums/` directory may be temporarily empty; its forum names are sorted
-before presentation. Each forum's `personas/` directory must contain at least
-one persona subdirectory, also sorted before loading. Every directory name is
-checked with `require_path_component()` before it becomes a path.
+The `forums/` directory may be temporarily empty; its valid forum names are
+sorted before presentation. Forum IDs and session database stems may contain
+only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and
+`..`; invalid entries are ignored during discovery and rejected on direct use.
+Each forum's `personas/` directory must contain at least one persona
+subdirectory, also sorted before loading. Persona directory names are checked
+with `require_path_component()` before they become paths.
 Each forum's `config.toml` must provide a non-empty string `display_name` for
 user-facing selection and listings; its directory name remains the stable ID.
 Each persona directory likewise supplies its stable ID, while its
@@ -62,12 +65,13 @@ static validation a real session receives before provider initialization. It
 does not inspect the optional `sessions/` directory or resolve provider
 credentials and models.
 
-`Workspace::check_session()` validates the selected stored session's identity
-and metadata without acquiring its lease, restoring it, or constructing a
-controller. It distinguishes an absent session from invalid or unreadable
-storage so front ends can map only absence to not-found. Web lobby routes skip
-this disk validation when their separate live-session registry can reattach
-directly, and otherwise use it before asking the registry to open a session.
+`Workspace::session_summary()` reads one selected stored session's identity,
+label, and metadata directly, without scanning the other session databases or
+acquiring its lease. `Workspace::check_session()` is the validation-only form.
+Both distinguish an absent session from invalid or unreadable storage so front
+ends can map only absence to not-found. Web lobby routes skip this disk
+validation when their separate live-session registry can reattach directly,
+and otherwise use it before asking the registry to open a session.
 
 ## Forum personas
 

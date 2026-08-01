@@ -61,8 +61,11 @@ SessionSummary summarize(const Session& stored) {
     };
 }
 
+enum class SubdirectoryNameKind { path_component, url_identifier };
+
 std::vector<std::string> subdirectory_names(
-    const std::filesystem::path& directory) {
+    const std::filesystem::path& directory,
+    SubdirectoryNameKind kind) {
     std::vector<std::string> result;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(directory)) {
@@ -70,7 +73,16 @@ std::vector<std::string> subdirectory_names(
             continue;
         }
         const std::string name = entry.path().filename().string();
-        require_path_component(name, directory);
+        if (kind == SubdirectoryNameKind::url_identifier) {
+            if (!is_url_safe_identifier(name)) {
+                log_warn(
+                    "Invalid forum directory ignored: path="
+                    + utf8_path(entry.path()));
+                continue;
+            }
+        } else {
+            require_path_component(name, directory);
+        }
         result.push_back(name);
     }
     std::sort(result.begin(), result.end());
@@ -172,7 +184,9 @@ const ApplicationConfig& Workspace::app_config() const {
 
 std::vector<std::string> Workspace::forums() const {
     const std::filesystem::path forums_directory = root_ / "forums";
-    return subdirectory_names(forums_directory);
+    return subdirectory_names(
+        forums_directory,
+        SubdirectoryNameKind::url_identifier);
 }
 
 Forum Workspace::load_forum(const std::string& name) const {
@@ -181,7 +195,8 @@ Forum Workspace::load_forum(const std::string& name) const {
         throw ForumNotFoundError("Forum '" + name + "' does not exist");
     }
     const std::vector<std::string> persona_names = subdirectory_names(
-        directory / "personas");
+        directory / "personas",
+        SubdirectoryNameKind::path_component);
     if (persona_names.empty()) {
         throw std::runtime_error(
             "Personas directory '" + utf8_path(directory / "personas")
@@ -209,7 +224,7 @@ Forum Workspace::check_forum(const std::string& name) const {
 
 std::filesystem::path Workspace::forum_directory(
     const std::string& name) const {
-    require_path_component(name, root_ / "forums");
+    require_url_safe_identifier(name, root_ / "forums");
     return root_ / "forums" / path_from_utf8(name);
 }
 
@@ -226,11 +241,17 @@ std::vector<SessionSummary> Workspace::sessions(
     return result;
 }
 
-void Workspace::check_session(
+SessionSummary Workspace::session_summary(
     const std::string& forum_name,
     const std::string& session_id) const {
     const SessionCatalog catalog = session_catalog(*this, forum_name);
-    (void)catalog.open_database_path(session_id);
+    return summarize(catalog.session(session_id));
+}
+
+void Workspace::check_session(
+    const std::string& forum_name,
+    const std::string& session_id) const {
+    (void)session_summary(forum_name, session_id);
 }
 
 SessionSummary Workspace::create_stored_session(

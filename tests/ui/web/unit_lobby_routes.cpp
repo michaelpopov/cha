@@ -252,6 +252,15 @@ TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeRegistry)
         "{}",
         "application/json");
     expect_error(backslash, 404, "not_found");
+    const auto fragment = server.client().Post(
+        "/api/v1/forums/lobby%23other/sessions/nope/open",
+        "{}",
+        "application/json");
+    expect_error(fragment, 404, "not_found");
+    expect_error(
+        server.client().Get("/api/v1/forums/lobby%00other/sessions"),
+        404,
+        "not_found");
     EXPECT_EQ(starts, 0);
 
     const auto wrong_type = server.client().Post("/api/v1/forums/lobby/sessions", "{}", "text/plain");

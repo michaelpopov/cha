@@ -250,10 +250,13 @@ is not a stable third-party contract.
 | `POST /api/v1/forums/{forum}/sessions` | Create a stored session and return its identity without opening it. |
 | `POST /api/v1/forums/{forum}/sessions/{session}/open` | Open or reattach to a session and return its path. |
 
-Forum and session identifiers are validated as application identifiers and are
-never treated as filesystem paths. Creation returns an owning session summary;
-opening returns `{"path":"/s/{forum}/{session}/"}` only after the runtime is
-published as `running`.
+Forum and session identifiers contain only RFC 3986 unreserved ASCII characters
+(letters, digits, `-`, `.`, `_`, and `~`), excluding the complete names `.` and
+`..`. They are validated as application identifiers and are never treated as
+filesystem paths. Display names and session labels remain unrestricted
+presentation text. Creation returns an owning session summary; opening returns
+`{"path":"/s/{forum}/{session}/"}` only after the runtime is published as
+`running`.
 
 ### Session API
 

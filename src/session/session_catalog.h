@@ -37,6 +37,9 @@ public:
         Clock clock = {});
 
     std::vector<Session> list() const;
+    // Reads and validates exactly one stored session without scanning the
+    // catalog. Absence is reported separately from invalid metadata.
+    [[nodiscard]] Session session(const std::string& session_id) const;
     [[nodiscard]] Session create(std::string label) const;
     std::filesystem::path database_path(const std::string& session_id) const;
     // Revalidates the embedded identity before returning the selected database.
@@ -44,6 +47,9 @@ public:
     std::filesystem::path open_database_path(const std::string& session_id) const;
 
 private:
+    [[nodiscard]] Session validated_session(
+        const std::filesystem::path& path,
+        const std::string& session_id) const;
     std::filesystem::path directory_;
     std::string forum_name_;
     Clock clock_;

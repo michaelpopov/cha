@@ -22,10 +22,6 @@
 namespace cha::web {
 namespace {
 
-void set_internal_error(httplib::Response& response) {
-    set_error_response(response, 500, {ErrorCode::internal_error, "The request could not be completed."});
-}
-
 bool is_running(const RegistrySnapshot& snapshot, const SessionKey& key) {
     return std::find(snapshot.running_sessions.begin(), snapshot.running_sessions.end(), key)
         != snapshot.running_sessions.end();
@@ -33,6 +29,7 @@ bool is_running(const RegistrySnapshot& snapshot, const SessionKey& key) {
 
 int status_for(const ErrorCode code) {
     switch (code) {
+    case ErrorCode::not_found: return 404;
     case ErrorCode::session_busy:
     case ErrorCode::session_stopping: return 409;
     case ErrorCode::session_limit_reached:
@@ -74,24 +71,20 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Get("/api/v1/forums", [workspace](const httplib::Request&, httplib::Response& response) {
-        try {
-            std::vector<ForumSummary> forums;
-            for (const std::string& name : workspace->forums()) {
-                try {
-                    const Forum forum = workspace->load_forum(name);
-                    forums.push_back({forum.name, forum.display_name});
-                } catch (const std::bad_alloc&) {
-                    throw;
-                } catch (const std::exception& error) {
-                    log_warn(
-                        "web server event=forum_omitted forum_id=" + name
-                        + " reason=" + error.what());
-                }
+        std::vector<ForumSummary> forums;
+        for (const std::string& name : workspace->forums()) {
+            try {
+                const Forum forum = workspace->load_forum(name);
+                forums.push_back({forum.name, forum.display_name});
+            } catch (const std::bad_alloc&) {
+                throw;
+            } catch (const std::exception& error) {
+                log_warn(
+                    "web server event=forum_omitted forum_id=" + name
+                    + " reason=" + error.what());
             }
-            set_json_response(response, 200, nlohmann::json(forums));
-        } catch (const std::exception&) {
-            set_internal_error(response);
         }
+        set_json_response(response, 200, nlohmann::json(forums));
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, registry](const httplib::Request& request, httplib::Response& response) {
@@ -106,8 +99,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
             set_json_response(response, 200, nlohmann::json(sessions));
         } catch (const ForumNotFoundError&) {
             set_route_not_found(response);
-        } catch (const std::exception&) {
-            set_internal_error(response);
         }
     });
 
@@ -119,8 +110,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
             (void)workspace->load_forum(forum);
         } catch (const ForumNotFoundError&) {
             return set_route_not_found(response);
-        } catch (const std::exception&) {
-            return set_internal_error(response);
         }
         std::string label;
         if (!parse_route_json_body(
@@ -135,8 +124,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
             set_json_response(response, 201, nlohmann::json(CreateSessionSuccess{created.id, created.label}));
         } catch (const ForumNotFoundError&) {
             set_route_not_found(response);
-        } catch (const std::exception&) {
-            set_internal_error(response);
         }
     });
 
@@ -161,8 +148,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
             return set_route_not_found(response);
         } catch (const SessionNotFoundError&) {
             return set_route_not_found(response);
-        } catch (const std::exception&) {
-            return set_internal_error(response);
         }
         set_open_result(
             response,

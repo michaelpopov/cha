@@ -624,14 +624,13 @@ void WebSessionRuntime::publish_change(
     }
 
     SessionSnapshot current = make_snapshot(controller);
-    if ((!last_snapshot_ || !last_snapshot_->generation.active)
-        && current.generation.active) {
-        log_event("generation_started request_id="
-            + (current.generation.request_id
-                ? std::to_string(*current.generation.request_id)
-                : std::string("none")));
-    } else if (last_snapshot_ && last_snapshot_->generation.active
-        && !current.generation.active) {
+    const bool was_active = last_snapshot_
+        && last_snapshot_->generation.active;
+    const bool is_active = current.generation.active;
+    const bool active_request_changed = was_active && is_active
+        && last_snapshot_->generation.request_id
+            != current.generation.request_id;
+    if (was_active && (!is_active || active_request_changed)) {
         log_event("generation_terminal request_id="
             + (last_snapshot_->generation.request_id
                 ? std::to_string(*last_snapshot_->generation.request_id)
@@ -639,6 +638,12 @@ void WebSessionRuntime::publish_change(
             + " status="
             + std::string(generation_terminal_status(
                 current, last_snapshot_->generation.request_id)));
+    }
+    if (is_active && (!was_active || active_request_changed)) {
+        log_event("generation_started request_id="
+            + (current.generation.request_id
+                ? std::to_string(*current.generation.request_id)
+                : std::string("none")));
     }
     if (last_snapshot_) {
         if (current == *last_snapshot_) return;

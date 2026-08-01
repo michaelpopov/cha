@@ -7,7 +7,6 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
-#include <exception>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -33,12 +32,7 @@ bool has_matching_origin(const httplib::Request& request) {
 } // namespace
 
 bool is_valid_route_component(std::string_view component) {
-    try {
-        require_path_component(component, "route identifier");
-        return true;
-    } catch (const std::exception&) {
-        return false;
-    }
+    return is_url_safe_identifier(component);
 }
 
 bool validate_json_mutation(

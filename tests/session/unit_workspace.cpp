@@ -238,6 +238,19 @@ TEST_F(ApplicationWorkspaceTest, CreatesAStoredSessionWithoutOpeningIt) {
     // during controller construction. Creation succeeded without that work.
 }
 
+TEST_F(ApplicationWorkspaceTest, ReadsOneStoredSessionSummaryDirectly) {
+    Workspace workspace(root_);
+    const SessionSummary created =
+        workspace.create_stored_session("lobby", "Selected session");
+
+    EXPECT_EQ(
+        workspace.session_summary("lobby", created.id),
+        created);
+    EXPECT_THROW(
+        (void)workspace.session_summary("lobby", "missing"),
+        SessionNotFoundError);
+}
+
 TEST_F(ApplicationWorkspaceTest, CreateStoredSessionValidatesBeforePublishing) {
     std::filesystem::remove(
         root_ / "forums" / "lobby" / "personas" / "persona_defaults.toml");

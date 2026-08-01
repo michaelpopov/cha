@@ -5,6 +5,7 @@
 #include "session/workspace.h"
 #include "ui/web/sse_mailbox.h"
 #include "util/logging.h"
+#include "util/path_name.h"
 
 #include <condition_variable>
 #include <exception>
@@ -18,6 +19,15 @@ namespace {
 std::string session_log(const SessionKey& key, std::string_view event) {
     return "web session forum_id=" + key.forum + " session_id=" + key.session_id
         + " event=" + std::string(event);
+}
+
+bool valid_key(const SessionKey& key) {
+    return is_url_safe_identifier(key.forum)
+        && is_url_safe_identifier(key.session_id);
+}
+
+Error invalid_key_error() {
+    return {ErrorCode::not_found, "That forum or session was not found."};
 }
 
 } // namespace
@@ -103,16 +113,13 @@ SessionRegistry SessionRegistry::from_workspace(
         },
         [workspace = std::move(workspace)](const SessionKey& key) {
             const Forum forum = workspace->load_forum(key.forum);
-            for (const SessionSummary& session : workspace->sessions(key.forum)) {
-                if (session.id == key.session_id) {
-                    return WebSessionMetadata{
-                        .forum = {forum.name, forum.display_name},
-                        .session_id = session.id,
-                        .session_label = session.label,
-                    };
-                }
-            }
-            throw std::runtime_error("Session metadata is unavailable");
+            const SessionSummary session = workspace->session_summary(
+                key.forum, key.session_id);
+            return WebSessionMetadata{
+                .forum = {forum.name, forum.display_name},
+                .session_id = session.id,
+                .session_label = session.label,
+            };
         });
 }
 
@@ -141,6 +148,7 @@ std::string SessionRegistry::path_for(const SessionKey& key) {
 RegistryOpenResult SessionRegistry::open(
     SessionKey key,
     std::chrono::milliseconds deadline) {
+    if (!valid_key(key)) return invalid_key_error();
     log_info(session_log(key, "open_requested"));
     RetiredEntries retired;
     std::shared_ptr<StartupResult> startup;
@@ -230,6 +238,7 @@ RegistryOpenResult SessionRegistry::open(
 
 std::optional<RegistryOpenResult> SessionRegistry::try_reattach(
     const SessionKey& key) {
+    if (!valid_key(key)) return invalid_key_error();
     RetiredEntries retired;
     std::optional<RegistryOpenResult> result;
     {
@@ -257,6 +266,7 @@ std::optional<RegistryOpenResult> SessionRegistry::try_reattach(
 }
 
 SessionHandle SessionRegistry::lookup(const SessionKey& key) {
+    if (!valid_key(key)) return {};
     RetiredEntries retired;
     SessionHandle result;
     {

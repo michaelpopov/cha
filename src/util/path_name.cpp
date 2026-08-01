@@ -22,4 +22,33 @@ void require_path_component(std::string_view name, const std::filesystem::path& 
     }
 }
 
+bool is_url_safe_identifier(std::string_view name) noexcept {
+    if (name.empty() || name == "." || name == "..") {
+        return false;
+    }
+    for (const char value : name) {
+        const unsigned char character = static_cast<unsigned char>(value);
+        const bool ascii_letter =
+            (character >= 'A' && character <= 'Z')
+            || (character >= 'a' && character <= 'z');
+        const bool digit = character >= '0' && character <= '9';
+        if (!ascii_letter && !digit
+            && character != '-' && character != '.'
+            && character != '_' && character != '~') {
+            return false;
+        }
+    }
+    return true;
+}
+
+void require_url_safe_identifier(
+    std::string_view name,
+    const std::filesystem::path& source) {
+    if (!is_url_safe_identifier(name)) {
+        throw std::runtime_error(
+            "Invalid URL-safe identifier '" + std::string(name) + "' in '"
+            + utf8_path(source) + "'");
+    }
+}
+
 } // namespace cha
