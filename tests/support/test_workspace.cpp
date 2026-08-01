@@ -39,6 +39,17 @@ TestWorkspace::~TestWorkspace() {
     std::filesystem::remove_all(root_, error);
 }
 
+void TestWorkspace::write_app_config(
+    int port,
+    std::string_view log_level) const {
+    std::ofstream(root_ / "app.toml")
+        << "host = \"127.0.0.1\"\n"
+           "port = " << port << "\n"
+           "[logging]\n"
+           "file = \"logs/cha.log\"\n"
+           "level = \"" << log_level << "\"\n";
+}
+
 void TestWorkspace::write_persona_config(std::string_view contents) const {
     std::ofstream(
         root_ / "forums" / "lobby" / "personas" / "guide" / "persona.toml")

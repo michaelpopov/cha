@@ -8,6 +8,11 @@ namespace cha::web {
 // Public fields deliberately make every deadline and bound injectable by tests.
 struct WebSettings {
     std::size_t session_limit{8};
+    // Reserve request workers beyond one long-lived SSE writer per allowed
+    // registry entry.  Pool and pending-request values are validated together
+    // when the listener is configured. This remains a setting so tests and
+    // deliberately small deployments can exercise the coupled bound.
+    std::size_t http_request_headroom{4};
     // Server validation must keep enough request threads for every live
     // session's SSE stream plus command, snapshot, lobby, and asset headroom.
     std::size_t http_thread_pool_size{16};

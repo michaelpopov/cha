@@ -218,6 +218,7 @@ add_library(cha_web STATIC
     src/ui/web/lobby_routes.cpp
     src/ui/web/protocol.cpp
     src/ui/web/route_support.cpp
+    src/ui/web/server_shutdown.cpp
     src/ui/web/session_routes.cpp
     src/ui/web/session_registry.cpp
     src/ui/web/sse_mailbox.cpp
@@ -377,6 +378,20 @@ if(BUILD_TESTING)
         add_dependencies(
             console_tests chacon_app cha_lease_test_helper)
         cha_enable_warnings(console_tests)
+
+        add_executable(
+            cha_web_process_tests
+            tests/ui/web/process_web_server.cpp
+            tests/support/test_workspace.cpp
+            tests/support/web_server_process.cpp)
+        target_link_libraries(cha_web_process_tests PRIVATE cha_web GTest::gtest_main)
+        target_include_directories(
+            cha_web_process_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        target_compile_definitions(
+            cha_web_process_tests
+            PRIVATE CHA_WEB_BINARY="$<TARGET_FILE:chaweb_app>")
+        add_dependencies(cha_web_process_tests chaweb_app)
+        cha_enable_warnings(cha_web_process_tests)
     endif()
 
     include(GoogleTest)
@@ -384,6 +399,9 @@ if(BUILD_TESTING)
     gtest_discover_tests(cha_web_tests)
     if(TARGET console_tests)
         gtest_discover_tests(console_tests)
+    endif()
+    if(TARGET cha_web_process_tests)
+        gtest_discover_tests(cha_web_process_tests PROPERTIES LABELS web_process)
     endif()
 endif()
 

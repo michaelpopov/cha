@@ -372,6 +372,7 @@ TEST(SessionRegistry, WaitersHaveIndependentDeadlines) {
 
 TEST(SessionRegistry, StoppingEntryRejectsOpenConsumesCapacityAndLateHandleStops) {
     ShutdownGate gate;
+    ReleaseGateOnExit release_gate(gate);
     std::atomic<int> starts{};
     SessionRegistry registry({.session_limit = 1}, [&](const SessionKey&, WakeNotifier&) {
         ++starts;
@@ -451,6 +452,26 @@ TEST(SessionRegistry, ShutdownWakesStartingWaitersWithoutWritingTheirResult) {
         release = true;
     }
     changed.notify_all();
+}
+
+TEST(SessionRegistry, ShutdownJoinUsesOneBoundedGracePeriod) {
+    ShutdownGate gate;
+    ReleaseGateOnExit release_gate(gate);
+    SessionRegistry registry({.session_limit = 1}, [&](const SessionKey&, WakeNotifier&) {
+        return std::make_unique<GatedShutdownController>(gate);
+    });
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        registry.open({"f", "blocked"}, 500ms)));
+
+    registry.begin_shutdown();
+    ASSERT_TRUE(gate.wait_until_entered());
+    EXPECT_FALSE(registry.join_shutdown(10ms));
+    const std::vector<SessionKey> expected_unfinished{{"f", "blocked"}};
+    EXPECT_EQ(registry.unfinished_owners(), expected_unfinished);
+
+    gate.release();
+    EXPECT_TRUE(registry.join_shutdown(500ms));
+    EXPECT_TRUE(registry.unfinished_owners().empty());
 }
 
 TEST(SessionRegistry, ShutdownAtCommitNeverPublishesAndTearsDownNewController) {

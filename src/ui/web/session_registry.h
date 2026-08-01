@@ -4,6 +4,7 @@
 #include "ui/web/web_session_runtime.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <map>
 #include <memory>
@@ -79,13 +80,21 @@ public:
     // returned as reattachable sessions.
     [[nodiscard]] RegistrySnapshot snapshot();
 
-    // Begins process shutdown without writing startup results.  It wakes open
-    // waiters and asks only already-published runtimes to stop.
-    void begin_shutdown();
+    // Begins process shutdown without writing startup results. The optional
+    // callback runs after the stopping flag is published but before open
+    // waiters are woken and already-published runtimes are asked to stop. The
+    // process coordinator uses that point to stop HTTP acceptance in the
+    // documented order.
+    void begin_shutdown(const std::function<void()>& stop_accepting = {});
     // Returns the identities whose owner threads have not yet reported
     // completion.  The process-shutdown coordinator uses this after its
     // bounded grace period to report threads it cannot safely join.
     [[nodiscard]] std::vector<SessionKey> unfinished_owners();
+    // Waits under one process-wide deadline for every owner to report its
+    // final state, then reaps them outside the registry mutex. False leaves
+    // the stuck owners untouched for the process coordinator to report before
+    // it takes the no-destructor exit path.
+    [[nodiscard]] bool join_shutdown(std::chrono::milliseconds grace);
     void sweep();
 
 private:
@@ -102,6 +111,7 @@ private:
     RegistryControllerFactory factory_;
     RegistryMetadataFactory metadata_factory_;
     std::mutex mutex_;
+    std::condition_variable lifecycle_changed_;
     std::map<SessionKey, std::unique_ptr<Entry>, std::less<>> entries_;
     bool stopping_{};
 };

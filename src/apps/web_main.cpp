@@ -4,6 +4,7 @@
 #include "ui/web/lobby_routes.h"
 #include "ui/web/session_routes.h"
 #include "ui/web/session_registry.h"
+#include "ui/web/server_shutdown.h"
 #include "ui/web/web_settings.h"
 #include "util/environment.h"
 #include "util/logging.h"
@@ -13,9 +14,9 @@
 #include <exception>
 #include <iostream>
 #include <string>
+#include <thread>
 
-// This is deliberately only a composition root. Route registration and live
-// session ownership arrive with their respective web-layer components.
+// This is deliberately only the process composition root.
 int main() {
     try {
         cha::load_dotenv();
@@ -30,10 +31,10 @@ int main() {
         cha::web::AssetHandler().install(server);
         cha::web::LobbyRoutes(workspace, registry, settings).install(server);
         cha::web::SessionRoutes(registry, settings).install(server);
+        cha::web::ProcessShutdownSignal signals;
+        cha::web::ServerShutdownCoordinator shutdown(registry, server);
         cha::log_info("Web server listener starting");
-        // The initial skeleton has no readiness protocol or signal-driven stop;
-        // production lifecycle handling arrives with the server-process block.
-        if (!server.listen(config.host, config.port)) {
+        if (!server.bind_to_port(config.host, config.port)) {
             const std::string message =
                 "Could not listen on " + config.host + ':'
                 + std::to_string(config.port);
@@ -41,6 +42,10 @@ int main() {
             std::cerr << "Failed: " << message << '\n';
             return 1;
         }
+        std::thread listener([&server] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        shutdown.wait_and_shutdown(signals, listener, settings.shutdown_grace);
+        cha::shutdown_diagnostic_logging();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Failed: " << error.what() << '\n';

@@ -7,6 +7,7 @@
 #include <httplib.h>
 
 #include <exception>
+#include <stdexcept>
 #include <string>
 
 namespace cha::web {
@@ -58,6 +59,16 @@ void set_exception_error(
 } // namespace
 
 void configure_http_server(httplib::Server& server, WebSettings settings) {
+    const std::size_t minimum_workers =
+        settings.session_limit + settings.http_request_headroom;
+    if (settings.http_thread_pool_size < minimum_workers) {
+        throw std::invalid_argument(
+            "Web HTTP pool needs session-limit SSE workers plus request headroom");
+    }
+    if (settings.http_pending_request_limit < settings.http_thread_pool_size) {
+        throw std::invalid_argument(
+            "Web pending-request limit must cover the HTTP request pool");
+    }
     server.new_task_queue = [settings] {
         return new httplib::ThreadPool(
             settings.http_thread_pool_size,

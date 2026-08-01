@@ -259,7 +259,8 @@ RegistrySnapshot SessionRegistry::snapshot() {
     return result;
 }
 
-void SessionRegistry::begin_shutdown() {
+void SessionRegistry::begin_shutdown(
+    const std::function<void()>& stop_accepting) {
     RetiredEntries retired;
     std::vector<std::shared_ptr<WebSessionRuntime>> runtimes;
     std::vector<std::shared_ptr<StartupResult>> startups;
@@ -275,11 +276,35 @@ void SessionRegistry::begin_shutdown() {
             }
         }
     }
-    reap(std::move(retired));
+    if (stop_accepting) stop_accepting();
     for (const auto& startup : startups) startup->wake();
+    reap(std::move(retired));
     for (const auto& runtime : runtimes) {
         runtime->request_shutdown(ShutdownReason::server_stopping);
     }
+}
+
+bool SessionRegistry::join_shutdown(std::chrono::milliseconds grace) {
+    const auto deadline = std::chrono::steady_clock::now() + grace;
+    {
+        std::unique_lock lock(mutex_);
+        if (!lifecycle_changed_.wait_until(lock, deadline, [this] {
+                for (const auto& [key, entry] : entries_) {
+                    (void)key;
+                    if (!entry->finished) return false;
+                }
+                return true;
+            })) {
+            return false;
+        }
+    }
+    // finished is published only as the final teardown hook, after the
+    // controller and every blocking runtime resource have been released.
+    // From that hook to owner_main returning there is only non-blocking stack
+    // unwinding, so reaping here cannot turn an owner operation into an
+    // unbounded join outside the grace deadline.
+    sweep();
+    return true;
 }
 
 std::vector<SessionKey> SessionRegistry::unfinished_owners() {
@@ -350,9 +375,12 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
                     if (found != entries_.end()) found->second->state = Entry::State::stopping;
                 },
                 .mark_finished = [this, key] {
-                    std::lock_guard lock(mutex_);
-                    const auto found = entries_.find(key);
-                    if (found != entries_.end()) found->second->finished = true;
+                    {
+                        std::lock_guard lock(mutex_);
+                        const auto found = entries_.find(key);
+                        if (found != entries_.end()) found->second->finished = true;
+                    }
+                    lifecycle_changed_.notify_all();
                 },
             });
         runtime_view = runtime.get();
@@ -391,23 +419,29 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
     } catch (const std::bad_alloc&) {
         std::terminate();
     } catch (const SessionBusyError&) {
-        std::lock_guard lock(mutex_);
-        startup->complete(StartupResult::Value::busy);
-        const auto found = entries_.find(key);
-        if (found != entries_.end()) {
-            if (runtime) found->second->runtime = std::move(runtime);
-            found->second->state = Entry::State::stopping;
-            found->second->finished = true;
+        {
+            std::lock_guard lock(mutex_);
+            startup->complete(StartupResult::Value::busy);
+            const auto found = entries_.find(key);
+            if (found != entries_.end()) {
+                if (runtime) found->second->runtime = std::move(runtime);
+                found->second->state = Entry::State::stopping;
+                found->second->finished = true;
+            }
         }
+        lifecycle_changed_.notify_all();
     } catch (...) {
-        std::lock_guard lock(mutex_);
-        startup->complete(StartupResult::Value::error);
-        const auto found = entries_.find(key);
-        if (found != entries_.end()) {
-            if (runtime) found->second->runtime = std::move(runtime);
-            found->second->state = Entry::State::stopping;
-            found->second->finished = true;
+        {
+            std::lock_guard lock(mutex_);
+            startup->complete(StartupResult::Value::error);
+            const auto found = entries_.find(key);
+            if (found != entries_.end()) {
+                if (runtime) found->second->runtime = std::move(runtime);
+                found->second->state = Entry::State::stopping;
+                found->second->finished = true;
+            }
         }
+        lifecycle_changed_.notify_all();
     }
 }
 

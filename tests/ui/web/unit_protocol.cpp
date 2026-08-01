@@ -1,4 +1,5 @@
 #include "ui/web/http_response.h"
+#include "ui/web/http_server.h"
 #include "ui/web/json.h"
 #include "ui/web/protocol.h"
 #include "ui/web/web_settings.h"
@@ -331,6 +332,41 @@ TEST(WebSettings, DefaultsRespectCoupledResourceAndLifetimeLimits) {
     EXPECT_GT(settings.command_batch_size, 0U);
     EXPECT_GT(settings.event_batch_size, 0U);
     EXPECT_GE(settings.orphan_limit, settings.idle_grace);
+}
+
+TEST(WebSettings, RequestHeadroomCoversNonStreamingWork) {
+    const WebSettings settings;
+    EXPECT_GE(
+        settings.http_thread_pool_size,
+        settings.session_limit + settings.http_request_headroom);
+    EXPECT_GE(settings.http_pending_request_limit, settings.http_thread_pool_size);
+}
+
+TEST(WebSettings, HttpServerRejectsPoolWithoutSessionHeadroom) {
+    httplib::Server server;
+    WebSettings settings;
+    settings.session_limit = 20;
+    EXPECT_THROW(
+        configure_http_server(server, settings),
+        std::invalid_argument);
+}
+
+TEST(WebSettings, HttpServerRejectsPendingLimitBelowPoolSize) {
+    httplib::Server server;
+    WebSettings settings;
+    settings.http_pending_request_limit = settings.http_thread_pool_size - 1;
+    EXPECT_THROW(
+        configure_http_server(server, settings),
+        std::invalid_argument);
+}
+
+TEST(WebSettings, RequestHeadroomIsInjectable) {
+    httplib::Server server;
+    WebSettings settings;
+    settings.http_request_headroom = 1;
+    settings.http_thread_pool_size = settings.session_limit + 1;
+    settings.http_pending_request_limit = settings.http_thread_pool_size;
+    EXPECT_NO_THROW(configure_http_server(server, settings));
 }
 
 TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {

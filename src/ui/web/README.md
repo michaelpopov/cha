@@ -47,4 +47,13 @@ separately owns the root HTML/asset boundary and currently serves only a
 framework-neutral lobby placeholder. `configure_http_server()` owns the
 server-global request pool, payload limit, and fallback error/exception
 handlers so route installers cannot silently replace one another's policy.
+`ServerShutdownCoordinator` implements the bounded process shutdown sequence:
+it waits for signal notification, sets the registry stopping flag, stops HTTP
+acceptance, wakes opening waiters, requests published runtimes to stop, joins
+owners under one grace deadline, logs stuck session identities and forces the
+no-destructor exit on expiry, then joins cpp-httplib's listener/request pool.
+Keeping that ordering in the coordinator makes the forced path directly
+testable and prevents a stuck HTTP worker from suppressing it.
+`ProcessShutdownSignal` is the portable signal bridge; its handler only records
+`sig_atomic_t` state and normal code performs the shutdown work.
 `web_main.cpp` is only the composition root for the one server listener.
