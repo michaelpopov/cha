@@ -282,8 +282,7 @@ public:
             if (merge_pending_appends && !payloads.empty()) {
                 if (auto* pending =
                         std::get_if<AppendEvent>(&payloads.back());
-                    pending && same_append_target(
-                        pending->target, candidate.target)) {
+                    pending && pending->target == candidate.target) {
                     pending->text.append(candidate.text);
                     changed.notify_all();
                     return;
@@ -319,19 +318,6 @@ public:
     int drain_waits{};
     int close_calls{};
     std::uint64_t next_append_seq{};
-
-private:
-    static bool same_append_target(
-        const AppendTarget& left,
-        const AppendTarget& right) {
-        if (left.index() != right.index()) return false;
-        if (const auto* entry = std::get_if<AppendTargetEntry>(&left)) {
-            return entry->entry_id
-                == std::get<AppendTargetEntry>(right).entry_id;
-        }
-        return std::get<AppendTargetReasoning>(left).request_id
-            == std::get<AppendTargetReasoning>(right).request_id;
-    }
 };
 
 class TemporaryWebSession {
@@ -682,17 +668,40 @@ TEST(WebSessionRuntime, ReceiveEndSessionStopsTheRuntime) {
         ErrorCode::session_not_live);
 }
 
-TEST(WebSessionRuntime, RejectsZeroBatchSizesBeforeStartingOwner) {
-    WebSettings settings = test_settings(2);
+TEST(WebSessionRuntime, RejectsZeroQueueAndBatchSizesBeforeStartingOwner) {
+    WebSettings settings = test_settings(0);
+    EXPECT_THROW(
+        (void)WebSessionRuntime(
+            fake_factory(std::make_shared<FakeState>()), settings),
+        std::invalid_argument);
+
+    settings = test_settings(2);
     settings.command_batch_size = 0;
 
     EXPECT_THROW(
         (void)WebSessionRuntime(fake_factory(std::make_shared<FakeState>()), settings),
         std::invalid_argument);
+
+    settings = test_settings(2);
+    settings.event_batch_size = 0;
+    EXPECT_THROW(
+        (void)WebSessionRuntime(
+            fake_factory(std::make_shared<FakeState>()), settings),
+        std::invalid_argument);
+}
+
+TEST(WebSessionRuntime, RegistryOwnedRuntimeRequiresMailbox) {
+    EXPECT_THROW(
+        (void)WebSessionRuntime(
+            test_settings(2),
+            WebSessionMetadata{},
+            std::shared_ptr<SseMailbox>{}),
+        std::invalid_argument);
 }
 
 TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
     auto state = std::make_shared<FakeState>();
+    state->fast_append_candidates = true;
     auto sink = std::make_shared<FakeSnapshotSink>();
     WebSessionRuntime runtime(
         fake_factory(state), test_settings(2),
@@ -715,7 +724,8 @@ TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
         std::lock_guard lock(state->mutex);
         state->snapshot.transcript[0].text = "one more";
     }
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"snapshot"}, 1s)));
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        runtime.submit(RawCommand{"append"}, 1s)));
     std::unique_lock lock(sink->mutex);
     ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 3U; }));
     ASSERT_TRUE(std::holds_alternative<AppendEvent>(sink->payloads.back()));
@@ -726,13 +736,40 @@ TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
     // A render hint with no state change must not consume an append sequence
     // number or publish an empty append.
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"snapshot"}, 1s)));
+        runtime.submit(RawCommand{"append"}, 1s)));
     std::lock_guard final_lock(sink->mutex);
     EXPECT_EQ(sink->payloads.size(), 3U);
 }
 
+TEST(WebSessionRuntime, CandidateUnavailablePublishesSnapshotForTextGrowth) {
+    auto state = std::make_shared<FakeState>();
+    auto sink = std::make_shared<FakeSnapshotSink>();
+    WebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
+    {
+        std::unique_lock lock(sink->mutex);
+        ASSERT_TRUE(sink->changed.wait_for(
+            lock,
+            1s,
+            [&] { return sink->payloads.size() == 1U; }));
+    }
+
+    {
+        std::lock_guard lock(state->mutex);
+        state->snapshot.transcript[0].text = "one more";
+    }
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        runtime.submit(RawCommand{"append"}, 1s)));
+
+    std::lock_guard lock(sink->mutex);
+    ASSERT_EQ(sink->payloads.size(), 2U);
+    const auto& snapshot =
+        std::get<SnapshotEvent>(sink->payloads.back()).snapshot;
+    EXPECT_EQ(snapshot.transcript[0].text, "one more");
+}
+
 TEST(WebSessionRuntime, SinkSequencesStoredPayloadsNotOwnerChanges) {
     auto state = std::make_shared<FakeState>();
+    state->fast_append_candidates = true;
     auto sink = std::make_shared<FakeSnapshotSink>();
     {
         std::lock_guard lock(sink->mutex);
@@ -828,6 +865,37 @@ TEST(WebSessionRuntime, TargetChangePublishesSnapshotBeforeResetSequence) {
     EXPECT_TRUE(
         std::holds_alternative<AppendTargetReasoning>(reasoning.target));
     EXPECT_EQ(reasoning.seq, 0U);
+}
+
+TEST(WebSessionRuntime, ReasoningGrowthWithStructuralChangeUsesSnapshot) {
+    auto state = std::make_shared<FakeState>();
+    {
+        std::lock_guard lock(state->mutex);
+        state->snapshot.transcript[0].status = TranscriptStatus::complete;
+        state->snapshot.generation.phase = GenerationPhase::reasoning;
+        state->snapshot.generation.reasoning_text = "think";
+    }
+    auto sink = std::make_shared<FakeSnapshotSink>();
+    WebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
+    {
+        std::unique_lock lock(sink->mutex);
+        ASSERT_TRUE(sink->changed.wait_for(
+            lock,
+            1s,
+            [&] { return sink->payloads.size() == 1U; }));
+    }
+
+    {
+        std::lock_guard lock(state->mutex);
+        state->snapshot.generation.reasoning_text = "think more";
+        state->snapshot.default_persona_id = "alternate";
+    }
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        runtime.submit(RawCommand{"append"}, 1s)));
+
+    std::lock_guard lock(sink->mutex);
+    ASSERT_EQ(sink->payloads.size(), 2U);
+    EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(sink->payloads.back()));
 }
 
 TEST(WebSessionRuntime, ProvenAppendBypassesFullSnapshotConstruction) {
@@ -1444,6 +1512,9 @@ TEST(WebSessionRuntime, ProcessStopWinsShutdownReason) {
     }
     runtime.request_shutdown();
     runtime.request_shutdown(ShutdownReason::server_stopping);
+    EXPECT_EQ(
+        std::get<ErrorCode>(runtime.submit(RawCommand{"late"}, 1s)),
+        ErrorCode::server_stopping);
     {
         std::lock_guard lock(state->mutex);
         state->receive_released = true;

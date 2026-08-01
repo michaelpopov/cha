@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -20,10 +21,10 @@ enum class GenerationPhase { waiting, reasoning, answering, stopping };
 enum class SessionLifecycle { starting, running, stopping };
 enum class ShutdownReason { browser_disconnected, session_failed, server_stopping };
 enum class ErrorCode {
-    not_found, bad_request, body_too_large, forbidden_origin, internal_error,
-    session_busy, session_stopping, session_limit_reached, session_open_timeout,
-    server_stopping, session_not_live, browser_stream_in_use, command_timeout,
-    command_queue_full,
+    not_found, bad_request, body_too_large, prompt_too_large, forbidden_origin,
+    internal_error, session_busy, session_stopping, session_limit_reached,
+    session_open_timeout, server_stopping, session_not_live,
+    browser_stream_in_use, command_timeout, command_queue_full,
 };
 
 struct ForumSummary {
@@ -134,18 +135,25 @@ struct Error {
 
 struct AppendTargetEntry {
     std::uint64_t entry_id{};
+    bool operator==(const AppendTargetEntry&) const = default;
 };
 
 struct AppendTargetReasoning {
     std::uint64_t request_id{};
+    bool operator==(const AppendTargetReasoning&) const = default;
 };
 
 using AppendTarget = std::variant<AppendTargetEntry, AppendTargetReasoning>;
 
+struct SnapshotAppendSelection {
+    AppendTarget target;
+    std::optional<std::size_t> transcript_index;
+};
+
 // The snapshot is the authoritative base for later append events. Keep target
 // selection shared by the runtime cache and transport mailbox so they cannot
 // establish different delta bases.
-[[nodiscard]] std::optional<AppendTarget> snapshot_append_target(
+[[nodiscard]] std::optional<SnapshotAppendSelection> snapshot_append_selection(
     const SessionSnapshot& snapshot);
 
 // Owning payload moved from a session owner thread into the SSE mailbox.

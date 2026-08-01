@@ -4,6 +4,7 @@
 #include "ui/web/session_registry.h"
 #include "support/test_workspace.h"
 
+#include "session/session_controller.h"
 #include "session/session_lease.h"
 #include "session/workspace.h"
 
@@ -114,6 +115,19 @@ bool listed_not_live(TestServer& server, std::string_view id) {
         if (session["id"] == id) return !session["live"].get<bool>();
     }
     return false;
+}
+
+WebSessionMetadata load_workspace_metadata(
+    const Workspace& workspace,
+    const SessionKey& key) {
+    const Forum forum = workspace.load_forum(key.forum);
+    const SessionSummary session = workspace.session_summary(
+        key.forum, key.session_id);
+    return {
+        .forum = {forum.name, forum.display_name},
+        .session_id = session.id,
+        .session_label = session.label,
+    };
 }
 
 TEST(LobbyRoutes, ServesPlaceholderHealthAndForumListingWithoutSessionDataInHealth) {
@@ -410,6 +424,86 @@ TEST(LobbyRoutes, ReattachesFromRegistryWithoutReadingStorageAgain) {
         nlohmann::json({{"path", "/s/lobby/" + id + "/"}}));
     EXPECT_EQ(starts, 1);
     registry.begin_shutdown();
+}
+
+TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleasesCapacity) {
+    test::TestWorkspace fixture;
+    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const SessionSummary deleted =
+        workspace->create_stored_session("lobby", "Deleted");
+    const SessionSummary survivor =
+        workspace->create_stored_session("lobby", "Survivor");
+    const std::filesystem::path deleted_database =
+        fixture.root() / "forums" / "lobby" / "sessions"
+        / (deleted.id + ".sqlite3");
+    const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
+    SessionRegistry registry(
+        settings,
+        [workspace, deleted, deleted_database](
+            const SessionKey& key,
+            WakeNotifier& notifier) {
+            if (key.session_id == deleted.id
+                && !std::filesystem::remove(deleted_database)) {
+                throw std::runtime_error("Test session was not deleted");
+            }
+            return adapt_session_controller(workspace->open_session(
+                key.forum, key.session_id, notifier));
+        },
+        [workspace](const SessionKey& key) {
+            return load_workspace_metadata(*workspace, key);
+        });
+    TestServer server(workspace, registry, settings);
+
+    expect_error(
+        server.client().Post(
+            "/api/v1/forums/lobby/sessions/" + deleted.id + "/open",
+            "{}",
+            "application/json"),
+        404,
+        "not_found");
+    EXPECT_EQ(registry.snapshot().live_entry_count, 0U);
+
+    const auto opened = server.client().Post(
+        "/api/v1/forums/lobby/sessions/" + survivor.id + "/open",
+        "{}",
+        "application/json");
+    ASSERT_TRUE(opened);
+    EXPECT_EQ(opened->status, 200);
+    registry.begin_shutdown();
+}
+
+TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
+    test::TestWorkspace fixture;
+    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const SessionSummary stored =
+        workspace->create_stored_session("lobby", "Deleted forum");
+    const std::filesystem::path forum_directory =
+        fixture.root() / "forums" / "lobby";
+    const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
+    SessionRegistry registry(
+        settings,
+        [workspace, forum_directory](
+            const SessionKey& key,
+            WakeNotifier& notifier) {
+            if (std::filesystem::remove_all(forum_directory) == 0) {
+                throw std::runtime_error("Test forum was not deleted");
+            }
+            return adapt_session_controller(workspace->open_session(
+                key.forum, key.session_id, notifier));
+        },
+        [workspace](const SessionKey& key) {
+            return load_workspace_metadata(*workspace, key);
+        });
+    TestServer server(workspace, registry, settings);
+
+    expect_error(
+        server.client().Post(
+            "/api/v1/forums/lobby/sessions/" + stored.id + "/open",
+            "{}",
+            "application/json"),
+        404,
+        "not_found");
+    EXPECT_EQ(registry.snapshot().live_entry_count, 0U);
 }
 
 TEST(LobbyRoutes, ValidatesOpenBodyAndAppliesTheRequestLimit) {

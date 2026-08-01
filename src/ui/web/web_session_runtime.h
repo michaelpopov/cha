@@ -49,9 +49,9 @@ public:
     // Called only by the owner thread. The returned value owns every field and
     // contains no controller or transcript borrows.
     virtual SessionSnapshot snapshot() { return {}; }
-    // Production controllers may prove a text-only delta without rebuilding a
-    // snapshot. Returning nullopt makes the runtime use its conservative full
-    // snapshot path.
+    // Controllers may prove a text-only delta without rebuilding a snapshot.
+    // Returning nullopt makes the runtime publish a full snapshot; the runtime
+    // does not independently infer an append from snapshot differences.
     virtual std::optional<WebAppendCandidate> append_candidate(
         const SessionSnapshot&) {
         return std::nullopt;
@@ -107,13 +107,20 @@ public:
         std::shared_ptr<WebSnapshotSink> sink = {},
         WebRuntimeHooks hooks = {},
         WebRuntimeClock clock = {});
+    WebSessionRuntime(
+        WebControllerFactory factory,
+        WebSettings settings,
+        WebSessionMetadata metadata,
+        std::shared_ptr<SseMailbox> mailbox,
+        WebRuntimeHooks hooks = {},
+        WebRuntimeClock clock = {});
     // Registry-owned runtimes are constructed and opened on the registry's
     // owner thread, then published before this loop starts.  This keeps the
     // controller and its permanent owner thread the same thread.
     WebSessionRuntime(
         WebSettings settings,
-        WebSessionMetadata metadata = {},
-        std::shared_ptr<WebSnapshotSink> sink = {},
+        WebSessionMetadata metadata,
+        std::shared_ptr<SseMailbox> mailbox,
         WebRuntimeHooks hooks = {},
         WebRuntimeClock clock = {});
     // No submit() call may overlap destruction. The production session-handle
@@ -139,6 +146,14 @@ public:
     void run_with_controller(std::unique_ptr<WebSessionController> controller);
 
 private:
+    WebSessionRuntime(
+        WebControllerFactory factory,
+        WebSettings settings,
+        WebSessionMetadata metadata,
+        std::shared_ptr<WebSnapshotSink> sink,
+        std::shared_ptr<SseMailbox> mailbox,
+        WebRuntimeHooks hooks,
+        WebRuntimeClock clock);
     void owner_loop(std::unique_ptr<WebSessionController> controller);
     void execute(WebSessionController& controller, OwnerCommand command);
     void apply_notification(OwnerNotification notification);

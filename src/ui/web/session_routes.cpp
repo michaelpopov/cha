@@ -141,10 +141,15 @@ void SessionRoutes::install(httplib::Server& server) const {
         if (!key) return;
         if (!validate_json_mutation(request, response)) return;
         RawCommand command;
-        if (!parse_route_json_body(request, response, settings.request_body_limit, [&command, &settings](const nlohmann::json& json) {
+        if (!parse_route_json_body(request, response, settings.request_body_limit, [&command](const nlohmann::json& json) {
                 command = parse_input_command(json);
-                if (command.text.size() > settings.prompt_limit) throw std::length_error("Prompt is too large");
             })) return;
+        if (command.text.size() > settings.prompt_limit) {
+            return set_error_response(
+                response,
+                413,
+                {ErrorCode::prompt_too_large, "Prompt is too large."});
+        }
         SessionHandle handle = registry->lookup(*key);
         if (!handle) return set_not_live(response);
         set_command_result(response, handle.runtime().submit(std::move(command), settings.command_deadline));

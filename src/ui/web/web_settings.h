@@ -34,7 +34,6 @@ struct WebSettings {
     std::chrono::milliseconds idle_grace{30000};
     // Runtime configuration validation must require orphan_limit >= idle_grace.
     std::chrono::milliseconds orphan_limit{300000};
-    std::chrono::milliseconds reload_retry_interval{2000};
     std::size_t request_body_limit{65536};
     std::size_t prompt_limit{32768};
     std::chrono::milliseconds shutdown_grace{10000};

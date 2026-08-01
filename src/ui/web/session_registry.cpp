@@ -1,5 +1,6 @@
 #include "ui/web/session_registry.h"
 
+#include "session/not_found_error.h"
 #include "session/session_lease.h"
 #include "session/session_controller.h"
 #include "session/workspace.h"
@@ -33,7 +34,7 @@ Error invalid_key_error() {
 } // namespace
 
 struct SessionRegistry::StartupResult {
-    enum class Value { ready, busy, error, shutting_down };
+    enum class Value { ready, busy, not_found, error, shutting_down };
 
     void complete(Value next) {
         {
@@ -194,11 +195,7 @@ RegistryOpenResult SessionRegistry::open(
                 position->second->owner = std::thread(
                     &SessionRegistry::owner_main, this, key, startup);
             } catch (const std::bad_alloc&) {
-                startup->complete(StartupResult::Value::error);
-                entries_.erase(position);
-                lock.unlock();
-                reap(std::move(retired));
-                throw;
+                std::terminate();
             } catch (...) {
                 // No waiter can attach while this mutex acquisition is still
                 // in progress, but resolve the result before removing the
@@ -229,6 +226,7 @@ RegistryOpenResult SessionRegistry::open(
     switch (*outcome) {
     case StartupResult::Value::ready: return OpenSessionSuccess{path_for(key)};
     case StartupResult::Value::busy: return Error{ErrorCode::session_busy, "Session is busy."};
+    case StartupResult::Value::not_found: return invalid_key_error();
     case StartupResult::Value::error: return Error{ErrorCode::internal_error, "Session could not be opened."};
     case StartupResult::Value::shutting_down:
         return Error{ErrorCode::server_stopping, "Server is stopping."};
@@ -403,6 +401,19 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
     // never destroy its own runtime by releasing the last owning reference.
     std::shared_ptr<WebSessionRuntime> runtime;
     WebSessionRuntime* runtime_view = nullptr;
+    const auto finish_failed_start = [&](StartupResult::Value result) {
+        {
+            std::lock_guard lock(mutex_);
+            startup->complete(result);
+            const auto found = entries_.find(key);
+            if (found != entries_.end()) {
+                if (runtime) found->second->runtime = std::move(runtime);
+                found->second->state = Entry::State::stopping;
+                found->second->finished = true;
+            }
+        }
+        lifecycle_changed_.notify_all();
+    };
     try {
         WebSessionMetadata metadata;
         if (metadata_factory_) {
@@ -482,30 +493,16 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
         std::terminate();
     } catch (const SessionBusyError&) {
         log_warn(session_log(key, "lease_busy"));
-        {
-            std::lock_guard lock(mutex_);
-            startup->complete(StartupResult::Value::busy);
-            const auto found = entries_.find(key);
-            if (found != entries_.end()) {
-                if (runtime) found->second->runtime = std::move(runtime);
-                found->second->state = Entry::State::stopping;
-                found->second->finished = true;
-            }
-        }
-        lifecycle_changed_.notify_all();
+        finish_failed_start(StartupResult::Value::busy);
+    } catch (const SessionNotFoundError&) {
+        log_warn(session_log(key, "storage_not_found"));
+        finish_failed_start(StartupResult::Value::not_found);
+    } catch (const ForumNotFoundError&) {
+        log_warn(session_log(key, "storage_not_found"));
+        finish_failed_start(StartupResult::Value::not_found);
     } catch (...) {
         log_error(session_log(key, "startup_failed"));
-        {
-            std::lock_guard lock(mutex_);
-            startup->complete(StartupResult::Value::error);
-            const auto found = entries_.find(key);
-            if (found != entries_.end()) {
-                if (runtime) found->second->runtime = std::move(runtime);
-                found->second->state = Entry::State::stopping;
-                found->second->finished = true;
-            }
-        }
-        lifecycle_changed_.notify_all();
+        finish_failed_start(StartupResult::Value::error);
     }
 }
 

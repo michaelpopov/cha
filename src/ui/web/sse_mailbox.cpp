@@ -3,18 +3,6 @@
 #include <utility>
 
 namespace cha::web {
-namespace {
-
-bool same_target(const AppendTarget& left, const AppendTarget& right) {
-    if (left.index() != right.index()) return false;
-    if (const auto* entry = std::get_if<AppendTargetEntry>(&left)) {
-        return entry->entry_id == std::get<AppendTargetEntry>(right).entry_id;
-    }
-    return std::get<AppendTargetReasoning>(left).request_id
-        == std::get<AppendTargetReasoning>(right).request_id;
-}
-
-} // namespace
 
 SseMailbox::Stream SseMailbox::begin_stream(SnapshotEvent snapshot) {
     std::lock_guard lock(mutex_);
@@ -102,7 +90,10 @@ void SseMailbox::close() noexcept {
 
 void SseMailbox::publish_snapshot_locked(SnapshotEvent snapshot) {
     if (pending_) ++collapsed_payloads_;
-    target_ = snapshot_append_target(snapshot.snapshot);
+    const auto selection = snapshot_append_selection(snapshot.snapshot);
+    target_ = selection
+        ? std::optional<AppendTarget>{selection->target}
+        : std::nullopt;
     next_sequence_ = 0;
     pending_ = std::make_shared<const SsePayload>(std::move(snapshot));
 }
@@ -110,14 +101,14 @@ void SseMailbox::publish_snapshot_locked(SnapshotEvent snapshot) {
 void SseMailbox::publish_append_locked(
     WebAppendCandidate candidate,
     const SessionSnapshot& fallback_snapshot) {
-    if (candidate.text.empty() || !target_ || !same_target(*target_, candidate.target)) {
+    if (candidate.text.empty() || !target_ || *target_ != candidate.target) {
         publish_snapshot_locked({fallback_snapshot});
         return;
     }
     if (const auto* pending = pending_
             ? std::get_if<AppendEvent>(pending_.get())
             : nullptr) {
-        if (same_target(pending->target, candidate.target)) {
+        if (pending->target == candidate.target) {
             ++collapsed_payloads_;
             pending_ = std::make_shared<const SsePayload>(AppendEvent{
                 pending->target, pending->text + candidate.text, pending->seq});

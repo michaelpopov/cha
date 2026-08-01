@@ -93,6 +93,7 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::not_found, "not_found"},
             {ErrorCode::bad_request, "bad_request"},
             {ErrorCode::body_too_large, "body_too_large"},
+            {ErrorCode::prompt_too_large, "prompt_too_large"},
             {ErrorCode::forbidden_origin, "forbidden_origin"},
             {ErrorCode::internal_error, "internal_error"},
             {ErrorCode::session_busy, "session_busy"},
@@ -107,16 +108,20 @@ std::string_view to_string(ErrorCode value) {
         });
 }
 
-std::optional<AppendTarget> snapshot_append_target(
+std::optional<SnapshotAppendSelection> snapshot_append_selection(
     const SessionSnapshot& snapshot) {
-    for (const TranscriptEntry& entry : snapshot.transcript) {
+    for (std::size_t index = 0; index != snapshot.transcript.size(); ++index) {
+        const TranscriptEntry& entry = snapshot.transcript[index];
         if (entry.status == TranscriptStatus::streaming) {
-            return AppendTargetEntry{entry.id};
+            return SnapshotAppendSelection{
+                AppendTargetEntry{entry.id}, index};
         }
     }
     if (snapshot.generation.active && snapshot.generation.request_id
         && snapshot.generation.phase == GenerationPhase::reasoning) {
-        return AppendTargetReasoning{*snapshot.generation.request_id};
+        return SnapshotAppendSelection{
+            AppendTargetReasoning{*snapshot.generation.request_id},
+            std::nullopt};
     }
     return std::nullopt;
 }

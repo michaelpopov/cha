@@ -171,6 +171,34 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         }));
 }
 
+TEST(WebProtocol, SelectsAppendTargetAndTranscriptIndexTogether) {
+    SessionSnapshot snapshot{
+        .transcript = {
+            {.id = 4, .status = TranscriptStatus::complete},
+            {.id = 7, .status = TranscriptStatus::streaming},
+        },
+        .generation = {
+            .active = true,
+            .request_id = 3,
+            .phase = GenerationPhase::reasoning,
+        },
+    };
+
+    auto selection = snapshot_append_selection(snapshot);
+    ASSERT_TRUE(selection);
+    EXPECT_EQ(selection->target, AppendTarget{AppendTargetEntry{7}});
+    EXPECT_EQ(selection->transcript_index, 1U);
+
+    snapshot.transcript[1].status = TranscriptStatus::complete;
+    selection = snapshot_append_selection(snapshot);
+    ASSERT_TRUE(selection);
+    EXPECT_EQ(selection->target, AppendTarget{AppendTargetReasoning{3}});
+    EXPECT_FALSE(selection->transcript_index);
+
+    snapshot.generation.active = false;
+    EXPECT_FALSE(snapshot_append_selection(snapshot));
+}
+
 TEST(WebProtocol, EscapesAndOwnsPresentationText) {
     std::string text = "quote \\\" newline\\n";
     TranscriptEntry entry{
@@ -238,6 +266,7 @@ TEST(WebProtocol, DefinesEveryEnumSpelling) {
         {ErrorCode::not_found, "not_found"},
         {ErrorCode::bad_request, "bad_request"},
         {ErrorCode::body_too_large, "body_too_large"},
+        {ErrorCode::prompt_too_large, "prompt_too_large"},
         {ErrorCode::forbidden_origin, "forbidden_origin"},
         {ErrorCode::internal_error, "internal_error"},
         {ErrorCode::session_busy, "session_busy"},

@@ -20,22 +20,18 @@ template<typename>
 inline constexpr bool unsupported_web_command = false;
 
 WebSettings validate_runtime_settings(WebSettings settings) {
+    if (settings.command_queue_capacity == 0) {
+        throw std::invalid_argument(
+            "Web runtime command queue capacity must be positive");
+    }
     if (settings.command_batch_size == 0 || settings.event_batch_size == 0) {
-        throw std::invalid_argument("Web runtime batch sizes must be positive");
+        throw std::invalid_argument(
+            "Web runtime batch sizes must be positive");
     }
     if (settings.orphan_limit < settings.idle_grace) {
         throw std::invalid_argument("Web orphan limit must be at least idle grace");
     }
     return settings;
-}
-
-bool same_target(const AppendTarget& left, const AppendTarget& right) {
-    if (left.index() != right.index()) return false;
-    if (const auto* entry = std::get_if<AppendTargetEntry>(&left)) {
-        return entry->entry_id == std::get<AppendTargetEntry>(right).entry_id;
-    }
-    return std::get<AppendTargetReasoning>(left).request_id
-        == std::get<AppendTargetReasoning>(right).request_id;
 }
 
 int shutdown_reason_priority(ShutdownReason reason) {
@@ -98,73 +94,6 @@ GenerationPhase web_phase(ResponsePhase phase) {
     case ResponsePhase::stopping: return GenerationPhase::stopping;
     }
     throw std::logic_error("Unsupported generation phase");
-}
-
-bool same_entry_except_text(
-    const TranscriptEntry& before,
-    const TranscriptEntry& after) {
-    return before.id == after.id
-        && before.kind == after.kind
-        && before.participant_id == after.participant_id
-        && before.display_name == after.display_name
-        && before.addressed_to == after.addressed_to
-        && before.addressed_to_name == after.addressed_to_name
-        && before.status == after.status
-        && before.request_id == after.request_id;
-}
-
-bool same_snapshot_except_transcript(
-    const SessionSnapshot& before,
-    const SessionSnapshot& after) {
-    return before.forum == after.forum
-        && before.session_id == after.session_id
-        && before.session_label == after.session_label
-        && before.personas == after.personas
-        && before.default_persona_id == after.default_persona_id
-        && before.generation == after.generation
-        && before.notice == after.notice
-        && before.lifecycle == after.lifecycle
-        && before.shutdown_reason == after.shutdown_reason;
-}
-
-bool differs_only_by_entry_text(
-    const SessionSnapshot& before,
-    const SessionSnapshot& after,
-    std::size_t changed_index) {
-    if (!same_snapshot_except_transcript(before, after)
-        || before.transcript.size() != after.transcript.size()) {
-        return false;
-    }
-    for (std::size_t index = 0; index != before.transcript.size(); ++index) {
-        if (index == changed_index) {
-            if (!same_entry_except_text(
-                    before.transcript[index], after.transcript[index])) {
-                return false;
-            }
-        } else if (before.transcript[index] != after.transcript[index]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool differs_only_by_reasoning_text(
-    const SessionSnapshot& before,
-    const SessionSnapshot& after) {
-    return before.forum == after.forum
-        && before.session_id == after.session_id
-        && before.session_label == after.session_label
-        && before.personas == after.personas
-        && before.default_persona_id == after.default_persona_id
-        && before.transcript == after.transcript
-        && before.generation.active == after.generation.active
-        && before.generation.request_id == after.generation.request_id
-        && before.generation.agent_id == after.generation.agent_id
-        && before.generation.agent_name == after.generation.agent_name
-        && before.generation.phase == after.generation.phase
-        && before.notice == after.notice
-        && before.lifecycle == after.lifecycle
-        && before.shutdown_reason == after.shutdown_reason;
 }
 
 std::string_view generation_terminal_status(
@@ -343,11 +272,44 @@ WebSessionRuntime::WebSessionRuntime(
     std::shared_ptr<WebSnapshotSink> sink,
     WebRuntimeHooks hooks,
     WebRuntimeClock clock)
+    : WebSessionRuntime(
+          std::move(factory),
+          std::move(settings),
+          std::move(metadata),
+          std::move(sink),
+          {},
+          std::move(hooks),
+          std::move(clock)) {}
+
+WebSessionRuntime::WebSessionRuntime(
+    WebControllerFactory factory,
+    WebSettings settings,
+    WebSessionMetadata metadata,
+    std::shared_ptr<SseMailbox> mailbox,
+    WebRuntimeHooks hooks,
+    WebRuntimeClock clock)
+    : WebSessionRuntime(
+          std::move(factory),
+          std::move(settings),
+          std::move(metadata),
+          mailbox,
+          mailbox,
+          std::move(hooks),
+          std::move(clock)) {}
+
+WebSessionRuntime::WebSessionRuntime(
+    WebControllerFactory factory,
+    WebSettings settings,
+    WebSessionMetadata metadata,
+    std::shared_ptr<WebSnapshotSink> sink,
+    std::shared_ptr<SseMailbox> mailbox,
+    WebRuntimeHooks hooks,
+    WebRuntimeClock clock)
     : settings_(validate_runtime_settings(std::move(settings))),
       commands_(settings_.command_queue_capacity),
       metadata_(std::move(metadata)),
       sink_(std::move(sink)),
-      sse_mailbox_(std::dynamic_pointer_cast<SseMailbox>(sink_)),
+      sse_mailbox_(std::move(mailbox)),
       hooks_(std::move(hooks)),
       clock_(clock ? std::move(clock) : [] {
           return std::chrono::steady_clock::now();
@@ -365,18 +327,23 @@ WebSessionRuntime::WebSessionRuntime(
 WebSessionRuntime::WebSessionRuntime(
     WebSettings settings,
     WebSessionMetadata metadata,
-    std::shared_ptr<WebSnapshotSink> sink,
+    std::shared_ptr<SseMailbox> mailbox,
     WebRuntimeHooks hooks,
     WebRuntimeClock clock)
     : settings_(validate_runtime_settings(std::move(settings))),
       commands_(settings_.command_queue_capacity),
       metadata_(std::move(metadata)),
-      sink_(std::move(sink)),
-      sse_mailbox_(std::dynamic_pointer_cast<SseMailbox>(sink_)),
+      sink_(mailbox),
+      sse_mailbox_(std::move(mailbox)),
       hooks_(std::move(hooks)),
       clock_(clock ? std::move(clock) : [] {
           return std::chrono::steady_clock::now();
-      }) {}
+      }) {
+    if (!sse_mailbox_) {
+        throw std::invalid_argument(
+            "Registry-owned web runtime needs an SSE mailbox");
+    }
+}
 
 WebSessionRuntime::~WebSessionRuntime() {
     request_shutdown();
@@ -394,7 +361,9 @@ CommandSubmitResult WebSessionRuntime::submit(
     {
         std::lock_guard lock(state_mutex_);
         if (stopping_) {
-            rejection = ErrorCode::session_not_live;
+            rejection = shutdown_reason_ == ShutdownReason::server_stopping
+                ? ErrorCode::server_stopping
+                : ErrorCode::session_not_live;
         } else {
             const CommandEnqueueResult enqueued = commands_.try_push({std::move(command), completion});
             if (!enqueued.accepted) {
@@ -645,50 +614,14 @@ void WebSessionRuntime::publish_change(
                 ? std::to_string(*current.generation.request_id)
                 : std::string("none")));
     }
-    if (last_snapshot_) {
-        if (current == *last_snapshot_) return;
-        for (std::size_t i = 0; i < current.transcript.size() && i < last_snapshot_->transcript.size(); ++i) {
-            const TranscriptEntry& before = last_snapshot_->transcript[i];
-            const TranscriptEntry& after = current.transcript[i];
-            if (after.status == TranscriptStatus::streaming
-                && after.text != before.text
-                && after.text.starts_with(before.text)
-                && differs_only_by_entry_text(*last_snapshot_, current, i)) {
-                const AppendTarget target = AppendTargetEntry{after.id};
-                if (append_target_
-                    && same_target(*append_target_, target)) {
-                    const std::string text = after.text.substr(before.text.size());
-                    last_snapshot_ = std::move(current);
-                    sink_->publish_append({target, text}, *last_snapshot_);
-                    return;
-                }
-            }
-        }
-        if (current.generation.active && current.generation.request_id
-            && current.generation.reasoning_text
-                != last_snapshot_->generation.reasoning_text
-            && current.generation.reasoning_text.starts_with(
-                last_snapshot_->generation.reasoning_text)
-            && differs_only_by_reasoning_text(*last_snapshot_, current)) {
-            const AppendTarget target =
-                AppendTargetReasoning{*current.generation.request_id};
-            if (append_target_
-                && same_target(*append_target_, target)) {
-                const std::string text = current.generation.reasoning_text.substr(
-                    last_snapshot_->generation.reasoning_text.size());
-                last_snapshot_ = std::move(current);
-                sink_->publish_append({target, text}, *last_snapshot_);
-                return;
-            }
-        }
-    }
+    if (last_snapshot_ && current == *last_snapshot_) return;
     publish_snapshot(std::move(current));
 }
 
 bool WebSessionRuntime::publish_append(WebAppendCandidate candidate) {
     if (!sink_ || !last_snapshot_ || !append_target_
         || candidate.text.empty()
-        || !same_target(*append_target_, candidate.target)) {
+        || *append_target_ != candidate.target) {
         return false;
     }
     if (const auto* entry = std::get_if<AppendTargetEntry>(&candidate.target)) {
@@ -715,21 +648,13 @@ bool WebSessionRuntime::publish_append(WebAppendCandidate candidate) {
 void WebSessionRuntime::publish_snapshot(SessionSnapshot snapshot) {
     sink_->publish(SnapshotEvent{snapshot});
     last_snapshot_ = std::move(snapshot);
-    append_target_ = snapshot_append_target(*last_snapshot_);
-    append_entry_index_.reset();
-    if (append_target_) {
-        if (const auto* target =
-                std::get_if<AppendTargetEntry>(&*append_target_)) {
-            for (std::size_t index = 0;
-                 index != last_snapshot_->transcript.size();
-                 ++index) {
-                if (last_snapshot_->transcript[index].id
-                    == target->entry_id) {
-                    append_entry_index_ = index;
-                    break;
-                }
-            }
-        }
+    const auto selection = snapshot_append_selection(*last_snapshot_);
+    if (selection) {
+        append_target_ = selection->target;
+        append_entry_index_ = selection->transcript_index;
+    } else {
+        append_target_.reset();
+        append_entry_index_.reset();
     }
 }
 

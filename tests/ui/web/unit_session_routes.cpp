@@ -16,6 +16,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -84,6 +85,23 @@ public:
                 .text = calls_->transcript_text,
                 .status = TranscriptStatus::streaming,
             }},
+        };
+    }
+    std::optional<WebAppendCandidate> append_candidate(
+        const SessionSnapshot& before) override {
+        std::lock_guard lock(calls_->mutex);
+        if (before.transcript.size() != 1
+            || before.transcript[0].id != 1
+            || !calls_->transcript_text.starts_with(
+                before.transcript[0].text)
+            || calls_->transcript_text.size()
+                <= before.transcript[0].text.size()) {
+            return std::nullopt;
+        }
+        return WebAppendCandidate{
+            .target = AppendTargetEntry{1},
+            .text = calls_->transcript_text.substr(
+                before.transcript[0].text.size()),
         };
     }
     void shutdown() override {}
@@ -387,7 +405,7 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     const RegistryOpenResult unavailable =
         registry.open({"lobby", "missing"}, 1s);
     ASSERT_TRUE(std::holds_alternative<Error>(unavailable));
-    EXPECT_EQ(std::get<Error>(unavailable).code, ErrorCode::internal_error);
+    EXPECT_EQ(std::get<Error>(unavailable).code, ErrorCode::not_found);
 
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         registry.open({"lobby", stored.id}, 1s)));
@@ -422,7 +440,7 @@ TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLook
     expect_error(server.client().Get("/s/lobby/missing%23fragment/api/v1/session"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing%00suffix/api/v1/session"), 404, "not_found");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/input", "{}", "text/plain"), 400, "bad_request");
-    expect_error(server.client().Post("/s/lobby/missing/api/v1/input", R"({"text":"123456789"})", "application/json"), 413, "body_too_large");
+    expect_error(server.client().Post("/s/lobby/missing/api/v1/input", R"({"text":"123456789"})", "application/json"), 413, "prompt_too_large");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/stop", R"({"extra":true})", "application/json"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/default-agent", R"({"persona_id":""})", "application/json"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/close", "{}", "application/json"), 404, "not_found");
@@ -470,23 +488,51 @@ TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
     registry.begin_shutdown();
 }
 
-TEST(SessionRoutes, MapsAdmissionAndShutdownOutcomesWithoutExecutingCommands) {
+TEST(SessionRoutes, MapsAdmissionAndShutdownOutcomesWithoutExecutingRejectedCommands) {
     const auto full_calls = std::make_shared<Calls>();
-    WebSettings full_settings{.session_limit = 1, .command_queue_capacity = 0};
+    full_calls->block_input = true;
+    WebSettings full_settings{
+        .session_limit = 1,
+        .command_queue_capacity = 1,
+        .command_deadline = 1s,
+    };
     SessionRegistry full_registry(full_settings, [full_calls](const SessionKey&, WakeNotifier&) {
         return std::make_unique<RouteController>(full_calls);
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(full_registry.open({"lobby", "full"}, 1s)));
     RouteServer full_server(full_registry, full_settings);
+    auto running = std::async(std::launch::async, [&] {
+        return full_server.client().Post(
+            "/s/lobby/full/api/v1/input",
+            R"({"text":"hold"})",
+            "application/json");
+    });
+    {
+        std::unique_lock lock(full_calls->mutex);
+        ASSERT_TRUE(full_calls->input_changed.wait_for(lock, 1s, [&] {
+            return full_calls->input_entered;
+        }));
+    }
+    auto queued = std::async(std::launch::async, [&] {
+        return full_server.client().Post(
+            "/s/lobby/full/api/v1/input",
+            R"({"text":"queued"})",
+            "application/json");
+    });
+    EXPECT_EQ(queued.wait_for(20ms), std::future_status::timeout);
     expect_error(
         full_server.client().Post(
-            "/s/lobby/full/api/v1/input", R"({"text":"queued"})", "application/json"),
+            "/s/lobby/full/api/v1/actions/stop", "{}", "application/json"),
         503,
         "command_queue_full");
     {
         std::lock_guard lock(full_calls->mutex);
-        EXPECT_TRUE(full_calls->input.empty());
+        EXPECT_EQ(full_calls->stops, 0);
+        full_calls->release_input = true;
     }
+    full_calls->input_changed.notify_all();
+    ASSERT_TRUE(running.get());
+    ASSERT_TRUE(queued.get());
     full_registry.begin_shutdown();
 
     const auto stopping_calls = std::make_shared<Calls>();
@@ -542,6 +588,13 @@ TEST(SessionRoutes, MapsProcessShutdownDrainToServerStopping) {
     });
     ASSERT_EQ(queued.wait_for(20ms), std::future_status::timeout);
     registry.begin_shutdown();
+    expect_error(
+        server.client().Post(
+            "/s/lobby/shutdown/api/v1/input",
+            R"({"text":"late"})",
+            "application/json"),
+        503,
+        "server_stopping");
     {
         std::lock_guard lock(calls->mutex);
         calls->release_input = true;
