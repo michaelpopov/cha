@@ -15,7 +15,11 @@ selection through command-line options.
 `app.toml` configures application-wide behavior. Its top-level `host` and
 `port` settings define the web frontend's listener address. The logging section
 requires a log file and level; relative log paths are resolved from the
-workspace root.
+workspace root. `chaweb` also uses that host and port as its allowed browser
+authority to prevent DNS rebinding; loopback configurations additionally allow
+`localhost`, `127.0.0.1`, and `[::1]` with the configured port. For network
+access, configure the concrete address or hostname clients will use rather than
+a wildcard listener address.
 
 ```toml
 # app.toml

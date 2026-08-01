@@ -127,7 +127,7 @@ void SessionRoutes::install(httplib::Server& server) const {
             [mailbox = connection->mailbox, stream = connection->stream,
              interval = settings.sse_heartbeat_interval](
                 std::size_t,
-                httplib::DataSink& sink) mutable {
+                httplib::DataSink& sink) {
                 return SseStreamWriter(mailbox, stream, interval).write(sink);
             },
             [handle, mailbox = connection->mailbox, stream = connection->stream,

@@ -375,7 +375,10 @@ void execute_sql(
     }
 }
 
-WebControllerFactory real_factory(const std::filesystem::path& path) {
+using TestControllerFactory =
+    std::function<std::unique_ptr<WebSessionController>(WakeNotifier&)>;
+
+TestControllerFactory real_factory(const std::filesystem::path& path) {
     return [path](WakeNotifier& notifier) {
         SessionLease lease = SessionLease::acquire(path);
         SessionRestore restore = load_session_state(path);
@@ -388,7 +391,7 @@ WebControllerFactory real_factory(const std::filesystem::path& path) {
     };
 }
 
-WebControllerFactory fake_factory(const std::shared_ptr<FakeState>& state) {
+TestControllerFactory fake_factory(const std::shared_ptr<FakeState>& state) {
     return [state](WakeNotifier& notifier) {
         return std::make_unique<FakeController>(state, notifier);
     };
@@ -404,6 +407,65 @@ WebSettings test_settings(
     settings.event_batch_size = event_batch_size;
     return settings;
 }
+
+// Production's SessionRegistry owns runtime threads. This test harness mirrors
+// that ownership without giving WebSessionRuntime a second lifecycle mode.
+class TestWebSessionRuntime final : public WebSessionRuntime {
+public:
+    TestWebSessionRuntime(
+        TestControllerFactory factory,
+        WebSettings settings = {},
+        WebSessionMetadata metadata = {},
+        std::shared_ptr<WebSnapshotSink> sink = {},
+        WebRuntimeHooks hooks = {},
+        WebRuntimeClock clock = {})
+        : WebSessionRuntime(
+              std::move(settings),
+              std::move(metadata),
+              std::move(sink),
+              {},
+              std::move(hooks),
+              std::move(clock)),
+          owner_([this, factory = std::move(factory)]() mutable {
+              run_factory(std::move(factory));
+          }) {}
+
+    TestWebSessionRuntime(
+        TestControllerFactory factory,
+        WebSettings settings,
+        WebSessionMetadata metadata,
+        std::shared_ptr<SseMailbox> mailbox,
+        WebRuntimeHooks hooks = {},
+        WebRuntimeClock clock = {})
+        : WebSessionRuntime(
+              std::move(settings),
+              std::move(metadata),
+              mailbox,
+              mailbox,
+              std::move(hooks),
+              std::move(clock)),
+          owner_([this, factory = std::move(factory)]() mutable {
+              run_factory(std::move(factory));
+          }) {}
+
+    ~TestWebSessionRuntime() {
+        request_shutdown();
+        owner_.join();
+    }
+
+private:
+    void run_factory(TestControllerFactory factory) {
+        try {
+            run_with_controller(factory(notifier_for_owner()));
+        } catch (const std::bad_alloc&) {
+            std::terminate();
+        } catch (...) {
+            run_with_controller(nullptr);
+        }
+    }
+
+    std::thread owner_;
+};
 
 TEST(WakeNotifier, RemembersWakeBeforeWait) {
     WakeNotifier notifier;
@@ -446,7 +508,7 @@ TEST(CommandCompletion, TimeoutAtomicallyAbandonsLateCompletion) {
 
 TEST(WebSessionRuntime, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     auto state = std::make_shared<FakeState>();
-    WebSessionRuntime runtime(fake_factory(state), test_settings(8));
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(8));
 
     EXPECT_EQ(
         std::get<CommandResult>(runtime.submit(RawCommand{"/clear"}, 1s))
@@ -472,7 +534,7 @@ TEST(WebSessionRuntime, RoutesRawAndTypedCommandsOnOneOwnerThread) {
 TEST(WebSessionRuntime, TimeoutLeavesAcceptedCommandAliveAndLateCompletionSafe) {
     auto state = std::make_shared<FakeState>();
     state->block_raw = true;
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2));
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
 
     EXPECT_EQ(
         std::get<ErrorCode>(runtime.submit(RawCommand{"slow"}, 5ms)),
@@ -493,7 +555,7 @@ TEST(WebSessionRuntime, TimeoutLeavesAcceptedCommandAliveAndLateCompletionSafe) 
 TEST(WebSessionRuntime, FullAndStoppingCommandsDoNotExecute) {
     auto state = std::make_shared<FakeState>();
     state->block_raw = true;
-    WebSessionRuntime runtime(fake_factory(state), test_settings(1));
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(1));
     auto first = std::async(std::launch::async, [&] {
         return runtime.submit(RawCommand{"first"}, 1s);
     });
@@ -527,7 +589,7 @@ TEST(WebSessionRuntime, FullAndStoppingCommandsDoNotExecute) {
 TEST(WebSessionRuntime, ContinuesAfterAFullBatchWithOnlyACoalescedWake) {
     auto state = std::make_shared<FakeState>();
     state->block_receive = true;
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(4, 2));
     {
         std::unique_lock lock(state->mutex);
@@ -559,8 +621,8 @@ TEST(WebSessionRuntime, ContinuesAfterAFullBatchWithOnlyACoalescedWake) {
 TEST(WebSessionRuntime, IndependentRuntimesProgressWithoutSharedState) {
     auto first_state = std::make_shared<FakeState>();
     auto second_state = std::make_shared<FakeState>();
-    WebSessionRuntime first(fake_factory(first_state), test_settings(4));
-    WebSessionRuntime second(fake_factory(second_state), test_settings(4));
+    TestWebSessionRuntime first(fake_factory(first_state), test_settings(4));
+    TestWebSessionRuntime second(fake_factory(second_state), test_settings(4));
 
     auto first_result = std::async(std::launch::async, [&] {
         return first.submit(RawCommand{"first"}, 1s);
@@ -580,7 +642,7 @@ TEST(WebSessionRuntime, IndependentRuntimesProgressWithoutSharedState) {
 TEST(WebSessionRuntime, InterleavesAgentDrainingWithCommandBatches) {
     auto state = std::make_shared<FakeState>();
     state->block_receive = true;
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(8, 2));
     {
         std::unique_lock lock(state->mutex);
@@ -620,7 +682,7 @@ TEST(WebSessionRuntime, InterleavesAgentDrainingWithCommandBatches) {
 TEST(WebSessionRuntime, NotificationPressureDoesNotStarveCommands) {
     auto state = std::make_shared<FakeState>();
     state->flood_notifications = true;
-    WebSessionRuntime runtime(fake_factory(state), test_settings(8));
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(8));
 
     {
         std::unique_lock lock(state->mutex);
@@ -643,7 +705,7 @@ TEST(WebSessionRuntime, NotificationPressureDoesNotStarveCommands) {
 
 TEST(WebSessionRuntime, CommandEndSessionStopsTheRuntime) {
     auto state = std::make_shared<FakeState>();
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2));
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         runtime.submit(RawCommand{"end session"}, 1s)));
@@ -655,7 +717,7 @@ TEST(WebSessionRuntime, CommandEndSessionStopsTheRuntime) {
 TEST(WebSessionRuntime, ReceiveEndSessionStopsTheRuntime) {
     auto state = std::make_shared<FakeState>();
     state->end_on_receive = true;
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2));
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
     {
         std::unique_lock lock(state->mutex);
         ASSERT_TRUE(state->entered.wait_for(lock, 1s, [&] {
@@ -671,7 +733,7 @@ TEST(WebSessionRuntime, ReceiveEndSessionStopsTheRuntime) {
 TEST(WebSessionRuntime, RejectsZeroQueueAndBatchSizesBeforeStartingOwner) {
     WebSettings settings = test_settings(0);
     EXPECT_THROW(
-        (void)WebSessionRuntime(
+        (void)TestWebSessionRuntime(
             fake_factory(std::make_shared<FakeState>()), settings),
         std::invalid_argument);
 
@@ -679,13 +741,14 @@ TEST(WebSessionRuntime, RejectsZeroQueueAndBatchSizesBeforeStartingOwner) {
     settings.command_batch_size = 0;
 
     EXPECT_THROW(
-        (void)WebSessionRuntime(fake_factory(std::make_shared<FakeState>()), settings),
+        (void)TestWebSessionRuntime(
+            fake_factory(std::make_shared<FakeState>()), settings),
         std::invalid_argument);
 
     settings = test_settings(2);
     settings.event_batch_size = 0;
     EXPECT_THROW(
-        (void)WebSessionRuntime(
+        (void)TestWebSessionRuntime(
             fake_factory(std::make_shared<FakeState>()), settings),
         std::invalid_argument);
 }
@@ -703,7 +766,7 @@ TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
     auto state = std::make_shared<FakeState>();
     state->fast_append_candidates = true;
     auto sink = std::make_shared<FakeSnapshotSink>();
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(2),
         {.forum = {"forum", "Forum"}, .session_id = "session", .session_label = "Label"},
         sink);
@@ -744,7 +807,7 @@ TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
 TEST(WebSessionRuntime, CandidateUnavailablePublishesSnapshotForTextGrowth) {
     auto state = std::make_shared<FakeState>();
     auto sink = std::make_shared<FakeSnapshotSink>();
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(
@@ -775,7 +838,7 @@ TEST(WebSessionRuntime, SinkSequencesStoredPayloadsNotOwnerChanges) {
         std::lock_guard lock(sink->mutex);
         sink->merge_pending_appends = true;
     }
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(
@@ -823,7 +886,7 @@ TEST(WebSessionRuntime, TargetChangePublishesSnapshotBeforeResetSequence) {
     auto state = std::make_shared<FakeState>();
     state->fast_append_candidates = true;
     auto sink = std::make_shared<FakeSnapshotSink>();
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(
@@ -876,7 +939,7 @@ TEST(WebSessionRuntime, ReasoningGrowthWithStructuralChangeUsesSnapshot) {
         state->snapshot.generation.reasoning_text = "think";
     }
     auto sink = std::make_shared<FakeSnapshotSink>();
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(
@@ -902,7 +965,7 @@ TEST(WebSessionRuntime, ProvenAppendBypassesFullSnapshotConstruction) {
     auto state = std::make_shared<FakeState>();
     state->fast_append_candidates = true;
     auto sink = std::make_shared<FakeSnapshotSink>();
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(
@@ -932,7 +995,7 @@ TEST(WebSessionRuntime, ConnectSnapshotBecomesAppendBaseWhileWriterIsStalled) {
     auto state = std::make_shared<FakeState>();
     state->fast_append_candidates = true;
     auto mailbox = std::make_shared<SseMailbox>();
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(4), {}, mailbox);
     {
         std::unique_lock lock(state->mutex);
@@ -995,7 +1058,7 @@ TEST(WebSessionRuntime, ConnectSnapshotBecomesAppendBaseWhileWriterIsStalled) {
 TEST(WebSessionRuntime, ConnectWithNonStreamingSinkReportsInternalError) {
     auto state = std::make_shared<FakeState>();
     auto sink = std::make_shared<FakeSnapshotSink>();
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(2), {}, sink);
     {
         std::unique_lock lock(sink->mutex);
@@ -1014,7 +1077,7 @@ TEST(WebSessionRuntime, OneActiveStreamRejectsConflictsAndIgnoresStaleCloses) {
     auto mailbox = std::make_shared<SseMailbox>();
     std::mutex events_mutex;
     std::vector<std::string> events;
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(4), {}, mailbox,
         {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
             std::lock_guard lock(events_mutex);
@@ -1030,7 +1093,7 @@ TEST(WebSessionRuntime, OneActiveStreamRejectsConflictsAndIgnoresStaleCloses) {
 
     auto other_state = std::make_shared<FakeState>();
     auto other_mailbox = std::make_shared<SseMailbox>();
-    WebSessionRuntime other(
+    TestWebSessionRuntime other(
         fake_factory(other_state), test_settings(4), {}, other_mailbox);
     const auto other_connection = other.connect_sse(1s);
     EXPECT_TRUE(std::holds_alternative<SseConnectResult>(other_connection));
@@ -1066,7 +1129,7 @@ TEST(WebSessionRuntime, TimedOutSseConnectReleasesItsUnclaimedStream) {
     auto state = std::make_shared<FakeState>();
     state->block_raw = true;
     auto mailbox = std::make_shared<SseMailbox>();
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(2), {}, mailbox);
 
     EXPECT_EQ(
@@ -1109,7 +1172,7 @@ TEST(WebSessionRuntime, InitialIdleDeadlineUnloadsAnUnvisitedSession) {
     WebSettings settings = test_settings(2);
     settings.idle_grace = 10ms;
     settings.orphan_limit = 20ms;
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), settings, {}, std::make_shared<SseMailbox>(),
         {.mark_finished = [&] { finished_signal.set_value(); }},
         [clock] { return clock->now(); });
@@ -1136,7 +1199,7 @@ TEST(WebSessionRuntime, GenerationCompletionReevaluatesDisconnectDeadline) {
     settings.idle_grace = 10ms;
     settings.orphan_limit = 200ms;
     auto mailbox = std::make_shared<SseMailbox>();
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), settings, {}, mailbox,
         {.mark_finished = [&] { finished_signal.set_value(); }},
         [clock] { return clock->now(); });
@@ -1169,7 +1232,7 @@ TEST(WebSessionRuntime, GeneratingDisconnectUsesOrphanLimitFromDisconnection) {
     settings.idle_grace = 10ms;
     settings.orphan_limit = 100ms;
     auto mailbox = std::make_shared<SseMailbox>();
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), settings, {}, mailbox,
         {.mark_finished = [&] { finished_signal.set_value(); }},
         [clock] { return clock->now(); });
@@ -1197,7 +1260,7 @@ TEST(WebSessionRuntime, ReconnectCancelsDeadlineAndStartsWithSnapshot) {
     settings.idle_grace = 200ms;
     settings.orphan_limit = 300ms;
     auto mailbox = std::make_shared<SseMailbox>();
-    WebSessionRuntime runtime(fake_factory(state), settings, {}, mailbox);
+    TestWebSessionRuntime runtime(fake_factory(state), settings, {}, mailbox);
 
     const auto first = runtime.connect_sse(1s);
     ASSERT_TRUE(std::holds_alternative<SseConnectResult>(first));
@@ -1221,7 +1284,7 @@ TEST(WebSessionRuntime, ReconnectCancelsDeadlineAndStartsWithSnapshot) {
 TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
     auto state = std::make_shared<FakeState>();
     auto sink = std::make_shared<FakeSnapshotSink>();
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 1U; }));
@@ -1268,7 +1331,7 @@ TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
         std::mutex events_mutex;
         std::vector<std::string> events;
         {
-            WebSessionRuntime runtime(
+            TestWebSessionRuntime runtime(
                 fake_factory(state), test_settings(2), {}, sink,
                 {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
                     std::lock_guard lock(events_mutex);
@@ -1307,7 +1370,7 @@ TEST(WebSessionRuntime, GenerationRequestChangeLogsTerminalThenNextStart) {
     std::mutex events_mutex;
     std::vector<std::string> events;
     {
-        WebSessionRuntime runtime(
+        TestWebSessionRuntime runtime(
             fake_factory(state), test_settings(2), {}, sink,
             {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
                 std::lock_guard lock(events_mutex);
@@ -1369,7 +1432,7 @@ TEST(WebSessionRuntime, ReasoningOnlyCancellationLogsCancelledStatus) {
     std::mutex events_mutex;
     std::vector<std::string> events;
     {
-        WebSessionRuntime runtime(
+        TestWebSessionRuntime runtime(
             fake_factory(state), test_settings(2), {}, sink,
             {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
                 std::lock_guard lock(events_mutex);
@@ -1431,7 +1494,7 @@ TEST(WebSessionRuntime, FinalSnapshotUsesBoundedDrainAndHooks) {
         std::lock_guard lock(sink->mutex);
         sink->written = false;
     }
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), settings, {}, sink,
         {
             .mark_registry_stopping = [&] { ++stopping; },
@@ -1461,7 +1524,7 @@ TEST(WebSessionRuntime, StoppedMailboxReaderExpiresFinalSnapshotDrain) {
     WebSettings settings = test_settings(2);
     settings.sse_drain_deadline = 10ms;
     auto mailbox = std::make_shared<SseMailbox>();
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), settings, {}, mailbox,
         {.mark_finished = [&] { finished_signal.set_value(); }});
 
@@ -1493,7 +1556,7 @@ TEST(WebSessionRuntime, WrittenFinalSnapshotEndsDrainImmediately) {
         std::lock_guard lock(sink->mutex);
         sink->written = true;
     }
-    WebSessionRuntime runtime(fake_factory(state), settings, {}, sink);
+    TestWebSessionRuntime runtime(fake_factory(state), settings, {}, sink);
     const auto started = std::chrono::steady_clock::now();
     runtime.request_shutdown();
     std::unique_lock lock(sink->mutex);
@@ -1505,7 +1568,7 @@ TEST(WebSessionRuntime, ProcessStopWinsShutdownReason) {
     auto state = std::make_shared<FakeState>();
     state->block_receive = true;
     auto sink = std::make_shared<FakeSnapshotSink>();
-    WebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
     {
         std::unique_lock lock(state->mutex);
         ASSERT_TRUE(state->entered.wait_for(lock, 1s, [&] { return state->receive_entered; }));
@@ -1535,7 +1598,7 @@ TEST(WebSessionRuntime, ConcurrentShutdownRequestsRunTeardownOnce) {
     int finished = 0;
     std::promise<void> finished_signal;
     auto finished_future = finished_signal.get_future();
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(2), {}, sink,
         {
             .mark_registry_stopping = [&] { ++stopping; },
@@ -1585,7 +1648,7 @@ TEST(WebSessionRuntime, FatalOwnerFailureIsContainedAndSkipsDrainWait) {
         .session_id = "session",
         .session_label = "Label",
     };
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(2), metadata, sink,
         {.log_fatal = [&](const WebSessionMetadata& identity) {
             ++fatal_logs;
@@ -1604,59 +1667,6 @@ TEST(WebSessionRuntime, FatalOwnerFailureIsContainedAndSkipsDrainWait) {
     EXPECT_EQ(logged_metadata->session_id, metadata.session_id);
 }
 
-TEST(WebSessionRuntime, FactoryFailureReleasesOpenHandoffLease) {
-    TemporaryWebSession temporary;
-    auto sink = std::make_shared<FakeSnapshotSink>();
-    int stopping = 0;
-    int finished = 0;
-    int fatal_logs = 0;
-    std::optional<WebSessionMetadata> logged_metadata;
-    std::promise<void> finished_signal;
-    auto finished_future = finished_signal.get_future();
-    const WebSessionMetadata metadata{
-        .forum = {"forum", "Forum"},
-        .session_id = "failed-open",
-        .session_label = "Failed open",
-    };
-    WebSessionRuntime runtime(
-        [path = temporary.path](WakeNotifier&)
-            -> std::unique_ptr<WebSessionController> {
-            SessionLease lease = SessionLease::acquire(path);
-            if (!lease.active()) {
-                throw std::logic_error("factory did not acquire its lease");
-            }
-            throw std::runtime_error("injected factory failure");
-        },
-        test_settings(2),
-        metadata,
-        sink,
-        {
-            .mark_registry_stopping = [&] { ++stopping; },
-            .mark_finished = [&] {
-                ++finished;
-                finished_signal.set_value();
-            },
-            .log_fatal = [&](const WebSessionMetadata& identity) {
-                ++fatal_logs;
-                logged_metadata = identity;
-            },
-        });
-
-    ASSERT_EQ(finished_future.wait_for(1s), std::future_status::ready);
-    std::lock_guard lock(sink->mutex);
-    EXPECT_TRUE(sink->closed);
-    EXPECT_EQ(sink->close_calls, 1);
-    EXPECT_TRUE(sink->payloads.empty());
-    EXPECT_EQ(sink->drain_waits, 0);
-    EXPECT_EQ(stopping, 1);
-    EXPECT_EQ(finished, 1);
-    EXPECT_EQ(fatal_logs, 1);
-    ASSERT_TRUE(logged_metadata);
-    EXPECT_EQ(logged_metadata->session_id, metadata.session_id);
-    SessionLease reopened = SessionLease::acquire(temporary.path);
-    EXPECT_TRUE(reopened.active());
-}
-
 TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
     auto state = std::make_shared<FakeState>();
     state->throw_shutdown = true;
@@ -1670,7 +1680,7 @@ TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
         .session_id = "throwing-shutdown",
         .session_label = "Throwing shutdown",
     };
-    WebSessionRuntime runtime(
+    TestWebSessionRuntime runtime(
         fake_factory(state),
         test_settings(2),
         metadata,
@@ -1707,7 +1717,7 @@ TEST(WebSessionRuntime, PersistenceFailureReleasesOnlyTheFailingRuntimeLease) {
     auto healthy_sink = std::make_shared<FakeSnapshotSink>();
     std::promise<void> failing_finished_signal;
     auto failing_finished = failing_finished_signal.get_future();
-    auto failing_runtime = std::make_unique<WebSessionRuntime>(
+    auto failing_runtime = std::make_unique<TestWebSessionRuntime>(
         real_factory(failing_session.path),
         test_settings(2),
         WebSessionMetadata{
@@ -1719,7 +1729,7 @@ TEST(WebSessionRuntime, PersistenceFailureReleasesOnlyTheFailingRuntimeLease) {
         WebRuntimeHooks{
             .mark_finished = [&] { failing_finished_signal.set_value(); },
         });
-    WebSessionRuntime healthy_runtime(
+    TestWebSessionRuntime healthy_runtime(
         real_factory(healthy_session.path),
         test_settings(2),
         WebSessionMetadata{

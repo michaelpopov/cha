@@ -106,11 +106,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
         const std::string forum = request.matches[1];
         if (!is_valid_route_component(forum)) return set_route_not_found(response);
         if (!validate_json_mutation(request, response)) return;
-        try {
-            (void)workspace->load_forum(forum);
-        } catch (const ForumNotFoundError&) {
-            return set_route_not_found(response);
-        }
         std::string label;
         if (!parse_route_json_body(
                 request,

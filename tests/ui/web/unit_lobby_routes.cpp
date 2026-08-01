@@ -44,12 +44,12 @@ public:
         SessionRegistry& registry,
         WebSettings settings = {.open_deadline = 500ms},
         Installer installer = {}) {
-        configure_http_server(server_, settings);
         AssetHandler().install(server_);
         LobbyRoutes(workspace, registry, settings).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
+        configure_http_server(server_, settings, "127.0.0.1", port_);
         thread_ = std::thread([this] { server_.listen_after_bind(); });
         server_.wait_until_ready();
     }
@@ -280,13 +280,16 @@ TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeRegistry)
     const auto wrong_type = server.client().Post("/api/v1/forums/lobby/sessions", "{}", "text/plain");
     expect_error(wrong_type, 400, "bad_request");
 
-    httplib::Headers headers{{"Content-Type", "application/json"}, {"Origin", "http://other.example"}, {"Host", "localhost"}};
+    httplib::Headers headers{
+        {"Content-Type", "application/json"},
+        {"Origin", "http://other.example"},
+    };
     const auto foreign = server.client().Post("/api/v1/forums/lobby/sessions", headers, R"({"label":"x"})", "application/json");
     expect_error(foreign, 403, "forbidden_origin");
     EXPECT_EQ(starts, 0);
 }
 
-TEST(LobbyRoutes, AcceptsMatchingLoopbackLanAndMdnsOrigins) {
+TEST(LobbyRoutes, AcceptsConfiguredAndLoopbackAliasOrigins) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
@@ -305,27 +308,64 @@ TEST(LobbyRoutes, AcceptsMatchingLoopbackLanAndMdnsOrigins) {
     ASSERT_TRUE(loopback);
     EXPECT_EQ(loopback->status, 201);
 
-    const auto lan = server.client().Post(
+    const auto localhost = server.client().Post(
         "/api/v1/forums/lobby/sessions",
         httplib::Headers{
-            {"Host", "192.168.1.25:8080"},
-            {"Origin", "http://192.168.1.25:8080"},
+            {"Host", "localhost:" + std::to_string(server.port())},
+            {"Origin", "http://localhost:" + std::to_string(server.port())},
         },
-        R"({"label":"LAN"})",
+        R"({"label":"localhost"})",
         "application/json");
-    ASSERT_TRUE(lan);
-    EXPECT_EQ(lan->status, 201);
+    ASSERT_TRUE(localhost);
+    EXPECT_EQ(localhost->status, 201);
+}
 
-    const auto mdns = server.client().Post(
-        "/api/v1/forums/lobby/sessions",
-        httplib::Headers{
-            {"Host", "cha.local"},
-            {"Origin", "https://cha.local"},
-        },
-        R"({"label":"mDNS"})",
-        "application/json");
-    ASSERT_TRUE(mdns);
-    EXPECT_EQ(mdns->status, 201);
+TEST(LobbyRoutes, RejectsDnsRebindingHostOnReadsAndMutations) {
+    test::TestWorkspace fixture;
+    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
+        return std::make_unique<IdleController>();
+    });
+    TestServer server(workspace, registry);
+    const httplib::Headers rebound{
+        {"Host", "evil.example:" + std::to_string(server.port())},
+        {"Origin", "http://evil.example:" + std::to_string(server.port())},
+    };
+
+    expect_error(
+        server.client().Get("/api/v1/forums", rebound),
+        403,
+        "forbidden_host");
+    const int other_port = server.port() == 65535
+        ? server.port() - 1
+        : server.port() + 1;
+    expect_error(
+        server.client().Get(
+            "/api/v1/forums",
+            httplib::Headers{{
+                "Host",
+                "127.0.0.1:" + std::to_string(other_port),
+            }}),
+        403,
+        "forbidden_host");
+    expect_error(
+        server.client().Get(
+            "/api/v1/forums",
+            httplib::Headers{
+                {"Host", "127.0.0.1:" + std::to_string(server.port())},
+                {"Host", "evil.example:" + std::to_string(server.port())},
+            }),
+        403,
+        "forbidden_host");
+    expect_error(
+        server.client().Post(
+            "/api/v1/forums/lobby/sessions",
+            rebound,
+            R"({"label":"rebound"})",
+            "application/json"),
+        403,
+        "forbidden_host");
+    EXPECT_TRUE(workspace->sessions("lobby").empty());
 }
 
 TEST(LobbyRoutes, ValidatesMissingIdentifiersMethodsAndOriginWithoutOrigin) {
@@ -337,6 +377,20 @@ TEST(LobbyRoutes, ValidatesMissingIdentifiersMethodsAndOriginWithoutOrigin) {
     TestServer server(workspace, registry);
 
     expect_error(server.client().Get("/api/v1/forums/missing/sessions"), 404, "not_found");
+    expect_error(
+        server.client().Post(
+            "/api/v1/forums/missing/sessions",
+            "garbage",
+            "application/json"),
+        400,
+        "bad_request");
+    expect_error(
+        server.client().Post(
+            "/api/v1/forums/missing/sessions",
+            R"({"label":"Missing"})",
+            "application/json"),
+        404,
+        "not_found");
     expect_error(
         server.client().Post(
             "/api/v1/forums/lobby/sessions/missing/open", "{}", "application/json"),

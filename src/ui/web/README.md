@@ -5,14 +5,15 @@ runtime coordination. It may depend on `session/` presentation values but does
 not put web types in `cha_core`. A future session runtime is the sole owner of a
 `SessionController`; HTTP workers exchange only owning web values with it.
 
-`WebSessionRuntime` owns one permanent thread, a condition-variable wake
-notifier, and a bounded multi-producer command queue. HTTP-facing callers get
+`SessionRegistry` owns one permanent thread per runtime and invokes the
+threadless `WebSessionRuntime` on it. The runtime owns a condition-variable wake
+notifier and a bounded multi-producer command queue. HTTP-facing callers get
 only owning command results; the owner thread alone reaches a controller and
-continues draining agent notifications without a browser connection. It copies
-controller state into owning, presentation-neutral snapshots and publishes
-them through a small abstract sink, so the SSE writer never borrows controller
-state or blocks the owner. Append candidates cross that seam without a sequence
-number; the mailbox assigns sequence values only to payloads
+continues draining agent notifications without a browser connection. The
+runtime copies controller state into owning, presentation-neutral snapshots
+and publishes them through a small abstract sink, so the SSE writer never
+borrows controller state or blocks the owner. Append candidates cross that seam
+without a sequence number; the mailbox assigns sequence values only to payloads
 it actually stores. Its idempotent owner-thread teardown
 uses registry hooks only for lifecycle notifications, drains a final snapshot
 for a bounded interval, and contains controller failures to that runtime.
@@ -46,8 +47,11 @@ reattach and directly reads only the selected session's stored metadata before
 a new open. `AssetHandler`
 separately owns the root HTML/asset boundary and currently serves only a
 framework-neutral lobby placeholder. `configure_http_server()` owns the
-server-global request pool, read/write timeouts, payload limit, and fallback error/exception
-handlers so route installers cannot silently replace one another's policy.
+server-global allowed-host check, request pool, read/write timeouts, payload
+limit, and fallback error/exception handlers so route installers cannot
+silently replace one another's policy. The allowed-host check runs before
+routing and admits only the configured listener authority; loopback listeners
+also admit the equivalent `localhost`, IPv4, and IPv6 loopback authorities.
 `ServerShutdownCoordinator` implements the bounded process shutdown sequence:
 it waits for signal notification, sets the registry stopping flag, stops HTTP
 acceptance, wakes opening waiters, requests published runtimes to stop, joins

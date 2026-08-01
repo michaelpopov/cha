@@ -34,7 +34,8 @@ int main() {
             cha::web::SessionRegistry registry =
                 cha::web::SessionRegistry::from_workspace(settings, workspace);
             httplib::Server server;
-            cha::web::configure_http_server(server, settings);
+            cha::web::configure_http_server(
+                server, settings, config.host, config.port);
             cha::web::AssetHandler().install(server);
             cha::web::LobbyRoutes(workspace, registry, settings).install(server);
             cha::web::SessionRoutes(registry, settings).install(server);

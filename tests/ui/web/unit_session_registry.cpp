@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <future>
 #include <mutex>
 #include <stdexcept>
@@ -113,6 +114,23 @@ public:
 
 private:
     std::atomic<bool>& lease_held_;
+};
+
+class TemporaryLeasePath {
+public:
+    TemporaryLeasePath()
+        : path(std::filesystem::temp_directory_path()
+               / ("cha_registry_failed_open_"
+                  + std::to_string(std::chrono::steady_clock::now()
+                                       .time_since_epoch()
+                                       .count())
+                  + ".sqlite3")) {}
+    ~TemporaryLeasePath() {
+        std::error_code ignored;
+        std::filesystem::remove(SessionLease::companion_path(path), ignored);
+    }
+
+    std::filesystem::path path;
 };
 
 TEST(SessionRegistry, ReusesRunningSessionAndReturnsHandle) {
@@ -334,6 +352,27 @@ TEST(SessionRegistry, FailedOpenIsSweptAndCanBeRetried) {
     EXPECT_EQ(code_of(registry.open(key, 500ms)), ErrorCode::internal_error);
     EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open(key, 500ms)));
     EXPECT_EQ(attempts, 2);
+    registry.begin_shutdown();
+}
+
+TEST(SessionRegistry, FactoryFailureReleasesOpenHandoffLease) {
+    TemporaryLeasePath temporary;
+    SessionRegistry registry(
+        {.session_limit = 1},
+        [path = temporary.path](const SessionKey&, WakeNotifier&)
+            -> std::unique_ptr<WebSessionController> {
+            SessionLease lease = SessionLease::acquire(path);
+            if (!lease.active()) {
+                throw std::logic_error("factory did not acquire its lease");
+            }
+            throw std::runtime_error("injected factory failure");
+        });
+
+    EXPECT_EQ(
+        code_of(registry.open({"f", "failed-lease"}, 500ms)),
+        ErrorCode::internal_error);
+    SessionLease reopened = SessionLease::acquire(temporary.path);
+    EXPECT_TRUE(reopened.active());
     registry.begin_shutdown();
 }
 

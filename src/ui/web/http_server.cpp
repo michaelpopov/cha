@@ -6,12 +6,71 @@
 
 #include <httplib.h>
 
+#include <algorithm>
+#include <cctype>
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
+#include <utility>
 
 namespace cha::web {
 namespace {
+
+std::string lowercase_ascii(std::string value) {
+    std::transform(
+        value.begin(), value.end(), value.begin(),
+        [](const unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    return value;
+}
+
+std::string unbracketed_host(std::string host) {
+    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
+        host.erase(host.begin());
+        host.pop_back();
+    }
+    return lowercase_ascii(std::move(host));
+}
+
+std::string host_authority(std::string host, int port) {
+    host = unbracketed_host(std::move(host));
+    if (host.find(':') != std::string::npos) {
+        host = '[' + host + ']';
+    }
+    return host + ':' + std::to_string(port);
+}
+
+std::unordered_set<std::string> allowed_host_authorities(
+    std::string listener_host,
+    int listener_port) {
+    if (listener_host.empty()) {
+        throw std::invalid_argument("Web listener host must not be empty");
+    }
+    if (listener_port < 1 || listener_port > 65535) {
+        throw std::invalid_argument("Web listener port must be between 1 and 65535");
+    }
+
+    const std::string normalized = unbracketed_host(listener_host);
+    std::unordered_set<std::string> allowed;
+    const auto add = [&](const std::string& host) {
+        const std::string authority = host_authority(host, listener_port);
+        allowed.insert(authority);
+        if (listener_port == 80) {
+            allowed.insert(authority.substr(0, authority.size() - 3));
+        }
+    };
+    add(normalized);
+    if (normalized == "127.0.0.1"
+        || normalized == "::1"
+        || normalized == "localhost") {
+        add("127.0.0.1");
+        add("::1");
+        add("localhost");
+    }
+    return allowed;
+}
 
 void set_generated_error(httplib::Response& response) {
     if (!response.body.empty()) return;
@@ -64,7 +123,11 @@ void set_exception_error(
 
 } // namespace
 
-void configure_http_server(httplib::Server& server, WebSettings settings) {
+void configure_http_server(
+    httplib::Server& server,
+    WebSettings settings,
+    std::string listener_host,
+    int listener_port) {
     const std::size_t minimum_workers =
         settings.session_limit + settings.http_request_headroom;
     if (settings.http_thread_pool_size < minimum_workers) {
@@ -75,6 +138,8 @@ void configure_http_server(httplib::Server& server, WebSettings settings) {
         throw std::invalid_argument(
             "Web pending-request limit must cover the HTTP request pool");
     }
+    const auto allowed_hosts = allowed_host_authorities(
+        std::move(listener_host), listener_port);
     server.new_task_queue = [settings] {
         return new httplib::ThreadPool(
             settings.http_thread_pool_size,
@@ -86,6 +151,20 @@ void configure_http_server(httplib::Server& server, WebSettings settings) {
     // cpp-httplib waits for writability before every content-provider write,
     // so this bounds lack of progress rather than total stream duration.
     server.set_write_timeout(settings.http_write_timeout);
+    server.set_pre_routing_handler(
+        [allowed_hosts](
+            const httplib::Request& request,
+            httplib::Response& response) {
+            const bool allowed = request.get_header_value_count("Host") == 1
+                && allowed_hosts.contains(lowercase_ascii(
+                    request.get_header_value("Host")));
+            if (allowed) return httplib::Server::HandlerResponse::Unhandled;
+            set_error_response(
+                response,
+                403,
+                {ErrorCode::forbidden_host, "Request host is not allowed."});
+            return httplib::Server::HandlerResponse::Handled;
+        });
     server.set_error_handler(
         [](const httplib::Request&, httplib::Response& response) {
             set_generated_error(response);

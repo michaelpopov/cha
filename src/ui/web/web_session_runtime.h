@@ -15,7 +15,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <variant>
 
 namespace cha {
@@ -59,9 +58,6 @@ public:
     virtual void shutdown() = 0;
 };
 
-using WebControllerFactory =
-    std::function<std::unique_ptr<WebSessionController>(WakeNotifier&)>;
-
 struct WebSessionMetadata {
     ForumSummary forum;
     std::string session_id;
@@ -100,20 +96,6 @@ using WebRuntimeClock =
 
 class WebSessionRuntime {
 public:
-    WebSessionRuntime(
-        WebControllerFactory factory,
-        WebSettings settings = {},
-        WebSessionMetadata metadata = {},
-        std::shared_ptr<WebSnapshotSink> sink = {},
-        WebRuntimeHooks hooks = {},
-        WebRuntimeClock clock = {});
-    WebSessionRuntime(
-        WebControllerFactory factory,
-        WebSettings settings,
-        WebSessionMetadata metadata,
-        std::shared_ptr<SseMailbox> mailbox,
-        WebRuntimeHooks hooks = {},
-        WebRuntimeClock clock = {});
     // Registry-owned runtimes are constructed and opened on the registry's
     // owner thread, then published before this loop starts.  This keeps the
     // controller and its permanent owner thread the same thread.
@@ -123,10 +105,7 @@ public:
         std::shared_ptr<SseMailbox> mailbox,
         WebRuntimeHooks hooks = {},
         WebRuntimeClock clock = {});
-    // No submit() call may overlap destruction. The production session-handle
-    // layer must enforce that lifetime and confirm owner exit within the
-    // process shutdown grace before allowing this final join.
-    ~WebSessionRuntime();
+    ~WebSessionRuntime() = default;
     WebSessionRuntime(const WebSessionRuntime&) = delete;
     WebSessionRuntime& operator=(const WebSessionRuntime&) = delete;
 
@@ -145,15 +124,18 @@ public:
     [[nodiscard]] WakeNotifier& notifier_for_owner() noexcept { return notifier_; }
     void run_with_controller(std::unique_ptr<WebSessionController> controller);
 
-private:
+protected:
+    // Threadless transport-neutral seam for tests that replace the production
+    // mailbox sink. The derived harness owns and joins its owner thread.
     WebSessionRuntime(
-        WebControllerFactory factory,
         WebSettings settings,
         WebSessionMetadata metadata,
         std::shared_ptr<WebSnapshotSink> sink,
         std::shared_ptr<SseMailbox> mailbox,
-        WebRuntimeHooks hooks,
-        WebRuntimeClock clock);
+        WebRuntimeHooks hooks = {},
+        WebRuntimeClock clock = {});
+
+private:
     void owner_loop(std::unique_ptr<WebSessionController> controller);
     void execute(WebSessionController& controller, OwnerCommand command);
     void apply_notification(OwnerNotification notification);
@@ -195,9 +177,6 @@ private:
     std::shared_ptr<SseMailbox> sse_mailbox_;
     WebRuntimeHooks hooks_;
     WebRuntimeClock clock_;
-    // This must be last: starting the owner thread before the state it uses is
-    // constructed would let it observe partially constructed runtime state.
-    std::thread owner_;
 };
 
 // Production adapter; controller construction remains in later runtime/registry work.

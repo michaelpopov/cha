@@ -266,39 +266,6 @@ static_assert(std::variant_size_v<WebCommand> == 5);
 } // namespace
 
 WebSessionRuntime::WebSessionRuntime(
-    WebControllerFactory factory,
-    WebSettings settings,
-    WebSessionMetadata metadata,
-    std::shared_ptr<WebSnapshotSink> sink,
-    WebRuntimeHooks hooks,
-    WebRuntimeClock clock)
-    : WebSessionRuntime(
-          std::move(factory),
-          std::move(settings),
-          std::move(metadata),
-          std::move(sink),
-          {},
-          std::move(hooks),
-          std::move(clock)) {}
-
-WebSessionRuntime::WebSessionRuntime(
-    WebControllerFactory factory,
-    WebSettings settings,
-    WebSessionMetadata metadata,
-    std::shared_ptr<SseMailbox> mailbox,
-    WebRuntimeHooks hooks,
-    WebRuntimeClock clock)
-    : WebSessionRuntime(
-          std::move(factory),
-          std::move(settings),
-          std::move(metadata),
-          mailbox,
-          mailbox,
-          std::move(hooks),
-          std::move(clock)) {}
-
-WebSessionRuntime::WebSessionRuntime(
-    WebControllerFactory factory,
     WebSettings settings,
     WebSessionMetadata metadata,
     std::shared_ptr<WebSnapshotSink> sink,
@@ -313,15 +280,6 @@ WebSessionRuntime::WebSessionRuntime(
       hooks_(std::move(hooks)),
       clock_(clock ? std::move(clock) : [] {
           return std::chrono::steady_clock::now();
-      }),
-      owner_([this, factory = std::move(factory)]() mutable {
-          try {
-              owner_loop(factory(notifier_));
-          } catch (const std::bad_alloc&) {
-              std::terminate();
-          } catch (...) {
-              owner_loop(nullptr);
-          }
       }) {}
 
 WebSessionRuntime::WebSessionRuntime(
@@ -330,25 +288,16 @@ WebSessionRuntime::WebSessionRuntime(
     std::shared_ptr<SseMailbox> mailbox,
     WebRuntimeHooks hooks,
     WebRuntimeClock clock)
-    : settings_(validate_runtime_settings(std::move(settings))),
-      commands_(settings_.command_queue_capacity),
-      metadata_(std::move(metadata)),
-      sink_(mailbox),
-      sse_mailbox_(std::move(mailbox)),
-      hooks_(std::move(hooks)),
-      clock_(clock ? std::move(clock) : [] {
-          return std::chrono::steady_clock::now();
-      }) {
+    : WebSessionRuntime(
+          std::move(settings),
+          std::move(metadata),
+          mailbox,
+          mailbox,
+          std::move(hooks),
+          std::move(clock)) {
     if (!sse_mailbox_) {
         throw std::invalid_argument(
             "Registry-owned web runtime needs an SSE mailbox");
-    }
-}
-
-WebSessionRuntime::~WebSessionRuntime() {
-    request_shutdown();
-    if (owner_.joinable()) {
-        owner_.join();
     }
 }
 

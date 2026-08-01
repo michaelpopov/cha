@@ -226,7 +226,7 @@ public:
 
 class RawHttpSocket {
 public:
-    RawHttpSocket(int port, int receive_buffer = 0) {
+    RawHttpSocket(int port, int receive_buffer = 0) : port_(port) {
         descriptor_ = ::socket(AF_INET, SOCK_STREAM, 0);
         if (descriptor_ == -1) {
             throw std::runtime_error("Could not create raw HTTP test socket");
@@ -271,7 +271,8 @@ public:
     void send_get(std::string_view path) {
         send_bytes(
             "GET " + std::string(path)
-            + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+            + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port_)
+            + "\r\nConnection: close\r\n\r\n");
     }
 
     [[nodiscard]] int read_status(
@@ -323,6 +324,7 @@ public:
 
 private:
     int descriptor_{-1};
+    int port_{};
 };
 
 class LargeSnapshotController final : public WebSessionController {
@@ -387,7 +389,6 @@ public:
           registry_(settings_, [](const SessionKey&, WakeNotifier&) {
               return std::make_unique<LargeSnapshotController>(8U * 1024U * 1024U);
           }) {
-        configure_http_server(server_, settings_);
         server_.set_socket_options([](int socket) {
             const int send_buffer = 16 * 1024;
             (void)::setsockopt(
@@ -403,6 +404,7 @@ public:
         if (port_ <= 0) {
             throw std::runtime_error("Could not bind real-socket SSE fixture");
         }
+        configure_http_server(server_, settings_, "127.0.0.1", port_);
         listener_ = std::thread([this] { server_.listen_after_bind(); });
         server_.wait_until_ready();
     }
@@ -449,12 +451,12 @@ TEST(WebServerSocketLimits, RejectsARequestThatExceedsInjectedReadTimeout) {
     settings.http_pending_request_limit = 2;
     settings.http_read_timeout = 100ms;
     httplib::Server server;
-    configure_http_server(server, settings);
     server.Get("/health", [](const httplib::Request&, httplib::Response& response) {
         response.set_content("ok", "text/plain");
     });
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
+    configure_http_server(server, settings, "127.0.0.1", port);
     std::thread listener([&server] { server.listen_after_bind(); });
     server.wait_until_ready();
 
@@ -812,10 +814,10 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
         });
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;
-    configure_http_server(server, settings);
     LobbyRoutes(workspace, registry, settings).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
+    configure_http_server(server, settings, "127.0.0.1", port);
     std::thread listener([&server] { server.listen_after_bind(); });
     server.wait_until_ready();
     ServerShutdownCoordinator coordinator(registry, server);

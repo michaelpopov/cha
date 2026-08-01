@@ -267,6 +267,7 @@ TEST(WebProtocol, DefinesEveryEnumSpelling) {
         {ErrorCode::bad_request, "bad_request"},
         {ErrorCode::body_too_large, "body_too_large"},
         {ErrorCode::prompt_too_large, "prompt_too_large"},
+        {ErrorCode::forbidden_host, "forbidden_host"},
         {ErrorCode::forbidden_origin, "forbidden_origin"},
         {ErrorCode::internal_error, "internal_error"},
         {ErrorCode::session_busy, "session_busy"},
@@ -376,7 +377,7 @@ TEST(WebSettings, HttpServerRejectsPoolWithoutSessionHeadroom) {
     WebSettings settings;
     settings.session_limit = 20;
     EXPECT_THROW(
-        configure_http_server(server, settings),
+        configure_http_server(server, settings, "127.0.0.1", 8080),
         std::invalid_argument);
 }
 
@@ -385,7 +386,20 @@ TEST(WebSettings, HttpServerRejectsPendingLimitBelowPoolSize) {
     WebSettings settings;
     settings.http_pending_request_limit = settings.http_thread_pool_size - 1;
     EXPECT_THROW(
-        configure_http_server(server, settings),
+        configure_http_server(server, settings, "127.0.0.1", 8080),
+        std::invalid_argument);
+}
+
+TEST(WebSettings, HttpServerRejectsInvalidListenerAuthority) {
+    httplib::Server empty_host_server;
+    EXPECT_THROW(
+        configure_http_server(
+            empty_host_server, WebSettings{}, "", 8080),
+        std::invalid_argument);
+    httplib::Server invalid_port_server;
+    EXPECT_THROW(
+        configure_http_server(
+            invalid_port_server, WebSettings{}, "127.0.0.1", 0),
         std::invalid_argument);
 }
 
@@ -395,7 +409,8 @@ TEST(WebSettings, RequestHeadroomIsInjectable) {
     settings.http_request_headroom = 1;
     settings.http_thread_pool_size = settings.session_limit + 1;
     settings.http_pending_request_limit = settings.http_thread_pool_size;
-    EXPECT_NO_THROW(configure_http_server(server, settings));
+    EXPECT_NO_THROW(configure_http_server(
+        server, settings, "127.0.0.1", 8080));
 }
 
 TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {

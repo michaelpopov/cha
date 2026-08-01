@@ -113,11 +113,11 @@ private:
 class RouteServer {
 public:
     RouteServer(SessionRegistry& registry, WebSettings settings = {}) {
-        configure_http_server(server_, settings);
         AssetHandler().install(server_);
         SessionRoutes(registry, settings).install(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
+        configure_http_server(server_, settings, "127.0.0.1", port_);
         thread_ = std::thread([this] { server_.listen_after_bind(); });
         server_.wait_until_ready();
     }
@@ -130,6 +130,7 @@ public:
         client.set_keep_alive(false);
         return client;
     }
+    int port() const noexcept { return port_; }
 
 private:
     httplib::Server server_;
@@ -472,8 +473,8 @@ TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
     const auto matching = server.client().Post(
         path,
         httplib::Headers{
-            {"Host", "session-host.example:8080"},
-            {"Origin", "https://session-host.example:8080"},
+            {"Host", "localhost:" + std::to_string(server.port())},
+            {"Origin", "https://localhost:" + std::to_string(server.port())},
         },
         R"({"text":"matching"})",
         "application/json");
@@ -485,6 +486,40 @@ TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
         "application/json");
     ASSERT_TRUE(without_origin);
     EXPECT_EQ(without_origin->status, 200);
+    registry.begin_shutdown();
+}
+
+TEST(SessionRoutes, RejectsDnsRebindingHostBeforeSnapshotsStreamsAndMutations) {
+    const auto calls = std::make_shared<Calls>();
+    SessionRegistry registry({.session_limit = 1}, [calls](const SessionKey&, WakeNotifier&) {
+        return std::make_unique<RouteController>(calls);
+    });
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        registry.open({"lobby", "one"}, 1s)));
+    RouteServer server(registry);
+    const std::string base = "/s/lobby/one/api/v1/";
+    const httplib::Headers rebound{
+        {"Host", "evil.example:" + std::to_string(server.port())},
+        {"Origin", "http://evil.example:" + std::to_string(server.port())},
+    };
+
+    expect_error(
+        server.client().Get(base + "session", rebound),
+        403,
+        "forbidden_host");
+    expect_error(
+        server.client().Get(base + "events", rebound),
+        403,
+        "forbidden_host");
+    expect_error(
+        server.client().Post(
+            base + "input", rebound, R"({"text":"rebound"})", "application/json"),
+        403,
+        "forbidden_host");
+    {
+        std::lock_guard lock(calls->mutex);
+        EXPECT_TRUE(calls->input.empty());
+    }
     registry.begin_shutdown();
 }
 
