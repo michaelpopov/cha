@@ -210,6 +210,7 @@ cha_enable_warnings(cha_core)
 
 add_library(cha_web STATIC
     src/ui/web/asset_handler.cpp
+    src/ui/web/browser_connection_state.cpp
     src/ui/web/command_queue.cpp
     src/ui/web/http_response.cpp
     src/ui/web/http_server.cpp
@@ -342,6 +343,7 @@ if(BUILD_TESTING)
     add_executable(
         cha_web_tests
         tests/ui/web/unit_protocol.cpp
+        tests/ui/web/unit_browser_connection_state.cpp
         tests/ui/web/unit_lobby_routes.cpp
         tests/ui/web/unit_session_routes.cpp
         tests/ui/web/unit_session_registry.cpp

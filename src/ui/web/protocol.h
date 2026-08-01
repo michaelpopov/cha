@@ -103,6 +103,7 @@ struct SseStreamToken {
 struct SseConnectResult {
     std::shared_ptr<SseMailbox> mailbox;
     SseStreamToken stream;
+    std::uint64_t connection_id{};
 };
 
 using WebCommand = std::variant<

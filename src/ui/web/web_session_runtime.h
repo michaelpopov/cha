@@ -1,6 +1,7 @@
 #pragma once
 
 #include "session/session_update.h"
+#include "ui/web/browser_connection_state.h"
 #include "ui/web/command_queue.h"
 #include "ui/web/protocol.h"
 #include "ui/web/wake_notifier.h"
@@ -44,6 +45,7 @@ public:
     virtual SessionUpdate request_stop() = 0;
     virtual SessionUpdate set_default_agent_id(std::string_view persona_id) = 0;
     virtual SessionEventBatch receive(std::size_t max_events) = 0;
+    [[nodiscard]] virtual bool is_generating() const = 0;
     // Called only by the owner thread. The returned value owns every field and
     // contains no controller or transcript borrows.
     virtual SessionSnapshot snapshot() { return {}; }
@@ -91,6 +93,10 @@ struct WebRuntimeHooks {
     std::function<void(const WebSessionMetadata&)> log_fatal;
 };
 
+// Owner-thread monotonic time seam; an empty function selects steady_clock.
+using WebRuntimeClock =
+    std::function<std::chrono::steady_clock::time_point()>;
+
 class WebSessionRuntime {
 public:
     WebSessionRuntime(
@@ -98,7 +104,8 @@ public:
         WebSettings settings = {},
         WebSessionMetadata metadata = {},
         std::shared_ptr<WebSnapshotSink> sink = {},
-        WebRuntimeHooks hooks = {});
+        WebRuntimeHooks hooks = {},
+        WebRuntimeClock clock = {});
     // Registry-owned runtimes are constructed and opened on the registry's
     // owner thread, then published before this loop starts.  This keeps the
     // controller and its permanent owner thread the same thread.
@@ -106,7 +113,8 @@ public:
         WebSettings settings,
         WebSessionMetadata metadata = {},
         std::shared_ptr<WebSnapshotSink> sink = {},
-        WebRuntimeHooks hooks = {});
+        WebRuntimeHooks hooks = {},
+        WebRuntimeClock clock = {});
     // No submit() call may overlap destruction. The production session-handle
     // layer must enforce that lifetime and confirm owner exit within the
     // process shutdown grace before allowing this final join.
@@ -121,6 +129,7 @@ public:
         std::chrono::milliseconds deadline);
     [[nodiscard]] CommandSubmitResult connect_sse(
         std::chrono::milliseconds deadline);
+    void disconnect_sse(std::uint64_t connection_id) noexcept;
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
     [[nodiscard]] WakeNotifier& notifier_for_owner() noexcept { return notifier_; }
@@ -129,6 +138,7 @@ public:
 private:
     void owner_loop(std::unique_ptr<WebSessionController> controller);
     void execute(WebSessionController& controller, OwnerCommand command);
+    void apply_notification(OwnerNotification notification);
     [[nodiscard]] SessionSnapshot make_snapshot(WebSessionController& controller);
     void apply_notice(const SessionUpdate& update);
     [[nodiscard]] ShutdownReason mark_stopping(ShutdownReason reason);
@@ -159,10 +169,12 @@ private:
     std::optional<AppendTarget> append_target_;
     std::optional<std::size_t> append_entry_index_;
     bool fatal_logged_{};
+    BrowserConnectionState browser_connection_;
     WebSessionMetadata metadata_;
     std::shared_ptr<WebSnapshotSink> sink_;
     std::shared_ptr<SseMailbox> sse_mailbox_;
     WebRuntimeHooks hooks_;
+    WebRuntimeClock clock_;
     // This must be last: starting the owner thread before the state it uses is
     // constructed would let it observe partially constructed runtime state.
     std::thread owner_;

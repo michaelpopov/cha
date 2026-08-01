@@ -71,6 +71,7 @@ public:
         return {};
     }
     SessionEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] bool is_generating() const override { return false; }
     SessionSnapshot snapshot() override {
         std::lock_guard lock(calls_->mutex);
         return {
@@ -208,6 +209,48 @@ TEST(SessionRoutes, EventsStartWithASnapshotAndIgnoreLastEventId) {
         EXPECT_TRUE(line.starts_with("event: ") || line.starts_with("data: "));
     }
     registry.begin_shutdown();
+}
+
+TEST(SessionRoutes, RejectsSecondEventStreamWithBrowserStreamInUse) {
+    const auto calls = std::make_shared<Calls>();
+    SessionRegistry registry({.session_limit = 1}, [calls](const SessionKey&, WakeNotifier&) {
+        return std::make_unique<RouteController>(calls);
+    });
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        registry.open({"lobby", "one"}, 1s)));
+    RouteServer server(registry);
+
+    std::mutex stream_mutex;
+    std::condition_variable stream_changed;
+    bool received_snapshot = false;
+    auto first_stream = std::async(std::launch::async, [&] {
+        auto client = server.client();
+        client.set_read_timeout(2s);
+        return client.Get(
+            "/s/lobby/one/api/v1/events",
+            [](const httplib::Response& response) { return response.status == 200; },
+            [&](const char*, std::size_t) {
+                std::lock_guard lock(stream_mutex);
+                received_snapshot = true;
+                stream_changed.notify_all();
+                return true;
+            });
+    });
+    {
+        std::unique_lock lock(stream_mutex);
+        ASSERT_TRUE(stream_changed.wait_for(lock, 1s, [&] {
+            return received_snapshot;
+        }));
+    }
+
+    expect_error(
+        server.client().Get("/s/lobby/one/api/v1/events"),
+        409,
+        "browser_stream_in_use");
+
+    registry.begin_shutdown();
+    ASSERT_EQ(first_stream.wait_for(2s), std::future_status::ready);
+    (void)first_stream.get();
 }
 
 TEST(SessionRoutes, EventsDeliverAppendWithSequenceOverHttp) {

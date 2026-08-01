@@ -27,8 +27,17 @@ the minimal chat/not-open page boundary, session API, and chunked SSE route.
 `SseMailbox` holds at most one immutable in-flight payload and one replaceable
 pending payload; its writer is the HTTP thread, never the session owner. Each
 stream begins with a fresh snapshot, then receives only snapshot or
-target/sequence-aware append events plus comment heartbeats. Stream guarding
-and browser disconnect lifetime remain later blocks.
+target/sequence-aware append events plus comment heartbeats.
+`BrowserConnectionState` is owner-thread-only state: it accepts one SSE stream
+per session, assigns an opaque server-local connection ID, and ignores stale
+close notifications. A runtime starts disconnected, cancels its one deadline
+on stream acceptance, and on matching close unloads at `idle_grace` or the
+absolute `orphan_limit` from that same disconnection timestamp while generation
+is active. The later browser page must enable controls only after the accepted
+stream's initial snapshot; a conflict retries briefly, then displays the
+already-open message. An append target or sequence mismatch closes that stream
+and uses bounded reconnect for a fresh snapshot rather than racing a REST
+snapshot against the old stream.
 `LobbyRoutes` is the HTTP boundary for stored-session discovery, create-only,
 and registry-backed open/reattach. It validates route identifiers before either
 the registry or session storage is consulted; creation reaches only the shared,

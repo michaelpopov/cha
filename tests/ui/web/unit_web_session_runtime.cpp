@@ -74,6 +74,39 @@ struct FakeState {
     };
 };
 
+class FakeRuntimeClock {
+public:
+    using Clock = std::chrono::steady_clock;
+
+    FakeRuntimeClock() : now_(Clock::now() + 24h) {}
+
+    Clock::time_point now() {
+        std::lock_guard lock(mutex_);
+        ++observations_;
+        observed_.notify_all();
+        return now_;
+    }
+
+    std::size_t advance(std::chrono::milliseconds amount) {
+        std::lock_guard lock(mutex_);
+        now_ += amount;
+        return observations_ + 1;
+    }
+
+    bool wait_until_observed(std::size_t target) {
+        std::unique_lock lock(mutex_);
+        return observed_.wait_for(lock, 1s, [&] {
+            return observations_ >= target;
+        });
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable observed_;
+    Clock::time_point now_;
+    std::size_t observations_{};
+};
+
 class FakeController final : public WebSessionController {
 public:
     FakeController(
@@ -164,6 +197,10 @@ public:
                 .end_session = end_session,
             },
         };
+    }
+    [[nodiscard]] bool is_generating() const override {
+        std::lock_guard lock(state_->mutex);
+        return state_->snapshot.generation.active;
     }
     void shutdown() override {
         std::lock_guard lock(state_->mutex);
@@ -406,12 +443,19 @@ TEST(WakeNotifier, ReturnsFalseAtDeadlineWithoutWake) {
 
 TEST(CommandCompletion, FirstCompletionWins) {
     CommandCompletion completion;
-    completion.complete(CommandResult{.notice = "first"});
-    completion.complete(ErrorCode::internal_error);
+    EXPECT_TRUE(completion.complete(CommandResult{.notice = "first"}));
+    EXPECT_FALSE(completion.complete(ErrorCode::internal_error));
 
-    const auto result = completion.wait_for(1ms);
+    const auto result = completion.wait_for(0ms);
     ASSERT_TRUE(result);
     EXPECT_EQ(std::get<CommandResult>(*result).notice, "first");
+}
+
+TEST(CommandCompletion, TimeoutAtomicallyAbandonsLateCompletion) {
+    CommandCompletion completion;
+
+    EXPECT_FALSE(completion.wait_for(0ms));
+    EXPECT_FALSE(completion.complete(CommandResult{}));
 }
 
 TEST(WebSessionRuntime, RoutesRawAndTypedCommandsOnOneOwnerThread) {
@@ -895,6 +939,202 @@ TEST(WebSessionRuntime, ConnectWithNonStreamingSinkReportsInternalError) {
     const CommandSubmitResult result = runtime.connect_sse(1s);
     ASSERT_TRUE(std::holds_alternative<ErrorCode>(result));
     EXPECT_EQ(std::get<ErrorCode>(result), ErrorCode::internal_error);
+}
+
+TEST(WebSessionRuntime, OneActiveStreamRejectsConflictsAndIgnoresStaleCloses) {
+    auto state = std::make_shared<FakeState>();
+    auto mailbox = std::make_shared<SseMailbox>();
+    WebSessionRuntime runtime(fake_factory(state), test_settings(4), {}, mailbox);
+
+    const auto first = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<SseConnectResult>(first));
+    const SseConnectResult first_connection = std::get<SseConnectResult>(first);
+    const auto rejected = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<ErrorCode>(rejected));
+    EXPECT_EQ(std::get<ErrorCode>(rejected), ErrorCode::browser_stream_in_use);
+
+    auto other_state = std::make_shared<FakeState>();
+    auto other_mailbox = std::make_shared<SseMailbox>();
+    WebSessionRuntime other(
+        fake_factory(other_state), test_settings(4), {}, other_mailbox);
+    const auto other_connection = other.connect_sse(1s);
+    EXPECT_TRUE(std::holds_alternative<SseConnectResult>(other_connection));
+
+    first_connection.mailbox->end_stream(first_connection.stream);
+    runtime.disconnect_sse(first_connection.connection_id);
+    const auto second = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<SseConnectResult>(second));
+    const SseConnectResult second_connection = std::get<SseConnectResult>(second);
+    EXPECT_NE(second_connection.connection_id, first_connection.connection_id);
+
+    runtime.disconnect_sse(first_connection.connection_id);
+    const auto still_rejected = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<ErrorCode>(still_rejected));
+    EXPECT_EQ(
+        std::get<ErrorCode>(still_rejected), ErrorCode::browser_stream_in_use);
+    second_connection.mailbox->end_stream(second_connection.stream);
+    runtime.disconnect_sse(second_connection.connection_id);
+    if (const auto* accepted =
+            std::get_if<SseConnectResult>(&other_connection)) {
+        accepted->mailbox->end_stream(accepted->stream);
+        other.disconnect_sse(accepted->connection_id);
+    }
+}
+
+TEST(WebSessionRuntime, TimedOutSseConnectReleasesItsUnclaimedStream) {
+    auto state = std::make_shared<FakeState>();
+    state->block_raw = true;
+    auto mailbox = std::make_shared<SseMailbox>();
+    WebSessionRuntime runtime(
+        fake_factory(state), test_settings(2), {}, mailbox);
+
+    EXPECT_EQ(
+        std::get<ErrorCode>(runtime.submit(RawCommand{"slow"}, 5ms)),
+        ErrorCode::command_timeout);
+    bool raw_entered = false;
+    {
+        std::unique_lock lock(state->mutex);
+        raw_entered = state->entered.wait_for(lock, 1s, [&] {
+            return state->raw_entered;
+        });
+        if (!raw_entered) state->released = true;
+    }
+    if (!raw_entered) state->release.notify_all();
+    ASSERT_TRUE(raw_entered);
+
+    const CommandSubmitResult abandoned = runtime.connect_sse(5ms);
+
+    {
+        std::lock_guard lock(state->mutex);
+        state->released = true;
+    }
+    state->release.notify_all();
+    ASSERT_TRUE(std::holds_alternative<ErrorCode>(abandoned));
+    EXPECT_EQ(std::get<ErrorCode>(abandoned), ErrorCode::command_timeout);
+
+    const auto fresh = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<SseConnectResult>(fresh));
+    const SseConnectResult connection = std::get<SseConnectResult>(fresh);
+    connection.mailbox->end_stream(connection.stream);
+    runtime.disconnect_sse(connection.connection_id);
+}
+
+TEST(WebSessionRuntime, InitialIdleDeadlineUnloadsAnUnvisitedSession) {
+    auto state = std::make_shared<FakeState>();
+    state->snapshot.generation.active = false;
+    auto clock = std::make_shared<FakeRuntimeClock>();
+    std::promise<void> finished_signal;
+    const auto finished = finished_signal.get_future();
+    WebSettings settings = test_settings(2);
+    settings.idle_grace = 10ms;
+    settings.orphan_limit = 20ms;
+    WebSessionRuntime runtime(
+        fake_factory(state), settings, {}, std::make_shared<SseMailbox>(),
+        {.mark_finished = [&] { finished_signal.set_value(); }},
+        [clock] { return clock->now(); });
+
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
+    const std::size_t before_deadline = clock->advance(9ms);
+    runtime.notifier_for_owner().wake();
+    ASSERT_TRUE(clock->wait_until_observed(before_deadline));
+    EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
+    const std::size_t at_deadline = clock->advance(1ms);
+    runtime.notifier_for_owner().wake();
+    ASSERT_TRUE(clock->wait_until_observed(at_deadline));
+    EXPECT_EQ(finished.wait_for(1s), std::future_status::ready);
+    std::lock_guard lock(state->mutex);
+    EXPECT_TRUE(state->shutdown);
+}
+
+TEST(WebSessionRuntime, GenerationCompletionReevaluatesDisconnectDeadline) {
+    auto state = std::make_shared<FakeState>();
+    auto clock = std::make_shared<FakeRuntimeClock>();
+    std::promise<void> finished_signal;
+    const auto finished = finished_signal.get_future();
+    WebSettings settings = test_settings(2);
+    settings.idle_grace = 10ms;
+    settings.orphan_limit = 200ms;
+    auto mailbox = std::make_shared<SseMailbox>();
+    WebSessionRuntime runtime(
+        fake_factory(state), settings, {}, mailbox,
+        {.mark_finished = [&] { finished_signal.set_value(); }},
+        [clock] { return clock->now(); });
+
+    const auto connected = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<SseConnectResult>(connected));
+    const SseConnectResult connection = std::get<SseConnectResult>(connected);
+    connection.mailbox->end_stream(connection.stream);
+    runtime.disconnect_sse(connection.connection_id);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
+
+    const std::size_t at_idle_deadline = clock->advance(10ms);
+    runtime.notifier_for_owner().wake();
+    ASSERT_TRUE(clock->wait_until_observed(at_idle_deadline));
+    EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
+    {
+        std::lock_guard lock(state->mutex);
+        state->snapshot.generation.active = false;
+    }
+    runtime.notifier_for_owner().wake();
+    EXPECT_EQ(finished.wait_for(1s), std::future_status::ready);
+}
+
+TEST(WebSessionRuntime, GeneratingDisconnectUsesOrphanLimitFromDisconnection) {
+    auto state = std::make_shared<FakeState>();
+    auto clock = std::make_shared<FakeRuntimeClock>();
+    std::promise<void> finished_signal;
+    const auto finished = finished_signal.get_future();
+    WebSettings settings = test_settings(2);
+    settings.idle_grace = 10ms;
+    settings.orphan_limit = 100ms;
+    auto mailbox = std::make_shared<SseMailbox>();
+    WebSessionRuntime runtime(
+        fake_factory(state), settings, {}, mailbox,
+        {.mark_finished = [&] { finished_signal.set_value(); }},
+        [clock] { return clock->now(); });
+
+    const auto connected = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<SseConnectResult>(connected));
+    const SseConnectResult connection = std::get<SseConnectResult>(connected);
+    connection.mailbox->end_stream(connection.stream);
+    runtime.disconnect_sse(connection.connection_id);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
+
+    const std::size_t before_orphan_limit = clock->advance(99ms);
+    runtime.notifier_for_owner().wake();
+    ASSERT_TRUE(clock->wait_until_observed(before_orphan_limit));
+    EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
+    const std::size_t at_orphan_limit = clock->advance(1ms);
+    runtime.notifier_for_owner().wake();
+    ASSERT_TRUE(clock->wait_until_observed(at_orphan_limit));
+    EXPECT_EQ(finished.wait_for(1s), std::future_status::ready);
+}
+
+TEST(WebSessionRuntime, ReconnectCancelsDeadlineAndStartsWithSnapshot) {
+    auto state = std::make_shared<FakeState>();
+    WebSettings settings = test_settings(2);
+    settings.idle_grace = 200ms;
+    settings.orphan_limit = 300ms;
+    auto mailbox = std::make_shared<SseMailbox>();
+    WebSessionRuntime runtime(fake_factory(state), settings, {}, mailbox);
+
+    const auto first = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<SseConnectResult>(first));
+    const SseConnectResult first_connection = std::get<SseConnectResult>(first);
+    first_connection.mailbox->end_stream(first_connection.stream);
+    runtime.disconnect_sse(first_connection.connection_id);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(runtime.snapshot(1s)));
+
+    const auto second = runtime.connect_sse(1s);
+    ASSERT_TRUE(std::holds_alternative<SseConnectResult>(second));
+    const SseConnectResult second_connection = std::get<SseConnectResult>(second);
+    const auto next = second_connection.mailbox->next(second_connection.stream, 1s);
+    ASSERT_TRUE(next.payload);
+    EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(*next.payload));
+
+    second_connection.mailbox->end_stream(second_connection.stream);
+    runtime.disconnect_sse(second_connection.connection_id);
+    runtime.request_shutdown();
 }
 
 TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {

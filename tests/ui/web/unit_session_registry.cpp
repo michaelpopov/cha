@@ -23,6 +23,7 @@ public:
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override { ++shutdowns; }
     static inline std::atomic<int> shutdowns{};
 };
@@ -90,6 +91,7 @@ public:
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override { gate_.wait(); }
 
 private:
@@ -106,6 +108,7 @@ public:
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
 
 private:
@@ -470,6 +473,7 @@ TEST(SessionRegistry, ShutdownAtCommitNeverPublishesAndTearsDownNewController) {
             SessionUpdate request_stop() override { return {}; }
             SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
             SessionEventBatch receive(std::size_t) override { return {}; }
+            [[nodiscard]] bool is_generating() const override { return false; }
             void shutdown() override {
                 ++shutdowns_;
                 shutdown_complete_.set_value();

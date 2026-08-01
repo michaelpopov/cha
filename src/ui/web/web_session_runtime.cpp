@@ -23,6 +23,9 @@ WebSettings validate_runtime_settings(WebSettings settings) {
     if (settings.command_batch_size == 0 || settings.event_batch_size == 0) {
         throw std::invalid_argument("Web runtime batch sizes must be positive");
     }
+    if (settings.orphan_limit < settings.idle_grace) {
+        throw std::invalid_argument("Web orphan limit must be at least idle grace");
+    }
     return settings;
 }
 
@@ -202,6 +205,9 @@ public:
     SessionEventBatch receive(std::size_t max_events) override {
         return controller_->receive_events(max_events);
     }
+    [[nodiscard]] bool is_generating() const override {
+        return controller_->is_generating();
+    }
     SessionSnapshot snapshot() override {
         SessionSnapshot result;
         result.personas.reserve(controller_->personas().all().size());
@@ -310,13 +316,17 @@ WebSessionRuntime::WebSessionRuntime(
     WebSettings settings,
     WebSessionMetadata metadata,
     std::shared_ptr<WebSnapshotSink> sink,
-    WebRuntimeHooks hooks)
+    WebRuntimeHooks hooks,
+    WebRuntimeClock clock)
     : settings_(validate_runtime_settings(std::move(settings))),
       commands_(settings_.command_queue_capacity),
       metadata_(std::move(metadata)),
       sink_(std::move(sink)),
       sse_mailbox_(std::dynamic_pointer_cast<SseMailbox>(sink_)),
       hooks_(std::move(hooks)),
+      clock_(clock ? std::move(clock) : [] {
+          return std::chrono::steady_clock::now();
+      }),
       owner_([this, factory = std::move(factory)]() mutable {
           try {
               owner_loop(factory(notifier_));
@@ -331,13 +341,17 @@ WebSessionRuntime::WebSessionRuntime(
     WebSettings settings,
     WebSessionMetadata metadata,
     std::shared_ptr<WebSnapshotSink> sink,
-    WebRuntimeHooks hooks)
+    WebRuntimeHooks hooks,
+    WebRuntimeClock clock)
     : settings_(validate_runtime_settings(std::move(settings))),
       commands_(settings_.command_queue_capacity),
       metadata_(std::move(metadata)),
       sink_(std::move(sink)),
       sse_mailbox_(std::dynamic_pointer_cast<SseMailbox>(sink_)),
-      hooks_(std::move(hooks)) {}
+      hooks_(std::move(hooks)),
+      clock_(clock ? std::move(clock) : [] {
+          return std::chrono::steady_clock::now();
+      }) {}
 
 WebSessionRuntime::~WebSessionRuntime() {
     request_shutdown();
@@ -373,6 +387,12 @@ CommandSubmitResult WebSessionRuntime::connect_sse(
     return submit(SseConnectCommand{}, deadline);
 }
 
+void WebSessionRuntime::disconnect_sse(std::uint64_t connection_id) noexcept {
+    if (commands_.push_notification(SseDisconnectNotification{connection_id})) {
+        notifier_.wake();
+    }
+}
+
 void WebSessionRuntime::request_shutdown(ShutdownReason reason) {
     {
         std::lock_guard lock(state_mutex_);
@@ -393,6 +413,7 @@ void WebSessionRuntime::owner_loop(
     bool fatal = false;
     try {
         if (!controller) throw std::runtime_error("Web controller factory returned null");
+        browser_connection_.published(clock_());
         publish_change(*controller);
         while (true) {
             std::size_t processed = 0;
@@ -401,9 +422,13 @@ void WebSessionRuntime::owner_loop(
                     std::lock_guard lock(state_mutex_);
                     if (stopping_) { reason = shutdown_reason_; break; }
                 }
-                auto command = commands_.try_pop();
-                if (!command) break;
-                execute(*controller, std::move(*command));
+                auto work = commands_.try_pop();
+                if (!work) break;
+                if (auto* notification = std::get_if<OwnerNotification>(&*work)) {
+                    apply_notification(std::move(*notification));
+                    continue;
+                }
+                execute(*controller, std::move(std::get<OwnerCommand>(*work)));
                 ++processed;
             }
             {
@@ -427,8 +452,16 @@ void WebSessionRuntime::owner_loop(
                 std::lock_guard lock(state_mutex_);
                 if (stopping_) { reason = shutdown_reason_; break; }
             }
+            const auto deadline = browser_connection_.deadline(
+                controller->is_generating(), settings_.idle_grace,
+                settings_.orphan_limit);
+            if (deadline && clock_() >= *deadline) {
+                reason = mark_stopping(ShutdownReason::browser_disconnected);
+                break;
+            }
             if (processed == settings_.command_batch_size || events.full) continue;
-            (void)notifier_.wait_until(std::chrono::steady_clock::time_point::max());
+            (void)notifier_.wait_until(
+                deadline.value_or(std::chrono::steady_clock::time_point::max()));
         }
     } catch (const std::bad_alloc&) {
         std::terminate();
@@ -442,13 +475,19 @@ void WebSessionRuntime::owner_loop(
 
 void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand command) {
     if (std::holds_alternative<SnapshotCommand>(command.command)) {
-        command.completion->complete(make_snapshot(controller));
+        (void)command.completion->complete(make_snapshot(controller));
         return;
     }
     if (std::holds_alternative<SseConnectCommand>(command.command)) {
         if (!sse_mailbox_) {
-            command.completion->complete(ErrorCode::internal_error);
+            (void)command.completion->complete(ErrorCode::internal_error);
         } else {
+            const auto connection_id = browser_connection_.accept();
+            if (!connection_id) {
+                (void)command.completion->complete(
+                    ErrorCode::browser_stream_in_use);
+                return;
+            }
             // Establish the exact snapshot sent on connect as the runtime's
             // append base. This keeps later candidates relative to what the
             // browser actually received even if a controller changed without
@@ -456,7 +495,13 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
             publish_snapshot(make_snapshot(controller));
             const SseMailbox::Stream stream =
                 sse_mailbox_->begin_stream({*last_snapshot_});
-            command.completion->complete(SseConnectResult{sse_mailbox_, stream});
+            if (!command.completion->complete(SseConnectResult{
+                    sse_mailbox_, stream, *connection_id})) {
+                // Mutations retain their unknown outcome after a timeout, but
+                // an unclaimed connect must not retain its exclusive slot.
+                sse_mailbox_->end_stream(stream);
+                (void)browser_connection_.close(*connection_id, clock_());
+            }
         }
         return;
     }
@@ -479,12 +524,19 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
     if (update.render_needed || notice_changed) {
         publish_change(controller, notice_changed);
     }
-    command.completion->complete(CommandResult{.clear_input = update.clear_input, .notice = update.notice});
+    (void)command.completion->complete(CommandResult{
+        .clear_input = update.clear_input,
+        .notice = update.notice,
+    });
     if (update.end_session) {
         // See the receive-path note above. This is a defensive fallback, not
         // evidence that the browser initiated the controller's terminal event.
         (void)mark_stopping(ShutdownReason::browser_disconnected);
     }
+}
+
+void WebSessionRuntime::apply_notification(OwnerNotification notification) {
+    (void)browser_connection_.close(notification.connection_id, clock_());
 }
 
 SessionSnapshot WebSessionRuntime::make_snapshot(WebSessionController& controller) {
@@ -661,8 +713,10 @@ void WebSessionRuntime::teardown(
     // A queue/completion mutex failure may strand later waiters, but it must
     // not strand the controller, journal, workers, or session lease.
     (void)run_guarded([&] {
-        while (auto command = commands_.try_pop()) {
-            command->completion->complete(
+        while (auto work = commands_.try_pop()) {
+            auto* command = std::get_if<OwnerCommand>(&*work);
+            if (!command) continue;
+            (void)command->completion->complete(
                 reason == ShutdownReason::server_stopping
                     ? ErrorCode::server_stopping
                     : ErrorCode::session_not_live);
