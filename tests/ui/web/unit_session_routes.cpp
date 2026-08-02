@@ -175,10 +175,18 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     EXPECT_EQ(json_body(snapshot)["forum"]["id"], "lobby");
     EXPECT_FALSE(json_body(snapshot).contains("error"));
 
-    const auto input = server.client().Post(base + "/api/v1/input", R"({"text":"/@Guide"})", "application/json");
+    const auto input = server.client().Post(base + "/api/v1/input", R"({"user":"reader","text":"/@Guide"})", "application/json");
     ASSERT_TRUE(input);
     EXPECT_EQ(input->status, 200);
     EXPECT_EQ(json_body(input), nlohmann::json({{"clear_input", true}, {"notice", "input accepted"}}));
+    expect_error(
+        server.client().Post(base + "/api/v1/input", R"({"text":"missing user"})", "application/json"),
+        400,
+        "bad_request");
+    expect_error(
+        server.client().Post(base + "/api/v1/input", R"({"user":"","text":"empty user"})", "application/json"),
+        400,
+        "bad_request");
     const auto stop = server.client().Post(base + "/api/v1/actions/stop", "{}", "application/json");
     ASSERT_TRUE(stop);
     EXPECT_EQ(stop->status, 200);
@@ -310,7 +318,9 @@ TEST(SessionRoutes, EventsDeliverAppendWithSequenceOverHttp) {
 
     const auto input = server.client().Post(
         "/s/lobby/one/api/v1/input",
-        R"({"text":"append"})",
+        // SessionRoutes checks wire shape only; roster membership belongs to
+        // the controller in Block 5.
+        R"({"user":"not-a-user","text":"append"})",
         "application/json");
     ASSERT_TRUE(input);
     EXPECT_EQ(input->status, 200);
@@ -441,7 +451,7 @@ TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLook
     expect_error(server.client().Get("/s/lobby/missing%23fragment/api/v1/session"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing%00suffix/api/v1/session"), 404, "not_found");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/input", "{}", "text/plain"), 400, "bad_request");
-    expect_error(server.client().Post("/s/lobby/missing/api/v1/input", R"({"text":"123456789"})", "application/json"), 413, "prompt_too_large");
+    expect_error(server.client().Post("/s/lobby/missing/api/v1/input", R"({"user":"u","text":"123456789"})", "application/json"), 413, "prompt_too_large");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/stop", R"({"extra":true})", "application/json"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/default-agent", R"({"persona_id":""})", "application/json"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/close", "{}", "application/json"), 404, "not_found");
@@ -462,7 +472,7 @@ TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
         server.client().Post(
             path,
             httplib::Headers{{"Origin", "http://other.example"}},
-            R"({"text":"hello"})",
+            R"({"user":"reader","text":"hello"})",
             "application/json"),
         403,
         "forbidden_origin");
@@ -476,13 +486,13 @@ TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
             {"Host", "localhost:" + std::to_string(server.port())},
             {"Origin", "https://localhost:" + std::to_string(server.port())},
         },
-        R"({"text":"matching"})",
+        R"({"user":"reader","text":"matching"})",
         "application/json");
     ASSERT_TRUE(matching);
     EXPECT_EQ(matching->status, 200);
     const auto without_origin = server.client().Post(
         path,
-        R"({"text":"hello"})",
+        R"({"user":"reader","text":"hello"})",
         "application/json");
     ASSERT_TRUE(without_origin);
     EXPECT_EQ(without_origin->status, 200);
@@ -513,7 +523,7 @@ TEST(SessionRoutes, RejectsDnsRebindingHostBeforeSnapshotsStreamsAndMutations) {
         "forbidden_host");
     expect_error(
         server.client().Post(
-            base + "input", rebound, R"({"text":"rebound"})", "application/json"),
+            base + "input", rebound, R"({"user":"reader","text":"rebound"})", "application/json"),
         403,
         "forbidden_host");
     {
@@ -539,7 +549,7 @@ TEST(SessionRoutes, MapsAdmissionAndShutdownOutcomesWithoutExecutingRejectedComm
     auto running = std::async(std::launch::async, [&] {
         return full_server.client().Post(
             "/s/lobby/full/api/v1/input",
-            R"({"text":"hold"})",
+            R"({"user":"reader","text":"hold"})",
             "application/json");
     });
     {
@@ -551,7 +561,7 @@ TEST(SessionRoutes, MapsAdmissionAndShutdownOutcomesWithoutExecutingRejectedComm
     auto queued = std::async(std::launch::async, [&] {
         return full_server.client().Post(
             "/s/lobby/full/api/v1/input",
-            R"({"text":"queued"})",
+            R"({"user":"reader","text":"queued"})",
             "application/json");
     });
     EXPECT_EQ(queued.wait_for(20ms), std::future_status::timeout);
@@ -608,7 +618,7 @@ TEST(SessionRoutes, MapsProcessShutdownDrainToServerStopping) {
     auto running = std::async(std::launch::async, [&] {
         return server.client().Post(
             "/s/lobby/shutdown/api/v1/input",
-            R"({"text":"hold"})",
+            R"({"user":"reader","text":"hold"})",
             "application/json");
     });
     {
@@ -626,7 +636,7 @@ TEST(SessionRoutes, MapsProcessShutdownDrainToServerStopping) {
     expect_error(
         server.client().Post(
             "/s/lobby/shutdown/api/v1/input",
-            R"({"text":"late"})",
+            R"({"user":"reader","text":"late"})",
             "application/json"),
         503,
         "server_stopping");
@@ -654,7 +664,7 @@ TEST(SessionRoutes, TimeoutAndClientDisconnectLeaveAcceptedCommandRunning) {
     const std::string path = "/s/lobby/slow/api/v1/input";
 
     expect_error(
-        server.client().Post(path, R"({"text":"timeout"})", "application/json"),
+        server.client().Post(path, R"({"user":"reader","text":"timeout"})", "application/json"),
         503,
         "command_timeout");
     {
@@ -700,7 +710,7 @@ TEST(SessionRoutes, TimeoutAndClientDisconnectLeaveAcceptedCommandRunning) {
         client.set_read_timeout(0, 20000);
         return client.Post(
             "/s/lobby/disconnect/api/v1/input",
-            R"({"text":"disconnect"})",
+            R"({"user":"reader","text":"disconnect"})",
             "application/json");
     });
     {

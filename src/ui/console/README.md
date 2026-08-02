@@ -12,7 +12,7 @@ transcript-writing vocabulary without depending on curses or `ui/tui/`.
 chacon --list-forums
 chacon --forum FORUM --list-sessions
 chacon --forum FORUM --check
-chacon --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
+chacon --user USER --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
 ```
 
 `--check` fully loads the forum configuration and expanded prompts, validates
@@ -28,7 +28,9 @@ Forum listings are one display name per line. Session listings always contain th
 tab-separated fields—ID, label, error—with no header, padding, or color.
 Invalid sessions are included. Tabs and line breaks inside fields are replaced
 with spaces, and terminal controls are sanitized. Listing modes take precedence
-over otherwise irrelevant session-selection flags.
+over otherwise irrelevant session-selection flags. They do not accept `--user`;
+chat startup requires it and resolves the ID from the workspace user roster
+before opening a session.
 
 Creating a session returns both its controller and its generated ID. With
 interactive stdin, the ready banner prints that resolved ID before the first

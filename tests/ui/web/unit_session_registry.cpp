@@ -450,7 +450,7 @@ TEST(SessionRegistry, StoppingEntryRejectsOpenConsumesCapacityAndLateHandleStops
     EXPECT_FALSE(registry.lookup(key));
     // The map no longer owns the runtime, but this in-flight request handle
     // keeps it alive and sees the already-stopping session.
-    const auto stopped = handle.runtime().submit(RawCommand{"ignored"}, 10ms);
+    const auto stopped = handle.runtime().submit(RawCommand{"reader", "ignored"}, 10ms);
     EXPECT_EQ(std::get<ErrorCode>(stopped), ErrorCode::session_not_live);
     EXPECT_EQ(starts, 1);
 }

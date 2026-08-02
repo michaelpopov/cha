@@ -687,7 +687,7 @@ TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
         httplib::Client concurrent_client = web_client(port);
         return concurrent_client.Post(
             std::move(route),
-            std::string(R"({"text":")") + std::string(text) + R"("})",
+            std::string(R"({"user":"reader","text":")") + std::string(text) + R"("})",
             "application/json");
     };
     auto first_submission = std::async(
@@ -763,7 +763,7 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
     ASSERT_FALSE(path.empty());
     const auto input = client.Post(
         path + "api/v1/input",
-        R"({"text":"Question"})",
+        R"({"user":"reader","text":"Question"})",
         "application/json");
     ASSERT_TRUE(input);
     ASSERT_EQ(input->status, 200) << input->body;

@@ -40,6 +40,12 @@ int main_internal() {
     cha::Terminal terminal;
     cha::StartupSelector selector(terminal);
 
+    const cha::UserRoster users = workspace.load_users();
+    const auto selected_user = selector.select_user(users);
+    if (!selected_user) {
+        throw std::runtime_error("User selection cancelled");
+    }
+
     std::vector<cha::Forum> forums;
     for (const std::string& forum_name : workspace.forums()) {
         forums.push_back(workspace.load_forum(forum_name));
@@ -78,7 +84,7 @@ int main_internal() {
             event_loop);
     }
 
-    cha::run_user(terminal, *controller, event_loop);
+    cha::run_user(terminal, *controller, event_loop, *selected_user);
     cha::log_info("Terminal application stopped");
     return 0;
 }

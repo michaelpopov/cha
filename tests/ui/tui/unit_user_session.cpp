@@ -31,6 +31,10 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
+User selected_user() {
+    return {.id = "reader", .display_name = "Reader", .prompt = ""};
+}
+
 // Removes one temporary session database when a controller test leaves scope.
 class TemporarySessionJournal {
 public:
@@ -222,7 +226,7 @@ TEST(UserSession, SubmitsEditedInputThroughTheController) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -242,7 +246,7 @@ TEST(UserSession, DelegatesClearAndInfoCommandsToTheController) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     enter(view, "/info");
     session.receive_terminal_input();
@@ -269,7 +273,7 @@ TEST(UserSession, StopInputDrivesControllerCancellation) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -295,7 +299,7 @@ TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -317,7 +321,7 @@ TEST(UserSession, ConsumesStopCommandDuringGeneration) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -337,7 +341,7 @@ TEST(UserSession, ExitCommandStopsTheSession) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     enter(view, "/exit");
     session.receive_terminal_input();
@@ -352,7 +356,7 @@ TEST(UserSession, ClosedAgentEventQueueStopsTheSession) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
     controller->shutdown();
 
     session.receive_responses();
@@ -367,7 +371,7 @@ TEST(UserSession, PollReportedTerminalClosureStopsTheSession) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     session.close_terminal();
 
@@ -381,7 +385,7 @@ TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     session.report_terminal_failure();
     session.render_if_needed();
@@ -398,7 +402,7 @@ TEST(UserSession, RendersTheGeneratingAgentByName) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     session.resize();
     session.render_if_needed();
@@ -425,7 +429,7 @@ TEST(UserSession, RendersAddressingWheneverTheForumHostsSeveralAgents) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     session.resize();
     session.render_if_needed();
@@ -445,7 +449,7 @@ TEST(UserSession, PreviewsTheDefaultOrLeadingMentionedInputTarget) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     session.resize();
     session.render_if_needed();
@@ -465,7 +469,7 @@ TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOt
             temporary.path,
             notifier());
         FakeSessionView view;
-        UserSession session(view, *controller);
+        UserSession session(view, *controller, selected_user());
         session.resize();
         session.render_if_needed();
         EXPECT_FALSE(view.rendered_show_addressing);
@@ -487,7 +491,7 @@ TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOt
         notifier(),
         std::move(restored));
     FakeSessionView view;
-    UserSession session(view, *reopened);
+    UserSession session(view, *reopened, selected_user());
 
     session.resize();
     session.render_if_needed();
@@ -507,7 +511,7 @@ TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller);
+    UserSession session(view, *controller, selected_user());
 
     enter(view, "Question");
     session.receive_terminal_input();

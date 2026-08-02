@@ -79,6 +79,7 @@ public:
             path_ / "forums" / "hall" / "personas" / "Ismael");
         std::filesystem::create_directories(
             path_ / "forums" / "hall" / "sessions");
+        std::filesystem::create_directories(path_ / "users" / "reader");
         write_file(
             path_ / "app.toml",
             "host = \"127.0.0.1\"\nport = 8080\n"
@@ -95,6 +96,9 @@ public:
         write_file(
             path_ / "forums" / "hall" / "FORUM.md",
             "Answer the user.\n");
+        write_file(
+            path_ / "users" / "reader" / "user.toml",
+            "display_name = \"Reader\"\n");
     }
 
     ~TemporaryWorkspace() {
@@ -150,7 +154,8 @@ ChildProcess launch_console(
     const TemporaryWorkspace& workspace,
     const std::filesystem::path& input_path = {},
     bool check_forum = false,
-    std::string session_id = {}) {
+    std::string session_id = {},
+    std::string user = "reader") {
     int input_pipe[2]{-1, -1};
     int output_pipe[2]{};
     int error_pipe[2]{};
@@ -207,6 +212,8 @@ ChildProcess launch_console(
             ::execl(
                 CHA_CONSOLE_BINARY,
                 CHA_CONSOLE_BINARY,
+                "--user",
+                user.c_str(),
                 "--forum",
                 "hall",
                 "--session",
@@ -217,6 +224,8 @@ ChildProcess launch_console(
             ::execl(
                 CHA_CONSOLE_BINARY,
                 CHA_CONSOLE_BINARY,
+                "--user",
+                user.c_str(),
                 "--forum",
                 "hall",
                 "--color=never",
@@ -535,6 +544,18 @@ TEST(ConsoleProcess, CheckValidatesWithoutCreatingASessionOrConnecting) {
     EXPECT_EQ(result.exit_code, 0) << result.errors;
     EXPECT_EQ(result.output, "Forum 'hall' is valid (1 persona).\n");
     EXPECT_TRUE(result.errors.empty());
+    EXPECT_FALSE(workspace.has_session());
+}
+
+TEST(ConsoleProcess, RejectsAnUnknownUserID) {
+    TemporaryWorkspace workspace;
+    ChildProcess process = launch_console(workspace, {}, false, {}, "ghost");
+
+    const ProcessResult result = run_to_completion(process);
+
+    EXPECT_FALSE(result.timed_out);
+    EXPECT_EQ(result.exit_code, 2);
+    EXPECT_NE(result.errors.find("ghost"), std::string::npos);
     EXPECT_FALSE(workspace.has_session());
 }
 

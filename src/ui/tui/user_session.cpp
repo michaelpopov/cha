@@ -12,9 +12,11 @@ namespace cha {
 // Coalesce session mutations behind this class so rendering happens consistently and only when needed.
 UserSession::UserSession(
     SessionView& view,
-    SessionController& controller)
+    SessionController& controller,
+    User user)
   : view_(view),
-    controller_(controller) {
+    controller_(controller),
+    user_(std::move(user)) {
 }
 
 bool UserSession::running() const {

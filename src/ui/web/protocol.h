@@ -84,6 +84,8 @@ struct SessionSnapshot {
 };
 
 struct RawCommand {
+    // Block 5 — Author reaches the transcript forwards this to text input.
+    std::string user;
     std::string text;
 };
 

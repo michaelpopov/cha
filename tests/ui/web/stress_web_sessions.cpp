@@ -165,10 +165,10 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     results.reserve(commands_per_session * 2);
     for (unsigned int index = 0; index != commands_per_session; ++index) {
         results.push_back(std::async(std::launch::async, [&first] {
-            return first.runtime().submit(RawCommand{"first"}, 1s);
+            return first.runtime().submit(RawCommand{"reader", "first"}, 1s);
         }));
         results.push_back(std::async(std::launch::async, [&second] {
-            return second.runtime().submit(RawCommand{"second"}, 1s);
+            return second.runtime().submit(RawCommand{"reader", "second"}, 1s);
         }));
     }
     for (auto& result : results) {
@@ -204,11 +204,11 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
     ASSERT_TRUE(healthy);
 
     auto blocked_command = std::async(std::launch::async, [&] {
-        return blocked.runtime().submit(RawCommand{"wait"}, 50ms);
+        return blocked.runtime().submit(RawCommand{"reader", "wait"}, 50ms);
     });
     ASSERT_TRUE(gate.wait_until_entered());
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        healthy.runtime().submit(RawCommand{"independent"}, 1s)));
+        healthy.runtime().submit(RawCommand{"reader", "independent"}, 1s)));
     EXPECT_EQ(healthy_commands, 1U);
     EXPECT_EQ(
         std::get<ErrorCode>(blocked_command.get()),
@@ -216,7 +216,7 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
 
     gate.release();
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        healthy.runtime().submit(RawCommand{"still-independent"}, 1s)));
+        healthy.runtime().submit(RawCommand{"reader", "still-independent"}, 1s)));
     EXPECT_EQ(healthy_commands, 2U);
     registry.begin_shutdown();
     EXPECT_TRUE(registry.join_shutdown(1s));
@@ -354,7 +354,7 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptGeneratingPeer) {
     std::vector<std::future<CommandSubmitResult>> commands;
     for (int index = 0; index != 40; ++index) {
         commands.push_back(std::async(std::launch::async, [&] {
-            return healthy_handle.runtime().submit(RawCommand{"work"}, 1s);
+            return healthy_handle.runtime().submit(RawCommand{"reader", "work"}, 1s);
         }));
     }
     for (auto& command : commands) {
@@ -457,7 +457,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     for (SessionHandle& handle : handles) {
         SessionHandle* const target = &handle;
         commands.push_back(std::async(std::launch::async, [target] {
-            return target->runtime().submit(RawCommand{"/clear"}, 2s);
+            return target->runtime().submit(RawCommand{"reader", "/clear"}, 2s);
         }));
     }
     for (auto& command : commands) {

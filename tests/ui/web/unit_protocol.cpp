@@ -292,10 +292,11 @@ TEST(WebProtocol, RejectsInvalidEnumValues) {
 }
 
 TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
-    nlohmann::json input_body = {{"text", "hello"}};
+    nlohmann::json input_body = {{"user", "reader"}, {"text", "hello"}};
     const WebCommand input = parse_input_command(input_body);
     input_body["text"] = "changed";
     ASSERT_TRUE(std::holds_alternative<RawCommand>(input));
+    EXPECT_EQ(std::get<RawCommand>(input).user, "reader");
     EXPECT_EQ(std::get<RawCommand>(input).text, "hello");
 
     const WebCommand default_agent =
@@ -308,10 +309,16 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     const WebCommand stop = StopCommand{};
     EXPECT_TRUE(std::holds_alternative<StopCommand>(stop));
     EXPECT_THROW(
-        (void)parse_input_command({{"type", "input"}, {"text", "hello"}}),
+        (void)parse_input_command({{"type", "input"}, {"user", "reader"}, {"text", "hello"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_input_command({{"text", 1}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_input_command({{"text", "hello"}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_input_command({{"user", ""}, {"text", "hello"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_default_agent_command({

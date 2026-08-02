@@ -82,6 +82,7 @@ std::variant<ConsoleOptions, ArgumentError> parse(
 TEST(ConsoleStartup, ParsesSelectionAndColorOptions) {
     const auto parsed = parse({
         "chacon",
+        "--user", "reader",
         "--forum", "hall",
         "--session", "saved",
         "--color=always",
@@ -89,10 +90,11 @@ TEST(ConsoleStartup, ParsesSelectionAndColorOptions) {
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(parsed));
     const ConsoleOptions& options = std::get<ConsoleOptions>(parsed);
     EXPECT_EQ(options.forum, "hall");
+    EXPECT_EQ(options.user, "reader");
     EXPECT_EQ(options.session_id, "saved");
     EXPECT_EQ(options.color, ColorMode::always);
 
-    const auto fresh = parse({"chacon", "--forum", "hall"});
+    const auto fresh = parse({"chacon", "--user", "reader", "--forum", "hall"});
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(fresh));
     ASSERT_TRUE(std::get<ConsoleOptions>(fresh).new_label.has_value());
     EXPECT_TRUE(std::get<ConsoleOptions>(fresh).new_label->empty());
@@ -111,6 +113,8 @@ TEST(ConsoleStartup, RejectsUsageErrorsWithCodeTwo) {
         parse({"chacon", "--unknown"}),
         parse({"chacon", "operand"}),
         parse({"chacon", "--forum", "hall", "--session", ""}),
+        parse({"chacon", "--user", "", "--forum", "hall"}),
+        parse({"chacon", "--forum", "hall"}),
         parse({
             "chacon", "--forum", "hall",
             "--session", "x", "--new", "y",
@@ -128,10 +132,21 @@ TEST(ConsoleStartup, RejectsUsageErrorsWithCodeTwo) {
             "--check", "--list-sessions",
         }),
         parse({"chacon", "--forum", "hall", "--color=sometimes"}),
+        parse({"chacon", "--user", "reader", "--list-forums"}),
+        parse({"chacon", "--user", "reader", "--forum", "hall", "--list-sessions"}),
+        parse({"chacon", "--user", "reader", "--forum", "hall", "--check"}),
     }) {
         ASSERT_TRUE(std::holds_alternative<ArgumentError>(parsed));
         EXPECT_EQ(std::get<ArgumentError>(parsed).exit_code, 2);
     }
+}
+
+TEST(ConsoleStartup, RejectsAnEmptyExplicitUserID) {
+    const auto parsed = parse({"chacon", "--user", "", "--forum", "hall"});
+
+    ASSERT_TRUE(std::holds_alternative<ArgumentError>(parsed));
+    EXPECT_EQ(std::get<ArgumentError>(parsed).exit_code, 2);
+    EXPECT_EQ(std::get<ArgumentError>(parsed).message, "--user requires a user ID");
 }
 
 TEST(ConsoleStartup, ForumListingUsesFilesystemNameOrder) {
