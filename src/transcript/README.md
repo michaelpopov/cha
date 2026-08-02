@@ -26,7 +26,7 @@ separates four things that are easy to conflate:
 | `kind`, `status` | What the entry *is* and how its content ended. |
 | `participant_id`, `display_name` | Who produced it — stable identity versus the label shown. |
 | `addressed_to`, `addressed_to_name` | Who a human prompt was sent to. Only human entries carry this. |
-| `text` | User text, agent answer text, or system/error text. |
+| `text` | Persona text, agent answer text, or system/error text. |
 
 Four kinds and four statuses combine only in these ways:
 
@@ -47,9 +47,9 @@ out of callers.
 `make_human_entry` takes one `HumanEntrySpec`; designated `author` and
 `addressed_to` fields preserve the human's stored identity separately from the
 agent they addressed without relying on positional arguments of the same type.
-The author is a validated workspace user ID and display name; the clean `text`
+The author is a validated workspace persona ID and display name; the clean `text`
 is stored and rendered unchanged. Model-context projection, outside this layer,
-adds `from <display name>:` only when it makes an ordinary `user` message.
+adds `from <display name>:` only when it makes an ordinary `persona` message.
 `make_hide_on_marker`, `make_hide_marker`, and `make_hide_off_marker` build the
 off-record markers the same way: notices with empty text whose display names
 are `"hide-on"`, `"hide"`, and `"hide-off"`.

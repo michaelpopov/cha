@@ -7,12 +7,12 @@ line-oriented `chacon` console frontend.
 ## Workspace configuration
 
 Run either executable from a workspace containing `app.toml`, `forums/`, and a
-`users/` roster. `Workspace` itself requires `forums/`; starting a session
-requires a non-empty `users/` directory, while forum listing remains available
+`personas/` roster. `Workspace` itself requires `forums/`; starting a session
+requires a non-empty `personas/` directory, while forum listing remains available
 before a roster has been created.
 Each immediate subdirectory of `forums/` is a forum; forums are presented in
 lexicographic name order. At `cha` startup, a terminal selector lets you choose
-a user, then a forum, and then an existing session or **New session**. `chacon` makes the same
+a persona, then a forum, and then an existing session or **New session**. `chacon` makes the same
 selection through command-line options.
 
 `app.toml` configures application-wide behavior. Its top-level `host` and
@@ -38,23 +38,23 @@ Supported levels are `trace`, `debug`, `info`, `warn`, `error`, `critical`,
 and `off`. When logging is enabled, missing parent directories for `file` are
 created automatically. Logs rotate at 10 MiB and retain three files.
 
-Each direct subdirectory of `users/` is a user. Its directory name is the
+Each direct subdirectory of `personas/` is a persona. Its directory name is the
 stable ID recorded in transcript rows and must be a C++ identifier
-`[A-Za-z_][A-Za-z0-9_]*`; `user.toml` must contain only a `display_name`, and
-an optional `USER.md` is fixed verbatim prompt text (not a template). User display
+`[A-Za-z_][A-Za-z0-9_]*`; `persona.toml` must contain only a `display_name`, and
+an optional `PERSONA.md` is fixed verbatim prompt text (not a template). Persona display
 names may contain ordinary spaces and punctuation, but cannot be empty or
 edge-whitespace, start with `@` or `/`, contain controls or line breaks, be
-reserved, or duplicate another user case-insensitively. The shared reserved
-names are `user`, `system`, `error`, `human`, `assistant`, `agent`, and `you`;
-they are rejected case-insensitively for both user IDs and display names, and for persona display
-names. Users are loaded in lexicographic ID order. There is no `--list-users`:
-the console's `--user` takes the directory ID, while the TUI and web lobby show
-display names. A user ID cannot equal a persona ID, and a user display name
-cannot equal a persona display name case-insensitively.
+reserved, or duplicate another persona case-insensitively. The shared reserved
+names are `persona`, `system`, `error`, `human`, `assistant`, `agent`, and `you`;
+they are rejected case-insensitively for both persona IDs and display names, and for character display
+names. Personas are loaded in lexicographic ID order. There is no `--list-personas`:
+the console's `--persona` takes the directory ID, while the TUI and web lobby show
+display names. A persona ID cannot equal a character ID, and a persona display name
+cannot equal a character display name case-insensitively.
 
-Each forum has `config.toml` with a required `display_name` string, a `personas/` directory with one or more persona subdirectories, and `FORUM.md`. The directory name is the stable forum ID used by `chacon --forum`; it may contain only RFC 3986 unreserved ASCII characters (letters, digits, `-`, `.`, `_`, and `~`), excluding the complete names `.` and `..`. The display name is shown in the UI and forum listings and is not subject to the ID restriction. A forum is also the unit of distribution: it can be zipped and unpacked into another workspace. Each persona is loaded from `forums/<forum>/personas/<persona>/persona.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt. Its four sections, in order, are expanded `SYSTEM.md`, expanded `FORUM.md`, the complete static user roster, and generated forum context that identifies the agent and the forum's other personas. Persona directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
+Each forum has `config.toml` with a required `display_name` string, a `characters/` directory with one or more character subdirectories, and `FORUM.md`. The directory name is the stable forum ID used by `chacon --forum`; it may contain only RFC 3986 unreserved ASCII characters (letters, digits, `-`, `.`, `_`, and `~`), excluding the complete names `.` and `..`. The display name is shown in the UI and forum listings and is not subject to the ID restriction. A forum is also the unit of distribution: it can be zipped and unpacked into another workspace. Each character is loaded from `forums/<forum>/characters/<character>/character.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt. Its four sections, in order, are expanded `SYSTEM.md`, expanded `FORUM.md`, the complete static persona roster, and generated forum context that identifies the agent and the forum's other characters. Character directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
-Each persona directory's name is its stable ID and identifies transcript entries;
+Each character directory's name is its stable ID and identifies transcript entries;
 its `display_name` is the visible `@mention` handle. Display names cannot start
 or end with whitespace, start with `@` or `/`, or be a reserved participant
 name (case-insensitively). A multi-word display name can be addressed through any
@@ -64,18 +64,18 @@ agents use the session's shared chat transcript. Exchanges involving another
 agent are supplied as escaped JSON Lines so the receiving agent can treat the
 other speaker's first-person statements as quoted history rather than its own
 identity. A session stores only its forum and transcript, so it can be reopened
-even if the forum's personas changed.
+even if the forum's characters changed.
 
 Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Session IDs use the same URL-safe character set as forum IDs; files whose stems do not follow that rule are ignored. Its embedded version, ID, and forum must match the selected forum before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database and is not subject to the ID restriction. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
 
-`forums/<forum>/personas/persona_defaults.toml` may define configuration shared by every persona in
-that forum. A persona's own `persona.toml` overrides it field by field. The
-precedence is built-in defaults, then `persona_defaults.toml`, then the persona
+`forums/<forum>/characters/character_defaults.toml` may define configuration shared by every character in
+that forum. A character's own `character.toml` overrides it field by field. The
+precedence is built-in defaults, then `character_defaults.toml`, then the character
 file. The defaults file is optional; it cannot define `display_name`.
 
 ### Prompt templates
 
-`SYSTEM.md` and `FORUM.md` are expanded separately for each persona before they
+`SYSTEM.md` and `FORUM.md` are expanded separately for each character before they
 are concatenated. Two expansion forms and one escape are recognized; everything
 else is copied unchanged:
 
@@ -94,28 +94,28 @@ Variables come from a `[prompt]` table (never from top-level connection fields
 such as `api_key`) and from reserved names supplied by the loader:
 
 ```toml
-# forums/example/personas/persona_defaults.toml
+# forums/example/characters/character_defaults.toml
 [prompt]
 register = "measured"
 
-# forums/example/personas/local-assistant/persona.toml
+# forums/example/characters/local-assistant/character.toml
 [prompt]
 register = "energetic"
 ```
 
 ```markdown
 $$(../shared/voice.md)
-You are portraying $${persona.display_name} in $${forum.display_name}.
+You are portraying $${character.display_name} in $${forum.display_name}.
 ```
 
 The initial variable scope is the base `[prompt]` table overlaid by the
-persona's `[prompt]` table. When a template or included file is read, a
+character's `[prompt]` table. When a template or included file is read, a
 `[prompt]` table in a template directory's adjacent `config.toml` overlays the inherited
 scope for that file and its descendants. Values may be strings, integers,
 floating-point numbers, or booleans. Variable names may contain ASCII letters,
 digits, `_`, `-`, and `.`.
 
-Reserved names are `persona.id`, `persona.display_name`, `forum.id`, and
+Reserved names are `character.id`, `character.display_name`, `forum.id`, and
 `forum.display_name`. They always come from the loader and cannot be overridden
 by a `[prompt]` table. Expansion rejects unknown variables, malformed macros,
 missing or cyclic includes, paths outside the forum, more than 256 includes, an
@@ -126,7 +126,7 @@ The following top-level configuration fields are supported:
 
 - `host`: required server host name or address.
 - `port`: required server port.
-- `display_name`: required display name and `@mention` handle. It cannot start or end with whitespace, start with `@` or `/`, or be a reserved participant name case-insensitively. Internal whitespace is allowed. The persona directory name is its stable identifier and must contain only ASCII letters, digits, underscores, and hyphens.
+- `display_name`: required display name and `@mention` handle. It cannot start or end with whitespace, start with `@` or `/`, or be a reserved participant name case-insensitively. Internal whitespace is allowed. The character directory name is its stable identifier and must contain only ASCII letters, digits, underscores, and hyphens.
 - `mode`: `net` for an OpenAI-compatible HTTP server or `test` for the built-in echo backend; defaults to `test`.
 - `model`: optional model name sent in chat-completions requests. If omitted, the first model returned by the endpoint's `/v1/models` API is used.
 - `stream`: whether to request streamed SSE responses; defaults to `true`.
@@ -138,13 +138,13 @@ The following top-level configuration fields are supported:
 - `reasoning_format`: representation used for provider-visible reasoning output; defaults to `auto`. Supported values are `auto`, `none`, `reasoning_content`, and `reasoning`.
 - `https`: use HTTPS instead of HTTP; defaults to `false`.
 
-Persona files use `display_name` and their directory-derived ID; the removed
+Character files use `display_name` and their directory-derived ID; the removed
 `name` and `id` fields are rejected.
 
 Example:
 
 ```toml
-# forums/example/personas/persona_defaults.toml
+# forums/example/characters/character_defaults.toml
 host = "127.0.0.1"
 port = 8080
 mode = "net"
@@ -155,7 +155,7 @@ reasoning_format = "auto"
 ```
 
 ```toml
-# forums/example/personas/local-assistant/persona.toml
+# forums/example/characters/local-assistant/character.toml
 display_name = "Local assistant"
 temperature = 0.7
 ```
@@ -215,11 +215,11 @@ prompts, response text, credentials, or provider error bodies.
 - `/hide` closes or extends that span to the current boundary; the transcript
   remains visible, but the enclosed entries are omitted from later requests.
 - `/hide-off` removes the span and returns its entries to later model context.
-- `/mcast [@Name, ... .] prompt` sends the same prompt to every persona, or the
-  selected personas in order, while keeping earlier multicast answers out of
+- `/mcast [@Name, ... .] prompt` sends the same prompt to every character, or the
+  selected characters in order, while keeping earlier multicast answers out of
   later multicast requests.
-- `/info` displays the transcript entry count followed by the current forum's personas.
-- `/agents` displays the current forum's personas and marks the default agent.
+- `/info` displays the transcript entry count followed by the current forum's characters.
+- `/agents` displays the current forum's characters and marks the default agent.
 - `/@Name` changes the default agent for this run only.
 - `/stop` cancels every live model run in the current request. If a
   foreground response completed before the stop request was processed, that
@@ -250,20 +250,20 @@ requires a forum except when listing all forums:
 chacon --list-forums
 chacon --forum FORUM --list-sessions
 chacon --forum FORUM --check
-chacon --user USER --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
+chacon --persona PERSONA --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
 ```
 
-`--user` is required for chat startup and is not accepted by listing or
-`--check` modes. It selects the stable user-directory ID that attributes every
+`--persona` is required for chat startup and is not accepted by listing or
+`--check` modes. It selects the stable persona-directory ID that attributes every
 prompt in that console run.
 
 `--check` performs a read-only validation of the forum and exits. It checks the
-forum and persona directories and required files, forum/persona TOML settings,
-effective required connection settings, persona ID and display-name validity
-and uniqueness, the validated user roster and user/persona collision rules,
-and complete expansion of every persona's `SYSTEM.md` and
+forum and character directories and required files, forum/character TOML settings,
+effective required connection settings, character ID and display-name validity
+and uniqueness, the validated persona roster and persona/character collision rules,
+and complete expansion of every character's `SYSTEM.md` and
 `FORUM.md`—including variables, includes, containment, cycles, and limits. A
-successful check prints, for example, `Forum 'stoics' is valid (3 personas).`
+successful check prints, for example, `Forum 'stoics' is valid (3 characters).`
 and exits with status 0; a validation failure uses the normal `Failed: ...`
 diagnostic and exits with status 1.
 
@@ -313,7 +313,7 @@ The same prefix is used for the live request and replayed history; quoted
 shared-history JSONL already has a speaker field and is not prefixed.
 
 Pre-existing checked-in session databases were deleted rather than migrated:
-their historical `human` participant IDs do not denote a workspace user.
+their historical `human` participant IDs do not denote a workspace persona.
 
 ## Build and test
 
@@ -392,7 +392,7 @@ The source tree is documented from the inside out, with diagrams:
 | --- | --- |
 | [`src/README.md`](src/README.md) | High-level architecture: layers, threading, the life of a turn, persistence, and the invariants that hold everywhere. Start here. |
 | [`src/transcript/README.md`](src/transcript/README.md) | The transcript model shared by every layer. |
-| [`src/agents/README.md`](src/agents/README.md) | Persona loading, staged runner threads, and the HTTP transport. |
+| [`src/agents/README.md`](src/agents/README.md) | Character loading, staged runner threads, and the HTTP transport. |
 | [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
 | [`src/ui/README.md`](src/ui/README.md) | The UI contract, with shared [`render/`](src/ui/render/README.md) and [`text/`](src/ui/text/README.md), plus the [`tui/`](src/ui/tui/README.md) and [`console/`](src/ui/console/README.md) frontends. |
 | [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |

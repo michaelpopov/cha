@@ -45,14 +45,14 @@ std::string request_action(
         + " for @" + std::string(agent_name);
 }
 
-ForumPersonas make_forum_personas(
+ForumCharacters make_forum_characters(
     const std::vector<AgentRuntimeInfo>& runtime_info) {
-    std::vector<PersonaInfo> personas;
-    personas.reserve(runtime_info.size());
+    std::vector<CharacterInfo> characters;
+    characters.reserve(runtime_info.size());
     for (const AgentRuntimeInfo& agent : runtime_info) {
-        personas.push_back(agent.persona);
+        characters.push_back(agent.character);
     }
-    return ForumPersonas(std::move(personas));
+    return ForumCharacters(std::move(characters));
 }
 
 void merge_update(SessionUpdate& all, SessionUpdate one) {
@@ -64,17 +64,17 @@ void merge_update(SessionUpdate& all, SessionUpdate one) {
     }
 }
 
-std::string format_personas_notice(
-    const ForumPersonas& personas,
+std::string format_characters_notice(
+    const ForumCharacters& characters,
     const std::vector<AgentRuntimeInfo>& runtime_info,
     const ParticipantId& default_agent_id) {
     std::ostringstream result;
-    result << "Personas in this forum (" << personas.all().size()
+    result << "Characters in this forum (" << characters.all().size()
            << "), * marks the default.";
     result << " Any unambiguous prefix works.";
     for (const AgentRuntimeInfo& agent : runtime_info) {
-        result << " | " << (agent.persona.id == default_agent_id ? "* " : "")
-               << "@" << agent.persona.name << "  " << agent.model << "  "
+        result << " | " << (agent.character.id == default_agent_id ? "* " : "")
+               << "@" << agent.character.name << "  " << agent.model << "  "
                << agent.api << "  "
                << (agent.streaming ? "streaming" : "non-streaming");
     }
@@ -83,13 +83,13 @@ std::string format_personas_notice(
 
 std::string format_session_information(
     const Transcript& transcript,
-    const ForumPersonas& personas,
+    const ForumCharacters& characters,
     const std::vector<AgentRuntimeInfo>& runtime_info,
     const ParticipantId& default_agent_id) {
     std::ostringstream text;
     text << "Transcript entries: " << transcript.size()
-         << " | " << format_personas_notice(
-             personas, runtime_info, default_agent_id);
+         << " | " << format_characters_notice(
+             characters, runtime_info, default_agent_id);
     return text.str();
 }
 
@@ -104,7 +104,7 @@ void require_agent_count(std::size_t count) {
 
 std::unique_ptr<SessionController> SessionController::from_definitions(
     std::vector<AgentDefinition> definitions,
-    UserRoster users,
+    PersonaRoster personas,
     std::filesystem::path database_path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -116,7 +116,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
     }
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
-        std::move(users),
+        std::move(personas),
         std::move(database_path),
         std::move(lease),
         notifier,
@@ -125,14 +125,14 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
 
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
     std::vector<AgentDefinition> definitions,
-    UserRoster users,
+    PersonaRoster personas,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored) {
     require_agent_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
-        std::move(users),
+        std::move(personas),
         std::move(database_path),
         SessionLease::inactive_for_testing(),
         notifier,
@@ -141,7 +141,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
 
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
-    UserRoster users,
+    PersonaRoster personas,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored,
@@ -149,7 +149,7 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     require_agent_count(backends.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(backends),
-        std::move(users),
+        std::move(personas),
         std::move(database_path),
         notifier,
         std::move(restored),
@@ -158,7 +158,7 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
 
 SessionController::SessionController(
     std::vector<AgentDefinition> definitions,
-    UserRoster users,
+    PersonaRoster personas,
     std::filesystem::path path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -167,15 +167,15 @@ SessionController::SessionController(
       journal_(std::move(path)),
       worker_pool_(definitions.size()),
       registry_(std::move(definitions), notifier, worker_pool_),
-      personas_(make_forum_personas(registry_.runtime_info())),
-      users_(std::move(users)),
-      default_agent_id_(personas_.first().id) {
+      characters_(make_forum_characters(registry_.runtime_info())),
+      personas_(std::move(personas)),
+      default_agent_id_(characters_.first().id) {
     initialize(std::move(restored));
 }
 
 SessionController::SessionController(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
-    UserRoster users,
+    PersonaRoster personas,
     std::filesystem::path path,
     WakeNotifier& notifier,
     SessionRestore restored,
@@ -184,9 +184,9 @@ SessionController::SessionController(
       journal_(std::move(path)),
       worker_pool_(backends.size()),
       registry_(std::move(backends), notifier, worker_pool_),
-      personas_(make_forum_personas(registry_.runtime_info())),
-      users_(std::move(users)),
-      default_agent_id_(personas_.first().id),
+      characters_(make_forum_characters(registry_.runtime_info())),
+      personas_(std::move(personas)),
+      default_agent_id_(characters_.first().id),
       before_activation_(std::move(before_activation)) {
     initialize(std::move(restored));
 }
@@ -268,11 +268,11 @@ std::optional<EntryIdentity> SessionController::resolve_author(
     std::string_view author_id,
     SessionUpdate& update) const {
     const auto author = std::find_if(
-        users_.begin(), users_.end(),
-        [author_id](const User& user) { return user.id == author_id; });
-    if (author == users_.end()) {
+        personas_.begin(), personas_.end(),
+        [author_id](const Persona& persona) { return persona.id == author_id; });
+    if (author == personas_.end()) {
         update.clear_input = false;
-        update.notice = "Unknown user ID '" + std::string(author_id) + "'";
+        update.notice = "Unknown persona ID '" + std::string(author_id) + "'";
         return std::nullopt;
     }
     return EntryIdentity{author->id, author->display_name};
@@ -290,20 +290,20 @@ SessionUpdate SessionController::submit_prompt(
     }
 
     SessionUpdate update;
-    const PersonaInfo* target = nullptr;
+    const CharacterInfo* target = nullptr;
     if (handle.empty()) {
-        target = personas_.find(default_agent_id_);
+        target = characters_.find(default_agent_id_);
     } else {
-        const HandleResolution resolution = personas_.resolve_handle(handle);
+        const HandleResolution resolution = characters_.resolve_handle(handle);
         if (resolution.match != HandleMatch::resolved) {
             update.notice = format_handle_resolution_notice(
-                handle, resolution, personas_);
+                handle, resolution, characters_);
             return update;
         }
-        target = resolution.persona;
+        target = resolution.character;
     }
     if (!target) {
-        throw std::logic_error("Default agent is not among the forum personas");
+        throw std::logic_error("Default agent is not among the forum characters");
     }
     if (text.empty()) {
         update.notice = "Prompt for @" + target->name + " is empty";
@@ -320,7 +320,7 @@ SessionUpdate SessionController::submit_prompt(
     start_batch(
         std::move(*author),
         std::move(text),
-        std::vector<PersonaInfo>{*target},
+        std::vector<CharacterInfo>{*target},
         std::move(history),
         update);
     return update;
@@ -329,7 +329,7 @@ SessionUpdate SessionController::submit_prompt(
 void SessionController::start_batch(
     EntryIdentity author,
     std::string text,
-    std::vector<PersonaInfo> targets,
+    std::vector<CharacterInfo> targets,
     SharedCompletionHistory history,
     SessionUpdate& update) {
     if (!history || targets.empty()) {
@@ -340,7 +340,7 @@ void SessionController::start_batch(
         .history = std::move(history),
     };
     batch.runs.reserve(targets.size());
-    for (PersonaInfo& target : targets) {
+    for (CharacterInfo& target : targets) {
         batch.runs.push_back({
             .request_id = next_request_id_++,
             .target = std::move(target),
@@ -599,14 +599,14 @@ SessionUpdate SessionController::start_multicast(
     std::vector<ParticipantId> ids;
     ids.reserve(handles.size());
     for (const std::string& handle : handles) {
-        const HandleResolution resolution = personas_.resolve_handle(handle);
+        const HandleResolution resolution = characters_.resolve_handle(handle);
         if (resolution.match != HandleMatch::resolved) {
             return {
                 .notice = format_handle_resolution_notice(
-                    handle, resolution, personas_),
+                    handle, resolution, characters_),
             };
         }
-        ids.push_back(resolution.persona->id);
+        ids.push_back(resolution.character->id);
     }
     return start_multicast_from_ids(author_id, std::move(text), std::move(ids));
 }
@@ -626,19 +626,19 @@ SessionUpdate SessionController::start_multicast_from_ids(
     std::string_view author_id,
     std::string text,
     std::vector<ParticipantId> ids) {
-    std::vector<PersonaInfo> targets;
+    std::vector<CharacterInfo> targets;
     if (ids.empty()) {
-        targets = personas_.all();
+        targets = characters_.all();
     } else {
         std::unordered_set<ParticipantId> distinct;
         targets.reserve(ids.size());
         for (const ParticipantId& id : ids) {
-            const PersonaInfo* target = personas_.find(id);
+            const CharacterInfo* target = characters_.find(id);
             if (!target) {
                 return {.notice = "Unknown multicast target ID '" + id + "'"};
             }
             if (!distinct.insert(id).second) {
-                return {.notice = format_duplicate_persona_notice(target->name)};
+                return {.notice = format_duplicate_character_notice(target->name)};
             }
             targets.push_back(*target);
         }
@@ -649,7 +649,7 @@ SessionUpdate SessionController::start_multicast_from_ids(
 SessionUpdate SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
-    std::vector<PersonaInfo> targets) {
+    std::vector<CharacterInfo> targets) {
     if (text.empty()) {
         return {.notice = "Multicast prompt is empty"};
     }
@@ -692,7 +692,7 @@ SessionUpdate SessionController::session_information() {
         .clear_input = true,
         .notice = format_session_information(
             transcript_,
-            personas_,
+            characters_,
             registry_.runtime_info(),
             default_agent_id_),
     };
@@ -705,8 +705,8 @@ SessionUpdate SessionController::agent_information() {
     return {
         .render_needed = true,
         .clear_input = true,
-        .notice = format_personas_notice(
-            personas_, registry_.runtime_info(), default_agent_id_),
+        .notice = format_characters_notice(
+            characters_, registry_.runtime_info(), default_agent_id_),
     };
 }
 
@@ -719,13 +719,13 @@ SessionUpdate SessionController::set_default_agent(std::string_view handle) {
         update.notice = "Usage: /@AgentName";
         return update;
     }
-    const HandleResolution result = personas_.resolve_handle(handle);
+    const HandleResolution result = characters_.resolve_handle(handle);
     if (result.match != HandleMatch::resolved) {
-        update.notice = format_handle_resolution_notice(handle, result, personas_);
+        update.notice = format_handle_resolution_notice(handle, result, characters_);
         return update;
     }
-    default_agent_id_ = result.persona->id;
-    update.notice = "Default agent is now " + result.persona->name;
+    default_agent_id_ = result.character->id;
+    update.notice = "Default agent is now " + result.character->name;
     return update;
 }
 
@@ -735,13 +735,13 @@ SessionUpdate SessionController::set_default_agent_by_id(std::string_view id) {
     }
     // This typed action submits no editor text, so it never clears a draft.
     SessionUpdate update;
-    const PersonaInfo* persona = personas_.find(id);
-    if (!persona) {
+    const CharacterInfo* character = characters_.find(id);
+    if (!character) {
         update.notice = "Unknown agent";
         return update;
     }
-    default_agent_id_ = persona->id;
-    update.notice = "Default agent is now " + persona->name;
+    default_agent_id_ = character->id;
+    update.notice = "Default agent is now " + character->name;
     return update;
 }
 

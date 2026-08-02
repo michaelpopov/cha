@@ -3,12 +3,12 @@
 namespace cha {
 
 bool show_addressing(
-    const ForumPersonas& personas,
+    const ForumCharacters& characters,
     TranscriptView transcript) {
-    if (personas.all().size() > 1) {
+    if (characters.all().size() > 1) {
         return true;
     }
-    const std::string_view sole = personas.first().id;
+    const std::string_view sole = characters.first().id;
     for (const TranscriptEntry& entry : transcript.entries) {
         const bool foreign =
             (entry.kind == EntryKind::agent && entry.participant_id != sole)

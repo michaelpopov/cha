@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/user.h"
+#include "agents/persona.h"
 #include "session/not_found_error.h"
 
 #include <filesystem>
@@ -14,12 +14,12 @@ namespace cha {
 class SessionController;
 class WakeNotifier;
 
-// A forum resolved from the workspace: its directory name, user-facing display
-// name, ordered personas, and the directory holding its instructions and sessions.
+// A forum resolved from the workspace: its directory name, persona-facing display
+// name, ordered characters, and the directory holding its instructions and sessions.
 struct Forum {
     std::string name;
     std::string display_name;
-    std::vector<std::string> persona_names;
+    std::vector<std::string> character_names;
     std::filesystem::path directory;
 };
 
@@ -54,10 +54,10 @@ ApplicationConfig load_application_config(
     const std::filesystem::path& root = ".");
 
 // The way into a workspace directory and the place where a chat session is assembled. It resolves
-// the layout (personas, forums), lists forums and their sessions, and on create or open loads the
+// the layout (characters, forums), lists forums and their sessions, and on create or open loads the
 // forum's AgentDefinition values, resolves the session file through SessionCatalog, restores the
 // stored transcript, and returns a SessionController ready to use. Front ends call it instead of
-// touching persona files or session storage themselves. A Workspace is immutable
+// touching character files or session storage themselves. A Workspace is immutable
 // after construction and has no lazy caches, so one instance may be shared by
 // concurrent callers.
 class Workspace {
@@ -67,9 +67,9 @@ public:
 
     const ApplicationConfig& app_config() const;
     std::vector<std::string> forums() const;
-    // Loads and validates the current workspace roster. Raises when users/ is
+    // Loads and validates the current workspace roster. Raises when personas/ is
     // missing or empty; re-reads the filesystem on every call.
-    UserRoster load_users() const;
+    PersonaRoster load_personas() const;
     Forum load_forum(const std::string& name) const;
     // Fully validates one forum without creating a session or initializing
     // completion providers. Returns its resolved metadata on success.

@@ -5,7 +5,7 @@
 
 namespace cha {
 
-// The message the user is composing. It holds wide-character multiline text with a cursor, offers
+// The message the persona is composing. It holds wide-character multiline text with a cursor, offers
 // editing and movement, tracks explicit continuation lines, and converts the result to UTF-8 when
 // the message is submitted. It knows nothing of curses, the transcript, or command syntax.
 class InputEditor {

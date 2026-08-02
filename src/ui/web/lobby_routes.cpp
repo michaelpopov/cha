@@ -87,12 +87,12 @@ void LobbyRoutes::install(httplib::Server& server) const {
         set_json_response(response, 200, nlohmann::json(forums));
     });
 
-    server.Get("/api/v1/users", [workspace](const httplib::Request&, httplib::Response& response) {
-        std::vector<UserSummary> users;
-        for (const User& user : workspace->load_users()) {
-            users.push_back({user.id, user.display_name});
+    server.Get("/api/v1/personas", [workspace](const httplib::Request&, httplib::Response& response) {
+        std::vector<PersonaSummary> personas;
+        for (const Persona& persona : workspace->load_personas()) {
+            personas.push_back({persona.id, persona.display_name});
         }
-        set_json_response(response, 200, nlohmann::json(users));
+        set_json_response(response, 200, nlohmann::json(personas));
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, registry](const httplib::Request& request, httplib::Response& response) {

@@ -130,7 +130,7 @@ WebSessionMetadata load_workspace_metadata(
     };
 }
 
-TEST(LobbyRoutes, ServesUserListingHealthAndForumListingWithoutSessionDataInHealth) {
+TEST(LobbyRoutes, ServesPersonaListingHealthAndForumListingWithoutSessionDataInHealth) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
@@ -141,8 +141,8 @@ TEST(LobbyRoutes, ServesUserListingHealthAndForumListingWithoutSessionDataInHeal
     ASSERT_TRUE(root);
     EXPECT_EQ(root->status, 200);
     EXPECT_EQ(root->get_header_value("Content-Type"), "text/html; charset=utf-8");
-    EXPECT_NE(root->body.find("Choose a user"), std::string::npos);
-    EXPECT_NE(root->body.find("/api/v1/users"), std::string::npos);
+    EXPECT_NE(root->body.find("Choose a persona"), std::string::npos);
+    EXPECT_NE(root->body.find("/api/v1/personas"), std::string::npos);
 
     const auto health = server.client().Get("/health");
     ASSERT_TRUE(health);
@@ -154,16 +154,16 @@ TEST(LobbyRoutes, ServesUserListingHealthAndForumListingWithoutSessionDataInHeal
     EXPECT_EQ(forums->status, 200);
     EXPECT_EQ(body(forums), nlohmann::json::array({{{"id", "lobby"}, {"display_name", "The Lobby"}}}));
 
-    const auto users = server.client().Get("/api/v1/users");
-    ASSERT_TRUE(users);
-    EXPECT_EQ(users->status, 200);
-    EXPECT_EQ(users->get_header_value("Content-Type"), "application/json");
+    const auto personas = server.client().Get("/api/v1/personas");
+    ASSERT_TRUE(personas);
+    EXPECT_EQ(personas->status, 200);
+    EXPECT_EQ(personas->get_header_value("Content-Type"), "application/json");
     EXPECT_EQ(
-        body(users),
+        body(personas),
         nlohmann::json::array({{{"id", "reader"}, {"display_name", "Reader"}}}));
 
-    fixture.add_user("author", "Author", "This prompt is not sent to the browser.");
-    const auto refreshed = server.client().Get("/api/v1/users");
+    fixture.add_persona("author", "Author", "This prompt is not sent to the browser.");
+    const auto refreshed = server.client().Get("/api/v1/personas");
     ASSERT_TRUE(refreshed);
     EXPECT_EQ(refreshed->status, 200);
     EXPECT_EQ(refreshed->body.find("This prompt is not sent to the browser."), std::string::npos);
@@ -175,9 +175,9 @@ TEST(LobbyRoutes, ServesUserListingHealthAndForumListingWithoutSessionDataInHeal
         }));
 }
 
-TEST(LobbyRoutes, UserListingReportsMissingUsersWhileForumListingStillWorks) {
+TEST(LobbyRoutes, PersonaListingReportsMissingPersonasWhileForumListingStillWorks) {
     test::TestWorkspace fixture;
-    std::filesystem::remove_all(fixture.root() / "users");
+    std::filesystem::remove_all(fixture.root() / "personas");
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
         return std::make_unique<IdleController>();
@@ -190,18 +190,18 @@ TEST(LobbyRoutes, UserListingReportsMissingUsersWhileForumListingStillWorks) {
     EXPECT_EQ(
         body(forums),
         nlohmann::json::array({{{"id", "lobby"}, {"display_name", "The Lobby"}}}));
-    expect_error(server.client().Get("/api/v1/users"), 500, "internal_error");
+    expect_error(server.client().Get("/api/v1/personas"), 500, "internal_error");
 }
 
 TEST(LobbyRoutes, SkipsMalformedForumsAndAllowsAnEmptyForumDirectory) {
     {
         test::TestWorkspace fixture;
         std::filesystem::create_directories(
-            fixture.root() / "forums" / "broken" / "personas");
+            fixture.root() / "forums" / "broken" / "characters");
         std::ofstream(fixture.root() / "forums" / "broken" / "config.toml")
             << "display_name = \"Broken\"\n";
         std::filesystem::create_directories(
-            fixture.root() / "forums" / "bad-config" / "personas" / "guide");
+            fixture.root() / "forums" / "bad-config" / "characters" / "guide");
         std::ofstream(
             fixture.root() / "forums" / "bad-config" / "config.toml")
             << "display_name = [not valid TOML";

@@ -496,22 +496,22 @@ TEST(TextTemplate, LoadTemplateScopeScalarsAndRejections) {
 TEST(TextTemplate, ScopeLookupOrderAndNoLeakOrReexpand) {
     const TempDir root("lookup");
     write_file(
-        root.path() / "persona" / "config.toml",
+        root.path() / "character" / "config.toml",
         "[prompt]\n"
         "register = \"energetic\"\n"
-        "shared = \"from-persona\"\n");
+        "shared = \"from-character\"\n");
     write_file(
         root.path() / "inner" / "config.toml",
         "[prompt]\nshared = \"from-inner\"\n");
     write_file(
         root.path() / "inner" / "part.md",
-        "$${shared}|$${register}|$${persona.display_name}");
+        "$${shared}|$${register}|$${character.display_name}");
     write_file(
-        root.path() / "persona" / "SYSTEM.md",
+        root.path() / "character" / "SYSTEM.md",
         "before=$${shared}\n$$(../inner/part.md)\nafter=$${shared}\nmacro=$${raw}");
 
     TemplateOptions options = options_for(root.path());
-    options.reserved = {{"persona.display_name", "Seneca"}};
+    options.reserved = {{"character.display_name", "Seneca"}};
     options.initial_scope = {
         {"register", "measured"},
         {"shared", "from-initial"},
@@ -519,10 +519,10 @@ TEST(TextTemplate, ScopeLookupOrderAndNoLeakOrReexpand) {
     };
 
     const std::string expanded =
-        expand_template_file(root.path() / "persona" / "SYSTEM.md", options);
+        expand_template_file(root.path() / "character" / "SYSTEM.md", options);
     EXPECT_EQ(
         expanded,
-        "before=from-persona\nfrom-inner|energetic|Seneca\nafter=from-persona\nmacro=$$(nope)$${x}");
+        "before=from-character\nfrom-inner|energetic|Seneca\nafter=from-character\nmacro=$$(nope)$${x}");
 
     write_file(root.path() / "res" / "config.toml", "[prompt]\nname = \"file\"\n");
     write_file(root.path() / "res" / "a.md", "$${name}");
@@ -548,11 +548,11 @@ TEST(TextTemplate, DiagnosticsUseRelativePathsAndIncludeChain) {
     const TempDir root("diag");
     write_file(root.path() / "shared.md", "$${registr}");
     write_file(
-        root.path() / "personas" / "seneca" / "SYSTEM.md",
+        root.path() / "characters" / "seneca" / "SYSTEM.md",
         "$$(../../shared.md)");
     try {
         (void)expand_in(
-            root.path(), root.path() / "personas" / "seneca" / "SYSTEM.md");
+            root.path(), root.path() / "characters" / "seneca" / "SYSTEM.md");
         FAIL();
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();

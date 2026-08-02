@@ -1,6 +1,6 @@
 # UI
 
-`ui/` holds everything the user touches: the front ends, and the input grammar
+`ui/` holds everything the persona touches: the front ends, and the input grammar
 they share. A front end may interpret input, keep protocol-specific state, and
 render session-layer values — but chat policy, agent execution, and persistence
 stay in `session/` and below.
@@ -34,8 +34,8 @@ flowchart TD
         txt["text/<br/>command and mention grammar"]
     end
 
-    user(["User"]) --> tui
-    user --> console
+    persona(["Persona"]) --> tui
+    persona --> console
     tui --> render
     console --> render
     tui -->|"submitted line"| txt
@@ -45,7 +45,7 @@ flowchart TD
     controller -->|"SessionUpdate"| console
     tui -->|"borrows"| convo["TranscriptView<br/>GenerationStatus"]
     console -->|"reads"| convo
-    render -->|"reads"| personas["ForumPersonas<br/>names for labels"]
+    render -->|"reads"| characters["ForumCharacters<br/>names for labels"]
 
     controller -.->|"never called from ui/"| store["SessionCatalog<br/>SessionJournal<br/>CompletionBackend"]
 ```
@@ -64,7 +64,7 @@ Code under `ui/` may depend on:
 - `transcript/` for presentation-ready transcript values;
 - the shared grammar and transcript writer;
 - narrowly scoped `util/` helpers where protocol parsing needs them;
-- `ForumPersonas` from `session/` when a presentation needs persona names — for
+- `ForumCharacters` from `session/` when a presentation needs character names — for
   example deciding whether to label who a message was addressed to or naming
   the console's current-default-agent prompt.
 

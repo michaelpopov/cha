@@ -10,11 +10,11 @@ code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, load the validated user roster, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. |
+| `workspace.*` | Resolve the workspace layout, load the validated persona roster, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
-| `forum_personas.*` | The ordered persona identities in a forum, including validation, lookup, and handle resolution. |
+| `forum_characters.*` | The ordered character identities in a forum, including validation, lookup, and handle resolution. |
 | `session_controller.*` | Own one live session: commands, the in-flight response batch, agent events, default agent, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
@@ -23,14 +23,14 @@ code.
 ```mermaid
 flowchart TD
     root --> forums["forums/"]
-    root --> users["users/<id>/user.toml + optional USER.md"]
+    root --> personas["personas/<id>/persona.toml + optional PERSONA.md"]
     root --> env[".env — optional"]
-    personas --> base["persona_defaults.toml<br/>optional forum defaults + [prompt]"]
-    personas --> shared["shared prompt files<br/>e.g. character-voice.md"]
+    characters --> base["character_defaults.toml<br/>optional forum defaults + [prompt]"]
+    characters --> shared["shared prompt files<br/>e.g. character-voice.md"]
     forums --> forum["forum-name/ — distribution unit and template containment root"]
     forum --> config["config.toml — required display_name + optional [prompt]"]
-    forum --> personas["personas/ — persona directories"]
-    personas --> persona["persona-name/persona.toml<br/>SYSTEM.md + includes"]
+    forum --> characters["characters/ — character directories"]
+    characters --> character["character-name/character.toml<br/>SYSTEM.md + includes"]
     forum --> forum_prompt["FORUM.md — template-expanded forum prompt extension"]
     forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
 ```
@@ -40,27 +40,27 @@ The `forums/` directory may be temporarily empty; its valid forum names are
 sorted before presentation. Forum IDs and session database stems may contain
 only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and
 `..`; invalid entries are ignored during discovery and rejected on direct use.
-Each forum's `personas/` directory must contain at least one persona
-subdirectory, also sorted before loading. Persona directory names are checked
+Each forum's `characters/` directory must contain at least one character
+subdirectory, also sorted before loading. Character directory names are checked
 with `require_path_component()` before they become paths.
 Each forum's `config.toml` must provide a non-empty string `display_name` for
-user-facing selection and listings; its directory name remains the stable ID.
-Each persona directory likewise supplies its stable ID, while its
-`config.toml` provides the required user-facing `display_name`. The loader
-rejects the removed persona-level `id` and `name` fields.
+persona-facing selection and listings; its directory name remains the stable ID.
+Each character directory likewise supplies its stable ID, while its
+`config.toml` provides the required persona-facing `display_name`. The loader
+rejects the removed character-level `id` and `name` fields.
 
 The forum directory is both the distribution unit and the prompt-template
 containment root: includes in `SYSTEM.md` / `FORUM.md` cannot leave it, so a
 zipped forum stays self-contained when unpacked elsewhere.
 
 When a session is created or opened, `Workspace` loads the validated roster once and checks for
-`personas/persona_defaults.toml` within the selected forum and explicitly passes that optional path, the
+`characters/character_defaults.toml` within the selected forum and explicitly passes that optional path, the
 forum directory, the forum display name, and the roster to the agent loaders along with each
-persona directory. The agent layer therefore applies shared configuration and
+character directory. The agent layer therefore applies shared configuration and
 template policy without knowing or inferring the workspace layout.
 
 `Workspace::check_forum()` follows the same loading path without creating or
-opening a session. It also constructs `ForumPersonas` to validate persona IDs,
+opening a session. It also constructs `ForumCharacters` to validate character IDs,
 display names, and uniqueness, giving the console's `--check` mode the same
 static validation a real session receives before provider initialization. It
 does not inspect the optional `sessions/` directory or resolve provider
@@ -74,19 +74,19 @@ ends can map only absence to not-found. Web lobby routes skip this disk
 validation when their separate live-session registry can reattach directly,
 and otherwise use it before asking the registry to open a session.
 
-## Forum personas
+## Forum characters
 
-`ForumPersonas` is the identity-only view of the personas participating in one
+`ForumCharacters` is the identity-only view of the characters participating in one
 forum. It is ordered, non-empty, and rejects duplicate IDs and
-ASCII-case-insensitive names. The first persona supplies the initial default
+ASCII-case-insensitive names. The first character supplies the initial default
 agent.
 
 `resolve_handle()` tries an exact case-insensitive name, retries after removing
 trailing `,.;:!?`, and finally accepts a unique case-insensitive prefix. It
 returns resolved, unknown, or ambiguous; `SessionController` owns the wording
-of the corresponding user notices.
+of the corresponding persona notices.
 
-Model, API, and streaming details do not belong to `ForumPersonas`.
+Model, API, and streaming details do not belong to `ForumCharacters`.
 `AgentRegistry` exposes those separately as `AgentRuntimeInfo`, and
 `SessionController` combines the two only for `/agents` and `/info`.
 
@@ -105,9 +105,9 @@ sequenceDiagram
 
     Note over UI,DB: Creating a stored session
     UI->>WS: create_stored_session forum, label
-    WS->>WS: load_forum, enumerate personas/ directories
-    WS->>WS: load_users
-    WS->>AG: load_agent_definitions(personas, forum, roster)
+    WS->>WS: load_forum, enumerate characters/ directories
+    WS->>WS: load_personas
+    WS->>AG: load_agent_definitions(characters, forum, roster)
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
     SC->>DB: build hidden temporary sibling, then link into place
@@ -130,8 +130,8 @@ sequenceDiagram
     WS->>SL: acquire `<database>.cha-lock` without waiting
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
-    WS->>WS: load_users
-    WS->>AG: load_agent_definitions(personas, forum, roster)
+    WS->>WS: load_personas
+    WS->>AG: load_agent_definitions(characters, forum, roster)
     WS->>CC: from_definitions with restore
     CC->>CC: repair interrupted turns, then install entries
     CC-->>UI: controller
@@ -304,14 +304,14 @@ read-only state, and commands that return `SessionUpdate` side effects.
 
 | Command | Behavior | Update |
 | --- | --- | --- |
-| `submit_prompt(author_id, text, handle)` | Resolves the author against the session roster, then resolves the handle or falls back to the default agent and starts a turn. | On success `clear_input` + `render_needed`; an unknown author produces `Unknown user ID '<id>'` and starts no batch, leaving the draft in the editor; unknown or ambiguous handles and an empty prompt likewise return only a notice and retain the draft. |
+| `submit_prompt(author_id, text, handle)` | Resolves the author against the session roster, then resolves the handle or falls back to the default agent and starts a turn. | On success `clear_input` + `render_needed`; an unknown author produces `Unknown persona ID '<id>'` and starts no batch, leaving the draft in the editor; unknown or ambiguous handles and an empty prompt likewise return only a notice and retain the draft. |
 | `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success `render_needed` + `clear_input` and no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
 | `start_multicast(author_id, text, handles)` / `start_multicast_by_ids(author_id, text, ids)` | Resolves textual handles or stable IDs once, resolves the author against the session roster, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | An unknown author starts no batch; terminal notices are retained until multicast completion or abort cleanup. |
-| `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
-| `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
+| `session_information()` | Entry count plus the forum characters and their runtime details. | `render_needed`, `clear_input`, notice. |
+| `agent_information()` | Forum characters and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
 | `request_stop()` | Cancels every live execution and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
 | `receive()` | Drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged updates; after shutdown drains its batch, `end_session` is true. |
@@ -319,7 +319,7 @@ read-only state, and commands that return `SessionUpdate` side effects.
 
 Every command except `request_stop()` and `receive()` is refused while a turn or
 multicast is active, with the shared in-progress notice. The controller and its
-forum-persona helpers format session notices — handle errors, forum-persona
+forum-character helpers format session notices — handle errors, forum-character
 text, `/info` — because their wording belongs to the session, not to a UI.
 For read-only activity checks, `is_generating()` avoids constructing a
 `GenerationStatus` and copying its potentially growing reasoning text.
@@ -349,7 +349,7 @@ Starting a batch, in order:
    calls no backend, waits for any already-submitted task, and creates no
    durable turn.
    Expected runtime refusals are reported as
-   `Request could not be dispatched` and preserve the user's draft; invalid
+   `Request could not be dispatched` and preserve the persona's draft; invalid
    inputs are controller bugs and propagate. The one live registry batch keeps
    each run at its stable controller index.
 3. Persist `start_turn()`, add the human entry, and install the active response.

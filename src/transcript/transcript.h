@@ -34,7 +34,7 @@ struct HumanEntrySpec {
     std::optional<RequestId> request_id;
 };
 
-// Classifies transcript semantics independently of the label rendered to the user.
+// Classifies transcript semantics independently of the label rendered to the persona.
 enum class EntryKind : std::int64_t {
     human = 0,
     agent = 1,

@@ -5,7 +5,7 @@
 namespace cha {
 namespace {
 
-TEST(MulticastInput, ParsesAllPersonaPromptAndLiteralAtEscape) {
+TEST(MulticastInput, ParsesAllCharacterPromptAndLiteralAtEscape) {
     EXPECT_EQ(
         parse_multicast_input("What time is it?"),
         (MulticastParseResult{MulticastInput{{}, "What time is it?"}}));

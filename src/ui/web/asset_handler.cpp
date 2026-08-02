@@ -9,9 +9,9 @@ void AssetHandler::install(httplib::Server& server) const {
         response.set_content(
             R"html(<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>cha</title></head><body><main><h1>cha</h1>
-<p id="status">Loading users…</p>
-<section id="user-screen"><h2>Choose a user</h2><ul id="users"></ul></section>
-<section id="forum-screen" hidden><h2>Choose a forum</h2><p id="chosen-user"></p><ul id="forums"></ul></section>
+<p id="status">Loading personas…</p>
+<section id="persona-screen"><h2>Choose a persona</h2><ul id="personas"></ul></section>
+<section id="forum-screen" hidden><h2>Choose a forum</h2><p id="chosen-persona"></p><ul id="forums"></ul></section>
 <section id="session-screen" hidden><h2>Choose a session</h2><p id="chosen-forum"></p><ul id="sessions"></ul><button id="new-session" type="button">New session</button></section>
 <script>
 (() => {
@@ -63,14 +63,14 @@ void AssetHandler::install(httplib::Server& server) const {
   });
   (async () => {
     try {
-      const users = document.getElementById('users');
-      for (const entry of await request('/api/v1/users')) {
+      const personas = document.getElementById('personas');
+      for (const entry of await request('/api/v1/personas')) {
         const item = document.createElement('li');
         item.append(button(entry.display_name, async () => {
-          sessionStorage.setItem('cha.user', entry.id);
+          sessionStorage.setItem('cha.persona', entry.id);
           forum = undefined;
           document.getElementById('session-screen').hidden = true;
-          document.getElementById('chosen-user').textContent = entry.display_name;
+          document.getElementById('chosen-persona').textContent = entry.display_name;
           document.getElementById('forum-screen').hidden = false;
           const forums = document.getElementById('forums');
           forums.replaceChildren();
@@ -83,7 +83,7 @@ void AssetHandler::install(httplib::Server& server) const {
             status.textContent = '';
           } catch (error) { showError(error); }
         }));
-        users.append(item);
+        personas.append(item);
       }
       status.textContent = '';
     } catch (error) { showError(error); }

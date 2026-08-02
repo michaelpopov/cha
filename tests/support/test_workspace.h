@@ -6,7 +6,7 @@
 
 namespace cha::test {
 
-// Small reusable workspace fixture for web tests. The default persona uses the
+// Small reusable workspace fixture for web tests. The default character uses the
 // deterministic in-process test provider mode, so callers never need a live
 // provider merely to construct a workspace.
 class TestWorkspace {
@@ -20,8 +20,8 @@ public:
     void write_app_config(
         int port,
         std::string_view log_level = "off") const;
-    void write_persona_config(std::string_view contents) const;
-    void add_user(
+    void write_character_config(std::string_view contents) const;
+    void add_persona(
         std::string_view id,
         std::string_view display_name,
         std::string_view prompt = "") const;

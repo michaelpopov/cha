@@ -631,7 +631,7 @@ TEST(WebServerProcess, InputAuthorReachesTheLiveTranscript) {
     ASSERT_FALSE(path.empty());
     const auto submitted = client.Post(
         path + "api/v1/input",
-        R"({"user":"reader","text":"Who wrote this?"})",
+        R"({"persona":"reader","text":"Who wrote this?"})",
         "application/json");
     ASSERT_TRUE(submitted);
     ASSERT_EQ(submitted->status, 200) << submitted->body;
@@ -726,7 +726,7 @@ TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
         httplib::Client concurrent_client = web_client(port);
         return concurrent_client.Post(
             std::move(route),
-            std::string(R"({"user":"reader","text":")") + std::string(text) + R"("})",
+            std::string(R"({"persona":"reader","text":")") + std::string(text) + R"("})",
             "application/json");
     };
     auto first_submission = std::async(
@@ -782,7 +782,7 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
     provider.start();
 
     test::TestWorkspace workspace;
-    workspace.write_persona_config(
+    workspace.write_character_config(
         "display_name = \"Guide\"\n"
         "host = \"127.0.0.1\"\n"
         "port = " + std::to_string(provider.port()) + "\n"
@@ -802,7 +802,7 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
     ASSERT_FALSE(path.empty());
     const auto input = client.Post(
         path + "api/v1/input",
-        R"({"user":"reader","text":"Question"})",
+        R"({"persona":"reader","text":"Question"})",
         "application/json");
     ASSERT_TRUE(input);
     ASSERT_EQ(input->status, 200) << input->body;

@@ -44,7 +44,7 @@ public:
         std::string_view author_id,
         std::string input) = 0;
     virtual SessionUpdate request_stop() = 0;
-    virtual SessionUpdate set_default_agent_id(std::string_view persona_id) = 0;
+    virtual SessionUpdate set_default_agent_id(std::string_view character_id) = 0;
     virtual SessionEventBatch receive(std::size_t max_events) = 0;
     [[nodiscard]] virtual bool is_generating() const = 0;
     // Called only by the owner thread. The returned value owns every field and

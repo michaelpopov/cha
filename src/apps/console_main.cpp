@@ -67,13 +67,13 @@ int main_internal(int argc, const char* const* argv) {
         cha::write_forum_check(workspace, options.forum, std::cout);
         return 0;
     }
-    const cha::UserRoster users = workspace.load_users();
+    const cha::PersonaRoster personas = workspace.load_personas();
     if (std::none_of(
-            users.begin(), users.end(),
-            [&options](const cha::User& user) {
-                return user.id == options.user;
+            personas.begin(), personas.end(),
+            [&options](const cha::Persona& persona) {
+                return persona.id == options.persona;
             })) {
-        std::cerr << "Unknown user ID '" << options.user << "'\n";
+        std::cerr << "Unknown persona ID '" << options.persona << "'\n";
         return 2;
     }
 
@@ -97,7 +97,7 @@ int main_internal(int argc, const char* const* argv) {
     if (input_is_tty) {
         // The resolved ID, not the requested one: a session created by --new or
         // by default has no ID on the command line, so reporting it here avoids
-        // making the user run a separate listing before reopening it.
+        // making the persona run a separate listing before reopening it.
         std::cerr << options.forum << " / " << selection.session_id
                   << " ready\n";
     }
@@ -105,7 +105,7 @@ int main_internal(int argc, const char* const* argv) {
     cha::TranscriptEmitter emitter(
         console.transcript(),
         cha::show_addressing(
-            controller.personas(),
+            controller.characters(),
             controller.transcript().view()),
         // TTY input is already visible when typed; only pipes need a second
         // copy of the human prompt in the transcript stream.
@@ -115,7 +115,7 @@ int main_internal(int argc, const char* const* argv) {
         controller,
         emitter,
         {
-            .author_id = options.user,
+            .author_id = options.persona,
             .show_prompt = input_is_tty,
             .backpressure_stdin = !input_is_tty,
         });

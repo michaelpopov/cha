@@ -12,25 +12,25 @@ transcript-writing vocabulary without depending on curses or `ui/tui/`.
 chacon --list-forums
 chacon --forum FORUM --list-sessions
 chacon --forum FORUM --check
-chacon --user USER --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
+chacon --persona PERSONA --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
 ```
 
-`--check` fully loads the forum configuration, validated user roster, and
-expanded prompts, validates effective connection settings plus persona identity,
-user/persona collision rules, and uniqueness, then exits
+`--check` fully loads the forum configuration, validated persona roster, and
+expanded prompts, validates effective connection settings plus character identity,
+persona/character collision rules, and uniqueness, then exits
 without inspecting stored sessions, creating a session, resolving
 `api_key_env`, initializing completion providers, discovering a model, or
 making network requests. It validates prompt-template includes, not arbitrary
 Markdown hyperlinks. A valid forum prints one plain summary line, such as
-`Forum 'stoics' is valid (3 personas).`; validation failures use the normal
+`Forum 'stoics' is valid (3 characters).`; validation failures use the normal
 `Failed: ...` diagnostic and exit code 1.
 
 Forum listings are one display name per line. Session listings always contain three
 tab-separated fields—ID, label, error—with no header, padding, or color.
 Invalid sessions are included. Tabs and line breaks inside fields are replaced
 with spaces, and terminal controls are sanitized. Listing modes take precedence
-over otherwise irrelevant session-selection flags. They do not accept `--user`;
-chat startup requires it and resolves the ID from the workspace user roster
+over otherwise irrelevant session-selection flags. They do not accept `--persona`;
+chat startup requires it and resolves the ID from the workspace persona roster
 before opening a session.
 
 Creating a session returns both its controller and its generated ID. With
@@ -108,7 +108,7 @@ Writing and committing the emitter watermark are separate operations:
 `ConsoleSession` writes, flushes stdout, and only then commits. A failed flush
 therefore never records undelivered output as delivered.
 
-The stream records what the user was shown, which can differ from the final
+The stream records what the persona was shown, which can differ from the final
 stored transcript. If an agent emits partial answer text and later fails, the
 controller discards that open entry and stores an error entry. The console
 keeps the already-written partial text, closes it, and appends the error. This
@@ -155,7 +155,7 @@ performs no output.
 | Dispatching every queued line at once | Every prompt after the first becomes a busy notice |
 | Reusing `TranscriptRenderPlanner` | No rebuild information, and streamed text lands after the separator |
 | An ad-hoc process signal flag | Ctrl-C delivery races with the blocking input wait |
-| Writing transcript text unsanitized | Model output controls the user's terminal |
+| Writing transcript text unsanitized | Model output controls the persona's terminal |
 | Joining continued lines with a newline | `handle_text_input()` sees input the TUI can never produce |
 | Leaving a closed stdin watcher active | The loop can spin at 100% CPU for the rest of the turn |
 | Emitting a zero-length streamed suffix | Each spin writes two SGR resets; measured 26 MB of escapes for 48 bytes of transcript |

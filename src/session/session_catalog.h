@@ -10,7 +10,7 @@
 
 namespace cha {
 
-// One stored session as offered for selection: its ID, the label shown to the user, and an error
+// One stored session as offered for selection: its ID, the label shown to the persona, and an error
 // message when the file exists but failed its identity check.
 struct Session {
     std::string id;

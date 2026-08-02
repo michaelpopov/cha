@@ -39,19 +39,19 @@ public:
     std::string output;
 };
 
-TEST(ShowAddressing, DependsOnForumPersonasAndForeignHistory) {
-    const ForumPersonas single({
-        PersonaInfo{
+TEST(ShowAddressing, DependsOnForumCharactersAndForeignHistory) {
+    const ForumCharacters single({
+        CharacterInfo{
             .id = "guide-id",
             .name = "Guide",
         }
     });
-    const ForumPersonas multi({
-        PersonaInfo{
+    const ForumCharacters multi({
+        CharacterInfo{
             .id = "guide-id",
             .name = "Guide",
         },
-        PersonaInfo{
+        CharacterInfo{
             .id = "ismael-id",
             .name = "Ismael",
         },

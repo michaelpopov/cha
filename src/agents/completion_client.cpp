@@ -139,8 +139,8 @@ struct ResponseContext {
     }
 };
 
-int transfer_progress(void* user_data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-    const auto& cancellation = *static_cast<std::atomic_bool*>(user_data);
+int transfer_progress(void* persona_data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+    const auto& cancellation = *static_cast<std::atomic_bool*>(persona_data);
     return cancellation.load(std::memory_order_acquire) ? 1 : 0;
 }
 
@@ -302,12 +302,12 @@ std::size_t receive_response(
     char* data,
     std::size_t size,
     std::size_t count,
-    void* user_data) {
+    void* persona_data) {
     const std::size_t bytes =
         size != 0 && count > std::numeric_limits<std::size_t>::max() / size
         ? std::numeric_limits<std::size_t>::max()
         : size * count;
-    auto& context = *static_cast<ResponseContext*>(user_data);
+    auto& context = *static_cast<ResponseContext*>(persona_data);
 
     try {
         if (bytes > std::numeric_limits<std::size_t>::max() - context.received_bytes) {
@@ -398,7 +398,7 @@ std::string response_error(const std::string& body) {
 std::string_view role_name(AgentRole role) {
     switch (role) {
     case AgentRole::system: return "system";
-    case AgentRole::user: return "user";
+    case AgentRole::persona: return "user";
     case AgentRole::assistant: return "assistant";
     }
     throw std::logic_error("Unknown agent context role");
@@ -755,7 +755,7 @@ CompletionResult CompletionClient::perform(
 
 AgentRuntimeInfo CompletionClient::info() const {
     return {
-        .persona = {
+        .character = {
             .id = config_.id,
             .name = config_.name,
         },

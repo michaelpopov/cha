@@ -166,11 +166,11 @@ public:
     }
     SessionSnapshot snapshot() override {
         SessionSnapshot result;
-        result.personas.reserve(controller_->personas().all().size());
-        for (const PersonaInfo& persona : controller_->personas().all()) {
-            result.personas.push_back({persona.id, persona.name});
+        result.characters.reserve(controller_->characters().all().size());
+        for (const CharacterInfo& character : controller_->characters().all()) {
+            result.characters.push_back({character.id, character.name});
         }
-        result.default_persona_id = controller_->default_agent_id();
+        result.default_character_id = controller_->default_agent_id();
         const TranscriptView view = controller_->transcript().view();
         snapshot_revision_ = view.revision;
         result.transcript.reserve(view.entries.size());
@@ -203,7 +203,7 @@ public:
         const SessionSnapshot& before) override {
         if (!snapshot_revision_
             || controller_->default_agent_id()
-                != before.default_persona_id) {
+                != before.default_character_id) {
             return std::nullopt;
         }
 
@@ -472,10 +472,10 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
     }
     SessionUpdate update = std::visit([&controller](auto&& value) -> SessionUpdate {
         using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, RawCommand>) return controller.handle_raw_input(value.user, std::move(value.text));
+        if constexpr (std::is_same_v<T, RawCommand>) return controller.handle_raw_input(value.persona, std::move(value.text));
         else if constexpr (std::is_same_v<T, StopCommand>) return controller.request_stop();
         else if constexpr (std::is_same_v<T, SetDefaultAgentCommand>) {
-            return controller.set_default_agent_id(value.persona_id);
+            return controller.set_default_agent_id(value.character_id);
         } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
             throw std::logic_error("Snapshot command handled before dispatch");
         } else if constexpr (std::is_same_v<T, SseConnectCommand>) {

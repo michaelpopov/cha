@@ -86,8 +86,8 @@ Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
     Config config = load_config(
-        workspace_directory / "forums" / "lobby" / "personas" / "Ismael" / "persona.toml",
-        workspace_directory / "forums" / "lobby" / "personas" / "persona_defaults.toml").config;
+        workspace_directory / "forums" / "lobby" / "characters" / "Ismael" / "character.toml",
+        workspace_directory / "forums" / "lobby" / "characters" / "character_defaults.toml").config;
     config.stream = stream;
     return config;
 }
@@ -262,29 +262,29 @@ public:
     std::filesystem::path path;
 };
 
-// Loads the checked-in two-persona lobby forum exactly as main() does.
+// Loads the checked-in two-character lobby forum exactly as main() does.
 struct LobbySetup {
     std::vector<AgentDefinition> definitions;
-    UserRoster users;
+    PersonaRoster personas;
 };
 
 LobbySetup lobby_setup() {
     const Workspace workspace{std::filesystem::path{CHA_WORKSPACE_DIRECTORY}};
     const Forum forum = workspace.load_forum("lobby");
     std::vector<std::filesystem::path> directories;
-    for (const std::string& persona_name : forum.persona_names) {
+    for (const std::string& character_name : forum.character_names) {
         directories.push_back(
-            forum.directory / "personas" / persona_name);
+            forum.directory / "characters" / character_name);
     }
-    UserRoster users = workspace.load_users();
+    PersonaRoster personas = workspace.load_personas();
     return {
         .definitions = load_agent_definitions(
         directories,
         forum.directory,
         forum.display_name,
-        users,
-        forum.directory / "personas" / "persona_defaults.toml"),
-        .users = std::move(users),
+        personas,
+        forum.directory / "characters" / "character_defaults.toml"),
+        .personas = std::move(personas),
     };
 }
 
@@ -366,7 +366,7 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
     {
         auto controller = test::from_definitions_for_testing(
             std::move(definitions),
-            lobby.users,
+            lobby.personas,
             session.path,
             notifier());
         (void)handle_text_input(*controller, "reader", "First question");
@@ -410,7 +410,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
     TemporarySession session;
     auto controller = test::from_definitions_for_testing(
         std::move(definitions),
-        lobby.users,
+        lobby.personas,
         session.path,
         notifier());
     (void)handle_text_input(*controller, "reader", "Question");
@@ -443,7 +443,7 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
     {
         auto controller = test::from_definitions_for_testing(
             std::move(definitions),
-            lobby.users,
+            lobby.personas,
             session.path,
             notifier());
         (void)handle_text_input(*controller, "reader", "Visible question");
@@ -495,14 +495,14 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     {
         auto controller = test::from_definitions_for_testing(
             std::move(definitions),
-            lobby.users,
+            lobby.personas,
             session.path,
             notifier());
-        ASSERT_EQ(controller->personas().first().id, "Cheburashka");
+        ASSERT_EQ(controller->characters().first().id, "Cheburashka");
         EXPECT_TRUE(show_addressing(
-            controller->personas(), controller->transcript().view()));
+            controller->characters(), controller->transcript().view()));
 
-        // No mention: the first persona directory in name order answers.
+        // No mention: the first character directory in name order answers.
         SessionUpdate update = handle_text_input(*controller, "reader", "Who are you?");
         ASSERT_TRUE(update.clear_input);
         run_until_idle(*controller);
@@ -525,7 +525,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
         Json{{"role", "user"}, {"content", "from Reader:\nWho are you?"}},
     }));
 
-    // Ismael's own system prompt, and Cheburashka's answer attributed as user input.
+    // Ismael's own system prompt, and Cheburashka's answer attributed as persona input.
     const Json second = body_of(ismael_server);
     EXPECT_EQ(second["messages"], Json::array({
         Json{{"role", "system"}, {"content", ismael_prompt}},
@@ -572,7 +572,7 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
     TemporarySession session;
     {
         auto controller = test::from_definitions_for_testing(
-            std::move(definitions), lobby.users, session.path,
+            std::move(definitions), lobby.personas, session.path,
             notifier());
         const SessionUpdate multicast =
             handle_text_input(*controller, "reader", "/mcast What time is it?");
@@ -629,7 +629,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
     {
         auto controller = test::from_definitions_for_testing(
             std::move(definitions),
-            lobby.users,
+            lobby.personas,
             session.path,
             notifier());
         (void)handle_text_input(*controller, "reader", "Who are you?");
@@ -646,17 +646,17 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
 
     auto reopened = test::from_definitions_for_testing(
         std::vector<AgentDefinition>{std::move(ismael_only)},
-        lobby.users,
+        lobby.personas,
         session.path,
         notifier(),
         std::move(restored));
-    EXPECT_EQ(reopened->personas().all().size(), 1U);
+    EXPECT_EQ(reopened->characters().all().size(), 1U);
     EXPECT_TRUE(show_addressing(
-        reopened->personas(), reopened->transcript().view()))
+        reopened->characters(), reopened->transcript().view()))
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
         handle_text_input(*reopened, "reader", "@Cheburashka are you there?").notice,
-        "Unknown agent @Cheburashka. Personas in this forum: @Ismael");
+        "Unknown agent @Cheburashka. Characters in this forum: @Ismael");
 
     (void)handle_text_input(*reopened, "reader", "What did he say?");
     run_until_idle(*reopened);

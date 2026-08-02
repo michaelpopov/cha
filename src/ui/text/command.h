@@ -20,7 +20,7 @@ enum class CommandKind {
     unknown,
 };
 
-// One line of user input after parsing: the command it names (plain text when it names none), the
+// One line of persona input after parsing: the command it names (plain text when it names none), the
 // text that followed it, and the handle when the line addresses an agent. Produced by
 // parse_command() and turned into controller calls by handle_text_input().
 struct Command {

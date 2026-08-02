@@ -1,4 +1,4 @@
-#include "ui/tui/user_session.h"
+#include "ui/tui/persona_session.h"
 
 #include "session/session_controller.h"
 #include "ui/render/transcript_writer.h"
@@ -10,7 +10,7 @@
 namespace cha {
 
 // Coalesce session mutations behind this class so rendering happens consistently and only when needed.
-UserSession::UserSession(
+PersonaSession::PersonaSession(
     SessionView& view,
     SessionController& controller,
     std::string author_id)
@@ -19,49 +19,49 @@ UserSession::UserSession(
     author_id_(std::move(author_id)) {
 }
 
-bool UserSession::running() const {
+bool PersonaSession::running() const {
     return running_;
 }
 
-void UserSession::render() {
+void PersonaSession::render() {
     const TranscriptView transcript = controller_.transcript().view();
     view_.render(
         transcript,
         editor_,
         controller_.generation_status(),
-        show_addressing(controller_.personas(), transcript),
+        show_addressing(controller_.characters(), transcript),
         input_target_name(),
         notice_);
     render_needed_ = false;
 }
 
-void UserSession::render_if_needed() {
+void PersonaSession::render_if_needed() {
     if (render_needed_) {
         render();
     }
 }
 
-void UserSession::resize() {
+void PersonaSession::resize() {
     view_.resize();
     request_render();
 }
 
-void UserSession::close_terminal() {
+void PersonaSession::close_terminal() {
     running_ = false;
 }
 
-void UserSession::report_terminal_failure() {
+void PersonaSession::report_terminal_failure() {
     notice_ = "Terminal input failed.";
     running_ = false;
     request_render();
 }
 
-void UserSession::receive_responses() {
+void PersonaSession::receive_responses() {
     const SessionUpdate update = controller_.receive();
     apply_update(update);
 }
 
-void UserSession::apply_update(const SessionUpdate& update) {
+void PersonaSession::apply_update(const SessionUpdate& update) {
     if (update.clear_input) {
         editor_.clear();
     }
@@ -76,7 +76,7 @@ void UserSession::apply_update(const SessionUpdate& update) {
     }
 }
 
-void UserSession::receive_terminal_input() {
+void PersonaSession::receive_terminal_input() {
     while (const std::optional<SessionInput> input = view_.read_input()) {
         request_render();
         handle_input(*input);
@@ -86,11 +86,11 @@ void UserSession::receive_terminal_input() {
     }
 }
 
-void UserSession::request_render() {
+void PersonaSession::request_render() {
     render_needed_ = true;
 }
 
-void UserSession::handle_input(const SessionInput& input) {
+void PersonaSession::handle_input(const SessionInput& input) {
     switch (input.kind) {
     case SessionInputKind::resize:
         view_.resize();
@@ -148,7 +148,7 @@ void UserSession::handle_input(const SessionInput& input) {
     }
 }
 
-void UserSession::submit_input() {
+void PersonaSession::submit_input() {
     if (editor_.ends_with_continuation()) {
         editor_.continue_line();
         return;
@@ -158,25 +158,25 @@ void UserSession::submit_input() {
     apply_update(handle_text_input(controller_, author_id_, input));
 }
 
-void UserSession::request_stop() {
+void PersonaSession::request_stop() {
     apply_update(controller_.request_stop());
 }
 
-std::string UserSession::input_target_name() const {
-    const PersonaInfo* target =
-        controller_.personas().find(controller_.default_agent_id());
+std::string PersonaSession::input_target_name() const {
+    const CharacterInfo* target =
+        controller_.characters().find(controller_.default_agent_id());
     const AddressedPrompt prompt = parse_addressed_prompt(editor_.value());
     if (!prompt.handle.empty()) {
         const HandleResolution resolution =
-            controller_.personas().resolve_handle(prompt.handle);
+            controller_.characters().resolve_handle(prompt.handle);
         if (resolution.match == HandleMatch::resolved) {
-            target = resolution.persona;
+            target = resolution.character;
         }
     }
     return target ? target->name : std::string{};
 }
 
-void UserSession::shutdown() {
+void PersonaSession::shutdown() {
     controller_.shutdown();
 }
 

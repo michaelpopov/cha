@@ -5,14 +5,14 @@ runtime coordination. It may depend on `session/` presentation values but does
 not put web types in `cha_core`. A future session runtime is the sole owner of a
 `SessionController`; HTTP workers exchange only owning web values with it.
 
-The lobby selects a workspace user before a forum and session. `GET
-/api/v1/users` returns the roster's stable IDs and display names in roster
+The lobby selects a workspace persona before a forum and session. `GET
+/api/v1/personas` returns the roster's stable IDs and display names in roster
 order; it deliberately exposes no prompt text. A submitted input body is
-exactly `{"user": "<id>", "text": "<text>"}`. The owner-thread adapter passes
+exactly `{"persona": "<id>", "text": "<text>"}`. The owner-thread adapter passes
 that ID through the shared text-input funnel, where `SessionController` resolves
-it against the roster captured when the session opened. Thus user selection is
+it against the roster captured when the session opened. Thus persona selection is
 attribution, not authentication, and an unknown ID starts no batch. A live
-session still serves one browser connection at a time; changing users happens
+session still serves one browser connection at a time; changing personas happens
 between prompts on that same shared session.
 
 `SessionRegistry` owns one permanent thread per runtime and invokes the

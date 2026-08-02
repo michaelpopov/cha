@@ -28,7 +28,7 @@ using namespace std::chrono_literals;
 
 struct Calls {
     std::mutex mutex;
-    std::string user;
+    std::string persona;
     std::string input;
     std::string agent;
     int stops{};
@@ -46,7 +46,7 @@ public:
 
     SessionUpdate handle_raw_input(std::string_view author_id, std::string input) override {
         std::unique_lock lock(calls_->mutex);
-        calls_->user = std::string(author_id);
+        calls_->persona = std::string(author_id);
         calls_->input = std::move(input);
         if (calls_->block_input) {
             calls_->input_entered = true;
@@ -78,8 +78,8 @@ public:
     SessionSnapshot snapshot() override {
         std::lock_guard lock(calls_->mutex);
         return {
-            .personas = {{"guide", "Guide"}},
-            .default_persona_id = "guide",
+            .characters = {{"guide", "Guide"}},
+            .default_character_id = "guide",
             .transcript = {{
                 .id = 1,
                 .kind = TranscriptKind::agent,
@@ -177,25 +177,25 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     EXPECT_EQ(json_body(snapshot)["forum"]["id"], "lobby");
     EXPECT_FALSE(json_body(snapshot).contains("error"));
 
-    const auto input = server.client().Post(base + "/api/v1/input", R"({"user":"reader","text":"/@Guide"})", "application/json");
+    const auto input = server.client().Post(base + "/api/v1/input", R"({"persona":"reader","text":"/@Guide"})", "application/json");
     ASSERT_TRUE(input);
     EXPECT_EQ(input->status, 200);
     EXPECT_EQ(json_body(input), nlohmann::json({{"clear_input", true}, {"notice", "input accepted"}}));
     expect_error(
-        server.client().Post(base + "/api/v1/input", R"({"text":"missing user"})", "application/json"),
+        server.client().Post(base + "/api/v1/input", R"({"text":"missing persona"})", "application/json"),
         400,
         "bad_request");
     expect_error(
-        server.client().Post(base + "/api/v1/input", R"({"user":"","text":"empty user"})", "application/json"),
+        server.client().Post(base + "/api/v1/input", R"({"persona":"","text":"empty persona"})", "application/json"),
         400,
         "bad_request");
-    const auto unknown_user = server.client().Post(
-        base + "/api/v1/input", R"({"user":"not-in-roster","text":"passes through"})", "application/json");
-    ASSERT_TRUE(unknown_user);
-    EXPECT_EQ(unknown_user->status, 200);
+    const auto unknown_persona = server.client().Post(
+        base + "/api/v1/input", R"({"persona":"not-in-roster","text":"passes through"})", "application/json");
+    ASSERT_TRUE(unknown_persona);
+    EXPECT_EQ(unknown_persona->status, 200);
     {
         std::lock_guard lock(calls->mutex);
-        EXPECT_EQ(calls->user, "not-in-roster");
+        EXPECT_EQ(calls->persona, "not-in-roster");
         EXPECT_EQ(calls->input, "passes through");
     }
     const auto stop = server.client().Post(base + "/api/v1/actions/stop", "{}", "application/json");
@@ -203,13 +203,13 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     EXPECT_EQ(stop->status, 200);
     EXPECT_EQ(json_body(stop)["clear_input"], false);
     EXPECT_EQ(json_body(stop)["notice"], "stop requested");
-    const auto agent = server.client().Post(base + "/api/v1/actions/default-agent", R"({"persona_id":"guide"})", "application/json");
+    const auto agent = server.client().Post(base + "/api/v1/actions/default-agent", R"({"character_id":"guide"})", "application/json");
     ASSERT_TRUE(agent);
     EXPECT_EQ(agent->status, 200);
     EXPECT_EQ(json_body(agent), nlohmann::json({{"clear_input", false}}));
     {
         std::lock_guard lock(calls->mutex);
-        EXPECT_EQ(calls->user, "not-in-roster");
+        EXPECT_EQ(calls->persona, "not-in-roster");
         EXPECT_EQ(calls->input, "passes through");
         EXPECT_EQ(calls->stops, 1);
         EXPECT_EQ(calls->agent, "guide");
@@ -332,7 +332,7 @@ TEST(SessionRoutes, EventsDeliverAppendWithSequenceOverHttp) {
         "/s/lobby/one/api/v1/input",
         // SessionRoutes checks wire shape only; roster membership belongs to
         // the controller.
-        R"({"user":"not-a-user","text":"append"})",
+        R"({"persona":"not-a-persona","text":"append"})",
         "application/json");
     ASSERT_TRUE(input);
     EXPECT_EQ(input->status, 200);
@@ -452,7 +452,7 @@ TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLook
         ++starts;
         return std::make_unique<RouteController>(std::make_shared<Calls>());
     });
-    RouteServer server(registry, {.request_body_limit = 32, .prompt_limit = 8});
+    RouteServer server(registry, {.request_body_limit = 64, .prompt_limit = 8});
 
     const auto page = server.client().Get("/s/lobby/missing/");
     ASSERT_TRUE(page);
@@ -463,9 +463,9 @@ TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLook
     expect_error(server.client().Get("/s/lobby/missing%23fragment/api/v1/session"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing%00suffix/api/v1/session"), 404, "not_found");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/input", "{}", "text/plain"), 400, "bad_request");
-    expect_error(server.client().Post("/s/lobby/missing/api/v1/input", R"({"user":"u","text":"123456789"})", "application/json"), 413, "prompt_too_large");
+    expect_error(server.client().Post("/s/lobby/missing/api/v1/input", R"({"persona":"u","text":"123456789"})", "application/json"), 413, "prompt_too_large");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/stop", R"({"extra":true})", "application/json"), 400, "bad_request");
-    expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/default-agent", R"({"persona_id":""})", "application/json"), 400, "bad_request");
+    expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/default-agent", R"({"character_id":""})", "application/json"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/close", "{}", "application/json"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing/api/v1/status"), 404, "not_found");
     EXPECT_EQ(starts, 0);
@@ -484,7 +484,7 @@ TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
         server.client().Post(
             path,
             httplib::Headers{{"Origin", "http://other.example"}},
-            R"({"user":"reader","text":"hello"})",
+            R"({"persona":"reader","text":"hello"})",
             "application/json"),
         403,
         "forbidden_origin");
@@ -498,13 +498,13 @@ TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
             {"Host", "localhost:" + std::to_string(server.port())},
             {"Origin", "https://localhost:" + std::to_string(server.port())},
         },
-        R"({"user":"reader","text":"matching"})",
+        R"({"persona":"reader","text":"matching"})",
         "application/json");
     ASSERT_TRUE(matching);
     EXPECT_EQ(matching->status, 200);
     const auto without_origin = server.client().Post(
         path,
-        R"({"user":"reader","text":"hello"})",
+        R"({"persona":"reader","text":"hello"})",
         "application/json");
     ASSERT_TRUE(without_origin);
     EXPECT_EQ(without_origin->status, 200);
@@ -535,7 +535,7 @@ TEST(SessionRoutes, RejectsDnsRebindingHostBeforeSnapshotsStreamsAndMutations) {
         "forbidden_host");
     expect_error(
         server.client().Post(
-            base + "input", rebound, R"({"user":"reader","text":"rebound"})", "application/json"),
+            base + "input", rebound, R"({"persona":"reader","text":"rebound"})", "application/json"),
         403,
         "forbidden_host");
     {
@@ -561,7 +561,7 @@ TEST(SessionRoutes, MapsAdmissionAndShutdownOutcomesWithoutExecutingRejectedComm
     auto running = std::async(std::launch::async, [&] {
         return full_server.client().Post(
             "/s/lobby/full/api/v1/input",
-            R"({"user":"reader","text":"hold"})",
+            R"({"persona":"reader","text":"hold"})",
             "application/json");
     });
     {
@@ -573,7 +573,7 @@ TEST(SessionRoutes, MapsAdmissionAndShutdownOutcomesWithoutExecutingRejectedComm
     auto queued = std::async(std::launch::async, [&] {
         return full_server.client().Post(
             "/s/lobby/full/api/v1/input",
-            R"({"user":"reader","text":"queued"})",
+            R"({"persona":"reader","text":"queued"})",
             "application/json");
     });
     EXPECT_EQ(queued.wait_for(20ms), std::future_status::timeout);
@@ -630,7 +630,7 @@ TEST(SessionRoutes, MapsProcessShutdownDrainToServerStopping) {
     auto running = std::async(std::launch::async, [&] {
         return server.client().Post(
             "/s/lobby/shutdown/api/v1/input",
-            R"({"user":"reader","text":"hold"})",
+            R"({"persona":"reader","text":"hold"})",
             "application/json");
     });
     {
@@ -648,7 +648,7 @@ TEST(SessionRoutes, MapsProcessShutdownDrainToServerStopping) {
     expect_error(
         server.client().Post(
             "/s/lobby/shutdown/api/v1/input",
-            R"({"user":"reader","text":"late"})",
+            R"({"persona":"reader","text":"late"})",
             "application/json"),
         503,
         "server_stopping");
@@ -676,7 +676,7 @@ TEST(SessionRoutes, TimeoutAndClientDisconnectLeaveAcceptedCommandRunning) {
     const std::string path = "/s/lobby/slow/api/v1/input";
 
     expect_error(
-        server.client().Post(path, R"({"user":"reader","text":"timeout"})", "application/json"),
+        server.client().Post(path, R"({"persona":"reader","text":"timeout"})", "application/json"),
         503,
         "command_timeout");
     {
@@ -722,7 +722,7 @@ TEST(SessionRoutes, TimeoutAndClientDisconnectLeaveAcceptedCommandRunning) {
         client.set_read_timeout(0, 20000);
         return client.Post(
             "/s/lobby/disconnect/api/v1/input",
-            R"({"user":"reader","text":"disconnect"})",
+            R"({"persona":"reader","text":"disconnect"})",
             "application/json");
     });
     {

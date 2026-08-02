@@ -44,33 +44,33 @@ void expect_forum_context(
         std::string::npos);
 }
 
-TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
+TEST(AgentDefinitions, LoadsOneCharacterAndCombinesRequiredPrompts) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = root / "forum";
-    const std::filesystem::path persona = forum / "personas" / "persona";
-    std::filesystem::create_directories(persona);
+    const std::filesystem::path character = forum / "characters" / "character";
+    std::filesystem::create_directories(character);
     std::filesystem::create_directories(forum);
     {
-        std::ofstream config(persona / "persona.toml");
+        std::ofstream config(character / "character.toml");
         config << "display_name = \"Guide\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
-        std::ofstream system_prompt(persona / "SYSTEM.md");
-        system_prompt << "Persona instructions";
+        std::ofstream system_prompt(character / "SYSTEM.md");
+        system_prompt << "Character instructions";
         std::ofstream forum_prompt(forum / "FORUM.md");
         forum_prompt << "Forum instructions";
     }
 
     const std::vector<AgentDefinition> definitions =
-        load_agent_definitions({persona}, forum, "Forum", {});
+        load_agent_definitions({character}, forum, "Forum", {});
 
     ASSERT_EQ(definitions.size(), 1U);
     const AgentDefinition& definition = definitions.front();
-    EXPECT_EQ(definition.config.id, "persona");
+    EXPECT_EQ(definition.config.id, "character");
     EXPECT_EQ(definition.config.name, "Guide");
     expect_forum_context(
         definition,
-        "Persona instructions\n\nForum instructions\n\n## Participants\n\nForum context\n\n",
+        "Character instructions\n\nForum instructions\n\n## Participants\n\nForum context\n\n",
         "Guide",
         "[]");
     std::filesystem::remove_all(root);
@@ -79,48 +79,48 @@ TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
 TEST(AgentDefinitions, RequiresBothPromptFiles) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = root / "forum";
-    const std::filesystem::path persona = forum / "personas" / "persona";
-    std::filesystem::create_directories(persona);
+    const std::filesystem::path character = forum / "characters" / "character";
+    std::filesystem::create_directories(character);
     std::filesystem::create_directories(forum);
     {
-        std::ofstream config(persona / "persona.toml");
+        std::ofstream config(character / "character.toml");
         config << "display_name = \"Guide\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
-        std::ofstream system_prompt(persona / "SYSTEM.md");
-        system_prompt << "Persona instructions";
+        std::ofstream system_prompt(character / "SYSTEM.md");
+        system_prompt << "Character instructions";
     }
 
     EXPECT_THROW(
-        (void)load_agent_definitions({persona}, forum, "Forum", {}),
+        (void)load_agent_definitions({character}, forum, "Forum", {}),
         std::runtime_error);
 
     {
         std::ofstream forum_prompt(forum / "FORUM.md");
         forum_prompt << "Forum instructions";
     }
-    std::filesystem::remove(persona / "SYSTEM.md");
+    std::filesystem::remove(character / "SYSTEM.md");
     EXPECT_THROW(
-        (void)load_agent_definitions({persona}, forum, "Forum", {}),
+        (void)load_agent_definitions({character}, forum, "Forum", {}),
         std::runtime_error);
 
     std::filesystem::remove_all(root);
 }
 
-// Writes one persona directory whose name is its ID and whose config declares its display name.
-std::filesystem::path make_persona(
+// Writes one character directory whose name is its ID and whose config declares its display name.
+std::filesystem::path make_character(
     const std::filesystem::path& root,
     std::string_view directory_name,
     std::string_view name) {
-    const std::filesystem::path persona = root / directory_name;
-    std::filesystem::create_directories(persona);
-    std::ofstream config(persona / "persona.toml");
+    const std::filesystem::path character = root / directory_name;
+    std::filesystem::create_directories(character);
+    std::ofstream config(character / "character.toml");
     config << "display_name = \"" << name << "\"\n"
            << "host = \"127.0.0.1\"\n"
            << "port = 8080\n";
-    std::ofstream system_prompt(persona / "SYSTEM.md");
+    std::ofstream system_prompt(character / "SYSTEM.md");
     system_prompt << name << " instructions";
-    return persona;
+    return character;
 }
 
 std::filesystem::path make_forum(const std::filesystem::path& root) {
@@ -131,14 +131,14 @@ std::filesystem::path make_forum(const std::filesystem::path& root) {
     return forum;
 }
 
-TEST(AgentDefinitions, LoadsEveryPersonaInTheDeclaredOrder) {
+TEST(AgentDefinitions, LoadsEveryCharacterInTheDeclaredOrder) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = make_forum(root);
-    const std::filesystem::path personas = forum / "personas";
+    const std::filesystem::path characters = forum / "characters";
     const std::filesystem::path first =
-        make_persona(personas, "cheburashka", "Cheburashka");
+        make_character(characters, "cheburashka", "Cheburashka");
     const std::filesystem::path second =
-        make_persona(personas, "ismael", "Ismael");
+        make_character(characters, "ismael", "Ismael");
 
     const std::vector<AgentDefinition> definitions =
         load_agent_definitions({first, second}, forum, "Forum", {});
@@ -162,46 +162,46 @@ TEST(AgentDefinitions, LoadsEveryPersonaInTheDeclaredOrder) {
 TEST(AgentDefinitions, AssemblesTheStaticRosterVerbatimBeforeForumContext) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = make_forum(root);
-    const std::filesystem::path persona =
-        make_persona(forum / "personas", "guide", "Guide");
-    const UserRoster users{
-        {"athlete", "Athlete", "Literal $${persona.id}"},
+    const std::filesystem::path character =
+        make_character(forum / "characters", "guide", "Guide");
+    const PersonaRoster personas{
+        {"athlete", "Athlete", "Literal $${character.id}"},
         {"reader", "Reader", "Reads\nclosely."},
     };
 
     const std::vector<AgentDefinition> definitions =
-        load_agent_definitions({persona}, forum, "Forum", users);
+        load_agent_definitions({character}, forum, "Forum", personas);
 
     ASSERT_EQ(definitions.size(), 1U);
     EXPECT_NE(
         definitions.front().system_prompt.find(
             "Guide instructions\n\nForum instructions\n\n"
             "## Participants\n\n"
-            "### Athlete\nLiteral $${persona.id}\n\n"
+            "### Athlete\nLiteral $${character.id}\n\n"
             "### Reader\nReads\nclosely.\n\nForum context"),
         std::string::npos);
     std::filesystem::remove_all(root);
 }
 
-TEST(AgentDefinitions, RefusesUserPersonaIdAndDisplayNameCollisions) {
+TEST(AgentDefinitions, RefusesPersonaCharacterIdAndDisplayNameCollisions) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = make_forum(root);
-    const std::filesystem::path persona =
-        make_persona(forum / "personas", "guide", "Guide");
+    const std::filesystem::path character =
+        make_character(forum / "characters", "guide", "Guide");
 
     try {
         (void)load_agent_definitions(
-            {persona}, forum, "Forum", {{"guide", "Reader", ""}});
-        FAIL() << "Expected user/persona ID collision rejection";
+            {character}, forum, "Forum", {{"guide", "Reader", ""}});
+        FAIL() << "Expected persona/character ID collision rejection";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string_view(error.what()).find("guide"), std::string_view::npos);
-        EXPECT_NE(std::string_view(error.what()).find("User"), std::string_view::npos);
-        EXPECT_NE(std::string_view(error.what()).find("persona"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("Persona"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("character"), std::string_view::npos);
     }
     try {
         (void)load_agent_definitions(
-            {persona}, forum, "Forum", {{"reader", "gUiDe", ""}});
-        FAIL() << "Expected user/persona display-name collision rejection";
+            {character}, forum, "Forum", {{"reader", "gUiDe", ""}});
+        FAIL() << "Expected persona/character display-name collision rejection";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string_view(error.what()).find("gUiDe"), std::string_view::npos);
         EXPECT_NE(std::string_view(error.what()).find("Guide"), std::string_view::npos);
@@ -209,19 +209,19 @@ TEST(AgentDefinitions, RefusesUserPersonaIdAndDisplayNameCollisions) {
     std::filesystem::remove_all(root);
 }
 
-TEST(AgentDefinitions, RefusesToOpenAForumWithMissingPersonaDefinitions) {
+TEST(AgentDefinitions, RefusesToOpenAForumWithMissingCharacterDefinitions) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = make_forum(root);
-    const std::filesystem::path personas = forum / "personas";
+    const std::filesystem::path characters = forum / "characters";
     const std::filesystem::path healthy =
-        make_persona(personas, "healthy", "Healthy");
+        make_character(characters, "healthy", "Healthy");
     const std::filesystem::path broken =
-        make_persona(personas, "broken", "Broken");
+        make_character(characters, "broken", "Broken");
     std::filesystem::remove(broken / "SYSTEM.md");
 
     try {
         (void)load_agent_definitions({healthy, broken}, forum, "Forum", {});
-        FAIL() << "expected the failing persona to be named";
+        FAIL() << "expected the failing character to be named";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("broken"), std::string::npos)
             << error.what();
@@ -232,73 +232,73 @@ TEST(AgentDefinitions, RefusesToOpenAForumWithMissingPersonaDefinitions) {
 TEST(AgentDefinitions, ExpandsTemplatesInSystemAndForumPrompts) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = root / "stoics";
-    const std::filesystem::path personas = forum / "personas";
-    const std::filesystem::path persona = personas / "seneca";
-    std::filesystem::create_directories(persona);
+    const std::filesystem::path characters = forum / "characters";
+    const std::filesystem::path character = characters / "seneca";
+    std::filesystem::create_directories(character);
     {
         std::ofstream forum_config(forum / "config.toml");
         forum_config << "display_name = \"The Stoics Forum\"\n";
-        std::ofstream base(personas / "persona_defaults.toml");
+        std::ofstream base(characters / "character_defaults.toml");
         base << "host = \"127.0.0.1\"\n"
              << "port = 8080\n"
              << "[prompt]\n"
              << "register = \"measured\"\n";
-        std::ofstream config(persona / "persona.toml");
+        std::ofstream config(character / "character.toml");
         config << "display_name = \"Seneca\"\n"
                << "[prompt]\n"
                << "register = \"energetic\"\n";
-        std::ofstream shared(personas / "character-voice.md");
-        shared << "Voice for $${persona.display_name} in $${forum.display_name} "
+        std::ofstream shared(characters / "character-voice.md");
+        shared << "Voice for $${character.display_name} in $${forum.display_name} "
                << "($${register})\n";
-        std::ofstream system_prompt(persona / "SYSTEM.md");
-        system_prompt << "$$(../character-voice.md)id=$${persona.id}\n";
+        std::ofstream system_prompt(character / "SYSTEM.md");
+        system_prompt << "$$(../character-voice.md)id=$${character.id}\n";
         std::ofstream forum_prompt(forum / "FORUM.md");
-        forum_prompt << "User facing $${persona.display_name}\n";
+        forum_prompt << "Persona facing $${character.display_name}\n";
     }
 
     const std::vector<AgentDefinition> definitions = load_agent_definitions(
-        {persona},
+        {character},
         forum,
         "The Stoics Forum",
         {},
-        personas / "persona_defaults.toml");
+        characters / "character_defaults.toml");
 
     ASSERT_EQ(definitions.size(), 1U);
     expect_forum_context(
         definitions.front(),
         "Voice for Seneca in The Stoics Forum (energetic)\n"
         "id=seneca\n\n\n"
-        "User facing Seneca\n\n\n"
+        "Persona facing Seneca\n\n\n"
         "## Participants\n\nForum context\n\n",
         "Seneca",
         "[]");
     std::filesystem::remove_all(root);
 }
 
-TEST(AgentDefinitions, WrapsExpansionFailuresWithPersonaAndChain) {
+TEST(AgentDefinitions, WrapsExpansionFailuresWithCharacterAndChain) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = root / "forum";
-    const std::filesystem::path persona = forum / "personas" / "seneca";
-    std::filesystem::create_directories(persona);
+    const std::filesystem::path character = forum / "characters" / "seneca";
+    std::filesystem::create_directories(character);
     {
-        std::ofstream config(persona / "persona.toml");
+        std::ofstream config(character / "character.toml");
         config << "display_name = \"Seneca\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
-        std::ofstream shared(forum / "personas" / "shared.md");
+        std::ofstream shared(forum / "characters" / "shared.md");
         shared << "$${missing}\n";
-        std::ofstream system_prompt(persona / "SYSTEM.md");
+        std::ofstream system_prompt(character / "SYSTEM.md");
         system_prompt << "$$(../shared.md)\n";
         std::ofstream forum_prompt(forum / "FORUM.md");
         forum_prompt << "ok\n";
     }
 
     try {
-        (void)load_agent_definitions({persona}, forum, "Forum", {});
+        (void)load_agent_definitions({character}, forum, "Forum", {});
         FAIL() << "expected expansion failure";
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
-        EXPECT_NE(message.find("Persona 'seneca' failed to read SYSTEM.md"), std::string::npos)
+        EXPECT_NE(message.find("Character 'seneca' failed to read SYSTEM.md"), std::string::npos)
             << message;
         EXPECT_NE(message.find("unknown variable 'missing'"), std::string::npos)
             << message;
@@ -310,38 +310,38 @@ TEST(AgentDefinitions, WrapsExpansionFailuresWithPersonaAndChain) {
 TEST(AgentDefinitions, IdentifiesInvalidPromptVariableConfiguration) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = root / "forum";
-    const std::filesystem::path personas = forum / "personas";
-    const std::filesystem::path persona = personas / "seneca";
-    std::filesystem::create_directories(persona);
+    const std::filesystem::path characters = forum / "characters";
+    const std::filesystem::path character = characters / "seneca";
+    std::filesystem::create_directories(character);
     {
-        std::ofstream base(personas / "persona_defaults.toml");
+        std::ofstream base(characters / "character_defaults.toml");
         base << "host = \"127.0.0.1\"\n"
              << "port = 8080\n"
              << "[prompt]\n"
              << "unsupported = [1, 2]\n";
-        std::ofstream config(persona / "persona.toml");
+        std::ofstream config(character / "character.toml");
         config << "display_name = \"Seneca\"\n";
-        std::ofstream system_prompt(persona / "SYSTEM.md");
+        std::ofstream system_prompt(character / "SYSTEM.md");
         system_prompt << "system\n";
         std::ofstream forum_prompt(forum / "FORUM.md");
-        forum_prompt << "user\n";
+        forum_prompt << "persona\n";
     }
 
     try {
         (void)load_agent_definitions(
-            {persona},
+            {character},
             forum,
             "Forum",
             {},
-            personas / "persona_defaults.toml");
+            characters / "character_defaults.toml");
         FAIL() << "expected invalid prompt-variable configuration";
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
         EXPECT_NE(
-            message.find("Persona 'seneca' has invalid configuration"),
+            message.find("Character 'seneca' has invalid configuration"),
             std::string::npos)
             << message;
-        EXPECT_NE(message.find("persona_defaults.toml"), std::string::npos)
+        EXPECT_NE(message.find("character_defaults.toml"), std::string::npos)
             << message;
         EXPECT_NE(message.find("unsupported type"), std::string::npos)
             << message;

@@ -60,7 +60,7 @@ TEST(Command, ParsesTheDefaultAgentCommandHandle) {
     EXPECT_EQ(prefix.kind, CommandKind::set_default);
     EXPECT_EQ(prefix.handle, "che");
 
-    // Handles are passed through verbatim; ForumPersonas interprets them.
+    // Handles are passed through verbatim; ForumCharacters interprets them.
     const Command punctuated = parse_command("/@Ismael,");
     EXPECT_EQ(punctuated.handle, "Ismael,");
 }

@@ -25,7 +25,7 @@ protected:
         root = std::filesystem::temp_directory_path()
             / ("cha_workspace_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(
-            root / "forums" / "lobby" / "personas" / "guide");
+            root / "forums" / "lobby" / "characters" / "guide");
         std::filesystem::create_directories(root / "forums" / "lobby" / "sessions");
         {
             std::ofstream file(root / "app.toml");
@@ -41,14 +41,14 @@ protected:
         }
         {
             std::ofstream file(
-                root / "forums" / "lobby" / "personas" / "guide" / "persona.toml");
+                root / "forums" / "lobby" / "characters" / "guide" / "character.toml");
             file << "display_name = \"Guide\"\n"
                  << "host = \"127.0.0.1\"\nport = 8080\n";
         }
         {
             std::ofstream file(
-                root / "forums" / "lobby" / "personas" / "guide" / "SYSTEM.md");
-            file << "Persona instructions";
+                root / "forums" / "lobby" / "characters" / "guide" / "SYSTEM.md");
+            file << "Character instructions";
         }
         {
             std::ofstream file(root / "forums" / "lobby" / "FORUM.md");
@@ -87,7 +87,7 @@ TranscriptEntry human(EntryId id, std::string text, RequestId request_id) {
         id, {"human", "You"}, {"guide-id", "Guide"}, std::move(text), request_id);
 }
 
-TEST_F(WorkspaceTest, LoadsForumsAndTheirPersonaDirectories) {
+TEST_F(WorkspaceTest, LoadsForumsAndTheirCharacterDirectories) {
     Workspace workspace(root);
 
     EXPECT_EQ(workspace.forums(), (std::vector<std::string>{"lobby"}));
@@ -95,7 +95,7 @@ TEST_F(WorkspaceTest, LoadsForumsAndTheirPersonaDirectories) {
 
     EXPECT_EQ(forum.name, "lobby");
     EXPECT_EQ(forum.display_name, "The Lobby");
-    EXPECT_EQ(forum.persona_names, (std::vector<std::string>{"guide"}));
+    EXPECT_EQ(forum.character_names, (std::vector<std::string>{"guide"}));
 }
 
 TEST_F(WorkspaceTest, EnumeratesForumSubdirectoriesInNameOrder) {
@@ -339,32 +339,32 @@ TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
     }
 }
 
-TEST_F(WorkspaceTest, LoadsForumPersonasFromSubdirectoriesInNameOrder) {
+TEST_F(WorkspaceTest, LoadsForumCharactersFromSubdirectoriesInNameOrder) {
     std::filesystem::create_directories(
-        root / "forums" / "lobby" / "personas" / "other");
+        root / "forums" / "lobby" / "characters" / "other");
     Workspace workspace(root);
     EXPECT_EQ(
-        workspace.load_forum("lobby").persona_names,
+        workspace.load_forum("lobby").character_names,
         (std::vector<std::string>{"guide", "other"}));
 }
 
-TEST_F(WorkspaceTest, IgnoresFilesWhenEnumeratingForumPersonas) {
-    std::ofstream(root / "forums" / "lobby" / "personas" / "README.md")
-        << "not a persona";
+TEST_F(WorkspaceTest, IgnoresFilesWhenEnumeratingForumCharacters) {
+    std::ofstream(root / "forums" / "lobby" / "characters" / "README.md")
+        << "not a character";
     Workspace workspace(root);
     EXPECT_EQ(
-        workspace.load_forum("lobby").persona_names,
+        workspace.load_forum("lobby").character_names,
         (std::vector<std::string>{"guide"}));
 }
 
-TEST_F(WorkspaceTest, RejectsAnEmptyOrAbsentForumPersonasDirectory) {
-    std::filesystem::remove_all(root / "forums" / "lobby" / "personas");
-    std::filesystem::create_directories(root / "forums" / "lobby" / "personas");
+TEST_F(WorkspaceTest, RejectsAnEmptyOrAbsentForumCharactersDirectory) {
+    std::filesystem::remove_all(root / "forums" / "lobby" / "characters");
+    std::filesystem::create_directories(root / "forums" / "lobby" / "characters");
     Workspace workspace(root);
     EXPECT_THROW((void)workspace.load_forum("lobby"), std::runtime_error);
 }
 
-TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumPersonasAre) {
+TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumCharactersAre) {
     Workspace workspace(root);
     SessionCatalog sessions(
         workspace.load_forum("lobby").directory / "sessions", "lobby");
@@ -386,10 +386,10 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumPersonasAre) {
                 1));
     }
 
-    // The forum now contains completely different personas; the session is unaffected.
-    std::filesystem::remove_all(root / "forums" / "lobby" / "personas");
+    // The forum now contains completely different characters; the session is unaffected.
+    std::filesystem::remove_all(root / "forums" / "lobby" / "characters");
     std::filesystem::create_directories(
-        root / "forums" / "lobby" / "personas" / "guide");
+        root / "forums" / "lobby" / "characters" / "guide");
     const Forum reduced = workspace.load_forum("lobby");
     SessionCatalog reopened(reduced.directory / "sessions", reduced.name);
 

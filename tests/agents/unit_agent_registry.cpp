@@ -207,7 +207,7 @@ TEST(AgentRegistry, RejectsInvalidBackendMetadataAtConstruction) {
         std::invalid_argument);
 }
 
-TEST(AgentRegistry, IdentifiesPersonaWhoseDefinitionStartupFails) {
+TEST(AgentRegistry, IdentifiesCharacterWhoseDefinitionStartupFails) {
     ThreadPool pool(1);
     AgentDefinition definition{
         .config = {
@@ -224,7 +224,7 @@ TEST(AgentRegistry, IdentifiesPersonaWhoseDefinitionStartupFails) {
         FAIL() << "Expected startup failure";
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
-        EXPECT_NE(message.find("Persona 'Alpha'"), std::string::npos);
+        EXPECT_NE(message.find("Character 'Alpha'"), std::string::npos);
         EXPECT_NE(message.find("alpha-id"), std::string::npos);
     }
 }

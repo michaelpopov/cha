@@ -21,8 +21,8 @@ flowchart TD
     config --> log["initialize diagnostic logging"]
     log --> c["construct Workspace<br/>requires app.toml + forums/"]
     c --> d["construct Terminal<br/>process-wide curses"]
-    d --> users["Workspace.load_users"]
-    users --> e["StartupSelector.select_user"]
+    d --> personas["Workspace.load_personas"]
+    personas --> e["StartupSelector.select_persona"]
     e -->|"cancelled"| x["throw, exit 1"]
     e --> forum["StartupSelector.select_forum"]
     forum -->|"cancelled"| x
@@ -35,18 +35,18 @@ flowchart TD
     g -->|"existing id"| j["Workspace.open_session"]
     i -->|"CreatedSession.controller"| k["SessionController"]
     j --> k
-    k --> l["run_user with terminal, controller,<br/>and selected user ID"]
+    k --> l["run_persona with terminal, controller,<br/>and selected persona ID"]
     l --> m["return 0"]
 ```
 
 Two properties matter more than the sequence:
 
 - **Everything file-related goes through `Workspace`.** The entry point never
-  constructs a `SessionCatalog`, never reads a persona directory, and never
+  constructs a `SessionCatalog`, never reads a character directory, and never
   opens a database. That is what lets a second front end reuse the same startup
   without copying logic.
 - **Failures are reported after the terminal is restored.** `Terminal`'s
-  destructor leaves curses mode during unwinding, and `run_user()` restores it
+  destructor leaves curses mode during unwinding, and `run_persona()` restores it
   explicitly before rethrowing, so the message printed by `main()` reaches a
   normal screen.
 
@@ -57,8 +57,8 @@ why it stopped.
 
 The line-oriented application parses forum/session selection and handles
 forum/session listings or `--forum ID --check` before constructing any console
-or session object. A chat run requires `--user ID`, which it resolves against
-`Workspace::load_users()`; listings and `--check` reject that flag. A forum
+or session object. A chat run requires `--persona ID`, which it resolves against
+`Workspace::load_personas()`; listings and `--check` reject that flag. A forum
 check loads and validates the static definitions through `Workspace`, then exits
 without provider initialization.
 

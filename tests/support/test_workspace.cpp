@@ -12,9 +12,9 @@ TestWorkspace::TestWorkspace()
           / ("cha_web_workspace_"
              + std::to_string(
                  std::chrono::steady_clock::now().time_since_epoch().count()))) {
-    const auto persona = root_ / "forums" / "lobby" / "personas" / "guide";
-    std::filesystem::create_directories(persona);
-    std::filesystem::create_directories(root_ / "users");
+    const auto character = root_ / "forums" / "lobby" / "characters" / "guide";
+    std::filesystem::create_directories(character);
+    std::filesystem::create_directories(root_ / "personas");
     std::ofstream(root_ / "app.toml")
         << "host = \"127.0.0.1\"\n"
            "port = 8080\n"
@@ -26,14 +26,14 @@ TestWorkspace::TestWorkspace()
     std::ofstream(root_ / "forums" / "lobby" / "FORUM.md")
         << "Forum instructions\n";
     std::ofstream(
-        root_ / "forums" / "lobby" / "personas" / "persona_defaults.toml")
+        root_ / "forums" / "lobby" / "characters" / "character_defaults.toml")
         << "host = \"test\"\n"
            "port = 1\n"
            "mode = \"test\"\n"
            "model = \"fake\"\n";
-    write_persona_config("display_name = \"Guide\"\n");
-    std::ofstream(persona / "SYSTEM.md") << "Persona instructions\n";
-    add_user("reader", "Reader");
+    write_character_config("display_name = \"Guide\"\n");
+    std::ofstream(character / "SYSTEM.md") << "Character instructions\n";
+    add_persona("reader", "Reader");
 }
 
 TestWorkspace::~TestWorkspace() {
@@ -52,21 +52,21 @@ void TestWorkspace::write_app_config(
            "level = \"" << log_level << "\"\n";
 }
 
-void TestWorkspace::write_persona_config(std::string_view contents) const {
+void TestWorkspace::write_character_config(std::string_view contents) const {
     std::ofstream(
-        root_ / "forums" / "lobby" / "personas" / "guide" / "persona.toml")
+        root_ / "forums" / "lobby" / "characters" / "guide" / "character.toml")
         << contents;
 }
 
-void TestWorkspace::add_user(
+void TestWorkspace::add_persona(
     std::string_view id,
     std::string_view display_name,
     std::string_view prompt) const {
-    const std::filesystem::path directory = root_ / "users" / std::string(id);
+    const std::filesystem::path directory = root_ / "personas" / std::string(id);
     std::filesystem::create_directories(directory);
-    std::ofstream(directory / "user.toml")
+    std::ofstream(directory / "persona.toml")
         << "display_name = \"" << display_name << "\"\n";
-    if (!prompt.empty()) std::ofstream(directory / "USER.md") << prompt;
+    if (!prompt.empty()) std::ofstream(directory / "PERSONA.md") << prompt;
 }
 
 } // namespace cha::test

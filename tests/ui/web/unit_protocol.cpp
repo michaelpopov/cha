@@ -69,13 +69,13 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json(ForumSummary{"forum", "Forum"}),
         nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}}));
     EXPECT_EQ(
-        nlohmann::json(UserSummary{"reader", "Reader"}),
+        nlohmann::json(PersonaSummary{"reader", "Reader"}),
         nlohmann::json({{"display_name", "Reader"}, {"id", "reader"}}));
     EXPECT_EQ(
         nlohmann::json(SessionListing{"s1", "Notes", true}),
         nlohmann::json({{"id", "s1"}, {"label", "Notes"}, {"live", true}}));
     EXPECT_EQ(
-        nlohmann::json(PersonaSummary{"guide", "Guide"}),
+        nlohmann::json(CharacterSummary{"guide", "Guide"}),
         nlohmann::json({{"display_name", "Guide"}, {"id", "guide"}}));
     EXPECT_EQ(
         nlohmann::json(CommandResult{true, std::nullopt}),
@@ -99,8 +99,8 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         .forum = {"forum", "Forum"},
         .session_id = "session",
         .session_label = "Label",
-        .personas = {{"guide", "Guide"}},
-        .default_persona_id = "guide",
+        .characters = {{"guide", "Guide"}},
+        .default_character_id = "guide",
         .transcript = {{
             .id = 7,
             .kind = TranscriptKind::agent,
@@ -125,7 +125,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
 
     const auto value = nlohmann::json(SnapshotEvent{std::move(snapshot)});
     const nlohmann::json expected = {
-        {"default_persona_id", "guide"},
+        {"default_character_id", "guide"},
         {"forum", {{"display_name", "Forum"}, {"id", "forum"}}},
         {"generation",
          {
@@ -138,7 +138,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
          }},
         {"lifecycle", "stopping"},
         {"notice", "<notice>"},
-        {"personas", {{{"display_name", "Guide"}, {"id", "guide"}}}},
+        {"characters", {{{"display_name", "Guide"}, {"id", "guide"}}}},
         {"session_id", "session"},
         {"session_label", "Label"},
         {"shutdown_reason", "session_failed"},
@@ -295,24 +295,24 @@ TEST(WebProtocol, RejectsInvalidEnumValues) {
 }
 
 TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
-    nlohmann::json input_body = {{"user", "reader"}, {"text", "hello"}};
+    nlohmann::json input_body = {{"persona", "reader"}, {"text", "hello"}};
     const WebCommand input = parse_input_command(input_body);
     input_body["text"] = "changed";
     ASSERT_TRUE(std::holds_alternative<RawCommand>(input));
-    EXPECT_EQ(std::get<RawCommand>(input).user, "reader");
+    EXPECT_EQ(std::get<RawCommand>(input).persona, "reader");
     EXPECT_EQ(std::get<RawCommand>(input).text, "hello");
 
     const WebCommand default_agent =
-        parse_default_agent_command({{"persona_id", "guide"}});
+        parse_default_agent_command({{"character_id", "guide"}});
     ASSERT_TRUE(std::holds_alternative<SetDefaultAgentCommand>(default_agent));
     EXPECT_EQ(
-        std::get<SetDefaultAgentCommand>(default_agent).persona_id,
+        std::get<SetDefaultAgentCommand>(default_agent).character_id,
         "guide");
 
     const WebCommand stop = StopCommand{};
     EXPECT_TRUE(std::holds_alternative<StopCommand>(stop));
     EXPECT_THROW(
-        (void)parse_input_command({{"type", "input"}, {"user", "reader"}, {"text", "hello"}}),
+        (void)parse_input_command({{"type", "input"}, {"persona", "reader"}, {"text", "hello"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_input_command({{"text", 1}}),
@@ -321,12 +321,12 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         (void)parse_input_command({{"text", "hello"}}),
         std::invalid_argument);
     EXPECT_THROW(
-        (void)parse_input_command({{"user", ""}, {"text", "hello"}}),
+        (void)parse_input_command({{"persona", ""}, {"text", "hello"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_default_agent_command({
             {"type", "default_agent"},
-            {"persona_id", "guide"},
+            {"character_id", "guide"},
         }),
         std::invalid_argument);
     EXPECT_THROW(
@@ -428,12 +428,12 @@ TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
     Workspace workspace(fixture.root());
     const Forum forum = workspace.check_forum("lobby");
     EXPECT_EQ(forum.display_name, "The Lobby");
-    EXPECT_EQ(forum.persona_names, (std::vector<std::string>{"guide"}));
+    EXPECT_EQ(forum.character_names, (std::vector<std::string>{"guide"}));
     const auto config = load_config(
         fixture.root()
-            / "forums/lobby/personas/guide/persona.toml",
+            / "forums/lobby/characters/guide/character.toml",
         fixture.root()
-            / "forums/lobby/personas/persona_defaults.toml")
+            / "forums/lobby/characters/character_defaults.toml")
                             .config;
     EXPECT_EQ(config.mode, Mode::test);
     EXPECT_EQ(config.model, "fake");

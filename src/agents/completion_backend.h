@@ -17,7 +17,7 @@ enum class CompletionOutcome {
 };
 
 // How one call to CompletionBackend::perform() ended. The message explains the failure outcomes
-// and is meant to reach the user unchanged.
+// and is meant to reach the persona unchanged.
 struct CompletionResult {
     CompletionOutcome outcome{CompletionOutcome::completed};
     std::string message;

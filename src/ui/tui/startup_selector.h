@@ -11,7 +11,7 @@ namespace cha {
 
 class Terminal;
 
-// The screens shown before a chat begins: choose a user, a forum, then choose
+// The screens shown before a chat begins: choose a persona, a forum, then choose
 // or name a session. It draws temporary selection lists on a borrowed Terminal
 // and works only from values handed to it by Workspace, so selection never
 // reaches into session storage.
@@ -22,7 +22,7 @@ public:
     StartupSelector(const StartupSelector&) = delete;
     StartupSelector& operator=(const StartupSelector&) = delete;
 
-    std::optional<User> select_user(const UserRoster& users);
+    std::optional<Persona> select_persona(const PersonaRoster& personas);
     std::optional<std::string> select_forum(const std::vector<Forum>& forums);
     std::optional<SessionSummary> select_session(
         const std::vector<SessionSummary>& sessions,

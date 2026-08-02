@@ -9,19 +9,19 @@
 
 namespace cha::test {
 
-inline UserRoster operator_roster() {
+inline PersonaRoster operator_roster() {
     return {{.id = "operator", .display_name = "Operator"}};
 }
 
 inline std::unique_ptr<SessionController> from_definitions_for_testing(
     std::vector<AgentDefinition> definitions,
-    UserRoster users,
+    PersonaRoster personas,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored = {}) {
     return SessionController::from_definitions_for_testing(
         std::move(definitions),
-        std::move(users),
+        std::move(personas),
         std::move(database_path),
         notifier,
         std::move(restored));
@@ -42,14 +42,14 @@ inline std::unique_ptr<SessionController> from_definitions_for_testing(
 
 inline std::unique_ptr<SessionController> from_backends_for_testing(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
-    UserRoster users,
+    PersonaRoster personas,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {}) {
     return SessionController::from_backends_for_testing(
         std::move(backends),
-        std::move(users),
+        std::move(personas),
         std::move(database_path),
         notifier,
         std::move(restored),

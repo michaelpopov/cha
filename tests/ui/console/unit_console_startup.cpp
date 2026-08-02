@@ -27,8 +27,8 @@ public:
         const auto forum = root / "forums" / "hall";
         const auto sessions = forum / "sessions";
         std::filesystem::create_directories(
-            forum / "personas" / "Guide");
-        std::filesystem::create_directories(root / "users" / "reader");
+            forum / "characters" / "Guide");
+        std::filesystem::create_directories(root / "personas" / "reader");
         std::filesystem::create_directories(sessions);
         write(
             root / "app.toml",
@@ -37,15 +37,15 @@ public:
         write(forum / "config.toml", "display_name = \"The Hall\"\n");
         write(forum / "FORUM.md", "Forum instructions\n");
         write(
-            forum / "personas" / "persona_defaults.toml",
+            forum / "characters" / "character_defaults.toml",
             "host = \"127.0.0.1\"\nport = 8080\n");
         write(
-            forum / "personas" / "Guide" / "persona.toml",
+            forum / "characters" / "Guide" / "character.toml",
             "display_name = \"Guide\"\n");
         write(
-            forum / "personas" / "Guide" / "SYSTEM.md",
-            "Persona instructions\n");
-        write(root / "users" / "reader" / "user.toml", "display_name = \"Reader\"\n");
+            forum / "characters" / "Guide" / "SYSTEM.md",
+            "Character instructions\n");
+        write(root / "personas" / "reader" / "persona.toml", "display_name = \"Reader\"\n");
         if (!create_session_database(
                 sessions / "valid.sqlite3",
                 {
@@ -84,7 +84,7 @@ std::variant<ConsoleOptions, ArgumentError> parse(
 TEST(ConsoleStartup, ParsesSelectionAndColorOptions) {
     const auto parsed = parse({
         "chacon",
-        "--user", "reader",
+        "--persona", "reader",
         "--forum", "hall",
         "--session", "saved",
         "--color=always",
@@ -92,11 +92,11 @@ TEST(ConsoleStartup, ParsesSelectionAndColorOptions) {
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(parsed));
     const ConsoleOptions& options = std::get<ConsoleOptions>(parsed);
     EXPECT_EQ(options.forum, "hall");
-    EXPECT_EQ(options.user, "reader");
+    EXPECT_EQ(options.persona, "reader");
     EXPECT_EQ(options.session_id, "saved");
     EXPECT_EQ(options.color, ColorMode::always);
 
-    const auto fresh = parse({"chacon", "--user", "reader", "--forum", "hall"});
+    const auto fresh = parse({"chacon", "--persona", "reader", "--forum", "hall"});
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(fresh));
     ASSERT_TRUE(std::get<ConsoleOptions>(fresh).new_label.has_value());
     EXPECT_TRUE(std::get<ConsoleOptions>(fresh).new_label->empty());
@@ -115,7 +115,7 @@ TEST(ConsoleStartup, RejectsUsageErrorsWithCodeTwo) {
         parse({"chacon", "--unknown"}),
         parse({"chacon", "operand"}),
         parse({"chacon", "--forum", "hall", "--session", ""}),
-        parse({"chacon", "--user", "", "--forum", "hall"}),
+        parse({"chacon", "--persona", "", "--forum", "hall"}),
         parse({"chacon", "--forum", "hall"}),
         parse({
             "chacon", "--forum", "hall",
@@ -134,21 +134,21 @@ TEST(ConsoleStartup, RejectsUsageErrorsWithCodeTwo) {
             "--check", "--list-sessions",
         }),
         parse({"chacon", "--forum", "hall", "--color=sometimes"}),
-        parse({"chacon", "--user", "reader", "--list-forums"}),
-        parse({"chacon", "--user", "reader", "--forum", "hall", "--list-sessions"}),
-        parse({"chacon", "--user", "reader", "--forum", "hall", "--check"}),
+        parse({"chacon", "--persona", "reader", "--list-forums"}),
+        parse({"chacon", "--persona", "reader", "--forum", "hall", "--list-sessions"}),
+        parse({"chacon", "--persona", "reader", "--forum", "hall", "--check"}),
     }) {
         ASSERT_TRUE(std::holds_alternative<ArgumentError>(parsed));
         EXPECT_EQ(std::get<ArgumentError>(parsed).exit_code, 2);
     }
 }
 
-TEST(ConsoleStartup, RejectsAnEmptyExplicitUserID) {
-    const auto parsed = parse({"chacon", "--user", "", "--forum", "hall"});
+TEST(ConsoleStartup, RejectsAnEmptyExplicitPersonaID) {
+    const auto parsed = parse({"chacon", "--persona", "", "--forum", "hall"});
 
     ASSERT_TRUE(std::holds_alternative<ArgumentError>(parsed));
     EXPECT_EQ(std::get<ArgumentError>(parsed).exit_code, 2);
-    EXPECT_EQ(std::get<ArgumentError>(parsed).message, "--user requires a user ID");
+    EXPECT_EQ(std::get<ArgumentError>(parsed).message, "--persona requires a persona ID");
 }
 
 TEST(ConsoleStartup, ForumListingUsesFilesystemNameOrder) {
@@ -184,7 +184,7 @@ TEST(ConsoleStartup, ForumCheckIsPlainAndDoesNotCreateASession) {
 
     write_forum_check(workspace, "hall", output);
 
-    EXPECT_EQ(output.str(), "Forum 'hall' is valid (1 persona).\n");
+    EXPECT_EQ(output.str(), "Forum 'hall' is valid (1 character).\n");
     EXPECT_EQ(workspace.sessions("hall"), sessions_before);
 }
 

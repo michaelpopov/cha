@@ -36,10 +36,10 @@ struct ForumSummary {
 
 // The lobby exposes identities only for browser-side attribution selection.
 // A session snapshot deliberately does not carry this workspace-wide roster.
-struct UserSummary {
+struct PersonaSummary {
     std::string id;
     std::string display_name;
-    bool operator==(const UserSummary&) const = default;
+    bool operator==(const PersonaSummary&) const = default;
 };
 
 struct SessionListing {
@@ -48,10 +48,10 @@ struct SessionListing {
     bool live{};
 };
 
-struct PersonaSummary {
+struct CharacterSummary {
     std::string id;
     std::string display_name;
-    bool operator==(const PersonaSummary&) const = default;
+    bool operator==(const CharacterSummary&) const = default;
 };
 
 struct TranscriptEntry {
@@ -81,8 +81,8 @@ struct SessionSnapshot {
     ForumSummary forum;
     std::string session_id;
     std::string session_label;
-    std::vector<PersonaSummary> personas;
-    std::string default_persona_id;
+    std::vector<CharacterSummary> characters;
+    std::string default_character_id;
     std::vector<TranscriptEntry> transcript;
     GenerationState generation;
     std::optional<std::string> notice;
@@ -93,14 +93,14 @@ struct SessionSnapshot {
 
 struct RawCommand {
     // Stable author ID forwarded to the shared text-input path.
-    std::string user;
+    std::string persona;
     std::string text;
 };
 
 struct StopCommand {};
 
 struct SetDefaultAgentCommand {
-    std::string persona_id;
+    std::string character_id;
 };
 
 // A snapshot request shares the owner queue with mutations so HTTP threads
@@ -187,9 +187,9 @@ std::string_view to_string(ShutdownReason value);
 std::string_view to_string(ErrorCode value);
 
 void to_json(nlohmann::json& json, const ForumSummary& value);
-void to_json(nlohmann::json& json, const UserSummary& value);
-void to_json(nlohmann::json& json, const SessionListing& value);
 void to_json(nlohmann::json& json, const PersonaSummary& value);
+void to_json(nlohmann::json& json, const SessionListing& value);
+void to_json(nlohmann::json& json, const CharacterSummary& value);
 void to_json(nlohmann::json& json, const TranscriptEntry& value);
 void to_json(nlohmann::json& json, const GenerationState& value);
 void to_json(nlohmann::json& json, const SessionSnapshot& value);

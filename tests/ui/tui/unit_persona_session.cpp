@@ -7,7 +7,7 @@
 #include "ui/tui/input_editor.h"
 #include "ui/tui/session_view.h"
 #include "support/test_backends.h"
-#include "ui/tui/user_session.h"
+#include "ui/tui/persona_session.h"
 
 #include <gtest/gtest.h>
 
@@ -41,7 +41,7 @@ class TemporarySessionJournal {
 public:
     TemporarySessionJournal()
       : path(std::filesystem::temp_directory_path()
-             / ("cha_user_session_"
+             / ("cha_persona_session_"
                 + std::to_string(
                     std::chrono::steady_clock::now()
                         .time_since_epoch()
@@ -50,11 +50,11 @@ public:
         if (!create_session_database(
                 path,
                 {
-                    .id = "user-session-test",
+                    .id = "persona-session-test",
                     .forum = "test-forum",
-                    .label = "User session test",
+                    .label = "Persona session test",
                 })) {
-            throw std::runtime_error("Failed to create user-session test database");
+            throw std::runtime_error("Failed to create persona-session test database");
         }
     }
 
@@ -173,7 +173,7 @@ public:
 
     AgentRuntimeInfo info() const override {
         return {
-            .persona = {
+            .character = {
                 .id = id_,
                 .name = name_,
             },
@@ -208,7 +208,7 @@ void enter(FakeSessionView& view, std::string_view text) {
 
 void receive_when_ready(
     SessionController& controller,
-    UserSession& session) {
+    PersonaSession& session) {
     while (controller.generation_status().active) {
         const std::size_t observed = notifier().wake_count();
         session.receive_responses();
@@ -220,14 +220,14 @@ void receive_when_ready(
     }
 }
 
-TEST(UserSession, SubmitsEditedInputThroughTheController) {
+TEST(PersonaSession, SubmitsEditedInputThroughTheController) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -240,14 +240,14 @@ TEST(UserSession, SubmitsEditedInputThroughTheController) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
-TEST(UserSession, DelegatesClearAndInfoCommandsToTheController) {
+TEST(PersonaSession, DelegatesClearAndInfoCommandsToTheController) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     enter(view, "/info");
     session.receive_terminal_input();
@@ -267,14 +267,14 @@ TEST(UserSession, DelegatesClearAndInfoCommandsToTheController) {
     EXPECT_EQ(view.rendered_notice, "Transcript cleared");
 }
 
-TEST(UserSession, StopInputDrivesControllerCancellation) {
+TEST(PersonaSession, StopInputDrivesControllerCancellation) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -293,14 +293,14 @@ TEST(UserSession, StopInputDrivesControllerCancellation) {
         copy_entries(controller->transcript()));
 }
 
-TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
+TEST(PersonaSession, PreservesADraftRejectedDuringGeneration) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -315,14 +315,14 @@ TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
     session.shutdown();
 }
 
-TEST(UserSession, ConsumesStopCommandDuringGeneration) {
+TEST(PersonaSession, ConsumesStopCommandDuringGeneration) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -335,14 +335,14 @@ TEST(UserSession, ConsumesStopCommandDuringGeneration) {
     receive_when_ready(*controller, session);
 }
 
-TEST(UserSession, ExitCommandStopsTheSession) {
+TEST(PersonaSession, ExitCommandStopsTheSession) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     enter(view, "/exit");
     session.receive_terminal_input();
@@ -350,14 +350,14 @@ TEST(UserSession, ExitCommandStopsTheSession) {
     EXPECT_FALSE(session.running());
 }
 
-TEST(UserSession, ClosedAgentEventQueueStopsTheSession) {
+TEST(PersonaSession, ClosedAgentEventQueueStopsTheSession) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
     controller->shutdown();
 
     session.receive_responses();
@@ -365,28 +365,28 @@ TEST(UserSession, ClosedAgentEventQueueStopsTheSession) {
     EXPECT_FALSE(session.running());
 }
 
-TEST(UserSession, PollReportedTerminalClosureStopsTheSession) {
+TEST(PersonaSession, PollReportedTerminalClosureStopsTheSession) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     session.close_terminal();
 
     EXPECT_FALSE(session.running());
 }
 
-TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
+TEST(PersonaSession, TerminalFailureStopsAndRendersItsNotice) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     session.report_terminal_failure();
     session.render_if_needed();
@@ -396,14 +396,14 @@ TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
     EXPECT_EQ(view.rendered_notice, "Terminal input failed.");
 }
 
-TEST(UserSession, RendersTheGeneratingAgentByName) {
+TEST(PersonaSession, RendersTheGeneratingAgentByName) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         two_agents(),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     session.resize();
     session.render_if_needed();
@@ -423,14 +423,14 @@ TEST(UserSession, RendersTheGeneratingAgentByName) {
     EXPECT_TRUE(view.rendered_agent_name.empty());
 }
 
-TEST(UserSession, RendersAddressingWheneverTheForumHostsSeveralAgents) {
+TEST(PersonaSession, RendersAddressingWheneverTheForumHostsSeveralAgents) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         two_agents(),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     session.resize();
     session.render_if_needed();
@@ -440,17 +440,17 @@ TEST(UserSession, RendersAddressingWheneverTheForumHostsSeveralAgents) {
     session.receive_terminal_input();
     session.render_if_needed();
     EXPECT_TRUE(view.rendered_show_addressing)
-        << "a forum with multiple personas keeps showing every prompt's target";
+        << "a forum with multiple characters keeps showing every prompt's target";
 }
 
-TEST(UserSession, PreviewsTheDefaultOrLeadingMentionedInputTarget) {
+TEST(PersonaSession, PreviewsTheDefaultOrLeadingMentionedInputTarget) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         two_agents(),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     session.resize();
     session.render_if_needed();
@@ -462,7 +462,7 @@ TEST(UserSession, PreviewsTheDefaultOrLeadingMentionedInputTarget) {
     EXPECT_EQ(view.rendered_input_target_name, "Ismael");
 }
 
-TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOtherwise) {
+TEST(PersonaSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOtherwise) {
     TemporarySessionJournal temporary;
     {
         auto controller = test::from_backends_for_testing(
@@ -470,7 +470,7 @@ TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOt
             temporary.path,
             notifier());
         FakeSessionView view;
-        UserSession session(view, *controller, selected_author_id());
+        PersonaSession session(view, *controller, selected_author_id());
         session.resize();
         session.render_if_needed();
         EXPECT_FALSE(view.rendered_show_addressing);
@@ -492,7 +492,7 @@ TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOt
         notifier(),
         std::move(restored));
     FakeSessionView view;
-    UserSession session(view, *reopened, selected_author_id());
+    PersonaSession session(view, *reopened, selected_author_id());
 
     session.resize();
     session.render_if_needed();
@@ -505,14 +505,14 @@ TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOt
         << "clearing removes the only reason a one-agent forum showed addressing";
 }
 
-TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {
+TEST(PersonaSession, ShutdownPersistsCancellationOfAnActiveTurn) {
     TemporarySessionJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_author_id());
+    PersonaSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();

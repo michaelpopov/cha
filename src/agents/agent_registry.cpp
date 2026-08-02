@@ -34,16 +34,16 @@ std::vector<AgentRuntimeInfo> build_runtime_info(
                 "Agent registry requires completion backends");
         }
         AgentRuntimeInfo info = backend->info();
-        validate_persona_id(info.persona.id);
-        validate_persona_name(info.persona.name);
-        if (!ids.insert(info.persona.id).second) {
+        validate_character_id(info.character.id);
+        validate_character_name(info.character.name);
+        if (!ids.insert(info.character.id).second) {
             throw std::invalid_argument(
-                "Agent registry has duplicate persona ID '" + info.persona.id
+                "Agent registry has duplicate character ID '" + info.character.id
                 + "'");
         }
-        if (!names.insert(fold_ascii(info.persona.name)).second) {
+        if (!names.insert(fold_ascii(info.character.name)).second) {
             throw std::invalid_argument(
-                "Agent registry has duplicate persona name '" + info.persona.name
+                "Agent registry has duplicate character name '" + info.character.name
                 + "'");
         }
         infos.push_back(std::move(info));
@@ -63,7 +63,7 @@ std::vector<std::unique_ptr<CompletionBackend>> build_backends(
                 std::make_unique<CompletionClient>(std::move(definition)));
         } catch (const std::exception& error) {
             throw std::runtime_error(
-                "Persona '" + name + "' (agent ID '" + id
+                "Character '" + name + "' (agent ID '" + id
                 + "') failed to initialize: " + error.what());
         }
     }
@@ -279,7 +279,7 @@ struct AgentRegistry::Impl {
 
     std::size_t backend_index(std::string_view id) const {
         for (std::size_t index = 0; index < runtime_info.size(); ++index) {
-            if (runtime_info[index].persona.id == id) {
+            if (runtime_info[index].character.id == id) {
                 return index;
             }
         }

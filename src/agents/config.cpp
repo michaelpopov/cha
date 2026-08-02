@@ -117,7 +117,7 @@ ParsedConfig parse_config(
     if (base && table.contains("display_name")) {
         throw std::runtime_error(
             "Base config file '" + utf8_path(path)
-            + "' cannot define persona identity 'display_name'");
+            + "' cannot define character identity 'display_name'");
     }
 
     return {
@@ -148,50 +148,50 @@ ParsedConfig parse_config(
 template<typename Value>
 void override_with(
     std::optional<Value>& effective,
-    const std::optional<Value>& persona) {
-    if (persona) {
-        effective = persona;
+    const std::optional<Value>& character) {
+    if (character) {
+        effective = character;
     }
 }
 
-void overlay(ConfigPatch& effective, const ConfigPatch& persona) {
-    override_with(effective.host, persona.host);
-    override_with(effective.port, persona.port);
-    override_with(effective.mode, persona.mode);
-    override_with(effective.model, persona.model);
-    override_with(effective.stream, persona.stream);
-    override_with(effective.temperature, persona.temperature);
-    override_with(effective.api_key, persona.api_key);
-    override_with(effective.api_key_env, persona.api_key_env);
-    override_with(effective.reasoning_effort, persona.reasoning_effort);
-    override_with(effective.reasoning_format, persona.reasoning_format);
-    override_with(effective.https, persona.https);
+void overlay(ConfigPatch& effective, const ConfigPatch& character) {
+    override_with(effective.host, character.host);
+    override_with(effective.port, character.port);
+    override_with(effective.mode, character.mode);
+    override_with(effective.model, character.model);
+    override_with(effective.stream, character.stream);
+    override_with(effective.temperature, character.temperature);
+    override_with(effective.api_key, character.api_key);
+    override_with(effective.api_key_env, character.api_key_env);
+    override_with(effective.reasoning_effort, character.reasoning_effort);
+    override_with(effective.reasoning_format, character.reasoning_format);
+    override_with(effective.https, character.https);
 }
 
-void overlay(TemplateScope& effective, TemplateScope persona) {
-    for (auto& [key, value] : persona) {
+void overlay(TemplateScope& effective, TemplateScope character) {
+    for (auto& [key, value] : character) {
         effective.insert_or_assign(std::move(key), std::move(value));
     }
 }
 
 Config build_config(
     ConfigPatch effective,
-    const ConfigPatch& persona,
-    const std::filesystem::path& persona_path,
+    const ConfigPatch& character,
+    const std::filesystem::path& character_path,
     const std::optional<std::filesystem::path>& base_path) {
-    if (!persona.display_name || persona.display_name->empty()) {
+    if (!character.display_name || character.display_name->empty()) {
         throw std::runtime_error(
-            "Persona config file '" + utf8_path(persona_path)
+            "Character config file '" + utf8_path(character_path)
             + "' requires a non-empty string 'display_name' value");
     }
     if (!effective.host || !effective.port) {
         throw std::runtime_error(
-            "Effective config for persona file '" + utf8_path(persona_path)
+            "Effective config for character file '" + utf8_path(character_path)
             + "' requires string 'host' and integer 'port' values");
     }
     if (*effective.port < 1 || *effective.port > 65535) {
         const std::filesystem::path& source =
-            persona.port || !base_path ? persona_path : *base_path;
+            character.port || !base_path ? character_path : *base_path;
         throw std::runtime_error(
             "Config file '" + utf8_path(source)
             + "' requires 'port' between 1 and 65535");
@@ -201,15 +201,15 @@ Config build_config(
             || *effective.temperature < 0.0
             || *effective.temperature > 2.0)) {
         const std::filesystem::path& source =
-            persona.temperature || !base_path ? persona_path : *base_path;
+            character.temperature || !base_path ? character_path : *base_path;
         throw std::runtime_error(
             "Config file '" + utf8_path(source)
             + "' requires 'temperature' between 0 and 2");
     }
 
     Config config;
-    config.id = utf8_path(persona_path.parent_path().filename());
-    config.name = *persona.display_name;
+    config.id = utf8_path(character_path.parent_path().filename());
+    config.name = *character.display_name;
     config.host = *effective.host;
     config.port = *effective.port;
     if (effective.mode) config.mode = *effective.mode;
@@ -231,18 +231,18 @@ Config build_config(
 } // namespace
 
 LoadedConfig load_config(
-    const std::filesystem::path& persona_path,
+    const std::filesystem::path& character_path,
     std::optional<std::filesystem::path> base_path) {
     ParsedConfig effective;
     if (base_path) {
         effective = parse_config(*base_path, true);
     }
-    ParsedConfig persona = parse_config(persona_path, false);
-    overlay(effective.patch, persona.patch);
-    overlay(effective.prompt_variables, std::move(persona.prompt_variables));
+    ParsedConfig character = parse_config(character_path, false);
+    overlay(effective.patch, character.patch);
+    overlay(effective.prompt_variables, std::move(character.prompt_variables));
     return {
         .config = build_config(
-            std::move(effective.patch), persona.patch, persona_path, base_path),
+            std::move(effective.patch), character.patch, character_path, base_path),
         .prompt_variables = std::move(effective.prompt_variables),
     };
 }

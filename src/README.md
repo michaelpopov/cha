@@ -5,35 +5,35 @@ owns, how a message travels from a keystroke to a model and back, and which
 rules must hold as the code grows. Read it before changing anything structural.
 
 Per-directory `README.md` files are the detailed reference for each layer; the
-user-facing manual is the [top-level `README.md`](../README.md).
+persona-facing manual is the [top-level `README.md`](../README.md).
 
 ## System overview
 
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
-It runs inside a workspace containing `app.toml`, a user roster, persona definitions, and forums. A persona
+It runs inside a workspace containing `app.toml`, a persona roster, character definitions, and forums. A character
 definition contains an identity, effective model configuration, and base
 system-prompt template. Its model configuration and prompt variables may
 inherit shared values from the
-selected forum's optional `personas/persona_defaults.toml`; persona-specific values
-override them. A forum contains an ordered list of the personas participating in
+selected forum's optional `characters/character_defaults.toml`; character-specific values
+override them. A forum contains an ordered list of the characters participating in
 chats in that forum, together with a forum-specific system-prompt template.
-When the forum is loaded, the persona's expanded `SYSTEM.md` is followed by the
-forum's expanded `FORUM.md`, the complete static user roster, and generated forum
-context identifying the current agent, the forum's other personas, and the
+When the forum is loaded, the character's expanded `SYSTEM.md` is followed by the
+forum's expanded `FORUM.md`, the complete static persona roster, and generated forum
+context identifying the current agent, the forum's other characters, and the
 shared-history encoding. Template
 includes are contained within the forum, so the forum remains a self-contained
 distribution unit.
 
-During a run, the participating personas are represented as agents. Each agent
+During a run, the participating characters are represented as agents. Each agent
 has its own identity, effective system prompt, and model connection, while all
 agents use the session's shared chat transcript. The first agent in the forum's
 list is the default; a prompt beginning with `@Name` is sent to another agent.
-Each submitted prompt carries a validated roster user as its author. That author
-is stored on the human entry; projection prefixes ordinary human `user` messages
+Each submitted prompt carries a validated roster persona as its author. That author
+is stored on the human entry; projection prefixes ordinary human `persona` messages
 with `from <Name>:` without changing stored or rendered text.
 
 A session is a persistent chat within a forum, stored in a single SQLite
-database. For each turn, `cha` records the user's prompt before sending it to
+database. For each turn, `cha` records the persona's prompt before sending it to
 the chosen agent on a worker thread. Model output is streamed into the chat
 transcript, and the outcome of the turn—completion, cancellation, or failure—is
 recorded in the database.
@@ -53,8 +53,8 @@ they need.
 | `ui/web/` | HTTP/SSE transport, owning web protocol values, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
-| `session/` | Workspace and session operations, `ForumPersonas`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
-| `agents/` | Persona config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
+| `session/` | Workspace and session operations, `ForumCharacters`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
+| `agents/` | Character config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the owner-thread-owned live `Transcript`. | Storage, providers, frontends. |
 | `util/` | Leaf helpers: text and path rules, `.env`, a portable concurrent queue, and the libuv wake loop. | Anything above it. |
 
@@ -85,7 +85,7 @@ Three rules keep this direction honest:
    new, add an operation to `session/`.
 2. **`transcript/` depends on nothing.** It may not import SQLite, provider
    protocol, or terminal concepts. Everything else may depend on it.
-3. **`agents/` owns persona loading but not workspace discovery.** Once
+3. **`agents/` owns character loading but not workspace discovery.** Once
    `session/` has resolved which directories a forum uses, `agents/` loads
    `Config` and `AgentDefinition` from them.
 4. **Frontends are siblings.** `ui/tui/` and `ui/console/` may share
@@ -104,11 +104,11 @@ for an unfinished worker.
 ```mermaid
 flowchart LR
     subgraph ownerthread["Session owner thread — UI/API, state, persistence"]
-        frontend["TUI UserSession or<br/>ConsoleSession"]
+        frontend["TUI PersonaSession or<br/>ConsoleSession"]
         presentation["Tui screen or<br/>console stream"]
         controller["SessionController"]
         conv["Transcript"]
-        personas["ForumPersonas"]
+        characters["ForumCharacters"]
         journal["SessionJournal<br/>SQLite"]
         registry["AgentRegistry<br/>owner-thread handle"]
     end
@@ -123,7 +123,7 @@ flowchart LR
     frontend --> presentation
     frontend --> controller
     controller --> conv
-    controller --> personas
+    controller --> characters
     controller --> journal
     controller --> registry
     controller -->|"capture CompletionHistory"| conv
@@ -138,13 +138,13 @@ Ownership is a strict tree, and destruction order matters:
 - Each entry point owns a `Workspace` and selected `SessionController`. The TUI
   additionally owns its process-wide `Terminal`; the console owns a
   `SystemConsole` and `TranscriptEmitter`.
-- `run_user()` owns the TUI chat state. `ConsoleSession::run()` owns the
+- `run_persona()` owns the TUI chat state. `ConsoleSession::run()` owns the
   console queue and EOF lifecycle.
 - `SessionController` owns the cross-process `SessionLease`, `Transcript`,
-  `ForumPersonas`, the `SessionJournal`, the `AgentRegistry`, the current
+  `ForumCharacters`, the `SessionJournal`, the `AgentRegistry`, the current
   default agent, and the state of the in-flight response batch. It captures
   immutable completion history before activating any run.
-- `AgentRegistry` owns runtime information and a backend for each forum persona,
+- `AgentRegistry` owns runtime information and a backend for each forum character,
   one reusable regular runner, temporary multicast runners, and one optional
   live batch whose fixed run slots follow input order. It also owns per-runner
   event channels and cancellation flags and backend leases. It has no
@@ -197,10 +197,10 @@ sequenceDiagram
 
     main->>main: load_dotenv
     main->>ws: construct, require forums/
-    main->>ws: load_users
-    ws-->>main: UserRoster
-    main->>sel: select_user
-    sel-->>main: selected User
+    main->>ws: load_personas
+    ws-->>main: PersonaRoster
+    main->>sel: select_persona
+    sel-->>main: selected Persona
     main->>ws: forums
     ws-->>main: forum names from forums/ subdirectories
     main->>sel: select_forum
@@ -229,10 +229,10 @@ sequenceDiagram
     else Existing session
         ws-->>main: SessionController
     end
-    main->>controller: run_user
+    main->>controller: run_persona
 ```
 
-Persona loading happens synchronously on the caller. During session
+Character loading happens synchronously on the caller. During session
 construction that caller is the session's owner thread (the process main thread
 in `cha` and `chacon`); a forum check uses its composition or lobby thread. Each
 `CompletionClient` is constructed — including optional `/v1/models` discovery
@@ -247,7 +247,7 @@ This is the path every prompt takes.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as UserSession
+    participant U as PersonaSession
     participant T as handle_text_input
     participant C as SessionController
     participant J as SessionJournal
@@ -256,11 +256,11 @@ sequenceDiagram
     participant W as Regular runner
     participant P as Model server
 
-    U->>T: selected user ID + submitted line
+    U->>T: selected persona ID + submitted line
     T->>T: parse_command, then parse_addressed_prompt
     T->>C: submit_prompt author ID, text, and handle
     C->>C: reject if a turn is active
-    C->>C: resolve author against session roster and handle against ForumPersonas
+    C->>C: resolve author against session roster and handle against ForumCharacters
     C->>V: capture immutable CompletionHistory
     C->>G: stage one-run batch behind closed gate
     C->>G: select foreground while gate remains closed
@@ -326,8 +326,8 @@ The final outcome is handled as follows:
 | --- | --- | --- |
 | The agent completes after producing answer text | The answer entry is finalized | `completed` |
 | The agent reports completion without producing answer text | An error entry is added | `failed` |
-| The user cancels before answer text arrives | No response entry is added | `cancelled` |
-| The user cancels after some answer text arrives | The partial answer is retained and marked as cancelled | `cancelled` |
+| The persona cancels before answer text arrives | No response entry is added | `cancelled` |
+| The persona cancels after some answer text arrives | The partial answer is retained and marked as cancelled | `cancelled` |
 | The agent fails | Any partial answer is removed and an error entry is added | `failed` |
 | The process stops before recording a final outcome | On the next open, an interruption error is added | Repaired from `started` to `failed` |
 
@@ -342,18 +342,18 @@ The transcript is not sent verbatim. `project_agent_context()` in `agents/`
 rebuilds a per-agent view of it for each request:
 
 - the agent's effective system prompt comes first; its generated forum-context
-  section identifies the current agent and other current personas and explains
+  section identifies the current agent and other current characters and explains
   the shared-history encoding;
 - notices, errors, and any still-open streaming entry are dropped;
 - entries inside a closed off-record span are dropped without a placeholder;
 - human prompts belonging to a failed turn are dropped with it;
 - only `complete` agent entries with non-empty text survive; cancelled and
   failed answers stay on screen but never become history;
-- human prompts addressed to the requesting agent become ordinary `user`
+- human prompts addressed to the requesting agent become ordinary `persona`
   messages prefixed `from <display name>:` on their own line, and that agent's
   own answers become `assistant` messages; the live `RunSpec` prompt appended
   after history uses the same prefix;
-- contiguous entries involving another agent become a separate `user` message
+- contiguous entries involving another agent become a separate `persona` message
   headed `Shared chat history (JSONL):`; every following line is an escaped
   JSON object carrying `kind`, `speaker`, `text`, and, for human entries,
   `addressed_to`;
@@ -415,15 +415,15 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 
 | Invariant | Enforced by |
 | --- | --- |
-| `ForumPersonas` is non-empty, with unique IDs and unique case-folded names. | `ForumPersonas` constructor |
-| At most one user operation and one foreground turn are active, while one multicast may run distinct backends concurrently. | `SessionController::busy`, batch reservation, backend leases |
+| `ForumCharacters` is non-empty, with unique IDs and unique case-folded names. | `ForumCharacters` constructor |
+| At most one persona operation and one foreground turn are active, while one multicast may run distinct backends concurrently. | `SessionController::busy`, batch reservation, backend leases |
 | Every launched run, including one cancelled at an unopened gate, yields exactly one terminal `AgentEvent` through its queue's reserved closing slot. | Per-runner execution and shutdown order |
 | Only the session's owner thread accesses its live `Transcript` or mutates its journal. Presentation views are call-scoped; only completion histories own copied entries. | `SessionController`, `TranscriptView`, `CompletionHistory` |
 | At most one streaming entry is open at a time. | `Transcript` |
 | Entry and request IDs are positive and strictly increasing. | `Transcript::require_next_id`, `state` table |
 | Durable writes precede visible ones. | `SessionController` |
 | Reasoning exists only while a response is active; it never enters the transcript, persistence, or projection. | `ActiveResponse`, `GenerationStatus`, `TranscriptEntry` shape |
-| A session's roster and system prompt are fixed when it opens; changes under `users/` take effect on its next open. | `Workspace::load_users`, `SessionController` |
+| A session's roster and system prompt are fixed when it opens; changes under `personas/` take effect on its next open. | `Workspace::load_personas`, `SessionController` |
 | Every prompt author is resolved against that session's roster at one authorization point. | `SessionController::start_batch` |
 | Front ends never open storage or call backends. | Include rules above |
 | N controllers may run on N owner threads when no domain object is shared between them. `Workspace` is the deliberate exception: it is immutable, cache-free, and safe to share for concurrent `const` calls. | Session ownership, `Workspace` construction, session-local SQLite and completion clients |
@@ -448,9 +448,9 @@ never a partially written one.
   transcript the database does not agree with.
 - **Provider failures are ordinary events.** A transport or protocol error
   becomes `AgentFailed`, an error entry, and a notice; the session continues.
-- **Startup failures abort.** A malformed workspace, forum, persona, or session
+- **Startup failures abort.** A malformed workspace, forum, character, or session
   database throws before any chat UI is drawn.
-- **Terminal restoration wins.** `run_user()` restores the terminal before
+- **Terminal restoration wins.** `run_persona()` restores the terminal before
   rethrowing, so a stack trace never lands on a screen still in curses mode.
 - **Error messages never carry model output.** Streaming protocol errors report
   sanitized status, content type, and byte counts only.
@@ -493,7 +493,7 @@ installed.
 - Every class and struct carries a comment saying why it exists, what it does,
   and which project types it collaborates with.
 - Public data types live with the behavior that owns their meaning: agent
-  protocol and runtime types in `agents/`, forum-persona and journal types in
+  protocol and runtime types in `agents/`, forum-character and journal types in
   `session/`, transcript semantics in `transcript/`.
 - Tests mirror this tree under `tests/`; cross-layer scenarios go in
   `tests/integration/`.

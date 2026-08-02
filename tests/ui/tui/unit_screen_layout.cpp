@@ -14,7 +14,7 @@ TEST(TranscriptLayout, AccountsForWrappingOffsetsAndControlCharacters) {
     EXPECT_EQ(layout_rows(L"ab\ncd", 10), 2);
 }
 
-TEST(TranscriptViewport, FollowsOutputUntilTheUserScrolls) {
+TEST(TranscriptViewport, FollowsOutputUntilThePersonaScrolls) {
     TranscriptViewport viewport;
     viewport.update(30, 10);
     EXPECT_EQ(viewport.top(), 20);

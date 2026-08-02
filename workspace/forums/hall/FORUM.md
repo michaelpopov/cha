@@ -1,1 +1,1 @@
-You are talking with the user in the hall. Be helpful and friendly.
+You are talking with the persona in the hall. Be helpful and friendly.

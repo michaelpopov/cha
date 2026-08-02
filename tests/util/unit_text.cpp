@@ -34,7 +34,7 @@ TEST(PathName, AcceptsOneSafePathComponent) {
 }
 
 TEST(PathName, RejectsEmptySpecialAndNestedPaths) {
-    const std::filesystem::path source = "personas";
+    const std::filesystem::path source = "characters";
 
     EXPECT_THROW(require_path_component("", source), std::runtime_error);
     EXPECT_THROW(require_path_component(".", source), std::runtime_error);

@@ -1,9 +1,9 @@
 # Agent runtime
 
-`agents/` owns everything about configured chat agents: loading a persona,
+`agents/` owns everything about configured chat agents: loading a character,
 projecting the transcript into model context, running completions as
 registry-owned pool tasks, and speaking the provider's HTTP protocol. The ordered
-personas in a forum and `@handle` resolution belong to `session/`.
+characters in a forum and `@handle` resolution belong to `session/`.
 
 It is the only layer that talks to a model server, and the only one that owns
 completion pool tasks.
@@ -13,23 +13,23 @@ completion pool tasks.
 | Source | Responsibility |
 | --- | --- |
 | `config.*` | `LoadedConfig` — typed connection settings plus prompt variables from one TOML overlay, with field validation. |
-| `user.h` | `User` and the ordered `UserRoster` values passed down from workspace discovery. |
-| `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
+| `persona.h` | `Persona` and the ordered `PersonaRoster` values passed down from workspace discovery. |
+| `agent.*` | `AgentDefinition`, `CharacterInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
 | `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
 | `agent_registry.*` | Runtime metadata, gated pool executions, per-run event routing, cancellation, and batch cleanup. |
 | `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
 | `completion_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
 
-## From persona directory to running agent
+## From character directory to running agent
 
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
-        base["forums/R/personas/persona_defaults.toml<br/>optional forum defaults + [prompt]"]
-        cfg["forums/R/personas/X/persona.toml"]
-        sys["forums/R/personas/X/SYSTEM.md"]
+        base["forums/R/characters/character_defaults.toml<br/>optional forum defaults + [prompt]"]
+        cfg["forums/R/characters/X/character.toml"]
+        sys["forums/R/characters/X/SYSTEM.md"]
         usr["forums/R/FORUM.md"]
-        roster["users/*/user.toml + USER.md<br/>verbatim"]
+        roster["personas/*/persona.toml + PERSONA.md<br/>verbatim"]
         shared["shared prompt files under the forum"]
     end
 
@@ -43,65 +43,65 @@ flowchart LR
     expand --> def["AgentDefinition<br/>config + effective system prompt"]
     conf --> def
     roster --> def
-    def -->|"one per persona"| client["CompletionClient"]
+    def -->|"one per character"| client["CompletionClient"]
     client --> registry["AgentRegistry"]
     client -->|"info"| runtime["AgentRuntimeInfo"]
     runtime --> registry
-    runtime -->|"identity only"| personas["session/ForumPersonas"]
+    runtime -->|"identity only"| characters["session/ForumCharacters"]
 ```
 
 The effective system prompt has four sections in this exact order: expanded
-persona `SYSTEM.md`, expanded forum `FORUM.md`, the static user roster (each
-`USER.md` verbatim under its display-name heading), and generated forum context.
+character `SYSTEM.md`, expanded forum `FORUM.md`, the static persona roster (each
+`PERSONA.md` verbatim under its display-name heading), and generated forum context.
 The roster is in lexicographic ID order and does not change for a live session.
 Expansion is
 implemented in `util/text_template.*`; this layer supplies the policy: forum
-directory as containment root, reserved `persona.*` / `forum.*` names, and the
-base-then-persona `[prompt]` initial scope. An adjacent template `config.toml` overlays
+directory as containment root, reserved `character.*` / `forum.*` names, and the
+base-then-character `[prompt]` initial scope. An adjacent template `config.toml` overlays
 that inherited scope for its template directory and descendants; reserved
 loader values always win. The generated section names the current agent, lists
-the other current personas, and defines how quoted shared history is encoded.
+the other current characters, and defines how quoted shared history is encoded.
 It is added even for a single-agent forum, because restored history can still
-mention a persona that has left. During session construction, loading happens
+mention a character that has left. During session construction, loading happens
 on the session's owner thread (the process main thread in `cha` and `chacon`);
 a forum check loads synchronously on its calling thread. `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
 Configuration is a one-level overlay, not general inheritance. Built-in
 defaults are applied first, then the optional forum
-`personas/persona_defaults.toml`, then the persona's own `persona.toml`. An omitted
-field inherits the value below it. The persona directory name provides the ID,
-and each persona file must define `display_name`; the defaults file must not. The
+`characters/character_defaults.toml`, then the character's own `character.toml`. An omitted
+field inherits the value below it. The character directory name provides the ID,
+and each character file must define `display_name`; the defaults file must not. The
 removed `id` and `name` fields are rejected. Parsing and validation errors
 identify the file that supplied the invalid value.
 
-Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
+Identity rules, enforced by `validate_character_id` and `validate_character_name`:
 
 - an **ID** is ASCII letters, digits, underscores, and hyphens. It is stable and
-  is what transcript entries record — never change it when renaming a persona.
+  is what transcript entries record — never change it when renaming a character.
 - a **name** is the visible `@handle`. It may not be empty, start or end with
   whitespace, start with `@` or `/`, or be a reserved participant name in any casing. Internal
   whitespace is allowed for multi-word handles.
 - within one forum, IDs are unique and names are unique case-insensitively.
 
 When `load_agent_definitions()` combines a forum with its roster, it also
-rejects user/persona ID collisions and case-insensitive display-name collisions.
+rejects persona/character ID collisions and case-insensitive display-name collisions.
 This is a workspace configuration error reported as a plain `runtime_error`.
 
 `AgentRegistry` validates these rules when it accepts backend metadata.
-`ForumPersonas` in `session/` separately owns the ordered identity-only view used
+`ForumCharacters` in `session/` separately owns the ordered identity-only view used
 for lookup and handle resolution.
 
 The generated context documents the shared-history JSONL encoding and the
 `from <Name>:` convention. Context projection adds that prefix to ordinary
-human `user` messages, for both replayed entries and the live `RunSpec` prompt.
+human `persona` messages, for both replayed entries and the live `RunSpec` prompt.
 It never mutates stored text; shared-history JSONL retains its own `speaker`
 field and unprefixed text.
 
 ## Execution: staged pool tasks and foreground routing
 
 `AgentRegistry` exists so slow providers never block the UI. It owns one
-backend per forum persona and borrows the session's fixed-size `ThreadPool`.
+backend per forum character and borrows the session's fixed-size `ThreadPool`.
 Every execution has its own cancellation flag and event queue. The queue buffers
 deltas and reserves separate storage for one final event supplied when it closes.
 
@@ -132,7 +132,7 @@ sequenceDiagram
 
 Rules that fall out of this design:
 
-- **One operation, several backends.** The controller still admits one user
+- **One operation, several backends.** The controller still admits one persona
   operation, while a multicast may target several distinct backends at once.
 - **One explicit batch.** The registry stores at most one `BatchRecord`, not a
   collection keyed by batch ID. Its fixed vector of executions follows input
@@ -182,7 +182,7 @@ Rules that fall out of this design:
 | --- | --- | --- |
 | `prepare(input)` | Agent worker | Project owned `CompletionHistory`, append the run prompt once, and build a `RequestPayload`. Must be fast and local. |
 | `perform(payload, sink, cancellation)` | Agent worker | One synchronous completion, streaming fragments to the sink. |
-| `info()` | Any time | Persona identity and public runtime details for the registry. |
+| `info()` | Any time | Character identity and public runtime details for the registry. |
 
 The controller captures immutable completion history before activating a turn,
 so neither the registry nor a backend reads the live transcript. Splitting
@@ -250,10 +250,10 @@ flowchart TD
     F -->|"otherwise"| K["keep"]
     K --> W{"whose entry?"}
     W -->|"this agent"| A["assistant message"]
-    W -->|"human to this agent"| U["ordinary user message"]
+    W -->|"human to this agent"| U["ordinary persona message"]
     W -->|"human to another agent"| J["shared-history JSON object"]
     W -->|"another agent"| J
-    J --> B["contiguous JSON Lines block<br/>in a separate user message"]
+    J --> B["contiguous JSON Lines block<br/>in a separate persona message"]
 ```
 
 The generated system section explains that shared-history objects are quoted
@@ -261,12 +261,12 @@ statements whose first-person claims belong to their named speakers. JSON
 escaping prevents embedded newlines, quotes, or label-like text from creating
 false entry boundaries. A human prompt addressed to the requesting agent is
 always emitted outside the preceding shared-history block. Plain single-agent
-history retains its ordinary user/assistant wire shape, and reasoning text is
+history retains its ordinary persona/assistant wire shape, and reasoning text is
 never included.
 
 The predicate is a conjunction, so the off-record rule needs no ordering against
 the others. The span is passed in as one `OffrecordSpan` value taken from the
-same owned `CompletionHistory` as the entries, and it is global: every persona
+same owned `CompletionHistory` as the entries, and it is global: every character
 in the forum sees the same exclusion, so the shared history they quote stays
 consistent between them. Excluded turns are spliced out silently — no
 placeholder marks the gap, since a note saying material was withheld is itself
@@ -281,7 +281,7 @@ from its answer.
   text helpers, `ConcurrentQueue`, and `WakeNotifier`; nlohmann/json for shared-history and HTTP
   JSON; libcurl in the HTTP client; toml++ in the config loader.
 - **Must not depend on:** `session/` or `ui/`. Workspace discovery
-  stays above; once the persona and forum directories are known, this layer owns
+  stays above; once the character and forum directories are known, this layer owns
   the loading.
 
 ## Tests
@@ -289,8 +289,8 @@ from its answer.
 | Test | Covers |
 | --- | --- |
 | `tests/agents/unit_config_loader.cpp` | TOML fields, defaults, and rejection of malformed values. |
-| `tests/agents/unit_agent_definition_loader.cpp` | Persona and forum prompt expansion, composition, scopes, and load errors. |
-| `tests/session/unit_forum_personas.cpp` | Forum-persona validation and every handle-resolution branch. |
+| `tests/agents/unit_agent_definition_loader.cpp` | Character and forum prompt expansion, composition, scopes, and load errors. |
+| `tests/session/unit_forum_characters.cpp` | Forum-character validation and every handle-resolution branch. |
 | `tests/agents/unit_agent_registry.cpp` | Pool-width validation, batch gating, terminal delivery, cancellation, indexed routing, and shutdown closure. |
 | `tests/agents/unit_agent_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
 | `tests/agents/unit_json_serialization.cpp` | Context-specific invalid-UTF-8 diagnostics for JSON serialization. |

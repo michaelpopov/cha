@@ -15,7 +15,7 @@ directory decides only how it looks and how input reaches it.
 | Source | Responsibility |
 | --- | --- |
 | `terminal.*` | The process-wide ncurses lifecycle: setup, mode switching between selection and chat, resize, restoration. |
-| `startup_selector.*` | The user, forum, and session pickers, plus the new-session name prompt, drawn from presentation-safe values. |
+| `startup_selector.*` | The persona, forum, and session pickers, plus the new-session name prompt, drawn from presentation-safe values. |
 
 ### Session input and control
 
@@ -23,8 +23,8 @@ directory decides only how it looks and how input reaches it.
 | --- | --- |
 | `input_editor.*` | Wide-character multiline draft text: cursor movement, editing, continuation lines, UTF-8 on submit. |
 | `session_view.h` | `SessionInput` and the `SessionView` seam that isolates session logic from curses. |
-| `user_session.*` | The session state machine: input to actions, `SessionUpdate` to screen. |
-| `user.*` | `run_user()` — the shared-input-wait loop and orderly shutdown. |
+| `persona_session.*` | The session state machine: input to actions, `SessionUpdate` to screen. |
+| `persona.*` | `run_persona()` — the shared-input-wait loop and orderly shutdown. |
 
 ### Rendering
 
@@ -44,7 +44,7 @@ threads. There are no timers and no polling intervals.
 
 ```mermaid
 flowchart TD
-    start["run_user"] --> mk["construct Tui and UserSession<br/>render once"]
+    start["run_persona"] --> mk["construct Tui and PersonaSession<br/>render once"]
     mk --> wait["run libuv loop<br/>stdin + resize + agent wake"]
     wait --> res{"result"}
     res -->|"resize"| resize["resize terminal,<br/>redraw if needed"] --> wait
@@ -68,13 +68,13 @@ flowchart TD
 
 Agent events are applied **before** keyboard input when both are ready, so the
 screen reflects the newest model output before it reacts to a keystroke.
-Rendering happens once per loop iteration, not once per event: `UserSession`
+Rendering happens once per loop iteration, not once per event: `PersonaSession`
 only sets a flag, and `render_if_needed()` collapses a burst of deltas into a
 single repaint.
 
 ## Session state machine
 
-`UserSession` is the testable core — it touches the screen only through
+`PersonaSession` is the testable core — it touches the screen only through
 `SessionView`.
 
 | Input | While idle | While generating |
@@ -100,7 +100,7 @@ flowchart LR
     tui -->|"rebuild or append"| pad["transcript pad"]
     tui --> port["TranscriptViewport<br/>top row, follow state"]
     port --> pad
-    personas["ForumPersonas"] --> addr["show_addressing"]
+    characters["ForumCharacters"] --> addr["show_addressing"]
     conv --> addr
     addr --> tui
     status["GenerationStatus"] --> line["status line"]
@@ -119,7 +119,7 @@ only "Terminal is too small".
   a rebuild. This keeps a long transcript cheap to update while a response
   streams in.
 - **`TranscriptViewport`** owns the scroll offset and whether the view is still
-  following new output, so a user who has scrolled back is not dragged forward.
+  following new output, so a persona who has scrolled back is not dragged forward.
 - **`TranscriptSurface`**, from [`../render/`](../render/README.md), is the
   styling sink. `write_transcript_entry()` writes
   a bold label — `[Name]`, `[Name → Name]`, `[System]`, `[Error]`, and
@@ -130,7 +130,7 @@ only "Terminal is too small".
 - **`show_addressing()`** decides whether labels name the addressee at all: it is
   true in any multi-agent forum, and also in a single-agent forum whose transcript
   contains entries from or to somebody else — which is what a session reopened
-  after the personas in a forum change.
+  after the characters in a forum change.
 
 The status line shows `[Idle]`, or
 `[Name generating|reasoning|responding|stopping]`, and appends the current
@@ -145,14 +145,14 @@ startup selectors, non-blocking input with a visible cursor for the chat. Both
 `StartupSelector` and `Tui` borrow it rather than configuring the screen
 themselves, and `restore()` is idempotent so unwinding is safe from anywhere.
 
-`run_user()` restores the terminal *before* rethrowing a failure, so an error
+`run_persona()` restores the terminal *before* rethrowing a failure, so an error
 message never lands on a screen still in curses mode.
 
 ## Dependencies
 
 - **Depends on:** `session/` for controller operations, generation status,
   and session summaries; `transcript/` for call-scoped views and entries;
-  `ui/text/` for command dispatch; `session/` for forum-persona values used in
+  `ui/text/` for command dispatch; `session/` for forum-character values used in
   labels; wide ncurses and POSIX polling.
 - **Must not:** load workspace files, open session catalogs, or call
   completion backends.
@@ -161,7 +161,7 @@ message never lands on a screen still in curses mode.
 
 | Test | Covers |
 | --- | --- |
-| `tests/ui/tui/unit_user_session.cpp` | The state machine against a fake `SessionView`: input handling, update application, cancel-versus-exit, notices. |
+| `tests/ui/tui/unit_persona_session.cpp` | The state machine against a fake `SessionView`: input handling, update application, cancel-versus-exit, notices. |
 | `tests/ui/tui/unit_render_plan.cpp` | Incremental redraw decisions. |
 | `tests/ui/tui/unit_screen_layout.cpp` | Viewport scrolling, wrapping, and row layout. |
 | `tests/ui/tui/unit_input_editor.cpp` | Editing, UTF-8 conversion, and continuation input. |

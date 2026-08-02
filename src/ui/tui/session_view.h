@@ -30,13 +30,13 @@ enum class SessionInputKind {
     backspace,
 };
 
-// One decoded input action for UserSession, carrying the character when the action is a keystroke.
+// One decoded input action for PersonaSession, carrying the character when the action is a keystroke.
 struct SessionInput {
     SessionInputKind kind{SessionInputKind::ignored};
     wchar_t character{};
 };
 
-// The seam between a session and the screen. It declares everything UserSession needs — read one
+// The seam between a session and the screen. It declares everything PersonaSession needs — read one
 // input action, paint the transcript, editor, generation status and notice, scroll, resize — so
 // session behavior can be exercised without curses. Tui is the curses implementation; tests
 // substitute a recording one.

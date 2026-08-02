@@ -1,7 +1,7 @@
 #include "session/workspace.h"
 
 #include "agents/agent.h"
-#include "session/forum_personas.h"
+#include "session/forum_characters.h"
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "session/session_catalog.h"
@@ -27,40 +27,40 @@ namespace {
 
 std::vector<AgentDefinition> load_definitions(
     const Forum& forum,
-    const UserRoster& users,
+    const PersonaRoster& personas,
     const std::filesystem::path& base_config_candidate) {
     log_info(
-        "Loading forum persona definitions: forum_id=" + forum.name
-        + " personas=" + std::to_string(forum.persona_names.size()));
-    std::vector<std::filesystem::path> persona_directories;
-    persona_directories.reserve(forum.persona_names.size());
-    for (const std::string& persona : forum.persona_names) {
-        persona_directories.push_back(
-            forum.directory / "personas" / path_from_utf8(persona));
+        "Loading forum character definitions: forum_id=" + forum.name
+        + " characters=" + std::to_string(forum.character_names.size()));
+    std::vector<std::filesystem::path> character_directories;
+    character_directories.reserve(forum.character_names.size());
+    for (const std::string& character : forum.character_names) {
+        character_directories.push_back(
+            forum.directory / "characters" / path_from_utf8(character));
     }
     const std::optional<std::filesystem::path> base_config =
         std::filesystem::exists(base_config_candidate)
         ? std::optional<std::filesystem::path>(base_config_candidate)
         : std::nullopt;
     return load_agent_definitions(
-        persona_directories,
+        character_directories,
         forum.directory,
         forum.display_name,
-        users,
+        personas,
         base_config);
 }
 
-void validate_forum_personas(
+void validate_forum_characters(
     const std::vector<AgentDefinition>& definitions) {
-    std::vector<PersonaInfo> personas;
-    personas.reserve(definitions.size());
+    std::vector<CharacterInfo> characters;
+    characters.reserve(definitions.size());
     for (const AgentDefinition& definition : definitions) {
-        personas.push_back({
+        characters.push_back({
             .id = definition.config.id,
             .name = definition.config.name,
         });
     }
-    (void)ForumPersonas(std::move(personas));
+    (void)ForumCharacters(std::move(characters));
 }
 
 SessionCatalog session_catalog(
@@ -131,7 +131,7 @@ std::string load_display_name(const std::filesystem::path& directory) {
     return *display_name;
 }
 
-bool is_user_id(std::string_view id) {
+bool is_persona_id(std::string_view id) {
     if (id.empty()) return false;
     const auto is_letter = [](unsigned char character) {
         return (character >= 'A' && character <= 'Z')
@@ -176,15 +176,15 @@ char32_t next_utf8_code_point(std::string_view text, std::size_t& offset) {
         continuation_count = 3;
         code_point = first & 0x07;
     } else {
-        throw std::runtime_error("User display name is not valid UTF-8");
+        throw std::runtime_error("Persona display name is not valid UTF-8");
     }
     if (continuation_count > text.size() - offset) {
-        throw std::runtime_error("User display name is not valid UTF-8");
+        throw std::runtime_error("Persona display name is not valid UTF-8");
     }
     for (std::size_t index = 0; index < continuation_count; ++index) {
         const unsigned char continuation = byte(offset++);
         if ((continuation & 0xc0) != 0x80) {
-            throw std::runtime_error("User display name is not valid UTF-8");
+            throw std::runtime_error("Persona display name is not valid UTF-8");
         }
         code_point = (code_point << 6) | (continuation & 0x3f);
     }
@@ -210,29 +210,29 @@ bool is_unicode_control(char32_t code_point) {
         || (code_point >= 0x007f && code_point <= 0x009f);
 }
 
-void validate_user_id(std::string_view id, const std::filesystem::path& directory) {
-    if (!is_user_id(id)) {
+void validate_persona_id(std::string_view id, const std::filesystem::path& directory) {
+    if (!is_persona_id(id)) {
         throw std::runtime_error(
-            "User ID '" + std::string(id) + "' in '" + utf8_path(directory)
+            "Persona ID '" + std::string(id) + "' in '" + utf8_path(directory)
             + "' must match [A-Za-z_][A-Za-z0-9_]*");
     }
     if (is_reserved_participant_name(id)) {
         throw std::runtime_error(
-            "User ID '" + std::string(id) + "' in '" + utf8_path(directory)
+            "Persona ID '" + std::string(id) + "' in '" + utf8_path(directory)
             + "' is reserved");
     }
 }
 
-void validate_user_display_name(
+void validate_persona_display_name(
     std::string_view name,
     const std::filesystem::path& path) {
     if (name.empty()) {
         throw std::runtime_error(
-            "User config '" + utf8_path(path)
+            "Persona config '" + utf8_path(path)
             + "' requires a non-empty string 'display_name'");
     }
     if (name.front() == '@' || name.front() == '/') {
-        throw std::runtime_error("User display name cannot start with '@' or '/'");
+        throw std::runtime_error("Persona display name cannot start with '@' or '/'");
     }
     char32_t first_code_point{};
     char32_t last_code_point{};
@@ -246,59 +246,59 @@ void validate_user_display_name(
             || code_point == 0x2028
             || code_point == 0x2029) {
             throw std::runtime_error(
-                "User display name cannot contain control characters or line breaks");
+                "Persona display name cannot contain control characters or line breaks");
         }
     }
     if (is_unicode_whitespace(first_code_point)
         || is_unicode_whitespace(last_code_point)) {
-        throw std::runtime_error("User display name cannot start or end with whitespace");
+        throw std::runtime_error("Persona display name cannot start or end with whitespace");
     }
     if (is_reserved_participant_name(name)) {
         throw std::runtime_error(
-            "User display name '" + std::string(name) + "' is reserved");
+            "Persona display name '" + std::string(name) + "' is reserved");
     }
 }
 
-User load_user(const std::filesystem::path& directory) {
+Persona load_persona(const std::filesystem::path& directory) {
     const std::string id = utf8_path(directory.filename());
-    validate_user_id(id, directory.parent_path());
-    const std::filesystem::path config_path = directory / "user.toml";
+    validate_persona_id(id, directory.parent_path());
+    const std::filesystem::path config_path = directory / "persona.toml";
     std::ifstream config_file(config_path, std::ios::binary);
     if (!config_file) {
         throw std::runtime_error(
-            "Failed to read user config '" + utf8_path(config_path) + "'");
+            "Failed to read persona config '" + utf8_path(config_path) + "'");
     }
     const toml::table table = toml::parse(config_file, utf8_path(config_path));
     for (const auto& [key, value] : table) {
         (void)value;
         if (key.str() != "display_name") {
             throw std::runtime_error(
-                "User config '" + utf8_path(config_path)
+                "Persona config '" + utf8_path(config_path)
                 + "' has unknown field '" + std::string(key.str()) + "'");
         }
     }
     const std::optional<std::string> display_name =
         table["display_name"].value<std::string>();
-    validate_user_display_name(display_name.value_or(""), config_path);
+    validate_persona_display_name(display_name.value_or(""), config_path);
 
     std::string prompt;
-    const std::filesystem::path prompt_path = directory / "USER.md";
+    const std::filesystem::path prompt_path = directory / "PERSONA.md";
     if (std::filesystem::is_regular_file(prompt_path)) {
         std::ifstream prompt_file(prompt_path, std::ios::binary);
         if (!prompt_file) {
             throw std::runtime_error(
-                "Failed to read user prompt '" + utf8_path(prompt_path) + "'");
+                "Failed to read persona prompt '" + utf8_path(prompt_path) + "'");
         }
         std::ostringstream contents;
         contents << prompt_file.rdbuf();
         if (!prompt_file.good() && !prompt_file.eof()) {
             throw std::runtime_error(
-                "Failed to read user prompt '" + utf8_path(prompt_path) + "'");
+                "Failed to read persona prompt '" + utf8_path(prompt_path) + "'");
         }
         prompt = std::move(contents).str();
     } else if (std::filesystem::exists(prompt_path)) {
         throw std::runtime_error(
-            "User prompt '" + utf8_path(prompt_path) + "' is not a regular file");
+            "Persona prompt '" + utf8_path(prompt_path) + "' is not a regular file");
     }
     return {id, *display_name, std::move(prompt)};
 }
@@ -385,37 +385,37 @@ std::vector<std::string> Workspace::forums() const {
         SubdirectoryNameKind::url_identifier);
 }
 
-UserRoster Workspace::load_users() const {
-    const std::filesystem::path users_directory = root_ / "users";
-    if (!std::filesystem::is_directory(users_directory)) {
+PersonaRoster Workspace::load_personas() const {
+    const std::filesystem::path personas_directory = root_ / "personas";
+    if (!std::filesystem::is_directory(personas_directory)) {
         throw std::runtime_error(
-            "Users directory '" + utf8_path(users_directory)
-            + "' does not exist; create users/<id>/user.toml");
+            "Personas directory '" + utf8_path(personas_directory)
+            + "' does not exist; create personas/<id>/persona.toml");
     }
-    UserRoster users;
+    PersonaRoster personas;
     for (const std::filesystem::directory_entry& entry :
-         std::filesystem::directory_iterator(users_directory)) {
-        if (entry.is_directory()) users.push_back(load_user(entry.path()));
+         std::filesystem::directory_iterator(personas_directory)) {
+        if (entry.is_directory()) personas.push_back(load_persona(entry.path()));
     }
-    if (users.empty()) {
+    if (personas.empty()) {
         throw std::runtime_error(
-            "Users directory '" + utf8_path(users_directory)
+            "Personas directory '" + utf8_path(personas_directory)
             + "' does not contain an entry");
     }
-    std::sort(users.begin(), users.end(), [](const User& left, const User& right) {
+    std::sort(personas.begin(), personas.end(), [](const Persona& left, const Persona& right) {
         return left.id < right.id;
     });
     std::unordered_map<std::string, std::string> display_names;
-    for (const User& user : users) {
-        const std::string folded = fold_ascii(user.display_name);
-        const auto [existing, inserted] = display_names.emplace(folded, user.id);
+    for (const Persona& persona : personas) {
+        const std::string folded = fold_ascii(persona.display_name);
+        const auto [existing, inserted] = display_names.emplace(folded, persona.id);
         if (!inserted) {
             throw std::runtime_error(
-                "User display name '" + user.display_name + "' is not unique: users '"
-                + existing->second + "' and '" + user.id + "'");
+                "Persona display name '" + persona.display_name + "' is not unique: personas '"
+                + existing->second + "' and '" + persona.id + "'");
         }
     }
-    return users;
+    return personas;
 }
 
 Forum Workspace::load_forum(const std::string& name) const {
@@ -423,23 +423,23 @@ Forum Workspace::load_forum(const std::string& name) const {
     if (!std::filesystem::is_directory(directory)) {
         throw ForumNotFoundError("Forum '" + name + "' does not exist");
     }
-    const std::vector<std::string> persona_names = subdirectory_names(
-        directory / "personas",
+    const std::vector<std::string> character_names = subdirectory_names(
+        directory / "characters",
         SubdirectoryNameKind::path_component);
-    if (persona_names.empty()) {
+    if (character_names.empty()) {
         throw std::runtime_error(
-            "Personas directory '" + utf8_path(directory / "personas")
+            "Characters directory '" + utf8_path(directory / "characters")
             + "' does not contain an entry");
     }
-    return {name, load_display_name(directory), persona_names, directory};
+    return {name, load_display_name(directory), character_names, directory};
 }
 
 Forum Workspace::check_forum(const std::string& name) const {
     Forum forum = load_forum(name);
-    const UserRoster users = load_users();
+    const PersonaRoster personas = load_personas();
     const std::vector<AgentDefinition> definitions = load_definitions(
-        forum, users, forum.directory / "personas" / "persona_defaults.toml");
-    validate_forum_personas(definitions);
+        forum, personas, forum.directory / "characters" / "character_defaults.toml");
+    validate_forum_characters(definitions);
     return forum;
 }
 
@@ -487,10 +487,10 @@ CreatedSession Workspace::create_session(
     std::string label,
     WakeNotifier& notifier) const {
     Forum forum = load_forum(forum_name);
-    UserRoster users = load_users();
+    PersonaRoster personas = load_personas();
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, users, forum.directory / "personas" / "persona_defaults.toml");
-    validate_forum_personas(definitions);
+        forum, personas, forum.directory / "characters" / "character_defaults.toml");
+    validate_forum_characters(definitions);
 
     const Session stored = store_session(forum, std::move(label));
 
@@ -502,7 +502,7 @@ CreatedSession Workspace::create_session(
     std::unique_ptr<SessionController> controller =
         SessionController::from_definitions(
             std::move(definitions),
-            std::move(users),
+            std::move(personas),
             database_path,
             std::move(lease),
             notifier,
@@ -525,13 +525,13 @@ std::unique_ptr<SessionController> Workspace::open_session(
         catalog.open_database_path(session_id);
     SessionLease lease = SessionLease::acquire(database_path);
     SessionRestore restored = load_session_state(database_path);
-    UserRoster users = load_users();
+    PersonaRoster personas = load_personas();
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, users, forum.directory / "personas" / "persona_defaults.toml");
+        forum, personas, forum.directory / "characters" / "character_defaults.toml");
     log_info("Session opened");
     return SessionController::from_definitions(
         std::move(definitions),
-        std::move(users),
+        std::move(personas),
         database_path,
         std::move(lease),
         notifier,

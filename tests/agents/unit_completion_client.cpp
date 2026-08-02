@@ -138,7 +138,7 @@ TEST(CompletionClient, EchoesOnePromptInTestMode) {
 TEST(CompletionClient, ConstructsSessionLocalNetworkClientsConcurrently) {
     // This file is POSIX-only. The cross-platform construction coverage is the
     // ConcurrentControllers counterpart; this duplicate is order-dependent
-    // smoke coverage because an earlier curl user may already have initialized
+    // smoke coverage because an earlier curl persona may already have initialized
     // curl_global()'s magic static. C++ guarantees thread-safe initialization.
     std::barrier start(3);
     std::array<AgentRuntimeInfo, 2> infos;
@@ -169,8 +169,8 @@ TEST(CompletionClient, ConstructsSessionLocalNetworkClientsConcurrently) {
             std::rethrow_exception(failure);
         }
     }
-    EXPECT_EQ(infos[0].persona.id, "assistant-0");
-    EXPECT_EQ(infos[1].persona.id, "assistant-1");
+    EXPECT_EQ(infos[0].character.id, "assistant-0");
+    EXPECT_EQ(infos[1].character.id, "assistant-1");
 }
 
 TEST(CompletionClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {

@@ -680,7 +680,7 @@ TEST(SessionDatabase, StoresTheTargetOnlyOnThePromptItself) {
     EXPECT_EQ(
         table_columns(path, "session"),
         (std::vector<std::string>{"singleton", "id", "forum", "label"}))
-        << "a session belongs to a forum, not to its current personas";
+        << "a session belongs to a forum, not to its current characters";
     std::filesystem::remove(path);
 }
 
@@ -778,7 +778,7 @@ TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
 }
 
 TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
-    const auto path = temporary_path("cha_forum_personas_drift_");
+    const auto path = temporary_path("cha_forum_characters_drift_");
     create_test_database(path);
     {
         SessionJournal journal(path);
@@ -808,12 +808,12 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
             "ismael"),
         (std::vector<AgentMessage>{
             {AgentRole::system, "Ismael system"},
-            {AgentRole::user,
+            {AgentRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"Who are you?"})"
              "\n"
              R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"},
-            {AgentRole::user, "from You:\nAnd you?"},
+            {AgentRole::persona, "from You:\nAnd you?"},
             {AgentRole::assistant, "Call me Ismael."},
         }));
     std::filesystem::remove(path);

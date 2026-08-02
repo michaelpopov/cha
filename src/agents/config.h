@@ -10,7 +10,7 @@
 namespace cha {
 
 // TOML table name for prompt-template variables and as
-// TemplateOptions::scope_table_name when expanding persona/forum prompts.
+// TemplateOptions::scope_table_name when expanding character/forum prompts.
 inline constexpr std::string_view prompt_scope_table = "prompt";
 
 enum class Mode {
@@ -25,8 +25,8 @@ enum class ReasoningFormat {
     reasoning,
 };
 
-// Everything needed to reach one persona's provider and shape its replies: identity, endpoint and
-// credentials, model, streaming, and reasoning settings. The persona directory
+// Everything needed to reach one character's provider and shape its replies: identity, endpoint and
+// credentials, model, streaming, and reasoning settings. The character directory
 // provides the stable ID; its config provides the display name.
 struct Config {
     std::string id{"assistant"};
@@ -45,18 +45,18 @@ struct Config {
 };
 
 // The typed connection configuration and initial template scope loaded from
-// one persona file. The optional defaults file supplies defaults to both.
+// one character file. The optional defaults file supplies defaults to both.
 struct LoadedConfig {
     Config config;
     TemplateScope prompt_variables;
 };
 
-// Loads one persona configuration and its initial [prompt] scope from the
+// Loads one character configuration and its initial [prompt] scope from the
 // same TOML parses. The parent directory name becomes its ID and display_name
-// must come from persona_path. When base_path is present, its other values
-// become defaults that the persona file may override.
+// must come from character_path. When base_path is present, its other values
+// become defaults that the character file may override.
 LoadedConfig load_config(
-    const std::filesystem::path& persona_path,
+    const std::filesystem::path& character_path,
     std::optional<std::filesystem::path> base_path = std::nullopt);
 
 } // namespace cha

@@ -34,7 +34,7 @@ test::TestNotifier& notifier() {
 }
 
 AgentMessage operator_prompt(std::string_view text) {
-    return {AgentRole::user, "from Operator:\n" + std::string(text)};
+    return {AgentRole::persona, "from Operator:\n" + std::string(text)};
 }
 
 // Blocks the execution's final wake. This makes `execution_finished` true
@@ -176,7 +176,7 @@ public:
 
     AgentRuntimeInfo info() const override {
         return {
-            .persona = {
+            .character = {
                 .id = id_,
                 .name = name_,
             },
@@ -240,7 +240,7 @@ public:
 
     AgentRuntimeInfo info() const override {
         return {
-            .persona = {.id = id_, .name = name_},
+            .character = {.id = id_, .name = name_},
             .model = "test-model",
             .api = "test://completion",
             .streaming = true,
@@ -288,7 +288,7 @@ public:
 
     AgentRuntimeInfo info() const override {
         return {
-            .persona = {.id = id_, .name = name_},
+            .character = {.id = id_, .name = name_},
             .model = "test-model",
             .api = "test://completion",
             .streaming = true,
@@ -319,7 +319,7 @@ public:
 
     AgentRuntimeInfo info() const override {
         return {
-            .persona = {
+            .character = {
                 .id = "guide-id",
                 .name = "Guide",
             },
@@ -431,7 +431,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(
         backend_view->model_contexts.front(),
         (std::vector<AgentMessage>{
-            {AgentRole::user, "from You:\nEarlier"},
+            {AgentRole::persona, "from You:\nEarlier"},
             operator_prompt("Current"),
         }));
     EXPECT_TRUE(completed.render_needed);
@@ -462,7 +462,7 @@ TEST(SessionController, ResolvesAndStampsTheAuthorForEveryBatchRun) {
     backends.push_back(std::move(second));
     auto controller = test::from_backends_for_testing(
         std::move(backends),
-        UserRoster{{.id = "engineer", .display_name = "Engineer"}},
+        PersonaRoster{{.id = "engineer", .display_name = "Engineer"}},
         temporary.path,
         notifier());
 
@@ -493,7 +493,7 @@ TEST(SessionController, KeepsTheStaticSystemPromptAcrossDifferentAuthors) {
     backend_view->system_prompt = "Static system prompt";
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::move(backend)),
-        UserRoster{
+        PersonaRoster{
             {.id = "athlete", .display_name = "Athlete"},
             {.id = "reader", .display_name = "Reader"},
         },
@@ -515,9 +515,9 @@ TEST(SessionController, KeepsTheStaticSystemPromptAcrossDifferentAuthors) {
     EXPECT_NE(backend_view->model_contexts[0].back(),
               backend_view->model_contexts[1].back());
     EXPECT_EQ(backend_view->model_contexts[0].back(),
-              (AgentMessage{AgentRole::user, "from Reader:\nFirst question"}));
+              (AgentMessage{AgentRole::persona, "from Reader:\nFirst question"}));
     EXPECT_EQ(backend_view->model_contexts[1].back(),
-              (AgentMessage{AgentRole::user, "from Athlete:\nSecond question"}));
+              (AgentMessage{AgentRole::persona, "from Athlete:\nSecond question"}));
 }
 
 TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
@@ -526,18 +526,18 @@ TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
     ScriptedBackend* const backend_view = backend.get();
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::move(backend)),
-        UserRoster{{.id = "engineer", .display_name = "Engineer"}},
+        PersonaRoster{{.id = "engineer", .display_name = "Engineer"}},
         temporary.path,
         notifier());
 
     const SessionUpdate unknown_ordinary =
         controller->submit_prompt("unknown", "Question");
     EXPECT_FALSE(unknown_ordinary.clear_input);
-    EXPECT_EQ(unknown_ordinary.notice, "Unknown user ID 'unknown'");
+    EXPECT_EQ(unknown_ordinary.notice, "Unknown persona ID 'unknown'");
     EXPECT_EQ(
         controller->start_multicast_by_ids(
             "unknown", "Question", {"guide-id"}).notice,
-        "Unknown user ID 'unknown'");
+        "Unknown persona ID 'unknown'");
     EXPECT_TRUE(controller->transcript().entries().empty());
     EXPECT_TRUE(backend_view->inputs.empty());
 }
@@ -1078,7 +1078,7 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
         copy_entries(controller->transcript()));
 }
 
-TEST(SessionController, ResolvesMulticastIdsAndTreatsAnEmptyListAsAllPersonas) {
+TEST(SessionController, ResolvesMulticastIdsAndTreatsAnEmptyListAsAllCharacters) {
     TemporaryJournal temporary;
     auto one = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"One answer"}, false,
@@ -1598,7 +1598,7 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
         std::string::npos);
 }
 
-TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumPersonas) {
+TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumCharacters) {
     TemporaryJournal temporary;
     auto guide = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"Guide answer"});
@@ -1671,7 +1671,7 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumPerso
         entries_before_agents);
 }
 
-// Foreign-history addressing is a transcript concern; covered in user_session/transcript tests.
+// Foreign-history addressing is a transcript concern; covered in persona_session/transcript tests.
 
 TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
     TemporaryJournal temporary;

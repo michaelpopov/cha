@@ -2,9 +2,9 @@
 
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
-#include "agents/user.h"
+#include "agents/persona.h"
 #include "session/generation_status.h"
-#include "session/forum_personas.h"
+#include "session/forum_characters.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
 #include "session/session_update.h"
@@ -24,7 +24,7 @@
 namespace cha {
 
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
-// halves: read-only session state (transcript, forum personas, default agent, generation status) and
+// halves: read-only session state (transcript, forum characters, default agent, generation status) and
 // commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
 // each returning a SessionUpdate instead of touching the UI. It owns the Transcript,
 // SessionJournal, AgentRegistry, and the state of the in-flight response batch. Command syntax,
@@ -37,7 +37,7 @@ public:
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions(
         std::vector<AgentDefinition> definitions,
-        UserRoster users,
+        PersonaRoster personas,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
@@ -46,7 +46,7 @@ public:
     // claim a fixture database's production lease.
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
         std::vector<AgentDefinition> definitions,
-        UserRoster users,
+        PersonaRoster personas,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {});
@@ -54,7 +54,7 @@ public:
     // here because the otherwise private controller owns both dependencies.
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
-        UserRoster users,
+        PersonaRoster personas,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {},
@@ -68,7 +68,7 @@ public:
     [[nodiscard]] bool is_generating() const noexcept;
     GenerationStatus generation_status() const;
     GenerationStatusView generation_status_view() const noexcept;
-    const ForumPersonas& personas() const { return personas_; }
+    const ForumCharacters& characters() const { return characters_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
 
     // --- Session commands (mutate, then report UI side effects) ---------------
@@ -82,13 +82,13 @@ public:
     [[nodiscard]] SessionUpdate extend_offrecord();
     [[nodiscard]] SessionUpdate restore_offrecord();
     // Text frontends submit handles; resolution and all target validation stay
-    // here with the forum's authoritative persona set.
+    // here with the forum's authoritative character set.
     [[nodiscard]] SessionUpdate start_multicast(
         std::string_view author_id,
         std::string text,
         std::vector<std::string> handles);
     // Programmatic clients, including the future HTTP API, submit stable
-    // persona IDs rather than user-facing handles.
+    // character IDs rather than persona-facing handles.
     [[nodiscard]] SessionUpdate start_multicast_by_ids(
         std::string_view author_id,
         std::string text,
@@ -124,14 +124,14 @@ private:
 
     SessionController(
         std::vector<AgentDefinition> definitions,
-        UserRoster users,
+        PersonaRoster personas,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
         SessionRestore restored);
     SessionController(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
-        UserRoster users,
+        PersonaRoster personas,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored,
@@ -146,13 +146,13 @@ private:
     void start_batch(
         EntryIdentity author,
         std::string text,
-        std::vector<PersonaInfo> targets,
+        std::vector<CharacterInfo> targets,
         SharedCompletionHistory history,
         SessionUpdate& update);
     [[nodiscard]] SessionUpdate start_resolved_multicast(
         std::string_view author_id,
         std::string text,
-        std::vector<PersonaInfo> targets);
+        std::vector<CharacterInfo> targets);
     [[nodiscard]] SessionUpdate start_multicast_from_ids(
         std::string_view author_id,
         std::string text,
@@ -187,8 +187,8 @@ private:
     // Declaration order is the fallback only for construction failures.
     ThreadPool worker_pool_;
     AgentRegistry registry_;
-    ForumPersonas personas_;
-    UserRoster users_;
+    ForumCharacters characters_;
+    PersonaRoster personas_;
     ParticipantId default_agent_id_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};

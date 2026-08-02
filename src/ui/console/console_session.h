@@ -18,7 +18,7 @@ inline constexpr std::size_t default_console_queue_limit = 64;
 // the session state machine does not inspect process descriptors or TTY state.
 struct ConsoleSessionOptions {
     // Unit-level console sessions use the same stable fixture author as the
-    // controller's test construction seam. Production passes ConsoleOptions::user.
+    // controller's test construction seam. Production passes ConsoleOptions::persona.
     std::string author_id{"operator"};
     bool show_prompt{};
     bool backpressure_stdin{};

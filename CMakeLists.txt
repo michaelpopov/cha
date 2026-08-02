@@ -202,7 +202,7 @@ add_library(cha_core STATIC
     src/agents/agent_registry.cpp
     src/agents/completion_client.cpp
     src/agents/config.cpp
-    src/session/forum_personas.cpp
+    src/session/forum_characters.cpp
     src/session/session_catalog.cpp
     src/session/session_controller.cpp
     src/session/session_database.cpp
@@ -275,8 +275,8 @@ if(CHA_BUILD_TUI)
         src/ui/tui/startup_selector.cpp
         src/ui/tui/terminal.cpp
         src/ui/tui/tui.cpp
-        src/ui/tui/user.cpp
-        src/ui/tui/user_session.cpp
+        src/ui/tui/persona.cpp
+        src/ui/tui/persona_session.cpp
     )
     target_link_libraries(cha_tui PUBLIC cha_core ${CURSES_WIDE_LIBRARY})
     target_include_directories(cha_tui SYSTEM PUBLIC ${CURSES_INCLUDE_DIRS})
@@ -319,11 +319,11 @@ if(BUILD_TESTING)
         tests/agents/unit_config_loader.cpp
         tests/agents/unit_json_serialization.cpp
         tests/session/unit_concurrent_controllers.cpp
-        tests/session/unit_forum_personas.cpp
+        tests/session/unit_forum_characters.cpp
         tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
-        tests/session/unit_user_loader.cpp
+        tests/session/unit_persona_loader.cpp
         tests/session/unit_workspace.cpp
         tests/ui/text/unit_command.cpp
         tests/ui/text/unit_mcast.cpp
@@ -341,7 +341,7 @@ if(BUILD_TESTING)
             tests/ui/tui/unit_render_plan.cpp
             tests/ui/tui/unit_screen_layout.cpp
             tests/ui/tui/unit_input_editor.cpp
-            tests/ui/tui/unit_user_session.cpp
+            tests/ui/tui/unit_persona_session.cpp
         )
     endif()
     if(NOT WIN32)

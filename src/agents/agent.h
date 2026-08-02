@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agents/config.h"
-#include "agents/user.h"
+#include "agents/persona.h"
 #include "transcript/transcript.h"
 
 #include <filesystem>
@@ -17,19 +17,19 @@ namespace cha {
 
 // Participant names no configured party may claim.
 inline constexpr std::string_view reserved_participant_names[] = {
-    "user", "system", "error", "human", "assistant", "agent", "you",
+    "persona", "system", "error", "human", "assistant", "agent", "you",
 };
 
-// A persona loaded and ready to run: its Config plus the effective system
-// prompt, which combines persona instructions, forum settings, the user
+// A character loaded and ready to run: its Config plus the effective system
+// prompt, which combines character instructions, forum settings, the persona
 // roster, and generated forum context.
 struct AgentDefinition {
     Config config;
     std::string system_prompt;
 };
 
-// The stable identity of one configured persona.
-struct PersonaInfo {
+// The stable identity of one configured character.
+struct CharacterInfo {
     std::string id;
     std::string name;
 };
@@ -37,7 +37,7 @@ struct PersonaInfo {
 // Public operational information about one initialized agent backend. It is safe to show in
 // diagnostics and never carries connection secrets.
 struct AgentRuntimeInfo {
-    PersonaInfo persona;
+    CharacterInfo character;
     std::string model;
     std::string api;
     bool streaming{};
@@ -50,7 +50,7 @@ using SharedCompletionHistory =
 // those IDs are assigned only when the controller activates the run.
 struct RunSpec {
     RequestId request_id{};
-    PersonaInfo target;
+    CharacterInfo target;
     EntryIdentity author;
     std::string prompt_text;
 };
@@ -65,7 +65,7 @@ struct CompletionInput {
 // Classifies model-visible message roles independently of their JSON spelling.
 enum class AgentRole {
     system,
-    user,
+    persona,
     assistant,
 };
 
@@ -78,16 +78,16 @@ struct AgentMessage {
     bool operator==(const AgentMessage&) const = default;
 };
 
-// Loads the forum's persona configurations in order and assembles each effective system prompt.
+// Loads the forum's character configurations in order and assembles each effective system prompt.
 std::vector<AgentDefinition> load_agent_definitions(
-    const std::vector<std::filesystem::path>& persona_directories,
+    const std::vector<std::filesystem::path>& character_directories,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
-    const UserRoster& users,
+    const PersonaRoster& personas,
     std::optional<std::filesystem::path> base_config_path = std::nullopt);
 
-void validate_persona_id(std::string_view id);
-void validate_persona_name(std::string_view name);
+void validate_character_id(std::string_view id);
+void validate_character_name(std::string_view name);
 
 // Projects typed transcript entries into protocol roles for one stable agent participant ID.
 std::vector<AgentMessage> project_agent_context(
@@ -98,7 +98,7 @@ std::vector<AgentMessage> project_agent_context(
     std::string_view agent_id);
 
 // Projects immutable history and appends the run's addressed prompt exactly
-// once as a user message.
+// once as a persona message.
 std::vector<AgentMessage> project_agent_context(
     const CompletionInput& input,
     std::string_view system_prompt);
@@ -136,7 +136,7 @@ struct AgentCancelled {
     RequestId request_id{};
 };
 
-// Terminal event: the request ended in a transport or protocol error, with a message for the user.
+// Terminal event: the request ended in a transport or protocol error, with a message for the persona.
 struct AgentFailed {
     RequestId request_id{};
     std::string message;

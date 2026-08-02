@@ -87,7 +87,7 @@ public:
 
     AgentRuntimeInfo info() const override {
         return {
-            .persona = {.id = id_, .name = name_},
+            .character = {.id = id_, .name = name_},
             .model = "test",
             .api = "test://console",
             .streaming = true,

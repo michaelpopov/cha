@@ -55,7 +55,7 @@ class DeterministicBackend final : public CompletionBackend {
 public:
     DeterministicBackend(std::string id, std::string name, std::string answer)
         : info_{
-              .persona = {.id = std::move(id), .name = std::move(name)},
+              .character = {.id = std::move(id), .name = std::move(name)},
               .model = "deterministic",
               .api = "test://deterministic",
               .streaming = true,
@@ -134,8 +134,8 @@ struct WorkspaceLayout {
 WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     const std::filesystem::path root = parent / "workspace";
     const std::filesystem::path forum = root / "forums" / "forum";
-    std::filesystem::create_directories(forum / "personas" / "agent");
-    std::filesystem::create_directories(root / "users" / "operator");
+    std::filesystem::create_directories(forum / "characters" / "agent");
+    std::filesystem::create_directories(root / "personas" / "operator");
     {
         std::ofstream file(root / "app.toml");
         file << "host = \"127.0.0.1\"\nport = 8080\n[logging]\n"
@@ -143,12 +143,12 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     }
     std::ofstream(forum / "config.toml") << "display_name = \"Forum\"\n";
     std::ofstream(forum / "FORUM.md") << "Forum prompt";
-    std::ofstream(forum / "personas" / "agent" / "persona.toml")
+    std::ofstream(forum / "characters" / "agent" / "character.toml")
         << "display_name = \"Worker\"\nhost = \"127.0.0.1\"\nport = 9\n"
         << "model = \"configured-model\"\n";
-    std::ofstream(forum / "personas" / "agent" / "SYSTEM.md")
+    std::ofstream(forum / "characters" / "agent" / "SYSTEM.md")
         << "System prompt";
-    std::ofstream(root / "users" / "operator" / "user.toml")
+    std::ofstream(root / "personas" / "operator" / "persona.toml")
         << "display_name = \"Reader\"\n";
     return {root, forum};
 }

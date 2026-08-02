@@ -134,7 +134,7 @@ void to_json(nlohmann::json& json, const ForumSummary& value) {
     };
 }
 
-void to_json(nlohmann::json& json, const UserSummary& value) {
+void to_json(nlohmann::json& json, const PersonaSummary& value) {
     json = {
         {"id", value.id},
         {"display_name", value.display_name},
@@ -149,7 +149,7 @@ void to_json(nlohmann::json& json, const SessionListing& value) {
     };
 }
 
-void to_json(nlohmann::json& json, const PersonaSummary& value) {
+void to_json(nlohmann::json& json, const CharacterSummary& value) {
     json = {
         {"id", value.id},
         {"display_name", value.display_name},
@@ -186,8 +186,8 @@ void to_json(nlohmann::json& json, const SessionSnapshot& value) {
         {"forum", value.forum},
         {"session_id", value.session_id},
         {"session_label", value.session_label},
-        {"personas", value.personas},
-        {"default_persona_id", value.default_persona_id},
+        {"characters", value.characters},
+        {"default_character_id", value.default_character_id},
         {"transcript", value.transcript},
         {"generation", value.generation},
         {"lifecycle", to_string(value.lifecycle)},

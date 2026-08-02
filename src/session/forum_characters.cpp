@@ -1,4 +1,4 @@
-#include "session/forum_personas.h"
+#include "session/forum_characters.h"
 
 #include "util/text.h"
 
@@ -82,72 +82,72 @@ bool starts_with_name_word(std::string_view name, std::string_view handle) {
 
 } // namespace
 
-ForumPersonas::ForumPersonas(std::vector<PersonaInfo> personas)
-    : personas_(std::move(personas)) {
-    if (personas_.empty()) {
-        throw std::invalid_argument("A forum must contain at least one persona");
+ForumCharacters::ForumCharacters(std::vector<CharacterInfo> characters)
+    : characters_(std::move(characters)) {
+    if (characters_.empty()) {
+        throw std::invalid_argument("A forum must contain at least one character");
     }
     std::unordered_set<std::string> ids;
     std::unordered_set<std::string> names;
-    for (const PersonaInfo& persona : personas_) {
-        validate_persona_id(persona.id);
-        validate_persona_name(persona.name);
-        if (!ids.insert(persona.id).second) {
+    for (const CharacterInfo& character : characters_) {
+        validate_character_id(character.id);
+        validate_character_name(character.name);
+        if (!ids.insert(character.id).second) {
             throw std::invalid_argument(
-                "Forum has duplicate persona ID '" + persona.id + "'");
+                "Forum has duplicate character ID '" + character.id + "'");
         }
-        if (!names.insert(fold_ascii(persona.name)).second) {
+        if (!names.insert(fold_ascii(character.name)).second) {
             throw std::invalid_argument(
-                "Forum has duplicate persona name '" + persona.name + "'");
+                "Forum has duplicate character name '" + character.name + "'");
         }
     }
 }
 
-const std::vector<PersonaInfo>& ForumPersonas::all() const noexcept {
-    return personas_;
+const std::vector<CharacterInfo>& ForumCharacters::all() const noexcept {
+    return characters_;
 }
 
-const PersonaInfo& ForumPersonas::first() const {
-    return personas_.front();
+const CharacterInfo& ForumCharacters::first() const {
+    return characters_.front();
 }
 
-const PersonaInfo* ForumPersonas::find(std::string_view id) const {
+const CharacterInfo* ForumCharacters::find(std::string_view id) const {
     const auto found = std::find_if(
-        personas_.begin(),
-        personas_.end(),
-        [id](const PersonaInfo& persona) { return persona.id == id; });
-    return found == personas_.end() ? nullptr : &*found;
+        characters_.begin(),
+        characters_.end(),
+        [id](const CharacterInfo& character) { return character.id == id; });
+    return found == characters_.end() ? nullptr : &*found;
 }
 
-HandleResolution ForumPersonas::resolve_handle(std::string_view handle) const {
+HandleResolution ForumCharacters::resolve_handle(std::string_view handle) const {
     if (handle.empty()) {
         return {};
     }
-    const auto named = [this](std::string_view value) -> const PersonaInfo* {
+    const auto named = [this](std::string_view value) -> const CharacterInfo* {
         const auto found = std::find_if(
-            personas_.begin(),
-            personas_.end(),
-            [value](const PersonaInfo& persona) {
-                return ascii_iequals(persona.name, value);
+            characters_.begin(),
+            characters_.end(),
+            [value](const CharacterInfo& character) {
+                return ascii_iequals(character.name, value);
             });
-        return found == personas_.end() ? nullptr : &*found;
+        return found == characters_.end() ? nullptr : &*found;
     };
-    if (const PersonaInfo* persona = named(handle)) {
-        return {HandleMatch::resolved, persona, {}};
+    if (const CharacterInfo* character = named(handle)) {
+        return {HandleMatch::resolved, character, {}};
     }
     const std::string_view trimmed = trim_punctuation(handle);
     if (trimmed != handle) {
-        if (const PersonaInfo* persona = named(trimmed)) {
-            return {HandleMatch::resolved, persona, {}};
+        if (const CharacterInfo* character = named(trimmed)) {
+            return {HandleMatch::resolved, character, {}};
         }
     }
     if (trimmed.empty()) {
         return {};
     }
-    std::vector<const PersonaInfo*> candidates;
-    for (const PersonaInfo& persona : personas_) {
-        if (matches_name_word(persona.name, trimmed)) {
-            candidates.push_back(&persona);
+    std::vector<const CharacterInfo*> candidates;
+    for (const CharacterInfo& character : characters_) {
+        if (matches_name_word(character.name, trimmed)) {
+            candidates.push_back(&character);
         }
     }
     if (candidates.size() == 1) {
@@ -156,10 +156,10 @@ HandleResolution ForumPersonas::resolve_handle(std::string_view handle) const {
     if (candidates.size() > 1) {
         return {HandleMatch::ambiguous, nullptr, std::move(candidates)};
     }
-    for (const PersonaInfo& persona : personas_) {
-        if (starts_with_folded(persona.name, trimmed)
-            || starts_with_name_word(persona.name, trimmed)) {
-            candidates.push_back(&persona);
+    for (const CharacterInfo& character : characters_) {
+        if (starts_with_folded(character.name, trimmed)
+            || starts_with_name_word(character.name, trimmed)) {
+            candidates.push_back(&character);
         }
     }
     if (candidates.size() == 1) {
@@ -171,13 +171,13 @@ HandleResolution ForumPersonas::resolve_handle(std::string_view handle) const {
     return {HandleMatch::ambiguous, nullptr, std::move(candidates)};
 }
 
-std::string ForumPersonas::handle_list() const {
+std::string ForumCharacters::handle_list() const {
     std::string result;
-    for (const PersonaInfo& persona : personas_) {
+    for (const CharacterInfo& character : characters_) {
         if (!result.empty()) {
             result += ", ";
         }
-        result += "@" + persona.name;
+        result += "@" + character.name;
     }
     return result;
 }
@@ -185,10 +185,10 @@ std::string ForumPersonas::handle_list() const {
 std::string format_handle_resolution_notice(
     std::string_view handle,
     const HandleResolution& resolution,
-    const ForumPersonas& personas) {
+    const ForumCharacters& characters) {
     if (resolution.match == HandleMatch::unknown) {
         return "Unknown agent @" + std::string(handle)
-            + ". Personas in this forum: " + personas.handle_list();
+            + ". Characters in this forum: " + characters.handle_list();
     }
     std::string result =
         "Ambiguous agent @" + std::string(handle) + ": matches ";
@@ -201,7 +201,7 @@ std::string format_handle_resolution_notice(
     return result + ". Type more of the name.";
 }
 
-std::string format_duplicate_persona_notice(std::string_view name) {
+std::string format_duplicate_character_notice(std::string_view name) {
     return "Multicast target @" + std::string(name) + " is duplicated";
 }
 

@@ -79,18 +79,18 @@ nlohmann::json parse_json_body(
 }
 
 RawCommand parse_input_command(const nlohmann::json& json) {
-    exact_keys(json, {"user", "text"});
-    const std::string& user = required_string(json, "user");
-    if (user.empty()) {
+    exact_keys(json, {"persona", "text"});
+    const std::string& persona = required_string(json, "persona");
+    if (persona.empty()) {
         throw std::invalid_argument("Invalid web command");
     }
-    return {user, required_string(json, "text")};
+    return {persona, required_string(json, "text")};
 }
 
 SetDefaultAgentCommand parse_default_agent_command(
     const nlohmann::json& json) {
-    exact_keys(json, {"persona_id"});
-    return {required_string(json, "persona_id")};
+    exact_keys(json, {"character_id"});
+    return {required_string(json, "character_id")};
 }
 
 std::string parse_create_session_label(const nlohmann::json& json) {

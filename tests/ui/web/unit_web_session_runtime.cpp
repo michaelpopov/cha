@@ -389,7 +389,7 @@ TestControllerFactory real_factory(const std::filesystem::path& path) {
         SessionRestore restore = load_session_state(path);
         return adapt_session_controller(SessionController::from_definitions(
             {test_definition()},
-            UserRoster{{.id = "reader", .display_name = "Reader"}},
+            PersonaRoster{{.id = "reader", .display_name = "Reader"}},
             path,
             std::move(lease),
             notifier,
@@ -958,7 +958,7 @@ TEST(WebSessionRuntime, ReasoningGrowthWithStructuralChangeUsesSnapshot) {
     {
         std::lock_guard lock(state->mutex);
         state->snapshot.generation.reasoning_text = "think more";
-        state->snapshot.default_persona_id = "alternate";
+        state->snapshot.default_character_id = "alternate";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         runtime.submit(RawCommand{"reader", "append"}, 1s)));
@@ -1478,7 +1478,7 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
         {test_definition()}, temporary.path, notifier, std::move(restore)));
 
     const SessionSnapshot before = adapted->snapshot();
-    EXPECT_EQ(before.personas, std::vector<PersonaSummary>({{"guide", "Guide"}}));
+    EXPECT_EQ(before.characters, std::vector<CharacterSummary>({{"guide", "Guide"}}));
     ASSERT_EQ(before.transcript.size(), 1U);
     EXPECT_EQ(before.transcript.front().text, "before");
     EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").render_needed);

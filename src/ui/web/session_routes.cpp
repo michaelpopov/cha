@@ -170,7 +170,7 @@ void SessionRoutes::install(httplib::Server& server) const {
         SetDefaultAgentCommand command;
         if (!parse_route_json_body(request, response, settings.request_body_limit, [&command](const nlohmann::json& json) {
                 command = parse_default_agent_command(json);
-                if (command.persona_id.empty()) throw std::invalid_argument("Persona ID is empty");
+                if (command.character_id.empty()) throw std::invalid_argument("Character ID is empty");
             })) return;
         SessionHandle handle = registry->lookup(*key);
         if (!handle) return set_not_live(response);

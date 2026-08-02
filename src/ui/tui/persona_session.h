@@ -15,9 +15,9 @@ struct SessionUpdate;
 // the SessionUpdate that comes back by redrawing, clearing the editor, or showing a notice. It
 // owns the InputEditor and the pending notice, and reaches the screen only through SessionView,
 // which is what makes the whole session testable without a terminal.
-class UserSession {
+class PersonaSession {
 public:
-    UserSession(
+    PersonaSession(
         SessionView& view,
         SessionController& controller,
         std::string author_id);

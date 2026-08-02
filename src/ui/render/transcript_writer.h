@@ -1,6 +1,6 @@
 #pragma once
 
-#include "session/forum_personas.h"
+#include "session/forum_characters.h"
 #include "transcript/transcript.h"
 
 #include <string>
@@ -43,7 +43,7 @@ void initialize_transcript_surface(TranscriptSurface& surface);
 
 // Whether transcript labels should include routing (multi-agent forum or foreign history).
 bool show_addressing(
-    const ForumPersonas& personas,
+    const ForumCharacters& characters,
     TranscriptView transcript);
 
 // Produces an unambiguous display label from an entry's semantic kind.

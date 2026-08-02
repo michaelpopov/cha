@@ -219,14 +219,14 @@ TEST(Config, RejectsRemovedIdentityFields) {
     std::filesystem::remove(path);
 }
 
-TEST(Config, OverlaysPersonaValuesOnWorkspaceDefaults) {
+TEST(Config, OverlaysCharacterValuesOnWorkspaceDefaults) {
     const auto directory = std::filesystem::temp_directory_path()
         / ("cha_config_overlay_"
            + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(directory);
-    const auto base_path = directory / "persona_defaults.toml";
-    const auto persona_path = directory / "persona.toml";
+    const auto base_path = directory / "character_defaults.toml";
+    const auto character_path = directory / "character.toml";
     {
         std::ofstream base(base_path);
         base << "host = \"shared.example\"\n"
@@ -239,21 +239,21 @@ TEST(Config, OverlaysPersonaValuesOnWorkspaceDefaults) {
              << "api_key_env = \"SHARED_API_KEY\"\n"
              << "reasoning_effort = \"medium\"\n"
              << "reasoning_format = \"reasoning\"\n";
-        std::ofstream persona(persona_path);
-        persona << "display_name = \"Example\"\n"
-                << "model = \"persona-model\"\n"
+        std::ofstream character(character_path);
+        character << "display_name = \"Example\"\n"
+                << "model = \"character-model\"\n"
                 << "stream = false\n";
     }
 
-    const Config config = load_config(persona_path, base_path).config;
+    const Config config = load_config(character_path, base_path).config;
 
-    EXPECT_EQ(config.id, utf8_path(persona_path.parent_path().filename()));
+    EXPECT_EQ(config.id, utf8_path(character_path.parent_path().filename()));
     EXPECT_EQ(config.name, "Example");
     EXPECT_EQ(config.host, "shared.example");
     EXPECT_EQ(config.port, 443);
     EXPECT_TRUE(config.https);
     EXPECT_EQ(config.mode, Mode::net);
-    EXPECT_EQ(config.model, "persona-model");
+    EXPECT_EQ(config.model, "character-model");
     EXPECT_FALSE(config.stream);
     EXPECT_DOUBLE_EQ(config.temperature, 0.5);
     EXPECT_EQ(config.api_key_env, "SHARED_API_KEY");
@@ -269,19 +269,19 @@ TEST(Config, RejectsDisplayNameInWorkspaceDefaults) {
            + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(directory);
-    const auto base_path = directory / "persona_defaults.toml";
-    const auto persona_path = directory / "persona.toml";
+    const auto base_path = directory / "character_defaults.toml";
+    const auto character_path = directory / "character.toml";
     {
         std::ofstream base(base_path);
         base << "display_name = \"Shared\"\n"
              << "host = \"shared.example\"\n"
              << "port = 443\n";
-        std::ofstream persona(persona_path);
-        persona << "display_name = \"Example\"\n";
+        std::ofstream character(character_path);
+        character << "display_name = \"Example\"\n";
     }
 
     try {
-        (void)load_config(persona_path, base_path);
+        (void)load_config(character_path, base_path);
         FAIL() << "Expected shared identity to fail";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
@@ -301,8 +301,8 @@ TEST(Config, LoadsPromptVariablesWithTheSameOverlayAsTheConnectionConfig) {
            + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(directory);
-    const auto base_path = directory / "persona_defaults.toml";
-    const auto persona_path = directory / "persona.toml";
+    const auto base_path = directory / "character_defaults.toml";
+    const auto character_path = directory / "character.toml";
     {
         std::ofstream base(base_path);
         base << "host = \"shared.example\"\n"
@@ -310,33 +310,33 @@ TEST(Config, LoadsPromptVariablesWithTheSameOverlayAsTheConnectionConfig) {
              << "[prompt]\n"
              << "register = \"measured\"\n"
              << "period = \"base-period\"\n";
-        std::ofstream persona(persona_path);
-        persona << "display_name = \"Example\"\n"
-                << "host = \"persona.example\"\n"
+        std::ofstream character(character_path);
+        character << "display_name = \"Example\"\n"
+                << "host = \"character.example\"\n"
                 << "port = 8080\n"
                 << "[prompt]\n"
                 << "register = \"energetic\"\n";
     }
 
-    const auto persona_no_prompt = directory / "persona_no_prompt.toml";
+    const auto character_no_prompt = directory / "character_no_prompt.toml";
     {
-        std::ofstream file(persona_no_prompt);
+        std::ofstream file(character_no_prompt);
         file << "display_name = \"Example\"\n"
-             << "host = \"persona.example\"\n"
+             << "host = \"character.example\"\n"
              << "port = 8080\n";
     }
 
     const TemplateScope only_base =
-        load_config(persona_no_prompt, base_path).prompt_variables;
+        load_config(character_no_prompt, base_path).prompt_variables;
     EXPECT_EQ(only_base.at("register"), "measured");
     EXPECT_EQ(only_base.at("period"), "base-period");
 
-    const TemplateScope only_persona = load_config(persona_path).prompt_variables;
-    EXPECT_EQ(only_persona.at("register"), "energetic");
-    EXPECT_EQ(only_persona.find("period"), only_persona.end());
+    const TemplateScope only_character = load_config(character_path).prompt_variables;
+    EXPECT_EQ(only_character.at("register"), "energetic");
+    EXPECT_EQ(only_character.find("period"), only_character.end());
 
     const TemplateScope overlaid =
-        load_config(persona_path, base_path).prompt_variables;
+        load_config(character_path, base_path).prompt_variables;
     EXPECT_EQ(overlaid.at("register"), "energetic");
     EXPECT_EQ(overlaid.at("period"), "base-period");
 
@@ -349,18 +349,18 @@ TEST(Config, IdentifiesInvalidWorkspaceDefaultSource) {
            + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(directory);
-    const auto base_path = directory / "persona_defaults.toml";
-    const auto persona_path = directory / "persona.toml";
+    const auto base_path = directory / "character_defaults.toml";
+    const auto character_path = directory / "character.toml";
     {
         std::ofstream base(base_path);
         base << "host = \"shared.example\"\n"
              << "port = 65536\n";
-        std::ofstream persona(persona_path);
-        persona << "display_name = \"Example\"\n";
+        std::ofstream character(character_path);
+        character << "display_name = \"Example\"\n";
     }
 
     try {
-        (void)load_config(persona_path, base_path);
+        (void)load_config(character_path, base_path);
         FAIL() << "Expected invalid shared port to fail";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(

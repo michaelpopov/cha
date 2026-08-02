@@ -23,20 +23,20 @@ curses, storage, or providers.
 | `@@channel hi` | Literal text `@channel hi` — no addressing. |
 | `@` alone, or `@ ` | Not a mention; sent as ordinary text. |
 | `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/info`, `/agents`, `/stop`, `/exit` | Commands. They take no arguments. |
-| `/mcast prompt` | Sends `prompt` to every forum persona in order. |
-| `/mcast @Ada, @Grace. prompt` | Sends `prompt` to the named personas in that order. `@@` starts a literal `@` prompt. |
+| `/mcast prompt` | Sends `prompt` to every forum character in order. |
+| `/mcast @Ada, @Grace. prompt` | Sends `prompt` to the named characters in that order. `@@` starts a literal `@` prompt. |
 | `/@Ada` | Set the default agent for this run. |
 | `/anything-else` | Unknown command; produces a notice. |
 
 Mentions are recognized only at the start of a line, after leading whitespace.
 Trailing punctuation on a handle (`@Ada, hello`) is tolerated during resolution
-in `ForumPersonas`, not here.
+in `ForumCharacters`, not here.
 
 The parser never resolves a handle. `handle_text_input()` receives the selected
-author's stable user ID and hands it with text and multicast handles through
+author's stable persona ID and hands it with text and multicast handles through
 to `SessionController`. The controller resolves the author against the
-session's captured user roster and the handles against `ForumPersonas`, so the
-grammar cannot go stale when the personas in a forum change.
+session's captured persona roster and the handles against `ForumCharacters`, so the
+grammar cannot go stale when the characters in a forum change.
 
 ## Dispatch
 

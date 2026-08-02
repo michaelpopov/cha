@@ -2,7 +2,7 @@
 #include "session/workspace.h"
 #include "ui/tui/startup_selector.h"
 #include "ui/tui/terminal.h"
-#include "ui/tui/user.h"
+#include "ui/tui/persona.h"
 #include "util/environment.h"
 #include "util/logging.h"
 #include "util/uv_event_loop.h"
@@ -41,14 +41,14 @@ int main_internal() {
     cha::Terminal terminal;
     cha::StartupSelector selector(terminal);
 
-    std::string selected_user_id;
+    std::string selected_persona_id;
     {
-        const cha::UserRoster users = workspace.load_users();
-        const auto selected_user = selector.select_user(users);
-        if (!selected_user) {
-            throw std::runtime_error("User selection cancelled");
+        const cha::PersonaRoster personas = workspace.load_personas();
+        const auto selected_persona = selector.select_persona(personas);
+        if (!selected_persona) {
+            throw std::runtime_error("Persona selection cancelled");
         }
-        selected_user_id = selected_user->id;
+        selected_persona_id = selected_persona->id;
     }
 
     std::vector<cha::Forum> forums;
@@ -89,11 +89,11 @@ int main_internal() {
             event_loop);
     }
 
-    cha::run_user(
+    cha::run_persona(
         terminal,
         *controller,
         event_loop,
-        std::move(selected_user_id));
+        std::move(selected_persona_id));
     cha::log_info("Terminal application stopped");
     return 0;
 }

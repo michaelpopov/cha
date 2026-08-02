@@ -76,10 +76,10 @@ public:
                        .time_since_epoch()
                        .count()))) {
         std::filesystem::create_directories(
-            path_ / "forums" / "hall" / "personas" / "Ismael");
+            path_ / "forums" / "hall" / "characters" / "Ismael");
         std::filesystem::create_directories(
             path_ / "forums" / "hall" / "sessions");
-        std::filesystem::create_directories(path_ / "users" / "reader");
+        std::filesystem::create_directories(path_ / "personas" / "reader");
         write_file(
             path_ / "app.toml",
             "host = \"127.0.0.1\"\nport = 8080\n"
@@ -88,16 +88,16 @@ public:
             path_ / "forums" / "hall" / "config.toml",
             "display_name = \"The Hall\"\n");
         write_file(
-            path_ / "forums" / "hall" / "personas" / "Ismael" / "persona.toml",
+            path_ / "forums" / "hall" / "characters" / "Ismael" / "character.toml",
             "display_name = \"Ismael\"\n");
         write_file(
-            path_ / "forums" / "hall" / "personas" / "Ismael" / "SYSTEM.md",
+            path_ / "forums" / "hall" / "characters" / "Ismael" / "SYSTEM.md",
             "You are a process test agent.\n");
         write_file(
             path_ / "forums" / "hall" / "FORUM.md",
-            "Answer the user.\n");
+            "Answer the persona.\n");
         write_file(
-            path_ / "users" / "reader" / "user.toml",
+            path_ / "personas" / "reader" / "persona.toml",
             "display_name = \"Reader\"\n");
     }
 
@@ -108,7 +108,7 @@ public:
 
     void point_at(int port) const {
         write_file(
-            path_ / "forums" / "hall" / "personas" / "persona_defaults.toml",
+            path_ / "forums" / "hall" / "characters" / "character_defaults.toml",
             "host = \"127.0.0.1\"\n"
             "port = " + std::to_string(port) + "\n"
             "https = false\n"
@@ -155,7 +155,7 @@ ChildProcess launch_console(
     const std::filesystem::path& input_path = {},
     bool check_forum = false,
     std::string session_id = {},
-    std::string user = "reader") {
+    std::string persona = "reader") {
     int input_pipe[2]{-1, -1};
     int output_pipe[2]{};
     int error_pipe[2]{};
@@ -212,8 +212,8 @@ ChildProcess launch_console(
             ::execl(
                 CHA_CONSOLE_BINARY,
                 CHA_CONSOLE_BINARY,
-                "--user",
-                user.c_str(),
+                "--persona",
+                persona.c_str(),
                 "--forum",
                 "hall",
                 "--session",
@@ -224,8 +224,8 @@ ChildProcess launch_console(
             ::execl(
                 CHA_CONSOLE_BINARY,
                 CHA_CONSOLE_BINARY,
-                "--user",
-                user.c_str(),
+                "--persona",
+                persona.c_str(),
                 "--forum",
                 "hall",
                 "--color=never",
@@ -529,7 +529,7 @@ TEST(ConsoleProcess, CheckValidatesWithoutCreatingASessionOrConnecting) {
     // --check neither initializes completion clients nor performs requests.
     write_file(
         workspace.path()
-            / "forums" / "hall" / "personas" / "persona_defaults.toml",
+            / "forums" / "hall" / "characters" / "character_defaults.toml",
         "host = \"127.0.0.1\"\n"
         "port = 9\n"
         "https = false\n"
@@ -542,12 +542,12 @@ TEST(ConsoleProcess, CheckValidatesWithoutCreatingASessionOrConnecting) {
 
     EXPECT_FALSE(result.timed_out);
     EXPECT_EQ(result.exit_code, 0) << result.errors;
-    EXPECT_EQ(result.output, "Forum 'hall' is valid (1 persona).\n");
+    EXPECT_EQ(result.output, "Forum 'hall' is valid (1 character).\n");
     EXPECT_TRUE(result.errors.empty());
     EXPECT_FALSE(workspace.has_session());
 }
 
-TEST(ConsoleProcess, RejectsAnUnknownUserID) {
+TEST(ConsoleProcess, RejectsAnUnknownPersonaID) {
     TemporaryWorkspace workspace;
     ChildProcess process = launch_console(workspace, {}, false, {}, "ghost");
 

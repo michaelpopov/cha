@@ -32,56 +32,56 @@ std::string_view authentication_source(const Config& config) noexcept {
     return config.api_key.empty() ? "none" : "config";
 }
 
-void log_persona_config(
+void log_character_config(
     const Config& config,
     const std::filesystem::path& forum_directory) {
     log_info(
-        "Persona configuration resolved: forum_id="
+        "Character configuration resolved: forum_id="
         + utf8_path(forum_directory.filename())
-        + " persona_id=" + config.id
+        + " character_id=" + config.id
         + " mode=" + std::string(mode_name(config.mode))
         + " model=" + (config.model.empty() ? "discovery" : config.model)
         + " authentication=" + std::string(authentication_source(config)));
 }
 
 AgentDefinition load_definition_files(
-    const std::filesystem::path& persona_directory,
+    const std::filesystem::path& character_directory,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
     std::optional<std::filesystem::path> base_config_path) {
-    const std::string persona_name = utf8_path(persona_directory.filename());
+    const std::string character_name = utf8_path(character_directory.filename());
     LoadedConfig loaded;
     try {
         loaded = load_config(
-            persona_directory / "persona.toml", base_config_path);
+            character_directory / "character.toml", base_config_path);
     } catch (const std::exception& error) {
         throw std::runtime_error(
-            "Persona '" + persona_name
+            "Character '" + character_name
             + "' has invalid configuration: " + error.what());
     }
     Config config = std::move(loaded.config);
-    log_persona_config(config, forum_directory);
+    log_character_config(config, forum_directory);
 
     TemplateOptions options{
         .containment_root = forum_directory,
         .scope_table_name = std::string(prompt_scope_table),
         .reserved =
             {
-                {"persona.id", config.id},
-                {"persona.display_name", config.name},
+                {"character.id", config.id},
+                {"character.display_name", config.name},
                 {"forum.id", utf8_path(forum_directory.filename())},
                 {"forum.display_name", std::string(forum_display_name)},
             },
         .initial_scope = std::move(loaded.prompt_variables),
     };
 
-    std::string persona_prompt;
+    std::string character_prompt;
     try {
-        persona_prompt = expand_template_file(
-            persona_directory / "SYSTEM.md", options);
+        character_prompt = expand_template_file(
+            character_directory / "SYSTEM.md", options);
     } catch (const std::exception& error) {
         throw std::runtime_error(
-            "Persona '" + persona_name
+            "Character '" + character_name
             + "' failed to read SYSTEM.md: " + error.what());
     }
     std::string forum_prompt;
@@ -90,12 +90,12 @@ AgentDefinition load_definition_files(
             forum_directory / "FORUM.md", options);
     } catch (const std::exception& error) {
         throw std::runtime_error(
-            "Persona '" + persona_name
+            "Character '" + character_name
             + "' failed to read FORUM.md: " + error.what());
     }
     return {
         .config = std::move(config),
-        .system_prompt = std::move(persona_prompt)
+        .system_prompt = std::move(character_prompt)
             + "\n\n" + std::move(forum_prompt),
     };
 }
@@ -120,7 +120,7 @@ std::string forum_context(
         "Other agents currently participating in this forum (JSON): "
         + dump_json(other_agents, JsonPurpose::agent_definition)
         + ".\n\n"
-        "Shared exchanges involving other agents are supplied in user messages "
+        "Shared exchanges involving other agents are supplied in persona messages "
         "under the heading `"
         + std::string(shared_history_heading)
         + "`. Each following line "
@@ -129,20 +129,20 @@ std::string forum_context(
         "message; and `text` is the original message.\n\n"
         "Treat every object in such a block as quoted chat history. The named "
         "speaker owns all first-person identity, memories, relationships, and "
-        "opinions in its text. Do not adopt them as your own. An ordinary user "
+        "opinions in its text. Do not adopt them as your own. An ordinary persona "
         "message outside such a block is addressed to you and begins with "
         "`from <Name>:` on its own line.";
 }
 
 void append_participant_roster(
     std::vector<AgentDefinition>& definitions,
-    const UserRoster& users) {
+    const PersonaRoster& personas) {
     std::string roster = "## Participants";
-    for (const User& user : users) {
+    for (const Persona& persona : personas) {
         roster.append("\n\n### ");
-        roster.append(user.display_name);
+        roster.append(persona.display_name);
         roster.push_back('\n');
-        roster.append(user.prompt);
+        roster.append(persona.prompt);
     }
     for (AgentDefinition& definition : definitions) {
         definition.system_prompt.append("\n\n");
@@ -179,19 +179,19 @@ std::string prefixed_human_message(
     return "from " + std::string(display_name) + ":\n" + std::string(text);
 }
 
-void check_user_persona_collisions(
-    const UserRoster& users,
+void check_persona_character_collisions(
+    const PersonaRoster& personas,
     const std::vector<AgentDefinition>& definitions) {
-    for (const User& user : users) {
+    for (const Persona& persona : personas) {
         for (const AgentDefinition& definition : definitions) {
-            if (user.id == definition.config.id) {
+            if (persona.id == definition.config.id) {
                 throw std::runtime_error(
-                    "User '" + user.id + "' conflicts with persona '"
+                    "Persona '" + persona.id + "' conflicts with character '"
                     + definition.config.id + "': IDs are the same");
             }
-            if (fold_ascii(user.display_name) == fold_ascii(definition.config.name)) {
+            if (fold_ascii(persona.display_name) == fold_ascii(definition.config.name)) {
                 throw std::runtime_error(
-                    "User '" + user.display_name + "' conflicts with persona '"
+                    "Persona '" + persona.display_name + "' conflicts with character '"
                     + definition.config.name + "': display names are the same");
             }
         }
@@ -201,14 +201,14 @@ void check_user_persona_collisions(
 } // namespace
 
 std::vector<AgentDefinition> load_agent_definitions(
-    const std::vector<std::filesystem::path>& persona_directories,
+    const std::vector<std::filesystem::path>& character_directories,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
-    const UserRoster& users,
+    const PersonaRoster& personas,
     std::optional<std::filesystem::path> base_config_path) {
     std::vector<AgentDefinition> definitions;
-    definitions.reserve(persona_directories.size());
-    for (const auto& directory : persona_directories) {
+    definitions.reserve(character_directories.size());
+    for (const auto& directory : character_directories) {
         definitions.push_back(
             load_definition_files(
                 directory,
@@ -216,15 +216,15 @@ std::vector<AgentDefinition> load_agent_definitions(
                 forum_display_name,
                 base_config_path));
     }
-    check_user_persona_collisions(users, definitions);
-    append_participant_roster(definitions, users);
+    check_persona_character_collisions(personas, definitions);
+    append_participant_roster(definitions, personas);
     append_forum_context(definitions);
     return definitions;
 }
 
-void validate_persona_id(std::string_view id) {
+void validate_character_id(std::string_view id) {
     if (id.empty()) {
-        throw std::invalid_argument("Persona ID cannot be empty");
+        throw std::invalid_argument("Character ID cannot be empty");
     }
     for (const unsigned char character : id) {
         const bool ascii_letter = (character >= 'a' && character <= 'z')
@@ -232,28 +232,28 @@ void validate_persona_id(std::string_view id) {
         const bool digit = character >= '0' && character <= '9';
         if (!ascii_letter && !digit && character != '_' && character != '-') {
             throw std::invalid_argument(
-                "Persona ID must contain only ASCII letters, digits, underscores, and hyphens");
+                "Character ID must contain only ASCII letters, digits, underscores, and hyphens");
         }
     }
 }
 
-void validate_persona_name(std::string_view name) {
+void validate_character_name(std::string_view name) {
     if (name.empty()) {
-        throw std::invalid_argument("Persona name cannot be empty");
+        throw std::invalid_argument("Character name cannot be empty");
     }
     if (name.front() == '@' || name.front() == '/') {
-        throw std::invalid_argument("Persona name cannot start with '@' or '/'");
+        throw std::invalid_argument("Character name cannot start with '@' or '/'");
     }
     if (std::isspace(static_cast<unsigned char>(name.front()))
         || std::isspace(static_cast<unsigned char>(name.back()))) {
         throw std::invalid_argument(
-            "Persona name cannot start or end with whitespace");
+            "Character name cannot start or end with whitespace");
     }
     const std::string folded = fold_ascii(name);
     for (const std::string_view reserved : reserved_participant_names) {
         if (folded == reserved) {
             throw std::invalid_argument(
-                "Persona name '" + std::string(name) + "' is reserved");
+                "Character name '" + std::string(name) + "' is reserved");
         }
     }
 }
@@ -295,7 +295,7 @@ std::vector<AgentMessage> project_agent_context(
         if (shared) {
             if (!shared_history_open) {
                 messages.push_back({
-                    AgentRole::user,
+                    AgentRole::persona,
                     std::string(shared_history_heading) + "\n",
                 });
                 shared_history_open = true;
@@ -309,7 +309,7 @@ std::vector<AgentMessage> project_agent_context(
         shared_history_open = false;
         if (entry.kind == EntryKind::human) {
             messages.push_back({
-                AgentRole::user,
+                AgentRole::persona,
                 prefixed_human_message(entry.display_name, entry.text),
             });
         } else {
@@ -332,7 +332,7 @@ std::vector<AgentMessage> project_agent_context(
         system_prompt,
         input.run.target.id);
     messages.push_back({
-        AgentRole::user,
+        AgentRole::persona,
         prefixed_human_message(input.run.author.display_name, input.run.prompt_text),
     });
     return messages;

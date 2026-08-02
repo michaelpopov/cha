@@ -93,7 +93,7 @@ public:
 
     AgentRuntimeInfo info() const override {
         return {
-            .persona = {
+            .character = {
                 .id = id_,
                 .name = "Guide",
             },
@@ -140,7 +140,7 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_EQ(empty_multicast.notice, "Multicast prompt is empty");
 
     EXPECT_EQ(
-        handle_text_input(*controller, "not-a-user", "/clear").notice,
+        handle_text_input(*controller, "not-a-persona", "/clear").notice,
         "Transcript cleared");
     EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide-on").render_needed);
     EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide").render_needed);
@@ -202,7 +202,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
     TemporaryTextSession ordinary_temporary;
     auto ordinary_controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<BlockingBackend>()),
-        UserRoster{{.id = "engineer", .display_name = "Engineer"}},
+        PersonaRoster{{.id = "engineer", .display_name = "Engineer"}},
         ordinary_temporary.path,
         notifier());
 
@@ -221,7 +221,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
     TemporaryTextSession multicast_temporary;
     auto multicast_controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<BlockingBackend>()),
-        UserRoster{{.id = "engineer", .display_name = "Engineer"}},
+        PersonaRoster{{.id = "engineer", .display_name = "Engineer"}},
         multicast_temporary.path,
         notifier());
 

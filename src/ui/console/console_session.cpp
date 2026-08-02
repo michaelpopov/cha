@@ -41,12 +41,12 @@ int ConsoleSession::run() {
             && queue_.empty()
             && !input_done_
             && !end_session_) {
-            const PersonaInfo* default_agent =
-                controller_.personas().find(
+            const CharacterInfo* default_agent =
+                controller_.characters().find(
                     controller_.default_agent_id());
             if (!default_agent) {
                 throw std::logic_error(
-                    "Default agent is not a forum persona");
+                    "Default agent is not a forum character");
             }
             write_console_prompt(port_.prompt(), default_agent->name);
             port_.notices() << std::flush;

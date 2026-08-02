@@ -31,7 +31,7 @@ the ASCII range, which is exactly what the agent-name rules allow.
 
 `require_path_component()` rejects empty names, absolute paths, anything with a
 separator, and `.` / `..`. It protects general workspace-controlled components,
-including persona directory names, before they are joined onto a path.
+including character directory names, before they are joined onto a path.
 
 Forum and session IDs use the stricter `is_url_safe_identifier()` check before
 discovery or direct use. Its accepted character set is itself path-safe and
@@ -41,7 +41,7 @@ are presentation text rather than route identifiers and are not restricted by
 this rule.
 
 Prompt-template includes need a second rule. An include path is resolved relative
-to the including file and may leave a persona directory to reach shared forum
+to the including file and may leave a character directory to reach shared forum
 text, so component checking cannot apply. Instead `expand_template_file()`
 canonicalizes every template and scope file it reads and requires it to lie
 under a caller-supplied containment root (the forum directory). The comparison

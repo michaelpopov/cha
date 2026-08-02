@@ -31,7 +31,7 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     const char* const* argv) {
     ConsoleOptions options;
     bool session_selected = false;
-    bool user_selected = false;
+    bool persona_selected = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--list-forums") {
@@ -41,7 +41,7 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
         } else if (argument == "--check") {
             options.check_forum = true;
         } else if (argument == "--forum"
-            || argument == "--user"
+            || argument == "--persona"
             || argument == "--session"
             || argument == "--new") {
             if (index + 1 >= argc) {
@@ -49,9 +49,9 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
                     "Missing value for " + std::string(argument));
             }
             const std::string value(argv[++index]);
-            if (argument == "--user") {
-                user_selected = true;
-                options.user = value;
+            if (argument == "--persona") {
+                persona_selected = true;
+                options.persona = value;
             } else if (argument == "--forum") {
                 options.forum = value;
             } else if (argument == "--session") {
@@ -79,8 +79,8 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
         }
     }
 
-    if (user_selected && (options.list_forums || options.list_sessions || options.check_forum)) {
-        return argument_error("--user is not accepted with listing or check modes");
+    if (persona_selected && (options.list_forums || options.list_sessions || options.check_forum)) {
+        return argument_error("--persona is not accepted with listing or check modes");
     }
     if (options.list_forums) {
         return options;
@@ -110,11 +110,11 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     if (options.check_forum) {
         return options;
     }
-    if (user_selected && options.user.empty()) {
-        return argument_error("--user requires a user ID");
+    if (persona_selected && options.persona.empty()) {
+        return argument_error("--persona requires a persona ID");
     }
-    if (options.user.empty()) {
-        return argument_error("--user is required");
+    if (options.persona.empty()) {
+        return argument_error("--persona is required");
     }
     if (!session_selected && !options.new_label) {
         options.new_label = "";
@@ -145,8 +145,8 @@ void write_forum_check(
     std::ostream& out) {
     const Forum forum = workspace.check_forum(forum_name);
     out << "Forum '" << listing_field(forum.name) << "' is valid ("
-        << forum.persona_names.size() << ' '
-        << (forum.persona_names.size() == 1 ? "persona" : "personas")
+        << forum.character_names.size() << ' '
+        << (forum.character_names.size() == 1 ? "character" : "characters")
         << ").\n";
 }
 
