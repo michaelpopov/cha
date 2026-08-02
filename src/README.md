@@ -18,7 +18,7 @@ selected forum's optional `personas/persona_defaults.toml`; persona-specific val
 override them. A forum contains an ordered list of the personas participating in
 chats in that forum, together with a forum-specific system-prompt template.
 When the forum is loaded, the persona's expanded `SYSTEM.md` is followed by the
-forum's expanded `USER.md` and generated forum context identifying the current
+forum's expanded `FORUM.md` and generated forum context identifying the current
 agent, the forum's other personas, and the shared-history encoding. Template
 includes are contained within the forum, so the forum remains a self-contained
 distribution unit.

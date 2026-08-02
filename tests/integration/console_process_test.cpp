@@ -93,7 +93,7 @@ public:
             path_ / "forums" / "hall" / "personas" / "Ismael" / "SYSTEM.md",
             "You are a process test agent.\n");
         write_file(
-            path_ / "forums" / "hall" / "USER.md",
+            path_ / "forums" / "hall" / "FORUM.md",
             "Answer the user.\n");
     }
 

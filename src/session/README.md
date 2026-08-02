@@ -30,7 +30,7 @@ flowchart TD
     forum --> config["config.toml — required display_name + optional [prompt]"]
     forum --> personas["personas/ — persona directories"]
     personas --> persona["persona-name/persona.toml<br/>SYSTEM.md + includes"]
-    forum --> user["USER.md — template-expanded forum prompt extension"]
+    forum --> forum_prompt["FORUM.md — template-expanded forum prompt extension"]
     forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
 ```
 
@@ -49,7 +49,7 @@ Each persona directory likewise supplies its stable ID, while its
 rejects the removed persona-level `id` and `name` fields.
 
 The forum directory is both the distribution unit and the prompt-template
-containment root: includes in `SYSTEM.md` / `USER.md` cannot leave it, so a
+containment root: includes in `SYSTEM.md` / `FORUM.md` cannot leave it, so a
 zipped forum stays self-contained when unpacked elsewhere.
 
 When a session is created or opened, `Workspace` checks for

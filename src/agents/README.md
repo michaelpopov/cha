@@ -27,14 +27,14 @@ flowchart LR
         base["forums/R/personas/persona_defaults.toml<br/>optional forum defaults + [prompt]"]
         cfg["forums/R/personas/X/persona.toml"]
         sys["forums/R/personas/X/SYSTEM.md"]
-        usr["forums/R/USER.md"]
+        usr["forums/R/FORUM.md"]
         shared["shared prompt files under the forum"]
     end
 
     base --> load["load_config<br/>one parsed overlay"]
     cfg --> load
     load --> conf["Config + TemplateScope"]
-    conf --> expand["expand_template_file<br/>SYSTEM.md and USER.md"]
+    conf --> expand["expand_template_file<br/>SYSTEM.md and FORUM.md"]
     sys --> expand
     usr --> expand
     shared --> expand
@@ -48,7 +48,7 @@ flowchart LR
 ```
 
 The effective system prompt is the expanded persona `SYSTEM.md`, followed by the
-expanded forum `USER.md`, followed by generated forum context. Expansion is
+expanded forum `FORUM.md`, followed by generated forum context. Expansion is
 implemented in `util/text_template.*`; this layer supplies the policy: forum
 directory as containment root, reserved `persona.*` / `forum.*` names, and the
 base-then-persona `[prompt]` initial scope. An adjacent template `config.toml` overlays

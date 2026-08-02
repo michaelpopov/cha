@@ -50,7 +50,7 @@ protected:
             file << "Persona instructions";
         }
         {
-            std::ofstream file(root / "forums" / "lobby" / "USER.md");
+            std::ofstream file(root / "forums" / "lobby" / "FORUM.md");
             file << "Forum instructions";
         }
     }

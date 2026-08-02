@@ -22,7 +22,7 @@ TestWorkspace::TestWorkspace()
            "level = \"off\"\n";
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\n";
-    std::ofstream(root_ / "forums" / "lobby" / "USER.md")
+    std::ofstream(root_ / "forums" / "lobby" / "FORUM.md")
         << "Forum instructions\n";
     std::ofstream(
         root_ / "forums" / "lobby" / "personas" / "persona_defaults.toml")

@@ -88,11 +88,11 @@ AgentDefinition load_definition_files(
     std::string forum_prompt;
     try {
         forum_prompt = expand_template_file(
-            forum_directory / "USER.md", options);
+            forum_directory / "FORUM.md", options);
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Persona '" + persona_name
-            + "' failed to read USER.md: " + error.what());
+            + "' failed to read FORUM.md: " + error.what());
     }
     return {
         .config = std::move(config),

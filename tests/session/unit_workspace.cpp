@@ -49,7 +49,7 @@ protected:
         }
         {
             std::ofstream forum_prompt(
-                root_ / "forums" / "lobby" / "USER.md");
+                root_ / "forums" / "lobby" / "FORUM.md");
             forum_prompt << "Forum instructions";
         }
         {

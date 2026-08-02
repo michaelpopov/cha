@@ -57,7 +57,7 @@ TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
                << "port = 8080\n";
         std::ofstream system_prompt(persona / "SYSTEM.md");
         system_prompt << "Persona instructions";
-        std::ofstream forum_prompt(forum / "USER.md");
+        std::ofstream forum_prompt(forum / "FORUM.md");
         forum_prompt << "Forum instructions";
     }
 
@@ -96,7 +96,7 @@ TEST(AgentDefinitions, RequiresBothPromptFiles) {
         std::runtime_error);
 
     {
-        std::ofstream forum_prompt(forum / "USER.md");
+        std::ofstream forum_prompt(forum / "FORUM.md");
         forum_prompt << "Forum instructions";
     }
     std::filesystem::remove(persona / "SYSTEM.md");
@@ -126,7 +126,7 @@ std::filesystem::path make_persona(
 std::filesystem::path make_forum(const std::filesystem::path& root) {
     const std::filesystem::path forum = root / "forum";
     std::filesystem::create_directories(forum);
-    std::ofstream forum_prompt(forum / "USER.md");
+    std::ofstream forum_prompt(forum / "FORUM.md");
     forum_prompt << "Forum instructions";
     return forum;
 }
@@ -179,7 +179,7 @@ TEST(AgentDefinitions, RefusesToOpenAForumWithMissingPersonaDefinitions) {
     std::filesystem::remove_all(root);
 }
 
-TEST(AgentDefinitions, ExpandsTemplatesInSystemAndUserPrompts) {
+TEST(AgentDefinitions, ExpandsTemplatesInSystemAndForumPrompts) {
     const std::filesystem::path root = unique_definition_directory();
     const std::filesystem::path forum = root / "stoics";
     const std::filesystem::path personas = forum / "personas";
@@ -202,7 +202,7 @@ TEST(AgentDefinitions, ExpandsTemplatesInSystemAndUserPrompts) {
                << "($${register})\n";
         std::ofstream system_prompt(persona / "SYSTEM.md");
         system_prompt << "$$(../character-voice.md)id=$${persona.id}\n";
-        std::ofstream forum_prompt(forum / "USER.md");
+        std::ofstream forum_prompt(forum / "FORUM.md");
         forum_prompt << "User facing $${persona.display_name}\n";
     }
 
@@ -238,7 +238,7 @@ TEST(AgentDefinitions, WrapsExpansionFailuresWithPersonaAndChain) {
         shared << "$${missing}\n";
         std::ofstream system_prompt(persona / "SYSTEM.md");
         system_prompt << "$$(../shared.md)\n";
-        std::ofstream forum_prompt(forum / "USER.md");
+        std::ofstream forum_prompt(forum / "FORUM.md");
         forum_prompt << "ok\n";
     }
 
@@ -272,7 +272,7 @@ TEST(AgentDefinitions, IdentifiesInvalidPromptVariableConfiguration) {
         config << "display_name = \"Seneca\"\n";
         std::ofstream system_prompt(persona / "SYSTEM.md");
         system_prompt << "system\n";
-        std::ofstream forum_prompt(forum / "USER.md");
+        std::ofstream forum_prompt(forum / "FORUM.md");
         forum_prompt << "user\n";
     }
 

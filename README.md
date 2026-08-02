@@ -35,7 +35,7 @@ Supported levels are `trace`, `debug`, `info`, `warn`, `error`, `critical`,
 and `off`. When logging is enabled, missing parent directories for `file` are
 created automatically. Logs rotate at 10 MiB and retain three files.
 
-Each forum has `config.toml` with a required `display_name` string, a `personas/` directory with one or more persona subdirectories, and `USER.md`. The directory name is the stable forum ID used by `chacon --forum`; it may contain only RFC 3986 unreserved ASCII characters (letters, digits, `-`, `.`, `_`, and `~`), excluding the complete names `.` and `..`. The display name is shown in the UI and forum listings and is not subject to the ID restriction. A forum is also the unit of distribution: it can be zipped and unpacked into another workspace. Each persona is loaded from `forums/<forum>/personas/<persona>/persona.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (expanded `SYSTEM.md`, followed by expanded `USER.md`, followed by generated forum context that identifies the agent and the forum's other personas). Persona directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
+Each forum has `config.toml` with a required `display_name` string, a `personas/` directory with one or more persona subdirectories, and `FORUM.md`. The directory name is the stable forum ID used by `chacon --forum`; it may contain only RFC 3986 unreserved ASCII characters (letters, digits, `-`, `.`, `_`, and `~`), excluding the complete names `.` and `..`. The display name is shown in the UI and forum listings and is not subject to the ID restriction. A forum is also the unit of distribution: it can be zipped and unpacked into another workspace. Each persona is loaded from `forums/<forum>/personas/<persona>/persona.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt (expanded `SYSTEM.md`, followed by expanded `FORUM.md`, followed by generated forum context that identifies the agent and the forum's other personas). Persona directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
 
 Each persona directory's name is its stable ID and identifies transcript entries;
 its `display_name` is the visible `@mention` handle. Display names cannot start
@@ -58,7 +58,7 @@ file. The defaults file is optional; it cannot define `display_name`.
 
 ### Prompt templates
 
-`SYSTEM.md` and `USER.md` are expanded separately for each persona before they
+`SYSTEM.md` and `FORUM.md` are expanded separately for each persona before they
 are concatenated. Two expansion forms and one escape are recognized; everything
 else is copied unchanged:
 
@@ -103,7 +103,7 @@ Reserved names are `persona.id`, `persona.display_name`, `forum.id`, and
 by a `[prompt]` table. Expansion rejects unknown variables, malformed macros,
 missing or cyclic includes, paths outside the forum, more than 256 includes, an
 active file depth above 16, or output above 1 MiB. Each `SYSTEM.md` and
-`USER.md` expansion has its own counters.
+`FORUM.md` expansion has its own counters.
 
 The following top-level configuration fields are supported:
 
@@ -242,7 +242,7 @@ chacon --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
 forum and persona directories and required files, forum/persona TOML settings,
 effective required connection settings, persona ID and display-name validity
 and uniqueness, and complete expansion of every persona's `SYSTEM.md` and
-`USER.md`—including variables, includes, containment, cycles, and limits. A
+`FORUM.md`—including variables, includes, containment, cycles, and limits. A
 successful check prints, for example, `Forum 'stoics' is valid (3 personas).`
 and exits with status 0; a validation failure uses the normal `Failed: ...`
 diagnostic and exits with status 1.
