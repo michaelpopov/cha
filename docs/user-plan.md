@@ -3,6 +3,10 @@
 Execution plan for [`user-design.md`](user-design.md). The design states the end
 state; this states the order, and why that order and not another.
 
+This is the historical commit plan. Post-implementation review refinements are
+recorded in `user-design.md` and the source-tree READMEs rather than retrofitted
+into the completed block sequence below.
+
 ## How to use this
 
 Eight blocks, strictly sequential. **Each block leaves the tree building and the

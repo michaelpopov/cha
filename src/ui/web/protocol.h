@@ -92,7 +92,7 @@ struct SessionSnapshot {
 };
 
 struct RawCommand {
-    // Block 5 — Author reaches the transcript forwards this to text input.
+    // Stable author ID forwarded to the shared text-input path.
     std::string user;
     std::string text;
 };

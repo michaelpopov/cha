@@ -1,6 +1,5 @@
 #pragma once
 
-#include "session/workspace.h"
 #include "ui/tui/input_editor.h"
 #include "ui/tui/session_view.h"
 
@@ -21,7 +20,7 @@ public:
     UserSession(
         SessionView& view,
         SessionController& controller,
-        User user);
+        std::string author_id);
 
     bool running() const;
     void render();
@@ -44,8 +43,7 @@ private:
     SessionView& view_;
     InputEditor editor_;
     SessionController& controller_;
-    // Block 5 — Author reaches the transcript passes this ID to submissions.
-    User user_;
+    std::string author_id_;
     bool running_{true};
     bool render_needed_{false};
     std::string notice_;

@@ -3,6 +3,7 @@
 #include "session/session_catalog.h"
 #include "session/workspace.h"
 #include "support/test_session_database.h"
+#include "support/test_transcript.h"
 #include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
@@ -82,7 +83,7 @@ protected:
 };
 
 TranscriptEntry human(EntryId id, std::string text, RequestId request_id) {
-    return make_human_entry(
+    return test::human_entry(
         id, {"human", "You"}, {"guide-id", "Guide"}, std::move(text), request_id);
 }
 
@@ -372,7 +373,7 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumPersonasAre) {
         SessionJournal journal(sessions.database_path(session.id));
         journal.start_turn(
             1,
-            make_human_entry(
+            test::human_entry(
                 1, {"human", "You"}, {"other-id", "Other"}, "Question", 1));
         journal.complete_turn(
             1,

@@ -10,6 +10,7 @@
 #include "session/session_database.h"
 #include "session/workspace.h"
 #include "support/test_notifier.h"
+#include "support/test_controller.h"
 #include "support/test_session_database.h"
 
 #include <gtest/gtest.h>
@@ -363,7 +364,7 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
+        auto controller = test::from_definitions_for_testing(
             std::move(definitions),
             lobby.users,
             session.path,
@@ -407,7 +408,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
         ReasoningFormat::reasoning;
 
     TemporarySession session;
-    auto controller = SessionController::from_definitions_for_testing(
+    auto controller = test::from_definitions_for_testing(
         std::move(definitions),
         lobby.users,
         session.path,
@@ -440,7 +441,7 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
+        auto controller = test::from_definitions_for_testing(
             std::move(definitions),
             lobby.users,
             session.path,
@@ -492,7 +493,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
+        auto controller = test::from_definitions_for_testing(
             std::move(definitions),
             lobby.users,
             session.path,
@@ -570,7 +571,7 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
+        auto controller = test::from_definitions_for_testing(
             std::move(definitions), lobby.users, session.path,
             notifier());
         const SessionUpdate multicast =
@@ -626,7 +627,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
+        auto controller = test::from_definitions_for_testing(
             std::move(definitions),
             lobby.users,
             session.path,
@@ -643,7 +644,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
     ASSERT_EQ(restored.entries.size(), 4U);
     ASSERT_TRUE(restored.interrupted_turns.empty());
 
-    auto reopened = SessionController::from_definitions_for_testing(
+    auto reopened = test::from_definitions_for_testing(
         std::vector<AgentDefinition>{std::move(ismael_only)},
         lobby.users,
         session.path,

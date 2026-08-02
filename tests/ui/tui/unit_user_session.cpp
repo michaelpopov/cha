@@ -2,6 +2,7 @@
 #include "agents/completion_backend.h"
 #include "session/session_database.h"
 #include "support/test_notifier.h"
+#include "support/test_controller.h"
 #include "support/test_session_database.h"
 #include "ui/tui/input_editor.h"
 #include "ui/tui/session_view.h"
@@ -31,8 +32,8 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
-User selected_user() {
-    return {.id = "operator", .display_name = "Operator", .prompt = ""};
+std::string selected_author_id() {
+    return "operator";
 }
 
 // Removes one temporary session database when a controller test leaves scope.
@@ -221,12 +222,12 @@ void receive_when_ready(
 
 TEST(UserSession, SubmitsEditedInputThroughTheController) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -241,12 +242,12 @@ TEST(UserSession, SubmitsEditedInputThroughTheController) {
 
 TEST(UserSession, DelegatesClearAndInfoCommandsToTheController) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     enter(view, "/info");
     session.receive_terminal_input();
@@ -268,12 +269,12 @@ TEST(UserSession, DelegatesClearAndInfoCommandsToTheController) {
 
 TEST(UserSession, StopInputDrivesControllerCancellation) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -294,12 +295,12 @@ TEST(UserSession, StopInputDrivesControllerCancellation) {
 
 TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -316,12 +317,12 @@ TEST(UserSession, PreservesADraftRejectedDuringGeneration) {
 
 TEST(UserSession, ConsumesStopCommandDuringGeneration) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();
@@ -336,12 +337,12 @@ TEST(UserSession, ConsumesStopCommandDuringGeneration) {
 
 TEST(UserSession, ExitCommandStopsTheSession) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     enter(view, "/exit");
     session.receive_terminal_input();
@@ -351,12 +352,12 @@ TEST(UserSession, ExitCommandStopsTheSession) {
 
 TEST(UserSession, ClosedAgentEventQueueStopsTheSession) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
     controller->shutdown();
 
     session.receive_responses();
@@ -366,12 +367,12 @@ TEST(UserSession, ClosedAgentEventQueueStopsTheSession) {
 
 TEST(UserSession, PollReportedTerminalClosureStopsTheSession) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     session.close_terminal();
 
@@ -380,12 +381,12 @@ TEST(UserSession, PollReportedTerminalClosureStopsTheSession) {
 
 TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     session.report_terminal_failure();
     session.render_if_needed();
@@ -397,12 +398,12 @@ TEST(UserSession, TerminalFailureStopsAndRendersItsNotice) {
 
 TEST(UserSession, RendersTheGeneratingAgentByName) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         two_agents(),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     session.resize();
     session.render_if_needed();
@@ -424,12 +425,12 @@ TEST(UserSession, RendersTheGeneratingAgentByName) {
 
 TEST(UserSession, RendersAddressingWheneverTheForumHostsSeveralAgents) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         two_agents(),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     session.resize();
     session.render_if_needed();
@@ -444,12 +445,12 @@ TEST(UserSession, RendersAddressingWheneverTheForumHostsSeveralAgents) {
 
 TEST(UserSession, PreviewsTheDefaultOrLeadingMentionedInputTarget) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         two_agents(),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     session.resize();
     session.render_if_needed();
@@ -464,12 +465,12 @@ TEST(UserSession, PreviewsTheDefaultOrLeadingMentionedInputTarget) {
 TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOtherwise) {
     TemporarySessionJournal temporary;
     {
-        auto controller = SessionController::from_backends_for_testing(
+        auto controller = test::from_backends_for_testing(
             test::one_backend(std::make_unique<SessionBackend>()),
             temporary.path,
             notifier());
         FakeSessionView view;
-        UserSession session(view, *controller, selected_user());
+        UserSession session(view, *controller, selected_author_id());
         session.resize();
         session.render_if_needed();
         EXPECT_FALSE(view.rendered_show_addressing);
@@ -485,13 +486,13 @@ TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOt
     SessionRestore restored = load_session_state(temporary.path);
     restored.entries.front().addressed_to = "departed";
     restored.entries.front().addressed_to_name = "Departed";
-    auto reopened = SessionController::from_backends_for_testing(
+    auto reopened = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>()),
         temporary.path,
         notifier(),
         std::move(restored));
     FakeSessionView view;
-    UserSession session(view, *reopened, selected_user());
+    UserSession session(view, *reopened, selected_author_id());
 
     session.resize();
     session.render_if_needed();
@@ -506,12 +507,12 @@ TEST(UserSession, RendersASingleAgentForumWithoutAddressingUntilItsHistorySaysOt
 
 TEST(UserSession, ShutdownPersistsCancellationOfAnActiveTurn) {
     TemporarySessionJournal temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<SessionBackend>(true)),
         temporary.path,
         notifier());
     FakeSessionView view;
-    UserSession session(view, *controller, selected_user());
+    UserSession session(view, *controller, selected_author_id());
 
     enter(view, "Question");
     session.receive_terminal_input();

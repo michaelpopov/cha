@@ -23,6 +23,17 @@ struct EntryIdentity {
     std::string display_name;
 };
 
+// Named inputs for one human transcript entry. Author and addressee have the
+// same representation, so named fields make their roles explicit at the call
+// site.
+struct HumanEntrySpec {
+    EntryId id{};
+    EntryIdentity author;
+    EntryIdentity addressed_to;
+    std::string text;
+    std::optional<RequestId> request_id;
+};
+
 // Classifies transcript semantics independently of the label rendered to the user.
 enum class EntryKind : std::int64_t {
     human = 0,
@@ -96,12 +107,7 @@ struct CompletionHistory {
     OffrecordSpan offrecord_span;
 };
 
-TranscriptEntry make_human_entry(
-    EntryId id,
-    EntryIdentity author,
-    EntryIdentity addressed_to,
-    std::string text,
-    std::optional<RequestId> request_id = std::nullopt);
+TranscriptEntry make_human_entry(HumanEntrySpec spec);
 TranscriptEntry make_agent_entry(
     EntryId id,
     ParticipantId participant_id,

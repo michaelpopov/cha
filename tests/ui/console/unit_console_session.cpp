@@ -3,6 +3,8 @@
 #include "session/session_database.h"
 #include "support/scripted_console.h"
 #include "support/test_backends.h"
+#include "support/test_controller.h"
+#include "support/test_transcript.h"
 #include "ui/console/console_session.h"
 #include "ui/console/transcript_emitter.h"
 
@@ -105,7 +107,7 @@ public:
         WakeNotifier& notifier,
         bool wait_for_cancel,
         SessionRestore restored)
-        : controller_(SessionController::from_backends_for_testing(
+        : controller_(test::from_backends_for_testing(
             test::one_backend(
                 std::make_unique<EchoBackend>(wait_for_cancel)),
             journal.path,
@@ -117,7 +119,7 @@ public:
         TemporaryJournal& journal,
         WakeNotifier& notifier,
         std::vector<std::unique_ptr<CompletionBackend>> backends)
-        : controller_(SessionController::from_backends_for_testing(
+        : controller_(test::from_backends_for_testing(
             std::move(backends),
             journal.path,
             notifier)) {
@@ -284,7 +286,7 @@ TEST(ConsoleSession, EmitsRestoredHistoryBeforeWaiting) {
     TemporaryJournal journal;
     SessionRestore restored{
         .entries = {
-            make_human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Earlier"),
+            test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Earlier"),
             make_agent_entry(
                 2,
                 "guide",
@@ -632,7 +634,7 @@ TEST(ConsoleSession, ReportsWaitAndFlushFailures) {
     TemporaryJournal flush_journal;
     SessionRestore restored{
         .entries = {
-            make_human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Undelivered"),
+            test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Undelivered"),
         },
         .next_entry_id = 2,
     };

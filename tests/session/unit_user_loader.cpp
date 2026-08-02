@@ -152,5 +152,33 @@ TEST_F(UserLoaderTest, RejectsInvalidReservedAndDuplicateDisplayNames) {
     EXPECT_THROW((void)Workspace(root_).load_users(), std::runtime_error);
 }
 
+TEST_F(UserLoaderTest, RejectsUnicodeControlsLineBreaksAndBoundaryWhitespace) {
+    add_user("ada", "Ada");
+    const std::filesystem::path config_path =
+        root_ / "users" / "ada" / "user.toml";
+
+    std::ofstream(config_path)
+        << "display_name = \"Ada\\u0085Lovelace\"\n";
+    EXPECT_THROW((void)Workspace(root_).load_users(), std::runtime_error);
+
+    std::ofstream(config_path)
+        << "display_name = \"Ada\\u2028Lovelace\"\n";
+    EXPECT_THROW((void)Workspace(root_).load_users(), std::runtime_error);
+
+    std::ofstream(config_path)
+        << "display_name = \"\\u00a0Ada\"\n";
+    EXPECT_THROW((void)Workspace(root_).load_users(), std::runtime_error);
+
+    std::ofstream(config_path)
+        << "display_name = \"Ada\\u3000\"\n";
+    EXPECT_THROW((void)Workspace(root_).load_users(), std::runtime_error);
+
+    std::ofstream(config_path)
+        << "display_name = \"Ren\\u00e9e \\u674e\"\n";
+    const UserRoster users = Workspace(root_).load_users();
+    ASSERT_EQ(users.size(), 1U);
+    EXPECT_EQ(users.front().display_name, "Renée 李");
+}
+
 } // namespace
 } // namespace cha

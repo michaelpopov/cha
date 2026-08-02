@@ -50,13 +50,6 @@ public:
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {});
-    // Focused tests that do not exercise attribution use one stable fixture
-    // author; attribution tests pass an explicit roster through the overload.
-    [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
-        std::vector<AgentDefinition> definitions,
-        std::filesystem::path database_path,
-        WakeNotifier& notifier,
-        SessionRestore restored = {});
     // Test-only construction and activation fault injection. These seams live
     // here because the otherwise private controller owns both dependencies.
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
@@ -66,13 +59,6 @@ public:
         WakeNotifier& notifier,
         SessionRestore restored = {},
         ActivationHook before_activation = {});
-    [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
-        std::vector<std::unique_ptr<CompletionBackend>> backends,
-        std::filesystem::path database_path,
-        WakeNotifier& notifier,
-        SessionRestore restored = {},
-        ActivationHook before_activation = {});
-
     ~SessionController();
     SessionController(const SessionController&) = delete;
     SessionController& operator=(const SessionController&) = delete;
@@ -154,8 +140,11 @@ private:
     void initialize(SessionRestore restored);
     bool busy() const noexcept;
     SessionUpdate busy_notice() const;
-    void start_batch(
+    [[nodiscard]] std::optional<EntryIdentity> resolve_author(
         std::string_view author_id,
+        SessionUpdate& update) const;
+    void start_batch(
+        EntryIdentity author,
         std::string text,
         std::vector<PersonaInfo> targets,
         SharedCompletionHistory history,

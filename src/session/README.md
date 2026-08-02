@@ -115,8 +115,12 @@ sequenceDiagram
 
     Note over UI,CC: Terminal create and open convenience
     UI->>WS: create_session forum, label
-    WS->>WS: create_stored_session
-    WS->>WS: open_session with assigned ID
+    WS->>WS: load forum, roster, and definitions once
+    WS->>SC: create label
+    WS->>SC: open_database_path assigned ID
+    WS->>SL: acquire lease
+    WS->>DB: load_session_state
+    WS->>CC: from_definitions with the loaded roster
     WS-->>UI: CreatedSession with controller and assigned id
 
     Note over UI,CC: Opening a session
@@ -143,16 +147,12 @@ nor constructs a controller or provider. Web callers create and open in
 separate operations, so an open failure leaves the successfully stored session
 available for a later ordinary open.
 
-`Workspace::create_session()` is the terminal convenience operation. It calls
-`create_stored_session()`, then passes the assigned ID through the ordinary
-`open_session()` path described below, and returns the controller with that ID.
-This deliberately validates and parses the forum twice: create-only enumerates
-personas and loads their configuration and prompt files before publication,
-while the ordinary open repeats `load_forum()` and `load_agent_definitions()`
-after revalidating the stored identity. The duplicated parsing is an accepted
-startup cost for a handful of small files and avoids coupling the two operations
-through prevalidated state. Terminal creation deliberately replaces the former
-single `Session created` log with `Session stored` followed by `Session opened`.
+`Workspace::create_session()` is the terminal convenience operation. It loads
+and validates the forum, roster, and definitions once, publishes the stored
+session, revalidates that database's identity, and constructs the controller
+from the values already loaded. The returned controller's roster is therefore
+the exact roster used to assemble its prompts. Terminal creation logs `Session
+stored` followed by `Session opened`.
 
 Listing is tolerant: a file that fails validation still appears, with its error
 attached, so the selector can show it instead of hiding a broken session.

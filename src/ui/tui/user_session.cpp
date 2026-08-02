@@ -13,10 +13,10 @@ namespace cha {
 UserSession::UserSession(
     SessionView& view,
     SessionController& controller,
-    User user)
+    std::string author_id)
   : view_(view),
     controller_(controller),
-    user_(std::move(user)) {
+    author_id_(std::move(author_id)) {
 }
 
 bool UserSession::running() const {
@@ -155,7 +155,7 @@ void UserSession::submit_input() {
     }
 
     const std::string input = editor_.value();
-    apply_update(handle_text_input(controller_, user_.id, input));
+    apply_update(handle_text_input(controller_, author_id_, input));
 }
 
 void UserSession::request_stop() {

@@ -5,6 +5,7 @@
 #include "session/session_database.h"
 #include "session/workspace.h"
 #include "support/test_backends.h"
+#include "support/test_controller.h"
 #include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
@@ -96,7 +97,7 @@ ControllerResult run_controller(
     try {
         test::TestNotifier notifier;
         start.arrive_and_wait();
-        auto controller = SessionController::from_backends_for_testing(
+        auto controller = test::from_backends_for_testing(
             test::one_backend(std::make_unique<DeterministicBackend>(
                 std::move(id), std::move(name), std::move(answer))),
             database_path,
@@ -213,7 +214,7 @@ TEST(ConcurrentControllers, ConstructSessionLocalCompletionClientsConcurrently) 
             definition.config.mode = Mode::net;
             definition.config.model = "configured-model";
             start.arrive_and_wait();
-            auto controller = SessionController::from_definitions_for_testing(
+            auto controller = test::from_definitions_for_testing(
                 {std::move(definition)}, path, notifier);
             controller->shutdown();
         } catch (...) {

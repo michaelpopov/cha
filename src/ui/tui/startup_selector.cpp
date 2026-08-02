@@ -35,27 +35,16 @@ StartupSelector::StartupSelector(Terminal& terminal) : terminal_(terminal) {
     terminal_.configure_selector();
 }
 
-std::vector<std::string> StartupSelector::user_display_names(
-    const UserRoster& users) {
+std::optional<User> StartupSelector::select_user(const UserRoster& users) {
     std::vector<std::string> options;
     options.reserve(users.size());
     for (const User& user : users) {
         options.push_back(user.display_name);
     }
-    return options;
-}
-
-std::optional<User> StartupSelector::selected_user(
-    const UserRoster& users,
-    std::optional<std::size_t> selection) {
+    const std::optional<std::size_t> selection =
+        select("Select a user", options);
     assert(!selection || *selection < users.size());
     return selection ? std::optional<User>(users[*selection]) : std::nullopt;
-}
-
-std::optional<User> StartupSelector::select_user(const UserRoster& users) {
-    return selected_user(
-        users,
-        select("Select a user", user_display_names(users)));
 }
 
 std::optional<std::string> StartupSelector::select_forum(const std::vector<Forum>& forums) {

@@ -35,7 +35,7 @@ flowchart TD
     g -->|"existing id"| j["Workspace.open_session"]
     i -->|"CreatedSession.controller"| k["SessionController"]
     j --> k
-    k --> l["run_user with terminal, controller,<br/>and selected User"]
+    k --> l["run_user with terminal, controller,<br/>and selected user ID"]
     l --> m["return 0"]
 ```
 

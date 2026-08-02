@@ -44,8 +44,9 @@ Entries are built through factories — `make_human_entry`, `make_agent_entry`,
 `make_notice_entry`, `make_error_entry`. `make_notice_entry` and
 `make_error_entry` keep their fixed `"System"` and `"Error"` display names
 out of callers.
-`make_human_entry` takes distinct `EntryIdentity` author and addressee values,
-preserving the human's stored identity separately from the agent they addressed.
+`make_human_entry` takes one `HumanEntrySpec`; designated `author` and
+`addressed_to` fields preserve the human's stored identity separately from the
+agent they addressed without relying on positional arguments of the same type.
 The author is a validated workspace user ID and display name; the clean `text`
 is stored and rendered unchanged. Model-context projection, outside this layer,
 adds `from <display name>:` only when it makes an ordinary `user` message.

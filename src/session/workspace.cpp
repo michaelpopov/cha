@@ -14,7 +14,6 @@
 #include <toml++/toml.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <fstream>
 #include <optional>
 #include <sstream>
@@ -51,6 +50,19 @@ std::vector<AgentDefinition> load_definitions(
         base_config);
 }
 
+void validate_forum_personas(
+    const std::vector<AgentDefinition>& definitions) {
+    std::vector<PersonaInfo> personas;
+    personas.reserve(definitions.size());
+    for (const AgentDefinition& definition : definitions) {
+        personas.push_back({
+            .id = definition.config.id,
+            .name = definition.config.name,
+        });
+    }
+    (void)ForumPersonas(std::move(personas));
+}
+
 SessionCatalog session_catalog(
     const Workspace& workspace,
     const std::string& forum_name) {
@@ -64,6 +76,13 @@ SessionSummary summarize(const Session& stored) {
         .label = stored.label,
         .error = stored.error,
     };
+}
+
+Session store_session(const Forum& forum, std::string label) {
+    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
+    Session stored = catalog.create(std::move(label));
+    log_info("Session stored");
+    return stored;
 }
 
 enum class SubdirectoryNameKind { path_component, url_identifier };
@@ -138,6 +157,59 @@ bool is_reserved_participant_name(std::string_view name) {
         [&folded](std::string_view reserved) { return folded == reserved; });
 }
 
+char32_t next_utf8_code_point(std::string_view text, std::size_t& offset) {
+    const auto byte = [&text](std::size_t index) {
+        return static_cast<unsigned char>(text[index]);
+    };
+    const unsigned char first = byte(offset++);
+    if (first < 0x80) return first;
+
+    std::size_t continuation_count{};
+    char32_t code_point{};
+    if ((first & 0xe0) == 0xc0) {
+        continuation_count = 1;
+        code_point = first & 0x1f;
+    } else if ((first & 0xf0) == 0xe0) {
+        continuation_count = 2;
+        code_point = first & 0x0f;
+    } else if ((first & 0xf8) == 0xf0) {
+        continuation_count = 3;
+        code_point = first & 0x07;
+    } else {
+        throw std::runtime_error("User display name is not valid UTF-8");
+    }
+    if (continuation_count > text.size() - offset) {
+        throw std::runtime_error("User display name is not valid UTF-8");
+    }
+    for (std::size_t index = 0; index < continuation_count; ++index) {
+        const unsigned char continuation = byte(offset++);
+        if ((continuation & 0xc0) != 0x80) {
+            throw std::runtime_error("User display name is not valid UTF-8");
+        }
+        code_point = (code_point << 6) | (continuation & 0x3f);
+    }
+    return code_point;
+}
+
+bool is_unicode_whitespace(char32_t code_point) {
+    return (code_point >= 0x0009 && code_point <= 0x000d)
+        || code_point == 0x0020
+        || code_point == 0x0085
+        || code_point == 0x00a0
+        || code_point == 0x1680
+        || (code_point >= 0x2000 && code_point <= 0x200a)
+        || code_point == 0x2028
+        || code_point == 0x2029
+        || code_point == 0x202f
+        || code_point == 0x205f
+        || code_point == 0x3000;
+}
+
+bool is_unicode_control(char32_t code_point) {
+    return code_point <= 0x001f
+        || (code_point >= 0x007f && code_point <= 0x009f);
+}
+
 void validate_user_id(std::string_view id, const std::filesystem::path& directory) {
     if (!is_user_id(id)) {
         throw std::runtime_error(
@@ -159,18 +231,27 @@ void validate_user_display_name(
             "User config '" + utf8_path(path)
             + "' requires a non-empty string 'display_name'");
     }
-    if (std::isspace(static_cast<unsigned char>(name.front()))
-        || std::isspace(static_cast<unsigned char>(name.back()))) {
-        throw std::runtime_error("User display name cannot start or end with whitespace");
-    }
     if (name.front() == '@' || name.front() == '/') {
         throw std::runtime_error("User display name cannot start with '@' or '/'");
     }
-    for (const char value : name) {
-        const unsigned char character = static_cast<unsigned char>(value);
-        if (character < 0x20 || character == 0x7f) {
-            throw std::runtime_error("User display name cannot contain control characters");
+    char32_t first_code_point{};
+    char32_t last_code_point{};
+    std::size_t offset{};
+    while (offset < name.size()) {
+        const bool first = offset == 0;
+        const char32_t code_point = next_utf8_code_point(name, offset);
+        if (first) first_code_point = code_point;
+        last_code_point = code_point;
+        if (is_unicode_control(code_point)
+            || code_point == 0x2028
+            || code_point == 0x2029) {
+            throw std::runtime_error(
+                "User display name cannot contain control characters or line breaks");
         }
+    }
+    if (is_unicode_whitespace(first_code_point)
+        || is_unicode_whitespace(last_code_point)) {
+        throw std::runtime_error("User display name cannot start or end with whitespace");
     }
     if (is_reserved_participant_name(name)) {
         throw std::runtime_error(
@@ -358,16 +439,7 @@ Forum Workspace::check_forum(const std::string& name) const {
     const UserRoster users = load_users();
     const std::vector<AgentDefinition> definitions = load_definitions(
         forum, users, forum.directory / "personas" / "persona_defaults.toml");
-
-    std::vector<PersonaInfo> personas;
-    personas.reserve(definitions.size());
-    for (const AgentDefinition& definition : definitions) {
-        personas.push_back({
-            .id = definition.config.id,
-            .name = definition.config.name,
-        });
-    }
-    (void)ForumPersonas(std::move(personas));
+    validate_forum_personas(definitions);
     return forum;
 }
 
@@ -407,22 +479,38 @@ SessionSummary Workspace::create_stored_session(
     const std::string& forum_name,
     std::string label) const {
     const Forum forum = check_forum(forum_name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    const Session session = catalog.create(std::move(label));
-    log_info("Session stored");
-    return summarize(session);
+    return summarize(store_session(forum, std::move(label)));
 }
 
 CreatedSession Workspace::create_session(
     const std::string& forum_name,
     std::string label,
     WakeNotifier& notifier) const {
-    const SessionSummary created = create_stored_session(
-        forum_name,
-        std::move(label));
+    Forum forum = load_forum(forum_name);
+    UserRoster users = load_users();
+    std::vector<AgentDefinition> definitions = load_definitions(
+        forum, users, forum.directory / "personas" / "persona_defaults.toml");
+    validate_forum_personas(definitions);
+
+    const Session stored = store_session(forum, std::move(label));
+
+    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
+    const std::filesystem::path database_path =
+        catalog.open_database_path(stored.id);
+    SessionLease lease = SessionLease::acquire(database_path);
+    SessionRestore restored = load_session_state(database_path);
+    std::unique_ptr<SessionController> controller =
+        SessionController::from_definitions(
+            std::move(definitions),
+            std::move(users),
+            database_path,
+            std::move(lease),
+            notifier,
+            std::move(restored));
+    log_info("Session opened");
     return {
-        .controller = open_session(forum_name, created.id, notifier),
-        .id = created.id,
+        .controller = std::move(controller),
+        .id = stored.id,
     };
 }
 

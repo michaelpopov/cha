@@ -1,6 +1,7 @@
 #include "agents/agent_registry.h"
 #include "support/test_backends.h"
 #include "support/test_notifier.h"
+#include "support/test_transcript.h"
 
 #include <gtest/gtest.h>
 
@@ -488,7 +489,7 @@ TEST(AgentRegistry, CancellationAfterGateOpenSkipsBackendPreparation) {
 
 TEST(AgentRegistry, PreservesCapturedHistoryForEveryExecution) {
     Transcript transcript;
-    transcript.add_entry(make_human_entry(
+    transcript.add_entry(test::human_entry(
         1, {"human", "You"}, {"one-id", "One"}, "Earlier question", 1));
     ThreadPool pool(2);
     auto one = std::make_unique<RecordingBackend>("one-id", "One", "");

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "session/workspace.h"
+#include <string>
 
 namespace cha {
 
@@ -13,6 +13,6 @@ void run_user(
     Terminal& terminal,
     SessionController& controller,
     UvEventLoop& event_loop,
-    User user);
+    std::string author_id);
 
 } // namespace cha

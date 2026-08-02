@@ -341,7 +341,6 @@ if(BUILD_TESTING)
             tests/ui/tui/unit_render_plan.cpp
             tests/ui/tui/unit_screen_layout.cpp
             tests/ui/tui/unit_input_editor.cpp
-            tests/ui/tui/unit_startup_selector.cpp
             tests/ui/tui/unit_user_session.cpp
         )
     endif()

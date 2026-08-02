@@ -331,7 +331,7 @@ TEST(SessionRoutes, EventsDeliverAppendWithSequenceOverHttp) {
     const auto input = server.client().Post(
         "/s/lobby/one/api/v1/input",
         // SessionRoutes checks wire shape only; roster membership belongs to
-        // the controller in Block 5.
+        // the controller.
         R"({"user":"not-a-user","text":"append"})",
         "application/json");
     ASSERT_TRUE(input);

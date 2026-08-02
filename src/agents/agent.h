@@ -20,8 +20,9 @@ inline constexpr std::string_view reserved_participant_names[] = {
     "user", "system", "error", "human", "assistant", "agent", "you",
 };
 
-// A persona loaded and ready to run: its Config plus the effective system prompt, which combines
-// the persona prompt, the forum's prompt extension, and generated forum context.
+// A persona loaded and ready to run: its Config plus the effective system
+// prompt, which combines persona instructions, forum settings, the user
+// roster, and generated forum context.
 struct AgentDefinition {
     Config config;
     std::string system_prompt;

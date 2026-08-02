@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -40,10 +41,14 @@ int main_internal() {
     cha::Terminal terminal;
     cha::StartupSelector selector(terminal);
 
-    const cha::UserRoster users = workspace.load_users();
-    const auto selected_user = selector.select_user(users);
-    if (!selected_user) {
-        throw std::runtime_error("User selection cancelled");
+    std::string selected_user_id;
+    {
+        const cha::UserRoster users = workspace.load_users();
+        const auto selected_user = selector.select_user(users);
+        if (!selected_user) {
+            throw std::runtime_error("User selection cancelled");
+        }
+        selected_user_id = selected_user->id;
     }
 
     std::vector<cha::Forum> forums;
@@ -84,7 +89,11 @@ int main_internal() {
             event_loop);
     }
 
-    cha::run_user(terminal, *controller, event_loop, *selected_user);
+    cha::run_user(
+        terminal,
+        *controller,
+        event_loop,
+        std::move(selected_user_id));
     cha::log_info("Terminal application stopped");
     return 0;
 }

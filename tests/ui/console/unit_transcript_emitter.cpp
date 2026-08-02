@@ -1,4 +1,5 @@
 #include "ui/console/transcript_emitter.h"
+#include "support/test_transcript.h"
 
 #include <gtest/gtest.h>
 
@@ -95,7 +96,7 @@ TEST(TranscriptEmitter, WritesCompleteEntriesAndNeverRepeatsCommittedState) {
     TranscriptEmitter emitter(surface, false);
     const TestTranscript transcript{
         .entries = {
-            make_human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Question"),
+            test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Question"),
             complete(2, "Answer"),
         },
         .revision = 2,
@@ -163,7 +164,7 @@ TEST(TranscriptEmitter, PrintsRestoredHumansThenSkipsLiveOnesWhenEchoOff) {
 
     const TestTranscript restored{
         .entries = {
-            make_human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Earlier"),
+            test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Earlier"),
             complete(2, "Earlier answer"),
         },
         .revision = 2,
@@ -177,9 +178,9 @@ TEST(TranscriptEmitter, PrintsRestoredHumansThenSkipsLiveOnesWhenEchoOff) {
 
     const TestTranscript live{
         .entries = {
-            make_human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Earlier"),
+            test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Earlier"),
             complete(2, "Earlier answer"),
-            make_human_entry(3, {"human", "You"}, {"guide", "Guide"}, "Live prompt"),
+            test::human_entry(3, {"human", "You"}, {"guide", "Guide"}, "Live prompt"),
             complete(4, "Live answer"),
         },
         .revision = 4,

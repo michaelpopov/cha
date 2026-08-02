@@ -6,6 +6,7 @@
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
+#include "support/test_controller.h"
 #include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
@@ -1473,7 +1474,7 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     SessionRestore restore;
     restore.entries.push_back(make_notice_entry(1, "before"));
     restore.next_entry_id = 2;
-    auto adapted = adapt_session_controller(SessionController::from_definitions_for_testing(
+    auto adapted = adapt_session_controller(test::from_definitions_for_testing(
         {test_definition()}, temporary.path, notifier, std::move(restore)));
 
     const SessionSnapshot before = adapted->snapshot();

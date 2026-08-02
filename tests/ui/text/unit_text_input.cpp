@@ -3,6 +3,7 @@
 #include "ui/text/text_input.h"
 #include "session/session_database.h"
 #include "support/test_backends.h"
+#include "support/test_controller.h"
 #include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
@@ -108,7 +109,7 @@ private:
 
 TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     TemporaryTextSession temporary;
-    auto controller = SessionController::from_definitions_for_testing(
+    auto controller = test::from_definitions_for_testing(
         std::vector<AgentDefinition>{definition()},
         temporary.path,
         notifier());
@@ -178,7 +179,7 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
 
 TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
     TemporaryTextSession temporary;
-    auto controller = SessionController::from_definitions_for_testing(
+    auto controller = test::from_definitions_for_testing(
         std::vector<AgentDefinition>{
             definition(),
             definition("ismael-id", "Ismael"),
@@ -199,7 +200,7 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
 
 TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
     TemporaryTextSession ordinary_temporary;
-    auto ordinary_controller = SessionController::from_backends_for_testing(
+    auto ordinary_controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<BlockingBackend>()),
         UserRoster{{.id = "engineer", .display_name = "Engineer"}},
         ordinary_temporary.path,
@@ -218,7 +219,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
     ordinary_controller->shutdown();
 
     TemporaryTextSession multicast_temporary;
-    auto multicast_controller = SessionController::from_backends_for_testing(
+    auto multicast_controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<BlockingBackend>()),
         UserRoster{{.id = "engineer", .display_name = "Engineer"}},
         multicast_temporary.path,
@@ -239,7 +240,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
 
 TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
     TemporaryTextSession temporary;
-    auto controller = SessionController::from_definitions_for_testing(
+    auto controller = test::from_definitions_for_testing(
         std::vector<AgentDefinition>{definition()},
         temporary.path,
         notifier());
@@ -260,7 +261,7 @@ TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
 
 TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
     TemporaryTextSession temporary;
-    auto controller = SessionController::from_backends_for_testing(
+    auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<BlockingBackend>()),
         temporary.path,
         notifier());

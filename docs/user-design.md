@@ -342,9 +342,8 @@ dependency.
 A run's `target` is a persona and its `author` is a user, and those are the two
 things the [name collision](#name-collisions) rules exist to keep apart;
 collapsing them into one type to save a declaration would erase the distinction
-in exactly the place it matters most. The addressee is converted explicitly at
-the call site — `make_human_entry(id, run.author, {run.target.id,
-run.target.name}, …)`.
+in exactly the place it matters most. The addressee is converted explicitly in
+the named `HumanEntrySpec::addressed_to` field at the call site.
 
 The controller must hold the author on the run in any case, independently of
 the prefix. `make_human_entry()` is called from `activate_current_run()`, which
@@ -441,7 +440,7 @@ name per entry is the established denormalization for agents: renaming a user
 later leaves historical entries under the old name, which is correct — that is
 what was shown at the time.
 
-**Pass the two identities as structs, not as four strings.** The signature
+**Pass the two identities through named fields, not as positional strings.** The signature
 already carries `addressed_to` and `addressed_to_name`, and `ParticipantId` is
 an alias for `std::string` (`transcript/transcript.h:15`), so adding the author
 naively yields four adjacent same-typed parameters that the compiler cannot tell
@@ -452,9 +451,10 @@ apart:
 make_human_entry(id, author_id, author_name, addressed_to, addressed_to_name, text, …);
 ```
 
-Grouping each pair makes a transposition a type error instead of a transcript
-that attributes every human turn to the persona it was addressed to — a bug
-that would show up only on reread, long after the session:
+Grouping each pair keeps each ID next to its display name. A containing spec
+lets the call site designate `author` and `addressed_to` instead of relying on
+the order of two same-typed identities — a bug that would otherwise show up
+only on reread, long after the session:
 
 ```cpp
 struct EntryIdentity {
@@ -462,12 +462,15 @@ struct EntryIdentity {
     std::string display_name;
 };
 
-TranscriptEntry make_human_entry(
-    EntryId id,
-    EntryIdentity author,
-    EntryIdentity addressed_to,
-    std::string text,
-    std::optional<RequestId> request_id = std::nullopt);
+struct HumanEntrySpec {
+    EntryId id{};
+    EntryIdentity author;
+    EntryIdentity addressed_to;
+    std::string text;
+    std::optional<RequestId> request_id;
+};
+
+TranscriptEntry make_human_entry(HumanEntrySpec spec);
 ```
 
 `make_agent_entry()` has the same shape and may adopt `EntryIdentity` for its
@@ -576,10 +579,12 @@ Commands that start no batch — `/clear`, `/hide*`, `/info`, `/agents`, `/stop`
 `/exit`, `/@Name` — are untouched, since nothing they do is attributed to
 anyone.
 
-`start_batch()` resolves `author_id` against the roster the session opened with
-— the single authorization point for every front end. An ID that is not in it
-starts no batch and returns `Unknown user ID '<id>'` as a
-`SessionUpdate::notice`, the same shape as an unknown multicast target.
+The private `resolve_author()` helper resolves `author_id` against the roster
+the session opened with. Both ordinary and multicast paths call it before
+copying completion history, so an unknown ID is cheap: it starts no batch and
+returns `Unknown user ID '<id>'` as a `SessionUpdate::notice`, the same shape as
+an unknown multicast target. The policy still has one implementation for every
+front end.
 
 Otherwise the controller takes the display name from the roster and **stores
 both on every `RunSpec` of the batch** — it does not hand them down the call
@@ -622,9 +627,9 @@ Three consequences follow, and they are why this shape was chosen:
 - The rule "an author must be in this session's roster" is enforced in one
   place for every front end.
 
-The cost is borne by the TUI, which carries its selected `User` down to the
-submission point through `run_user()` and `UserSession` rather than handing it
-to `Workspace` once at startup.
+The TUI carries only the selected user's stable ID down to the submission point
+through `run_user()` and `UserSession`; prompt text and display name stay out of
+the live UI state.
 
 ### `cha` (TUI)
 
@@ -645,7 +650,7 @@ sequenceDiagram
     S-->>M: SessionSummary or New session
     M->>W: create_session / open_session
     W-->>M: SessionController
-    Note over M: the selected User is retained by the TUI<br/>and passed with every submitted prompt
+    Note over M: the selected user's ID is retained by the TUI<br/>and passed with every submitted prompt
 ```
 
 `StartupSelector::select_user()` reuses the existing private `select()` helper,
@@ -710,10 +715,9 @@ check** beyond the presence one above.
 
 The check that matters happens where it is free. The controller must resolve
 the author against its roster anyway, to get the display name for
-`make_human_entry()`; a resolution that can fail *is* the check. It lives in
-`start_batch()` — the one function both `submit_prompt()`
-(`session/session_controller.cpp:291`) and `start_resolved_multicast()`
-(`:636`) funnel through — and an unrecognised ID produces a notice, exactly as
+`make_human_entry()`; a resolution that can fail *is* the check. The ordinary
+and multicast paths use the same private `resolve_author()` helper before
+capturing history, and an unrecognised ID produces a notice, exactly as
 `"Unknown multicast target ID"` does today:
 
 ```
@@ -793,8 +797,9 @@ Recorded so they are not rediscovered as bugs.
 - **Any client can claim any user ID.** `chaweb` has no authentication, here or
   anywhere else. The user field is an attribution, not a credential.
 - **Display names may contain Markdown.** A user named `# Engineer` renders
-  oddly under the `### <Name>` roster heading. Only control characters are
-  excluded, so this is the author's problem to avoid.
+  oddly under the `### <Name>` roster heading. Controls, line breaks, and
+  boundary whitespace are excluded, but Markdown punctuation is the author's
+  problem to avoid.
 
 ## Change surface
 
@@ -802,15 +807,15 @@ Recorded so they are not rediscovered as bugs.
 | --- | --- |
 | `agents/user.h` | New. `User` and `UserRoster` — in `agents/`, since `load_agent_definitions()` takes the roster and `agents/` may not depend on `session/`. No new exception type. |
 | `session/workspace.h/.cpp` | `load_users()` and nothing else. It reads every subdirectory of `users/`, requires `user.toml`, treats a missing `USER.md` as empty, and raises on a missing or empty `users/` — construction is unchanged. ID, display-name, and uniqueness validation; roster passed to definition loading. No user parameter on `open_session()` / `create_session()`. |
-| `session/session_controller.h/.cpp` | Hold the session's `UserRoster`; `submit_prompt()`, `start_multicast()`, and `start_multicast_by_ids()` gain `author_id` (with the private `start_resolved_multicast()`, `start_multicast_from_ids()`, and `start_batch()` following). `start_batch()` resolves the author against the roster — the one authorization point for every front end, answering an unknown ID with a notice — and stores it on every `RunSpec` the batch creates, so it survives to each deferred `activate_current_run()` and reaches `make_human_entry()`. `prompt_text` is left clean. |
-| `transcript/transcript.h/.cpp` | Delete both human constants; add `EntryIdentity`; `make_human_entry()` takes the author and the addressee as two structs rather than four adjacent strings. |
+| `session/session_controller.h/.cpp` | Hold the session's `UserRoster`; `submit_prompt()`, `start_multicast()`, and `start_multicast_by_ids()` gain `author_id` (with the private multicast and batch helpers following). One private `resolve_author()` implements roster resolution before either path copies history, answering an unknown ID with a notice; the resolved identity is stored on every `RunSpec`, so it survives deferred activation and reaches `make_human_entry()`. `prompt_text` is left clean. |
+| `transcript/transcript.h/.cpp` | Delete both human constants; add `EntryIdentity` and named `HumanEntrySpec`; production call sites designate `author` and `addressed_to` rather than passing two same-typed positional identities. |
 | `agents/agent.h/.cpp` | `UserRoster` parameter; roster section third; roster↔persona collision check in `load_agent_definitions()`; `FORUM.md` in place of forum `USER.md`; `EntryIdentity author` on `RunSpec`; `from <Name>:` prefix on plain human messages at **both** sites — replayed entries (`:263`) and the live prompt (`:283`), producing identical bytes; `reserved_participant_names` in place of `human_speaker_name`, retargeting `validate_persona_name()`; JSONL speaker from `display_name`; roster/prefix sentence in the generated context. |
 | `ui/text/text_input.h/.cpp` | `handle_text_input()` gains `author_id` and forwards it to the three batch-starting controller calls. This is the one funnel all three front ends already share, so it is where the author enters the session layer; every other command is untouched. |
 | `ui/render/transcript_writer.cpp` | Human label from `entry.display_name`. |
 | `ui/tui/startup_selector.h/.cpp` | `select_user()`. |
-| `ui/tui/user.h/.cpp`, `user_session.*` | Carry the selected `User` to the submission point. |
+| `ui/tui/user.h/.cpp`, `user_session.*` | Carry only the selected user's stable ID to the submission point. |
 | `ui/console/console_startup.h/.cpp` | `--user` and required-user validation. |
-| `apps/tui_main.cpp` | User screen first; retain the `User` for submission. |
+| `apps/tui_main.cpp` | User screen first; retain the selected ID for submission. |
 | `apps/console_main.cpp` | Resolve `--user` by lookup in `load_users()`; an unknown ID reports the bad value and exits 2, like any other rejected flag value. |
 | `ui/web/json.h/.cpp` | `parse_input_command()` parses `user` and rejects it when omitted or empty. `session_routes.cpp` is otherwise untouched: no roster, no `Workspace`, no semantic check. |
 | `ui/web/lobby_routes.cpp` | `GET /api/v1/users`. |
@@ -859,13 +864,14 @@ migration fixes it to "You address the user" rather than carrying it across.
 | `tests/ui/text/unit_text_input.cpp` | The author reaches `submit_prompt()` and both multicast forms; commands that start no batch are unaffected by it. |
 | `tests/session/unit_session_controller.cpp` | Each batch-starting call stamps the given author; an unknown author yields a notice and starts no batch — the single authorization point, exercised for both the ordinary and the multicast path; a multicast attributes every one of its N entries to that author across deferred activations; the stored entry text carries no prefix. |
 | `tests/ui/render/*` | `[Engineer]` / `[Engineer → Sage]` labels. |
-| `tests/ui/tui/*` | `select_user()` screen and cancellation. |
+| `tests/ui/tui/*` | The selected author ID reaches submission through `UserSession`. |
 | `tests/integration/console_process_test.cpp` | End-to-end run with `--user`; `--check` without one, including a reported collision. |
 | `tests/ui/web/unit_session_routes.cpp` | `user` accepted and attribution reaches the transcript; omitted and empty each rejected with 400; an out-of-roster ID is *not* rejected by the route. |
 | `tests/ui/web/unit_lobby_routes.cpp` | `GET /api/v1/users`. |
 
 New: `tests/session/unit_user_loader.cpp` for `user.toml` field validation,
-`USER.md` reading including its absence, the ID and display-name rules, and
+`USER.md` reading including its absence, the ID and display-name rules
+(including Unicode controls, line separators, and boundary whitespace), and
 workspace-wide name uniqueness, mirroring `unit_config_loader.cpp`.
 
 Seven existing test files write a forum `USER.md` by hand and must move to

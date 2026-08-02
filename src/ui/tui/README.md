@@ -165,7 +165,6 @@ message never lands on a screen still in curses mode.
 | `tests/ui/tui/unit_render_plan.cpp` | Incremental redraw decisions. |
 | `tests/ui/tui/unit_screen_layout.cpp` | Viewport scrolling, wrapping, and row layout. |
 | `tests/ui/tui/unit_input_editor.cpp` | Editing, UTF-8 conversion, and continuation input. |
-| `tests/ui/tui/unit_startup_selector.cpp` | User roster display-name selection mapping. |
 | `tests/ui/render/unit_transcript_writer.cpp` | Shared labels and styling through a recording `TranscriptSurface`. |
 
 Curses itself is never required by the unit tests — that is the point of
