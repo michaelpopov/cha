@@ -46,6 +46,9 @@ Entries are built through factories — `make_human_entry`, `make_agent_entry`,
 out of callers.
 `make_human_entry` takes distinct `EntryIdentity` author and addressee values,
 preserving the human's stored identity separately from the agent they addressed.
+The author is a validated workspace user ID and display name; the clean `text`
+is stored and rendered unchanged. Model-context projection, outside this layer,
+adds `from <display name>:` only when it makes an ordinary `user` message.
 `make_hide_on_marker`, `make_hide_marker`, and `make_hide_off_marker` build the
 off-record markers the same way: notices with empty text whose display names
 are `"hide-on"`, `"hide"`, and `"hide-off"`.

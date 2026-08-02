@@ -21,9 +21,12 @@ flowchart TD
     config --> log["initialize diagnostic logging"]
     log --> c["construct Workspace<br/>requires app.toml + forums/"]
     c --> d["construct Terminal<br/>process-wide curses"]
-    d --> e["StartupSelector.select_forum"]
+    d --> users["Workspace.load_users"]
+    users --> e["StartupSelector.select_user"]
     e -->|"cancelled"| x["throw, exit 1"]
-    e --> f["Workspace.sessions of forum"]
+    e --> forum["StartupSelector.select_forum"]
+    forum -->|"cancelled"| x
+    forum --> f["Workspace.sessions of forum"]
     f --> g["StartupSelector.select_session"]
     g -->|"cancelled"| x
     g -->|"row carries an error"| x
@@ -32,7 +35,7 @@ flowchart TD
     g -->|"existing id"| j["Workspace.open_session"]
     i -->|"CreatedSession.controller"| k["SessionController"]
     j --> k
-    k --> l["run_user with terminal and controller"]
+    k --> l["run_user with terminal, controller,<br/>and selected User"]
     l --> m["return 0"]
 ```
 
@@ -54,8 +57,10 @@ why it stopped.
 
 The line-oriented application parses forum/session selection and handles
 forum/session listings or `--forum ID --check` before constructing any console
-or session object. A forum check loads and validates the static definitions
-through `Workspace`, then exits without provider initialization.
+or session object. A chat run requires `--user ID`, which it resolves against
+`Workspace::load_users()`; listings and `--check` reject that flag. A forum
+check loads and validates the static definitions through `Workspace`, then exits
+without provider initialization.
 
 For a chat run, the entry point constructs a `SystemConsole` whose libuv loop
 handles SIGINT and stdin, opens the controller through `Workspace`, and

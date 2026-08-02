@@ -106,7 +106,8 @@ sequenceDiagram
     Note over UI,DB: Creating a stored session
     UI->>WS: create_stored_session forum, label
     WS->>WS: load_forum, enumerate personas/ directories
-    WS->>AG: load_agent_definitions
+    WS->>WS: load_users
+    WS->>AG: load_agent_definitions(personas, forum, roster)
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
     SC->>DB: build hidden temporary sibling, then link into place
@@ -125,7 +126,8 @@ sequenceDiagram
     WS->>SL: acquire `<database>.cha-lock` without waiting
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
-    WS->>AG: load_agent_definitions
+    WS->>WS: load_users
+    WS->>AG: load_agent_definitions(personas, forum, roster)
     WS->>CC: from_definitions with restore
     CC->>CC: repair interrupted turns, then install entries
     CC-->>UI: controller

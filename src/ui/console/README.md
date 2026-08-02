@@ -15,8 +15,9 @@ chacon --forum FORUM --check
 chacon --user USER --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
 ```
 
-`--check` fully loads the forum configuration and expanded prompts, validates
-effective connection settings plus persona identity and uniqueness, then exits
+`--check` fully loads the forum configuration, validated user roster, and
+expanded prompts, validates effective connection settings plus persona identity,
+user/persona collision rules, and uniqueness, then exits
 without inspecting stored sessions, creating a session, resolving
 `api_key_env`, initializing completion providers, discovering a model, or
 making network requests. It validates prompt-template includes, not arbitrary
@@ -98,8 +99,8 @@ entries, so they are emitted once each, in the order the commands were given,
 and nothing already written is ever retracted when the span changes.
 
 On an interactive TTY, live human prompts are not rewritten as transcript
-lines: the terminal already echoed the typed input, so a second `[You] ...`
-line would only repeat it. Restored history still prints human turns so a
+lines: the terminal already echoed the typed input, so a second attributed line
+would only repeat it. Restored history still prints human turns so a
 reopened session is readable. Piped stdin keeps echoing human prompts because
 there is no interactive display of the input body.
 

@@ -29,6 +29,7 @@ flowchart LR
         cfg["forums/R/personas/X/persona.toml"]
         sys["forums/R/personas/X/SYSTEM.md"]
         usr["forums/R/FORUM.md"]
+        roster["users/*/user.toml + USER.md<br/>verbatim"]
         shared["shared prompt files under the forum"]
     end
 
@@ -41,6 +42,7 @@ flowchart LR
     shared --> expand
     expand --> def["AgentDefinition<br/>config + effective system prompt"]
     conf --> def
+    roster --> def
     def -->|"one per persona"| client["CompletionClient"]
     client --> registry["AgentRegistry"]
     client -->|"info"| runtime["AgentRuntimeInfo"]
@@ -48,9 +50,11 @@ flowchart LR
     runtime -->|"identity only"| personas["session/ForumPersonas"]
 ```
 
-The effective system prompt is the expanded persona `SYSTEM.md`, followed by the
-expanded forum `FORUM.md`, the static user roster (each `USER.md` verbatim), and
-generated forum context. Expansion is
+The effective system prompt has four sections in this exact order: expanded
+persona `SYSTEM.md`, expanded forum `FORUM.md`, the static user roster (each
+`USER.md` verbatim under its display-name heading), and generated forum context.
+The roster is in lexicographic ID order and does not change for a live session.
+Expansion is
 implemented in `util/text_template.*`; this layer supplies the policy: forum
 directory as containment root, reserved `persona.*` / `forum.*` names, and the
 base-then-persona `[prompt]` initial scope. An adjacent template `config.toml` overlays
@@ -80,9 +84,19 @@ Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
   whitespace is allowed for multi-word handles.
 - within one forum, IDs are unique and names are unique case-insensitively.
 
+When `load_agent_definitions()` combines a forum with its roster, it also
+rejects user/persona ID collisions and case-insensitive display-name collisions.
+This is a workspace configuration error reported as a plain `runtime_error`.
+
 `AgentRegistry` validates these rules when it accepts backend metadata.
 `ForumPersonas` in `session/` separately owns the ordered identity-only view used
 for lookup and handle resolution.
+
+The generated context documents the shared-history JSONL encoding and the
+`from <Name>:` convention. Context projection adds that prefix to ordinary
+human `user` messages, for both replayed entries and the live `RunSpec` prompt.
+It never mutates stored text; shared-history JSONL retains its own `speaker`
+field and unprefixed text.
 
 ## Execution: staged pool tasks and foreground routing
 
