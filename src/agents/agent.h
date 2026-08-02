@@ -14,6 +14,11 @@
 
 namespace cha {
 
+// Participant names no configured party may claim.
+inline constexpr std::string_view reserved_participant_names[] = {
+    "user", "system", "error", "human", "assistant", "agent", "you",
+};
+
 // A persona loaded and ready to run: its Config plus the effective system prompt, which combines
 // the persona prompt, the forum's prompt extension, and generated forum context.
 struct AgentDefinition {

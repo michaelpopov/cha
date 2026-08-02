@@ -10,7 +10,7 @@ code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. |
+| `workspace.*` | Resolve the workspace layout, load the validated user roster, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
@@ -23,6 +23,7 @@ code.
 ```mermaid
 flowchart TD
     root --> forums["forums/"]
+    root --> users["users/<id>/user.toml + optional USER.md"]
     root --> env[".env — optional"]
     personas --> base["persona_defaults.toml<br/>optional forum defaults + [prompt]"]
     personas --> shared["shared prompt files<br/>e.g. character-voice.md"]

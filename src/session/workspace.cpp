@@ -14,10 +14,13 @@
 #include <toml++/toml.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
+#include <unordered_map>
 #include <utility>
 
 namespace cha {
@@ -107,6 +110,116 @@ std::string load_display_name(const std::filesystem::path& directory) {
     return *display_name;
 }
 
+bool is_user_id(std::string_view id) {
+    if (id.empty()) return false;
+    const auto is_letter = [](unsigned char character) {
+        return (character >= 'A' && character <= 'Z')
+            || (character >= 'a' && character <= 'z');
+    };
+    const unsigned char first = static_cast<unsigned char>(id.front());
+    if (!is_letter(first) && first != '_') return false;
+    for (const char value : id) {
+        const unsigned char character = static_cast<unsigned char>(value);
+        if (!is_letter(character)
+            && !(character >= '0' && character <= '9')
+            && character != '_') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_reserved_participant_name(std::string_view name) {
+    const std::string folded = fold_ascii(name);
+    return std::ranges::any_of(
+        reserved_participant_names,
+        [&folded](std::string_view reserved) { return folded == reserved; });
+}
+
+void validate_user_id(std::string_view id, const std::filesystem::path& directory) {
+    if (!is_user_id(id)) {
+        throw std::runtime_error(
+            "User ID '" + std::string(id) + "' in '" + utf8_path(directory)
+            + "' must match [A-Za-z_][A-Za-z0-9_]*");
+    }
+    if (is_reserved_participant_name(id)) {
+        throw std::runtime_error(
+            "User ID '" + std::string(id) + "' in '" + utf8_path(directory)
+            + "' is reserved");
+    }
+}
+
+void validate_user_display_name(
+    std::string_view name,
+    const std::filesystem::path& path) {
+    if (name.empty()) {
+        throw std::runtime_error(
+            "User config '" + utf8_path(path)
+            + "' requires a non-empty string 'display_name'");
+    }
+    if (std::isspace(static_cast<unsigned char>(name.front()))
+        || std::isspace(static_cast<unsigned char>(name.back()))) {
+        throw std::runtime_error("User display name cannot start or end with whitespace");
+    }
+    if (name.front() == '@' || name.front() == '/') {
+        throw std::runtime_error("User display name cannot start with '@' or '/'");
+    }
+    for (const char value : name) {
+        const unsigned char character = static_cast<unsigned char>(value);
+        if (character < 0x20 || character == 0x7f) {
+            throw std::runtime_error("User display name cannot contain control characters");
+        }
+    }
+    if (is_reserved_participant_name(name)) {
+        throw std::runtime_error(
+            "User display name '" + std::string(name) + "' is reserved");
+    }
+}
+
+User load_user(const std::filesystem::path& directory) {
+    const std::string id = utf8_path(directory.filename());
+    validate_user_id(id, directory.parent_path());
+    const std::filesystem::path config_path = directory / "user.toml";
+    std::ifstream config_file(config_path, std::ios::binary);
+    if (!config_file) {
+        throw std::runtime_error(
+            "Failed to read user config '" + utf8_path(config_path) + "'");
+    }
+    const toml::table table = toml::parse(config_file, utf8_path(config_path));
+    for (const auto& [key, value] : table) {
+        (void)value;
+        if (key.str() != "display_name") {
+            throw std::runtime_error(
+                "User config '" + utf8_path(config_path)
+                + "' has unknown field '" + std::string(key.str()) + "'");
+        }
+    }
+    const std::optional<std::string> display_name =
+        table["display_name"].value<std::string>();
+    validate_user_display_name(display_name.value_or(""), config_path);
+
+    std::string prompt;
+    const std::filesystem::path prompt_path = directory / "USER.md";
+    if (std::filesystem::is_regular_file(prompt_path)) {
+        std::ifstream prompt_file(prompt_path, std::ios::binary);
+        if (!prompt_file) {
+            throw std::runtime_error(
+                "Failed to read user prompt '" + utf8_path(prompt_path) + "'");
+        }
+        std::ostringstream contents;
+        contents << prompt_file.rdbuf();
+        if (!prompt_file.good() && !prompt_file.eof()) {
+            throw std::runtime_error(
+                "Failed to read user prompt '" + utf8_path(prompt_path) + "'");
+        }
+        prompt = std::move(contents).str();
+    } else if (std::filesystem::exists(prompt_path)) {
+        throw std::runtime_error(
+            "User prompt '" + utf8_path(prompt_path) + "' is not a regular file");
+    }
+    return {id, *display_name, std::move(prompt)};
+}
+
 } // namespace
 
 ApplicationConfig load_application_config(const std::filesystem::path& root) {
@@ -187,6 +300,39 @@ std::vector<std::string> Workspace::forums() const {
     return subdirectory_names(
         forums_directory,
         SubdirectoryNameKind::url_identifier);
+}
+
+UserRoster Workspace::load_users() const {
+    const std::filesystem::path users_directory = root_ / "users";
+    if (!std::filesystem::is_directory(users_directory)) {
+        throw std::runtime_error(
+            "Users directory '" + utf8_path(users_directory)
+            + "' does not exist; create users/<id>/user.toml");
+    }
+    UserRoster users;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(users_directory)) {
+        if (entry.is_directory()) users.push_back(load_user(entry.path()));
+    }
+    if (users.empty()) {
+        throw std::runtime_error(
+            "Users directory '" + utf8_path(users_directory)
+            + "' does not contain an entry");
+    }
+    std::sort(users.begin(), users.end(), [](const User& left, const User& right) {
+        return left.id < right.id;
+    });
+    std::unordered_map<std::string, std::string> display_names;
+    for (const User& user : users) {
+        const std::string folded = fold_ascii(user.display_name);
+        const auto [existing, inserted] = display_names.emplace(folded, user.id);
+        if (!inserted) {
+            throw std::runtime_error(
+                "User display name '" + user.display_name + "' is not unique: users '"
+                + existing->second + "' and '" + user.id + "'");
+        }
+    }
+    return users;
 }
 
 Forum Workspace::load_forum(const std::string& name) const {

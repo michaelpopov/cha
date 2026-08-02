@@ -14,6 +14,7 @@ TestWorkspace::TestWorkspace()
                  std::chrono::steady_clock::now().time_since_epoch().count()))) {
     const auto persona = root_ / "forums" / "lobby" / "personas" / "guide";
     std::filesystem::create_directories(persona);
+    std::filesystem::create_directories(root_ / "users");
     std::ofstream(root_ / "app.toml")
         << "host = \"127.0.0.1\"\n"
            "port = 8080\n"
@@ -54,6 +55,17 @@ void TestWorkspace::write_persona_config(std::string_view contents) const {
     std::ofstream(
         root_ / "forums" / "lobby" / "personas" / "guide" / "persona.toml")
         << contents;
+}
+
+void TestWorkspace::add_user(
+    std::string_view id,
+    std::string_view display_name,
+    std::string_view prompt) const {
+    const std::filesystem::path directory = root_ / "users" / std::string(id);
+    std::filesystem::create_directories(directory);
+    std::ofstream(directory / "user.toml")
+        << "display_name = \"" << display_name << "\"\n";
+    if (!prompt.empty()) std::ofstream(directory / "USER.md") << prompt;
 }
 
 } // namespace cha::test

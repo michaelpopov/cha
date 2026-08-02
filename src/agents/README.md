@@ -13,6 +13,7 @@ completion pool tasks.
 | Source | Responsibility |
 | --- | --- |
 | `config.*` | `LoadedConfig` — typed connection settings plus prompt variables from one TOML overlay, with field validation. |
+| `user.h` | `User` and the ordered `UserRoster` values passed down from workspace discovery. |
 | `agent.*` | `AgentDefinition`, `PersonaInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
 | `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
 | `agent_registry.*` | Runtime metadata, gated pool executions, per-run event routing, cancellation, and batch cleanup. |

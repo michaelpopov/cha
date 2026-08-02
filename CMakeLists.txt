@@ -323,6 +323,7 @@ if(BUILD_TESTING)
         tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
+        tests/session/unit_user_loader.cpp
         tests/session/unit_workspace.cpp
         tests/ui/text/unit_command.cpp
         tests/ui/text/unit_mcast.cpp

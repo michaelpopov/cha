@@ -88,6 +88,22 @@ TEST_F(ApplicationWorkspaceTest, ListsForumsAndSessionsAsApplicationValues) {
     EXPECT_EQ(workspace.app_config().log_level, "off");
 }
 
+TEST_F(ApplicationWorkspaceTest, UserLoadingDoesNotChangeWorkspaceConstruction) {
+    Workspace workspace(root_);
+
+    EXPECT_THROW((void)workspace.load_users(), std::runtime_error);
+
+    std::filesystem::create_directories(root_ / "users");
+    EXPECT_THROW((void)workspace.load_users(), std::runtime_error);
+}
+
+TEST_F(ApplicationWorkspaceTest, UserLoadingDoesNotSkipMalformedDirectories) {
+    std::filesystem::create_directories(root_ / "users" / "missing_config");
+    Workspace workspace(root_);
+
+    EXPECT_THROW((void)workspace.load_users(), std::runtime_error);
+}
+
 TEST_F(ApplicationWorkspaceTest, RequiresApplicationConfiguration) {
     std::filesystem::remove(root_ / "app.toml");
 
