@@ -40,7 +40,9 @@ struct WebAppendCandidate {
 class WebSessionController {
 public:
     virtual ~WebSessionController() = default;
-    virtual SessionUpdate handle_raw_input(std::string input) = 0;
+    virtual SessionUpdate handle_raw_input(
+        std::string_view author_id,
+        std::string input) = 0;
     virtual SessionUpdate request_stop() = 0;
     virtual SessionUpdate set_default_agent_id(std::string_view persona_id) = 0;
     virtual SessionEventBatch receive(std::size_t max_events) = 0;

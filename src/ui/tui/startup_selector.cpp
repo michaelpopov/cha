@@ -6,6 +6,7 @@
 #include <curses.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cwchar>
 #include <cwctype>
 #include <string>
@@ -32,6 +33,18 @@ std::wstring_view visible_suffix(std::wstring_view text, int available_cells) {
 
 StartupSelector::StartupSelector(Terminal& terminal) : terminal_(terminal) {
     terminal_.configure_selector();
+}
+
+std::optional<User> StartupSelector::select_user(const UserRoster& users) {
+    std::vector<std::string> options;
+    options.reserve(users.size());
+    for (const User& user : users) {
+        options.push_back(user.display_name);
+    }
+    const std::optional<std::size_t> selection =
+        select("Select a user", options);
+    assert(!selection || *selection < users.size());
+    return selection ? std::optional<User>(users[*selection]) : std::nullopt;
 }
 
 std::optional<std::string> StartupSelector::select_forum(const std::vector<Forum>& forums) {

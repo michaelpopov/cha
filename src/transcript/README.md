@@ -41,11 +41,18 @@ Provider reasoning is not transcript content. The session layer holds it only
 while a response is active and clears it when the turn ends.
 
 Entries are built through factories — `make_human_entry`, `make_agent_entry`,
-`make_notice_entry`, `make_error_entry` — so the fixed fields of each kind
-(`participant_id` `"human"`, display names `"You"`, `"System"`, `"Error"`) are
-never spelled out by callers. `make_hide_on_marker`, `make_hide_marker`, and
-`make_hide_off_marker` build the off-record markers the same way: notices with
-empty text whose display names are `"hide-on"`, `"hide"`, and `"hide-off"`.
+`make_notice_entry`, `make_error_entry`. `make_notice_entry` and
+`make_error_entry` keep their fixed `"System"` and `"Error"` display names
+out of callers.
+`make_human_entry` takes one `HumanEntrySpec`; designated `author` and
+`addressed_to` fields preserve the human's stored identity separately from the
+agent they addressed without relying on positional arguments of the same type.
+The author is a validated workspace user ID and display name; the clean `text`
+is stored and rendered unchanged. Model-context projection, outside this layer,
+adds `from <display name>:` only when it makes an ordinary `user` message.
+`make_hide_on_marker`, `make_hide_marker`, and `make_hide_off_marker` build the
+off-record markers the same way: notices with empty text whose display names
+are `"hide-on"`, `"hide"`, and `"hide-off"`.
 
 ## Validation levels
 

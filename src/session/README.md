@@ -10,7 +10,7 @@ code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. |
+| `workspace.*` | Resolve the workspace layout, load the validated user roster, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
@@ -23,6 +23,7 @@ code.
 ```mermaid
 flowchart TD
     root --> forums["forums/"]
+    root --> users["users/<id>/user.toml + optional USER.md"]
     root --> env[".env — optional"]
     personas --> base["persona_defaults.toml<br/>optional forum defaults + [prompt]"]
     personas --> shared["shared prompt files<br/>e.g. character-voice.md"]
@@ -30,7 +31,7 @@ flowchart TD
     forum --> config["config.toml — required display_name + optional [prompt]"]
     forum --> personas["personas/ — persona directories"]
     personas --> persona["persona-name/persona.toml<br/>SYSTEM.md + includes"]
-    forum --> user["USER.md — template-expanded forum prompt extension"]
+    forum --> forum_prompt["FORUM.md — template-expanded forum prompt extension"]
     forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
 ```
 
@@ -49,12 +50,12 @@ Each persona directory likewise supplies its stable ID, while its
 rejects the removed persona-level `id` and `name` fields.
 
 The forum directory is both the distribution unit and the prompt-template
-containment root: includes in `SYSTEM.md` / `USER.md` cannot leave it, so a
+containment root: includes in `SYSTEM.md` / `FORUM.md` cannot leave it, so a
 zipped forum stays self-contained when unpacked elsewhere.
 
-When a session is created or opened, `Workspace` checks for
+When a session is created or opened, `Workspace` loads the validated roster once and checks for
 `personas/persona_defaults.toml` within the selected forum and explicitly passes that optional path, the
-forum directory, and the forum display name to the agent loaders along with each
+forum directory, the forum display name, and the roster to the agent loaders along with each
 persona directory. The agent layer therefore applies shared configuration and
 template policy without knowing or inferring the workspace layout.
 
@@ -105,7 +106,8 @@ sequenceDiagram
     Note over UI,DB: Creating a stored session
     UI->>WS: create_stored_session forum, label
     WS->>WS: load_forum, enumerate personas/ directories
-    WS->>AG: load_agent_definitions
+    WS->>WS: load_users
+    WS->>AG: load_agent_definitions(personas, forum, roster)
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
     SC->>DB: build hidden temporary sibling, then link into place
@@ -113,8 +115,12 @@ sequenceDiagram
 
     Note over UI,CC: Terminal create and open convenience
     UI->>WS: create_session forum, label
-    WS->>WS: create_stored_session
-    WS->>WS: open_session with assigned ID
+    WS->>WS: load forum, roster, and definitions once
+    WS->>SC: create label
+    WS->>SC: open_database_path assigned ID
+    WS->>SL: acquire lease
+    WS->>DB: load_session_state
+    WS->>CC: from_definitions with the loaded roster
     WS-->>UI: CreatedSession with controller and assigned id
 
     Note over UI,CC: Opening a session
@@ -124,7 +130,8 @@ sequenceDiagram
     WS->>SL: acquire `<database>.cha-lock` without waiting
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
-    WS->>AG: load_agent_definitions
+    WS->>WS: load_users
+    WS->>AG: load_agent_definitions(personas, forum, roster)
     WS->>CC: from_definitions with restore
     CC->>CC: repair interrupted turns, then install entries
     CC-->>UI: controller
@@ -140,16 +147,12 @@ nor constructs a controller or provider. Web callers create and open in
 separate operations, so an open failure leaves the successfully stored session
 available for a later ordinary open.
 
-`Workspace::create_session()` is the terminal convenience operation. It calls
-`create_stored_session()`, then passes the assigned ID through the ordinary
-`open_session()` path described below, and returns the controller with that ID.
-This deliberately validates and parses the forum twice: create-only enumerates
-personas and loads their configuration and prompt files before publication,
-while the ordinary open repeats `load_forum()` and `load_agent_definitions()`
-after revalidating the stored identity. The duplicated parsing is an accepted
-startup cost for a handful of small files and avoids coupling the two operations
-through prevalidated state. Terminal creation deliberately replaces the former
-single `Session created` log with `Session stored` followed by `Session opened`.
+`Workspace::create_session()` is the terminal convenience operation. It loads
+and validates the forum, roster, and definitions once, publishes the stored
+session, revalidates that database's identity, and constructs the controller
+from the values already loaded. The returned controller's roster is therefore
+the exact roster used to assemble its prompts. Terminal creation logs `Session
+stored` followed by `Session opened`.
 
 Listing is tolerant: a file that fails validation still appears, with its error
 attached, so the selector can show it instead of hiding a broken session.
@@ -301,12 +304,12 @@ read-only state, and commands that return `SessionUpdate` side effects.
 
 | Command | Behavior | Update |
 | --- | --- | --- |
-| `submit_prompt(text, handle)` | Resolves the handle, or falls back to the default agent, and starts a turn. | On success `clear_input` + `render_needed`; on an unknown or ambiguous handle, or an empty prompt, only a notice — the draft text is left in the editor. |
+| `submit_prompt(author_id, text, handle)` | Resolves the author against the session roster, then resolves the handle or falls back to the default agent and starts a turn. | On success `clear_input` + `render_needed`; an unknown author produces `Unknown user ID '<id>'` and starts no batch, leaving the draft in the editor; unknown or ambiguous handles and an empty prompt likewise return only a notice and retain the draft. |
 | `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success `render_needed` + `clear_input` and no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
-| `start_multicast(text, handles)` / `start_multicast_by_ids(text, ids)` | Resolves textual handles or stable IDs once, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Starts the staged batch; terminal notices are retained until multicast completion or abort cleanup. |
+| `start_multicast(author_id, text, handles)` / `start_multicast_by_ids(author_id, text, ids)` | Resolves textual handles or stable IDs once, resolves the author against the session roster, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | An unknown author starts no batch; terminal notices are retained until multicast completion or abort cleanup. |
 | `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |

@@ -14,10 +14,25 @@ using RequestId = std::uint64_t;
 using EntryId = std::uint64_t;
 using ParticipantId = std::string;
 
-inline constexpr std::string_view human_participant_id = "human";
-inline constexpr std::string_view human_display_name = "You";
 inline constexpr std::string_view notice_display_name = "System";
 inline constexpr std::string_view error_display_name = "Error";
+
+// The stored identity of the party who authored or received a transcript entry.
+struct EntryIdentity {
+    ParticipantId id;
+    std::string display_name;
+};
+
+// Named inputs for one human transcript entry. Author and addressee have the
+// same representation, so named fields make their roles explicit at the call
+// site.
+struct HumanEntrySpec {
+    EntryId id{};
+    EntryIdentity author;
+    EntryIdentity addressed_to;
+    std::string text;
+    std::optional<RequestId> request_id;
+};
 
 // Classifies transcript semantics independently of the label rendered to the user.
 enum class EntryKind : std::int64_t {
@@ -92,12 +107,7 @@ struct CompletionHistory {
     OffrecordSpan offrecord_span;
 };
 
-TranscriptEntry make_human_entry(
-    EntryId id,
-    ParticipantId addressed_to,
-    std::string addressed_to_name,
-    std::string text,
-    std::optional<RequestId> request_id = std::nullopt);
+TranscriptEntry make_human_entry(HumanEntrySpec spec);
 TranscriptEntry make_agent_entry(
     EntryId id,
     ParticipantId participant_id,

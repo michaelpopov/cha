@@ -1,6 +1,7 @@
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
 #include "transcript/transcript.h"
+#include "support/test_transcript.h"
 #include "ui/render/transcript_writer.h"
 
 #include <gtest/gtest.h>
@@ -13,7 +14,7 @@ namespace cha {
 namespace {
 
 TranscriptEntry human(EntryId id, std::string text) {
-    return make_human_entry(id, "guide-id", "Guide", std::move(text));
+    return test::human_entry(id, {"engineer", "Engineer"}, {"guide-id", "Guide"}, std::move(text));
 }
 
 class RecordingSurface final : public TranscriptSurface {
@@ -62,7 +63,7 @@ TEST(ShowAddressing, DependsOnForumPersonasAndForeignHistory) {
 
     Transcript foreign;
     foreign.replace_entries({
-        make_human_entry(1, "guide-id", "Guide", "Question", 1),
+        test::human_entry(1, {"human", "You"}, {"guide-id", "Guide"}, "Question", 1),
         make_agent_entry(
             2, "former-id", "Former", "Answer", EntryStatus::complete, 1),
     });
@@ -75,7 +76,7 @@ TEST(ShowAddressing, DependsOnForumPersonasAndForeignHistory) {
 TEST(TranscriptLabel, FormatsEveryEntryKind) {
     EXPECT_EQ(
         transcript_entry_label(human(1, "Question"), false),
-        "[You] ");
+        "[Engineer] ");
     EXPECT_EQ(
         transcript_entry_label(
             make_agent_entry(
@@ -101,16 +102,16 @@ TEST(TranscriptRendering, RendersMulticastPromptsAsOrdinaryAddressedPrompts) {
     RecordingSurface surface;
     write_transcript_entry(
         surface,
-        make_human_entry(1, "one-id", "One", "Question", 1),
+        test::human_entry(1, {"engineer", "Engineer"}, {"one-id", "One"}, "Question", 1),
         true);
     write_transcript_entry(
         surface,
-        make_human_entry(2, "two-id", "Two", "Question", 2),
+        test::human_entry(2, {"engineer", "Engineer"}, {"two-id", "Two"}, "Question", 2),
         true);
 
     EXPECT_EQ(
         surface.output,
-        "[You → One] Question[You → Two] Question");
+        "[Engineer → One] Question[Engineer → Two] Question");
 }
 
 TEST(TranscriptRendering, RendersAnEmptyMarkerWithoutATrailingSeparator) {

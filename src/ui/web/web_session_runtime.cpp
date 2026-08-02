@@ -149,8 +149,10 @@ public:
     explicit SessionControllerAdapter(std::unique_ptr<SessionController> controller)
         : controller_(std::move(controller)) {}
 
-    SessionUpdate handle_raw_input(std::string input) override {
-        return cha::handle_text_input(*controller_, std::move(input));
+    SessionUpdate handle_raw_input(
+        std::string_view author_id,
+        std::string input) override {
+        return cha::handle_text_input(*controller_, author_id, std::move(input));
     }
     SessionUpdate request_stop() override { return controller_->request_stop(); }
     SessionUpdate set_default_agent_id(std::string_view id) override {
@@ -470,7 +472,7 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
     }
     SessionUpdate update = std::visit([&controller](auto&& value) -> SessionUpdate {
         using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, RawCommand>) return controller.handle_raw_input(std::move(value.text));
+        if constexpr (std::is_same_v<T, RawCommand>) return controller.handle_raw_input(value.user, std::move(value.text));
         else if constexpr (std::is_same_v<T, StopCommand>) return controller.request_stop();
         else if constexpr (std::is_same_v<T, SetDefaultAgentCommand>) {
             return controller.set_default_agent_id(value.persona_id);

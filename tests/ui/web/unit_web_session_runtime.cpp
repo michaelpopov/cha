@@ -6,6 +6,7 @@
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
+#include "support/test_controller.h"
 #include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
@@ -33,6 +34,7 @@ struct FakeState {
     std::condition_variable release;
     std::thread::id owner_id;
     std::vector<std::string> raw_inputs;
+    std::vector<std::string> raw_authors;
     std::vector<std::string> default_ids;
     std::vector<std::size_t> raw_counts_at_receive;
     std::vector<int> receives_at_raw_input;
@@ -120,10 +122,13 @@ public:
         state_->entered.notify_all();
     }
 
-    SessionUpdate handle_raw_input(std::string input) override {
+    SessionUpdate handle_raw_input(
+        std::string_view author_id,
+        std::string input) override {
         std::unique_lock lock(state_->mutex);
         check_owner();
         state_->raw_inputs.push_back(std::move(input));
+        state_->raw_authors.emplace_back(author_id);
         state_->receives_at_raw_input.push_back(state_->receives);
         state_->raw_entered = true;
         state_->entered.notify_all();
@@ -384,6 +389,7 @@ TestControllerFactory real_factory(const std::filesystem::path& path) {
         SessionRestore restore = load_session_state(path);
         return adapt_session_controller(SessionController::from_definitions(
             {test_definition()},
+            UserRoster{{.id = "reader", .display_name = "Reader"}},
             path,
             std::move(lease),
             notifier,
@@ -511,7 +517,7 @@ TEST(WebSessionRuntime, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(8));
 
     EXPECT_EQ(
-        std::get<CommandResult>(runtime.submit(RawCommand{"/clear"}, 1s))
+        std::get<CommandResult>(runtime.submit(RawCommand{"reader", "/clear"}, 1s))
             .notice,
         "raw");
     EXPECT_EQ(
@@ -526,6 +532,7 @@ TEST(WebSessionRuntime, RoutesRawAndTypedCommandsOnOneOwnerThread) {
 
     std::lock_guard lock(state->mutex);
     EXPECT_EQ(state->raw_inputs, std::vector<std::string>({"/clear"}));
+    EXPECT_EQ(state->raw_authors, std::vector<std::string>({"reader"}));
     EXPECT_EQ(state->stops, 1);
     EXPECT_EQ(state->default_ids, std::vector<std::string>({"stable-id"}));
     EXPECT_NE(state->owner_id, std::this_thread::get_id());
@@ -537,7 +544,7 @@ TEST(WebSessionRuntime, TimeoutLeavesAcceptedCommandAliveAndLateCompletionSafe) 
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
 
     EXPECT_EQ(
-        std::get<ErrorCode>(runtime.submit(RawCommand{"slow"}, 5ms)),
+        std::get<ErrorCode>(runtime.submit(RawCommand{"reader", "slow"}, 5ms)),
         ErrorCode::command_timeout);
     {
         std::unique_lock lock(state->mutex);
@@ -557,7 +564,7 @@ TEST(WebSessionRuntime, FullAndStoppingCommandsDoNotExecute) {
     state->block_raw = true;
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(1));
     auto first = std::async(std::launch::async, [&] {
-        return runtime.submit(RawCommand{"first"}, 1s);
+        return runtime.submit(RawCommand{"reader", "first"}, 1s);
     });
     {
         std::unique_lock lock(state->mutex);
@@ -566,7 +573,7 @@ TEST(WebSessionRuntime, FullAndStoppingCommandsDoNotExecute) {
         }));
     }
     EXPECT_EQ(
-        std::get<ErrorCode>(runtime.submit(RawCommand{"second"}, 5ms)),
+        std::get<ErrorCode>(runtime.submit(RawCommand{"reader", "second"}, 5ms)),
         ErrorCode::command_timeout);
     EXPECT_EQ(
         std::get<ErrorCode>(runtime.submit(StopCommand{}, 1s)),
@@ -602,7 +609,7 @@ TEST(WebSessionRuntime, ContinuesAfterAFullBatchWithOnlyACoalescedWake) {
     // missing full-batch continuation.
     for (int index = 0; index != 3; ++index) {
         EXPECT_EQ(
-            std::get<ErrorCode>(runtime.submit(RawCommand{"queued"}, 1ms)),
+            std::get<ErrorCode>(runtime.submit(RawCommand{"reader", "queued"}, 1ms)),
             ErrorCode::command_timeout);
     }
     {
@@ -625,10 +632,10 @@ TEST(WebSessionRuntime, IndependentRuntimesProgressWithoutSharedState) {
     TestWebSessionRuntime second(fake_factory(second_state), test_settings(4));
 
     auto first_result = std::async(std::launch::async, [&] {
-        return first.submit(RawCommand{"first"}, 1s);
+        return first.submit(RawCommand{"reader", "first"}, 1s);
     });
     auto second_result = std::async(std::launch::async, [&] {
-        return second.submit(RawCommand{"second"}, 1s);
+        return second.submit(RawCommand{"reader", "second"}, 1s);
     });
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(first_result.get()));
@@ -652,7 +659,7 @@ TEST(WebSessionRuntime, InterleavesAgentDrainingWithCommandBatches) {
     }
     for (int index = 0; index != 5; ++index) {
         EXPECT_EQ(
-            std::get<ErrorCode>(runtime.submit(RawCommand{"/info"}, 1ms)),
+            std::get<ErrorCode>(runtime.submit(RawCommand{"reader", "/info"}, 1ms)),
             ErrorCode::command_timeout);
     }
     {
@@ -692,7 +699,7 @@ TEST(WebSessionRuntime, NotificationPressureDoesNotStarveCommands) {
     }
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"during notification pressure"}, 1s)));
+        runtime.submit(RawCommand{"reader", "during notification pressure"}, 1s)));
 
     std::lock_guard lock(state->mutex);
     EXPECT_TRUE(state->flood_notifications);
@@ -708,7 +715,7 @@ TEST(WebSessionRuntime, CommandEndSessionStopsTheRuntime) {
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"end session"}, 1s)));
+        runtime.submit(RawCommand{"reader", "end session"}, 1s)));
     EXPECT_EQ(
         std::get<ErrorCode>(runtime.submit(StopCommand{}, 1s)),
         ErrorCode::session_not_live);
@@ -778,7 +785,7 @@ TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
     }
     // The command notice is structural, so establish it before testing the
     // subsequent text-only update.
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"snapshot"}, 1s)));
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 2U; }));
@@ -788,7 +795,7 @@ TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
         state->snapshot.transcript[0].text = "one more";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
     std::unique_lock lock(sink->mutex);
     ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 3U; }));
     ASSERT_TRUE(std::holds_alternative<AppendEvent>(sink->payloads.back()));
@@ -799,7 +806,7 @@ TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
     // A render hint with no state change must not consume an append sequence
     // number or publish an empty append.
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
     std::lock_guard final_lock(sink->mutex);
     EXPECT_EQ(sink->payloads.size(), 3U);
 }
@@ -821,7 +828,7 @@ TEST(WebSessionRuntime, CandidateUnavailablePublishesSnapshotForTextGrowth) {
         state->snapshot.transcript[0].text = "one more";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
 
     std::lock_guard lock(sink->mutex);
     ASSERT_EQ(sink->payloads.size(), 2U);
@@ -852,13 +859,13 @@ TEST(WebSessionRuntime, SinkSequencesStoredPayloadsNotOwnerChanges) {
         state->snapshot.transcript[0].text = "one A";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
     {
         std::lock_guard lock(state->mutex);
         state->snapshot.transcript[0].text = "one AB";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
     {
         std::lock_guard lock(sink->mutex);
         ASSERT_EQ(sink->payloads.size(), 2U);
@@ -874,7 +881,7 @@ TEST(WebSessionRuntime, SinkSequencesStoredPayloadsNotOwnerChanges) {
         state->snapshot.transcript[0].text = "one ABC";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
     std::lock_guard lock(sink->mutex);
     ASSERT_EQ(sink->payloads.size(), 3U);
     const AppendEvent& next = std::get<AppendEvent>(sink->payloads.back());
@@ -900,7 +907,7 @@ TEST(WebSessionRuntime, TargetChangePublishesSnapshotBeforeResetSequence) {
         state->snapshot.transcript[0].text = "one more";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
     {
         std::lock_guard lock(state->mutex);
         state->snapshot.transcript[0].status = TranscriptStatus::complete;
@@ -909,13 +916,13 @@ TEST(WebSessionRuntime, TargetChangePublishesSnapshotBeforeResetSequence) {
         state->snapshot.generation.reasoning_text = "think";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
     {
         std::lock_guard lock(state->mutex);
         state->snapshot.generation.reasoning_text = "think more";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
 
     std::lock_guard lock(sink->mutex);
     ASSERT_EQ(sink->payloads.size(), 4U);
@@ -954,7 +961,7 @@ TEST(WebSessionRuntime, ReasoningGrowthWithStructuralChangeUsesSnapshot) {
         state->snapshot.default_persona_id = "alternate";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
 
     std::lock_guard lock(sink->mutex);
     ASSERT_EQ(sink->payloads.size(), 2U);
@@ -980,7 +987,7 @@ TEST(WebSessionRuntime, ProvenAppendBypassesFullSnapshotConstruction) {
     }
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
     {
         std::lock_guard lock(state->mutex);
         EXPECT_EQ(state->append_candidate_calls, 1);
@@ -1026,7 +1033,7 @@ TEST(WebSessionRuntime, ConnectSnapshotBecomesAppendBaseWhileWriterIsStalled) {
         state->snapshot.transcript[0].text = "one hidden more";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        runtime.submit(RawCommand{"append"}, 1s)));
+        runtime.submit(RawCommand{"reader", "append"}, 1s)));
     {
         std::lock_guard lock(state->mutex);
         state->snapshot.transcript[0].text = "one hidden more again";
@@ -1133,7 +1140,7 @@ TEST(WebSessionRuntime, TimedOutSseConnectReleasesItsUnclaimedStream) {
         fake_factory(state), test_settings(2), {}, mailbox);
 
     EXPECT_EQ(
-        std::get<ErrorCode>(runtime.submit(RawCommand{"slow"}, 5ms)),
+        std::get<ErrorCode>(runtime.submit(RawCommand{"reader", "slow"}, 5ms)),
         ErrorCode::command_timeout);
     bool raw_entered = false;
     {
@@ -1290,7 +1297,7 @@ TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 1U; }));
     }
 
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"snapshot"}, 1s)));
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 2U; }));
@@ -1298,13 +1305,13 @@ TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
         ASSERT_TRUE(snapshot.notice);
         EXPECT_EQ(*snapshot.notice, "raw");
     }
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"clear notice"}, 1s)));
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "clear notice"}, 1s)));
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 3U; }));
         EXPECT_FALSE(std::get<SnapshotEvent>(sink->payloads.back()).snapshot.notice);
     }
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"replace notice"}, 1s)));
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "replace notice"}, 1s)));
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 4U; }));
@@ -1314,7 +1321,7 @@ TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
         std::lock_guard lock(state->mutex);
         state->snapshot.transcript[0].status = TranscriptStatus::complete;
     }
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"snapshot"}, 1s)));
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
     std::unique_lock lock(sink->mutex);
     ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 5U; }));
     EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(sink->payloads.back()));
@@ -1352,7 +1359,7 @@ TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
                 }
             }
             ASSERT_TRUE(std::holds_alternative<CommandResult>(
-                runtime.submit(RawCommand{"snapshot"}, 1s)));
+                runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
             runtime.request_shutdown();
         }
 
@@ -1399,7 +1406,7 @@ TEST(WebSessionRuntime, GenerationRequestChangeLogsTerminalThenNextStart) {
             state->snapshot.generation.phase = GenerationPhase::waiting;
         }
         ASSERT_TRUE(std::holds_alternative<CommandResult>(
-            runtime.submit(RawCommand{"snapshot"}, 1s)));
+            runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
         runtime.request_shutdown();
     }
 
@@ -1449,7 +1456,7 @@ TEST(WebSessionRuntime, ReasoningOnlyCancellationLogsCancelledStatus) {
             state->snapshot.generation.active = false;
         }
         ASSERT_TRUE(std::holds_alternative<CommandResult>(
-            runtime.submit(RawCommand{"snapshot"}, 1s)));
+            runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
         runtime.request_shutdown();
     }
 
@@ -1467,14 +1474,14 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     SessionRestore restore;
     restore.entries.push_back(make_notice_entry(1, "before"));
     restore.next_entry_id = 2;
-    auto adapted = adapt_session_controller(SessionController::from_definitions_for_testing(
+    auto adapted = adapt_session_controller(test::from_definitions_for_testing(
         {test_definition()}, temporary.path, notifier, std::move(restore)));
 
     const SessionSnapshot before = adapted->snapshot();
     EXPECT_EQ(before.personas, std::vector<PersonaSummary>({{"guide", "Guide"}}));
     ASSERT_EQ(before.transcript.size(), 1U);
     EXPECT_EQ(before.transcript.front().text, "before");
-    EXPECT_TRUE(adapted->handle_raw_input("/clear").render_needed);
+    EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").render_needed);
     const SessionSnapshot after = adapted->snapshot();
     EXPECT_TRUE(after.transcript.empty());
     EXPECT_EQ(before.transcript.front().text, "before");
@@ -1576,7 +1583,7 @@ TEST(WebSessionRuntime, ProcessStopWinsShutdownReason) {
     runtime.request_shutdown();
     runtime.request_shutdown(ShutdownReason::server_stopping);
     EXPECT_EQ(
-        std::get<ErrorCode>(runtime.submit(RawCommand{"late"}, 1s)),
+        std::get<ErrorCode>(runtime.submit(RawCommand{"reader", "late"}, 1s)),
         ErrorCode::server_stopping);
     {
         std::lock_guard lock(state->mutex);
@@ -1758,7 +1765,7 @@ TEST(WebSessionRuntime, PersistenceFailureReleasesOnlyTheFailingRuntimeLease) {
     execute_sql(failing_session.path, "DROP TABLE turns");
     EXPECT_EQ(
         std::get<ErrorCode>(
-            failing_runtime->submit(RawCommand{"Question"}, 20ms)),
+            failing_runtime->submit(RawCommand{"reader", "Question"}, 20ms)),
         ErrorCode::command_timeout);
     {
         std::unique_lock lock(failing_sink->mutex);

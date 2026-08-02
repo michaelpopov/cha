@@ -171,12 +171,13 @@ private:
 void run_user(
     Terminal& terminal,
     SessionController& controller,
-    UvEventLoop& event_loop) {
+    UvEventLoop& event_loop,
+    std::string author_id) {
 
     std::exception_ptr failure;
     {
         Tui tui(terminal);
-        UserSession session(tui, controller);
+        UserSession session(tui, controller, std::move(author_id));
         try {
             TuiEventSource events(event_loop);
             session.render();

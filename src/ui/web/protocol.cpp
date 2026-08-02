@@ -134,6 +134,13 @@ void to_json(nlohmann::json& json, const ForumSummary& value) {
     };
 }
 
+void to_json(nlohmann::json& json, const UserSummary& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+    };
+}
+
 void to_json(nlohmann::json& json, const SessionListing& value) {
     json = {
         {"id", value.id},

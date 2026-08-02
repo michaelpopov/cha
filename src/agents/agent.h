@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agents/config.h"
+#include "agents/user.h"
 #include "transcript/transcript.h"
 
 #include <filesystem>
@@ -14,8 +15,14 @@
 
 namespace cha {
 
-// A persona loaded and ready to run: its Config plus the effective system prompt, which combines
-// the persona prompt, the forum's prompt extension, and generated forum context.
+// Participant names no configured party may claim.
+inline constexpr std::string_view reserved_participant_names[] = {
+    "user", "system", "error", "human", "assistant", "agent", "you",
+};
+
+// A persona loaded and ready to run: its Config plus the effective system
+// prompt, which combines persona instructions, forum settings, the user
+// roster, and generated forum context.
 struct AgentDefinition {
     Config config;
     std::string system_prompt;
@@ -44,6 +51,7 @@ using SharedCompletionHistory =
 struct RunSpec {
     RequestId request_id{};
     PersonaInfo target;
+    EntryIdentity author;
     std::string prompt_text;
 };
 
@@ -75,6 +83,7 @@ std::vector<AgentDefinition> load_agent_definitions(
     const std::vector<std::filesystem::path>& persona_directories,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
+    const UserRoster& users,
     std::optional<std::filesystem::path> base_config_path = std::nullopt);
 
 void validate_persona_id(std::string_view id);

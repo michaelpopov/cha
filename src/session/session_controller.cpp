@@ -2,6 +2,7 @@
 
 #include "util/logging.h"
 
+#include <algorithm>
 #include <exception>
 #include <limits>
 #include <sstream>
@@ -103,6 +104,7 @@ void require_agent_count(std::size_t count) {
 
 std::unique_ptr<SessionController> SessionController::from_definitions(
     std::vector<AgentDefinition> definitions,
+    UserRoster users,
     std::filesystem::path database_path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -114,6 +116,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
     }
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
+        std::move(users),
         std::move(database_path),
         std::move(lease),
         notifier,
@@ -122,12 +125,14 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
 
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
     std::vector<AgentDefinition> definitions,
+    UserRoster users,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored) {
     require_agent_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
+        std::move(users),
         std::move(database_path),
         SessionLease::inactive_for_testing(),
         notifier,
@@ -136,6 +141,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
 
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
+    UserRoster users,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored,
@@ -143,6 +149,7 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     require_agent_count(backends.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(backends),
+        std::move(users),
         std::move(database_path),
         notifier,
         std::move(restored),
@@ -151,6 +158,7 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
 
 SessionController::SessionController(
     std::vector<AgentDefinition> definitions,
+    UserRoster users,
     std::filesystem::path path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -160,12 +168,14 @@ SessionController::SessionController(
       worker_pool_(definitions.size()),
       registry_(std::move(definitions), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),
+      users_(std::move(users)),
       default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
 }
 
 SessionController::SessionController(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
+    UserRoster users,
     std::filesystem::path path,
     WakeNotifier& notifier,
     SessionRestore restored,
@@ -175,6 +185,7 @@ SessionController::SessionController(
       worker_pool_(backends.size()),
       registry_(std::move(backends), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),
+      users_(std::move(users)),
       default_agent_id_(personas_.first().id),
       before_activation_(std::move(before_activation)) {
     initialize(std::move(restored));
@@ -253,7 +264,22 @@ SessionUpdate SessionController::busy_notice() const {
     return {.notice = std::string(generation_in_progress_notice)};
 }
 
+std::optional<EntryIdentity> SessionController::resolve_author(
+    std::string_view author_id,
+    SessionUpdate& update) const {
+    const auto author = std::find_if(
+        users_.begin(), users_.end(),
+        [author_id](const User& user) { return user.id == author_id; });
+    if (author == users_.end()) {
+        update.clear_input = false;
+        update.notice = "Unknown user ID '" + std::string(author_id) + "'";
+        return std::nullopt;
+    }
+    return EntryIdentity{author->id, author->display_name};
+}
+
 SessionUpdate SessionController::submit_prompt(
+    std::string_view author_id,
     std::string text,
     std::string handle) {
     if (busy()) {
@@ -284,11 +310,15 @@ SessionUpdate SessionController::submit_prompt(
         return update;
     }
 
+    std::optional<EntryIdentity> author = resolve_author(author_id, update);
+    if (!author) return update;
+
     SharedCompletionHistory history =
         std::make_shared<const CompletionHistory>(
             transcript_.completion_history());
     update.clear_input = true;
     start_batch(
+        std::move(*author),
         std::move(text),
         std::vector<PersonaInfo>{*target},
         std::move(history),
@@ -297,6 +327,7 @@ SessionUpdate SessionController::submit_prompt(
 }
 
 void SessionController::start_batch(
+    EntryIdentity author,
     std::string text,
     std::vector<PersonaInfo> targets,
     SharedCompletionHistory history,
@@ -313,6 +344,7 @@ void SessionController::start_batch(
         batch.runs.push_back({
             .request_id = next_request_id_++,
             .target = std::move(target),
+            .author = author,
             .prompt_text = text,
         });
     }
@@ -350,12 +382,13 @@ void SessionController::activate_current_run(SessionUpdate& update) {
         throw std::logic_error("Response batch run index is out of range");
     }
     const RunSpec& run = batch_->runs[batch_->foreground_index];
-    TranscriptEntry prompt = make_human_entry(
-        next_entry_id_++,
-        run.target.id,
-        run.target.name,
-        run.prompt_text,
-        run.request_id);
+    TranscriptEntry prompt = make_human_entry({
+        .id = next_entry_id_++,
+        .author = run.author,
+        .addressed_to = {run.target.id, run.target.name},
+        .text = run.prompt_text,
+        .request_id = run.request_id,
+    });
     ActiveResponse response{
         .request_id = run.request_id,
         .response_entry_id = next_entry_id_++,
@@ -556,6 +589,7 @@ SessionUpdate SessionController::restore_offrecord() {
 }
 
 SessionUpdate SessionController::start_multicast(
+    std::string_view author_id,
     std::string text,
     std::vector<std::string> handles) {
     if (busy()) {
@@ -574,20 +608,22 @@ SessionUpdate SessionController::start_multicast(
         }
         ids.push_back(resolution.persona->id);
     }
-    return start_multicast_from_ids(std::move(text), std::move(ids));
+    return start_multicast_from_ids(author_id, std::move(text), std::move(ids));
 }
 
 SessionUpdate SessionController::start_multicast_by_ids(
+    std::string_view author_id,
     std::string text,
     std::vector<ParticipantId> ids) {
     if (busy()) {
         return busy_notice();
     }
 
-    return start_multicast_from_ids(std::move(text), std::move(ids));
+    return start_multicast_from_ids(author_id, std::move(text), std::move(ids));
 }
 
 SessionUpdate SessionController::start_multicast_from_ids(
+    std::string_view author_id,
     std::string text,
     std::vector<ParticipantId> ids) {
     std::vector<PersonaInfo> targets;
@@ -607,10 +643,11 @@ SessionUpdate SessionController::start_multicast_from_ids(
             targets.push_back(*target);
         }
     }
-    return start_resolved_multicast(std::move(text), std::move(targets));
+    return start_resolved_multicast(author_id, std::move(text), std::move(targets));
 }
 
 SessionUpdate SessionController::start_resolved_multicast(
+    std::string_view author_id,
     std::string text,
     std::vector<PersonaInfo> targets) {
     if (text.empty()) {
@@ -619,6 +656,10 @@ SessionUpdate SessionController::start_resolved_multicast(
     if (targets.empty()) {
         return {.notice = "Multicast has no targets"};
     }
+
+    SessionUpdate update;
+    std::optional<EntryIdentity> author = resolve_author(author_id, update);
+    if (!author) return update;
 
     // Capture once so the off-record precondition and every child use the
     // same completion history.
@@ -632,8 +673,9 @@ SessionUpdate SessionController::start_resolved_multicast(
         };
     }
 
-    SessionUpdate update{.clear_input = true};
+    update.clear_input = true;
     start_batch(
+        std::move(*author),
         std::move(text),
         std::move(targets),
         std::move(history),

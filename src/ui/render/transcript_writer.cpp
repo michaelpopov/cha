@@ -23,7 +23,9 @@ bool show_addressing(
 std::string transcript_entry_label(const TranscriptEntry& entry, bool show_addressing) {
     switch (entry.kind) {
     case EntryKind::human:
-        return show_addressing ? "[You → " + entry.addressed_to_name + "] " : "[You] ";
+        return show_addressing
+            ? "[" + entry.display_name + " → " + entry.addressed_to_name + "] "
+            : "[" + entry.display_name + "] ";
     case EntryKind::agent:
         return "[" + entry.display_name + "] ";
     case EntryKind::notice:

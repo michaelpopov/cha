@@ -10,6 +10,7 @@
 #include "session/session_database.h"
 #include "session/workspace.h"
 #include "support/test_notifier.h"
+#include "support/test_controller.h"
 #include "support/test_session_database.h"
 
 #include <gtest/gtest.h>
@@ -262,7 +263,12 @@ public:
 };
 
 // Loads the checked-in two-persona lobby forum exactly as main() does.
-std::vector<AgentDefinition> lobby_definitions() {
+struct LobbySetup {
+    std::vector<AgentDefinition> definitions;
+    UserRoster users;
+};
+
+LobbySetup lobby_setup() {
     const Workspace workspace{std::filesystem::path{CHA_WORKSPACE_DIRECTORY}};
     const Forum forum = workspace.load_forum("lobby");
     std::vector<std::filesystem::path> directories;
@@ -270,11 +276,16 @@ std::vector<AgentDefinition> lobby_definitions() {
         directories.push_back(
             forum.directory / "personas" / persona_name);
     }
-    return load_agent_definitions(
+    UserRoster users = workspace.load_users();
+    return {
+        .definitions = load_agent_definitions(
         directories,
         forum.directory,
         forum.display_name,
-        forum.directory / "personas" / "persona_defaults.toml");
+        users,
+        forum.directory / "personas" / "persona_defaults.toml"),
+        .users = std::move(users),
+    };
 }
 
 // Redirects one agent's backend at a local mock server without touching its prompt.
@@ -336,7 +347,8 @@ std::string streamed_answer(
 }
 
 TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContext) {
-    std::vector<AgentDefinition> definitions = lobby_definitions();
+    LobbySetup lobby = lobby_setup();
+    std::vector<AgentDefinition>& definitions = lobby.definitions;
     definitions.resize(1);
     constexpr std::string_view reasoning_marker =
         "INTEGRATION_PRIVATE_REASONING_731";
@@ -352,18 +364,19 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
+        auto controller = test::from_definitions_for_testing(
             std::move(definitions),
+            lobby.users,
             session.path,
             notifier());
-        (void)handle_text_input(*controller, "First question");
+        (void)handle_text_input(*controller, "reader", "First question");
         run_until_idle(*controller);
         const std::vector<TranscriptEntry> live =
             copy_entries(controller->transcript());
         ASSERT_EQ(live.size(), 2U);
         EXPECT_EQ(live.back().text, "First answer");
 
-        (void)handle_text_input(*controller, "Second question");
+        (void)handle_text_input(*controller, "reader", "Second question");
         run_until_idle(*controller);
     }
     server.join();
@@ -383,7 +396,8 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
 }
 
 TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
-    std::vector<AgentDefinition> definitions = lobby_definitions();
+    LobbySetup lobby = lobby_setup();
+    std::vector<AgentDefinition>& definitions = lobby.definitions;
     definitions.resize(1);
     MockHttpServer server({http_response(
         "application/json",
@@ -394,11 +408,12 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
         ReasoningFormat::reasoning;
 
     TemporarySession session;
-    auto controller = SessionController::from_definitions_for_testing(
+    auto controller = test::from_definitions_for_testing(
         std::move(definitions),
+        lobby.users,
         session.path,
         notifier());
-    (void)handle_text_input(*controller, "Question");
+    (void)handle_text_input(*controller, "reader", "Question");
     run_until_idle(*controller);
     server.join();
 
@@ -412,7 +427,8 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
 }
 
 TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
-    std::vector<AgentDefinition> definitions = lobby_definitions();
+    LobbySetup lobby = lobby_setup();
+    std::vector<AgentDefinition>& definitions = lobby.definitions;
     definitions.resize(1);
     const std::string system_prompt = definitions.front().system_prompt;
     MockHttpServer server({
@@ -425,17 +441,18 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
+        auto controller = test::from_definitions_for_testing(
             std::move(definitions),
+            lobby.users,
             session.path,
             notifier());
-        (void)handle_text_input(*controller, "Visible question");
+        (void)handle_text_input(*controller, "reader", "Visible question");
         run_until_idle(*controller);
-        EXPECT_TRUE(handle_text_input(*controller, "/hide-on").render_needed);
-        (void)handle_text_input(*controller, "Hidden question");
+        EXPECT_TRUE(handle_text_input(*controller, "reader", "/hide-on").render_needed);
+        (void)handle_text_input(*controller, "reader", "Hidden question");
         run_until_idle(*controller);
-        EXPECT_TRUE(handle_text_input(*controller, "/hide").render_needed);
-        (void)handle_text_input(*controller, "Current question");
+        EXPECT_TRUE(handle_text_input(*controller, "reader", "/hide").render_needed);
+        (void)handle_text_input(*controller, "reader", "Current question");
         run_until_idle(*controller);
     }
     server.join();
@@ -445,9 +462,9 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
         Json::parse(request_body(server.requests().back()));
     EXPECT_EQ(current_body["messages"], Json::array({
         Json{{"role", "system"}, {"content", system_prompt}},
-        Json{{"role", "user"}, {"content", "Visible question"}},
+        Json{{"role", "user"}, {"content", "from Reader:\nVisible question"}},
         Json{{"role", "assistant"}, {"content", "Visible answer"}},
-        Json{{"role", "user"}, {"content", "Current question"}},
+        Json{{"role", "user"}, {"content", "from Reader:\nCurrent question"}},
     }));
 
     const std::vector<TranscriptEntry> restored =
@@ -458,7 +475,8 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
 }
 
 TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
-    std::vector<AgentDefinition> definitions = lobby_definitions();
+    LobbySetup lobby = lobby_setup();
+    std::vector<AgentDefinition>& definitions = lobby.definitions;
     ASSERT_EQ(definitions.size(), 2U);
     ASSERT_EQ(definitions.front().config.name, "Cheburashka");
     ASSERT_EQ(definitions.back().config.name, "Ismael");
@@ -475,8 +493,9 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
+        auto controller = test::from_definitions_for_testing(
             std::move(definitions),
+            lobby.users,
             session.path,
             notifier());
         ASSERT_EQ(controller->personas().first().id, "Cheburashka");
@@ -484,12 +503,12 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
             controller->personas(), controller->transcript().view()));
 
         // No mention: the first persona directory in name order answers.
-        SessionUpdate update = handle_text_input(*controller, "Who are you?");
+        SessionUpdate update = handle_text_input(*controller, "reader", "Who are you?");
         ASSERT_TRUE(update.clear_input);
         run_until_idle(*controller);
 
         // An addressed prompt reaches the mentioned agent instead.
-        update = handle_text_input(*controller, "@Ismael, and you?");
+        update = handle_text_input(*controller, "reader", "@Ismael, and you?");
         ASSERT_TRUE(update.clear_input);
         run_until_idle(*controller);
     }
@@ -503,7 +522,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     const Json first = body_of(cheburashka_server);
     EXPECT_EQ(first["messages"], Json::array({
         Json{{"role", "system"}, {"content", cheburashka_prompt}},
-        Json{{"role", "user"}, {"content", "Who are you?"}},
+        Json{{"role", "user"}, {"content", "from Reader:\nWho are you?"}},
     }));
 
     // Ismael's own system prompt, and Cheburashka's answer attributed as user input.
@@ -513,10 +532,10 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
         Json{{"role", "user"},
              {"content",
               "Shared chat history (JSONL):\n"
-              R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"Who are you?"})"
+              R"({"kind":"human","speaker":"Reader","addressed_to":"Cheburashka","text":"Who are you?"})"
               "\n"
               R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
-        Json{{"role", "user"}, {"content", "and you?"}},
+        Json{{"role", "user"}, {"content", "from Reader:\nand you?"}},
     }));
 
     const std::vector<TranscriptEntry> restored =
@@ -535,7 +554,8 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
 }
 
 TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
-    std::vector<AgentDefinition> definitions = lobby_definitions();
+    LobbySetup lobby = lobby_setup();
+    std::vector<AgentDefinition>& definitions = lobby.definitions;
     ASSERT_EQ(definitions.size(), 2U);
     const std::string cheburashka_prompt = definitions.front().system_prompt;
     const std::string ismael_prompt = definitions.back().system_prompt;
@@ -551,15 +571,15 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
-            std::move(definitions), session.path,
+        auto controller = test::from_definitions_for_testing(
+            std::move(definitions), lobby.users, session.path,
             notifier());
         const SessionUpdate multicast =
-            handle_text_input(*controller, "/mcast What time is it?");
+            handle_text_input(*controller, "reader", "/mcast What time is it?");
         ASSERT_TRUE(multicast.clear_input);
         run_until_idle(*controller);
 
-        (void)handle_text_input(*controller, "What did the panel say?");
+        (void)handle_text_input(*controller, "reader", "What did the panel say?");
         run_until_idle(*controller);
     }
     cheburashka_server.join();
@@ -571,13 +591,13 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
         Json::parse(request_body(cheburashka_server.requests()[0]))["messages"],
         Json::array({
             Json{{"role", "system"}, {"content", cheburashka_prompt}},
-            Json{{"role", "user"}, {"content", "What time is it?"}},
+        Json{{"role", "user"}, {"content", "from Reader:\nWhat time is it?"}},
         }));
     EXPECT_EQ(
         body_of(ismael_server)["messages"],
         Json::array({
             Json{{"role", "system"}, {"content", ismael_prompt}},
-            Json{{"role", "user"}, {"content", "What time is it?"}},
+        Json{{"role", "user"}, {"content", "from Reader:\nWhat time is it?"}},
         }));
 
     const std::string follow_up =
@@ -593,7 +613,8 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
 }
 
 TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
-    std::vector<AgentDefinition> definitions = lobby_definitions();
+    LobbySetup lobby = lobby_setup();
+    std::vector<AgentDefinition>& definitions = lobby.definitions;
     const std::string ismael_prompt = definitions.back().system_prompt;
 
     MockHttpServer cheburashka_server({answer("I am Cheburashka.")});
@@ -606,13 +627,14 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
 
     TemporarySession session;
     {
-        auto controller = SessionController::from_definitions_for_testing(
+        auto controller = test::from_definitions_for_testing(
             std::move(definitions),
+            lobby.users,
             session.path,
             notifier());
-        (void)handle_text_input(*controller, "Who are you?");
+        (void)handle_text_input(*controller, "reader", "Who are you?");
         run_until_idle(*controller);
-        (void)handle_text_input(*controller, "@Ismael and you?");
+        (void)handle_text_input(*controller, "reader", "@Ismael and you?");
         run_until_idle(*controller);
     }
     cheburashka_server.join();
@@ -622,8 +644,9 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
     ASSERT_EQ(restored.entries.size(), 4U);
     ASSERT_TRUE(restored.interrupted_turns.empty());
 
-    auto reopened = SessionController::from_definitions_for_testing(
+    auto reopened = test::from_definitions_for_testing(
         std::vector<AgentDefinition>{std::move(ismael_only)},
+        lobby.users,
         session.path,
         notifier(),
         std::move(restored));
@@ -632,10 +655,10 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
         reopened->personas(), reopened->transcript().view()))
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
-        handle_text_input(*reopened, "@Cheburashka are you there?").notice,
+        handle_text_input(*reopened, "reader", "@Cheburashka are you there?").notice,
         "Unknown agent @Cheburashka. Personas in this forum: @Ismael");
 
-    (void)handle_text_input(*reopened, "What did he say?");
+    (void)handle_text_input(*reopened, "reader", "What did he say?");
     run_until_idle(*reopened);
     ismael_server.join();
 
@@ -646,12 +669,12 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
         Json{{"role", "user"},
              {"content",
               "Shared chat history (JSONL):\n"
-              R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"Who are you?"})"
+              R"({"kind":"human","speaker":"Reader","addressed_to":"Cheburashka","text":"Who are you?"})"
               "\n"
               R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
-        Json{{"role", "user"}, {"content", "and you?"}},
+        Json{{"role", "user"}, {"content", "from Reader:\nand you?"}},
         Json{{"role", "assistant"}, {"content", "Call me Ismael."}},
-        Json{{"role", "user"}, {"content", "What did he say?"}},
+        Json{{"role", "user"}, {"content", "from Reader:\nWhat did he say?"}},
     }));
 }
 

@@ -22,6 +22,8 @@ enum class ColorMode {
 // The filesystem-independent result of parsing chacon's selection, listing,
 // and color flags. The startup helpers later resolve it through Workspace.
 struct ConsoleOptions {
+    // Stable author ID passed with every chat submission.
+    std::string user;
     std::string forum;
     std::string session_id;
     std::optional<std::string> new_label;

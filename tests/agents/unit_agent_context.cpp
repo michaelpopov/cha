@@ -1,4 +1,5 @@
 #include "agents/agent.h"
+#include "support/test_transcript.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -27,13 +28,17 @@ std::vector<AgentMessage> context(
         agent_id);
 }
 
+AgentMessage human(std::string_view text) {
+    return {AgentRole::user, "from You:\n" + std::string(text)};
+}
+
 TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "reviewer-id", "Reviewer", "Draft an answer", 1),
+            test::human_entry(1, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Draft an answer", 1),
             make_agent_entry(
                 2, "writer-id", "You", "Initial draft", EntryStatus::complete, 1),
-            make_human_entry(3, "reviewer-id", "Reviewer", "Review it", 2),
+            test::human_entry(3, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Review it", 2),
             make_agent_entry(
                 4, "reviewer-id", "System", "Looks good", EntryStatus::complete, 2),
         },
@@ -43,11 +48,11 @@ TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
         context(transcript, "Be concise.", "reviewer-id"),
         (std::vector<AgentMessage>{
             {AgentRole::system, "Be concise."},
-            {AgentRole::user, "Draft an answer"},
+            human("Draft an answer"),
             {AgentRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"agent","speaker":"You","text":"Initial draft"})"},
-            {AgentRole::user, "Review it"},
+            human("Review it"),
             {AgentRole::assistant, "Looks good"},
         }));
 }
@@ -55,10 +60,10 @@ TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
 TEST(AgentContext, OmitsNoticesErrorsFailedPromptsAndIncompleteAgentEntries) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "reviewer-id", "Reviewer", "Failed request", 7),
+            test::human_entry(1, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Failed request", 7),
             make_error_entry(2, "unavailable", 7, "reviewer-id"),
             make_notice_entry(3, "Model information"),
-            make_human_entry(4, "reviewer-id", "Reviewer", "Current request", 8),
+            test::human_entry(4, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Current request", 8),
             make_agent_entry(
                 5, "reviewer-id", "Reviewer", "Stopped", EntryStatus::cancelled, 8),
             make_agent_entry(
@@ -69,17 +74,17 @@ TEST(AgentContext, OmitsNoticesErrorsFailedPromptsAndIncompleteAgentEntries) {
 
     EXPECT_EQ(
         context(transcript, {}, "reviewer-id"),
-        (std::vector<AgentMessage>{{AgentRole::user, "Current request"}}));
+        (std::vector<AgentMessage>{human("Current request")}));
 }
 
 TEST(AgentContext, OmitsTheClosedOffrecordSpan) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "assistant", "Assistant", "Before", 1),
+        test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Before", 1),
         make_hide_on_marker(2),
-        make_human_entry(3, "assistant", "Assistant", "Hidden", 2),
+        test::human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "Hidden", 2),
         make_agent_entry(4, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 2),
         make_hide_marker(5),
-        make_human_entry(6, "assistant", "Assistant", "After", 3),
+        test::human_entry(6, {"human", "You"}, {"assistant", "Assistant"}, "After", 3),
     };
 
     EXPECT_EQ(
@@ -90,16 +95,16 @@ TEST(AgentContext, OmitsTheClosedOffrecordSpan) {
             {},
             "assistant"),
         (std::vector<AgentMessage>{
-            {AgentRole::user, "Before"},
-            {AgentRole::user, "After"},
+            human("Before"),
+            human("After"),
         }));
 }
 
 TEST(AgentContext, AnOpenOffrecordSpanExcludesNothing) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "assistant", "Assistant", "Before", 1),
+        test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Before", 1),
         make_hide_on_marker(2),
-        make_human_entry(3, "assistant", "Assistant", "After opening", 2),
+        test::human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "After opening", 2),
     };
 
     EXPECT_EQ(
@@ -110,16 +115,16 @@ TEST(AgentContext, AnOpenOffrecordSpanExcludesNothing) {
             {},
             "assistant"),
         (std::vector<AgentMessage>{
-            {AgentRole::user, "Before"},
-            {AgentRole::user, "After opening"},
+            human("Before"),
+            human("After opening"),
         }));
 }
 
 TEST(AgentContext, ProjectsOnlyEntriesOutsideAClosedOffrecordSpan) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "one", "One", "Question", 1),
+        test::human_entry(1, {"human", "You"}, {"one", "One"}, "Question", 1),
         make_agent_entry(2, "one", "One", "One answer", EntryStatus::complete, 1),
-        make_human_entry(3, "two", "Two", "Question", 2),
+        test::human_entry(3, {"human", "You"}, {"two", "Two"}, "Question", 2),
     };
 
     EXPECT_EQ(
@@ -129,15 +134,15 @@ TEST(AgentContext, ProjectsOnlyEntriesOutsideAClosedOffrecordSpan) {
             OffrecordSpan{.begin = 1, .end = 3},
             {},
             "two"),
-        (std::vector<AgentMessage>{{AgentRole::user, "Question"}}));
+        (std::vector<AgentMessage>{human("Question")}));
 }
 
 TEST(AgentContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
     auto history = std::make_shared<const CompletionHistory>(
         CompletionHistory{
             .entries = {
-                make_human_entry(
-                    1, "other", "Other", "Other question", 1),
+                test::human_entry(
+                    1, {"human", "You"}, {"other", "Other"}, "Other question", 1),
                 make_agent_entry(
                     2,
                     "other",
@@ -152,12 +157,13 @@ TEST(AgentContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
         .run = {
             .request_id = 2,
             .target = {"assistant", "Assistant"},
+            .author = {"human", "You"},
             .prompt_text = "Current question",
         },
     };
     std::vector<TranscriptEntry> old_tail = input.history->entries;
-    old_tail.push_back(make_human_entry(
-        3, "assistant", "Assistant", "Current question", 2));
+    old_tail.push_back(test::human_entry(
+        3, {"human", "You"}, {"assistant", "Assistant"}, "Current question", 2));
 
     const std::vector<AgentMessage> projected =
         project_agent_context(input, {});
@@ -171,24 +177,50 @@ TEST(AgentContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
         (std::vector<AgentMessage>{
             {AgentRole::user,
              "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"User","addressed_to":"Other","text":"Other question"})"
+             R"({"kind":"human","speaker":"You","addressed_to":"Other","text":"Other question"})"
              "\n"
              R"({"kind":"agent","speaker":"Other","text":"Other answer"})"},
-            {AgentRole::user, "Current question"},
+            human("Current question"),
+        }));
+}
+
+TEST(AgentContext, PrefixesBothReplayedAndLivePromptsWithTheirOwnAuthors) {
+    const CompletionHistory history{
+        .entries = {
+            test::human_entry(
+                1, {"reader", "Reader"}, {"assistant", "Assistant"},
+                "Earlier prompt", 1),
+        },
+    };
+    const CompletionInput input{
+        .history = std::make_shared<const CompletionHistory>(history),
+        .run = {
+            .request_id = 2,
+            .target = {"assistant", "Assistant"},
+            .author = {"athlete", "Athlete"},
+            .prompt_text = "Current prompt",
+        },
+    };
+
+    EXPECT_EQ(
+        project_agent_context(input, {}),
+        (std::vector<AgentMessage>{
+            {AgentRole::user, "from Reader:\nEarlier prompt"},
+            {AgentRole::user, "from Athlete:\nCurrent prompt"},
         }));
 }
 
 TEST(AgentContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "other", "Other", "First question", 1),
+        test::human_entry(1, {"human", "You"}, {"other", "Other"}, "First question", 1),
         make_agent_entry(2, "other", "Other", "First answer", EntryStatus::complete, 1),
         make_hide_on_marker(3),
-        make_human_entry(4, "assistant", "Assistant", "Hidden question", 2),
+        test::human_entry(4, {"human", "You"}, {"assistant", "Assistant"}, "Hidden question", 2),
         make_agent_entry(5, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 2),
         make_hide_marker(6),
-        make_human_entry(7, "other", "Other", "Second question", 3),
+        test::human_entry(7, {"human", "You"}, {"other", "Other"}, "Second question", 3),
         make_agent_entry(8, "other", "Other", "Second answer", EntryStatus::complete, 3),
-        make_human_entry(9, "assistant", "Assistant", "Current", 4),
+        test::human_entry(9, {"human", "You"}, {"assistant", "Assistant"}, "Current", 4),
     };
 
     EXPECT_EQ(
@@ -201,24 +233,24 @@ TEST(AgentContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
         (std::vector<AgentMessage>{
             {AgentRole::user,
              "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"User","addressed_to":"Other","text":"First question"})"
+             R"({"kind":"human","speaker":"You","addressed_to":"Other","text":"First question"})"
              "\n"
              R"({"kind":"agent","speaker":"Other","text":"First answer"})"
              "\n"
-             R"({"kind":"human","speaker":"User","addressed_to":"Other","text":"Second question"})"
+             R"({"kind":"human","speaker":"You","addressed_to":"Other","text":"Second question"})"
              "\n"
              R"({"kind":"agent","speaker":"Other","text":"Second answer"})"},
-            {AgentRole::user, "Current"},
+            human("Current"),
         }));
 }
 
 TEST(AgentContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "assistant", "Assistant", "Earlier", 1),
+        test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier", 1),
         make_agent_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 1),
         make_hide_on_marker(3),
         make_hide_marker(4),
-        make_human_entry(5, "assistant", "Assistant", "Current", 2),
+        test::human_entry(5, {"human", "You"}, {"assistant", "Assistant"}, "Current", 2),
     };
 
     EXPECT_EQ(
@@ -230,18 +262,18 @@ TEST(AgentContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
             "assistant"),
         (std::vector<AgentMessage>{
             {AgentRole::system, "System"},
-            {AgentRole::user, "Current"},
+            human("Current"),
         }));
 }
 
 TEST(AgentContext, CombinesSpanExclusionWithFailedAndCancelledTurnRules) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "assistant", "Assistant", "Hidden", 1),
-        make_human_entry(2, "assistant", "Assistant", "Failed", 2),
+        test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Hidden", 1),
+        test::human_entry(2, {"human", "You"}, {"assistant", "Assistant"}, "Failed", 2),
         make_error_entry(3, "unavailable", 2, "assistant"),
-        make_human_entry(4, "assistant", "Assistant", "Cancelled", 3),
+        test::human_entry(4, {"human", "You"}, {"assistant", "Assistant"}, "Cancelled", 3),
         make_agent_entry(5, "assistant", "Assistant", "Partial", EntryStatus::cancelled, 3),
-        make_human_entry(6, "assistant", "Assistant", "Current", 4),
+        test::human_entry(6, {"human", "You"}, {"assistant", "Assistant"}, "Current", 4),
     };
 
     EXPECT_EQ(
@@ -252,8 +284,8 @@ TEST(AgentContext, CombinesSpanExclusionWithFailedAndCancelledTurnRules) {
             {},
             "assistant"),
         (std::vector<AgentMessage>{
-            {AgentRole::user, "Cancelled"},
-            {AgentRole::user, "Current"},
+            human("Cancelled"),
+            human("Current"),
         }));
 }
 
@@ -278,35 +310,35 @@ TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {
 TEST(AgentContext, PreservesTheSingleAgentWireShapeByteForByte) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "assistant", "Assistant", "First", 1),
+            test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "First", 1),
             make_agent_entry(2, "assistant", "Assistant", "Answer", EntryStatus::complete, 1),
-            make_human_entry(3, "assistant", "Assistant", "Second", 2),
+            test::human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "Second", 2),
         },
     };
 
     EXPECT_EQ(
         context(transcript, {}, "assistant"),
         (std::vector<AgentMessage>{
-            {AgentRole::user, "First"},
+            human("First"),
             {AgentRole::assistant, "Answer"},
-            {AgentRole::user, "Second"},
+            human("Second"),
         }));
 }
 
 TEST(AgentContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "assistant", "Assistant", "First", 1),
+            test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "First", 1),
             make_agent_entry(2, "assistant", "Assistant", "Partial", EntryStatus::cancelled, 1),
-            make_human_entry(3, "assistant", "Assistant", "Second", 2),
+            test::human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "Second", 2),
         },
     };
 
     EXPECT_EQ(
         context(transcript, {}, "assistant"),
         (std::vector<AgentMessage>{
-            {AgentRole::user, "First"},
-            {AgentRole::user, "Second"},
+            human("First"),
+            human("Second"),
         }));
 }
 
@@ -314,14 +346,14 @@ TEST(AgentContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
 CompletionHistory lobby_transcript() {
     return {
         .entries = {
-            make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1),
+            test::human_entry(1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "Who are you?", 1),
             make_agent_entry(
                 2, "cheburashka", "Cheburashka", "I am Cheburashka.",
                 EntryStatus::complete, 1),
-            make_human_entry(3, "ismael", "Ismael", "And you?", 2),
+            test::human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 2),
             make_agent_entry(
                 4, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 2),
-            make_human_entry(5, "cheburashka", "Cheburashka", "What did he say?", 3),
+            test::human_entry(5, {"human", "You"}, {"cheburashka", "Cheburashka"}, "What did he say?", 3),
         },
     };
 }
@@ -331,14 +363,14 @@ TEST(AgentContext, ProjectsTheSharedTranscriptForTheAddressedAgent) {
         context(lobby_transcript(), "Cheburashka system", "cheburashka"),
         (std::vector<AgentMessage>{
             {AgentRole::system, "Cheburashka system"},
-            {AgentRole::user, "Who are you?"},
+            human("Who are you?"),
             {AgentRole::assistant, "I am Cheburashka."},
             {AgentRole::user,
              "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"User","addressed_to":"Ismael","text":"And you?"})"
+             R"({"kind":"human","speaker":"You","addressed_to":"Ismael","text":"And you?"})"
              "\n"
              R"({"kind":"agent","speaker":"Ismael","text":"Call me Ismael."})"},
-            {AgentRole::user, "What did he say?"},
+            human("What did he say?"),
         }));
 }
 
@@ -349,14 +381,14 @@ TEST(AgentContext, ProjectsTheSameTranscriptFromTheOtherAgentsPointOfView) {
             {AgentRole::system, "Ismael system"},
             {AgentRole::user,
              "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"Who are you?"})"
+             R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"Who are you?"})"
              "\n"
              R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"},
-            {AgentRole::user, "And you?"},
+            human("And you?"),
             {AgentRole::assistant, "Call me Ismael."},
             {AgentRole::user,
              "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"What did he say?"})"},
+             R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"What did he say?"})"},
         }));
 }
 
@@ -365,19 +397,19 @@ TEST(AgentContext, KeepsSharedHistorySeparateFromTheCurrentPrompt) {
         context(lobby_transcript(), {}, "cheburashka");
 
     ASSERT_EQ(projected.size(), 4U);
-    EXPECT_EQ(projected.front().content, "Who are you?");
+    EXPECT_EQ(projected.front().content, "from You:\nWho are you?");
     EXPECT_EQ(projected[2].role, AgentRole::user);
     EXPECT_TRUE(projected[2].content.starts_with(shared_history_header));
     EXPECT_NE(
         projected[2].content.find(R"("addressed_to":"Ismael")"),
         std::string::npos);
-    EXPECT_EQ(projected.back(), (AgentMessage{AgentRole::user, "What did he say?"}));
+    EXPECT_EQ(projected.back(), human("What did he say?"));
 }
 
 TEST(AgentContext, LeavesSingleAgentHistoryAsPlainUserAndAssistantMessages) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "ismael", "Ismael", "Who are you?", 1),
+            test::human_entry(1, {"human", "You"}, {"ismael", "Ismael"}, "Who are you?", 1),
             make_agent_entry(
                 2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1),
         },
@@ -386,7 +418,7 @@ TEST(AgentContext, LeavesSingleAgentHistoryAsPlainUserAndAssistantMessages) {
     EXPECT_EQ(
         context(transcript, {}, "ismael"),
         (std::vector<AgentMessage>{
-            {AgentRole::user, "Who are you?"},
+            human("Who are you?"),
             {AgentRole::assistant, "Call me Ismael."},
         }));
 }
@@ -394,10 +426,10 @@ TEST(AgentContext, LeavesSingleAgentHistoryAsPlainUserAndAssistantMessages) {
 TEST(AgentContext, AttributesAgentsWhosePersonasAreNoLongerInTheForum) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "departed", "Departed", "Say something", 1),
+            test::human_entry(1, {"human", "You"}, {"departed", "Departed"}, "Say something", 1),
             make_agent_entry(
                 2, "departed", "Departed", "Farewell", EntryStatus::complete, 1),
-            make_human_entry(3, "ismael", "Ismael", "Your turn", 2),
+            test::human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "Your turn", 2),
         },
     };
 
@@ -406,10 +438,10 @@ TEST(AgentContext, AttributesAgentsWhosePersonasAreNoLongerInTheForum) {
         (std::vector<AgentMessage>{
             {AgentRole::user,
              "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"User","addressed_to":"Departed","text":"Say something"})"
+             R"({"kind":"human","speaker":"You","addressed_to":"Departed","text":"Say something"})"
              "\n"
              R"({"kind":"agent","speaker":"Departed","text":"Farewell"})"},
-            {AgentRole::user, "Your turn"},
+            human("Your turn"),
         }));
 }
 
@@ -443,8 +475,8 @@ TEST(AgentContext, EscapesSharedHistoryAsJsonLines) {
 TEST(AgentContext, KeepsAnotherAgentsFirstPersonClaimOutOfTheCurrentPrompt) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(
-                1, "cheburashka", "Cheburashka", "What is your name?", 1),
+            test::human_entry(
+                1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "What is your name?", 1),
             make_agent_entry(
                 2,
                 "cheburashka",
@@ -452,7 +484,7 @@ TEST(AgentContext, KeepsAnotherAgentsFirstPersonClaimOutOfTheCurrentPrompt) {
                 "I'm Cheburashka. My best friend is Crocodile Gena.",
                 EntryStatus::complete,
                 1),
-            make_human_entry(3, "ismael", "Ismael", "who's Gena?", 2),
+            test::human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "who's Gena?", 2),
         },
     };
 
@@ -465,12 +497,12 @@ TEST(AgentContext, KeepsAnotherAgentsFirstPersonClaimOutOfTheCurrentPrompt) {
     EXPECT_EQ(
         projected[1].content,
         "Shared chat history (JSONL):\n"
-        R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"What is your name?"})"
+        R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"What is your name?"})"
         "\n"
         R"({"kind":"agent","speaker":"Cheburashka","text":"I'm Cheburashka. My best friend is Crocodile Gena."})");
     EXPECT_EQ(
         projected.back(),
-        (AgentMessage{AgentRole::user, "who's Gena?"}));
+        human("who's Gena?"));
 }
 
 } // namespace

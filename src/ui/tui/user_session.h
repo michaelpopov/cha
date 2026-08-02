@@ -19,7 +19,8 @@ class UserSession {
 public:
     UserSession(
         SessionView& view,
-        SessionController& controller);
+        SessionController& controller,
+        std::string author_id);
 
     bool running() const;
     void render();
@@ -42,6 +43,7 @@ private:
     SessionView& view_;
     InputEditor editor_;
     SessionController& controller_;
+    std::string author_id_;
     bool running_{true};
     bool render_needed_{false};
     std::string notice_;

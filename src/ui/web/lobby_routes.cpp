@@ -87,6 +87,14 @@ void LobbyRoutes::install(httplib::Server& server) const {
         set_json_response(response, 200, nlohmann::json(forums));
     });
 
+    server.Get("/api/v1/users", [workspace](const httplib::Request&, httplib::Response& response) {
+        std::vector<UserSummary> users;
+        for (const User& user : workspace->load_users()) {
+            users.push_back({user.id, user.display_name});
+        }
+        set_json_response(response, 200, nlohmann::json(users));
+    });
+
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, registry](const httplib::Request& request, httplib::Response& response) {
         const std::string forum = request.matches[1];
         if (!is_valid_route_component(forum)) return set_route_not_found(response);

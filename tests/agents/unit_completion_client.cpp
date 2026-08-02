@@ -1,6 +1,7 @@
 #include "agents/completion_client.h"
 #include "transcript/transcript.h"
 #include "support/mock_http_server.h"
+#include "support/test_transcript.h"
 #include "util/logging.h"
 
 #include <gtest/gtest.h>
@@ -40,15 +41,13 @@ CompletionInput client_request(
         .run = {
             .request_id = request_id,
             .target = {"assistant", "Assistant"},
+            .author = {"human", "You"},
             .prompt_text = std::move(prompt),
         },
     };
-    transcript.add_entry(make_human_entry(
-        1000 + request_id,
-        "assistant",
-        "Assistant",
-        input.run.prompt_text,
-        request_id));
+    transcript.add_entry(test::human_entry(
+        1000 + request_id, {"human", "You"}, {"assistant", "Assistant"},
+        input.run.prompt_text, request_id));
     return input;
 }
 
@@ -210,7 +209,7 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
     Transcript transcript;
     const CompletionInput request = client_request(
         transcript, 7, "Question", {
-            make_human_entry(1, "assistant", "Assistant", "Earlier question", 6),
+            test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier question", 6),
             make_agent_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 6),
             make_notice_entry(3, "hidden"),
             make_agent_entry(4, "other", "Other", "Other answer", EntryStatus::complete, 6),
@@ -236,13 +235,13 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
     EXPECT_EQ(body["reasoning_effort"], "medium");
     EXPECT_EQ(body["messages"], Json::array({
         {{"role", "system"}, {"content", "Be concise."}},
-        {{"role", "user"}, {"content", "Earlier question"}},
+        {{"role", "user"}, {"content", "from You:\nEarlier question"}},
         {{"role", "assistant"}, {"content", "Earlier answer"}},
         {{"role", "user"},
          {"content",
           "Shared chat history (JSONL):\n"
           R"({"kind":"agent","speaker":"Other","text":"Other answer"})"}},
-        {{"role", "user"}, {"content", "Question"}},
+        {{"role", "user"}, {"content", "from You:\nQuestion"}},
     }));
 }
 
@@ -265,7 +264,7 @@ TEST(CompletionClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
     EXPECT_DOUBLE_EQ(body["temperature"], 1.0);
     ASSERT_EQ(body["messages"].size(), 1U);
     EXPECT_EQ(body["messages"][0]["role"], "user");
-    EXPECT_EQ(body["messages"][0]["content"], prompt);
+    EXPECT_EQ(body["messages"][0]["content"], "from You:\n" + prompt);
 }
 
 TEST(CompletionClient, RejectsInvalidUtf8WhenPreparingRequest) {

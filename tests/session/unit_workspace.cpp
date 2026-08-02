@@ -35,6 +35,7 @@ protected:
                    std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(
             root_ / "forums" / "lobby" / "personas" / "guide");
+        std::filesystem::create_directories(root_ / "users" / "operator");
         {
             std::ofstream app_config(root_ / "app.toml");
             app_config << "host = \"127.0.0.1\"\n"
@@ -49,7 +50,7 @@ protected:
         }
         {
             std::ofstream forum_prompt(
-                root_ / "forums" / "lobby" / "USER.md");
+                root_ / "forums" / "lobby" / "FORUM.md");
             forum_prompt << "Forum instructions";
         }
         {
@@ -68,6 +69,8 @@ protected:
                 root_ / "forums" / "lobby" / "personas" / "guide" / "SYSTEM.md");
             system_prompt << "Persona instructions";
         }
+        std::ofstream(root_ / "users" / "operator" / "user.toml")
+            << "display_name = \"Reader\"\n";
     }
 
     void TearDown() override {
@@ -86,6 +89,23 @@ TEST_F(ApplicationWorkspaceTest, ListsForumsAndSessionsAsApplicationValues) {
     EXPECT_EQ(workspace.app_config().port, 8080);
     EXPECT_EQ(workspace.app_config().log_file, root_ / "logs" / "cha.log");
     EXPECT_EQ(workspace.app_config().log_level, "off");
+}
+
+TEST_F(ApplicationWorkspaceTest, UserLoadingDoesNotChangeWorkspaceConstruction) {
+    std::filesystem::remove_all(root_ / "users");
+    Workspace workspace(root_);
+
+    EXPECT_THROW((void)workspace.load_users(), std::runtime_error);
+
+    std::filesystem::create_directories(root_ / "users");
+    EXPECT_THROW((void)workspace.load_users(), std::runtime_error);
+}
+
+TEST_F(ApplicationWorkspaceTest, UserLoadingDoesNotSkipMalformedDirectories) {
+    std::filesystem::create_directories(root_ / "users" / "missing_config");
+    Workspace workspace(root_);
+
+    EXPECT_THROW((void)workspace.load_users(), std::runtime_error);
 }
 
 TEST_F(ApplicationWorkspaceTest, RequiresApplicationConfiguration) {
@@ -184,6 +204,36 @@ TEST_F(ApplicationWorkspaceTest, ForumCheckRejectsDuplicatePersonaNames) {
 
     EXPECT_THROW((void)workspace.check_forum("lobby"), std::invalid_argument);
     EXPECT_TRUE(workspace.sessions("lobby").empty());
+}
+
+TEST_F(ApplicationWorkspaceTest, OpenSessionRejectsAUserPersonaIdCollision) {
+    Workspace workspace(root_);
+    const SessionSummary stored = workspace.create_stored_session("lobby", "collision");
+    std::filesystem::rename(root_ / "users" / "operator", root_ / "users" / "guide");
+
+    try {
+        (void)workspace.open_session("lobby", stored.id, notifier());
+        FAIL() << "Expected user/persona ID collision rejection";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string_view(error.what()).find("guide"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("User"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("persona"), std::string_view::npos);
+    }
+}
+
+TEST_F(ApplicationWorkspaceTest, OpenSessionRejectsAUserPersonaDisplayNameCollision) {
+    Workspace workspace(root_);
+    const SessionSummary stored = workspace.create_stored_session("lobby", "collision");
+    std::ofstream(root_ / "users" / "operator" / "user.toml")
+        << "display_name = \"gUiDe\"\n";
+
+    try {
+        (void)workspace.open_session("lobby", stored.id, notifier());
+        FAIL() << "Expected user/persona display-name collision rejection";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string_view(error.what()).find("gUiDe"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("Guide"), std::string_view::npos);
+    }
 }
 
 TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {

@@ -13,6 +13,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <variant>
@@ -66,6 +67,15 @@ int main_internal(int argc, const char* const* argv) {
         cha::write_forum_check(workspace, options.forum, std::cout);
         return 0;
     }
+    const cha::UserRoster users = workspace.load_users();
+    if (std::none_of(
+            users.begin(), users.end(),
+            [&options](const cha::User& user) {
+                return user.id == options.user;
+            })) {
+        std::cerr << "Unknown user ID '" << options.user << "'\n";
+        return 2;
+    }
 
     const bool input_is_tty =
         cha::standard_stream_is_terminal(
@@ -105,6 +115,7 @@ int main_internal(int argc, const char* const* argv) {
         controller,
         emitter,
         {
+            .author_id = options.user,
             .show_prompt = input_is_tty,
             .backpressure_stdin = !input_is_tty,
         });

@@ -2,6 +2,7 @@
 #include "transcript/transcript.h"
 #include "session/session_database.h"
 #include "support/test_session_database.h"
+#include "support/test_transcript.h"
 #include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
@@ -103,8 +104,23 @@ TranscriptEntry human(
     EntryId id,
     std::string text,
     std::optional<RequestId> request_id = std::nullopt) {
-    return make_human_entry(
-        id, "reviewer-id", "Reviewer", std::move(text), request_id);
+    return test::human_entry(
+        id, {"human", "You"}, {"reviewer-id", "Reviewer"}, std::move(text), request_id);
+}
+
+TEST(Transcript, HumanEntryKeepsAuthorAndAddresseeIdentitiesSeparate) {
+    const TranscriptEntry entry = make_human_entry({
+        .id = 7,
+        .author = {"engineer", "Engineer"},
+        .addressed_to = {"guide-id", "Guide"},
+        .text = "Question",
+        .request_id = 11,
+    });
+
+    EXPECT_EQ(entry.participant_id, "engineer");
+    EXPECT_EQ(entry.display_name, "Engineer");
+    EXPECT_EQ(entry.addressed_to, "guide-id");
+    EXPECT_EQ(entry.addressed_to_name, "Guide");
 }
 
 TEST(Transcript, StoresTypedCompleteAndStreamingEntries) {
@@ -530,7 +546,7 @@ TEST(SessionJournal, RecognizesAnInterruptedTypedTurn) {
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
     const TranscriptEntry prompt =
-        make_human_entry(5, "guide-id", "Guide", "Pending", 12);
+        test::human_entry(5, {"human", "You"}, {"guide-id", "Guide"}, "Pending", 12);
     journal->start_turn(12, prompt);
 
     const SessionRestore restored = load_session_state(path);
@@ -616,7 +632,7 @@ TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
     const auto path = temporary_path("cha_addressed_round_trip_");
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
-    journal->start_turn(1, make_human_entry(1, "ismael", "Ismael", "And you?", 1));
+    journal->start_turn(1, test::human_entry(1, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 1));
     journal->complete_turn(1, make_agent_entry(
         2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1));
 
@@ -742,11 +758,11 @@ TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
     create_test_database(path);
     {
         SessionJournal journal(path);
-        journal.start_turn(1, make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1));
+        journal.start_turn(1, test::human_entry(1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "Who are you?", 1));
         journal.complete_turn(1, make_agent_entry(
             2, "cheburashka", "Cheburashka", "I am Cheburashka.",
             EntryStatus::complete, 1));
-        journal.start_turn(2, make_human_entry(3, "ismael", "Ismael", "And you?", 2));
+        journal.start_turn(2, test::human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 2));
     }
 
     const SessionRestore restored = load_session_state(path);
@@ -766,11 +782,11 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
     create_test_database(path);
     {
         SessionJournal journal(path);
-        journal.start_turn(1, make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1));
+        journal.start_turn(1, test::human_entry(1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "Who are you?", 1));
         journal.complete_turn(1, make_agent_entry(
             2, "cheburashka", "Cheburashka", "I am Cheburashka.",
             EntryStatus::complete, 1));
-        journal.start_turn(2, make_human_entry(3, "ismael", "Ismael", "And you?", 2));
+        journal.start_turn(2, test::human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 2));
         journal.complete_turn(2, make_agent_entry(
             4, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 2));
     }
@@ -794,10 +810,10 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
             {AgentRole::system, "Ismael system"},
             {AgentRole::user,
              "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"Who are you?"})"
+             R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"Who are you?"})"
              "\n"
              R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"},
-            {AgentRole::user, "And you?"},
+            {AgentRole::user, "from You:\nAnd you?"},
             {AgentRole::assistant, "Call me Ismael."},
         }));
     std::filesystem::remove(path);

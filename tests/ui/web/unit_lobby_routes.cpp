@@ -27,7 +27,7 @@ using namespace std::chrono_literals;
 
 class IdleController final : public WebSessionController {
 public:
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
@@ -130,7 +130,7 @@ WebSessionMetadata load_workspace_metadata(
     };
 }
 
-TEST(LobbyRoutes, ServesPlaceholderHealthAndForumListingWithoutSessionDataInHealth) {
+TEST(LobbyRoutes, ServesUserListingHealthAndForumListingWithoutSessionDataInHealth) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
@@ -141,6 +141,8 @@ TEST(LobbyRoutes, ServesPlaceholderHealthAndForumListingWithoutSessionDataInHeal
     ASSERT_TRUE(root);
     EXPECT_EQ(root->status, 200);
     EXPECT_EQ(root->get_header_value("Content-Type"), "text/html; charset=utf-8");
+    EXPECT_NE(root->body.find("Choose a user"), std::string::npos);
+    EXPECT_NE(root->body.find("/api/v1/users"), std::string::npos);
 
     const auto health = server.client().Get("/health");
     ASSERT_TRUE(health);
@@ -151,6 +153,44 @@ TEST(LobbyRoutes, ServesPlaceholderHealthAndForumListingWithoutSessionDataInHeal
     ASSERT_TRUE(forums);
     EXPECT_EQ(forums->status, 200);
     EXPECT_EQ(body(forums), nlohmann::json::array({{{"id", "lobby"}, {"display_name", "The Lobby"}}}));
+
+    const auto users = server.client().Get("/api/v1/users");
+    ASSERT_TRUE(users);
+    EXPECT_EQ(users->status, 200);
+    EXPECT_EQ(users->get_header_value("Content-Type"), "application/json");
+    EXPECT_EQ(
+        body(users),
+        nlohmann::json::array({{{"id", "reader"}, {"display_name", "Reader"}}}));
+
+    fixture.add_user("author", "Author", "This prompt is not sent to the browser.");
+    const auto refreshed = server.client().Get("/api/v1/users");
+    ASSERT_TRUE(refreshed);
+    EXPECT_EQ(refreshed->status, 200);
+    EXPECT_EQ(refreshed->body.find("This prompt is not sent to the browser."), std::string::npos);
+    EXPECT_EQ(
+        body(refreshed),
+        nlohmann::json::array({
+            {{"id", "author"}, {"display_name", "Author"}},
+            {{"id", "reader"}, {"display_name", "Reader"}},
+        }));
+}
+
+TEST(LobbyRoutes, UserListingReportsMissingUsersWhileForumListingStillWorks) {
+    test::TestWorkspace fixture;
+    std::filesystem::remove_all(fixture.root() / "users");
+    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
+        return std::make_unique<IdleController>();
+    });
+    TestServer server(workspace, registry);
+
+    const auto forums = server.client().Get("/api/v1/forums");
+    ASSERT_TRUE(forums);
+    EXPECT_EQ(forums->status, 200);
+    EXPECT_EQ(
+        body(forums),
+        nlohmann::json::array({{{"id", "lobby"}, {"display_name", "The Lobby"}}}));
+    expect_error(server.client().Get("/api/v1/users"), 500, "internal_error");
 }
 
 TEST(LobbyRoutes, SkipsMalformedForumsAndAllowsAnEmptyForumDirectory) {

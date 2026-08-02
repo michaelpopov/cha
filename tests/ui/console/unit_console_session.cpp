@@ -3,6 +3,8 @@
 #include "session/session_database.h"
 #include "support/scripted_console.h"
 #include "support/test_backends.h"
+#include "support/test_controller.h"
+#include "support/test_transcript.h"
 #include "ui/console/console_session.h"
 #include "ui/console/transcript_emitter.h"
 
@@ -105,7 +107,7 @@ public:
         WakeNotifier& notifier,
         bool wait_for_cancel,
         SessionRestore restored)
-        : controller_(SessionController::from_backends_for_testing(
+        : controller_(test::from_backends_for_testing(
             test::one_backend(
                 std::make_unique<EchoBackend>(wait_for_cancel)),
             journal.path,
@@ -117,7 +119,7 @@ public:
         TemporaryJournal& journal,
         WakeNotifier& notifier,
         std::vector<std::unique_ptr<CompletionBackend>> backends)
-        : controller_(SessionController::from_backends_for_testing(
+        : controller_(test::from_backends_for_testing(
             std::move(backends),
             journal.path,
             notifier)) {
@@ -167,8 +169,8 @@ TEST(ConsoleSession, DrainsSeveralPipedPromptsInOrderAfterEof) {
     EXPECT_EQ(session.run(), 0);
     EXPECT_EQ(
         port.transcript_output(),
-        "[You] one\n\n[Guide] Answer to one\n\n"
-        "[You] two\n\n[Guide] Answer to two\n\n");
+        "[Operator] one\n\n[Guide] Answer to one\n\n"
+        "[Operator] two\n\n[Guide] Answer to two\n\n");
     EXPECT_EQ(
         port.notice_output().find(generation_in_progress_notice),
         std::string::npos);
@@ -195,8 +197,8 @@ TEST(ConsoleSession, EmitsPipedMulticastTurnsWithoutInternalMarkers) {
     EXPECT_EQ(session.run(), 0);
     EXPECT_EQ(
         port.transcript_output(),
-        "[You] Question\n\n[One] Answer to Question\n\n"
-        "[You] Question\n\n[Two] Answer to Question\n\n");
+        "[Operator] Question\n\n[One] Answer to Question\n\n"
+        "[Operator] Question\n\n[Two] Answer to Question\n\n");
     EXPECT_TRUE(port.notice_output().empty());
     EXPECT_FALSE(port.under_scripted);
 }
@@ -246,7 +248,7 @@ TEST(ConsoleSession, ShowsPromptWhenIdleNotWhileGenerating) {
     EXPECT_EQ(port.notice_output(), "@Guide> @Guide> ");
     EXPECT_EQ(
         port.transcript_output(),
-        "[You] question\n\n[Guide] Answer to question\n\n")
+        "[Operator] question\n\n[Guide] Answer to question\n\n")
         << "default emitter still records human prompts for pipes/tests";
 }
 
@@ -284,7 +286,7 @@ TEST(ConsoleSession, EmitsRestoredHistoryBeforeWaiting) {
     TemporaryJournal journal;
     SessionRestore restored{
         .entries = {
-            make_human_entry(1, "guide", "Guide", "Earlier"),
+            test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Earlier"),
             make_agent_entry(
                 2,
                 "guide",
@@ -564,9 +566,9 @@ TEST(ConsoleSession, DoesNotConsumeAFileReadCompletedDuringBackpressure) {
     EXPECT_EQ(port.suppressed_take_lines, 0U);
     EXPECT_EQ(
         port.transcript_output(),
-        "[You] one\n\n[Guide] Answer to one\n\n"
-        "[You] two\n\n[Guide] Answer to two\n\n"
-        "[You] deferred\n\n[Guide] Answer to deferred\n\n");
+        "[Operator] one\n\n[Guide] Answer to one\n\n"
+        "[Operator] two\n\n[Guide] Answer to two\n\n"
+        "[Operator] deferred\n\n[Guide] Answer to deferred\n\n");
 }
 
 TEST(ConsoleSession, InteractiveInputRemainsEnabledWhenQueueIsFull) {
@@ -632,7 +634,7 @@ TEST(ConsoleSession, ReportsWaitAndFlushFailures) {
     TemporaryJournal flush_journal;
     SessionRestore restored{
         .entries = {
-            make_human_entry(1, "guide", "Guide", "Undelivered"),
+            test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Undelivered"),
         },
         .next_entry_id = 2,
     };

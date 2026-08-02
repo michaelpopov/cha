@@ -160,7 +160,7 @@ private:
 class PermanentlyBlockedShutdownController final
     : public WebSessionController {
 public:
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
@@ -216,7 +216,7 @@ private:
 
 class IdleController final : public WebSessionController {
 public:
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
@@ -332,7 +332,7 @@ public:
     explicit LargeSnapshotController(std::size_t text_size)
         : text_(text_size, 'x') {}
 
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
@@ -616,6 +616,45 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     }
 }
 
+TEST(WebServerProcess, InputAuthorReachesTheLiveTranscript) {
+    test::TestWorkspace workspace;
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    workspace.write_app_config(port);
+    test::WebServerProcess server(workspace.root(), port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    httplib::Client client = web_client(port);
+    const std::string id = create_session(client, "Attributed");
+    ASSERT_FALSE(id.empty());
+    const std::string path = open_session(client, id);
+    ASSERT_FALSE(path.empty());
+    const auto submitted = client.Post(
+        path + "api/v1/input",
+        R"({"user":"reader","text":"Who wrote this?"})",
+        "application/json");
+    ASSERT_TRUE(submitted);
+    ASSERT_EQ(submitted->status, 200) << submitted->body;
+
+    const auto snapshot = client.Get(path + "api/v1/session");
+    ASSERT_TRUE(snapshot);
+    ASSERT_EQ(snapshot->status, 200) << snapshot->body;
+    const nlohmann::json transcript =
+        nlohmann::json::parse(snapshot->body).at("transcript");
+    const auto human = std::find_if(
+        transcript.begin(), transcript.end(), [](const nlohmann::json& entry) {
+            return entry.at("kind") == "human";
+        });
+    ASSERT_NE(human, transcript.end());
+    EXPECT_EQ(human->at("participant_id"), "reader");
+    EXPECT_EQ(human->at("display_name"), "Reader");
+    EXPECT_EQ(human->at("text"), "Who wrote this?");
+
+    const test::ProcessExit stopped = server.stop(SIGINT);
+    EXPECT_FALSE(stopped.timed_out) << server.errors();
+    EXPECT_EQ(stopped.exit_code, 0) << server.errors();
+}
+
 TEST(WebServerProcess, RestartReopensLeasesAfterCleanAndForcedExit) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
@@ -687,7 +726,7 @@ TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
         httplib::Client concurrent_client = web_client(port);
         return concurrent_client.Post(
             std::move(route),
-            std::string(R"({"text":")") + std::string(text) + R"("})",
+            std::string(R"({"user":"reader","text":")") + std::string(text) + R"("})",
             "application/json");
     };
     auto first_submission = std::async(
@@ -763,7 +802,7 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
     ASSERT_FALSE(path.empty());
     const auto input = client.Post(
         path + "api/v1/input",
-        R"({"text":"Question"})",
+        R"({"user":"reader","text":"Question"})",
         "application/json");
     ASSERT_TRUE(input);
     ASSERT_EQ(input->status, 200) << input->body;

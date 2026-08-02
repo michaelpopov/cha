@@ -5,22 +5,17 @@
 
 namespace cha {
 
-TranscriptEntry make_human_entry(
-    EntryId id,
-    ParticipantId addressed_to,
-    std::string addressed_to_name,
-    std::string text,
-    std::optional<RequestId> request_id) {
+TranscriptEntry make_human_entry(HumanEntrySpec spec) {
     return {
-        .id = id,
+        .id = spec.id,
         .kind = EntryKind::human,
-        .participant_id = std::string(human_participant_id),
-        .display_name = std::string(human_display_name),
-        .addressed_to = std::move(addressed_to),
-        .addressed_to_name = std::move(addressed_to_name),
-        .text = std::move(text),
+        .participant_id = std::move(spec.author.id),
+        .display_name = std::move(spec.author.display_name),
+        .addressed_to = std::move(spec.addressed_to.id),
+        .addressed_to_name = std::move(spec.addressed_to.display_name),
+        .text = std::move(spec.text),
         .status = EntryStatus::complete,
-        .request_id = request_id,
+        .request_id = spec.request_id,
     };
 }
 

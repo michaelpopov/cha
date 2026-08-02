@@ -16,8 +16,10 @@
 #include <algorithm>
 #include <fstream>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
+#include <unordered_map>
 #include <utility>
 
 namespace cha {
@@ -25,6 +27,7 @@ namespace {
 
 std::vector<AgentDefinition> load_definitions(
     const Forum& forum,
+    const UserRoster& users,
     const std::filesystem::path& base_config_candidate) {
     log_info(
         "Loading forum persona definitions: forum_id=" + forum.name
@@ -43,7 +46,21 @@ std::vector<AgentDefinition> load_definitions(
         persona_directories,
         forum.directory,
         forum.display_name,
+        users,
         base_config);
+}
+
+void validate_forum_personas(
+    const std::vector<AgentDefinition>& definitions) {
+    std::vector<PersonaInfo> personas;
+    personas.reserve(definitions.size());
+    for (const AgentDefinition& definition : definitions) {
+        personas.push_back({
+            .id = definition.config.id,
+            .name = definition.config.name,
+        });
+    }
+    (void)ForumPersonas(std::move(personas));
 }
 
 SessionCatalog session_catalog(
@@ -59,6 +76,13 @@ SessionSummary summarize(const Session& stored) {
         .label = stored.label,
         .error = stored.error,
     };
+}
+
+Session store_session(const Forum& forum, std::string label) {
+    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
+    Session stored = catalog.create(std::move(label));
+    log_info("Session stored");
+    return stored;
 }
 
 enum class SubdirectoryNameKind { path_component, url_identifier };
@@ -105,6 +129,178 @@ std::string load_display_name(const std::filesystem::path& directory) {
             + "' requires a non-empty string 'display_name'");
     }
     return *display_name;
+}
+
+bool is_user_id(std::string_view id) {
+    if (id.empty()) return false;
+    const auto is_letter = [](unsigned char character) {
+        return (character >= 'A' && character <= 'Z')
+            || (character >= 'a' && character <= 'z');
+    };
+    const unsigned char first = static_cast<unsigned char>(id.front());
+    if (!is_letter(first) && first != '_') return false;
+    for (const char value : id) {
+        const unsigned char character = static_cast<unsigned char>(value);
+        if (!is_letter(character)
+            && !(character >= '0' && character <= '9')
+            && character != '_') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_reserved_participant_name(std::string_view name) {
+    const std::string folded = fold_ascii(name);
+    return std::ranges::any_of(
+        reserved_participant_names,
+        [&folded](std::string_view reserved) { return folded == reserved; });
+}
+
+char32_t next_utf8_code_point(std::string_view text, std::size_t& offset) {
+    const auto byte = [&text](std::size_t index) {
+        return static_cast<unsigned char>(text[index]);
+    };
+    const unsigned char first = byte(offset++);
+    if (first < 0x80) return first;
+
+    std::size_t continuation_count{};
+    char32_t code_point{};
+    if ((first & 0xe0) == 0xc0) {
+        continuation_count = 1;
+        code_point = first & 0x1f;
+    } else if ((first & 0xf0) == 0xe0) {
+        continuation_count = 2;
+        code_point = first & 0x0f;
+    } else if ((first & 0xf8) == 0xf0) {
+        continuation_count = 3;
+        code_point = first & 0x07;
+    } else {
+        throw std::runtime_error("User display name is not valid UTF-8");
+    }
+    if (continuation_count > text.size() - offset) {
+        throw std::runtime_error("User display name is not valid UTF-8");
+    }
+    for (std::size_t index = 0; index < continuation_count; ++index) {
+        const unsigned char continuation = byte(offset++);
+        if ((continuation & 0xc0) != 0x80) {
+            throw std::runtime_error("User display name is not valid UTF-8");
+        }
+        code_point = (code_point << 6) | (continuation & 0x3f);
+    }
+    return code_point;
+}
+
+bool is_unicode_whitespace(char32_t code_point) {
+    return (code_point >= 0x0009 && code_point <= 0x000d)
+        || code_point == 0x0020
+        || code_point == 0x0085
+        || code_point == 0x00a0
+        || code_point == 0x1680
+        || (code_point >= 0x2000 && code_point <= 0x200a)
+        || code_point == 0x2028
+        || code_point == 0x2029
+        || code_point == 0x202f
+        || code_point == 0x205f
+        || code_point == 0x3000;
+}
+
+bool is_unicode_control(char32_t code_point) {
+    return code_point <= 0x001f
+        || (code_point >= 0x007f && code_point <= 0x009f);
+}
+
+void validate_user_id(std::string_view id, const std::filesystem::path& directory) {
+    if (!is_user_id(id)) {
+        throw std::runtime_error(
+            "User ID '" + std::string(id) + "' in '" + utf8_path(directory)
+            + "' must match [A-Za-z_][A-Za-z0-9_]*");
+    }
+    if (is_reserved_participant_name(id)) {
+        throw std::runtime_error(
+            "User ID '" + std::string(id) + "' in '" + utf8_path(directory)
+            + "' is reserved");
+    }
+}
+
+void validate_user_display_name(
+    std::string_view name,
+    const std::filesystem::path& path) {
+    if (name.empty()) {
+        throw std::runtime_error(
+            "User config '" + utf8_path(path)
+            + "' requires a non-empty string 'display_name'");
+    }
+    if (name.front() == '@' || name.front() == '/') {
+        throw std::runtime_error("User display name cannot start with '@' or '/'");
+    }
+    char32_t first_code_point{};
+    char32_t last_code_point{};
+    std::size_t offset{};
+    while (offset < name.size()) {
+        const bool first = offset == 0;
+        const char32_t code_point = next_utf8_code_point(name, offset);
+        if (first) first_code_point = code_point;
+        last_code_point = code_point;
+        if (is_unicode_control(code_point)
+            || code_point == 0x2028
+            || code_point == 0x2029) {
+            throw std::runtime_error(
+                "User display name cannot contain control characters or line breaks");
+        }
+    }
+    if (is_unicode_whitespace(first_code_point)
+        || is_unicode_whitespace(last_code_point)) {
+        throw std::runtime_error("User display name cannot start or end with whitespace");
+    }
+    if (is_reserved_participant_name(name)) {
+        throw std::runtime_error(
+            "User display name '" + std::string(name) + "' is reserved");
+    }
+}
+
+User load_user(const std::filesystem::path& directory) {
+    const std::string id = utf8_path(directory.filename());
+    validate_user_id(id, directory.parent_path());
+    const std::filesystem::path config_path = directory / "user.toml";
+    std::ifstream config_file(config_path, std::ios::binary);
+    if (!config_file) {
+        throw std::runtime_error(
+            "Failed to read user config '" + utf8_path(config_path) + "'");
+    }
+    const toml::table table = toml::parse(config_file, utf8_path(config_path));
+    for (const auto& [key, value] : table) {
+        (void)value;
+        if (key.str() != "display_name") {
+            throw std::runtime_error(
+                "User config '" + utf8_path(config_path)
+                + "' has unknown field '" + std::string(key.str()) + "'");
+        }
+    }
+    const std::optional<std::string> display_name =
+        table["display_name"].value<std::string>();
+    validate_user_display_name(display_name.value_or(""), config_path);
+
+    std::string prompt;
+    const std::filesystem::path prompt_path = directory / "USER.md";
+    if (std::filesystem::is_regular_file(prompt_path)) {
+        std::ifstream prompt_file(prompt_path, std::ios::binary);
+        if (!prompt_file) {
+            throw std::runtime_error(
+                "Failed to read user prompt '" + utf8_path(prompt_path) + "'");
+        }
+        std::ostringstream contents;
+        contents << prompt_file.rdbuf();
+        if (!prompt_file.good() && !prompt_file.eof()) {
+            throw std::runtime_error(
+                "Failed to read user prompt '" + utf8_path(prompt_path) + "'");
+        }
+        prompt = std::move(contents).str();
+    } else if (std::filesystem::exists(prompt_path)) {
+        throw std::runtime_error(
+            "User prompt '" + utf8_path(prompt_path) + "' is not a regular file");
+    }
+    return {id, *display_name, std::move(prompt)};
 }
 
 } // namespace
@@ -189,6 +385,39 @@ std::vector<std::string> Workspace::forums() const {
         SubdirectoryNameKind::url_identifier);
 }
 
+UserRoster Workspace::load_users() const {
+    const std::filesystem::path users_directory = root_ / "users";
+    if (!std::filesystem::is_directory(users_directory)) {
+        throw std::runtime_error(
+            "Users directory '" + utf8_path(users_directory)
+            + "' does not exist; create users/<id>/user.toml");
+    }
+    UserRoster users;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(users_directory)) {
+        if (entry.is_directory()) users.push_back(load_user(entry.path()));
+    }
+    if (users.empty()) {
+        throw std::runtime_error(
+            "Users directory '" + utf8_path(users_directory)
+            + "' does not contain an entry");
+    }
+    std::sort(users.begin(), users.end(), [](const User& left, const User& right) {
+        return left.id < right.id;
+    });
+    std::unordered_map<std::string, std::string> display_names;
+    for (const User& user : users) {
+        const std::string folded = fold_ascii(user.display_name);
+        const auto [existing, inserted] = display_names.emplace(folded, user.id);
+        if (!inserted) {
+            throw std::runtime_error(
+                "User display name '" + user.display_name + "' is not unique: users '"
+                + existing->second + "' and '" + user.id + "'");
+        }
+    }
+    return users;
+}
+
 Forum Workspace::load_forum(const std::string& name) const {
     const std::filesystem::path directory = forum_directory(name);
     if (!std::filesystem::is_directory(directory)) {
@@ -207,18 +436,10 @@ Forum Workspace::load_forum(const std::string& name) const {
 
 Forum Workspace::check_forum(const std::string& name) const {
     Forum forum = load_forum(name);
+    const UserRoster users = load_users();
     const std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "persona_defaults.toml");
-
-    std::vector<PersonaInfo> personas;
-    personas.reserve(definitions.size());
-    for (const AgentDefinition& definition : definitions) {
-        personas.push_back({
-            .id = definition.config.id,
-            .name = definition.config.name,
-        });
-    }
-    (void)ForumPersonas(std::move(personas));
+        forum, users, forum.directory / "personas" / "persona_defaults.toml");
+    validate_forum_personas(definitions);
     return forum;
 }
 
@@ -258,22 +479,38 @@ SessionSummary Workspace::create_stored_session(
     const std::string& forum_name,
     std::string label) const {
     const Forum forum = check_forum(forum_name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    const Session session = catalog.create(std::move(label));
-    log_info("Session stored");
-    return summarize(session);
+    return summarize(store_session(forum, std::move(label)));
 }
 
 CreatedSession Workspace::create_session(
     const std::string& forum_name,
     std::string label,
     WakeNotifier& notifier) const {
-    const SessionSummary created = create_stored_session(
-        forum_name,
-        std::move(label));
+    Forum forum = load_forum(forum_name);
+    UserRoster users = load_users();
+    std::vector<AgentDefinition> definitions = load_definitions(
+        forum, users, forum.directory / "personas" / "persona_defaults.toml");
+    validate_forum_personas(definitions);
+
+    const Session stored = store_session(forum, std::move(label));
+
+    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
+    const std::filesystem::path database_path =
+        catalog.open_database_path(stored.id);
+    SessionLease lease = SessionLease::acquire(database_path);
+    SessionRestore restored = load_session_state(database_path);
+    std::unique_ptr<SessionController> controller =
+        SessionController::from_definitions(
+            std::move(definitions),
+            std::move(users),
+            database_path,
+            std::move(lease),
+            notifier,
+            std::move(restored));
+    log_info("Session opened");
     return {
-        .controller = open_session(forum_name, created.id, notifier),
-        .id = created.id,
+        .controller = std::move(controller),
+        .id = stored.id,
     };
 }
 
@@ -288,11 +525,13 @@ std::unique_ptr<SessionController> Workspace::open_session(
         catalog.open_database_path(session_id);
     SessionLease lease = SessionLease::acquire(database_path);
     SessionRestore restored = load_session_state(database_path);
+    UserRoster users = load_users();
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "persona_defaults.toml");
+        forum, users, forum.directory / "personas" / "persona_defaults.toml");
     log_info("Session opened");
     return SessionController::from_definitions(
         std::move(definitions),
+        std::move(users),
         database_path,
         std::move(lease),
         notifier,

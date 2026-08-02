@@ -10,7 +10,7 @@ user-facing manual is the [top-level `README.md`](../README.md).
 ## System overview
 
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
-It runs inside a workspace containing `app.toml`, persona definitions, and forums. A persona
+It runs inside a workspace containing `app.toml`, a user roster, persona definitions, and forums. A persona
 definition contains an identity, effective model configuration, and base
 system-prompt template. Its model configuration and prompt variables may
 inherit shared values from the
@@ -18,8 +18,9 @@ selected forum's optional `personas/persona_defaults.toml`; persona-specific val
 override them. A forum contains an ordered list of the personas participating in
 chats in that forum, together with a forum-specific system-prompt template.
 When the forum is loaded, the persona's expanded `SYSTEM.md` is followed by the
-forum's expanded `USER.md` and generated forum context identifying the current
-agent, the forum's other personas, and the shared-history encoding. Template
+forum's expanded `FORUM.md`, the complete static user roster, and generated forum
+context identifying the current agent, the forum's other personas, and the
+shared-history encoding. Template
 includes are contained within the forum, so the forum remains a self-contained
 distribution unit.
 
@@ -27,6 +28,9 @@ During a run, the participating personas are represented as agents. Each agent
 has its own identity, effective system prompt, and model connection, while all
 agents use the session's shared chat transcript. The first agent in the forum's
 list is the default; a prompt beginning with `@Name` is sent to another agent.
+Each submitted prompt carries a validated roster user as its author. That author
+is stored on the human entry; projection prefixes ordinary human `user` messages
+with `from <Name>:` without changing stored or rendered text.
 
 A session is a persistent chat within a forum, stored in a single SQLite
 database. For each turn, `cha` records the user's prompt before sending it to
@@ -193,6 +197,10 @@ sequenceDiagram
 
     main->>main: load_dotenv
     main->>ws: construct, require forums/
+    main->>ws: load_users
+    ws-->>main: UserRoster
+    main->>sel: select_user
+    sel-->>main: selected User
     main->>ws: forums
     ws-->>main: forum names from forums/ subdirectories
     main->>sel: select_forum
@@ -248,11 +256,11 @@ sequenceDiagram
     participant W as Regular runner
     participant P as Model server
 
-    U->>T: submitted line
+    U->>T: selected user ID + submitted line
     T->>T: parse_command, then parse_addressed_prompt
-    T->>C: submit_prompt text and handle
+    T->>C: submit_prompt author ID, text, and handle
     C->>C: reject if a turn is active
-    C->>C: resolve handle against ForumPersonas
+    C->>C: resolve author against session roster and handle against ForumPersonas
     C->>V: capture immutable CompletionHistory
     C->>G: stage one-run batch behind closed gate
     C->>G: select foreground while gate remains closed
@@ -342,7 +350,9 @@ rebuilds a per-agent view of it for each request:
 - only `complete` agent entries with non-empty text survive; cancelled and
   failed answers stay on screen but never become history;
 - human prompts addressed to the requesting agent become ordinary `user`
-  messages, and that agent's own answers become `assistant` messages;
+  messages prefixed `from <display name>:` on their own line, and that agent's
+  own answers become `assistant` messages; the live `RunSpec` prompt appended
+  after history uses the same prefix;
 - contiguous entries involving another agent become a separate `user` message
   headed `Shared chat history (JSONL):`; every following line is an escaped
   JSON object carrying `kind`, `speaker`, `text`, and, for human entries,
@@ -413,6 +423,8 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | Entry and request IDs are positive and strictly increasing. | `Transcript::require_next_id`, `state` table |
 | Durable writes precede visible ones. | `SessionController` |
 | Reasoning exists only while a response is active; it never enters the transcript, persistence, or projection. | `ActiveResponse`, `GenerationStatus`, `TranscriptEntry` shape |
+| A session's roster and system prompt are fixed when it opens; changes under `users/` take effect on its next open. | `Workspace::load_users`, `SessionController` |
+| Every prompt author is resolved against that session's roster at one authorization point. | `SessionController::start_batch` |
 | Front ends never open storage or call backends. | Include rules above |
 | N controllers may run on N owner threads when no domain object is shared between them. `Workspace` is the deliberate exception: it is immutable, cache-free, and safe to share for concurrent `const` calls. | Session ownership, `Workspace` construction, session-local SQLite and completion clients |
 | A web runtime has one permanent owner thread; HTTP threads exchange only owning commands and results with it. | `ui/web/WebSessionRuntime` |

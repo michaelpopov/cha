@@ -12,11 +12,12 @@ transcript-writing vocabulary without depending on curses or `ui/tui/`.
 chacon --list-forums
 chacon --forum FORUM --list-sessions
 chacon --forum FORUM --check
-chacon --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
+chacon --user USER --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
 ```
 
-`--check` fully loads the forum configuration and expanded prompts, validates
-effective connection settings plus persona identity and uniqueness, then exits
+`--check` fully loads the forum configuration, validated user roster, and
+expanded prompts, validates effective connection settings plus persona identity,
+user/persona collision rules, and uniqueness, then exits
 without inspecting stored sessions, creating a session, resolving
 `api_key_env`, initializing completion providers, discovering a model, or
 making network requests. It validates prompt-template includes, not arbitrary
@@ -28,7 +29,9 @@ Forum listings are one display name per line. Session listings always contain th
 tab-separated fields—ID, label, error—with no header, padding, or color.
 Invalid sessions are included. Tabs and line breaks inside fields are replaced
 with spaces, and terminal controls are sanitized. Listing modes take precedence
-over otherwise irrelevant session-selection flags.
+over otherwise irrelevant session-selection flags. They do not accept `--user`;
+chat startup requires it and resolves the ID from the workspace user roster
+before opening a session.
 
 Creating a session returns both its controller and its generated ID. With
 interactive stdin, the ready banner prints that resolved ID before the first
@@ -96,8 +99,8 @@ entries, so they are emitted once each, in the order the commands were given,
 and nothing already written is ever retracted when the span changes.
 
 On an interactive TTY, live human prompts are not rewritten as transcript
-lines: the terminal already echoed the typed input, so a second `[You] ...`
-line would only repeat it. Restored history still prints human turns so a
+lines: the terminal already echoed the typed input, so a second attributed line
+would only repeat it. Restored history still prints human turns so a
 reopened session is readable. Piped stdin keeps echoing human prompts because
 there is no interactive display of the input body.
 

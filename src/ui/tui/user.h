@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace cha {
 
 class SessionController;
@@ -10,6 +12,7 @@ class UvEventLoop;
 void run_user(
     Terminal& terminal,
     SessionController& controller,
-    UvEventLoop& event_loop);
+    UvEventLoop& event_loop,
+    std::string author_id);
 
 } // namespace cha

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agents/user.h"
 #include "session/not_found_error.h"
 
 #include <filesystem>
@@ -66,6 +67,9 @@ public:
 
     const ApplicationConfig& app_config() const;
     std::vector<std::string> forums() const;
+    // Loads and validates the current workspace roster. Raises when users/ is
+    // missing or empty; re-reads the filesystem on every call.
+    UserRoster load_users() const;
     Forum load_forum(const std::string& name) const;
     // Fully validates one forum without creating a session or initializing
     // completion providers. Returns its resolved metadata on success.

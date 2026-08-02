@@ -1,4 +1,5 @@
 #include "transcript/transcript.h"
+#include "support/test_transcript.h"
 #include "ui/tui/render_plan.h"
 
 #include <gtest/gtest.h>
@@ -12,11 +13,8 @@ namespace cha {
 namespace {
 
 TranscriptEntry human(EntryId id, std::string text) {
-    return make_human_entry(
-        id,
-        "guide-id",
-        "Guide",
-        std::move(text));
+    return test::human_entry(
+        id, {"human", "You"}, {"guide-id", "Guide"}, std::move(text));
 }
 
 TranscriptEntry agent(EntryId id, std::string text) {

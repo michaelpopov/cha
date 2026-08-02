@@ -5,6 +5,7 @@
 #include "session/session_database.h"
 #include "session/workspace.h"
 #include "support/test_backends.h"
+#include "support/test_controller.h"
 #include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
@@ -96,12 +97,12 @@ ControllerResult run_controller(
     try {
         test::TestNotifier notifier;
         start.arrive_and_wait();
-        auto controller = SessionController::from_backends_for_testing(
+        auto controller = test::from_backends_for_testing(
             test::one_backend(std::make_unique<DeterministicBackend>(
                 std::move(id), std::move(name), std::move(answer))),
             database_path,
             notifier);
-        (void)controller->submit_prompt(std::move(prompt));
+        (void)controller->submit_prompt("operator", std::move(prompt));
         while (controller->is_generating()) {
             const std::size_t observed = notifier.wake_count();
             (void)controller->receive();
@@ -134,18 +135,21 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     const std::filesystem::path root = parent / "workspace";
     const std::filesystem::path forum = root / "forums" / "forum";
     std::filesystem::create_directories(forum / "personas" / "agent");
+    std::filesystem::create_directories(root / "users" / "operator");
     {
         std::ofstream file(root / "app.toml");
         file << "host = \"127.0.0.1\"\nport = 8080\n[logging]\n"
              << "file = \"cha.log\"\nlevel = \"off\"\n";
     }
     std::ofstream(forum / "config.toml") << "display_name = \"Forum\"\n";
-    std::ofstream(forum / "USER.md") << "Forum prompt";
+    std::ofstream(forum / "FORUM.md") << "Forum prompt";
     std::ofstream(forum / "personas" / "agent" / "persona.toml")
-        << "display_name = \"Agent\"\nhost = \"127.0.0.1\"\nport = 9\n"
+        << "display_name = \"Worker\"\nhost = \"127.0.0.1\"\nport = 9\n"
         << "model = \"configured-model\"\n";
     std::ofstream(forum / "personas" / "agent" / "SYSTEM.md")
         << "System prompt";
+    std::ofstream(root / "users" / "operator" / "user.toml")
+        << "display_name = \"Reader\"\n";
     return {root, forum};
 }
 
@@ -210,7 +214,7 @@ TEST(ConcurrentControllers, ConstructSessionLocalCompletionClientsConcurrently) 
             definition.config.mode = Mode::net;
             definition.config.model = "configured-model";
             start.arrive_and_wait();
-            auto controller = SessionController::from_definitions_for_testing(
+            auto controller = test::from_definitions_for_testing(
                 {std::move(definition)}, path, notifier);
             controller->shutdown();
         } catch (...) {

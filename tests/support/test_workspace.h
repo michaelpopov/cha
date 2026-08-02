@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 namespace cha::test {
@@ -20,6 +21,10 @@ public:
         int port,
         std::string_view log_level = "off") const;
     void write_persona_config(std::string_view contents) const;
+    void add_user(
+        std::string_view id,
+        std::string_view display_name,
+        std::string_view prompt = "") const;
 
 private:
     std::filesystem::path root_;

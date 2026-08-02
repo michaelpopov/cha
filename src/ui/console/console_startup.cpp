@@ -31,6 +31,7 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     const char* const* argv) {
     ConsoleOptions options;
     bool session_selected = false;
+    bool user_selected = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--list-forums") {
@@ -40,6 +41,7 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
         } else if (argument == "--check") {
             options.check_forum = true;
         } else if (argument == "--forum"
+            || argument == "--user"
             || argument == "--session"
             || argument == "--new") {
             if (index + 1 >= argc) {
@@ -47,7 +49,10 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
                     "Missing value for " + std::string(argument));
             }
             const std::string value(argv[++index]);
-            if (argument == "--forum") {
+            if (argument == "--user") {
+                user_selected = true;
+                options.user = value;
+            } else if (argument == "--forum") {
                 options.forum = value;
             } else if (argument == "--session") {
                 session_selected = true;
@@ -74,6 +79,9 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
         }
     }
 
+    if (user_selected && (options.list_forums || options.list_sessions || options.check_forum)) {
+        return argument_error("--user is not accepted with listing or check modes");
+    }
     if (options.list_forums) {
         return options;
     }
@@ -101,6 +109,12 @@ std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     }
     if (options.check_forum) {
         return options;
+    }
+    if (user_selected && options.user.empty()) {
+        return argument_error("--user requires a user ID");
+    }
+    if (options.user.empty()) {
+        return argument_error("--user is required");
     }
     if (!session_selected && !options.new_label) {
         options.new_label = "";
