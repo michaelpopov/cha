@@ -28,6 +28,7 @@ using namespace std::chrono_literals;
 
 struct Calls {
     std::mutex mutex;
+    std::string user;
     std::string input;
     std::string agent;
     int stops{};
@@ -43,8 +44,9 @@ class RouteController final : public WebSessionController {
 public:
     explicit RouteController(std::shared_ptr<Calls> calls) : calls_(std::move(calls)) {}
 
-    SessionUpdate handle_raw_input(std::string_view, std::string input) override {
+    SessionUpdate handle_raw_input(std::string_view author_id, std::string input) override {
         std::unique_lock lock(calls_->mutex);
+        calls_->user = std::string(author_id);
         calls_->input = std::move(input);
         if (calls_->block_input) {
             calls_->input_entered = true;
@@ -187,6 +189,15 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
         server.client().Post(base + "/api/v1/input", R"({"user":"","text":"empty user"})", "application/json"),
         400,
         "bad_request");
+    const auto unknown_user = server.client().Post(
+        base + "/api/v1/input", R"({"user":"not-in-roster","text":"passes through"})", "application/json");
+    ASSERT_TRUE(unknown_user);
+    EXPECT_EQ(unknown_user->status, 200);
+    {
+        std::lock_guard lock(calls->mutex);
+        EXPECT_EQ(calls->user, "not-in-roster");
+        EXPECT_EQ(calls->input, "passes through");
+    }
     const auto stop = server.client().Post(base + "/api/v1/actions/stop", "{}", "application/json");
     ASSERT_TRUE(stop);
     EXPECT_EQ(stop->status, 200);
@@ -198,7 +209,8 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     EXPECT_EQ(json_body(agent), nlohmann::json({{"clear_input", false}}));
     {
         std::lock_guard lock(calls->mutex);
-        EXPECT_EQ(calls->input, "/@Guide");
+        EXPECT_EQ(calls->user, "not-in-roster");
+        EXPECT_EQ(calls->input, "passes through");
         EXPECT_EQ(calls->stops, 1);
         EXPECT_EQ(calls->agent, "guide");
     }

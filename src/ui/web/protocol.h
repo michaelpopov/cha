@@ -34,6 +34,14 @@ struct ForumSummary {
     bool operator==(const ForumSummary&) const = default;
 };
 
+// The lobby exposes identities only for browser-side attribution selection.
+// A session snapshot deliberately does not carry this workspace-wide roster.
+struct UserSummary {
+    std::string id;
+    std::string display_name;
+    bool operator==(const UserSummary&) const = default;
+};
+
 struct SessionListing {
     std::string id;
     std::string label;
@@ -179,6 +187,7 @@ std::string_view to_string(ShutdownReason value);
 std::string_view to_string(ErrorCode value);
 
 void to_json(nlohmann::json& json, const ForumSummary& value);
+void to_json(nlohmann::json& json, const UserSummary& value);
 void to_json(nlohmann::json& json, const SessionListing& value);
 void to_json(nlohmann::json& json, const PersonaSummary& value);
 void to_json(nlohmann::json& json, const TranscriptEntry& value);

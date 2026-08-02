@@ -69,6 +69,9 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json(ForumSummary{"forum", "Forum"}),
         nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}}));
     EXPECT_EQ(
+        nlohmann::json(UserSummary{"reader", "Reader"}),
+        nlohmann::json({{"display_name", "Reader"}, {"id", "reader"}}));
+    EXPECT_EQ(
         nlohmann::json(SessionListing{"s1", "Notes", true}),
         nlohmann::json({{"id", "s1"}, {"label", "Notes"}, {"live", true}}));
     EXPECT_EQ(

@@ -616,6 +616,45 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     }
 }
 
+TEST(WebServerProcess, InputAuthorReachesTheLiveTranscript) {
+    test::TestWorkspace workspace;
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    workspace.write_app_config(port);
+    test::WebServerProcess server(workspace.root(), port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    httplib::Client client = web_client(port);
+    const std::string id = create_session(client, "Attributed");
+    ASSERT_FALSE(id.empty());
+    const std::string path = open_session(client, id);
+    ASSERT_FALSE(path.empty());
+    const auto submitted = client.Post(
+        path + "api/v1/input",
+        R"({"user":"reader","text":"Who wrote this?"})",
+        "application/json");
+    ASSERT_TRUE(submitted);
+    ASSERT_EQ(submitted->status, 200) << submitted->body;
+
+    const auto snapshot = client.Get(path + "api/v1/session");
+    ASSERT_TRUE(snapshot);
+    ASSERT_EQ(snapshot->status, 200) << snapshot->body;
+    const nlohmann::json transcript =
+        nlohmann::json::parse(snapshot->body).at("transcript");
+    const auto human = std::find_if(
+        transcript.begin(), transcript.end(), [](const nlohmann::json& entry) {
+            return entry.at("kind") == "human";
+        });
+    ASSERT_NE(human, transcript.end());
+    EXPECT_EQ(human->at("participant_id"), "reader");
+    EXPECT_EQ(human->at("display_name"), "Reader");
+    EXPECT_EQ(human->at("text"), "Who wrote this?");
+
+    const test::ProcessExit stopped = server.stop(SIGINT);
+    EXPECT_FALSE(stopped.timed_out) << server.errors();
+    EXPECT_EQ(stopped.exit_code, 0) << server.errors();
+}
+
 TEST(WebServerProcess, RestartReopensLeasesAfterCleanAndForcedExit) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
