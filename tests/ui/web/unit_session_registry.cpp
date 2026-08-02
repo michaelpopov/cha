@@ -20,7 +20,7 @@ using namespace std::chrono_literals;
 
 class IdleController final : public WebSessionController {
 public:
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
@@ -88,7 +88,7 @@ thread_local ThreadExitBlocker thread_exit_blocker;
 class GatedShutdownController final : public WebSessionController {
 public:
     explicit GatedShutdownController(ShutdownGate& gate) : gate_(gate) {}
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
@@ -105,7 +105,7 @@ public:
         : lease_held_(lease_held) {}
     ~LeaseTrackingController() override { lease_held_ = false; }
 
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
@@ -549,7 +549,7 @@ TEST(SessionRegistry, ShutdownAtCommitNeverPublishesAndTearsDownNewController) {
                 std::promise<void>& shutdown_complete)
                 : shutdowns_(shutdowns), shutdown_complete_(shutdown_complete) {}
 
-            SessionUpdate handle_raw_input(std::string) override { return {}; }
+            SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
             SessionUpdate request_stop() override { return {}; }
             SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
             SessionEventBatch receive(std::size_t) override { return {}; }

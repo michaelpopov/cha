@@ -43,7 +43,7 @@ class RouteController final : public WebSessionController {
 public:
     explicit RouteController(std::shared_ptr<Calls> calls) : calls_(std::move(calls)) {}
 
-    SessionUpdate handle_raw_input(std::string input) override {
+    SessionUpdate handle_raw_input(std::string_view, std::string input) override {
         std::unique_lock lock(calls_->mutex);
         calls_->input = std::move(input);
         if (calls_->block_input) {

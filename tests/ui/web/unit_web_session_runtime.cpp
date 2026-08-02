@@ -33,6 +33,7 @@ struct FakeState {
     std::condition_variable release;
     std::thread::id owner_id;
     std::vector<std::string> raw_inputs;
+    std::vector<std::string> raw_authors;
     std::vector<std::string> default_ids;
     std::vector<std::size_t> raw_counts_at_receive;
     std::vector<int> receives_at_raw_input;
@@ -120,10 +121,13 @@ public:
         state_->entered.notify_all();
     }
 
-    SessionUpdate handle_raw_input(std::string input) override {
+    SessionUpdate handle_raw_input(
+        std::string_view author_id,
+        std::string input) override {
         std::unique_lock lock(state_->mutex);
         check_owner();
         state_->raw_inputs.push_back(std::move(input));
+        state_->raw_authors.emplace_back(author_id);
         state_->receives_at_raw_input.push_back(state_->receives);
         state_->raw_entered = true;
         state_->entered.notify_all();
@@ -384,6 +388,7 @@ TestControllerFactory real_factory(const std::filesystem::path& path) {
         SessionRestore restore = load_session_state(path);
         return adapt_session_controller(SessionController::from_definitions(
             {test_definition()},
+            UserRoster{{.id = "reader", .display_name = "Reader"}},
             path,
             std::move(lease),
             notifier,
@@ -526,6 +531,7 @@ TEST(WebSessionRuntime, RoutesRawAndTypedCommandsOnOneOwnerThread) {
 
     std::lock_guard lock(state->mutex);
     EXPECT_EQ(state->raw_inputs, std::vector<std::string>({"/clear"}));
+    EXPECT_EQ(state->raw_authors, std::vector<std::string>({"reader"}));
     EXPECT_EQ(state->stops, 1);
     EXPECT_EQ(state->default_ids, std::vector<std::string>({"stable-id"}));
     EXPECT_NE(state->owner_id, std::this_thread::get_id());
@@ -1474,7 +1480,7 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     EXPECT_EQ(before.personas, std::vector<PersonaSummary>({{"guide", "Guide"}}));
     ASSERT_EQ(before.transcript.size(), 1U);
     EXPECT_EQ(before.transcript.front().text, "before");
-    EXPECT_TRUE(adapted->handle_raw_input("/clear").render_needed);
+    EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").render_needed);
     const SessionSnapshot after = adapted->snapshot();
     EXPECT_TRUE(after.transcript.empty());
     EXPECT_EQ(before.transcript.front().text, "before");

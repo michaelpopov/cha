@@ -12,6 +12,7 @@ namespace {
 
 SessionUpdate handle_multicast_input(
     SessionController& controller,
+    std::string_view author_id,
     std::string_view argument) {
     SessionUpdate update{.clear_input = true};
     MulticastParseResult parsed = parse_multicast_input(argument);
@@ -22,6 +23,7 @@ SessionUpdate handle_multicast_input(
 
     MulticastInput input = std::get<MulticastInput>(std::move(parsed));
     SessionUpdate started = controller.start_multicast(
+        author_id,
         std::move(input.text), std::move(input.handles));
     started.clear_input = started.clear_input || update.clear_input;
     return started;
@@ -31,6 +33,7 @@ SessionUpdate handle_multicast_input(
 
 SessionUpdate handle_text_input(
     SessionController& controller,
+    std::string_view author_id,
     std::string input) {
     SessionUpdate update;
     if (input.empty()) {
@@ -49,11 +52,12 @@ SessionUpdate handle_text_input(
     if (command.kind == CommandKind::text) {
         AddressedPrompt prompt = parse_addressed_prompt(input);
         return controller.submit_prompt(
+            author_id,
             std::move(prompt.text),
             std::move(prompt.handle));
     }
     if (command.kind == CommandKind::mcast) {
-        return handle_multicast_input(controller, command.argument);
+        return handle_multicast_input(controller, author_id, command.argument);
     }
     if (!command.argument.empty() && command.kind != CommandKind::unknown) {
         update.clear_input = true;

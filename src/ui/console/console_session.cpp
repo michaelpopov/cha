@@ -141,7 +141,7 @@ void ConsoleSession::pump() {
         && !controller_.is_generating()) {
         std::string line = std::move(queue_.front());
         queue_.pop_front();
-        apply(handle_text_input(controller_, std::move(line)));
+        apply(handle_text_input(controller_, options_.author_id, std::move(line)));
     }
 }
 

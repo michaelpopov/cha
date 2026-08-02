@@ -356,14 +356,14 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
             std::move(definitions),
             session.path,
             notifier());
-        (void)handle_text_input(*controller, "First question");
+        (void)handle_text_input(*controller, "operator", "First question");
         run_until_idle(*controller);
         const std::vector<TranscriptEntry> live =
             copy_entries(controller->transcript());
         ASSERT_EQ(live.size(), 2U);
         EXPECT_EQ(live.back().text, "First answer");
 
-        (void)handle_text_input(*controller, "Second question");
+        (void)handle_text_input(*controller, "operator", "Second question");
         run_until_idle(*controller);
     }
     server.join();
@@ -398,7 +398,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
         std::move(definitions),
         session.path,
         notifier());
-    (void)handle_text_input(*controller, "Question");
+    (void)handle_text_input(*controller, "operator", "Question");
     run_until_idle(*controller);
     server.join();
 
@@ -429,13 +429,13 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
             std::move(definitions),
             session.path,
             notifier());
-        (void)handle_text_input(*controller, "Visible question");
+        (void)handle_text_input(*controller, "operator", "Visible question");
         run_until_idle(*controller);
-        EXPECT_TRUE(handle_text_input(*controller, "/hide-on").render_needed);
-        (void)handle_text_input(*controller, "Hidden question");
+        EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide-on").render_needed);
+        (void)handle_text_input(*controller, "operator", "Hidden question");
         run_until_idle(*controller);
-        EXPECT_TRUE(handle_text_input(*controller, "/hide").render_needed);
-        (void)handle_text_input(*controller, "Current question");
+        EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide").render_needed);
+        (void)handle_text_input(*controller, "operator", "Current question");
         run_until_idle(*controller);
     }
     server.join();
@@ -484,12 +484,12 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
             controller->personas(), controller->transcript().view()));
 
         // No mention: the first persona directory in name order answers.
-        SessionUpdate update = handle_text_input(*controller, "Who are you?");
+        SessionUpdate update = handle_text_input(*controller, "operator", "Who are you?");
         ASSERT_TRUE(update.clear_input);
         run_until_idle(*controller);
 
         // An addressed prompt reaches the mentioned agent instead.
-        update = handle_text_input(*controller, "@Ismael, and you?");
+        update = handle_text_input(*controller, "operator", "@Ismael, and you?");
         ASSERT_TRUE(update.clear_input);
         run_until_idle(*controller);
     }
@@ -555,11 +555,11 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
             std::move(definitions), session.path,
             notifier());
         const SessionUpdate multicast =
-            handle_text_input(*controller, "/mcast What time is it?");
+            handle_text_input(*controller, "operator", "/mcast What time is it?");
         ASSERT_TRUE(multicast.clear_input);
         run_until_idle(*controller);
 
-        (void)handle_text_input(*controller, "What did the panel say?");
+        (void)handle_text_input(*controller, "operator", "What did the panel say?");
         run_until_idle(*controller);
     }
     cheburashka_server.join();
@@ -610,9 +610,9 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
             std::move(definitions),
             session.path,
             notifier());
-        (void)handle_text_input(*controller, "Who are you?");
+        (void)handle_text_input(*controller, "operator", "Who are you?");
         run_until_idle(*controller);
-        (void)handle_text_input(*controller, "@Ismael and you?");
+        (void)handle_text_input(*controller, "operator", "@Ismael and you?");
         run_until_idle(*controller);
     }
     cheburashka_server.join();
@@ -632,10 +632,10 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
         reopened->personas(), reopened->transcript().view()))
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
-        handle_text_input(*reopened, "@Cheburashka are you there?").notice,
+        handle_text_input(*reopened, "operator", "@Cheburashka are you there?").notice,
         "Unknown agent @Cheburashka. Personas in this forum: @Ismael");
 
-    (void)handle_text_input(*reopened, "What did he say?");
+    (void)handle_text_input(*reopened, "operator", "What did he say?");
     run_until_idle(*reopened);
     ismael_server.join();
 

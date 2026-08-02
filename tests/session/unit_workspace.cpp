@@ -35,6 +35,7 @@ protected:
                    std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(
             root_ / "forums" / "lobby" / "personas" / "guide");
+        std::filesystem::create_directories(root_ / "users" / "operator");
         {
             std::ofstream app_config(root_ / "app.toml");
             app_config << "host = \"127.0.0.1\"\n"
@@ -68,6 +69,8 @@ protected:
                 root_ / "forums" / "lobby" / "personas" / "guide" / "SYSTEM.md");
             system_prompt << "Persona instructions";
         }
+        std::ofstream(root_ / "users" / "operator" / "user.toml")
+            << "display_name = \"Reader\"\n";
     }
 
     void TearDown() override {
@@ -89,6 +92,7 @@ TEST_F(ApplicationWorkspaceTest, ListsForumsAndSessionsAsApplicationValues) {
 }
 
 TEST_F(ApplicationWorkspaceTest, UserLoadingDoesNotChangeWorkspaceConstruction) {
+    std::filesystem::remove_all(root_ / "users");
     Workspace workspace(root_);
 
     EXPECT_THROW((void)workspace.load_users(), std::runtime_error);

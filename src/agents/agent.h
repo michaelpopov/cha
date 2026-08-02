@@ -49,6 +49,7 @@ using SharedCompletionHistory =
 struct RunSpec {
     RequestId request_id{};
     PersonaInfo target;
+    EntryIdentity author;
     std::string prompt_text;
 };
 

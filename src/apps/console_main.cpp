@@ -115,6 +115,7 @@ int main_internal(int argc, const char* const* argv) {
         controller,
         emitter,
         {
+            .author_id = options.user,
             .show_prompt = input_is_tty,
             .backpressure_stdin = !input_is_tty,
         });

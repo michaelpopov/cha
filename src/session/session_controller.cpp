@@ -2,6 +2,7 @@
 
 #include "util/logging.h"
 
+#include <algorithm>
 #include <exception>
 #include <limits>
 #include <sstream>
@@ -54,6 +55,10 @@ ForumPersonas make_forum_personas(
     return ForumPersonas(std::move(personas));
 }
 
+UserRoster default_test_users() {
+    return {{.id = "operator", .display_name = "Operator"}};
+}
+
 void merge_update(SessionUpdate& all, SessionUpdate one) {
     all.render_needed = all.render_needed || one.render_needed;
     all.end_session = all.end_session || one.end_session;
@@ -103,6 +108,7 @@ void require_agent_count(std::size_t count) {
 
 std::unique_ptr<SessionController> SessionController::from_definitions(
     std::vector<AgentDefinition> definitions,
+    UserRoster users,
     std::filesystem::path database_path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -114,8 +120,25 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
     }
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
+        std::move(users),
         std::move(database_path),
         std::move(lease),
+        notifier,
+        std::move(restored)));
+}
+
+std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
+    std::vector<AgentDefinition> definitions,
+    UserRoster users,
+    std::filesystem::path database_path,
+    WakeNotifier& notifier,
+    SessionRestore restored) {
+    require_agent_count(definitions.size());
+    return std::unique_ptr<SessionController>(new SessionController(
+        std::move(definitions),
+        std::move(users),
+        std::move(database_path),
+        SessionLease::inactive_for_testing(),
         notifier,
         std::move(restored)));
 }
@@ -125,13 +148,29 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored) {
-    require_agent_count(definitions.size());
-    return std::unique_ptr<SessionController>(new SessionController(
+    return from_definitions_for_testing(
         std::move(definitions),
+        default_test_users(),
         std::move(database_path),
-        SessionLease::inactive_for_testing(),
         notifier,
-        std::move(restored)));
+        std::move(restored));
+}
+
+std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
+    std::vector<std::unique_ptr<CompletionBackend>> backends,
+    UserRoster users,
+    std::filesystem::path database_path,
+    WakeNotifier& notifier,
+    SessionRestore restored,
+    ActivationHook before_activation) {
+    require_agent_count(backends.size());
+    return std::unique_ptr<SessionController>(new SessionController(
+        std::move(backends),
+        std::move(users),
+        std::move(database_path),
+        notifier,
+        std::move(restored),
+        std::move(before_activation)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
@@ -140,17 +179,18 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     WakeNotifier& notifier,
     SessionRestore restored,
     ActivationHook before_activation) {
-    require_agent_count(backends.size());
-    return std::unique_ptr<SessionController>(new SessionController(
+    return from_backends_for_testing(
         std::move(backends),
+        default_test_users(),
         std::move(database_path),
         notifier,
         std::move(restored),
-        std::move(before_activation)));
+        std::move(before_activation));
 }
 
 SessionController::SessionController(
     std::vector<AgentDefinition> definitions,
+    UserRoster users,
     std::filesystem::path path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -160,12 +200,14 @@ SessionController::SessionController(
       worker_pool_(definitions.size()),
       registry_(std::move(definitions), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),
+      users_(std::move(users)),
       default_agent_id_(personas_.first().id) {
     initialize(std::move(restored));
 }
 
 SessionController::SessionController(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
+    UserRoster users,
     std::filesystem::path path,
     WakeNotifier& notifier,
     SessionRestore restored,
@@ -175,6 +217,7 @@ SessionController::SessionController(
       worker_pool_(backends.size()),
       registry_(std::move(backends), notifier, worker_pool_),
       personas_(make_forum_personas(registry_.runtime_info())),
+      users_(std::move(users)),
       default_agent_id_(personas_.first().id),
       before_activation_(std::move(before_activation)) {
     initialize(std::move(restored));
@@ -254,6 +297,7 @@ SessionUpdate SessionController::busy_notice() const {
 }
 
 SessionUpdate SessionController::submit_prompt(
+    std::string_view author_id,
     std::string text,
     std::string handle) {
     if (busy()) {
@@ -289,6 +333,7 @@ SessionUpdate SessionController::submit_prompt(
             transcript_.completion_history());
     update.clear_input = true;
     start_batch(
+        author_id,
         std::move(text),
         std::vector<PersonaInfo>{*target},
         std::move(history),
@@ -297,6 +342,7 @@ SessionUpdate SessionController::submit_prompt(
 }
 
 void SessionController::start_batch(
+    std::string_view author_id,
     std::string text,
     std::vector<PersonaInfo> targets,
     SharedCompletionHistory history,
@@ -304,6 +350,14 @@ void SessionController::start_batch(
     if (!history || targets.empty()) {
         throw std::invalid_argument(
             "Response batch requires history and at least one target");
+    }
+    const auto author = std::find_if(
+        users_.begin(), users_.end(),
+        [author_id](const User& user) { return user.id == author_id; });
+    if (author == users_.end()) {
+        update.clear_input = false;
+        update.notice = "Unknown user ID '" + std::string(author_id) + "'";
+        return;
     }
     ResponseBatch batch{
         .history = std::move(history),
@@ -313,6 +367,7 @@ void SessionController::start_batch(
         batch.runs.push_back({
             .request_id = next_request_id_++,
             .target = std::move(target),
+            .author = {.id = author->id, .display_name = author->display_name},
             .prompt_text = text,
         });
     }
@@ -352,7 +407,7 @@ void SessionController::activate_current_run(SessionUpdate& update) {
     const RunSpec& run = batch_->runs[batch_->foreground_index];
     TranscriptEntry prompt = make_human_entry(
         next_entry_id_++,
-        {"human", "You"}, // Block 5 replaces this with run.author.
+        run.author,
         {run.target.id, run.target.name},
         run.prompt_text,
         run.request_id);
@@ -556,6 +611,7 @@ SessionUpdate SessionController::restore_offrecord() {
 }
 
 SessionUpdate SessionController::start_multicast(
+    std::string_view author_id,
     std::string text,
     std::vector<std::string> handles) {
     if (busy()) {
@@ -574,20 +630,22 @@ SessionUpdate SessionController::start_multicast(
         }
         ids.push_back(resolution.persona->id);
     }
-    return start_multicast_from_ids(std::move(text), std::move(ids));
+    return start_multicast_from_ids(author_id, std::move(text), std::move(ids));
 }
 
 SessionUpdate SessionController::start_multicast_by_ids(
+    std::string_view author_id,
     std::string text,
     std::vector<ParticipantId> ids) {
     if (busy()) {
         return busy_notice();
     }
 
-    return start_multicast_from_ids(std::move(text), std::move(ids));
+    return start_multicast_from_ids(author_id, std::move(text), std::move(ids));
 }
 
 SessionUpdate SessionController::start_multicast_from_ids(
+    std::string_view author_id,
     std::string text,
     std::vector<ParticipantId> ids) {
     std::vector<PersonaInfo> targets;
@@ -607,10 +665,11 @@ SessionUpdate SessionController::start_multicast_from_ids(
             targets.push_back(*target);
         }
     }
-    return start_resolved_multicast(std::move(text), std::move(targets));
+    return start_resolved_multicast(author_id, std::move(text), std::move(targets));
 }
 
 SessionUpdate SessionController::start_resolved_multicast(
+    std::string_view author_id,
     std::string text,
     std::vector<PersonaInfo> targets) {
     if (text.empty()) {
@@ -634,6 +693,7 @@ SessionUpdate SessionController::start_resolved_multicast(
 
     SessionUpdate update{.clear_input = true};
     start_batch(
+        author_id,
         std::move(text),
         std::move(targets),
         std::move(history),

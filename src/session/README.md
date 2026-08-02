@@ -302,12 +302,12 @@ read-only state, and commands that return `SessionUpdate` side effects.
 
 | Command | Behavior | Update |
 | --- | --- | --- |
-| `submit_prompt(text, handle)` | Resolves the handle, or falls back to the default agent, and starts a turn. | On success `clear_input` + `render_needed`; on an unknown or ambiguous handle, or an empty prompt, only a notice — the draft text is left in the editor. |
+| `submit_prompt(author_id, text, handle)` | Resolves the author against the session roster, then resolves the handle or falls back to the default agent and starts a turn. | On success `clear_input` + `render_needed`; an unknown author produces `Unknown user ID '<id>'` and starts no batch, leaving the draft in the editor; unknown or ambiguous handles and an empty prompt likewise return only a notice and retain the draft. |
 | `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success `render_needed` + `clear_input` and no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
-| `start_multicast(text, handles)` / `start_multicast_by_ids(text, ids)` | Resolves textual handles or stable IDs once, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Starts the staged batch; terminal notices are retained until multicast completion or abort cleanup. |
+| `start_multicast(author_id, text, handles)` / `start_multicast_by_ids(author_id, text, ids)` | Resolves textual handles or stable IDs once, resolves the author against the session roster, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | An unknown author starts no batch; terminal notices are retained until multicast completion or abort cleanup. |
 | `session_information()` | Entry count plus the forum personas and their runtime details. | `render_needed`, `clear_input`, notice. |
 | `agent_information()` | Forum personas and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
 | `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |

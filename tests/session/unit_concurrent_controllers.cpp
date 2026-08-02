@@ -101,7 +101,7 @@ ControllerResult run_controller(
                 std::move(id), std::move(name), std::move(answer))),
             database_path,
             notifier);
-        (void)controller->submit_prompt(std::move(prompt));
+        (void)controller->submit_prompt("operator", std::move(prompt));
         while (controller->is_generating()) {
             const std::size_t observed = notifier.wake_count();
             (void)controller->receive();
@@ -134,6 +134,7 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     const std::filesystem::path root = parent / "workspace";
     const std::filesystem::path forum = root / "forums" / "forum";
     std::filesystem::create_directories(forum / "personas" / "agent");
+    std::filesystem::create_directories(root / "users" / "operator");
     {
         std::ofstream file(root / "app.toml");
         file << "host = \"127.0.0.1\"\nport = 8080\n[logging]\n"
@@ -146,6 +147,8 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
         << "model = \"configured-model\"\n";
     std::ofstream(forum / "personas" / "agent" / "SYSTEM.md")
         << "System prompt";
+    std::ofstream(root / "users" / "operator" / "user.toml")
+        << "display_name = \"Reader\"\n";
     return {root, forum};
 }
 

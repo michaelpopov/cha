@@ -2,6 +2,7 @@
 
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
+#include "agents/user.h"
 #include "session/generation_status.h"
 #include "session/forum_personas.h"
 #include "session/session_database.h"
@@ -36,6 +37,7 @@ public:
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions(
         std::vector<AgentDefinition> definitions,
+        UserRoster users,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
@@ -44,11 +46,26 @@ public:
     // claim a fixture database's production lease.
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
         std::vector<AgentDefinition> definitions,
+        UserRoster users,
+        std::filesystem::path database_path,
+        WakeNotifier& notifier,
+        SessionRestore restored = {});
+    // Focused tests that do not exercise attribution use one stable fixture
+    // author; attribution tests pass an explicit roster through the overload.
+    [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
+        std::vector<AgentDefinition> definitions,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {});
     // Test-only construction and activation fault injection. These seams live
     // here because the otherwise private controller owns both dependencies.
+    [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
+        std::vector<std::unique_ptr<CompletionBackend>> backends,
+        UserRoster users,
+        std::filesystem::path database_path,
+        WakeNotifier& notifier,
+        SessionRestore restored = {},
+        ActivationHook before_activation = {});
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         std::filesystem::path database_path,
@@ -71,6 +88,7 @@ public:
     // --- Session commands (mutate, then report UI side effects) ---------------
     // Return value carries render/end/clear/notice side effects the UI must apply.
     [[nodiscard]] SessionUpdate submit_prompt(
+        std::string_view author_id,
         std::string text,
         std::string handle = {});
     [[nodiscard]] SessionUpdate clear_transcript();
@@ -80,11 +98,13 @@ public:
     // Text frontends submit handles; resolution and all target validation stay
     // here with the forum's authoritative persona set.
     [[nodiscard]] SessionUpdate start_multicast(
+        std::string_view author_id,
         std::string text,
         std::vector<std::string> handles);
     // Programmatic clients, including the future HTTP API, submit stable
     // persona IDs rather than user-facing handles.
     [[nodiscard]] SessionUpdate start_multicast_by_ids(
+        std::string_view author_id,
         std::string text,
         std::vector<ParticipantId> ids);
     [[nodiscard]] SessionUpdate session_information();
@@ -118,12 +138,14 @@ private:
 
     SessionController(
         std::vector<AgentDefinition> definitions,
+        UserRoster users,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
         SessionRestore restored);
     SessionController(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
+        UserRoster users,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored,
@@ -133,14 +155,17 @@ private:
     bool busy() const noexcept;
     SessionUpdate busy_notice() const;
     void start_batch(
+        std::string_view author_id,
         std::string text,
         std::vector<PersonaInfo> targets,
         SharedCompletionHistory history,
         SessionUpdate& update);
     [[nodiscard]] SessionUpdate start_resolved_multicast(
+        std::string_view author_id,
         std::string text,
         std::vector<PersonaInfo> targets);
     [[nodiscard]] SessionUpdate start_multicast_from_ids(
+        std::string_view author_id,
         std::string text,
         std::vector<ParticipantId> ids);
     void activate_current_run(SessionUpdate& update);
@@ -174,6 +199,7 @@ private:
     ThreadPool worker_pool_;
     AgentRegistry registry_;
     ForumPersonas personas_;
+    UserRoster users_;
     ParticipantId default_agent_id_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};

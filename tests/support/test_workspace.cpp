@@ -33,6 +33,7 @@ TestWorkspace::TestWorkspace()
            "model = \"fake\"\n";
     write_persona_config("display_name = \"Guide\"\n");
     std::ofstream(persona / "SYSTEM.md") << "Persona instructions\n";
+    add_user("reader", "Reader");
 }
 
 TestWorkspace::~TestWorkspace() {

@@ -32,7 +32,7 @@ test::TestNotifier& notifier() {
 }
 
 User selected_user() {
-    return {.id = "reader", .display_name = "Reader", .prompt = ""};
+    return {.id = "operator", .display_name = "Operator", .prompt = ""};
 }
 
 // Removes one temporary session database when a controller test leaves scope.

@@ -155,7 +155,7 @@ void UserSession::submit_input() {
     }
 
     const std::string input = editor_.value();
-    apply_update(handle_text_input(controller_, input));
+    apply_update(handle_text_input(controller_, user_.id, input));
 }
 
 void UserSession::request_stop() {

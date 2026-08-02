@@ -439,6 +439,7 @@ std::unique_ptr<SessionController> Workspace::open_session(
     log_info("Session opened");
     return SessionController::from_definitions(
         std::move(definitions),
+        load_users(),
         database_path,
         std::move(lease),
         notifier,

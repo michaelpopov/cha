@@ -160,7 +160,7 @@ private:
 class PermanentlyBlockedShutdownController final
     : public WebSessionController {
 public:
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
@@ -216,7 +216,7 @@ private:
 
 class IdleController final : public WebSessionController {
 public:
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
@@ -332,7 +332,7 @@ public:
     explicit LargeSnapshotController(std::size_t text_size)
         : text_(text_size, 'x') {}
 
-    SessionUpdate handle_raw_input(std::string) override { return {}; }
+    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
     SessionUpdate request_stop() override { return {}; }
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
