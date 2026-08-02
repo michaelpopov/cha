@@ -284,7 +284,7 @@ TEST(ConsoleSession, EmitsRestoredHistoryBeforeWaiting) {
     TemporaryJournal journal;
     SessionRestore restored{
         .entries = {
-            make_human_entry(1, "guide", "Guide", "Earlier"),
+            make_human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Earlier"),
             make_agent_entry(
                 2,
                 "guide",
@@ -632,7 +632,7 @@ TEST(ConsoleSession, ReportsWaitAndFlushFailures) {
     TemporaryJournal flush_journal;
     SessionRestore restored{
         .entries = {
-            make_human_entry(1, "guide", "Guide", "Undelivered"),
+            make_human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Undelivered"),
         },
         .next_entry_id = 2,
     };

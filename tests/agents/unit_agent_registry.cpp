@@ -489,7 +489,7 @@ TEST(AgentRegistry, CancellationAfterGateOpenSkipsBackendPreparation) {
 TEST(AgentRegistry, PreservesCapturedHistoryForEveryExecution) {
     Transcript transcript;
     transcript.add_entry(make_human_entry(
-        1, "one-id", "One", "Earlier question", 1));
+        1, {"human", "You"}, {"one-id", "One"}, "Earlier question", 1));
     ThreadPool pool(2);
     auto one = std::make_unique<RecordingBackend>("one-id", "One", "");
     auto two = std::make_unique<RecordingBackend>("two-id", "Two", "");

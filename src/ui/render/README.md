@@ -8,11 +8,11 @@ does not know about curses, screen dimensions, descriptors, or output streams.
 select `normal`, `bold`, `dim`, or `bold_dim` attributes and write text.
 `write_transcript_entry()`, `write_active_response()`, and
 `write_transcript_suffix()` then produce the same labels and styling in either
-frontend. `show_addressing()` enables `[You → Name]` labels for multi-agent
+frontend. `show_addressing()` enables `[Author → Name]` labels for multi-agent
 forums and for restored history involving agents no longer in the forum.
 
-Human and error entries have fixed labels, while agent and notice entries are
-labelled with their own `display_name`. That is what lets the off-record markers
+Human, agent, and notice entries are labelled with their own `display_name`;
+error entries have a fixed label. That is what lets the off-record markers
 render as `[hide-on]`, `[hide]`, and `[hide-off]` while ordinary notices stay
 `[System]`. An entry with empty text also drops the trailing separator after its
 label, so a marker is exactly its bracketed name and nothing more.

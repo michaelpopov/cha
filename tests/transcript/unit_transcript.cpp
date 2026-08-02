@@ -104,7 +104,21 @@ TranscriptEntry human(
     std::string text,
     std::optional<RequestId> request_id = std::nullopt) {
     return make_human_entry(
-        id, "reviewer-id", "Reviewer", std::move(text), request_id);
+        id, {"human", "You"}, {"reviewer-id", "Reviewer"}, std::move(text), request_id);
+}
+
+TEST(Transcript, HumanEntryKeepsAuthorAndAddresseeIdentitiesSeparate) {
+    const TranscriptEntry entry = make_human_entry(
+        7,
+        {"engineer", "Engineer"},
+        {"guide-id", "Guide"},
+        "Question",
+        11);
+
+    EXPECT_EQ(entry.participant_id, "engineer");
+    EXPECT_EQ(entry.display_name, "Engineer");
+    EXPECT_EQ(entry.addressed_to, "guide-id");
+    EXPECT_EQ(entry.addressed_to_name, "Guide");
 }
 
 TEST(Transcript, StoresTypedCompleteAndStreamingEntries) {
@@ -530,7 +544,7 @@ TEST(SessionJournal, RecognizesAnInterruptedTypedTurn) {
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
     const TranscriptEntry prompt =
-        make_human_entry(5, "guide-id", "Guide", "Pending", 12);
+        make_human_entry(5, {"human", "You"}, {"guide-id", "Guide"}, "Pending", 12);
     journal->start_turn(12, prompt);
 
     const SessionRestore restored = load_session_state(path);
@@ -616,7 +630,7 @@ TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
     const auto path = temporary_path("cha_addressed_round_trip_");
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
-    journal->start_turn(1, make_human_entry(1, "ismael", "Ismael", "And you?", 1));
+    journal->start_turn(1, make_human_entry(1, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 1));
     journal->complete_turn(1, make_agent_entry(
         2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1));
 
@@ -742,11 +756,11 @@ TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
     create_test_database(path);
     {
         SessionJournal journal(path);
-        journal.start_turn(1, make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1));
+        journal.start_turn(1, make_human_entry(1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "Who are you?", 1));
         journal.complete_turn(1, make_agent_entry(
             2, "cheburashka", "Cheburashka", "I am Cheburashka.",
             EntryStatus::complete, 1));
-        journal.start_turn(2, make_human_entry(3, "ismael", "Ismael", "And you?", 2));
+        journal.start_turn(2, make_human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 2));
     }
 
     const SessionRestore restored = load_session_state(path);
@@ -766,11 +780,11 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
     create_test_database(path);
     {
         SessionJournal journal(path);
-        journal.start_turn(1, make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1));
+        journal.start_turn(1, make_human_entry(1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "Who are you?", 1));
         journal.complete_turn(1, make_agent_entry(
             2, "cheburashka", "Cheburashka", "I am Cheburashka.",
             EntryStatus::complete, 1));
-        journal.start_turn(2, make_human_entry(3, "ismael", "Ismael", "And you?", 2));
+        journal.start_turn(2, make_human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 2));
         journal.complete_turn(2, make_agent_entry(
             4, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 2));
     }

@@ -44,11 +44,8 @@ CompletionInput client_request(
         },
     };
     transcript.add_entry(make_human_entry(
-        1000 + request_id,
-        "assistant",
-        "Assistant",
-        input.run.prompt_text,
-        request_id));
+        1000 + request_id, {"human", "You"}, {"assistant", "Assistant"},
+        input.run.prompt_text, request_id));
     return input;
 }
 
@@ -210,7 +207,7 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
     Transcript transcript;
     const CompletionInput request = client_request(
         transcript, 7, "Question", {
-            make_human_entry(1, "assistant", "Assistant", "Earlier question", 6),
+            make_human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier question", 6),
             make_agent_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 6),
             make_notice_entry(3, "hidden"),
             make_agent_entry(4, "other", "Other", "Other answer", EntryStatus::complete, 6),

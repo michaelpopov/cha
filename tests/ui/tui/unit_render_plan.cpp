@@ -13,10 +13,7 @@ namespace {
 
 TranscriptEntry human(EntryId id, std::string text) {
     return make_human_entry(
-        id,
-        "guide-id",
-        "Guide",
-        std::move(text));
+        id, {"human", "You"}, {"guide-id", "Guide"}, std::move(text));
 }
 
 TranscriptEntry agent(EntryId id, std::string text) {

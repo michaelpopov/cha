@@ -30,10 +30,10 @@ std::vector<AgentMessage> context(
 TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "reviewer-id", "Reviewer", "Draft an answer", 1),
+            make_human_entry(1, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Draft an answer", 1),
             make_agent_entry(
                 2, "writer-id", "You", "Initial draft", EntryStatus::complete, 1),
-            make_human_entry(3, "reviewer-id", "Reviewer", "Review it", 2),
+            make_human_entry(3, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Review it", 2),
             make_agent_entry(
                 4, "reviewer-id", "System", "Looks good", EntryStatus::complete, 2),
         },
@@ -55,10 +55,10 @@ TEST(AgentContext, ProjectsRolesFromKindsAndStableParticipantIds) {
 TEST(AgentContext, OmitsNoticesErrorsFailedPromptsAndIncompleteAgentEntries) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "reviewer-id", "Reviewer", "Failed request", 7),
+            make_human_entry(1, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Failed request", 7),
             make_error_entry(2, "unavailable", 7, "reviewer-id"),
             make_notice_entry(3, "Model information"),
-            make_human_entry(4, "reviewer-id", "Reviewer", "Current request", 8),
+            make_human_entry(4, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Current request", 8),
             make_agent_entry(
                 5, "reviewer-id", "Reviewer", "Stopped", EntryStatus::cancelled, 8),
             make_agent_entry(
@@ -74,12 +74,12 @@ TEST(AgentContext, OmitsNoticesErrorsFailedPromptsAndIncompleteAgentEntries) {
 
 TEST(AgentContext, OmitsTheClosedOffrecordSpan) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "assistant", "Assistant", "Before", 1),
+        make_human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Before", 1),
         make_hide_on_marker(2),
-        make_human_entry(3, "assistant", "Assistant", "Hidden", 2),
+        make_human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "Hidden", 2),
         make_agent_entry(4, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 2),
         make_hide_marker(5),
-        make_human_entry(6, "assistant", "Assistant", "After", 3),
+        make_human_entry(6, {"human", "You"}, {"assistant", "Assistant"}, "After", 3),
     };
 
     EXPECT_EQ(
@@ -97,9 +97,9 @@ TEST(AgentContext, OmitsTheClosedOffrecordSpan) {
 
 TEST(AgentContext, AnOpenOffrecordSpanExcludesNothing) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "assistant", "Assistant", "Before", 1),
+        make_human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Before", 1),
         make_hide_on_marker(2),
-        make_human_entry(3, "assistant", "Assistant", "After opening", 2),
+        make_human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "After opening", 2),
     };
 
     EXPECT_EQ(
@@ -117,9 +117,9 @@ TEST(AgentContext, AnOpenOffrecordSpanExcludesNothing) {
 
 TEST(AgentContext, ProjectsOnlyEntriesOutsideAClosedOffrecordSpan) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "one", "One", "Question", 1),
+        make_human_entry(1, {"human", "You"}, {"one", "One"}, "Question", 1),
         make_agent_entry(2, "one", "One", "One answer", EntryStatus::complete, 1),
-        make_human_entry(3, "two", "Two", "Question", 2),
+        make_human_entry(3, {"human", "You"}, {"two", "Two"}, "Question", 2),
     };
 
     EXPECT_EQ(
@@ -137,7 +137,7 @@ TEST(AgentContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
         CompletionHistory{
             .entries = {
                 make_human_entry(
-                    1, "other", "Other", "Other question", 1),
+                    1, {"human", "You"}, {"other", "Other"}, "Other question", 1),
                 make_agent_entry(
                     2,
                     "other",
@@ -157,7 +157,7 @@ TEST(AgentContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
     };
     std::vector<TranscriptEntry> old_tail = input.history->entries;
     old_tail.push_back(make_human_entry(
-        3, "assistant", "Assistant", "Current question", 2));
+        3, {"human", "You"}, {"assistant", "Assistant"}, "Current question", 2));
 
     const std::vector<AgentMessage> projected =
         project_agent_context(input, {});
@@ -180,15 +180,15 @@ TEST(AgentContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
 
 TEST(AgentContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "other", "Other", "First question", 1),
+        make_human_entry(1, {"human", "You"}, {"other", "Other"}, "First question", 1),
         make_agent_entry(2, "other", "Other", "First answer", EntryStatus::complete, 1),
         make_hide_on_marker(3),
-        make_human_entry(4, "assistant", "Assistant", "Hidden question", 2),
+        make_human_entry(4, {"human", "You"}, {"assistant", "Assistant"}, "Hidden question", 2),
         make_agent_entry(5, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 2),
         make_hide_marker(6),
-        make_human_entry(7, "other", "Other", "Second question", 3),
+        make_human_entry(7, {"human", "You"}, {"other", "Other"}, "Second question", 3),
         make_agent_entry(8, "other", "Other", "Second answer", EntryStatus::complete, 3),
-        make_human_entry(9, "assistant", "Assistant", "Current", 4),
+        make_human_entry(9, {"human", "You"}, {"assistant", "Assistant"}, "Current", 4),
     };
 
     EXPECT_EQ(
@@ -214,11 +214,11 @@ TEST(AgentContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
 
 TEST(AgentContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "assistant", "Assistant", "Earlier", 1),
+        make_human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier", 1),
         make_agent_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 1),
         make_hide_on_marker(3),
         make_hide_marker(4),
-        make_human_entry(5, "assistant", "Assistant", "Current", 2),
+        make_human_entry(5, {"human", "You"}, {"assistant", "Assistant"}, "Current", 2),
     };
 
     EXPECT_EQ(
@@ -236,12 +236,12 @@ TEST(AgentContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
 
 TEST(AgentContext, CombinesSpanExclusionWithFailedAndCancelledTurnRules) {
     const std::vector<TranscriptEntry> entries{
-        make_human_entry(1, "assistant", "Assistant", "Hidden", 1),
-        make_human_entry(2, "assistant", "Assistant", "Failed", 2),
+        make_human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Hidden", 1),
+        make_human_entry(2, {"human", "You"}, {"assistant", "Assistant"}, "Failed", 2),
         make_error_entry(3, "unavailable", 2, "assistant"),
-        make_human_entry(4, "assistant", "Assistant", "Cancelled", 3),
+        make_human_entry(4, {"human", "You"}, {"assistant", "Assistant"}, "Cancelled", 3),
         make_agent_entry(5, "assistant", "Assistant", "Partial", EntryStatus::cancelled, 3),
-        make_human_entry(6, "assistant", "Assistant", "Current", 4),
+        make_human_entry(6, {"human", "You"}, {"assistant", "Assistant"}, "Current", 4),
     };
 
     EXPECT_EQ(
@@ -278,9 +278,9 @@ TEST(AgentContext, DisplayNameChangesDoNotChangeAgentRole) {
 TEST(AgentContext, PreservesTheSingleAgentWireShapeByteForByte) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "assistant", "Assistant", "First", 1),
+            make_human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "First", 1),
             make_agent_entry(2, "assistant", "Assistant", "Answer", EntryStatus::complete, 1),
-            make_human_entry(3, "assistant", "Assistant", "Second", 2),
+            make_human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "Second", 2),
         },
     };
 
@@ -296,9 +296,9 @@ TEST(AgentContext, PreservesTheSingleAgentWireShapeByteForByte) {
 TEST(AgentContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "assistant", "Assistant", "First", 1),
+            make_human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "First", 1),
             make_agent_entry(2, "assistant", "Assistant", "Partial", EntryStatus::cancelled, 1),
-            make_human_entry(3, "assistant", "Assistant", "Second", 2),
+            make_human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "Second", 2),
         },
     };
 
@@ -314,14 +314,14 @@ TEST(AgentContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
 CompletionHistory lobby_transcript() {
     return {
         .entries = {
-            make_human_entry(1, "cheburashka", "Cheburashka", "Who are you?", 1),
+            make_human_entry(1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "Who are you?", 1),
             make_agent_entry(
                 2, "cheburashka", "Cheburashka", "I am Cheburashka.",
                 EntryStatus::complete, 1),
-            make_human_entry(3, "ismael", "Ismael", "And you?", 2),
+            make_human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 2),
             make_agent_entry(
                 4, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 2),
-            make_human_entry(5, "cheburashka", "Cheburashka", "What did he say?", 3),
+            make_human_entry(5, {"human", "You"}, {"cheburashka", "Cheburashka"}, "What did he say?", 3),
         },
     };
 }
@@ -377,7 +377,7 @@ TEST(AgentContext, KeepsSharedHistorySeparateFromTheCurrentPrompt) {
 TEST(AgentContext, LeavesSingleAgentHistoryAsPlainUserAndAssistantMessages) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "ismael", "Ismael", "Who are you?", 1),
+            make_human_entry(1, {"human", "You"}, {"ismael", "Ismael"}, "Who are you?", 1),
             make_agent_entry(
                 2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1),
         },
@@ -394,10 +394,10 @@ TEST(AgentContext, LeavesSingleAgentHistoryAsPlainUserAndAssistantMessages) {
 TEST(AgentContext, AttributesAgentsWhosePersonasAreNoLongerInTheForum) {
     const CompletionHistory transcript{
         .entries = {
-            make_human_entry(1, "departed", "Departed", "Say something", 1),
+            make_human_entry(1, {"human", "You"}, {"departed", "Departed"}, "Say something", 1),
             make_agent_entry(
                 2, "departed", "Departed", "Farewell", EntryStatus::complete, 1),
-            make_human_entry(3, "ismael", "Ismael", "Your turn", 2),
+            make_human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "Your turn", 2),
         },
     };
 
@@ -444,7 +444,7 @@ TEST(AgentContext, KeepsAnotherAgentsFirstPersonClaimOutOfTheCurrentPrompt) {
     const CompletionHistory transcript{
         .entries = {
             make_human_entry(
-                1, "cheburashka", "Cheburashka", "What is your name?", 1),
+                1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "What is your name?", 1),
             make_agent_entry(
                 2,
                 "cheburashka",
@@ -452,7 +452,7 @@ TEST(AgentContext, KeepsAnotherAgentsFirstPersonClaimOutOfTheCurrentPrompt) {
                 "I'm Cheburashka. My best friend is Crocodile Gena.",
                 EntryStatus::complete,
                 1),
-            make_human_entry(3, "ismael", "Ismael", "who's Gena?", 2),
+            make_human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "who's Gena?", 2),
         },
     };
 

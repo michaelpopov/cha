@@ -83,11 +83,7 @@ protected:
 
 TranscriptEntry human(EntryId id, std::string text, RequestId request_id) {
     return make_human_entry(
-        id,
-        "guide-id",
-        "Guide",
-        std::move(text),
-        request_id);
+        id, {"human", "You"}, {"guide-id", "Guide"}, std::move(text), request_id);
 }
 
 TEST_F(WorkspaceTest, LoadsForumsAndTheirPersonaDirectories) {
@@ -377,7 +373,7 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumPersonasAre) {
         journal.start_turn(
             1,
             make_human_entry(
-                1, "other-id", "Other", "Question", 1));
+                1, {"human", "You"}, {"other-id", "Other"}, "Question", 1));
         journal.complete_turn(
             1,
             make_agent_entry(

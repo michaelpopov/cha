@@ -390,7 +390,7 @@ TEST(SessionController, RejectsEmptyAgentConfigurationWithRegistryMessage) {
 TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     TemporaryJournal temporary;
     const TranscriptEntry earlier =
-        make_human_entry(10, "guide-id", "Guide", "Earlier", 16);
+        make_human_entry(10, {"human", "You"}, {"guide-id", "Guide"}, "Earlier", 16);
     {
         SessionJournal journal(temporary.path);
         journal.start_turn(16, earlier);
@@ -779,7 +779,7 @@ TEST(SessionController, ReplacesPartialOutputWithATypedError) {
 TEST(SessionController, OwnsClearAndInformationSemantics) {
     TemporaryJournal temporary;
     const TranscriptEntry existing =
-        make_human_entry(1, "guide-id", "Guide", "Existing", 1);
+        make_human_entry(1, {"human", "You"}, {"guide-id", "Guide"}, "Existing", 1);
     {
         SessionJournal journal(temporary.path);
         journal.start_turn(1, existing);
@@ -956,6 +956,8 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     const std::vector<TranscriptEntry> multicast_entries =
         copy_entries(controller->transcript());
     ASSERT_EQ(multicast_entries.size(), 4U);
+    EXPECT_EQ(multicast_entries[0].participant_id, "human");
+    EXPECT_EQ(multicast_entries[0].display_name, "You");
     EXPECT_EQ(multicast_entries[0].addressed_to, "one-id");
     EXPECT_EQ(multicast_entries[0].text, "What time is it?");
     EXPECT_EQ(multicast_entries[1].text, "One answer");
@@ -1471,7 +1473,7 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
     {
         SessionJournal journal(temporary.path);
         const TranscriptEntry prompt =
-            make_human_entry(1, "guide-id", "Guide", "Interrupted", 5);
+            make_human_entry(1, {"human", "You"}, {"guide-id", "Guide"}, "Interrupted", 5);
         journal.start_turn(5, prompt);
     }
     SessionRestore restored =

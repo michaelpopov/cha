@@ -352,8 +352,8 @@ void SessionController::activate_current_run(SessionUpdate& update) {
     const RunSpec& run = batch_->runs[batch_->foreground_index];
     TranscriptEntry prompt = make_human_entry(
         next_entry_id_++,
-        run.target.id,
-        run.target.name,
+        {"human", "You"}, // Block 5 replaces this with run.author.
+        {run.target.id, run.target.name},
         run.prompt_text,
         run.request_id);
     ActiveResponse response{

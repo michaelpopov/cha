@@ -122,7 +122,7 @@ only "Terminal is too small".
   following new output, so a user who has scrolled back is not dragged forward.
 - **`TranscriptSurface`**, from [`../render/`](../render/README.md), is the
   styling sink. `write_transcript_entry()` writes
-  a bold label — `[You]`, `[You → Name]`, `[Name]`, `[System]`, `[Error]`, and
+  a bold label — `[Name]`, `[Name → Name]`, `[System]`, `[Error]`, and
   the off-record markers `[hide-on]`, `[hide]`,
   `[hide-off]`. While a turn is active, `write_active_response()` adds the
   ephemeral dim `[Reasoning]` block above any streamed answer. Tests implement
