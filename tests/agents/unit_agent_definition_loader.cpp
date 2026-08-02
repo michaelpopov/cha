@@ -62,7 +62,7 @@ TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
     }
 
     const std::vector<AgentDefinition> definitions =
-        load_agent_definitions({persona}, forum, "Forum");
+        load_agent_definitions({persona}, forum, "Forum", {});
 
     ASSERT_EQ(definitions.size(), 1U);
     const AgentDefinition& definition = definitions.front();
@@ -70,7 +70,7 @@ TEST(AgentDefinitions, LoadsOnePersonaAndCombinesRequiredPrompts) {
     EXPECT_EQ(definition.config.name, "Guide");
     expect_forum_context(
         definition,
-        "Persona instructions\n\nForum instructions\n\nForum context\n\n",
+        "Persona instructions\n\nForum instructions\n\n## Participants\n\nForum context\n\n",
         "Guide",
         "[]");
     std::filesystem::remove_all(root);
@@ -92,7 +92,7 @@ TEST(AgentDefinitions, RequiresBothPromptFiles) {
     }
 
     EXPECT_THROW(
-        (void)load_agent_definitions({persona}, forum, "Forum"),
+        (void)load_agent_definitions({persona}, forum, "Forum", {}),
         std::runtime_error);
 
     {
@@ -101,7 +101,7 @@ TEST(AgentDefinitions, RequiresBothPromptFiles) {
     }
     std::filesystem::remove(persona / "SYSTEM.md");
     EXPECT_THROW(
-        (void)load_agent_definitions({persona}, forum, "Forum"),
+        (void)load_agent_definitions({persona}, forum, "Forum", {}),
         std::runtime_error);
 
     std::filesystem::remove_all(root);
@@ -141,21 +141,71 @@ TEST(AgentDefinitions, LoadsEveryPersonaInTheDeclaredOrder) {
         make_persona(personas, "ismael", "Ismael");
 
     const std::vector<AgentDefinition> definitions =
-        load_agent_definitions({first, second}, forum, "Forum");
+        load_agent_definitions({first, second}, forum, "Forum", {});
 
     ASSERT_EQ(definitions.size(), 2U);
     EXPECT_EQ(definitions.front().config.id, "cheburashka");
     expect_forum_context(
         definitions.front(),
-        "Cheburashka instructions\n\nForum instructions\n\nForum context\n\n",
+        "Cheburashka instructions\n\nForum instructions\n\n## Participants\n\nForum context\n\n",
         "Cheburashka",
         R"(["Ismael"])");
     EXPECT_EQ(definitions.back().config.id, "ismael");
     expect_forum_context(
         definitions.back(),
-        "Ismael instructions\n\nForum instructions\n\nForum context\n\n",
+        "Ismael instructions\n\nForum instructions\n\n## Participants\n\nForum context\n\n",
         "Ismael",
         R"(["Cheburashka"])");
+    std::filesystem::remove_all(root);
+}
+
+TEST(AgentDefinitions, AssemblesTheStaticRosterVerbatimBeforeForumContext) {
+    const std::filesystem::path root = unique_definition_directory();
+    const std::filesystem::path forum = make_forum(root);
+    const std::filesystem::path persona =
+        make_persona(forum / "personas", "guide", "Guide");
+    const UserRoster users{
+        {"athlete", "Athlete", "Literal $${persona.id}"},
+        {"reader", "Reader", "Reads\nclosely."},
+    };
+
+    const std::vector<AgentDefinition> definitions =
+        load_agent_definitions({persona}, forum, "Forum", users);
+
+    ASSERT_EQ(definitions.size(), 1U);
+    EXPECT_NE(
+        definitions.front().system_prompt.find(
+            "Guide instructions\n\nForum instructions\n\n"
+            "## Participants\n\n"
+            "### Athlete\nLiteral $${persona.id}\n\n"
+            "### Reader\nReads\nclosely.\n\nForum context"),
+        std::string::npos);
+    std::filesystem::remove_all(root);
+}
+
+TEST(AgentDefinitions, RefusesUserPersonaIdAndDisplayNameCollisions) {
+    const std::filesystem::path root = unique_definition_directory();
+    const std::filesystem::path forum = make_forum(root);
+    const std::filesystem::path persona =
+        make_persona(forum / "personas", "guide", "Guide");
+
+    try {
+        (void)load_agent_definitions(
+            {persona}, forum, "Forum", {{"guide", "Reader", ""}});
+        FAIL() << "Expected user/persona ID collision rejection";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string_view(error.what()).find("guide"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("User"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("persona"), std::string_view::npos);
+    }
+    try {
+        (void)load_agent_definitions(
+            {persona}, forum, "Forum", {{"reader", "gUiDe", ""}});
+        FAIL() << "Expected user/persona display-name collision rejection";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string_view(error.what()).find("gUiDe"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("Guide"), std::string_view::npos);
+    }
     std::filesystem::remove_all(root);
 }
 
@@ -170,7 +220,7 @@ TEST(AgentDefinitions, RefusesToOpenAForumWithMissingPersonaDefinitions) {
     std::filesystem::remove(broken / "SYSTEM.md");
 
     try {
-        (void)load_agent_definitions({healthy, broken}, forum, "Forum");
+        (void)load_agent_definitions({healthy, broken}, forum, "Forum", {});
         FAIL() << "expected the failing persona to be named";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("broken"), std::string::npos)
@@ -210,6 +260,7 @@ TEST(AgentDefinitions, ExpandsTemplatesInSystemAndForumPrompts) {
         {persona},
         forum,
         "The Stoics Forum",
+        {},
         personas / "persona_defaults.toml");
 
     ASSERT_EQ(definitions.size(), 1U);
@@ -218,7 +269,7 @@ TEST(AgentDefinitions, ExpandsTemplatesInSystemAndForumPrompts) {
         "Voice for Seneca in The Stoics Forum (energetic)\n"
         "id=seneca\n\n\n"
         "User facing Seneca\n\n\n"
-        "Forum context\n\n",
+        "## Participants\n\nForum context\n\n",
         "Seneca",
         "[]");
     std::filesystem::remove_all(root);
@@ -243,7 +294,7 @@ TEST(AgentDefinitions, WrapsExpansionFailuresWithPersonaAndChain) {
     }
 
     try {
-        (void)load_agent_definitions({persona}, forum, "Forum");
+        (void)load_agent_definitions({persona}, forum, "Forum", {});
         FAIL() << "expected expansion failure";
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
@@ -281,6 +332,7 @@ TEST(AgentDefinitions, IdentifiesInvalidPromptVariableConfiguration) {
             {persona},
             forum,
             "Forum",
+            {},
             personas / "persona_defaults.toml");
         FAIL() << "expected invalid prompt-variable configuration";
     } catch (const std::runtime_error& error) {

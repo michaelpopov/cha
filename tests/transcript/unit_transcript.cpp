@@ -808,10 +808,10 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
             {AgentRole::system, "Ismael system"},
             {AgentRole::user,
              "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"User","addressed_to":"Cheburashka","text":"Who are you?"})"
+             R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"Who are you?"})"
              "\n"
              R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"},
-            {AgentRole::user, "And you?"},
+            {AgentRole::user, "from You:\nAnd you?"},
             {AgentRole::assistant, "Call me Ismael."},
         }));
     std::filesystem::remove(path);

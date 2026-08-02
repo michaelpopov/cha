@@ -143,7 +143,7 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     std::ofstream(forum / "config.toml") << "display_name = \"Forum\"\n";
     std::ofstream(forum / "FORUM.md") << "Forum prompt";
     std::ofstream(forum / "personas" / "agent" / "persona.toml")
-        << "display_name = \"Agent\"\nhost = \"127.0.0.1\"\nport = 9\n"
+        << "display_name = \"Worker\"\nhost = \"127.0.0.1\"\nport = 9\n"
         << "model = \"configured-model\"\n";
     std::ofstream(forum / "personas" / "agent" / "SYSTEM.md")
         << "System prompt";

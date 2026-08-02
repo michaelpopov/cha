@@ -53,9 +53,9 @@ The forum directory is both the distribution unit and the prompt-template
 containment root: includes in `SYSTEM.md` / `FORUM.md` cannot leave it, so a
 zipped forum stays self-contained when unpacked elsewhere.
 
-When a session is created or opened, `Workspace` checks for
+When a session is created or opened, `Workspace` loads the validated roster once and checks for
 `personas/persona_defaults.toml` within the selected forum and explicitly passes that optional path, the
-forum directory, and the forum display name to the agent loaders along with each
+forum directory, the forum display name, and the roster to the agent loaders along with each
 persona directory. The agent layer therefore applies shared configuration and
 template policy without knowing or inferring the workspace layout.
 

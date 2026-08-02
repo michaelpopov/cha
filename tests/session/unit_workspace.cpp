@@ -206,6 +206,36 @@ TEST_F(ApplicationWorkspaceTest, ForumCheckRejectsDuplicatePersonaNames) {
     EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
+TEST_F(ApplicationWorkspaceTest, OpenSessionRejectsAUserPersonaIdCollision) {
+    Workspace workspace(root_);
+    const SessionSummary stored = workspace.create_stored_session("lobby", "collision");
+    std::filesystem::rename(root_ / "users" / "operator", root_ / "users" / "guide");
+
+    try {
+        (void)workspace.open_session("lobby", stored.id, notifier());
+        FAIL() << "Expected user/persona ID collision rejection";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string_view(error.what()).find("guide"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("User"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("persona"), std::string_view::npos);
+    }
+}
+
+TEST_F(ApplicationWorkspaceTest, OpenSessionRejectsAUserPersonaDisplayNameCollision) {
+    Workspace workspace(root_);
+    const SessionSummary stored = workspace.create_stored_session("lobby", "collision");
+    std::ofstream(root_ / "users" / "operator" / "user.toml")
+        << "display_name = \"gUiDe\"\n";
+
+    try {
+        (void)workspace.open_session("lobby", stored.id, notifier());
+        FAIL() << "Expected user/persona display-name collision rejection";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string_view(error.what()).find("gUiDe"), std::string_view::npos);
+        EXPECT_NE(std::string_view(error.what()).find("Guide"), std::string_view::npos);
+    }
+}
+
 TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     Workspace workspace(root_);
 

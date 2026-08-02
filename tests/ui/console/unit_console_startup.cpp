@@ -28,6 +28,7 @@ public:
         const auto sessions = forum / "sessions";
         std::filesystem::create_directories(
             forum / "personas" / "Guide");
+        std::filesystem::create_directories(root / "users" / "reader");
         std::filesystem::create_directories(sessions);
         write(
             root / "app.toml",
@@ -44,6 +45,7 @@ public:
         write(
             forum / "personas" / "Guide" / "SYSTEM.md",
             "Persona instructions\n");
+        write(root / "users" / "reader" / "user.toml", "display_name = \"Reader\"\n");
         if (!create_session_database(
                 sessions / "valid.sqlite3",
                 {

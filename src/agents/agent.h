@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agents/config.h"
+#include "agents/user.h"
 #include "transcript/transcript.h"
 
 #include <filesystem>
@@ -81,6 +82,7 @@ std::vector<AgentDefinition> load_agent_definitions(
     const std::vector<std::filesystem::path>& persona_directories,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
+    const UserRoster& users,
     std::optional<std::filesystem::path> base_config_path = std::nullopt);
 
 void validate_persona_id(std::string_view id);

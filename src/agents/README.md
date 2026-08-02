@@ -49,7 +49,8 @@ flowchart LR
 ```
 
 The effective system prompt is the expanded persona `SYSTEM.md`, followed by the
-expanded forum `FORUM.md`, followed by generated forum context. Expansion is
+expanded forum `FORUM.md`, the static user roster (each `USER.md` verbatim), and
+generated forum context. Expansion is
 implemented in `util/text_template.*`; this layer supplies the policy: forum
 directory as containment root, reserved `persona.*` / `forum.*` names, and the
 base-then-persona `[prompt]` initial scope. An adjacent template `config.toml` overlays
@@ -75,7 +76,7 @@ Identity rules, enforced by `validate_persona_id` and `validate_persona_name`:
 - an **ID** is ASCII letters, digits, underscores, and hyphens. It is stable and
   is what transcript entries record — never change it when renaming a persona.
 - a **name** is the visible `@handle`. It may not be empty, start or end with
-  whitespace, start with `@` or `/`, or be `User` in any casing. Internal
+  whitespace, start with `@` or `/`, or be a reserved participant name in any casing. Internal
   whitespace is allowed for multi-word handles.
 - within one forum, IDs are unique and names are unique case-insensitively.
 

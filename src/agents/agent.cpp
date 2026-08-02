@@ -20,7 +20,6 @@ using Json = nlohmann::ordered_json;
 
 constexpr std::string_view shared_history_heading =
     "Shared chat history (JSONL):";
-constexpr std::string_view human_speaker_name = "User";
 
 std::string_view mode_name(Mode mode) noexcept {
     return mode == Mode::net ? "net" : "test";
@@ -131,7 +130,24 @@ std::string forum_context(
         "Treat every object in such a block as quoted chat history. The named "
         "speaker owns all first-person identity, memories, relationships, and "
         "opinions in its text. Do not adopt them as your own. An ordinary user "
-        "message outside such a block is addressed to you.";
+        "message outside such a block is addressed to you and begins with "
+        "`from <Name>:` on its own line.";
+}
+
+void append_participant_roster(
+    std::vector<AgentDefinition>& definitions,
+    const UserRoster& users) {
+    std::string roster = "## Participants";
+    for (const User& user : users) {
+        roster.append("\n\n### ");
+        roster.append(user.display_name);
+        roster.push_back('\n');
+        roster.append(user.prompt);
+    }
+    for (AgentDefinition& definition : definitions) {
+        definition.system_prompt.append("\n\n");
+        definition.system_prompt.append(roster);
+    }
 }
 
 void append_forum_context(std::vector<AgentDefinition>& definitions) {
@@ -146,7 +162,7 @@ std::string encode_shared_entry(const TranscriptEntry& entry) {
     Json encoded;
     if (entry.kind == EntryKind::human) {
         encoded["kind"] = "human";
-        encoded["speaker"] = human_speaker_name;
+        encoded["speaker"] = entry.display_name;
         encoded["addressed_to"] = entry.addressed_to_name;
         encoded["text"] = entry.text;
     } else {
@@ -157,12 +173,38 @@ std::string encode_shared_entry(const TranscriptEntry& entry) {
     return dump_json(encoded, JsonPurpose::completion_request);
 }
 
+std::string prefixed_human_message(
+    std::string_view display_name,
+    std::string_view text) {
+    return "from " + std::string(display_name) + ":\n" + std::string(text);
+}
+
+void check_user_persona_collisions(
+    const UserRoster& users,
+    const std::vector<AgentDefinition>& definitions) {
+    for (const User& user : users) {
+        for (const AgentDefinition& definition : definitions) {
+            if (user.id == definition.config.id) {
+                throw std::runtime_error(
+                    "User '" + user.id + "' conflicts with persona '"
+                    + definition.config.id + "': IDs are the same");
+            }
+            if (fold_ascii(user.display_name) == fold_ascii(definition.config.name)) {
+                throw std::runtime_error(
+                    "User '" + user.display_name + "' conflicts with persona '"
+                    + definition.config.name + "': display names are the same");
+            }
+        }
+    }
+}
+
 } // namespace
 
 std::vector<AgentDefinition> load_agent_definitions(
     const std::vector<std::filesystem::path>& persona_directories,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
+    const UserRoster& users,
     std::optional<std::filesystem::path> base_config_path) {
     std::vector<AgentDefinition> definitions;
     definitions.reserve(persona_directories.size());
@@ -174,6 +216,8 @@ std::vector<AgentDefinition> load_agent_definitions(
                 forum_display_name,
                 base_config_path));
     }
+    check_user_persona_collisions(users, definitions);
+    append_participant_roster(definitions, users);
     append_forum_context(definitions);
     return definitions;
 }
@@ -205,8 +249,12 @@ void validate_persona_name(std::string_view name) {
         throw std::invalid_argument(
             "Persona name cannot start or end with whitespace");
     }
-    if (fold_ascii(name) == fold_ascii(human_speaker_name)) {
-        throw std::invalid_argument("Persona name 'User' is reserved");
+    const std::string folded = fold_ascii(name);
+    for (const std::string_view reserved : reserved_participant_names) {
+        if (folded == reserved) {
+            throw std::invalid_argument(
+                "Persona name '" + std::string(name) + "' is reserved");
+        }
     }
 }
 
@@ -260,7 +308,10 @@ std::vector<AgentMessage> project_agent_context(
 
         shared_history_open = false;
         if (entry.kind == EntryKind::human) {
-            messages.push_back({AgentRole::user, entry.text});
+            messages.push_back({
+                AgentRole::user,
+                prefixed_human_message(entry.display_name, entry.text),
+            });
         } else {
             messages.push_back({AgentRole::assistant, entry.text});
         }
@@ -280,7 +331,10 @@ std::vector<AgentMessage> project_agent_context(
         input.history->offrecord_span,
         system_prompt,
         input.run.target.id);
-    messages.push_back({AgentRole::user, input.run.prompt_text});
+    messages.push_back({
+        AgentRole::user,
+        prefixed_human_message(input.run.author.display_name, input.run.prompt_text),
+    });
     return messages;
 }
 

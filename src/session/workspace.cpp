@@ -28,6 +28,7 @@ namespace {
 
 std::vector<AgentDefinition> load_definitions(
     const Forum& forum,
+    const UserRoster& users,
     const std::filesystem::path& base_config_candidate) {
     log_info(
         "Loading forum persona definitions: forum_id=" + forum.name
@@ -46,6 +47,7 @@ std::vector<AgentDefinition> load_definitions(
         persona_directories,
         forum.directory,
         forum.display_name,
+        users,
         base_config);
 }
 
@@ -353,8 +355,9 @@ Forum Workspace::load_forum(const std::string& name) const {
 
 Forum Workspace::check_forum(const std::string& name) const {
     Forum forum = load_forum(name);
+    const UserRoster users = load_users();
     const std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "persona_defaults.toml");
+        forum, users, forum.directory / "personas" / "persona_defaults.toml");
 
     std::vector<PersonaInfo> personas;
     personas.reserve(definitions.size());
@@ -434,12 +437,13 @@ std::unique_ptr<SessionController> Workspace::open_session(
         catalog.open_database_path(session_id);
     SessionLease lease = SessionLease::acquire(database_path);
     SessionRestore restored = load_session_state(database_path);
+    UserRoster users = load_users();
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, forum.directory / "personas" / "persona_defaults.toml");
+        forum, users, forum.directory / "personas" / "persona_defaults.toml");
     log_info("Session opened");
     return SessionController::from_definitions(
         std::move(definitions),
-        load_users(),
+        std::move(users),
         database_path,
         std::move(lease),
         notifier,

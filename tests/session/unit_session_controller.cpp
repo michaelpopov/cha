@@ -31,6 +31,10 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
+AgentMessage operator_prompt(std::string_view text) {
+    return {AgentRole::user, "from Operator:\n" + std::string(text)};
+}
+
 // Blocks the execution's final wake. This makes `execution_finished` true
 // while the worker task is still live, so shutdown must join the pool rather
 // than treating the registry's backend-safety barrier as full quiescence.
@@ -148,7 +152,7 @@ public:
 
     RequestPayload prepare(const CompletionInput& input) override {
         inputs.push_back(input);
-        model_contexts.push_back(project_agent_context(input, {}));
+        model_contexts.push_back(project_agent_context(input, system_prompt));
         return {.bytes = input.run.prompt_text};
     }
 
@@ -182,6 +186,7 @@ public:
 
     std::vector<CompletionInput> inputs;
     std::vector<std::vector<AgentMessage>> model_contexts;
+    std::string system_prompt;
 
 private:
     std::string id_{"guide-id"};
@@ -424,8 +429,8 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(
         backend_view->model_contexts.front(),
         (std::vector<AgentMessage>{
-            {AgentRole::user, "Earlier"},
-            {AgentRole::user, "Current"},
+            {AgentRole::user, "from You:\nEarlier"},
+            operator_prompt("Current"),
         }));
     EXPECT_TRUE(completed.render_needed);
 
@@ -476,6 +481,41 @@ TEST(SessionController, ResolvesAndStampsTheAuthorForEveryBatchRun) {
     EXPECT_EQ(entries[2].participant_id, "engineer");
     EXPECT_EQ(entries[2].display_name, "Engineer");
     EXPECT_EQ(entries[2].text, "Question");
+}
+
+TEST(SessionController, KeepsTheStaticSystemPromptAcrossDifferentAuthors) {
+    TemporaryJournal temporary;
+    auto backend = std::make_unique<ScriptedBackend>(
+        CompletionResult{}, std::vector<std::string>{"First", "Second"});
+    ScriptedBackend* const backend_view = backend.get();
+    backend_view->system_prompt = "Static system prompt";
+    auto controller = SessionController::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        UserRoster{
+            {.id = "athlete", .display_name = "Athlete"},
+            {.id = "reader", .display_name = "Reader"},
+        },
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("reader", "First question");
+    receive_until_idle(*controller);
+    (void)controller->submit_prompt("athlete", "Second question");
+    receive_until_idle(*controller);
+
+    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
+    ASSERT_FALSE(backend_view->model_contexts[0].empty());
+    ASSERT_FALSE(backend_view->model_contexts[1].empty());
+    EXPECT_EQ(backend_view->model_contexts[0].front(),
+              backend_view->model_contexts[1].front());
+    EXPECT_EQ(backend_view->model_contexts[0].front(),
+              (AgentMessage{AgentRole::system, "Static system prompt"}));
+    EXPECT_NE(backend_view->model_contexts[0].back(),
+              backend_view->model_contexts[1].back());
+    EXPECT_EQ(backend_view->model_contexts[0].back(),
+              (AgentMessage{AgentRole::user, "from Reader:\nFirst question"}));
+    EXPECT_EQ(backend_view->model_contexts[1].back(),
+              (AgentMessage{AgentRole::user, "from Athlete:\nSecond question"}));
 }
 
 TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
@@ -552,9 +592,9 @@ TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedTranscript) {
     EXPECT_EQ(
         backend_view->model_contexts[1],
         (std::vector<AgentMessage>{
-            {AgentRole::user, "First"},
+            operator_prompt("First"),
             {AgentRole::assistant, "Answer"},
-            {AgentRole::user, "Second"},
+            operator_prompt("Second"),
         }));
 }
 
@@ -577,7 +617,7 @@ TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<AgentMessage>{{AgentRole::user, "Second"}}));
+        (std::vector<AgentMessage>{operator_prompt("Second")}));
 }
 
 TEST(SessionController, ExcludesFailedTurnsFromTheFollowingModelContext) {
@@ -598,7 +638,7 @@ TEST(SessionController, ExcludesFailedTurnsFromTheFollowingModelContext) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<AgentMessage>{{AgentRole::user, "Second"}}));
+        (std::vector<AgentMessage>{operator_prompt("Second")}));
 }
 
 TEST(SessionController, ExcludesCancelledPartialOutputFromFollowingModelContext) {
@@ -621,8 +661,8 @@ TEST(SessionController, ExcludesCancelledPartialOutputFromFollowingModelContext)
     EXPECT_EQ(
         backend_view->model_contexts[1],
         (std::vector<AgentMessage>{
-            {AgentRole::user, "First"},
-            {AgentRole::user, "Second"},
+            operator_prompt("First"),
+            operator_prompt("Second"),
         }));
 }
 
@@ -922,9 +962,9 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
     EXPECT_EQ(
         backend_view->model_contexts[2],
         (std::vector<AgentMessage>{
-            {AgentRole::user, "Visible"},
+            operator_prompt("Visible"),
             {AgentRole::assistant, "Answer"},
-            {AgentRole::user, "Current"},
+            operator_prompt("Current"),
         }));
 
     (void)controller->restore_offrecord();
@@ -935,13 +975,13 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
     EXPECT_EQ(
         backend_view->model_contexts[3],
         (std::vector<AgentMessage>{
-            {AgentRole::user, "Visible"},
+            operator_prompt("Visible"),
             {AgentRole::assistant, "Answer"},
-            {AgentRole::user, "Hidden"},
+            operator_prompt("Hidden"),
             {AgentRole::assistant, "Answer"},
-            {AgentRole::user, "Current"},
+            operator_prompt("Current"),
             {AgentRole::assistant, "Answer"},
-            {AgentRole::user, "Restored"},
+            operator_prompt("Restored"),
         }));
 }
 
@@ -1008,10 +1048,10 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     EXPECT_EQ(one_view->inputs.front().history, two_view->inputs.front().history);
     EXPECT_EQ(
         one_view->model_contexts.front(),
-        (std::vector<AgentMessage>{{AgentRole::user, "What time is it?"}}));
+        (std::vector<AgentMessage>{operator_prompt("What time is it?")}));
     EXPECT_EQ(
         two_view->model_contexts.front(),
-        (std::vector<AgentMessage>{{AgentRole::user, "What time is it?"}}));
+        (std::vector<AgentMessage>{operator_prompt("What time is it?")}));
 
     const std::vector<TranscriptEntry> multicast_entries =
         copy_entries(controller->transcript());
@@ -1232,7 +1272,7 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     ASSERT_EQ(complete_view->inputs.size(), 1U);
     EXPECT_EQ(
         complete_view->model_contexts.front(),
-        (std::vector<AgentMessage>{{AgentRole::user, "Question"}}));
+        (std::vector<AgentMessage>{operator_prompt("Question")}));
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_EQ(controller->transcript().offrecord_span(), OffrecordSpan{});
 }
