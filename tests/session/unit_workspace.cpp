@@ -194,9 +194,21 @@ TEST_F(ApplicationWorkspaceTest, ResolvesDefaultAgentWithoutReorderingMembers) {
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\ndefault_agent = \"guide\"\n";
 
-    const Forum forum = Workspace(root_).load_forum("lobby");
+    Workspace workspace(root_);
+    const Forum forum = workspace.load_forum("lobby");
     EXPECT_EQ(forum.character_names, (std::vector<std::string>{"alpha", "guide"}));
     EXPECT_EQ(forum.default_agent_id, "guide");
+
+    CreatedSession created = workspace.create_session("lobby", "default", notifier());
+    EXPECT_EQ(created.controller->default_agent_id(), "guide");
+    const std::string session_id = created.id;
+    created.controller->shutdown();
+    created.controller.reset();
+
+    std::unique_ptr<SessionController> opened =
+        workspace.open_session("lobby", session_id, notifier());
+    EXPECT_EQ(opened->default_agent_id(), "guide");
+    opened->shutdown();
 }
 
 TEST_F(ApplicationWorkspaceTest, DefaultsToFirstLexicographicMember) {

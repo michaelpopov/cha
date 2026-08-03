@@ -394,6 +394,24 @@ TEST(SessionController, RejectsEmptyAgentConfigurationWithRegistryMessage) {
     }
 }
 
+TEST(SessionController, RejectsUnknownInitialDefaultAgentID) {
+    TemporaryJournal temporary;
+
+    try {
+        (void)SessionController::from_backends_for_testing(
+            test::one_backend(std::make_unique<ScriptedBackend>()),
+            test::operator_roster(),
+            "unknown-id",
+            temporary.path,
+            notifier());
+        FAIL() << "Expected unknown initial default rejection";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_EQ(
+            error.what(),
+            std::string("Initial default agent ID is not in the forum roster"));
+    }
+}
+
 TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     TemporaryJournal temporary;
     const TranscriptEntry earlier =
@@ -1598,7 +1616,7 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
         std::string::npos);
 }
 
-TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumCharacters) {
+TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharacters) {
     TemporaryJournal temporary;
     auto guide = std::make_unique<ScriptedBackend>(
         CompletionResult{}, std::vector<std::string>{"Guide answer"});
@@ -1613,15 +1631,41 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumChara
     auto controller = test::from_backends_for_testing(
         std::move(backends),
         temporary.path,
-        notifier());
+        notifier(),
+        {},
+        {},
+        "ismael-id");
+
+    EXPECT_EQ(controller->default_agent_id(), "ismael-id");
+    ASSERT_EQ(controller->characters().all().size(), 2U);
+    EXPECT_EQ(controller->characters().all()[0].id, "guide-id");
+    EXPECT_EQ(controller->characters().all()[1].id, "ismael-id");
+
+    (void)controller->submit_prompt("operator", "initial default");
+    receive_until_idle(*controller);
+    ASSERT_EQ(ismael_view->inputs.size(), 1U);
+    EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
+    EXPECT_TRUE(guide_view->inputs.empty());
+
+    (void)controller->start_multicast_by_ids("operator", "all agents", {});
+    receive_until_idle(*controller);
+    ASSERT_EQ(guide_view->inputs.size(), 1U);
+    ASSERT_EQ(ismael_view->inputs.size(), 2U);
+    EXPECT_EQ(guide_view->inputs.back().run.target.id, "guide-id");
+    EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
+    const std::vector<TranscriptEntry> entries_after_multicast =
+        copy_entries(controller->transcript());
+    ASSERT_EQ(entries_after_multicast.size(), 6U);
+    EXPECT_EQ(entries_after_multicast[2].addressed_to, "guide-id");
+    EXPECT_EQ(entries_after_multicast[4].addressed_to, "ismael-id");
 
     const SessionUpdate mentioned =
         controller->submit_prompt("operator", "hello", "Ism");
     EXPECT_TRUE(mentioned.clear_input);
     receive_until_idle(*controller);
-    ASSERT_EQ(ismael_view->inputs.size(), 1U);
-    EXPECT_EQ(ismael_view->inputs.front().run.target.id, "ismael-id");
-    EXPECT_TRUE(guide_view->inputs.empty());
+    ASSERT_EQ(ismael_view->inputs.size(), 3U);
+    EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
+    EXPECT_EQ(guide_view->inputs.size(), 1U);
 
     const SessionUpdate default_changed =
         controller->set_default_agent("Gui");
@@ -1629,8 +1673,8 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumChara
     EXPECT_EQ(default_changed.notice, "Default agent is now Guide");
     (void)controller->submit_prompt("operator", "next");
     receive_until_idle(*controller);
-    ASSERT_EQ(guide_view->inputs.size(), 1U);
-    EXPECT_EQ(guide_view->inputs.front().run.target.id, "guide-id");
+    ASSERT_EQ(guide_view->inputs.size(), 2U);
+    EXPECT_EQ(guide_view->inputs.back().run.target.id, "guide-id");
 
     const SessionUpdate stable_id_changed =
         controller->set_default_agent_by_id("ismael-id");
@@ -1638,7 +1682,7 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumChara
     EXPECT_EQ(stable_id_changed.notice, "Default agent is now Ismael");
     (void)controller->submit_prompt("operator", "by stable ID");
     receive_until_idle(*controller);
-    ASSERT_EQ(ismael_view->inputs.size(), 2U);
+    ASSERT_EQ(ismael_view->inputs.size(), 4U);
     EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
 
     const SessionUpdate unknown_id =
@@ -1663,6 +1707,11 @@ TEST(SessionController, RoutesStructuredPromptsAndDefaultChangesAcrossForumChara
         std::string::npos);
     EXPECT_EQ(agents.notice->find("Cheburashka"), std::string::npos);
     EXPECT_NE(agents.notice->find("@Ismael"), std::string::npos);
+    EXPECT_LT(agents.notice->find("@Guide"), agents.notice->find("@Ismael"));
+    EXPECT_LT(agents.notice->find("* @Ismael"), agents.notice->find("@Ismael"));
+    const SessionUpdate info = controller->session_information();
+    ASSERT_TRUE(info.notice);
+    EXPECT_NE(info.notice->find("* @Ismael"), std::string::npos);
     EXPECT_EQ(
         copy_entries(controller->transcript()),
         entries_before_agents);

@@ -594,6 +594,7 @@ CreatedSession Workspace::create_session(
         SessionController::from_definitions(
             std::move(definitions),
             std::move(personas),
+            forum.default_agent_id,
             database_path,
             std::move(lease),
             notifier,
@@ -623,6 +624,7 @@ std::unique_ptr<SessionController> Workspace::open_session(
     return SessionController::from_definitions(
         std::move(definitions),
         std::move(personas),
+        forum.default_agent_id,
         database_path,
         std::move(lease),
         notifier,

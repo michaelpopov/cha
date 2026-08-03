@@ -390,6 +390,7 @@ TestControllerFactory real_factory(const std::filesystem::path& path) {
         return adapt_session_controller(SessionController::from_definitions(
             {test_definition()},
             PersonaRoster{{.id = "reader", .display_name = "Reader"}},
+            "guide",
             path,
             std::move(lease),
             notifier,
