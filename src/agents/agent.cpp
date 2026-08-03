@@ -45,15 +45,28 @@ void log_character_config(
 }
 
 AgentDefinition load_definition_files(
-    const std::filesystem::path& character_directory,
+    const AgentDefinitionSource& source,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
-    std::optional<std::filesystem::path> base_config_path) {
-    const std::string character_name = utf8_path(character_directory.filename());
+    std::optional<std::filesystem::path> forum_defaults_path) {
+    const std::string character_name = utf8_path(source.definition_directory.filename());
+    const std::filesystem::path member_config = source.member_directory / "character.toml";
+    const std::filesystem::path member_prompt = source.member_directory / "CHARACTER.md";
+    const auto optional_regular_file = [](const std::filesystem::path& path) {
+        if (!std::filesystem::exists(path)) return std::optional<std::filesystem::path>{};
+        if (!std::filesystem::is_regular_file(path)) {
+            throw std::runtime_error("Optional character file '" + utf8_path(path)
+                + "' is not a regular file");
+        }
+        return std::optional<std::filesystem::path>(path);
+    };
     LoadedConfig loaded;
     try {
         loaded = load_config(
-            character_directory / "character.toml", base_config_path);
+            {.definition = source.definition_directory / "character.toml",
+             .forum_defaults = forum_defaults_path
+                 ? optional_regular_file(*forum_defaults_path) : std::nullopt,
+             .member_override = optional_regular_file(member_config)});
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Character '" + character_name
@@ -62,13 +75,30 @@ AgentDefinition load_definition_files(
     Config config = std::move(loaded.config);
     log_character_config(config, forum_directory);
 
-    TemplateOptions options{
-        .containment_root = forum_directory,
+    std::optional<std::filesystem::path> selected_member_prompt;
+    try {
+        selected_member_prompt = optional_regular_file(member_prompt);
+    } catch (const std::exception& error) {
+        throw std::runtime_error(
+            "Character '" + character_name
+            + "' has invalid prompt configuration: " + error.what());
+    }
+    const std::filesystem::path definition_prompt =
+        source.definition_directory / "CHARACTER.md";
+    if (!std::filesystem::is_regular_file(definition_prompt)) {
+        throw std::runtime_error("Character '" + character_name
+            + "' requires regular definition CHARACTER.md");
+    }
+    const std::filesystem::path selected_prompt =
+        selected_member_prompt ? *selected_member_prompt : definition_prompt;
+    TemplateOptions character_options{
+        .containment_root = selected_member_prompt
+            ? forum_directory : source.definition_directory.parent_path(),
         .scope_table_name = std::string(prompt_scope_table),
         .reserved =
             {
                 {"character.id", config.id},
-                {"character.display_name", config.name},
+                {"character.display_name", config.display_name},
                 {"forum.id", utf8_path(forum_directory.filename())},
                 {"forum.display_name", std::string(forum_display_name)},
             },
@@ -78,16 +108,17 @@ AgentDefinition load_definition_files(
     std::string character_prompt;
     try {
         character_prompt = expand_template_file(
-            character_directory / "SYSTEM.md", options);
+            selected_prompt, character_options);
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Character '" + character_name
-            + "' failed to read SYSTEM.md: " + error.what());
+            + "' failed to read CHARACTER.md: " + error.what());
     }
+    TemplateOptions forum_options = character_options;
+    forum_options.containment_root = forum_directory;
     std::string forum_prompt;
     try {
-        forum_prompt = expand_template_file(
-            forum_directory / "FORUM.md", options);
+        forum_prompt = expand_template_file(forum_directory / "FORUM.md", forum_options);
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Character '" + character_name
@@ -106,7 +137,7 @@ std::string forum_context(
     Json other_agents = Json::array();
     for (const AgentDefinition& definition : definitions) {
         if (definition.config.id != current.config.id) {
-            other_agents.push_back(definition.config.name);
+            other_agents.push_back(definition.config.display_name);
         }
     }
 
@@ -114,7 +145,7 @@ std::string forum_context(
         "Forum context\n\n"
         "You are the agent named "
         + dump_json(
-            Json(current.config.name),
+            Json(current.config.display_name),
             JsonPurpose::agent_definition)
         + ".\n"
         "Other agents currently participating in this forum (JSON): "
@@ -179,47 +210,46 @@ std::string prefixed_human_message(
     return "from " + std::string(display_name) + ":\n" + std::string(text);
 }
 
-void check_persona_character_collisions(
-    const PersonaRoster& personas,
-    const std::vector<AgentDefinition>& definitions) {
-    for (const Persona& persona : personas) {
-        for (const AgentDefinition& definition : definitions) {
-            if (persona.id == definition.config.id) {
-                throw std::runtime_error(
-                    "Persona '" + persona.id + "' conflicts with character '"
-                    + definition.config.id + "': IDs are the same");
-            }
-            if (fold_ascii(persona.display_name) == fold_ascii(definition.config.name)) {
-                throw std::runtime_error(
-                    "Persona '" + persona.display_name + "' conflicts with character '"
-                    + definition.config.name + "': display names are the same");
-            }
-        }
-    }
-}
-
 } // namespace
 
 std::vector<AgentDefinition> load_agent_definitions(
-    const std::vector<std::filesystem::path>& character_directories,
+    const std::vector<AgentDefinitionSource>& sources,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
     const PersonaRoster& personas,
-    std::optional<std::filesystem::path> base_config_path) {
+    std::optional<std::filesystem::path> forum_defaults_path) {
     std::vector<AgentDefinition> definitions;
-    definitions.reserve(character_directories.size());
-    for (const auto& directory : character_directories) {
+    definitions.reserve(sources.size());
+    for (const AgentDefinitionSource& source : sources) {
         definitions.push_back(
             load_definition_files(
-                directory,
+                source,
                 forum_directory,
                 forum_display_name,
-                base_config_path));
+                forum_defaults_path));
     }
-    check_persona_character_collisions(personas, definitions);
     append_participant_roster(definitions, personas);
     append_forum_context(definitions);
     return definitions;
+}
+
+void validate_persona_character_collisions(
+    const PersonaRoster& personas,
+    const std::vector<CharacterDefinitionMetadata>& definitions) {
+    for (const Persona& persona : personas) {
+        for (const CharacterDefinitionMetadata& definition : definitions) {
+            if (persona.id == definition.id) {
+                throw std::runtime_error(
+                    "Persona '" + persona.id + "' conflicts with character '"
+                    + definition.id + "': IDs are the same");
+            }
+            if (fold_ascii(persona.display_name) == fold_ascii(definition.display_name)) {
+                throw std::runtime_error(
+                    "Persona '" + persona.display_name + "' conflicts with character '"
+                    + definition.display_name + "': display names are the same");
+            }
+        }
+    }
 }
 
 void validate_character_id(std::string_view id) {

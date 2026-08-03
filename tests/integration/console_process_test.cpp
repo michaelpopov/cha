@@ -75,8 +75,8 @@ public:
                    std::chrono::steady_clock::now()
                        .time_since_epoch()
                        .count()))) {
-        std::filesystem::create_directories(
-            path_ / "forums" / "hall" / "characters" / "Ismael");
+        std::filesystem::create_directories(path_ / "characters" / "Ismael");
+        std::filesystem::create_directories(path_ / "forums" / "hall" / "members" / "Ismael");
         std::filesystem::create_directories(
             path_ / "forums" / "hall" / "sessions");
         std::filesystem::create_directories(path_ / "personas" / "reader");
@@ -88,10 +88,10 @@ public:
             path_ / "forums" / "hall" / "config.toml",
             "display_name = \"The Hall\"\n");
         write_file(
-            path_ / "forums" / "hall" / "characters" / "Ismael" / "character.toml",
+            path_ / "characters" / "Ismael" / "character.toml",
             "display_name = \"Ismael\"\n");
         write_file(
-            path_ / "forums" / "hall" / "characters" / "Ismael" / "SYSTEM.md",
+            path_ / "characters" / "Ismael" / "CHARACTER.md",
             "You are a process test agent.\n");
         write_file(
             path_ / "forums" / "hall" / "FORUM.md",
@@ -108,7 +108,7 @@ public:
 
     void point_at(int port) const {
         write_file(
-            path_ / "forums" / "hall" / "characters" / "character_defaults.toml",
+            path_ / "forums" / "hall" / "members" / "character_defaults.toml",
             "host = \"127.0.0.1\"\n"
             "port = " + std::to_string(port) + "\n"
             "https = false\n"
@@ -529,7 +529,7 @@ TEST(ConsoleProcess, CheckValidatesWithoutCreatingASessionOrConnecting) {
     // --check neither initializes completion clients nor performs requests.
     write_file(
         workspace.path()
-            / "forums" / "hall" / "characters" / "character_defaults.toml",
+            / "forums" / "hall" / "members" / "character_defaults.toml",
         "host = \"127.0.0.1\"\n"
         "port = 9\n"
         "https = false\n"

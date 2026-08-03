@@ -27,7 +27,8 @@ public:
         const auto forum = root / "forums" / "hall";
         const auto sessions = forum / "sessions";
         std::filesystem::create_directories(
-            forum / "characters" / "Guide");
+            root / "characters" / "Guide");
+        std::filesystem::create_directories(forum / "members" / "Guide");
         std::filesystem::create_directories(root / "personas" / "reader");
         std::filesystem::create_directories(sessions);
         write(
@@ -37,13 +38,13 @@ public:
         write(forum / "config.toml", "display_name = \"The Hall\"\n");
         write(forum / "FORUM.md", "Forum instructions\n");
         write(
-            forum / "characters" / "character_defaults.toml",
+            forum / "members" / "character_defaults.toml",
             "host = \"127.0.0.1\"\nport = 8080\n");
         write(
-            forum / "characters" / "Guide" / "character.toml",
+            root / "characters" / "Guide" / "character.toml",
             "display_name = \"Guide\"\n");
         write(
-            forum / "characters" / "Guide" / "SYSTEM.md",
+            root / "characters" / "Guide" / "CHARACTER.md",
             "Character instructions\n");
         write(root / "personas" / "reader" / "persona.toml", "display_name = \"Reader\"\n");
         if (!create_session_database(

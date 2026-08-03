@@ -5,373 +5,258 @@
 
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace cha {
 namespace {
 
-TEST(Config, LoadsHostAndPortFromToml) {
-    const auto directory = std::filesystem::temp_directory_path()
-        / ("cha_config_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directory(directory);
-    const auto path = directory / "config.toml";
-    {
-        std::ofstream config_file(path);
-        config_file
-            << "display_name = \"Example\"\n"
-            << "host = \"example.com\"\n"
-            << "port = 8080\n"
-            << "mode = \"net\"\n"
-            << "model = \"example-model\"\n"
-            << "stream = false\n"
-            << "temperature = 0.25\n"
-            << "api_key = \"secret\"\n"
-            << "api_key_env = \"OPENAI_API_KEY\"\n"
-            << "reasoning_effort = \"medium\"\n"
-            << "reasoning_format = \"reasoning_content\"\n"
-            << "https = true\n";
+class ConfigFiles {
+public:
+    ConfigFiles()
+        : root_(std::filesystem::temp_directory_path() / ("cha_config_"
+            + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))),
+          definition_(root_ / "definition" / "character.toml"),
+          defaults_(root_ / "forum" / "members" / "character_defaults.toml"),
+          member_(root_ / "forum" / "members" / "member" / "character.toml") {
+        std::filesystem::create_directories(definition_.parent_path());
+        std::filesystem::create_directories(defaults_.parent_path());
+        std::filesystem::create_directories(member_.parent_path());
     }
-
-    const Config config = load_config(path).config;
-
-    EXPECT_EQ(config.id, utf8_path(path.parent_path().filename()));
-    EXPECT_EQ(config.name, "Example");
-    EXPECT_EQ(config.host, "example.com");
-    EXPECT_EQ(config.port, 8080);
-    EXPECT_EQ(config.mode, Mode::net);
-    EXPECT_EQ(config.model, "example-model");
-    EXPECT_FALSE(config.stream);
-    EXPECT_DOUBLE_EQ(config.temperature, 0.25);
-    EXPECT_EQ(config.api_key, "secret");
-    EXPECT_EQ(config.api_key_env, "OPENAI_API_KEY");
-    EXPECT_EQ(config.reasoning_effort, "medium");
-    EXPECT_EQ(config.reasoning_format, ReasoningFormat::reasoning_content);
-    EXPECT_TRUE(config.https);
-
-    std::filesystem::remove_all(directory);
-}
-
-TEST(Config, LoadsTomlFromANonAsciiPath) {
-    const auto directory = std::filesystem::temp_directory_path()
-        / path_from_utf8(
-            "cha_config_na\xc3\xafve_\xe6\x9d\xb1\xe4\xba\xac_"
-            + std::to_string(
-                std::chrono::steady_clock::now()
-                    .time_since_epoch()
-                    .count()));
-    std::filesystem::create_directory(directory);
-    const auto path = directory / "config.toml";
-    {
-        std::ofstream config_file(path);
-        config_file << "display_name = \"Example\"\n"
-                    << "host = \"example.com\"\n"
-                    << "port = 8080\n";
+    ~ConfigFiles() { std::filesystem::remove_all(root_); }
+    void write(const std::filesystem::path& path, std::string_view contents) const {
+        std::ofstream file(path);
+        file << contents;
     }
-
-    EXPECT_EQ(
-        load_config(path).config.id,
-        utf8_path(path.parent_path().filename()));
-    std::filesystem::remove_all(directory);
-}
-
-TEST(Config, DefaultsAndValidatesReasoningFormat) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_reasoning_format_"
-           + std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count())
-           + ".toml");
-    {
-        std::ofstream config_file(path);
-        config_file << "display_name = \"Example\"\n"
-                    << "host = \"example.com\"\n"
-                    << "port = 8080\n";
+    CharacterConfigPaths paths(bool defaults = false, bool member = false) const {
+        return {.definition = definition_,
+            .forum_defaults = defaults ? std::optional{defaults_} : std::nullopt,
+            .member_override = member ? std::optional{member_} : std::nullopt};
     }
-    EXPECT_EQ(
-        load_config(path).config.reasoning_format,
-        ReasoningFormat::automatic);
+    const std::filesystem::path& definition() const { return definition_; }
+    const std::filesystem::path& defaults() const { return defaults_; }
+    const std::filesystem::path& member() const { return member_; }
+private:
+    std::filesystem::path root_, definition_, defaults_, member_;
+};
 
-    {
-        std::ofstream config_file(path);
-        config_file << "display_name = \"Example\"\n"
-                    << "host = \"example.com\"\n"
-                    << "port = 8080\n"
-                    << "reasoning_format = \"tags\"\n";
-    }
+constexpr std::string_view required_definition =
+    "display_name = \"Example\"\nhost = \"definition.example\"\nport = 8080\n";
+
+void expect_error_containing(const std::function<void()>& operation,
+    const std::filesystem::path& path, std::string_view field) {
     try {
-        (void)load_config(path);
-        FAIL() << "Expected invalid reasoning_format to fail";
+        operation();
+        FAIL() << "Expected config load to fail";
     } catch (const std::runtime_error& error) {
-        EXPECT_NE(
-            std::string(error.what()).find(utf8_path(path)),
-            std::string::npos);
-        EXPECT_NE(
-            std::string(error.what()).find("reasoning_format"),
-            std::string::npos);
+        const std::string message(error.what());
+        EXPECT_NE(message.find(utf8_path(path)), std::string::npos);
+        EXPECT_NE(message.find(field), std::string::npos);
     }
-    std::filesystem::remove(path);
 }
 
-TEST(Config, AllowsMissingModel) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_no_model_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".toml");
-    {
-        std::ofstream config_file(path);
-        config_file << "display_name = \"Example\"\n"
-                    << "host = \"example.com\"\nport = 8080\n";
+void expect_definition_values(const LoadedConfig& loaded) {
+    const Config& config = loaded.config;
+    EXPECT_EQ(config.host, "definition");
+    EXPECT_EQ(config.port, 80);
+    EXPECT_EQ(config.mode, Mode::test);
+    EXPECT_EQ(config.model, "one");
+    EXPECT_TRUE(config.stream);
+    EXPECT_DOUBLE_EQ(config.temperature, 0.1);
+    EXPECT_EQ(config.api_key, "one");
+    EXPECT_EQ(config.api_key_env, "ONE");
+    EXPECT_EQ(config.reasoning_effort, "low");
+    EXPECT_EQ(config.reasoning_format, ReasoningFormat::none);
+    EXPECT_FALSE(config.https);
+    EXPECT_EQ(loaded.prompt_variables, (TemplateScope{{"value", "definition"}, {"base", "base"}}));
+}
+
+constexpr std::string_view complete_definition =
+    "display_name = \"Example\"\nhost = \"definition\"\nport = 80\nmode = \"test\"\n"
+    "model = \"one\"\nstream = true\ntemperature = 0.1\napi_key = \"one\"\n"
+    "api_key_env = \"ONE\"\nreasoning_effort = \"low\"\nreasoning_format = \"none\"\n"
+    "https = false\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n";
+
+TEST(Config, LoadsDefinitionOnlyAndKeepsReservedNameDefault) {
+    ConfigFiles files;
+    files.write(files.definition(), required_definition);
+    const Config effective = load_config(files.paths()).config;
+    EXPECT_EQ(effective.id, "definition");
+    EXPECT_EQ(effective.display_name, "Example");
+    EXPECT_EQ(effective.name, Config{}.name);
+    EXPECT_EQ(effective.host, "definition.example");
+    EXPECT_EQ(effective.port, 8080);
+}
+
+TEST(Config, OverlaysEveryRuntimeAndPromptFieldAcrossThreeLayers) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        "display_name = \"Example\"\nhost = \"definition\"\nport = 80\nmode = \"test\"\nmodel = \"one\"\nstream = false\ntemperature = 0.1\napi_key = \"one\"\napi_key_env = \"ONE\"\nreasoning_effort = \"low\"\nreasoning_format = \"none\"\nhttps = false\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n");
+    files.write(files.defaults(),
+        "host = \"defaults\"\nport = 443\nmode = \"test\"\nmodel = \"two\"\nstream = false\ntemperature = 0.2\napi_key = \"two\"\napi_key_env = \"TWO\"\nreasoning_effort = \"medium\"\nreasoning_format = \"reasoning\"\nhttps = false\n[prompt]\nvalue = \"defaults\"\ndefault = \"default\"\n");
+    files.write(files.member(),
+        "host = \"member\"\nport = 8443\nmode = \"net\"\nmodel = \"three\"\nstream = true\ntemperature = 0.3\napi_key = \"three\"\napi_key_env = \"THREE\"\nreasoning_effort = \"high\"\nreasoning_format = \"reasoning_content\"\nhttps = true\n[prompt]\nvalue = \"member\"\nmember = \"member\"\n");
+    const LoadedConfig loaded = load_config(files.paths(true, true));
+    const Config& effective = loaded.config;
+    EXPECT_EQ(effective.id, "definition");
+    EXPECT_EQ(effective.display_name, "Example");
+    EXPECT_EQ(effective.name, Config{}.name);
+    EXPECT_EQ(effective.host, "member");
+    EXPECT_EQ(effective.port, 8443);
+    EXPECT_EQ(effective.mode, Mode::net);
+    EXPECT_EQ(effective.model, "three");
+    EXPECT_TRUE(effective.stream);
+    EXPECT_DOUBLE_EQ(effective.temperature, 0.3);
+    EXPECT_EQ(effective.api_key, "three");
+    EXPECT_EQ(effective.api_key_env, "THREE");
+    EXPECT_EQ(effective.reasoning_effort, "high");
+    EXPECT_EQ(effective.reasoning_format, ReasoningFormat::reasoning_content);
+    EXPECT_TRUE(effective.https);
+    EXPECT_EQ(loaded.prompt_variables.at("value"), "member");
+    EXPECT_EQ(loaded.prompt_variables.at("base"), "base");
+    EXPECT_EQ(loaded.prompt_variables.at("default"), "default");
+    EXPECT_EQ(loaded.prompt_variables.at("member"), "member");
+}
+
+TEST(Config, ForumDefaultsOverlayDefinitionWhenMemberIsAbsent) {
+    ConfigFiles files;
+    files.write(files.definition(), complete_definition);
+    files.write(files.defaults(), "host = \"defaults\"\nmode = \"net\"\nstream = true\nhttps = true\n[prompt]\nvalue = \"defaults\"\n");
+    const LoadedConfig loaded = load_config(files.paths(true));
+    EXPECT_EQ(loaded.config.host, "defaults");
+    EXPECT_EQ(loaded.config.mode, Mode::net);
+    EXPECT_TRUE(loaded.config.stream);
+    EXPECT_TRUE(loaded.config.https);
+    EXPECT_EQ(loaded.prompt_variables.at("value"), "defaults");
+    EXPECT_EQ(loaded.config.model, "one");
+    EXPECT_EQ(loaded.prompt_variables.at("base"), "base");
+}
+
+TEST(Config, EmptyAndCommentOnlyOptionalLayersAreNoopOverlays) {
+    ConfigFiles files;
+    files.write(files.definition(), complete_definition);
+    files.write(files.defaults(), "");
+    expect_definition_values(load_config(files.paths(true)));
+    files.write(files.defaults(), "# defaults\n");
+    expect_definition_values(load_config(files.paths(true)));
+    files.write(files.member(), "");
+    expect_definition_values(load_config(files.paths(false, true)));
+    files.write(files.member(), "# member\n");
+    expect_definition_values(load_config(files.paths(false, true)));
+}
+
+TEST(Config, RejectsDefinitionOnlyAndRemovedIdentityFieldsInEveryLayer) {
+    ConfigFiles files;
+    files.write(files.definition(), required_definition);
+    for (const std::string_view key : {"name", "id"}) {
+        files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 80\n"
+            + std::string(key) + " = \"Wrong\"\n");
+        expect_error_containing([&] { (void)load_config(files.paths()); }, files.definition(), key);
     }
+    files.write(files.definition(), required_definition);
+    for (const auto& path : {files.defaults(), files.member()}) {
+        files.write(path, "display_name = \"Wrong\"\n");
+        expect_error_containing(
+            [&] { (void)load_config(files.paths(path == files.defaults(), path == files.member())); },
+            path,
+            "display_name");
+        files.write(path, "tags = [\"Wrong\"]\n");
+        expect_error_containing(
+            [&] { (void)load_config(files.paths(path == files.defaults(), path == files.member())); },
+            path,
+            "tags");
+        files.write(path, "name = \"Wrong\"\n");
+        expect_error_containing(
+            [&] { (void)load_config(files.paths(path == files.defaults(), path == files.member())); },
+            path,
+            "name");
+        files.write(path, "id = \"wrong\"\n");
+        expect_error_containing(
+            [&] { (void)load_config(files.paths(path == files.defaults(), path == files.member())); },
+            path,
+            "id");
+    }
+}
 
-    const Config config = load_config(path).config;
+TEST(Config, AttributesEffectiveValidationToHighestPrecedenceSource) {
+    ConfigFiles files;
+    files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 65536\n");
+    expect_error_containing([&] { (void)load_config(files.paths()); }, files.definition(), "port");
+    files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 80\ntemperature = 2.1\n");
+    expect_error_containing([&] { (void)load_config(files.paths()); }, files.definition(), "temperature");
+    files.write(files.definition(), required_definition);
+    files.write(files.defaults(), "port = 65536\n");
+    expect_error_containing([&] { (void)load_config(files.paths(true)); }, files.defaults(), "port");
+    files.write(files.defaults(), "temperature = 2.1\n");
+    expect_error_containing([&] { (void)load_config(files.paths(true)); }, files.defaults(), "temperature");
+    files.write(files.defaults(), "");
+    files.write(files.member(), "port = 65536\n");
+    expect_error_containing([&] { (void)load_config(files.paths(true, true)); }, files.member(), "port");
+    files.write(files.member(), "temperature = 2.1\n");
+    expect_error_containing([&] { (void)load_config(files.paths(true, true)); }, files.member(), "temperature");
+}
 
+TEST(Config, LoadsAndValidatesDefinitionMetadataTags) {
+    ConfigFiles files;
+    files.write(files.definition(), "display_name = \"Example\"\n");
+    EXPECT_TRUE(load_character_definition_metadata(files.definition()).tags.empty());
+    files.write(files.definition(), "display_name = \"Example\"\ntags = []\n");
+    EXPECT_TRUE(load_character_definition_metadata(files.definition()).tags.empty());
+    files.write(files.definition(), "display_name = \"Example\"\ntags = [\" Stoic \", \"Philosopher\"]\n");
+    const auto metadata = load_character_definition_metadata(files.definition());
+    EXPECT_EQ(metadata.id, "definition");
+    EXPECT_EQ(metadata.display_name, "Example");
+    EXPECT_EQ(metadata.tags, (std::vector<std::string>{"Stoic", "Philosopher"}));
+    files.write(files.definition(), "display_name = \"Example\"\ntags = [\"Stoic\", \"stoic\"]\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+    files.write(files.definition(), "display_name = \"Example\"\ntags = [\"\"]\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+    files.write(files.definition(), "display_name = \"Example\"\ntags = [1]\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+    files.write(files.definition(), "display_name = \"Example\"\ntags = [\"line\\nbreak\"]\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+    files.write(files.definition(), "display_name = \"Example\"\ntags = [\"tab\\tcharacter\"]\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+}
+
+TEST(Config, RequiresDefinitionDisplayName) {
+    ConfigFiles files;
+    files.write(files.definition(), "host = \"example\"\nport = 80\n");
+    expect_error_containing([&] { (void)load_config(files.paths()); }, files.definition(), "display_name");
+    expect_error_containing([&] { (void)load_character_definition_metadata(files.definition()); }, files.definition(), "display_name");
+}
+
+TEST(Config, PreservesExistingDefaultsAndValidation) {
+    ConfigFiles files;
+    files.write(files.definition(), required_definition);
+    const Config config = load_config(files.paths()).config;
     EXPECT_TRUE(config.model.empty());
     EXPECT_DOUBLE_EQ(config.temperature, 1.0);
-    std::filesystem::remove(path);
+    EXPECT_EQ(config.reasoning_format, ReasoningFormat::automatic);
+
+    files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 80\nmode = \"invalid\"\n");
+    expect_error_containing([&] { (void)load_config(files.paths()); }, files.definition(), "mode");
+    files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 80\nreasoning_format = \"invalid\"\n");
+    expect_error_containing([&] { (void)load_config(files.paths()); }, files.definition(), "reasoning_format");
 }
 
-TEST(Config, RejectsOutOfRangePort) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_invalid_port_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".toml");
+TEST(Config, DerivesIdFromANonAsciiDefinitionDirectory) {
+    const auto root = std::filesystem::temp_directory_path() / "cha_config_\xC3\xA9";
+    const auto definition = root / "caf\xC3\xA9" / "character.toml";
+    std::filesystem::create_directories(definition.parent_path());
     {
-        std::ofstream config_file(path);
-        config_file
-            << "display_name = \"Example\"\n"
-            << "host = \"example.com\"\n"
-            << "port = 65536\n"
-            << "model = \"example-model\"\n";
+        std::ofstream file(definition);
+        file << required_definition;
     }
-
-    EXPECT_THROW(
-        {
-            const auto loaded = load_config(path);
-            (void)loaded;
-        },
-        std::runtime_error);
-    std::filesystem::remove(path);
-}
-
-TEST(Config, RejectsOutOfRangeTemperature) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_invalid_temperature_"
-           + std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count())
-           + ".toml");
-    {
-        std::ofstream config_file(path);
-        config_file
-            << "display_name = \"Example\"\n"
-            << "host = \"example.com\"\n"
-            << "port = 8080\n"
-            << "temperature = 2.1\n";
-    }
-
-    try {
-        (void)load_config(path);
-        FAIL() << "Expected invalid temperature to fail";
-    } catch (const std::runtime_error& error) {
-        EXPECT_NE(
-            std::string(error.what()).find(utf8_path(path)),
-            std::string::npos);
-        EXPECT_NE(
-            std::string(error.what()).find("temperature"),
-            std::string::npos);
-    }
-    std::filesystem::remove(path);
-}
-
-TEST(Config, RequiresDisplayName) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_missing_identity_"
-           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
-           + ".toml");
-    {
-        std::ofstream config_file(path);
-        config_file << "host = \"example.com\"\nport = 8080\n";
-    }
-
-    EXPECT_THROW((void)load_config(path), std::runtime_error);
-    std::filesystem::remove(path);
-}
-
-TEST(Config, RejectsRemovedIdentityFields) {
-    const auto path = std::filesystem::temp_directory_path()
-        / ("cha_removed_identity_"
-           + std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count())
-           + ".toml");
-    {
-        std::ofstream config_file(path);
-        config_file << "display_name = \"Example\"\n"
-                    << "id = \"old-id\"\n"
-                    << "host = \"example.com\"\n"
-                    << "port = 8080\n";
-    }
-    EXPECT_THROW((void)load_config(path), std::runtime_error);
-
-    {
-        std::ofstream config_file(path);
-        config_file << "display_name = \"Example\"\n"
-                    << "name = \"Old Example\"\n"
-                    << "host = \"example.com\"\n"
-                    << "port = 8080\n";
-    }
-    EXPECT_THROW((void)load_config(path), std::runtime_error);
-    std::filesystem::remove(path);
-}
-
-TEST(Config, OverlaysCharacterValuesOnWorkspaceDefaults) {
-    const auto directory = std::filesystem::temp_directory_path()
-        / ("cha_config_overlay_"
-           + std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directory(directory);
-    const auto base_path = directory / "character_defaults.toml";
-    const auto character_path = directory / "character.toml";
-    {
-        std::ofstream base(base_path);
-        base << "host = \"shared.example\"\n"
-             << "port = 443\n"
-             << "https = true\n"
-             << "mode = \"net\"\n"
-             << "model = \"shared-model\"\n"
-             << "stream = true\n"
-             << "temperature = 0.5\n"
-             << "api_key_env = \"SHARED_API_KEY\"\n"
-             << "reasoning_effort = \"medium\"\n"
-             << "reasoning_format = \"reasoning\"\n";
-        std::ofstream character(character_path);
-        character << "display_name = \"Example\"\n"
-                << "model = \"character-model\"\n"
-                << "stream = false\n";
-    }
-
-    const Config config = load_config(character_path, base_path).config;
-
-    EXPECT_EQ(config.id, utf8_path(character_path.parent_path().filename()));
-    EXPECT_EQ(config.name, "Example");
-    EXPECT_EQ(config.host, "shared.example");
-    EXPECT_EQ(config.port, 443);
-    EXPECT_TRUE(config.https);
-    EXPECT_EQ(config.mode, Mode::net);
-    EXPECT_EQ(config.model, "character-model");
-    EXPECT_FALSE(config.stream);
-    EXPECT_DOUBLE_EQ(config.temperature, 0.5);
-    EXPECT_EQ(config.api_key_env, "SHARED_API_KEY");
-    EXPECT_EQ(config.reasoning_effort, "medium");
-    EXPECT_EQ(config.reasoning_format, ReasoningFormat::reasoning);
-
-    std::filesystem::remove_all(directory);
-}
-
-TEST(Config, RejectsDisplayNameInWorkspaceDefaults) {
-    const auto directory = std::filesystem::temp_directory_path()
-        / ("cha_config_base_identity_"
-           + std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directory(directory);
-    const auto base_path = directory / "character_defaults.toml";
-    const auto character_path = directory / "character.toml";
-    {
-        std::ofstream base(base_path);
-        base << "display_name = \"Shared\"\n"
-             << "host = \"shared.example\"\n"
-             << "port = 443\n";
-        std::ofstream character(character_path);
-        character << "display_name = \"Example\"\n";
-    }
-
-    try {
-        (void)load_config(character_path, base_path);
-        FAIL() << "Expected shared identity to fail";
-    } catch (const std::runtime_error& error) {
-        EXPECT_NE(
-            std::string(error.what()).find(utf8_path(base_path)),
-            std::string::npos);
-        EXPECT_NE(
-            std::string(error.what()).find("display_name"),
-            std::string::npos);
-    }
-
-    std::filesystem::remove_all(directory);
-}
-
-TEST(Config, LoadsPromptVariablesWithTheSameOverlayAsTheConnectionConfig) {
-    const auto directory = std::filesystem::temp_directory_path()
-        / ("cha_prompt_vars_"
-           + std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directory(directory);
-    const auto base_path = directory / "character_defaults.toml";
-    const auto character_path = directory / "character.toml";
-    {
-        std::ofstream base(base_path);
-        base << "host = \"shared.example\"\n"
-             << "port = 443\n"
-             << "[prompt]\n"
-             << "register = \"measured\"\n"
-             << "period = \"base-period\"\n";
-        std::ofstream character(character_path);
-        character << "display_name = \"Example\"\n"
-                << "host = \"character.example\"\n"
-                << "port = 8080\n"
-                << "[prompt]\n"
-                << "register = \"energetic\"\n";
-    }
-
-    const auto character_no_prompt = directory / "character_no_prompt.toml";
-    {
-        std::ofstream file(character_no_prompt);
-        file << "display_name = \"Example\"\n"
-             << "host = \"character.example\"\n"
-             << "port = 8080\n";
-    }
-
-    const TemplateScope only_base =
-        load_config(character_no_prompt, base_path).prompt_variables;
-    EXPECT_EQ(only_base.at("register"), "measured");
-    EXPECT_EQ(only_base.at("period"), "base-period");
-
-    const TemplateScope only_character = load_config(character_path).prompt_variables;
-    EXPECT_EQ(only_character.at("register"), "energetic");
-    EXPECT_EQ(only_character.find("period"), only_character.end());
-
-    const TemplateScope overlaid =
-        load_config(character_path, base_path).prompt_variables;
-    EXPECT_EQ(overlaid.at("register"), "energetic");
-    EXPECT_EQ(overlaid.at("period"), "base-period");
-
-    std::filesystem::remove_all(directory);
-}
-
-TEST(Config, IdentifiesInvalidWorkspaceDefaultSource) {
-    const auto directory = std::filesystem::temp_directory_path()
-        / ("cha_config_base_value_"
-           + std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directory(directory);
-    const auto base_path = directory / "character_defaults.toml";
-    const auto character_path = directory / "character.toml";
-    {
-        std::ofstream base(base_path);
-        base << "host = \"shared.example\"\n"
-             << "port = 65536\n";
-        std::ofstream character(character_path);
-        character << "display_name = \"Example\"\n";
-    }
-
-    try {
-        (void)load_config(character_path, base_path);
-        FAIL() << "Expected invalid shared port to fail";
-    } catch (const std::runtime_error& error) {
-        EXPECT_NE(
-            std::string(error.what()).find(utf8_path(base_path)),
-            std::string::npos);
-        EXPECT_NE(
-            std::string(error.what()).find("port"),
-            std::string::npos);
-    }
-
-    std::filesystem::remove_all(directory);
+    const LoadedConfig loaded = load_config({.definition = definition});
+    EXPECT_EQ(loaded.config.id, "caf\xC3\xA9");
+    EXPECT_EQ(load_character_definition_metadata(definition).id, "caf\xC3\xA9");
+    std::filesystem::remove_all(root);
 }
 
 } // namespace

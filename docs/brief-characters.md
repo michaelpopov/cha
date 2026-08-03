@@ -20,7 +20,8 @@ workspace/
       members/             <- was characters/
         character_defaults.toml
         epictetus/
-          character.toml   <- optional, overrides only
+          character.toml   <- optional, per-key overrides only
+          CHARACTER.md     <- optional full prompt replacement
 ```
 
 ## Why
@@ -35,13 +36,12 @@ Three things already pointed this way:
 - The prompt already concatenates a character-owned document and a forum-owned
   one. The seam existed; this moves the files to match it.
 
-It also gives the browser UI a Characters level, which had nowhere to live.
+It gives a future browser Characters level a workspace home.
 
 ## How overrides work
 
-One rule: **a forum's member directory shadows the workspace character
-directory, file by file.** Present locally means used; absent means the
-workspace file.
+One rule per file kind: a member `character.toml` overlays the definition key by
+key, while a member `CHARACTER.md` shadows the definition file wholesale.
 
 Config merges across three layers, weakest to strongest:
 
@@ -53,13 +53,17 @@ Config merges across three layers, weakest to strongest:
 so "copy it in and edit it" stays available when a room genuinely wants a
 divergent character.
 
+Includes from a definition prompt stay within workspace `characters/`; includes
+from a member prompt and `FORUM.md` stay within that forum.
+
 Note the consequence: forum defaults outrank the definition, so a forum that
 sets a value overrides every member's own declared value in that room.
 
 ## What cannot be overridden
 
-`display_name`. It is declared once, in the definition, and putting it in an
-override is a load error.
+`display_name` and `tags`. They are declared only in the definition, and putting
+either in an override is a load error. `display_name` is the sole authorable
+identity key; `id` and `name` are rejected in every configuration layer.
 
 It carries too much weight elsewhere: it is written into every transcript row in
 every session database, it appears in the prompts the model reads, it is the
@@ -85,16 +89,22 @@ persona IDs or persona display names.
 tags = ["stoics", "philosopher"]
 ```
 
-Free-form strings for grouping characters in the UI. Optional, no registry,
-matched case-insensitively. Tags are for navigation only — they never determine
-which forum a character belongs to. Membership is always an explicit member
-directory.
+Free-form strings for future grouping. Optional, no registry, matched with ASCII
+case folding while preserving authored casing. Tags are trimmed; empty tags,
+controls, line breaks, and case-folded duplicates within one character are
+errors. They are for navigation only — they never determine which forum a
+character belongs to. Membership is always an explicit member directory.
 
 ## Validation
 
 **At workspace load:** referential integrity of the directory structure — every
 `members/<id>/` has a matching `characters/<id>/` — plus workspace-wide name
 collisions. `characters/` is now required, like `forums/`.
+
+`default_agent = "character-id"` in a forum's `config.toml` must name one of its
+members. When omitted, the lexicographically first member ID is used; an
+explicit default never reorders the roster. Workspace validation is
+all-or-nothing, while definitions with no forum membership are valid.
 
 **At session open:** everything expensive, unchanged. Template expansion, agent
 construction, model connections.
@@ -114,5 +124,5 @@ forum whose old messages stay in past sessions exactly as recorded.
 
 ## Not covered yet
 
-The web API changes, the Characters screen itself, and how tag-based grouping
-should look.
+The web Characters API, the Characters screen itself, and how tag-based
+grouping should look.

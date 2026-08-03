@@ -85,9 +85,10 @@ private:
 Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
-    Config config = load_config(
-        workspace_directory / "forums" / "lobby" / "characters" / "Ismael" / "character.toml",
-        workspace_directory / "forums" / "lobby" / "characters" / "character_defaults.toml").config;
+    Config config = load_config({
+        .definition = workspace_directory / "characters" / "Ismael" / "character.toml",
+        .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
+    }).config;
     config.stream = stream;
     return config;
 }
@@ -153,7 +154,7 @@ ChatResult run_chat(bool stream) {
             transcript.completion_history()),
         .run = {
             .request_id = 1,
-            .target = {config.id, config.name},
+            .target = {config.id, config.display_name},
             .prompt_text = input,
         },
     };
@@ -194,7 +195,7 @@ ChatResult run_cancelled_chat() {
             transcript.completion_history()),
         .run = {
             .request_id = 2,
-            .target = {config.id, config.name},
+            .target = {config.id, config.display_name},
             .prompt_text = input,
         },
     };
@@ -271,19 +272,21 @@ struct LobbySetup {
 LobbySetup lobby_setup() {
     const Workspace workspace{std::filesystem::path{CHA_WORKSPACE_DIRECTORY}};
     const Forum forum = workspace.load_forum("lobby");
-    std::vector<std::filesystem::path> directories;
+    std::vector<AgentDefinitionSource> sources;
     for (const std::string& character_name : forum.character_names) {
-        directories.push_back(
-            forum.directory / "characters" / character_name);
+        sources.push_back({
+            .definition_directory = std::filesystem::path{CHA_WORKSPACE_DIRECTORY} / "characters" / character_name,
+            .member_directory = forum.directory / "members" / character_name,
+        });
     }
     PersonaRoster personas = workspace.load_personas();
     return {
         .definitions = load_agent_definitions(
-        directories,
+        sources,
         forum.directory,
         forum.display_name,
         personas,
-        forum.directory / "characters" / "character_defaults.toml"),
+        forum.directory / "members" / "character_defaults.toml"),
         .personas = std::move(personas),
     };
 }
@@ -478,8 +481,8 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     LobbySetup lobby = lobby_setup();
     std::vector<AgentDefinition>& definitions = lobby.definitions;
     ASSERT_EQ(definitions.size(), 2U);
-    ASSERT_EQ(definitions.front().config.name, "Cheburashka");
-    ASSERT_EQ(definitions.back().config.name, "Ismael");
+    ASSERT_EQ(definitions.front().config.display_name, "Cheburashka");
+    ASSERT_EQ(definitions.back().config.display_name, "Ismael");
     const std::string cheburashka_prompt = definitions.front().system_prompt;
     const std::string ismael_prompt = definitions.back().system_prompt;
     ASSERT_NE(cheburashka_prompt, ismael_prompt);

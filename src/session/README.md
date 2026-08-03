@@ -25,39 +25,53 @@ flowchart TD
     root --> forums["forums/"]
     root --> personas["personas/<id>/persona.toml + optional PERSONA.md"]
     root --> env[".env — optional"]
-    characters --> base["character_defaults.toml<br/>optional forum defaults + [prompt]"]
-    characters --> shared["shared prompt files<br/>e.g. character-voice.md"]
-    forums --> forum["forum-name/ — distribution unit and template containment root"]
-    forum --> config["config.toml — required display_name + optional [prompt]"]
-    forum --> characters["characters/ — character directories"]
-    characters --> character["character-name/character.toml<br/>SYSTEM.md + includes"]
+    root --> characters["characters/<id>/"]
+    characters --> character["character.toml + CHARACTER.md<br/>definition + includes"]
+    forums --> forum["forum-name/"]
+    forum --> config["config.toml — required display_name + optional default_agent"]
+    forum --> members["members/"]
+    members --> base["character_defaults.toml<br/>optional forum defaults + [prompt]"]
+    members --> member["<id>/character.toml + CHARACTER.md<br/>optional overrides"]
     forum --> forum_prompt["FORUM.md — template-expanded forum prompt extension"]
     forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
 ```
 
-`Workspace` refuses to construct unless `forums/` exists.
+`Workspace` refuses to construct unless `forums/`, `characters/`, and a valid
+non-empty `personas/` roster exist.
 The `forums/` directory may be temporarily empty; its valid forum names are
 sorted before presentation. Forum IDs and session database stems may contain
 only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and
 `..`; invalid entries are ignored during discovery and rejected on direct use.
-Each forum's `characters/` directory must contain at least one character
-subdirectory, also sorted before loading. Character directory names are checked
-with `require_path_component()` before they become paths.
+Each forum's `members/` directory must contain at least one member subdirectory,
+also sorted before loading. Member and definition directory names are character
+IDs and are validated with `validate_character_id()`.
 Each forum's `config.toml` must provide a non-empty string `display_name` for
 persona-facing selection and listings; its directory name remains the stable ID.
-Each character directory likewise supplies its stable ID, while its
-`config.toml` provides the required persona-facing `display_name`. The loader
-rejects the removed character-level `id` and `name` fields.
+Each definition directory likewise supplies its stable ID, while its
+`character.toml` provides the required persona-facing `display_name`. The loader
+rejects the removed character-level `id` and `name` fields. `display_name` and
+optional tags are definition-only: they are errors in forum defaults and member
+overrides. Tags are trimmed, non-empty, control-free, and unique under ASCII
+case folding; they are metadata only and never determine membership. Definitions
+with no member directory in any forum are valid.
 
-The forum directory is both the distribution unit and the prompt-template
-containment root: includes in `SYSTEM.md` / `FORUM.md` cannot leave it, so a
-zipped forum stays self-contained when unpacked elsewhere.
+Workspace construction validates the whole directory graph before it serves a
+forum: every member resolves to one definition, each configured `default_agent`
+names a member, and character/persona IDs and case-folded display names do not
+collide. An invalid workspace fails as a whole. `default_agent` leaves member
+and agent-definition ordering unchanged; when it is absent, the first
+lexicographic member ID is used.
+
+Template containment follows the file's layer: a definition `CHARACTER.md` is
+contained to workspace `characters/`; a member `CHARACTER.md` and `FORUM.md`
+are contained to their forum directory.
 
 When a session is created or opened, `Workspace` loads the validated roster once and checks for
-`characters/character_defaults.toml` within the selected forum and explicitly passes that optional path, the
+`members/character_defaults.toml` within the selected forum and explicitly passes that optional path, the
 forum directory, the forum display name, and the roster to the agent loaders along with each
-character directory. The agent layer therefore applies shared configuration and
-template policy without knowing or inferring the workspace layout.
+definition/member pair. The agent layer applies shared configuration and template
+policy, deriving the definition containment root from the definition directory's
+parent and otherwise receiving resolved workspace paths explicitly.
 
 `Workspace::check_forum()` follows the same loading path without creating or
 opening a session. It also constructs `ForumCharacters` to validate character IDs,
@@ -78,8 +92,9 @@ and otherwise use it before asking the registry to open a session.
 
 `ForumCharacters` is the identity-only view of the characters participating in one
 forum. It is ordered, non-empty, and rejects duplicate IDs and
-ASCII-case-insensitive names. The first character supplies the initial default
-agent.
+ASCII-case-insensitive names. The workspace passes the validated initial default
+character ID separately: it is `config.toml`'s `default_agent` when supplied,
+otherwise the first lexicographic member ID. It never reorders this view.
 
 `resolve_handle()` tries an exact case-insensitive name, retries after removing
 trailing `,.;:!?`, and finally accepts a unique case-insensitive prefix. It
@@ -105,9 +120,9 @@ sequenceDiagram
 
     Note over UI,DB: Creating a stored session
     UI->>WS: create_stored_session forum, label
-    WS->>WS: load_forum, enumerate characters/ directories
+    WS->>WS: load_forum, enumerate members/ directories
     WS->>WS: load_personas
-    WS->>AG: load_agent_definitions(characters, forum, roster)
+    WS->>AG: load_agent_definitions(definition/member pairs, forum, roster)
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
     SC->>DB: build hidden temporary sibling, then link into place
@@ -131,7 +146,7 @@ sequenceDiagram
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
     WS->>WS: load_personas
-    WS->>AG: load_agent_definitions(characters, forum, roster)
+    WS->>AG: load_agent_definitions(definition/member pairs, forum, roster)
     WS->>CC: from_definitions with restore
     CC->>CC: repair interrupted turns, then install entries
     CC-->>UI: controller

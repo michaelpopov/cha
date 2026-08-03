@@ -789,6 +789,12 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
         "mode = \"net\"\n"
         "model = \"blocking-test-model\"\n"
         "stream = true\n");
+    workspace.write_character_defaults(
+        "host = \"127.0.0.1\"\n"
+        "port = " + std::to_string(provider.port()) + "\n"
+        "mode = \"net\"\n"
+        "model = \"blocking-test-model\"\n"
+        "stream = true\n");
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
     workspace.write_app_config(port);

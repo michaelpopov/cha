@@ -134,7 +134,8 @@ struct WorkspaceLayout {
 WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     const std::filesystem::path root = parent / "workspace";
     const std::filesystem::path forum = root / "forums" / "forum";
-    std::filesystem::create_directories(forum / "characters" / "agent");
+    std::filesystem::create_directories(root / "characters" / "agent");
+    std::filesystem::create_directories(forum / "members" / "agent");
     std::filesystem::create_directories(root / "personas" / "operator");
     {
         std::ofstream file(root / "app.toml");
@@ -143,10 +144,10 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     }
     std::ofstream(forum / "config.toml") << "display_name = \"Forum\"\n";
     std::ofstream(forum / "FORUM.md") << "Forum prompt";
-    std::ofstream(forum / "characters" / "agent" / "character.toml")
+    std::ofstream(root / "characters" / "agent" / "character.toml")
         << "display_name = \"Worker\"\nhost = \"127.0.0.1\"\nport = 9\n"
         << "model = \"configured-model\"\n";
-    std::ofstream(forum / "characters" / "agent" / "SYSTEM.md")
+    std::ofstream(root / "characters" / "agent" / "CHARACTER.md")
         << "System prompt";
     std::ofstream(root / "personas" / "operator" / "persona.toml")
         << "display_name = \"Reader\"\n";
@@ -208,7 +209,7 @@ TEST(ConcurrentControllers, ConstructSessionLocalCompletionClientsConcurrently) 
             test::NoopNotifier notifier;
             AgentDefinition definition;
             definition.config.id = "agent-" + std::to_string(index);
-            definition.config.name = "Agent " + std::to_string(index);
+            definition.config.display_name = "Agent " + std::to_string(index);
             definition.config.host = "127.0.0.1";
             definition.config.port = 9;
             definition.config.mode = Mode::net;

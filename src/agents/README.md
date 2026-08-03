@@ -25,19 +25,24 @@ completion pool tasks.
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
-        base["forums/R/characters/character_defaults.toml<br/>optional forum defaults + [prompt]"]
-        cfg["forums/R/characters/X/character.toml"]
-        sys["forums/R/characters/X/SYSTEM.md"]
+        definition_cfg["characters/X/character.toml"]
+        definition_prompt["characters/X/CHARACTER.md"]
+        base["forums/R/members/character_defaults.toml<br/>optional forum defaults + [prompt]"]
+        member_cfg["forums/R/members/X/character.toml<br/>optional"]
+        member_prompt["forums/R/members/X/CHARACTER.md<br/>optional replacement"]
         usr["forums/R/FORUM.md"]
         roster["personas/*/persona.toml + PERSONA.md<br/>verbatim"]
-        shared["shared prompt files under the forum"]
+        shared["definition includes under characters/;<br/>member/forum includes under the forum"]
     end
 
     base --> load["load_config<br/>one parsed overlay"]
-    cfg --> load
+    definition_cfg --> load
+    base --> load
+    member_cfg --> load
     load --> conf["Config + TemplateScope"]
-    conf --> expand["expand_template_file<br/>SYSTEM.md and FORUM.md"]
-    sys --> expand
+    conf --> expand["expand_template_file<br/>CHARACTER.md and FORUM.md"]
+    definition_prompt --> expand
+    member_prompt --> expand
     usr --> expand
     shared --> expand
     expand --> def["AgentDefinition<br/>config + effective system prompt"]
@@ -51,13 +56,14 @@ flowchart LR
 ```
 
 The effective system prompt has four sections in this exact order: expanded
-character `SYSTEM.md`, expanded forum `FORUM.md`, the static persona roster (each
+character `CHARACTER.md`, expanded forum `FORUM.md`, the static persona roster (each
 `PERSONA.md` verbatim under its display-name heading), and generated forum context.
 The roster is in lexicographic ID order and does not change for a live session.
-Expansion is
-implemented in `util/text_template.*`; this layer supplies the policy: forum
-directory as containment root, reserved `character.*` / `forum.*` names, and the
-base-then-character `[prompt]` initial scope. An adjacent template `config.toml` overlays
+Expansion is implemented in `util/text_template.*`; this layer supplies the
+policy: a definition prompt is contained to workspace `characters/`, while a
+member prompt and `FORUM.md` are contained to the forum directory. It also
+supplies reserved `character.*` / `forum.*` names and the three-layer `[prompt]`
+initial scope. An adjacent template `config.toml` overlays
 that inherited scope for its template directory and descendants; reserved
 loader values always win. The generated section names the current agent, lists
 the other current characters, and defines how quoted shared history is encoded.
@@ -67,13 +73,16 @@ on the session's owner thread (the process main thread in `cha` and `chacon`);
 a forum check loads synchronously on its calling thread. `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
-Configuration is a one-level overlay, not general inheritance. Built-in
-defaults are applied first, then the optional forum
-`characters/character_defaults.toml`, then the character's own `character.toml`. An omitted
-field inherits the value below it. The character directory name provides the ID,
-and each character file must define `display_name`; the defaults file must not. The
-removed `id` and `name` fields are rejected. Parsing and validation errors
-identify the file that supplied the invalid value.
+Configuration is a key-wise overlay, not general inheritance. Built-in defaults
+are applied first, then the character definition, the optional forum
+`members/character_defaults.toml`, and the optional per-member override. An omitted field inherits the
+value below it. The character definition directory name provides the ID, and its
+file must define `display_name`; both forum-local layers must not define it or
+`tags`. `tags` are definition-only optional free-form strings: each is trimmed,
+non-empty, free of controls and line breaks, and unique under ASCII case
+folding while retaining authored casing. The removed `id` and `name` fields are
+rejected. Parsing and validation errors identify the file that supplied the
+invalid value.
 
 Identity rules, enforced by `validate_character_id` and `validate_character_name`:
 
@@ -84,9 +93,9 @@ Identity rules, enforced by `validate_character_id` and `validate_character_name
   whitespace is allowed for multi-word handles.
 - within one forum, IDs are unique and names are unique case-insensitively.
 
-When `load_agent_definitions()` combines a forum with its roster, it also
-rejects persona/character ID collisions and case-insensitive display-name collisions.
-This is a workspace configuration error reported as a plain `runtime_error`.
+Workspace construction rejects persona/character ID collisions and
+case-insensitive display-name collisions across all definitions. Tags organize
+definitions only; they never imply membership in a forum.
 
 `AgentRegistry` validates these rules when it accepts backend metadata.
 `ForumCharacters` in `session/` separately owns the ordered identity-only view used

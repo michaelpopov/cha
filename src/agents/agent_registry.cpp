@@ -57,7 +57,7 @@ std::vector<std::unique_ptr<CompletionBackend>> build_backends(
     backends.reserve(definitions.size());
     for (AgentDefinition& definition : definitions) {
         const std::string id = definition.config.id;
-        const std::string name = definition.config.name;
+        const std::string name = definition.config.display_name;
         try {
             backends.push_back(
                 std::make_unique<CompletionClient>(std::move(definition)));

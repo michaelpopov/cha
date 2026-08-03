@@ -38,6 +38,7 @@ public:
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions(
         std::vector<AgentDefinition> definitions,
         PersonaRoster personas,
+        ParticipantId initial_default_agent_id,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
@@ -47,6 +48,7 @@ public:
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
         std::vector<AgentDefinition> definitions,
         PersonaRoster personas,
+        ParticipantId initial_default_agent_id,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {});
@@ -55,6 +57,7 @@ public:
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         PersonaRoster personas,
+        ParticipantId initial_default_agent_id,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {},
@@ -125,6 +128,7 @@ private:
     SessionController(
         std::vector<AgentDefinition> definitions,
         PersonaRoster personas,
+        ParticipantId initial_default_agent_id,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
@@ -132,6 +136,7 @@ private:
     SessionController(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         PersonaRoster personas,
+        ParticipantId initial_default_agent_id,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored,

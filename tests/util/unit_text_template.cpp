@@ -274,13 +274,13 @@ TEST(TextTemplate, RejectsSymlinkEscape) {
 TEST(TextTemplate, RejectsRootTemplateSymlinkEscape) {
     const TempDir root("root_symlink");
     const TempDir outside("root_symlink_out");
-    write_file(outside.path() / "SYSTEM.md", "SECRET");
+    write_file(outside.path() / "CHARACTER.md", "SECRET");
     std::filesystem::create_directories(root.path());
     std::filesystem::create_symlink(
-        outside.path() / "SYSTEM.md", root.path() / "SYSTEM.md");
+        outside.path() / "CHARACTER.md", root.path() / "CHARACTER.md");
 
     try {
-        (void)expand_in(root.path(), root.path() / "SYSTEM.md");
+        (void)expand_in(root.path(), root.path() / "CHARACTER.md");
         FAIL();
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
@@ -507,7 +507,7 @@ TEST(TextTemplate, ScopeLookupOrderAndNoLeakOrReexpand) {
         root.path() / "inner" / "part.md",
         "$${shared}|$${register}|$${character.display_name}");
     write_file(
-        root.path() / "character" / "SYSTEM.md",
+        root.path() / "character" / "CHARACTER.md",
         "before=$${shared}\n$$(../inner/part.md)\nafter=$${shared}\nmacro=$${raw}");
 
     TemplateOptions options = options_for(root.path());
@@ -519,7 +519,7 @@ TEST(TextTemplate, ScopeLookupOrderAndNoLeakOrReexpand) {
     };
 
     const std::string expanded =
-        expand_template_file(root.path() / "character" / "SYSTEM.md", options);
+        expand_template_file(root.path() / "character" / "CHARACTER.md", options);
     EXPECT_EQ(
         expanded,
         "before=from-character\nfrom-inner|energetic|Seneca\nafter=from-character\nmacro=$$(nope)$${x}");
@@ -548,18 +548,18 @@ TEST(TextTemplate, DiagnosticsUseRelativePathsAndIncludeChain) {
     const TempDir root("diag");
     write_file(root.path() / "shared.md", "$${registr}");
     write_file(
-        root.path() / "characters" / "seneca" / "SYSTEM.md",
+        root.path() / "characters" / "seneca" / "CHARACTER.md",
         "$$(../../shared.md)");
     try {
         (void)expand_in(
-            root.path(), root.path() / "characters" / "seneca" / "SYSTEM.md");
+            root.path(), root.path() / "characters" / "seneca" / "CHARACTER.md");
         FAIL();
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
         EXPECT_NE(message.find("unknown variable 'registr'"), std::string::npos);
         EXPECT_NE(message.find("shared.md"), std::string::npos);
         EXPECT_NE(message.find("included from"), std::string::npos);
-        EXPECT_NE(message.find("SYSTEM.md"), std::string::npos);
+        EXPECT_NE(message.find("CHARACTER.md"), std::string::npos);
         EXPECT_EQ(message.find(utf8_path(root.path())), std::string::npos)
             << message;
     }

@@ -105,6 +105,7 @@ void require_agent_count(std::size_t count) {
 std::unique_ptr<SessionController> SessionController::from_definitions(
     std::vector<AgentDefinition> definitions,
     PersonaRoster personas,
+    ParticipantId initial_default_agent_id,
     std::filesystem::path database_path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -117,6 +118,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
         std::move(personas),
+        std::move(initial_default_agent_id),
         std::move(database_path),
         std::move(lease),
         notifier,
@@ -126,6 +128,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
     std::vector<AgentDefinition> definitions,
     PersonaRoster personas,
+    ParticipantId initial_default_agent_id,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored) {
@@ -133,6 +136,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
         std::move(personas),
+        std::move(initial_default_agent_id),
         std::move(database_path),
         SessionLease::inactive_for_testing(),
         notifier,
@@ -142,6 +146,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     PersonaRoster personas,
+    ParticipantId initial_default_agent_id,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored,
@@ -150,6 +155,7 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(backends),
         std::move(personas),
+        std::move(initial_default_agent_id),
         std::move(database_path),
         notifier,
         std::move(restored),
@@ -159,6 +165,7 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
 SessionController::SessionController(
     std::vector<AgentDefinition> definitions,
     PersonaRoster personas,
+    ParticipantId initial_default_agent_id,
     std::filesystem::path path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -169,13 +176,17 @@ SessionController::SessionController(
       registry_(std::move(definitions), notifier, worker_pool_),
       characters_(make_forum_characters(registry_.runtime_info())),
       personas_(std::move(personas)),
-      default_agent_id_(characters_.first().id) {
+      default_agent_id_(std::move(initial_default_agent_id)) {
+    if (!characters_.find(default_agent_id_)) {
+        throw std::invalid_argument("Initial default agent ID is not in the forum roster");
+    }
     initialize(std::move(restored));
 }
 
 SessionController::SessionController(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     PersonaRoster personas,
+    ParticipantId initial_default_agent_id,
     std::filesystem::path path,
     WakeNotifier& notifier,
     SessionRestore restored,
@@ -186,8 +197,11 @@ SessionController::SessionController(
       registry_(std::move(backends), notifier, worker_pool_),
       characters_(make_forum_characters(registry_.runtime_info())),
       personas_(std::move(personas)),
-      default_agent_id_(characters_.first().id),
+      default_agent_id_(std::move(initial_default_agent_id)),
       before_activation_(std::move(before_activation)) {
+    if (!characters_.find(default_agent_id_)) {
+        throw std::invalid_argument("Initial default agent ID is not in the forum roster");
+    }
     initialize(std::move(restored));
 }
 

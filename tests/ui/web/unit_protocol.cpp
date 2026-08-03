@@ -429,12 +429,12 @@ TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
     const Forum forum = workspace.check_forum("lobby");
     EXPECT_EQ(forum.display_name, "The Lobby");
     EXPECT_EQ(forum.character_names, (std::vector<std::string>{"guide"}));
-    const auto config = load_config(
-        fixture.root()
-            / "forums/lobby/characters/guide/character.toml",
-        fixture.root()
-            / "forums/lobby/characters/character_defaults.toml")
-                            .config;
+    const auto config = load_config({
+        .definition = fixture.root()
+            / "characters/guide/character.toml",
+        .forum_defaults = fixture.root()
+            / "forums/lobby/members/character_defaults.toml",
+    }).config;
     EXPECT_EQ(config.mode, Mode::test);
     EXPECT_EQ(config.model, "fake");
 }

@@ -435,7 +435,7 @@ std::string build_request_body(
 CompletionClient::CompletionClient(AgentDefinition definition)
     : config_(std::move(definition.config)),
       system_prompt_(std::move(definition.system_prompt)) {
-    if (config_.id.empty() || config_.name.empty()) {
+    if (config_.id.empty() || config_.display_name.empty()) {
         throw std::runtime_error(
             "Completion client agent ID and display name cannot be empty");
     }
@@ -757,7 +757,7 @@ AgentRuntimeInfo CompletionClient::info() const {
     return {
         .character = {
             .id = config_.id,
-            .name = config_.name,
+            .name = config_.display_name,
         },
         .model = config_.model,
         .api = endpoint(),

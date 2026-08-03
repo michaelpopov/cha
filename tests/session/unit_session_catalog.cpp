@@ -25,7 +25,9 @@ protected:
         root = std::filesystem::temp_directory_path()
             / ("cha_workspace_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(
-            root / "forums" / "lobby" / "characters" / "guide");
+            root / "characters" / "guide");
+        std::filesystem::create_directories(root / "forums" / "lobby" / "members" / "guide");
+        std::filesystem::create_directories(root / "personas" / "reader");
         std::filesystem::create_directories(root / "forums" / "lobby" / "sessions");
         {
             std::ofstream file(root / "app.toml");
@@ -41,19 +43,21 @@ protected:
         }
         {
             std::ofstream file(
-                root / "forums" / "lobby" / "characters" / "guide" / "character.toml");
+                root / "characters" / "guide" / "character.toml");
             file << "display_name = \"Guide\"\n"
                  << "host = \"127.0.0.1\"\nport = 8080\n";
         }
         {
             std::ofstream file(
-                root / "forums" / "lobby" / "characters" / "guide" / "SYSTEM.md");
+                root / "characters" / "guide" / "CHARACTER.md");
             file << "Character instructions";
         }
         {
             std::ofstream file(root / "forums" / "lobby" / "FORUM.md");
             file << "Forum instructions";
         }
+        std::ofstream(root / "personas" / "reader" / "persona.toml")
+            << "display_name = \"Reader\"\n";
     }
 
     void TearDown() override {
@@ -99,7 +103,10 @@ TEST_F(WorkspaceTest, LoadsForumsAndTheirCharacterDirectories) {
 }
 
 TEST_F(WorkspaceTest, EnumeratesForumSubdirectoriesInNameOrder) {
-    std::filesystem::create_directories(root / "forums" / "alpha");
+    const std::filesystem::path alpha = root / "forums" / "alpha";
+    std::filesystem::create_directories(alpha / "members" / "guide");
+    std::ofstream(alpha / "config.toml") << "display_name = \"Alpha\"\n";
+    std::ofstream(alpha / "FORUM.md") << "Alpha";
     std::ofstream(root / "forums" / "README.md") << "not a forum";
 
     Workspace workspace(root);
@@ -124,7 +131,6 @@ TEST_F(WorkspaceTest, RejectsForumDirectoryNamesThatAreNotUrlSafe) {
 TEST_F(WorkspaceTest, AllowsTheForumDirectoryToBeTemporarilyEmpty) {
     std::filesystem::remove_all(root / "forums" / "lobby");
     Workspace workspace(root);
-
     EXPECT_TRUE(workspace.forums().empty());
 }
 
@@ -340,8 +346,11 @@ TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
 }
 
 TEST_F(WorkspaceTest, LoadsForumCharactersFromSubdirectoriesInNameOrder) {
-    std::filesystem::create_directories(
-        root / "forums" / "lobby" / "characters" / "other");
+    const std::filesystem::path other = root / "characters" / "other";
+    std::filesystem::create_directories(other);
+    std::filesystem::create_directories(root / "forums" / "lobby" / "members" / "other");
+    std::ofstream(other / "character.toml") << "display_name = \"Other\"\n";
+    std::ofstream(other / "CHARACTER.md") << "Other";
     Workspace workspace(root);
     EXPECT_EQ(
         workspace.load_forum("lobby").character_names,
@@ -349,7 +358,7 @@ TEST_F(WorkspaceTest, LoadsForumCharactersFromSubdirectoriesInNameOrder) {
 }
 
 TEST_F(WorkspaceTest, IgnoresFilesWhenEnumeratingForumCharacters) {
-    std::ofstream(root / "forums" / "lobby" / "characters" / "README.md")
+    std::ofstream(root / "forums" / "lobby" / "members" / "README.md")
         << "not a character";
     Workspace workspace(root);
     EXPECT_EQ(
@@ -358,10 +367,9 @@ TEST_F(WorkspaceTest, IgnoresFilesWhenEnumeratingForumCharacters) {
 }
 
 TEST_F(WorkspaceTest, RejectsAnEmptyOrAbsentForumCharactersDirectory) {
-    std::filesystem::remove_all(root / "forums" / "lobby" / "characters");
-    std::filesystem::create_directories(root / "forums" / "lobby" / "characters");
-    Workspace workspace(root);
-    EXPECT_THROW((void)workspace.load_forum("lobby"), std::runtime_error);
+    std::filesystem::remove_all(root / "forums" / "lobby" / "members");
+    std::filesystem::create_directories(root / "forums" / "lobby" / "members");
+    EXPECT_THROW((void)Workspace(root), std::runtime_error);
 }
 
 TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumCharactersAre) {
@@ -387,9 +395,8 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumCharactersAre) {
     }
 
     // The forum now contains completely different characters; the session is unaffected.
-    std::filesystem::remove_all(root / "forums" / "lobby" / "characters");
-    std::filesystem::create_directories(
-        root / "forums" / "lobby" / "characters" / "guide");
+    std::filesystem::remove_all(root / "forums" / "lobby" / "members");
+    std::filesystem::create_directories(root / "forums" / "lobby" / "members" / "guide");
     const Forum reduced = workspace.load_forum("lobby");
     SessionCatalog reopened(reduced.directory / "sessions", reduced.name);
 

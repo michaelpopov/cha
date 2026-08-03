@@ -62,7 +62,7 @@ AgentDefinition definition(
     return {
         .config = {
             .id = std::move(id),
-            .name = std::move(name),
+            .display_name = std::move(name),
             .host = "127.0.0.1",
             .port = 8080,
         },

@@ -175,76 +175,30 @@ TEST(LobbyRoutes, ServesPersonaListingHealthAndForumListingWithoutSessionDataInH
         }));
 }
 
-TEST(LobbyRoutes, PersonaListingReportsMissingPersonasWhileForumListingStillWorks) {
+TEST(LobbyRoutes, RejectsMissingPersonasAtWorkspaceConstruction) {
     test::TestWorkspace fixture;
     std::filesystem::remove_all(fixture.root() / "personas");
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<IdleController>();
-    });
-    TestServer server(workspace, registry);
-
-    const auto forums = server.client().Get("/api/v1/forums");
-    ASSERT_TRUE(forums);
-    EXPECT_EQ(forums->status, 200);
-    EXPECT_EQ(
-        body(forums),
-        nlohmann::json::array({{{"id", "lobby"}, {"display_name", "The Lobby"}}}));
-    expect_error(server.client().Get("/api/v1/personas"), 500, "internal_error");
+    EXPECT_THROW((void)Workspace(fixture.root()), std::runtime_error);
 }
 
-TEST(LobbyRoutes, SkipsMalformedForumsAndAllowsAnEmptyForumDirectory) {
+TEST(LobbyRoutes, RejectsMalformedForumsAtWorkspaceConstruction) {
     {
         test::TestWorkspace fixture;
-        std::filesystem::create_directories(
-            fixture.root() / "forums" / "broken" / "characters");
+        std::filesystem::create_directories(fixture.root() / "forums" / "broken" / "members");
         std::ofstream(fixture.root() / "forums" / "broken" / "config.toml")
             << "display_name = \"Broken\"\n";
-        std::filesystem::create_directories(
-            fixture.root() / "forums" / "bad-config" / "characters" / "guide");
+        std::filesystem::create_directories(fixture.root() / "forums" / "bad-config" / "members" / "guide");
         std::ofstream(
             fixture.root() / "forums" / "bad-config" / "config.toml")
             << "display_name = [not valid TOML";
-        auto workspace = std::make_shared<const Workspace>(fixture.root());
-        SessionRegistry registry(
-            {.session_limit = 2},
-            [](const SessionKey&, WakeNotifier&) {
-                return std::make_unique<IdleController>();
-            });
-        TestServer server(workspace, registry);
-
-        const auto forums = server.client().Get("/api/v1/forums");
-        ASSERT_TRUE(forums);
-        EXPECT_EQ(forums->status, 200);
-        EXPECT_EQ(
-            body(forums),
-            nlohmann::json::array({
-                {{"id", "lobby"}, {"display_name", "The Lobby"}},
-            }));
-        expect_error(
-            server.client().Post(
-                "/api/v1/forums/broken/sessions",
-                R"({"label":"Rejected"})",
-                "application/json"),
-            500,
-            "internal_error");
+        EXPECT_THROW((void)Workspace(fixture.root()), std::runtime_error);
     }
 
     {
         test::TestWorkspace fixture;
         std::filesystem::remove_all(fixture.root() / "forums" / "lobby");
-        auto workspace = std::make_shared<const Workspace>(fixture.root());
-        SessionRegistry registry(
-            {.session_limit = 2},
-            [](const SessionKey&, WakeNotifier&) {
-                return std::make_unique<IdleController>();
-            });
-        TestServer server(workspace, registry);
-
-        const auto forums = server.client().Get("/api/v1/forums");
-        ASSERT_TRUE(forums);
-        EXPECT_EQ(forums->status, 200);
-        EXPECT_EQ(body(forums), nlohmann::json::array());
+        Workspace workspace(fixture.root());
+        EXPECT_TRUE(workspace.forums().empty());
     }
 }
 

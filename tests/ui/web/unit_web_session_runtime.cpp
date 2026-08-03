@@ -349,7 +349,7 @@ public:
 
 AgentDefinition test_definition() {
     return {
-        .config = {.id = "guide", .name = "Guide", .host = "127.0.0.1", .port = 1},
+        .config = {.id = "guide", .display_name = "Guide", .host = "127.0.0.1", .port = 1},
         .system_prompt = "Test prompt",
     };
 }
@@ -390,6 +390,7 @@ TestControllerFactory real_factory(const std::filesystem::path& path) {
         return adapt_session_controller(SessionController::from_definitions(
             {test_definition()},
             PersonaRoster{{.id = "reader", .display_name = "Reader"}},
+            "guide",
             path,
             std::move(lease),
             notifier,

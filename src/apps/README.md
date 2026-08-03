@@ -19,7 +19,7 @@ flowchart TD
     a["main<br/>catch and report any exception"] --> b["load_dotenv"]
     b --> config["load app.toml"]
     config --> log["initialize diagnostic logging"]
-    log --> c["construct Workspace<br/>requires app.toml + forums/"]
+    log --> c["construct Workspace<br/>requires app.toml + characters/ + forums/ + personas/"]
     c --> d["construct Terminal<br/>process-wide curses"]
     d --> personas["Workspace.load_personas"]
     personas --> e["StartupSelector.select_persona"]

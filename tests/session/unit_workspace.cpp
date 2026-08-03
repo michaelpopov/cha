@@ -33,8 +33,8 @@ protected:
             / ("cha_workspace_"
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()));
-        std::filesystem::create_directories(
-            root_ / "forums" / "lobby" / "characters" / "guide");
+        std::filesystem::create_directories(root_ / "characters" / "guide");
+        std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "guide");
         std::filesystem::create_directories(root_ / "personas" / "operator");
         {
             std::ofstream app_config(root_ / "app.toml");
@@ -55,18 +55,18 @@ protected:
         }
         {
             std::ofstream base_config(
-                root_ / "forums" / "lobby" / "characters" / "character_defaults.toml");
+                root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
             base_config << "host = \"127.0.0.1\"\n"
                         << "port = 8080\n";
         }
         {
             std::ofstream config(
-                root_ / "forums" / "lobby" / "characters" / "guide" / "character.toml");
+                root_ / "characters" / "guide" / "character.toml");
             config << "display_name = \"Guide\"\n";
         }
         {
             std::ofstream system_prompt(
-                root_ / "forums" / "lobby" / "characters" / "guide" / "SYSTEM.md");
+                root_ / "characters" / "guide" / "CHARACTER.md");
             system_prompt << "Character instructions";
         }
         std::ofstream(root_ / "personas" / "operator" / "persona.toml")
@@ -91,21 +91,157 @@ TEST_F(ApplicationWorkspaceTest, ListsForumsAndSessionsAsApplicationValues) {
     EXPECT_EQ(workspace.app_config().log_level, "off");
 }
 
-TEST_F(ApplicationWorkspaceTest, PersonaLoadingDoesNotChangeWorkspaceConstruction) {
-    std::filesystem::remove_all(root_ / "personas");
-    Workspace workspace(root_);
+TEST_F(ApplicationWorkspaceTest, RequiresWorkspaceDefinitions) {
+    std::filesystem::remove_all(root_ / "characters");
+    try {
+        (void)Workspace(root_);
+        FAIL() << "expected missing definitions directory to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find(root_.string()), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("characters/"), std::string::npos);
+    }
+}
 
-    EXPECT_THROW((void)workspace.load_personas(), std::runtime_error);
+TEST_F(ApplicationWorkspaceTest, RequiresMembersDirectory) {
+    std::filesystem::remove_all(root_ / "forums" / "lobby" / "members");
+    try {
+        (void)Workspace(root_);
+        FAIL() << "expected missing members directory to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("lobby"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("members/"), std::string::npos);
+    }
+}
+
+TEST_F(ApplicationWorkspaceTest, RejectsDanglingMember) {
+    std::filesystem::rename(
+        root_ / "forums" / "lobby" / "members" / "guide",
+        root_ / "forums" / "lobby" / "members" / "unknown");
+    try {
+        (void)Workspace(root_);
+        FAIL() << "expected dangling member to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("lobby"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("unknown"), std::string::npos);
+    }
+}
+
+TEST_F(ApplicationWorkspaceTest, RejectsInvalidMemberIdBeforeReferenceValidation) {
+    std::filesystem::rename(
+        root_ / "forums" / "lobby" / "members" / "guide",
+        root_ / "forums" / "lobby" / "members" / "guide.invalid");
+    try {
+        (void)Workspace(root_);
+        FAIL() << "expected invalid member ID to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("lobby"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("guide.invalid"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("Character ID"), std::string::npos);
+    }
+}
+
+TEST_F(ApplicationWorkspaceTest, ValidatesRequiredDefinitionFilesAtWorkspaceLoad) {
+    std::filesystem::remove(root_ / "characters" / "guide" / "character.toml");
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+
+    std::ofstream(root_ / "characters" / "guide" / "character.toml")
+        << "display_name = \"Guide\"\n";
+    std::filesystem::remove(root_ / "characters" / "guide" / "CHARACTER.md");
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+}
+
+TEST_F(ApplicationWorkspaceTest, RejectsMalformedDefinitionAtWorkspaceLoad) {
+    std::ofstream(root_ / "characters" / "guide" / "character.toml")
+        << "display_name = [\"Guide\"]\n";
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+}
+
+TEST_F(ApplicationWorkspaceTest, RejectsInvalidDefinitionIdAtWorkspaceLoad) {
+    std::filesystem::rename(
+        root_ / "characters" / "guide", root_ / "characters" / "guide.invalid");
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+}
+
+TEST_F(ApplicationWorkspaceTest, RejectsReservedDefinitionDisplayNameAtWorkspaceLoad) {
+    std::ofstream(root_ / "characters" / "guide" / "character.toml")
+        << "display_name = \"system\"\n";
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+}
+
+TEST_F(ApplicationWorkspaceTest, AcceptsEmptyMemberDirectoriesAndOrphanDefinitions) {
+    std::filesystem::remove(root_ / "forums" / "lobby" / "members" / "guide" / "character.toml");
+    std::filesystem::create_directories(root_ / "characters" / "orphan");
+    std::ofstream(root_ / "characters" / "orphan" / "character.toml")
+        << "display_name = \"Orphan\"\n";
+    std::ofstream(root_ / "characters" / "orphan" / "CHARACTER.md") << "Orphan";
+    EXPECT_NO_THROW((void)Workspace(root_));
+}
+
+TEST_F(ApplicationWorkspaceTest, AllowsOneDefinitionInMultipleForums) {
+    const std::filesystem::path other = root_ / "forums" / "other";
+    std::filesystem::create_directories(other / "members" / "guide");
+    std::ofstream(other / "config.toml") << "display_name = \"Other\"\n";
+    std::ofstream(other / "FORUM.md") << "Other forum";
+    EXPECT_NO_THROW((void)Workspace(root_));
+}
+
+TEST_F(ApplicationWorkspaceTest, ResolvesDefaultAgentWithoutReorderingMembers) {
+    std::filesystem::create_directories(root_ / "characters" / "alpha");
+    std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "alpha");
+    std::ofstream(root_ / "characters" / "alpha" / "character.toml")
+        << "display_name = \"Alpha\"\n";
+    std::ofstream(root_ / "characters" / "alpha" / "CHARACTER.md") << "Alpha";
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_agent = \"guide\"\n";
+
+    Workspace workspace(root_);
+    const Forum forum = workspace.load_forum("lobby");
+    EXPECT_EQ(forum.character_names, (std::vector<std::string>{"alpha", "guide"}));
+    EXPECT_EQ(forum.default_agent_id, "guide");
+
+    CreatedSession created = workspace.create_session("lobby", "default", notifier());
+    EXPECT_EQ(created.controller->default_agent_id(), "guide");
+    const std::string session_id = created.id;
+    created.controller->shutdown();
+    created.controller.reset();
+
+    std::unique_ptr<SessionController> opened =
+        workspace.open_session("lobby", session_id, notifier());
+    EXPECT_EQ(opened->default_agent_id(), "guide");
+    opened->shutdown();
+}
+
+TEST_F(ApplicationWorkspaceTest, DefaultsToFirstLexicographicMember) {
+    std::filesystem::create_directories(root_ / "characters" / "alpha");
+    std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "alpha");
+    std::ofstream(root_ / "characters" / "alpha" / "character.toml")
+        << "display_name = \"Alpha\"\n";
+    std::ofstream(root_ / "characters" / "alpha" / "CHARACTER.md") << "Alpha";
+    const Forum forum = Workspace(root_).load_forum("lobby");
+    EXPECT_EQ(forum.default_agent_id, "alpha");
+}
+
+TEST_F(ApplicationWorkspaceTest, RejectsUnknownAndMalformedDefaultAgent) {
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_agent = \"missing\"\n";
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_agent = [\"guide\"]\n";
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+}
+
+TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRequiresValidPersonaRoster) {
+    std::filesystem::remove_all(root_ / "personas");
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
 
     std::filesystem::create_directories(root_ / "personas");
-    EXPECT_THROW((void)workspace.load_personas(), std::runtime_error);
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
 }
 
 TEST_F(ApplicationWorkspaceTest, PersonaLoadingDoesNotSkipMalformedDirectories) {
     std::filesystem::create_directories(root_ / "personas" / "missing_config");
-    Workspace workspace(root_);
-
-    EXPECT_THROW((void)workspace.load_personas(), std::runtime_error);
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
 }
 
 TEST_F(ApplicationWorkspaceTest, RequiresApplicationConfiguration) {
@@ -153,9 +289,22 @@ TEST_F(ApplicationWorkspaceTest, ChecksAForumWithoutCreatingASession) {
     EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
+TEST_F(ApplicationWorkspaceTest, ForumCheckUsesDefinitionDefaultsAndMemberOverride) {
+    std::ofstream(root_ / "characters" / "guide" / "character.toml")
+        << "display_name = \"Guide\"\nhost = \"127.0.0.1\"\n";
+    std::ofstream(root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
+        << "port = 8080\n";
+    std::ofstream(root_ / "forums" / "lobby" / "members" / "guide" / "character.toml")
+        << "[prompt]\nvoice = \"member\"\n";
+    std::ofstream(root_ / "characters" / "guide" / "CHARACTER.md")
+        << "$${voice}";
+
+    EXPECT_NO_THROW((void)Workspace(root_).check_forum("lobby"));
+}
+
 TEST_F(ApplicationWorkspaceTest, ForumCheckRequiresEffectiveSettings) {
     std::filesystem::remove(
-        root_ / "forums" / "lobby" / "characters" / "character_defaults.toml");
+        root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
     Workspace workspace(root_);
 
     try {
@@ -173,7 +322,7 @@ TEST_F(ApplicationWorkspaceTest, ForumCheckRequiresEffectiveSettings) {
 TEST_F(ApplicationWorkspaceTest, ForumCheckExpandsEveryPromptLink) {
     {
         std::ofstream system_prompt(
-            root_ / "forums" / "lobby" / "characters" / "guide" / "SYSTEM.md");
+            root_ / "characters" / "guide" / "CHARACTER.md");
         system_prompt << "$$(missing.md)";
     }
     Workspace workspace(root_);
@@ -190,49 +339,47 @@ TEST_F(ApplicationWorkspaceTest, ForumCheckExpandsEveryPromptLink) {
     EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
-TEST_F(ApplicationWorkspaceTest, ForumCheckRejectsDuplicateCharacterNames) {
+TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRejectsDuplicateCharacterDisplayNames) {
     const std::filesystem::path duplicate =
-        root_ / "forums" / "lobby" / "characters" / "other";
+        root_ / "characters" / "other";
     std::filesystem::create_directories(duplicate);
     {
         std::ofstream config(duplicate / "character.toml");
-        config << "display_name = \"Guide\"\n";
-        std::ofstream system_prompt(duplicate / "SYSTEM.md");
+        config << "display_name = \"gUiDe\"\n";
+        std::ofstream system_prompt(duplicate / "CHARACTER.md");
         system_prompt << "Other instructions";
     }
-    Workspace workspace(root_);
-
-    EXPECT_THROW((void)workspace.check_forum("lobby"), std::invalid_argument);
-    EXPECT_TRUE(workspace.sessions("lobby").empty());
-}
-
-TEST_F(ApplicationWorkspaceTest, OpenSessionRejectsAPersonaCharacterIdCollision) {
-    Workspace workspace(root_);
-    const SessionSummary stored = workspace.create_stored_session("lobby", "collision");
-    std::filesystem::rename(root_ / "personas" / "operator", root_ / "personas" / "guide");
-
     try {
-        (void)workspace.open_session("lobby", stored.id, notifier());
-        FAIL() << "Expected persona/character ID collision rejection";
+        (void)Workspace(root_);
+        FAIL() << "expected duplicate character display name rejection";
     } catch (const std::runtime_error& error) {
-        EXPECT_NE(std::string_view(error.what()).find("guide"), std::string_view::npos);
-        EXPECT_NE(std::string_view(error.what()).find("Persona"), std::string_view::npos);
-        EXPECT_NE(std::string_view(error.what()).find("character"), std::string_view::npos);
+        EXPECT_NE(std::string(error.what()).find("gUiDe"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("guide"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("other"), std::string::npos);
     }
 }
 
-TEST_F(ApplicationWorkspaceTest, OpenSessionRejectsAPersonaCharacterDisplayNameCollision) {
-    Workspace workspace(root_);
-    const SessionSummary stored = workspace.create_stored_session("lobby", "collision");
+TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRejectsPersonaCharacterIdCollision) {
+    std::filesystem::rename(root_ / "personas" / "operator", root_ / "personas" / "guide");
+    try {
+        (void)Workspace(root_);
+        FAIL() << "expected persona/character ID collision rejection";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("guide"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("Persona"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("character"), std::string::npos);
+    }
+}
+
+TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRejectsPersonaCharacterDisplayNameCollision) {
     std::ofstream(root_ / "personas" / "operator" / "persona.toml")
         << "display_name = \"gUiDe\"\n";
-
     try {
-        (void)workspace.open_session("lobby", stored.id, notifier());
-        FAIL() << "Expected persona/character display-name collision rejection";
+        (void)Workspace(root_);
+        FAIL() << "expected persona/character display-name collision rejection";
     } catch (const std::runtime_error& error) {
-        EXPECT_NE(std::string_view(error.what()).find("gUiDe"), std::string_view::npos);
-        EXPECT_NE(std::string_view(error.what()).find("Guide"), std::string_view::npos);
+        EXPECT_NE(std::string(error.what()).find("gUiDe"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("Guide"), std::string::npos);
     }
 }
 
@@ -269,7 +416,7 @@ TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
 TEST_F(ApplicationWorkspaceTest, CreatesAStoredSessionWithoutOpeningIt) {
     {
         std::ofstream base_config(
-            root_ / "forums" / "lobby" / "characters" / "character_defaults.toml");
+            root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
         base_config << "host = \"127.0.0.1\"\n"
                     << "port = 1\n"
                     << "mode = \"net\"\n";
@@ -303,7 +450,7 @@ TEST_F(ApplicationWorkspaceTest, ReadsOneStoredSessionSummaryDirectly) {
 
 TEST_F(ApplicationWorkspaceTest, CreateStoredSessionValidatesBeforePublishing) {
     std::filesystem::remove(
-        root_ / "forums" / "lobby" / "characters" / "character_defaults.toml");
+        root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
     // guide/character.toml supplies only display_name, so removing the shared
     // defaults leaves the character without the required host or port.
     Workspace workspace(root_);
@@ -396,10 +543,10 @@ TEST_F(ApplicationWorkspaceTest, ReportsContentionBeforeRestoringSessionState) {
 
 TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedCharacterConfig) {
     std::filesystem::remove(
-        root_ / "forums" / "lobby" / "characters" / "character_defaults.toml");
+        root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
     {
         std::ofstream config(
-            root_ / "forums" / "lobby" / "characters" / "guide" / "character.toml");
+            root_ / "characters" / "guide" / "character.toml");
         config << "display_name = \"Guide\"\n"
                << "host = \"127.0.0.1\"\n"
                << "port = 8080\n";
