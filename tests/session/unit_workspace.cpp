@@ -339,7 +339,7 @@ TEST_F(ApplicationWorkspaceTest, ForumCheckExpandsEveryPromptLink) {
     EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
-TEST_F(ApplicationWorkspaceTest, ForumCheckRejectsDuplicateCharacterNames) {
+TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRejectsDuplicateCharacterDisplayNames) {
     const std::filesystem::path duplicate =
         root_ / "characters" / "other";
     std::filesystem::create_directories(duplicate);
@@ -359,7 +359,7 @@ TEST_F(ApplicationWorkspaceTest, ForumCheckRejectsDuplicateCharacterNames) {
     }
 }
 
-TEST_F(ApplicationWorkspaceTest, OpenSessionRejectsAPersonaCharacterIdCollision) {
+TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRejectsPersonaCharacterIdCollision) {
     std::filesystem::rename(root_ / "personas" / "operator", root_ / "personas" / "guide");
     try {
         (void)Workspace(root_);
@@ -371,7 +371,7 @@ TEST_F(ApplicationWorkspaceTest, OpenSessionRejectsAPersonaCharacterIdCollision)
     }
 }
 
-TEST_F(ApplicationWorkspaceTest, OpenSessionRejectsAPersonaCharacterDisplayNameCollision) {
+TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRejectsPersonaCharacterDisplayNameCollision) {
     std::ofstream(root_ / "personas" / "operator" / "persona.toml")
         << "display_name = \"gUiDe\"\n";
     try {

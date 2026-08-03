@@ -119,14 +119,14 @@ std::vector<std::string> read_tags(
                 + "' requires string elements in 'tags'");
         }
         const std::string tag(trim_view(*value));
-        if (tag.empty() || tag.find_first_of("\n\r") != std::string::npos) {
+        if (tag.empty()) {
             throw std::runtime_error("Config file '" + utf8_path(path)
-                + "' has invalid tag '" + tag + "'");
+                + "' has empty element in 'tags'");
         }
         for (const unsigned char character : tag) {
             if (character < 0x20 || character == 0x7f) {
                 throw std::runtime_error("Config file '" + utf8_path(path)
-                    + "' has invalid tag '" + tag + "'");
+                    + "' has control character in 'tags'");
             }
         }
         if (!seen.insert(fold_ascii(tag)).second) {
