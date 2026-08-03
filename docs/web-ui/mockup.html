@@ -1,0 +1,1810 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Cha Web Ui States</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Cha Web Ui States" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Cha Web Ui States&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 14px);
+  --red: light-dark(rgb(186 38 35), rgb(250 66 62));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: var(--border-radius-lg, 12.5px);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--font-weight-medium, 500);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead th {
+  padding-block: 8px;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 6px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+    [aria-pressed=&quot;true&quot;],
+    [aria-selected=&quot;true&quot;],
+    .is-selected
+  ) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div id=&quot;cha-web-ui-states&quot;&gt;
+  &lt;style&gt;
+    #cha-web-ui-states {
+      --cha-sidebar-width: 16.5rem;
+      color: var(--foreground);
+      font-family: var(--font-sans, system-ui, sans-serif);
+    }
+    #cha-web-ui-states * { box-sizing: border-box; }
+    #cha-web-ui-states .cha-demo-wrap {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      margin-top: 0.75rem;
+    }
+    #cha-web-ui-states .cha-demo {
+      position: relative;
+      width: 100%;
+      height: 31rem;
+      overflow: hidden;
+      color: var(--foreground);
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: 1.25rem;
+      transition: width 180ms ease, height 180ms ease, border-radius 180ms ease;
+    }
+    #cha-web-ui-states .cha-demo[data-viewport=&quot;phone&quot;] {
+      width: min(100%, 22rem);
+      height: 39rem;
+      border-radius: 2rem;
+    }
+    #cha-web-ui-states .cha-sidebar {
+      position: absolute;
+      inset: 0 auto 0 0;
+      z-index: 1;
+      width: var(--cha-sidebar-width);
+      display: flex;
+      flex-direction: column;
+      padding: 1rem 0.9rem;
+      background: var(--background);
+    }
+    #cha-web-ui-states .cha-demo[data-viewport=&quot;phone&quot;] .cha-sidebar {
+      width: calc(100% - 3.5rem);
+    }
+    #cha-web-ui-states .cha-brand {
+      padding: 0.35rem 0.65rem 1rem;
+      font-size: calc(var(--font-size-base, 16px) * 1.25);
+      font-weight: 500;
+    }
+    #cha-web-ui-states .cha-sidebar-nav,
+    #cha-web-ui-states .cha-recents {
+      display: grid;
+      gap: 0.25rem;
+    }
+    #cha-web-ui-states .cha-section-label {
+      padding: 1rem 0.65rem 0.35rem;
+      color: var(--muted-foreground);
+      font-weight: 500;
+    }
+    #cha-web-ui-states .cha-sidebar-footer {
+      margin-top: auto;
+      display: flex;
+      justify-content: flex-end;
+      padding: 0.75rem 0.3rem 0;
+    }
+    #cha-web-ui-states .cha-side-action,
+    #cha-web-ui-states .cha-recent,
+    #cha-web-ui-states .cha-list-action,
+    #cha-web-ui-states .cha-icon-action,
+    #cha-web-ui-states .cha-composer-action {
+      appearance: none;
+      border: 0;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+    #cha-web-ui-states .cha-side-action,
+    #cha-web-ui-states .cha-recent {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      min-width: 0;
+      padding: 0.65rem;
+      text-align: left;
+      background: transparent;
+      border-radius: 0.8rem;
+    }
+    #cha-web-ui-states .cha-side-action:hover,
+    #cha-web-ui-states .cha-recent:hover,
+    #cha-web-ui-states .cha-list-action:hover,
+    #cha-web-ui-states .cha-icon-action:hover {
+      background: var(--accent);
+      color: var(--accent-foreground);
+    }
+    #cha-web-ui-states .cha-side-action.is-current,
+    #cha-web-ui-states .cha-recent.is-current,
+    #cha-web-ui-states .cha-settings-button.is-current {
+      background: var(--accent);
+      color: var(--accent-foreground);
+      font-weight: 500;
+    }
+    #cha-web-ui-states .cha-recent-copy,
+    #cha-web-ui-states .cha-list-copy {
+      min-width: 0;
+      display: grid;
+      gap: 0.1rem;
+    }
+    #cha-web-ui-states .cha-primary-line,
+    #cha-web-ui-states .cha-secondary-line {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #cha-web-ui-states .cha-secondary-line {
+      color: var(--muted-foreground);
+      font-size: calc(var(--font-size-base, 16px) * 0.78);
+    }
+    #cha-web-ui-states .cha-main {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      width: 100%;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+      background: color-mix(in oklab, var(--background) 94%, var(--foreground) 6%);
+      color: var(--foreground);
+      transition: transform 220ms ease, border-radius 220ms ease;
+    }
+    #cha-web-ui-states .cha-demo.is-sidebar-open .cha-main {
+      transform: translateX(var(--cha-sidebar-width));
+      border-radius: 1.75rem 0 0 1.75rem;
+      box-shadow: -0.35rem 0 1.5rem color-mix(in srgb, var(--foreground) 12%, transparent);
+    }
+    #cha-web-ui-states .cha-demo[data-viewport=&quot;phone&quot;].is-sidebar-open .cha-main {
+      transform: translateX(calc(100% - 3.5rem));
+    }
+    #cha-web-ui-states .cha-topbar {
+      display: grid;
+      grid-template-columns: 3rem minmax(0, 1fr) 3rem;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.8rem 1rem 0.55rem;
+    }
+    #cha-web-ui-states .cha-icon-action {
+      width: 2.65rem;
+      height: 2.65rem;
+      display: inline-grid;
+      place-items: center;
+      background: var(--secondary);
+      color: var(--secondary-foreground);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+    }
+    #cha-web-ui-states .cha-topbar-title {
+      min-width: 0;
+      text-align: center;
+    }
+    #cha-web-ui-states .cha-title,
+    #cha-web-ui-states .cha-subtitle {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #cha-web-ui-states .cha-title {
+      font-size: calc(var(--font-size-base, 16px) * 1.08);
+      font-weight: 500;
+    }
+    #cha-web-ui-states .cha-subtitle {
+      margin-top: 0.12rem;
+      color: var(--muted-foreground);
+      font-size: calc(var(--font-size-base, 16px) * 0.78);
+    }
+    #cha-web-ui-states .cha-empty-action { width: 2.65rem; }
+    #cha-web-ui-states .cha-screen {
+      min-height: 0;
+      display: none;
+    }
+    #cha-web-ui-states .cha-screen.is-active { display: flex; }
+    #cha-web-ui-states .cha-navigation {
+      flex-direction: column;
+      gap: 0.6rem;
+      padding: 0.6rem 1.2rem 1.2rem;
+      overflow: hidden;
+    }
+    #cha-web-ui-states .cha-navigation h2 {
+      margin: 0.2rem 0 0.4rem;
+      font-size: calc(var(--font-size-base, 16px) * 1.05);
+      font-weight: 500;
+    }
+    #cha-web-ui-states .cha-list {
+      display: grid;
+      gap: 0.2rem;
+    }
+    #cha-web-ui-states .cha-list-action {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 2.4rem minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 0.7rem;
+      padding: 0.7rem 0.6rem;
+      text-align: left;
+      background: transparent;
+      border-radius: 0.85rem;
+    }
+    #cha-web-ui-states .cha-list-icon {
+      width: 2.25rem;
+      height: 2.25rem;
+      display: grid;
+      place-items: center;
+      background: var(--secondary);
+      color: var(--secondary-foreground);
+      border-radius: 0.7rem;
+    }
+    #cha-web-ui-states .cha-chevron { color: var(--muted-foreground); }
+    #cha-web-ui-states .cha-back-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--muted-foreground);
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      font: inherit;
+      width: fit-content;
+      padding: 0.3rem 0;
+    }
+    #cha-web-ui-states .cha-persona-list {
+      display: grid;
+      gap: 0.35rem;
+    }
+    #cha-web-ui-states .cha-persona-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
+      padding: 0.8rem 0.65rem;
+      border-bottom: 1px solid var(--border);
+    }
+    #cha-web-ui-states .cha-persona-row:last-child { border-bottom: 0; }
+    #cha-web-ui-states .cha-persona-copy {
+      display: grid;
+      gap: 0.15rem;
+    }
+    #cha-web-ui-states .cha-persona-name { font-weight: 500; }
+    #cha-web-ui-states .cha-persona-description {
+      margin-top: 0.15rem;
+      color: var(--muted-foreground);
+      font-size: calc(var(--font-size-base, 16px) * 0.78);
+    }
+    #cha-web-ui-states .cha-persona-row input { accent-color: var(--primary); }
+    #cha-web-ui-states .cha-chat {
+      flex-direction: column;
+      min-height: 0;
+      padding: 0.2rem 1rem 1rem;
+    }
+    #cha-web-ui-states .cha-transcript {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 0.85rem;
+      width: min(100%, 42rem);
+      margin: 0 auto;
+      padding: 0.5rem 0 1rem;
+    }
+    #cha-web-ui-states .cha-message {
+      max-width: 82%;
+      display: grid;
+      gap: 0.25rem;
+    }
+    #cha-web-ui-states .cha-message.is-user {
+      align-self: flex-end;
+      padding: 0.65rem 0.8rem;
+      background: var(--secondary);
+      color: var(--secondary-foreground);
+      border-radius: 1rem 1rem 0.3rem 1rem;
+    }
+    #cha-web-ui-states .cha-speaker {
+      color: var(--muted-foreground);
+      font-size: calc(var(--font-size-base, 16px) * 0.78);
+      font-weight: 500;
+    }
+    #cha-web-ui-states .cha-composer {
+      width: min(100%, 42rem);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.5rem;
+      background: var(--secondary);
+      color: var(--secondary-foreground);
+      border: 1px solid var(--border);
+      border-radius: 1.4rem;
+    }
+    #cha-web-ui-states .cha-composer-action {
+      width: 2rem;
+      height: 2rem;
+      display: grid;
+      place-items: center;
+      background: transparent;
+      border-radius: 50%;
+    }
+    #cha-web-ui-states .cha-composer input {
+      width: 100%;
+      min-width: 0;
+      appearance: none;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+    }
+    #cha-web-ui-states .cha-composer input::placeholder { color: var(--muted-foreground); }
+    #cha-web-ui-states .cha-send {
+      background: var(--primary);
+      color: var(--primary-foreground);
+    }
+    #cha-web-ui-states .cha-new-session {
+      width: min(100%, 30rem);
+      display: grid;
+      gap: 0.8rem;
+      margin: 1.2rem auto 0;
+    }
+    #cha-web-ui-states .cha-new-session p { margin: 0; color: var(--muted-foreground); }
+    #cha-web-ui-states .cha-new-session-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    #cha-web-ui-states .cha-selection-line {
+      margin-top: 0.65rem;
+      color: var(--muted-foreground);
+      text-align: center;
+    }
+    #cha-web-ui-states .cha-demo[data-viewport=&quot;phone&quot;] .cha-navigation {
+      padding-inline: 1rem;
+    }
+    #cha-web-ui-states .cha-demo[data-viewport=&quot;phone&quot;] .cha-transcript {
+      justify-content: flex-end;
+    }
+    #cha-web-ui-states .cha-demo[data-viewport=&quot;phone&quot;] .cha-message { max-width: 92%; }
+    #cha-web-ui-states .cha-demo[data-viewport=&quot;phone&quot;] .cha-brand { padding-top: 0.75rem; }
+    @media (max-width: 430px) {
+      #cha-web-ui-states .viz-controls { align-items: stretch; }
+      #cha-web-ui-states .viz-controls .form-label { width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #cha-web-ui-states .cha-demo,
+      #cha-web-ui-states .cha-main { transition: none; }
+    }
+  &lt;/style&gt;
+
+  &lt;div class=&quot;viz-controls&quot; aria-label=&quot;Mockup controls&quot;&gt;
+    &lt;label class=&quot;form-label&quot; for=&quot;cha-viewport&quot;&gt;Viewport
+      &lt;select class=&quot;form-select&quot; id=&quot;cha-viewport&quot;&gt;
+        &lt;option value=&quot;desktop&quot;&gt;Desktop browser&lt;/option&gt;
+        &lt;option value=&quot;phone&quot;&gt;iPhone browser&lt;/option&gt;
+      &lt;/select&gt;
+    &lt;/label&gt;
+    &lt;label class=&quot;form-label&quot; for=&quot;cha-view&quot;&gt;Visible main area
+      &lt;select class=&quot;form-select&quot; id=&quot;cha-view&quot;&gt;
+        &lt;option value=&quot;chat&quot;&gt;Chat&lt;/option&gt;
+        &lt;option value=&quot;personas&quot;&gt;Personas&lt;/option&gt;
+        &lt;option value=&quot;forums&quot;&gt;Forums&lt;/option&gt;
+        &lt;option value=&quot;sessions&quot;&gt;Forum sessions&lt;/option&gt;
+        &lt;option value=&quot;new-session&quot;&gt;New session&lt;/option&gt;
+        &lt;option value=&quot;settings&quot;&gt;Settings&lt;/option&gt;
+      &lt;/select&gt;
+    &lt;/label&gt;
+    &lt;label class=&quot;form-check form-switch&quot; for=&quot;cha-sidebar-open&quot;&gt;
+      &lt;input class=&quot;form-check-input&quot; type=&quot;checkbox&quot; id=&quot;cha-sidebar-open&quot; checked&gt;
+      &lt;span class=&quot;form-check-label&quot;&gt;Sidebar open&lt;/span&gt;
+    &lt;/label&gt;
+  &lt;/div&gt;
+
+  &lt;div class=&quot;cha-demo-wrap&quot;&gt;
+    &lt;section class=&quot;cha-demo is-sidebar-open&quot; id=&quot;cha-demo&quot; data-viewport=&quot;desktop&quot; aria-label=&quot;Interactive cha web interface mockup&quot;&gt;
+      &lt;aside class=&quot;cha-sidebar&quot; aria-label=&quot;Sidebar&quot;&gt;
+        &lt;div class=&quot;cha-brand&quot;&gt;cha&lt;/div&gt;
+        &lt;nav class=&quot;cha-sidebar-nav&quot; aria-label=&quot;Primary&quot;&gt;
+          &lt;button class=&quot;cha-side-action&quot; type=&quot;button&quot; data-view=&quot;personas&quot; data-nav=&quot;personas&quot;&gt;
+            &lt;i data-lucide=&quot;users&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;span class=&quot;cha-recent-copy&quot;&gt;&lt;span&gt;Personas&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot; id=&quot;cha-sidebar-persona&quot;&gt;Reader&lt;/span&gt;&lt;/span&gt;
+          &lt;/button&gt;
+          &lt;button class=&quot;cha-side-action&quot; type=&quot;button&quot; data-view=&quot;forums&quot; data-nav=&quot;forums&quot;&gt;
+            &lt;i data-lucide=&quot;messages-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;span class=&quot;cha-recent-copy&quot;&gt;&lt;span&gt;Forums&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot; id=&quot;cha-sidebar-forum&quot;&gt;The Lobby&lt;/span&gt;&lt;/span&gt;
+          &lt;/button&gt;
+        &lt;/nav&gt;
+        &lt;div class=&quot;cha-section-label&quot;&gt;Recent&lt;/div&gt;
+        &lt;div class=&quot;cha-recents&quot;&gt;
+          &lt;button class=&quot;cha-recent&quot; type=&quot;button&quot; data-session=&quot;design-review&quot; data-forum=&quot;lobby&quot;&gt;
+            &lt;i data-lucide=&quot;message-circle&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;span class=&quot;cha-recent-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;Design review&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;The Lobby&lt;/span&gt;&lt;/span&gt;
+          &lt;/button&gt;
+          &lt;button class=&quot;cha-recent&quot; type=&quot;button&quot; data-session=&quot;daily-reflection&quot; data-forum=&quot;stoics&quot;&gt;
+            &lt;i data-lucide=&quot;message-circle&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;span class=&quot;cha-recent-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;Daily reflection&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;The Stoics Forum&lt;/span&gt;&lt;/span&gt;
+          &lt;/button&gt;
+          &lt;button class=&quot;cha-recent&quot; type=&quot;button&quot; data-session=&quot;open-questions&quot; data-forum=&quot;hall&quot;&gt;
+            &lt;i data-lucide=&quot;message-circle&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;span class=&quot;cha-recent-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;Open questions&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;The Hall&lt;/span&gt;&lt;/span&gt;
+          &lt;/button&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;cha-sidebar-footer&quot;&gt;
+          &lt;button class=&quot;cha-icon-action cha-settings-button&quot; type=&quot;button&quot; data-view=&quot;settings&quot; data-nav=&quot;settings&quot; aria-label=&quot;Settings&quot; data-tooltip=&quot;Settings&quot; data-tooltip-placement=&quot;top&quot;&gt;
+            &lt;i data-lucide=&quot;settings&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+          &lt;/button&gt;
+        &lt;/div&gt;
+      &lt;/aside&gt;
+
+      &lt;main class=&quot;cha-main&quot;&gt;
+        &lt;header class=&quot;cha-topbar&quot;&gt;
+          &lt;button class=&quot;cha-icon-action&quot; type=&quot;button&quot; id=&quot;cha-menu-button&quot; aria-label=&quot;Hide sidebar&quot;&gt;
+            &lt;i data-lucide=&quot;equal&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+          &lt;/button&gt;
+          &lt;div class=&quot;cha-topbar-title&quot; id=&quot;cha-topbar-context&quot; hidden&gt;
+            &lt;div class=&quot;cha-title&quot; id=&quot;cha-title&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;cha-subtitle&quot; id=&quot;cha-subtitle&quot;&gt;&lt;/div&gt;
+          &lt;/div&gt;
+          &lt;div class=&quot;cha-empty-action&quot; id=&quot;cha-empty-action&quot; aria-hidden=&quot;true&quot;&gt;&lt;/div&gt;
+        &lt;/header&gt;
+
+        &lt;section class=&quot;cha-screen cha-chat is-active&quot; data-screen=&quot;chat&quot; aria-label=&quot;Chat area&quot;&gt;
+          &lt;div class=&quot;cha-transcript&quot;&gt;
+            &lt;div class=&quot;cha-message is-user&quot;&gt;Help me compare the two approaches.&lt;/div&gt;
+            &lt;div class=&quot;cha-message&quot;&gt;
+              &lt;div class=&quot;cha-speaker&quot;&gt;Ismael&lt;/div&gt;
+              &lt;div&gt;Let’s separate the decision into scope, reversibility, and long-term maintenance.&lt;/div&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+          &lt;form class=&quot;cha-composer&quot; id=&quot;cha-composer&quot;&gt;
+            &lt;button class=&quot;cha-composer-action&quot; type=&quot;button&quot; aria-label=&quot;Add attachment&quot;&gt;&lt;i data-lucide=&quot;plus&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;
+            &lt;input id=&quot;cha-message&quot; type=&quot;text&quot; aria-label=&quot;Message&quot; placeholder=&quot;Message The Lobby&quot;&gt;
+            &lt;button class=&quot;cha-composer-action cha-send&quot; type=&quot;submit&quot; aria-label=&quot;Send message&quot;&gt;&lt;i data-lucide=&quot;arrow-up&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;
+          &lt;/form&gt;
+        &lt;/section&gt;
+
+        &lt;section class=&quot;cha-screen cha-navigation&quot; data-screen=&quot;personas&quot; aria-label=&quot;Personas navigation&quot;&gt;
+          &lt;h2&gt;Select a persona&lt;/h2&gt;
+          &lt;div class=&quot;cha-persona-list&quot; role=&quot;radiogroup&quot; aria-label=&quot;Persona&quot;&gt;
+            &lt;label class=&quot;cha-persona-row&quot; for=&quot;persona-reader&quot;&gt;
+              &lt;span class=&quot;cha-persona-copy&quot;&gt;&lt;span class=&quot;cha-persona-name&quot;&gt;Reader&lt;/span&gt;&lt;span class=&quot;cha-persona-description&quot;&gt;Thoughtful, curious, and concise&lt;/span&gt;&lt;/span&gt;
+              &lt;input id=&quot;persona-reader&quot; name=&quot;mock-persona&quot; type=&quot;radio&quot; value=&quot;reader&quot; checked&gt;
+            &lt;/label&gt;
+            &lt;label class=&quot;cha-persona-row&quot; for=&quot;persona-researcher&quot;&gt;
+              &lt;span class=&quot;cha-persona-copy&quot;&gt;&lt;span class=&quot;cha-persona-name&quot;&gt;Researcher&lt;/span&gt;&lt;span class=&quot;cha-persona-description&quot;&gt;Evidence-first and methodical&lt;/span&gt;&lt;/span&gt;
+              &lt;input id=&quot;persona-researcher&quot; name=&quot;mock-persona&quot; type=&quot;radio&quot; value=&quot;researcher&quot;&gt;
+            &lt;/label&gt;
+            &lt;label class=&quot;cha-persona-row&quot; for=&quot;persona-editor&quot;&gt;
+              &lt;span class=&quot;cha-persona-copy&quot;&gt;&lt;span class=&quot;cha-persona-name&quot;&gt;Editor&lt;/span&gt;&lt;span class=&quot;cha-persona-description&quot;&gt;Direct and language-focused&lt;/span&gt;&lt;/span&gt;
+              &lt;input id=&quot;persona-editor&quot; name=&quot;mock-persona&quot; type=&quot;radio&quot; value=&quot;editor&quot;&gt;
+            &lt;/label&gt;
+          &lt;/div&gt;
+        &lt;/section&gt;
+
+        &lt;section class=&quot;cha-screen cha-navigation&quot; data-screen=&quot;forums&quot; aria-label=&quot;Forums navigation&quot;&gt;
+          &lt;h2&gt;Choose a forum&lt;/h2&gt;
+          &lt;div class=&quot;cha-list&quot;&gt;
+            &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-open-forum=&quot;lobby&quot;&gt;
+              &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;messages-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;The Lobby&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;3 sessions&lt;/span&gt;&lt;/span&gt;
+              &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;/button&gt;
+            &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-open-forum=&quot;hall&quot;&gt;
+              &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;messages-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;The Hall&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;1 session&lt;/span&gt;&lt;/span&gt;
+              &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;/button&gt;
+            &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-open-forum=&quot;stoics&quot;&gt;
+              &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;messages-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;The Stoics Forum&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;4 sessions&lt;/span&gt;&lt;/span&gt;
+              &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;/button&gt;
+          &lt;/div&gt;
+        &lt;/section&gt;
+
+        &lt;section class=&quot;cha-screen cha-navigation&quot; data-screen=&quot;sessions&quot; aria-label=&quot;Forum sessions navigation&quot;&gt;
+          &lt;button class=&quot;cha-back-row&quot; type=&quot;button&quot; data-view=&quot;forums&quot;&gt;&lt;i data-lucide=&quot;chevron-left&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;span&gt;All forums&lt;/span&gt;&lt;/button&gt;
+          &lt;div class=&quot;cha-list&quot; id=&quot;cha-session-list&quot;&gt;
+            &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-view=&quot;new-session&quot;&gt;
+              &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;plus&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;New session&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;Enter a name to begin&lt;/span&gt;&lt;/span&gt;
+              &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;/button&gt;
+            &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-session=&quot;design-review&quot;&gt;
+              &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;message-circle&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;Design review&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;Let’s separate the decision into scope…&lt;/span&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-secondary-line&quot;&gt;Now&lt;/span&gt;
+            &lt;/button&gt;
+            &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-session=&quot;welcome&quot;&gt;
+              &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;message-circle&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;Welcome&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;A first conversation in this forum&lt;/span&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-secondary-line&quot;&gt;Tue&lt;/span&gt;
+            &lt;/button&gt;
+          &lt;/div&gt;
+        &lt;/section&gt;
+
+        &lt;section class=&quot;cha-screen cha-navigation&quot; data-screen=&quot;new-session&quot; aria-label=&quot;New session navigation&quot;&gt;
+          &lt;button class=&quot;cha-back-row&quot; type=&quot;button&quot; data-view=&quot;sessions&quot;&gt;&lt;i data-lucide=&quot;chevron-left&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;span&gt;Sessions&lt;/span&gt;&lt;/button&gt;
+          &lt;form class=&quot;cha-new-session&quot; id=&quot;cha-new-session-form&quot;&gt;
+            &lt;label class=&quot;form-label&quot; for=&quot;cha-session-name&quot;&gt;Session name
+              &lt;input class=&quot;form-control&quot; id=&quot;cha-session-name&quot; type=&quot;text&quot; placeholder=&quot;e.g. Architecture review&quot;&gt;
+            &lt;/label&gt;
+            &lt;div class=&quot;cha-new-session-actions&quot;&gt;
+              &lt;button class=&quot;btn btn-ghost&quot; type=&quot;button&quot; data-view=&quot;sessions&quot;&gt;Cancel&lt;/button&gt;
+              &lt;button class=&quot;btn btn-primary&quot; id=&quot;cha-start-session&quot; type=&quot;button&quot; disabled&gt;Start session&lt;/button&gt;
+            &lt;/div&gt;
+          &lt;/form&gt;
+        &lt;/section&gt;
+
+        &lt;section class=&quot;cha-screen cha-navigation&quot; data-screen=&quot;settings&quot; aria-label=&quot;Settings navigation&quot;&gt;&lt;/section&gt;
+      &lt;/main&gt;
+    &lt;/section&gt;
+  &lt;/div&gt;
+  &lt;div class=&quot;cha-selection-line text-small&quot; id=&quot;cha-selection-line&quot; aria-live=&quot;polite&quot;&gt;Desktop browser · Sidebar open · Chat · Reader / The Lobby / Design review&lt;/div&gt;
+
+  &lt;script&gt;
+    (() =&gt; {
+      const root = document.getElementById(&#x27;cha-web-ui-states&#x27;);
+      const demo = root.querySelector(&#x27;#cha-demo&#x27;);
+      const viewportControl = root.querySelector(&#x27;#cha-viewport&#x27;);
+      const viewControl = root.querySelector(&#x27;#cha-view&#x27;);
+      const sidebarControl = root.querySelector(&#x27;#cha-sidebar-open&#x27;);
+      const menuButton = root.querySelector(&#x27;#cha-menu-button&#x27;);
+      const title = root.querySelector(&#x27;#cha-title&#x27;);
+      const subtitle = root.querySelector(&#x27;#cha-subtitle&#x27;);
+      const selectionLine = root.querySelector(&#x27;#cha-selection-line&#x27;);
+      const composer = root.querySelector(&#x27;#cha-composer&#x27;);
+      const sessionName = root.querySelector(&#x27;#cha-session-name&#x27;);
+      const startSession = root.querySelector(&#x27;#cha-start-session&#x27;);
+      const sidebarPersona = root.querySelector(&#x27;#cha-sidebar-persona&#x27;);
+      const sidebarForum = root.querySelector(&#x27;#cha-sidebar-forum&#x27;);
+      const topbarContext = root.querySelector(&#x27;#cha-topbar-context&#x27;);
+      const recentList = root.querySelector(&#x27;.cha-recents&#x27;);
+
+      const labels = {
+        persona: {reader: &#x27;Reader&#x27;, researcher: &#x27;Researcher&#x27;, editor: &#x27;Editor&#x27;},
+        forum: {lobby: &#x27;The Lobby&#x27;, hall: &#x27;The Hall&#x27;, stoics: &#x27;The Stoics Forum&#x27;},
+        session: {
+          &#x27;design-review&#x27;: &#x27;Design review&#x27;,
+          &#x27;daily-reflection&#x27;: &#x27;Daily reflection&#x27;,
+          &#x27;open-questions&#x27;: &#x27;Open questions&#x27;,
+          welcome: &#x27;Welcome&#x27;
+        }
+      };
+      const state = {
+        viewport: &#x27;desktop&#x27;,
+        view: &#x27;chat&#x27;,
+        sidebar: true,
+        persona: &#x27;reader&#x27;,
+        forum: &#x27;lobby&#x27;,
+        session: &#x27;design-review&#x27;
+      };
+
+      function textFor(group, key) {
+        return labels[group][key] || key;
+      }
+
+      function sync() {
+        demo.dataset.viewport = state.viewport;
+        demo.classList.toggle(&#x27;is-sidebar-open&#x27;, state.sidebar);
+        sidebarControl.checked = state.sidebar;
+        viewportControl.value = state.viewport;
+        viewControl.value = state.view;
+        menuButton.setAttribute(&#x27;aria-label&#x27;, state.sidebar ? &#x27;Hide sidebar&#x27; : &#x27;Show sidebar&#x27;);
+        root.querySelectorAll(&#x27;.cha-screen&#x27;).forEach(screen =&gt; {
+          screen.classList.toggle(&#x27;is-active&#x27;, screen.dataset.screen === state.view);
+        });
+        const currentNav = state.view === &#x27;personas&#x27;
+          ? &#x27;personas&#x27;
+          : state.view === &#x27;settings&#x27;
+            ? &#x27;settings&#x27;
+            : [&#x27;forums&#x27;, &#x27;sessions&#x27;, &#x27;new-session&#x27;].includes(state.view)
+              ? &#x27;forums&#x27;
+              : &#x27;&#x27;;
+        root.querySelectorAll(&#x27;[data-nav]&#x27;).forEach(button =&gt; {
+          const current = button.dataset.nav === currentNav;
+          button.classList.toggle(&#x27;is-current&#x27;, current);
+          if (current) button.setAttribute(&#x27;aria-current&#x27;, &#x27;page&#x27;);
+          else button.removeAttribute(&#x27;aria-current&#x27;);
+        });
+
+        const forumName = textFor(&#x27;forum&#x27;, state.forum);
+        const personaName = textFor(&#x27;persona&#x27;, state.persona);
+        const sessionLabel = textFor(&#x27;session&#x27;, state.session);
+        sidebarPersona.textContent = personaName;
+        sidebarForum.textContent = forumName;
+        root.querySelectorAll(&#x27;.cha-recent[data-session][data-forum]&#x27;).forEach(button =&gt; {
+          button.classList.toggle(
+            &#x27;is-current&#x27;,
+            button.dataset.session === state.session &amp;&amp; button.dataset.forum === state.forum);
+        });
+        const titles = {
+          chat: [&#x27;&#x27;, &#x27;&#x27;],
+          personas: [&#x27;Personas&#x27;, &#x27;&#x27;],
+          forums: [&#x27;Forums&#x27;, &#x27;&#x27;],
+          sessions: [&#x27;Sessions&#x27;, &#x27;&#x27;],
+          &#x27;new-session&#x27;: [&#x27;New session&#x27;, &#x27;&#x27;],
+          settings: [&#x27;Settings&#x27;, &#x27;&#x27;]
+        };
+        topbarContext.hidden = state.view === &#x27;chat&#x27;;
+        title.textContent = titles[state.view][0];
+        subtitle.textContent = titles[state.view][1];
+        subtitle.hidden = titles[state.view][1] === &#x27;&#x27;;
+        root.querySelector(&#x27;#cha-message&#x27;).placeholder = &#x27;Message &#x27; + forumName;
+        selectionLine.textContent =
+          (state.viewport === &#x27;desktop&#x27; ? &#x27;Desktop browser&#x27; : &#x27;iPhone browser&#x27;) +
+          &#x27; · Sidebar &#x27; + (state.sidebar ? &#x27;open&#x27; : &#x27;closed&#x27;) +
+          &#x27; · &#x27; + (state.view === &#x27;chat&#x27; ? &#x27;Chat&#x27; : titles[state.view][0]) +
+          &#x27; · &#x27; + personaName + &#x27; / &#x27; + forumName + &#x27; / &#x27; + sessionLabel;
+      }
+
+      function chooseView(view, closeSidebar = true) {
+        state.view = view;
+        if (closeSidebar) state.sidebar = false;
+        sync();
+      }
+
+      viewportControl.addEventListener(&#x27;change&#x27;, event =&gt; {
+        state.viewport = event.target.value;
+        sync();
+      });
+      viewControl.addEventListener(&#x27;change&#x27;, event =&gt; chooseView(event.target.value, false));
+      sidebarControl.addEventListener(&#x27;change&#x27;, event =&gt; {
+        state.sidebar = event.target.checked;
+        sync();
+      });
+      menuButton.addEventListener(&#x27;click&#x27;, () =&gt; {
+        state.sidebar = !state.sidebar;
+        sync();
+      });
+
+      root.querySelectorAll(&#x27;[data-view]&#x27;).forEach(button =&gt; {
+        button.addEventListener(&#x27;click&#x27;, () =&gt; chooseView(button.dataset.view));
+      });
+      root.querySelectorAll(&#x27;[data-open-forum]&#x27;).forEach(button =&gt; {
+        button.addEventListener(&#x27;click&#x27;, () =&gt; {
+          state.forum = button.dataset.openForum;
+          chooseView(&#x27;sessions&#x27;);
+        });
+      });
+      function bindSessionButton(button) {
+        button.addEventListener(&#x27;click&#x27;, () =&gt; {
+          if (button.dataset.forum) state.forum = button.dataset.forum;
+          state.session = button.dataset.session;
+          chooseView(&#x27;chat&#x27;);
+        });
+      }
+      root.querySelectorAll(&#x27;[data-session]&#x27;).forEach(bindSessionButton);
+      root.querySelectorAll(&#x27;input[name=&quot;mock-persona&quot;]&#x27;).forEach(radio =&gt; {
+        radio.addEventListener(&#x27;change&#x27;, () =&gt; {
+          if (radio.checked) {
+            state.persona = radio.value;
+            sync();
+          }
+        });
+      });
+      composer.addEventListener(&#x27;submit&#x27;, event =&gt; event.preventDefault());
+      sessionName.addEventListener(&#x27;input&#x27;, () =&gt; {
+        startSession.disabled = sessionName.value.trim() === &#x27;&#x27;;
+      });
+      startSession.addEventListener(&#x27;click&#x27;, () =&gt; {
+        const proposed = sessionName.value.trim();
+        if (!proposed) {
+          sessionName.focus();
+          return;
+        }
+        state.session = &#x27;created-&#x27; + Date.now();
+        labels.session[state.session] = proposed;
+        const recent = recentList.querySelector(&#x27;.cha-recent&#x27;).cloneNode(true);
+        recent.dataset.session = state.session;
+        recent.dataset.forum = state.forum;
+        recent.querySelector(&#x27;.cha-primary-line&#x27;).textContent = proposed;
+        recent.querySelector(&#x27;.cha-secondary-line&#x27;).textContent = textFor(&#x27;forum&#x27;, state.forum);
+        bindSessionButton(recent);
+        recentList.prepend(recent);
+        sessionName.value = &#x27;&#x27;;
+        startSession.disabled = true;
+        chooseView(&#x27;chat&#x27;);
+      });
+      sync();
+    })();
+  &lt;/script&gt;
+&lt;/div&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>
