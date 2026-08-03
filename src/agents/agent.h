@@ -32,6 +32,8 @@ struct AgentDefinition {
 struct CharacterInfo {
     std::string id;
     std::string name;
+
+    bool operator==(const CharacterInfo&) const = default;
 };
 
 // The two filesystem layers that form one forum member's effective agent.

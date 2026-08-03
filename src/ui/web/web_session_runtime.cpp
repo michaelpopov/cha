@@ -166,39 +166,9 @@ public:
     [[nodiscard]] bool is_generating() const override {
         return controller_.is_generating();
     }
-    SessionSnapshot snapshot() override {
-        SessionSnapshot result;
-        result.characters.reserve(controller_.characters().all().size());
-        for (const CharacterInfo& character : controller_.characters().all()) {
-            result.characters.push_back({character.id, character.name});
-        }
-        result.default_character_id = controller_.default_agent_id();
-        const TranscriptView view = controller_.transcript().view();
-        snapshot_revision_ = view.revision;
-        result.transcript.reserve(view.entries.size());
-        for (const cha::TranscriptEntry& entry : view.entries) {
-            result.transcript.push_back({
-                .id = entry.id,
-                .kind = web_kind(entry.kind),
-                .participant_id = entry.participant_id,
-                .display_name = entry.display_name,
-                .addressed_to = entry.addressed_to,
-                .addressed_to_name = entry.addressed_to_name,
-                .text = entry.text,
-                .status = web_status(entry.status),
-                .request_id = entry.request_id,
-            });
-        }
-        const GenerationStatusView status =
-            controller_.generation_status_view();
-        result.generation = {
-            .active = status.active,
-            .request_id = status.request_id,
-            .agent_id = std::string(status.agent_id),
-            .agent_name = std::string(status.agent_name),
-            .phase = web_phase(status.phase),
-            .reasoning_text = std::string(status.reasoning_text),
-        };
+    SessionState state() override {
+        SessionState result = controller_.state();
+        snapshot_revision_ = result.revision;
         return result;
     }
     std::optional<WebAppendCandidate> append_candidate(
@@ -533,14 +503,18 @@ void WebSessionRuntime::apply_notification(OwnerNotification notification) {
 }
 
 SessionSnapshot WebSessionRuntime::make_snapshot(WebSessionController& controller) {
-    SessionSnapshot current = controller.snapshot();
-    current.forum = {descriptor_.identity.forum_id, descriptor_.forum_display_name};
-    current.session_id = descriptor_.identity.session_id;
-    current.session_label = descriptor_.session_label;
-    current.notice = notice_;
-    current.lifecycle = SessionLifecycle::running;
-    current.shutdown_reason.reset();
-    return current;
+    return to_snapshot(
+        descriptor_, controller.state(), presentation(SessionLifecycle::running));
+}
+
+WebPresentationState WebSessionRuntime::presentation(
+    SessionLifecycle lifecycle,
+    std::optional<ShutdownReason> shutdown_reason) const {
+    return {
+        .notice = notice_,
+        .lifecycle = lifecycle,
+        .shutdown_reason = shutdown_reason,
+    };
 }
 
 void WebSessionRuntime::apply_notice(const SessionUpdate& update) {
@@ -635,13 +609,9 @@ void WebSessionRuntime::publish_snapshot(SessionSnapshot snapshot) {
 
 void WebSessionRuntime::publish_final(WebSessionController& controller, ShutdownReason reason) {
     if (!sink_) return;
-    SessionSnapshot snapshot = controller.snapshot();
-    snapshot.forum = {descriptor_.identity.forum_id, descriptor_.forum_display_name};
-    snapshot.session_id = descriptor_.identity.session_id;
-    snapshot.session_label = descriptor_.session_label;
-    snapshot.notice = notice_;
-    snapshot.lifecycle = SessionLifecycle::stopping;
-    snapshot.shutdown_reason = reason;
+    SessionSnapshot snapshot = to_snapshot(
+        descriptor_, controller.state(),
+        presentation(SessionLifecycle::stopping, reason));
     sink_->publish(SnapshotEvent{std::move(snapshot)});
 }
 

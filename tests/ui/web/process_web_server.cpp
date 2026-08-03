@@ -344,13 +344,13 @@ public:
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
-    SessionSnapshot snapshot() override {
+    SessionState state() override {
         return {
             .transcript = {{
                 .id = 1,
-                .kind = TranscriptKind::agent,
+                .kind = EntryKind::agent,
                 .text = text_,
-                .status = TranscriptStatus::complete,
+                .status = EntryStatus::complete,
             }},
         };
     }

@@ -129,12 +129,12 @@ public:
     SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return true; }
-    SessionSnapshot snapshot() override {
+    SessionState state() override {
         return {
             .generation = {
                 .active = true,
                 .request_id = 1,
-                .phase = GenerationPhase::answering,
+                .phase = ResponsePhase::answering,
             },
         };
     }

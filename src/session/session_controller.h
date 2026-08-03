@@ -7,6 +7,7 @@
 #include "session/forum_characters.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
+#include "session/session_state.h"
 #include "session/session_update.h"
 #include "transcript/transcript.h"
 #include "util/wake_notifier.h"
@@ -71,6 +72,10 @@ public:
     [[nodiscard]] bool is_generating() const noexcept;
     GenerationStatus generation_status() const;
     GenerationStatusView generation_status_view() const noexcept;
+    // Builds an owning state value on this controller's owner thread for
+    // asynchronous presentation consumers. Borrowed views remain available
+    // for direct frontends on that same thread.
+    [[nodiscard]] SessionState state() const;
     const ForumCharacters& characters() const { return characters_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
 

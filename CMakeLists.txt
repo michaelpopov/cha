@@ -269,6 +269,7 @@ add_library(cha_web STATIC
     src/ui/web/lobby_routes.cpp
     src/ui/web/protocol.cpp
     src/ui/web/route_support.cpp
+    src/ui/web/session_projection.cpp
     src/ui/web/server_shutdown.cpp
     src/ui/web/session_routes.cpp
     src/ui/web/session_registry.cpp
@@ -414,6 +415,7 @@ if(BUILD_TESTING)
     add_executable(
         cha_web_tests
         tests/ui/web/unit_protocol.cpp
+        tests/ui/web/unit_session_projection.cpp
         tests/ui/web/unit_browser_connection_state.cpp
         tests/ui/web/unit_lobby_routes.cpp
         tests/ui/web/unit_session_routes.cpp

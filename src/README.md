@@ -50,10 +50,10 @@ Each entry point links only its frontend target.
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
 | `ui/tui/` | Curses lifecycle, startup selection, input editing, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
 | `ui/console/` | CLI selection, line input, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
-| `ui/web/` | HTTP/SSE transport, owning web protocol values, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
+| `ui/web/` | HTTP/SSE transport, protocol DTOs, presentation state, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
-| `session/` | Workspace and session operations, `ForumCharacters`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
+| `session/` | Workspace and session operations, `ForumCharacters`, SQLite persistence, live chat coordination, and the owning `SessionState` read model. | Frontends, command syntax, transports. |
 | `agents/` | Character config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the owner-thread-owned live `Transcript`. | Storage, providers, frontends. |
 | `util/` | Leaf helpers: text and path rules, `.env`, a portable concurrent queue, and the libuv wake loop. | Anything above it. |

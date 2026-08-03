@@ -1749,6 +1749,69 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
     EXPECT_EQ(entries.back().text, "Partial");
 }
 
+TEST(SessionController, StateOwnsControllerValuesAndTranscriptContinuity) {
+    TemporaryJournal temporary;
+    const TranscriptEntry entry = make_notice_entry(1, "Before");
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier(),
+        restore_with({entry}, 1, 2));
+
+    const SessionState state = controller->state();
+    ASSERT_EQ(state.characters.size(), 1U);
+    EXPECT_EQ(state.characters.front().id, "guide-id");
+    EXPECT_EQ(state.default_agent_id, "guide-id");
+    EXPECT_EQ(state.transcript, std::vector<TranscriptEntry>({entry}));
+    EXPECT_GT(state.revision, 0U);
+    EXPECT_EQ(state.revision, controller->transcript().view().revision);
+    EXPECT_FALSE(state.open_entry_id);
+    EXPECT_EQ(state.history_epoch, controller->transcript().view().history_epoch);
+    EXPECT_FALSE(state.generation.active);
+
+    (void)controller->clear_transcript();
+    EXPECT_EQ(state.transcript, std::vector<TranscriptEntry>({entry}));
+}
+
+TEST(SessionController, StateOwnsActiveGenerationAndOpenEntry) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            CompletionResult{}, std::vector<std::string>{}, true)),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, "Thinking",
+    });
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, "Answer",
+    });
+    const SessionState state = controller->state();
+    const TranscriptView view = controller->transcript().view();
+
+    ASSERT_TRUE(state.open_entry_id);
+    EXPECT_EQ(state.open_entry_id, view.open_entry_id);
+    EXPECT_EQ(state.revision, view.revision);
+    EXPECT_EQ(state.history_epoch, view.history_epoch);
+    EXPECT_EQ(state.generation, controller->generation_status());
+    EXPECT_TRUE(state.generation.active);
+    EXPECT_EQ(state.generation.request_id, 1);
+    EXPECT_EQ(state.generation.agent_id, "guide-id");
+    EXPECT_EQ(state.generation.agent_name, "Guide");
+    EXPECT_EQ(state.generation.phase, ResponsePhase::answering);
+    EXPECT_EQ(state.generation.reasoning_text, "Thinking");
+    ASSERT_EQ(state.transcript.size(), 2U);
+    EXPECT_EQ(state.transcript.back().id, *state.open_entry_id);
+    EXPECT_EQ(state.transcript.back().text, "Answer");
+
+    (void)controller->handle_agent_event(AgentCompleted{1});
+    EXPECT_EQ(state.generation.phase, ResponsePhase::answering);
+    EXPECT_EQ(state.generation.reasoning_text, "Thinking");
+    EXPECT_EQ(state.transcript.back().status, EntryStatus::streaming);
+}
+
 TEST(SessionController, ShutdownJoinsPoolBeforeRegistryCanBeDestroyed) {
     TemporaryJournal temporary;
     FinalWakeBlockingNotifier shutdown_notifier;

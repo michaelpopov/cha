@@ -1,10 +1,12 @@
 #pragma once
 
 #include "session/opened_session.h"
+#include "session/session_state.h"
 #include "session/session_update.h"
 #include "ui/web/browser_connection_state.h"
 #include "ui/web/command_queue.h"
 #include "ui/web/protocol.h"
+#include "ui/web/session_projection.h"
 #include "ui/web/wake_notifier.h"
 #include "ui/web/web_settings.h"
 
@@ -50,7 +52,7 @@ public:
     [[nodiscard]] virtual bool is_generating() const = 0;
     // Called only by the owner thread. The returned value owns every field and
     // contains no controller or transcript borrows.
-    virtual SessionSnapshot snapshot() { return {}; }
+    virtual SessionState state() { return {}; }
     // Controllers may prove a text-only delta without rebuilding a snapshot.
     // Returning nullopt makes the runtime publish a full snapshot; the runtime
     // does not independently infer an append from snapshot differences.
@@ -142,6 +144,9 @@ private:
     void execute(WebSessionController& controller, OwnerCommand command);
     void apply_notification(OwnerNotification notification);
     [[nodiscard]] SessionSnapshot make_snapshot(WebSessionController& controller);
+    [[nodiscard]] WebPresentationState presentation(
+        SessionLifecycle lifecycle,
+        std::optional<ShutdownReason> shutdown_reason = std::nullopt) const;
     void apply_notice(const SessionUpdate& update);
     [[nodiscard]] ShutdownReason mark_stopping(ShutdownReason reason);
     void publish_change(

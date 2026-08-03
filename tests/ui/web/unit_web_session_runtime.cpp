@@ -56,14 +56,16 @@ struct FakeState {
     bool throw_shutdown{};
     bool destroyed{};
     bool fast_append_candidates{};
-    SessionSnapshot snapshot{
+    SessionState snapshot{
+        .characters = {{"guide", "Guide"}},
+        .default_agent_id = "guide",
         .transcript = {{
             .id = 7,
-            .kind = TranscriptKind::agent,
+            .kind = EntryKind::agent,
             .participant_id = "guide",
             .display_name = "Guide",
             .text = "one",
-            .status = TranscriptStatus::streaming,
+            .status = EntryStatus::streaming,
             .request_id = 3,
         }},
         .generation = {
@@ -71,7 +73,7 @@ struct FakeState {
             .request_id = 3,
             .agent_id = "guide",
             .agent_name = "Guide",
-            .phase = GenerationPhase::answering,
+            .phase = ResponsePhase::answering,
         },
     };
 };
@@ -216,7 +218,7 @@ public:
             throw std::runtime_error("injected shutdown failure");
         }
     }
-    SessionSnapshot snapshot() override {
+    SessionState state() override {
         std::lock_guard lock(state_->mutex);
         check_owner();
         ++state_->snapshot_calls;
@@ -229,10 +231,10 @@ public:
         ++state_->append_candidate_calls;
         state_->entered.notify_all();
         if (!state_->fast_append_candidates) return std::nullopt;
-        const SessionSnapshot& after = state_->snapshot;
+        const SessionState& after = state_->snapshot;
         if (!before.transcript.empty()
             && before.transcript.size() == after.transcript.size()
-            && after.transcript.back().status == TranscriptStatus::streaming
+            && after.transcript.back().status == EntryStatus::streaming
             && after.transcript.back().text.starts_with(
                 before.transcript.back().text)
             && after.transcript.back().text.size()
@@ -911,9 +913,9 @@ TEST(WebSessionRuntime, TargetChangePublishesSnapshotBeforeResetSequence) {
         runtime.submit(RawCommand{"reader", "append"}, 1s)));
     {
         std::lock_guard lock(state->mutex);
-        state->snapshot.transcript[0].status = TranscriptStatus::complete;
+        state->snapshot.transcript[0].status = EntryStatus::complete;
         state->snapshot.generation.request_id = 9;
-        state->snapshot.generation.phase = GenerationPhase::reasoning;
+        state->snapshot.generation.phase = ResponsePhase::reasoning;
         state->snapshot.generation.reasoning_text = "think";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
@@ -942,8 +944,8 @@ TEST(WebSessionRuntime, ReasoningGrowthWithStructuralChangeUsesSnapshot) {
     auto state = std::make_shared<FakeState>();
     {
         std::lock_guard lock(state->mutex);
-        state->snapshot.transcript[0].status = TranscriptStatus::complete;
-        state->snapshot.generation.phase = GenerationPhase::reasoning;
+        state->snapshot.transcript[0].status = EntryStatus::complete;
+        state->snapshot.generation.phase = ResponsePhase::reasoning;
         state->snapshot.generation.reasoning_text = "think";
     }
     auto sink = std::make_shared<FakeSnapshotSink>();
@@ -959,7 +961,7 @@ TEST(WebSessionRuntime, ReasoningGrowthWithStructuralChangeUsesSnapshot) {
     {
         std::lock_guard lock(state->mutex);
         state->snapshot.generation.reasoning_text = "think more";
-        state->snapshot.default_character_id = "alternate";
+        state->snapshot.default_agent_id = "alternate";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         runtime.submit(RawCommand{"reader", "append"}, 1s)));
@@ -1320,7 +1322,7 @@ TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
     }
     {
         std::lock_guard lock(state->mutex);
-        state->snapshot.transcript[0].status = TranscriptStatus::complete;
+        state->snapshot.transcript[0].status = EntryStatus::complete;
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
     std::unique_lock lock(sink->mutex);
@@ -1354,9 +1356,9 @@ TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
             {
                 std::lock_guard lock(state->mutex);
                 state->snapshot.generation.active = false;
-                state->snapshot.transcript[0].status = status;
+                state->snapshot.transcript[0].status = static_cast<EntryStatus>(status);
                 if (status == TranscriptStatus::failed) {
-                    state->snapshot.transcript[0].kind = TranscriptKind::error;
+                    state->snapshot.transcript[0].kind = EntryKind::error;
                 }
             }
             ASSERT_TRUE(std::holds_alternative<CommandResult>(
@@ -1392,19 +1394,19 @@ TEST(WebSessionRuntime, GenerationRequestChangeLogsTerminalThenNextStart) {
         }
         {
             std::lock_guard lock(state->mutex);
-            state->snapshot.transcript[0].status = TranscriptStatus::complete;
+            state->snapshot.transcript[0].status = EntryStatus::complete;
             state->snapshot.transcript.push_back({
                 .id = 8,
-                .kind = TranscriptKind::agent,
+                .kind = EntryKind::agent,
                 .participant_id = "reviewer",
                 .display_name = "Reviewer",
-                .status = TranscriptStatus::streaming,
+                .status = EntryStatus::streaming,
                 .request_id = 4,
             });
             state->snapshot.generation.request_id = 4;
             state->snapshot.generation.agent_id = "reviewer";
             state->snapshot.generation.agent_name = "Reviewer";
-            state->snapshot.generation.phase = GenerationPhase::waiting;
+            state->snapshot.generation.phase = ResponsePhase::waiting;
         }
         ASSERT_TRUE(std::holds_alternative<CommandResult>(
             runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
@@ -1427,13 +1429,13 @@ TEST(WebSessionRuntime, ReasoningOnlyCancellationLogsCancelledStatus) {
     auto state = std::make_shared<FakeState>();
     state->snapshot.transcript = {{
         .id = 1,
-        .kind = TranscriptKind::human,
+        .kind = EntryKind::human,
         .participant_id = "human",
         .display_name = "You",
         .addressed_to = "guide",
         .addressed_to_name = "Guide",
         .text = "question",
-        .status = TranscriptStatus::complete,
+        .status = EntryStatus::complete,
         .request_id = 3,
     }};
     auto sink = std::make_shared<FakeSnapshotSink>();
@@ -1478,12 +1480,14 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     auto adapted = adapt_session_controller(test::from_definitions_for_testing(
         {test_definition()}, temporary.path, notifier, std::move(restore)));
 
-    const SessionSnapshot before = adapted->snapshot();
-    EXPECT_EQ(before.characters, std::vector<CharacterSummary>({{"guide", "Guide"}}));
+    const SessionState before = adapted->state();
+    ASSERT_EQ(before.characters.size(), 1U);
+    EXPECT_EQ(before.characters.front().id, "guide");
+    EXPECT_EQ(before.characters.front().name, "Guide");
     ASSERT_EQ(before.transcript.size(), 1U);
     EXPECT_EQ(before.transcript.front().text, "before");
     EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").render_needed);
-    const SessionSnapshot after = adapted->snapshot();
+    const SessionState after = adapted->state();
     EXPECT_TRUE(after.transcript.empty());
     EXPECT_EQ(before.transcript.front().text, "before");
     adapted->shutdown();

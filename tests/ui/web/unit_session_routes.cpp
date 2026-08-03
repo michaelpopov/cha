@@ -82,17 +82,17 @@ public:
     }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
-    SessionSnapshot snapshot() override {
+    SessionState state() override {
         std::lock_guard lock(calls_->mutex);
         return {
             .characters = {{"guide", "Guide"}},
-            .default_character_id = "guide",
+            .default_agent_id = "guide",
             .transcript = {{
                 .id = 1,
-                .kind = TranscriptKind::agent,
+                .kind = EntryKind::agent,
                 .display_name = "Guide",
                 .text = calls_->transcript_text,
-                .status = TranscriptStatus::streaming,
+                .status = EntryStatus::streaming,
             }},
         };
     }

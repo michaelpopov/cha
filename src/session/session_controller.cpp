@@ -266,6 +266,19 @@ GenerationStatusView SessionController::generation_status_view() const noexcept 
     };
 }
 
+SessionState SessionController::state() const {
+    const TranscriptView view = transcript_.view();
+    return {
+        .characters = characters_.all(),
+        .default_agent_id = default_agent_id_,
+        .transcript = {view.entries.begin(), view.entries.end()},
+        .revision = view.revision,
+        .open_entry_id = view.open_entry_id,
+        .history_epoch = view.history_epoch,
+        .generation = generation_status(),
+    };
+}
+
 bool SessionController::is_generating() const noexcept {
     return busy();
 }
