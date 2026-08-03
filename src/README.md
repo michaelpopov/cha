@@ -39,10 +39,11 @@ recorded in the database.
 
 ## Layer map
 
-The tree is organized by responsibility. CMake keeps curses behind a real
-library boundary: reusable and console code is in static `cha_core`, while the
-ncurses frontend is in static `cha_tui`. Entry points link only the libraries
-they need.
+The tree is organized by responsibility. CMake gives the reusable domain and
+each presentation layer its own static-library target: `cha_core` contains no
+`ui/` sources; `cha_ui_text` and `cha_ui_render` are shared support libraries;
+and `cha_console`, `cha_tui`, and `cha_web` are sibling concrete frontends.
+Each entry point links only its frontend target.
 
 | Directory | Owns | Must not know about |
 | --- | --- | --- |
@@ -470,11 +471,16 @@ never a partially written one.
 
 | Target | Contents |
 | --- | --- |
-| `cha_core` | Static reusable core, shared rendering, and console implementation; no curses dependency. |
-| `cha_tui` | Static curses frontend library, built only with `CHA_BUILD_TUI=ON`. |
-| `cha` | Full-screen application: `cha_core`, `cha_tui`, and `apps/tui_main.cpp`. |
-| `chacon` | Line-oriented application: `cha_core` and `apps/console_main.cpp`. |
-| `cha_tests` | Unit and component tests under `tests/`, mirroring this tree. Run with `make test`. |
+| `cha_core` | Static reusable domain and session code: `util/`, `transcript/`, `agents/`, and `session/`; no `ui/` sources. |
+| `cha_ui_text` | Shared textual grammar support, linked to `cha_core`. |
+| `cha_ui_render` | Shared transcript rendering support, linked to `cha_core`. |
+| `cha_console` | Line-oriented frontend implementation, linked to `cha_core`, `cha_ui_text`, and `cha_ui_render`. |
+| `cha_tui` | Static curses frontend library, linked to `cha_core`, the shared UI libraries, and ncurses; built only with `CHA_BUILD_TUI=ON`. |
+| `cha_web` | HTTP/SSE frontend, linked to `cha_core`, `cha_ui_text`, cpp-httplib, and JSON. |
+| `cha` | Full-screen application entry point linked to `cha_tui`. |
+| `chacon` | Line-oriented application entry point linked to `cha_console`. |
+| `chaweb` | Web application entry point linked to `cha_web`. |
+| `cha_tests` | Mixed unit/component test binary. It deliberately links the production libraries covered by its sources and is exempt from production-boundary enforcement. Run with `make test`. |
 | `console_tests` | Registered fork/exec tests for pipes, signals, output failures, and link dependencies. |
 | `itest` | Live integration tests driving the real stack against the checked-in `workspace/`. Run with `make itest`; not part of `make test`. |
 

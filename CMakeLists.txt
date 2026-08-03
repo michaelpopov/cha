@@ -208,17 +208,6 @@ add_library(cha_core STATIC
     src/session/session_database.cpp
     src/session/session_lease.cpp
     src/session/workspace.cpp
-    src/ui/text/command.cpp
-    src/ui/text/mcast.cpp
-    src/ui/text/mention.cpp
-    src/ui/text/text_input.cpp
-    src/ui/console/console_writer.cpp
-    src/ui/console/console_startup.cpp
-    src/ui/console/console_session.cpp
-    src/ui/console/line_reader.cpp
-    src/ui/console/system_console.cpp
-    src/ui/console/transcript_emitter.cpp
-    src/ui/render/transcript_writer.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
@@ -244,6 +233,32 @@ target_link_libraries(
 )
 cha_enable_warnings(cha_core)
 
+add_library(cha_ui_text STATIC
+    src/ui/text/command.cpp
+    src/ui/text/mcast.cpp
+    src/ui/text/mention.cpp
+    src/ui/text/text_input.cpp
+)
+target_link_libraries(cha_ui_text PUBLIC cha_core)
+cha_enable_warnings(cha_ui_text)
+
+add_library(cha_ui_render STATIC
+    src/ui/render/transcript_writer.cpp
+)
+target_link_libraries(cha_ui_render PUBLIC cha_core)
+cha_enable_warnings(cha_ui_render)
+
+add_library(cha_console STATIC
+    src/ui/console/console_writer.cpp
+    src/ui/console/console_startup.cpp
+    src/ui/console/console_session.cpp
+    src/ui/console/line_reader.cpp
+    src/ui/console/system_console.cpp
+    src/ui/console/transcript_emitter.cpp
+)
+target_link_libraries(cha_console PUBLIC cha_core cha_ui_text cha_ui_render)
+cha_enable_warnings(cha_console)
+
 add_library(cha_web STATIC
     src/ui/web/asset_handler.cpp
     src/ui/web/browser_connection_state.cpp
@@ -264,7 +279,13 @@ add_library(cha_web STATIC
 )
 target_compile_features(cha_web PUBLIC cxx_std_20)
 target_include_directories(cha_web PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(cha_web PUBLIC cha_core httplib::httplib)
+target_link_libraries(
+    cha_web
+    PUBLIC
+        cha_core
+        cha_ui_text
+        httplib::httplib
+        nlohmann_json::nlohmann_json)
 cha_enable_warnings(cha_web)
 
 if(CHA_BUILD_TUI)
@@ -278,7 +299,13 @@ if(CHA_BUILD_TUI)
         src/ui/tui/persona.cpp
         src/ui/tui/persona_session.cpp
     )
-    target_link_libraries(cha_tui PUBLIC cha_core ${CURSES_WIDE_LIBRARY})
+    target_link_libraries(
+        cha_tui
+        PUBLIC
+            cha_core
+            cha_ui_text
+            cha_ui_render
+            ${CURSES_WIDE_LIBRARY})
     target_include_directories(cha_tui SYSTEM PUBLIC ${CURSES_INCLUDE_DIRS})
     target_compile_definitions(cha_tui PUBLIC _XOPEN_SOURCE_EXTENDED)
     cha_enable_warnings(cha_tui)
@@ -364,7 +391,13 @@ if(BUILD_TESTING)
     # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
     target_link_libraries(
         cha_tests
-        PRIVATE cha_core cha_sqlite3 GTest::gtest_main)
+        PRIVATE
+            cha_core
+            cha_ui_text
+            cha_ui_render
+            cha_console
+            cha_sqlite3
+            GTest::gtest_main)
     if(CHA_BUILD_TUI)
         target_link_libraries(cha_tests PRIVATE cha_tui)
     endif()
@@ -409,7 +442,8 @@ if(BUILD_TESTING)
         # fork/exec. They test the portable console implementation on Linux
         # and macOS but are not part of the Windows build.
         add_executable(itest tests/integration/integration_test.cpp)
-        target_link_libraries(itest PRIVATE cha_core GTest::gtest_main)
+        target_link_libraries(
+            itest PRIVATE cha_core cha_ui_text cha_ui_render GTest::gtest_main)
         target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         cha_enable_warnings(itest)
         target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
@@ -472,7 +506,7 @@ if(BUILD_TESTING)
 endif()
 
 add_executable(chacon_app src/apps/console_main.cpp)
-target_link_libraries(chacon_app PRIVATE cha_core)
+target_link_libraries(chacon_app PRIVATE cha_console)
 set_target_properties(chacon_app PROPERTIES OUTPUT_NAME chacon)
 cha_enable_warnings(chacon_app)
 
