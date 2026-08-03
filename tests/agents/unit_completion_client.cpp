@@ -64,7 +64,7 @@ CompletionResult complete(
 Config network_config(int port, bool stream = true) {
     Config config;
     config.id = "assistant";
-    config.name = "Assistant";
+    config.display_name = "Assistant";
     config.host = "127.0.0.1";
     config.port = port;
     config.mode = Mode::net;
@@ -116,7 +116,7 @@ private:
 TEST(CompletionClient, EchoesOnePromptInTestMode) {
     Config config;
     config.id = "assistant";
-    config.name = "Assistant";
+    config.display_name = "Assistant";
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = config});
     Transcript transcript;
@@ -150,7 +150,7 @@ TEST(CompletionClient, ConstructsSessionLocalNetworkClientsConcurrently) {
             try {
                 Config config = network_config(9);
                 config.id = "assistant-" + std::to_string(index);
-                config.name = "Assistant " + std::to_string(index);
+                config.display_name = "Assistant " + std::to_string(index);
                 start.arrive_and_wait();
                 CompletionClient client({.config = std::move(config)});
                 infos[index] = client.info();
@@ -176,7 +176,7 @@ TEST(CompletionClient, ConstructsSessionLocalNetworkClientsConcurrently) {
 TEST(CompletionClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
     Config config;
     config.id = "assistant";
-    config.name = "Assistant";
+    config.display_name = "Assistant";
     std::atomic_bool cancellation{true};
     CompletionClient client({.config = config});
     Transcript transcript;

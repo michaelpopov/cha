@@ -69,9 +69,10 @@ even if the forum's characters changed.
 Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Session IDs use the same URL-safe character set as forum IDs; files whose stems do not follow that rule are ignored. Its embedded version, ID, and forum must match the selected forum before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database and is not subject to the ID restriction. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
 
 `forums/<forum>/characters/character_defaults.toml` may define configuration shared by every character in
-that forum. A character's own `character.toml` overrides it field by field. The
-precedence is built-in defaults, then `character_defaults.toml`, then the character
-file. The defaults file is optional; it cannot define `display_name`.
+that forum. Its values override the character definition field by field. The
+precedence is built-in defaults, then the character definition, then
+`character_defaults.toml` (and, after the member-layout migration, a per-member
+override). The defaults file is optional; it cannot define `display_name`.
 
 ### Prompt templates
 

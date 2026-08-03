@@ -57,7 +57,7 @@ void validate_forum_characters(
     for (const AgentDefinition& definition : definitions) {
         characters.push_back({
             .id = definition.config.id,
-            .name = definition.config.name,
+            .name = definition.config.display_name,
         });
     }
     (void)ForumCharacters(std::move(characters));

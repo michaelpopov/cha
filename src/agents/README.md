@@ -67,11 +67,12 @@ on the session's owner thread (the process main thread in `cha` and `chacon`);
 a forum check loads synchronously on its calling thread. `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
-Configuration is a one-level overlay, not general inheritance. Built-in
-defaults are applied first, then the optional forum
-`characters/character_defaults.toml`, then the character's own `character.toml`. An omitted
-field inherits the value below it. The character directory name provides the ID,
-and each character file must define `display_name`; the defaults file must not. The
+Configuration is a key-wise overlay, not general inheritance. Built-in defaults
+are applied first, then the character definition, then the optional forum
+`characters/character_defaults.toml`; a later per-member override will have the
+highest precedence after the layout migration. An omitted field inherits the
+value below it. The character definition directory name provides the ID, and its
+file must define `display_name`; the defaults file must not. The
 removed `id` and `name` fields are rejected. Parsing and validation errors
 identify the file that supplied the invalid value.
 

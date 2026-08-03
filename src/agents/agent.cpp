@@ -53,7 +53,8 @@ AgentDefinition load_definition_files(
     LoadedConfig loaded;
     try {
         loaded = load_config(
-            character_directory / "character.toml", base_config_path);
+            {.definition = character_directory / "character.toml",
+             .forum_defaults = std::move(base_config_path)});
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "Character '" + character_name
@@ -68,7 +69,7 @@ AgentDefinition load_definition_files(
         .reserved =
             {
                 {"character.id", config.id},
-                {"character.display_name", config.name},
+                {"character.display_name", config.display_name},
                 {"forum.id", utf8_path(forum_directory.filename())},
                 {"forum.display_name", std::string(forum_display_name)},
             },
@@ -106,7 +107,7 @@ std::string forum_context(
     Json other_agents = Json::array();
     for (const AgentDefinition& definition : definitions) {
         if (definition.config.id != current.config.id) {
-            other_agents.push_back(definition.config.name);
+            other_agents.push_back(definition.config.display_name);
         }
     }
 
@@ -114,7 +115,7 @@ std::string forum_context(
         "Forum context\n\n"
         "You are the agent named "
         + dump_json(
-            Json(current.config.name),
+            Json(current.config.display_name),
             JsonPurpose::agent_definition)
         + ".\n"
         "Other agents currently participating in this forum (JSON): "
@@ -189,10 +190,10 @@ void check_persona_character_collisions(
                     "Persona '" + persona.id + "' conflicts with character '"
                     + definition.config.id + "': IDs are the same");
             }
-            if (fold_ascii(persona.display_name) == fold_ascii(definition.config.name)) {
+            if (fold_ascii(persona.display_name) == fold_ascii(definition.config.display_name)) {
                 throw std::runtime_error(
                     "Persona '" + persona.display_name + "' conflicts with character '"
-                    + definition.config.name + "': display names are the same");
+                    + definition.config.display_name + "': display names are the same");
             }
         }
     }

@@ -212,7 +212,7 @@ TEST(AgentRegistry, IdentifiesCharacterWhoseDefinitionStartupFails) {
     AgentDefinition definition{
         .config = {
             .id = "alpha-id",
-            .name = "Alpha",
+            .display_name = "Alpha",
             .api_key_env = "__CHA_TEST_MISSING_AGENT_KEY__",
         },
         .system_prompt = "Prompt",

@@ -67,7 +67,7 @@ TEST(AgentDefinitions, LoadsOneCharacterAndCombinesRequiredPrompts) {
     ASSERT_EQ(definitions.size(), 1U);
     const AgentDefinition& definition = definitions.front();
     EXPECT_EQ(definition.config.id, "character");
-    EXPECT_EQ(definition.config.name, "Guide");
+    EXPECT_EQ(definition.config.display_name, "Guide");
     expect_forum_context(
         definition,
         "Character instructions\n\nForum instructions\n\n## Participants\n\nForum context\n\n",
@@ -266,7 +266,7 @@ TEST(AgentDefinitions, ExpandsTemplatesInSystemAndForumPrompts) {
     ASSERT_EQ(definitions.size(), 1U);
     expect_forum_context(
         definitions.front(),
-        "Voice for Seneca in The Stoics Forum (energetic)\n"
+        "Voice for Seneca in The Stoics Forum (measured)\n"
         "id=seneca\n\n\n"
         "Persona facing Seneca\n\n\n"
         "## Participants\n\nForum context\n\n",

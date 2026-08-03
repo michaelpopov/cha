@@ -208,7 +208,7 @@ TEST(ConcurrentControllers, ConstructSessionLocalCompletionClientsConcurrently) 
             test::NoopNotifier notifier;
             AgentDefinition definition;
             definition.config.id = "agent-" + std::to_string(index);
-            definition.config.name = "Agent " + std::to_string(index);
+            definition.config.display_name = "Agent " + std::to_string(index);
             definition.config.host = "127.0.0.1";
             definition.config.port = 9;
             definition.config.mode = Mode::net;

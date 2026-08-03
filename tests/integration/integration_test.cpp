@@ -85,9 +85,10 @@ private:
 Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
-    Config config = load_config(
-        workspace_directory / "forums" / "lobby" / "characters" / "Ismael" / "character.toml",
-        workspace_directory / "forums" / "lobby" / "characters" / "character_defaults.toml").config;
+    Config config = load_config({
+        .definition = workspace_directory / "forums" / "lobby" / "characters" / "Ismael" / "character.toml",
+        .forum_defaults = workspace_directory / "forums" / "lobby" / "characters" / "character_defaults.toml",
+    }).config;
     config.stream = stream;
     return config;
 }
@@ -153,7 +154,7 @@ ChatResult run_chat(bool stream) {
             transcript.completion_history()),
         .run = {
             .request_id = 1,
-            .target = {config.id, config.name},
+            .target = {config.id, config.display_name},
             .prompt_text = input,
         },
     };
@@ -194,7 +195,7 @@ ChatResult run_cancelled_chat() {
             transcript.completion_history()),
         .run = {
             .request_id = 2,
-            .target = {config.id, config.name},
+            .target = {config.id, config.display_name},
             .prompt_text = input,
         },
     };
@@ -478,8 +479,8 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     LobbySetup lobby = lobby_setup();
     std::vector<AgentDefinition>& definitions = lobby.definitions;
     ASSERT_EQ(definitions.size(), 2U);
-    ASSERT_EQ(definitions.front().config.name, "Cheburashka");
-    ASSERT_EQ(definitions.back().config.name, "Ismael");
+    ASSERT_EQ(definitions.front().config.display_name, "Cheburashka");
+    ASSERT_EQ(definitions.back().config.display_name, "Ismael");
     const std::string cheburashka_prompt = definitions.front().system_prompt;
     const std::string ismael_prompt = definitions.back().system_prompt;
     ASSERT_NE(cheburashka_prompt, ismael_prompt);

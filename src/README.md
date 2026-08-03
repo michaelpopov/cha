@@ -12,10 +12,10 @@ persona-facing manual is the [top-level `README.md`](../README.md).
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
 It runs inside a workspace containing `app.toml`, a persona roster, character definitions, and forums. A character
 definition contains an identity, effective model configuration, and base
-system-prompt template. Its model configuration and prompt variables may
-inherit shared values from the
-selected forum's optional `characters/character_defaults.toml`; character-specific values
-override them. A forum contains an ordered list of the characters participating in
+system-prompt template. Its model configuration and prompt variables may be
+overridden by shared values from the selected forum's optional
+`characters/character_defaults.toml`; a later per-member override will have the
+highest precedence after the layout migration. A forum contains an ordered list of the characters participating in
 chats in that forum, together with a forum-specific system-prompt template.
 When the forum is loaded, the character's expanded `SYSTEM.md` is followed by the
 forum's expanded `FORUM.md`, the complete static persona roster, and generated forum

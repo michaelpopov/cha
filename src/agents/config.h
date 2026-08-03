@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha {
 
@@ -30,7 +31,9 @@ enum class ReasoningFormat {
 // provides the stable ID; its config provides the display name.
 struct Config {
     std::string id{"assistant"};
+    // Reserved for a future character-name concept distinct from display name.
     std::string name{"Assistant"};
+    std::string display_name{"Assistant"};
     std::string host;
     int port{};
     Mode mode{Mode::test};
@@ -44,19 +47,31 @@ struct Config {
     bool https{};
 };
 
-// The typed connection configuration and initial template scope loaded from
-// one character file. The optional defaults file supplies defaults to both.
+// Definition-only data used for workspace validation and character browsing.
+struct CharacterDefinitionMetadata {
+    std::string id;
+    std::string display_name;
+    std::vector<std::string> tags;
+};
+
+// Named configuration paths prevent callers from confusing the three overlay roles.
+struct CharacterConfigPaths {
+    std::filesystem::path definition;
+    std::optional<std::filesystem::path> forum_defaults;
+    std::optional<std::filesystem::path> member_override;
+};
+
+// The typed connection configuration and initial template scope after all layers.
 struct LoadedConfig {
     Config config;
     TemplateScope prompt_variables;
 };
 
-// Loads one character configuration and its initial [prompt] scope from the
-// same TOML parses. The parent directory name becomes its ID and display_name
-// must come from character_path. When base_path is present, its other values
-// become defaults that the character file may override.
-LoadedConfig load_config(
-    const std::filesystem::path& character_path,
-    std::optional<std::filesystem::path> base_path = std::nullopt);
+// Loads definition, forum defaults, and member override in precedence order.
+LoadedConfig load_config(const CharacterConfigPaths& paths);
+
+// Loads definition-only identity and tag metadata without requiring provider settings.
+CharacterDefinitionMetadata load_character_definition_metadata(
+    const std::filesystem::path& definition_path);
 
 } // namespace cha

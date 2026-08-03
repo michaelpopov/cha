@@ -58,6 +58,12 @@ void TestWorkspace::write_character_config(std::string_view contents) const {
         << contents;
 }
 
+void TestWorkspace::write_character_defaults(std::string_view contents) const {
+    std::ofstream(
+        root_ / "forums" / "lobby" / "characters" / "character_defaults.toml")
+        << contents;
+}
+
 void TestWorkspace::add_persona(
     std::string_view id,
     std::string_view display_name,

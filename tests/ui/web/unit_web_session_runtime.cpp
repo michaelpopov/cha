@@ -349,7 +349,7 @@ public:
 
 AgentDefinition test_definition() {
     return {
-        .config = {.id = "guide", .name = "Guide", .host = "127.0.0.1", .port = 1},
+        .config = {.id = "guide", .display_name = "Guide", .host = "127.0.0.1", .port = 1},
         .system_prompt = "Test prompt",
     };
 }
