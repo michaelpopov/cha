@@ -23,8 +23,10 @@ stay within the forum.
 
 During a run, the participating characters are represented as agents. Each agent
 has its own identity, effective system prompt, and model connection, while all
-agents use the session's shared chat transcript. The first agent in the forum's
-list is the default; a prompt beginning with `@Name` is sent to another agent.
+agents use the session's shared chat transcript. A forum's optional validated
+`default_agent` ID selects the default without changing the lexicographic agent
+list; otherwise its first member ID is the default. A prompt beginning with
+`@Name` is sent to another agent.
 Each submitted prompt carries a validated roster persona as its author. That author
 is stored on the human entry; projection prefixes ordinary human `persona` messages
 with `from <Name>:` without changing stored or rendered text.
@@ -193,8 +195,8 @@ sequenceDiagram
     participant controller as SessionController
 
     main->>main: load_dotenv
-    main->>ws: construct, require forums/
-    main->>ws: load_personas
+    main->>ws: construct, require characters/, forums/, and personas/
+    main->>ws: use validated PersonaRoster
     ws-->>main: PersonaRoster
     main->>sel: select_persona
     sel-->>main: selected Persona

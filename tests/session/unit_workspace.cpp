@@ -231,7 +231,7 @@ TEST_F(ApplicationWorkspaceTest, RejectsUnknownAndMalformedDefaultAgent) {
     EXPECT_THROW((void)Workspace(root_), std::runtime_error);
 }
 
-TEST_F(ApplicationWorkspaceTest, PersonaLoadingDoesNotChangeWorkspaceConstruction) {
+TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRequiresValidPersonaRoster) {
     std::filesystem::remove_all(root_ / "personas");
     EXPECT_THROW((void)Workspace(root_), std::runtime_error);
 

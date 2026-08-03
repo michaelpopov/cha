@@ -36,7 +36,8 @@ flowchart TD
     forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
 ```
 
-`Workspace` refuses to construct unless both `forums/` and `characters/` exist.
+`Workspace` refuses to construct unless `forums/`, `characters/`, and a valid
+non-empty `personas/` roster exist.
 The `forums/` directory may be temporarily empty; its valid forum names are
 sorted before presentation. Forum IDs and session database stems may contain
 only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and
@@ -47,8 +48,19 @@ IDs and are validated with `validate_character_id()`.
 Each forum's `config.toml` must provide a non-empty string `display_name` for
 persona-facing selection and listings; its directory name remains the stable ID.
 Each definition directory likewise supplies its stable ID, while its
-`config.toml` provides the required persona-facing `display_name`. The loader
-rejects the removed character-level `id` and `name` fields.
+`character.toml` provides the required persona-facing `display_name`. The loader
+rejects the removed character-level `id` and `name` fields. `display_name` and
+optional tags are definition-only: they are errors in forum defaults and member
+overrides. Tags are trimmed, non-empty, control-free, and unique under ASCII
+case folding; they are metadata only and never determine membership. Definitions
+with no member directory in any forum are valid.
+
+Workspace construction validates the whole directory graph before it serves a
+forum: every member resolves to one definition, each configured `default_agent`
+names a member, and character/persona IDs and case-folded display names do not
+collide. An invalid workspace fails as a whole. `default_agent` leaves member
+and agent-definition ordering unchanged; when it is absent, the first
+lexicographic member ID is used.
 
 Template containment follows the file's layer: a definition `CHARACTER.md` is
 contained to workspace `characters/`; a member `CHARACTER.md` and `FORUM.md`
@@ -57,8 +69,9 @@ are contained to their forum directory.
 When a session is created or opened, `Workspace` loads the validated roster once and checks for
 `members/character_defaults.toml` within the selected forum and explicitly passes that optional path, the
 forum directory, the forum display name, and the roster to the agent loaders along with each
-definition/member pair. The agent layer therefore applies shared configuration and
-template policy without knowing or inferring the workspace layout.
+definition/member pair. The agent layer applies shared configuration and template
+policy, deriving the definition containment root from the definition directory's
+parent and otherwise receiving resolved workspace paths explicitly.
 
 `Workspace::check_forum()` follows the same loading path without creating or
 opening a session. It also constructs `ForumCharacters` to validate character IDs,
@@ -79,8 +92,9 @@ and otherwise use it before asking the registry to open a session.
 
 `ForumCharacters` is the identity-only view of the characters participating in one
 forum. It is ordered, non-empty, and rejects duplicate IDs and
-ASCII-case-insensitive names. The first character supplies the initial default
-agent.
+ASCII-case-insensitive names. The workspace passes the validated initial default
+character ID separately: it is `config.toml`'s `default_agent` when supplied,
+otherwise the first lexicographic member ID. It never reorders this view.
 
 `resolve_handle()` tries an exact case-insensitive name, retries after removing
 trailing `,.;:!?`, and finally accepts a unique case-insensitive prefix. It

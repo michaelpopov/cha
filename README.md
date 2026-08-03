@@ -6,10 +6,10 @@ line-oriented `chacon` console frontend.
 
 ## Workspace configuration
 
-Run either executable from a workspace containing `app.toml`, `forums/`, and a
-`personas/` roster. `Workspace` itself requires `forums/`; starting a session
-requires a non-empty `personas/` directory, while forum listing remains available
-before a roster has been created.
+Run either executable from a workspace containing `app.toml`, `characters/`,
+`forums/`, and a valid non-empty `personas/` roster. `Workspace` construction
+is all-or-nothing: it requires `characters/`, `forums/`, and the roster, so
+forum listing is unavailable before a roster has been created.
 Each immediate subdirectory of `forums/` is a forum; forums are presented in
 lexicographic name order. At `cha` startup, a terminal selector lets you choose
 a persona, then a forum, and then an existing session or **New session**. `chacon` makes the same
@@ -52,31 +52,60 @@ the console's `--persona` takes the directory ID, while the TUI and web lobby sh
 display names. A persona ID cannot equal a character ID, and a persona display name
 cannot equal a character display name case-insensitively.
 
-Each forum has `config.toml` with a required `display_name` string, a `characters/` directory with one or more character subdirectories, and `FORUM.md`. The directory name is the stable forum ID used by `chacon --forum`; it may contain only RFC 3986 unreserved ASCII characters (letters, digits, `-`, `.`, `_`, and `~`), excluding the complete names `.` and `..`. The display name is shown in the UI and forum listings and is not subject to the ID restriction. A forum is also the unit of distribution: it can be zipped and unpacked into another workspace. Each character is loaded from `forums/<forum>/characters/<character>/character.toml` and `SYSTEM.md`; each gets its own model connection and effective system prompt. Its four sections, in order, are expanded `SYSTEM.md`, expanded `FORUM.md`, the complete static persona roster, and generated forum context that identifies the agent and the forum's other characters. Character directories are loaded in lexicographic name order; the first is the default. Start a prompt with `@Name` to choose another agent; names are matched case-insensitively and an unambiguous prefix works. Use `@@` to send a literal leading `@`, and `/@Name` to change the default for the current run.
+Character definitions live once at `characters/<character>/`, with required
+`character.toml` and `CHARACTER.md`. A forum has `config.toml` with a required
+`display_name`, `FORUM.md`, and a required non-empty `members/` directory. Each
+`members/<character>/` directory is an explicit membership record; it may be
+empty, or may contain optional `character.toml` and `CHARACTER.md` overrides.
+The optional `members/character_defaults.toml` provides forum-wide overrides.
+When present, a member `CHARACTER.md` replaces the definition prompt entirely;
+it is never merged. Each effective system prompt retains its four sections in
+order: expanded `CHARACTER.md`, expanded `FORUM.md`, the complete static persona
+roster, and generated forum context.
+The forum directory name is the stable ID used by `chacon --forum`; it may
+contain only RFC 3986 unreserved ASCII characters (letters, digits, `-`, `.`,
+`_`, and `~`), excluding `.` and `..`. A member must name an existing workspace
+definition, and an optional `default_agent = "character-id"` in `config.toml`
+must name a member. Without it, the lexicographically first member ID is the
+default; an explicit default never changes roster order. Workspace validation is
+all-or-nothing: invalid definitions, members, defaults, or identity collisions
+prevent loading.
 
-Each character directory's name is its stable ID and identifies transcript entries;
-its `display_name` is the visible `@mention` handle. Display names cannot start
-or end with whitespace, start with `@` or `/`, or be a reserved participant
-name (case-insensitively). A multi-word display name can be addressed through any
-unique word or word prefix—for example, `@Winston` or `@Churchill` for
-`Winston Churchill`. A forum cannot contain duplicate IDs or display names. All
-agents use the session's shared chat transcript. Exchanges involving another
+Each definition directory's name is its stable ID and identifies transcript
+entries; its required `display_name` is the visible `@mention` handle. It is
+the sole authorable identity key: `id` and `name` are rejected in every
+configuration layer, and `display_name` is rejected in both forum-local layers.
+Display names cannot start or end with whitespace, start with `@` or `/`, or be
+a reserved participant name (case-insensitively). A multi-word display name can
+be addressed through any unique word or word prefix—for example, `@Winston` or
+`@Churchill` for `Winston Churchill`. Character IDs and display names are unique
+workspace-wide, including against personas. Definitions may belong to no forum;
+removing a member does not alter durable names in existing session transcripts.
+Start a prompt with `@Name` to choose another agent; names match
+case-insensitively and an unambiguous prefix works. Use `@@` to send a literal
+leading `@`.
+All agents use the session's shared chat transcript. Exchanges involving another
 agent are supplied as escaped JSON Lines so the receiving agent can treat the
 other speaker's first-person statements as quoted history rather than its own
-identity. A session stores only its forum and transcript, so it can be reopened
-even if the forum's characters changed.
+identity.
 
 Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Session IDs use the same URL-safe character set as forum IDs; files whose stems do not follow that rule are ignored. Its embedded version, ID, and forum must match the selected forum before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database and is not subject to the ID restriction. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
 
-`forums/<forum>/characters/character_defaults.toml` may define configuration shared by every character in
-that forum. Its values override the character definition field by field. The
-precedence is built-in defaults, then the character definition, then
-`character_defaults.toml` (and, after the member-layout migration, a per-member
-override). The defaults file is optional; it cannot define `display_name`.
+Configuration is overlaid one key at a time: built-in defaults, then
+`characters/<id>/character.toml`, optional
+`forums/<forum>/members/character_defaults.toml`, and optional
+`forums/<forum>/members/<id>/character.toml`. The `[prompt]` table uses the
+same precedence. `display_name` and `tags` belong only in the definition and
+are errors in either forum-local layer.
+
+Definition tags are optional free-form strings used only for future navigation;
+they never create membership. Each tag is trimmed, cannot be empty or contain a
+control character or line break, and must be unique within one definition under
+ASCII case folding. Its authored casing is retained for display.
 
 ### Prompt templates
 
-`SYSTEM.md` and `FORUM.md` are expanded separately for each character before they
+`CHARACTER.md` and `FORUM.md` are expanded separately for each character before they
 are concatenated. Two expansion forms and one escape are recognized; everything
 else is copied unchanged:
 
@@ -87,19 +116,19 @@ else is copied unchanged:
 | `$$$` | Escape the next macro prefix by producing a literal `$$`. For example, `$$$(file.md)` becomes `$$(file.md)`. |
 
 Include paths are trimmed, resolved relative to the including file, and inserted
-without adding separators or newlines. They must name regular files inside the
-forum directory, including after symlink resolution. That keeps a zipped forum
-self-contained: it cannot depend on sibling forums or anything outside itself.
+without adding separators or newlines. Definition `CHARACTER.md` includes must
+remain under workspace `characters/`; member `CHARACTER.md` and `FORUM.md`
+includes must remain in that forum, including after symlink resolution.
 
 Variables come from a `[prompt]` table (never from top-level connection fields
 such as `api_key`) and from reserved names supplied by the loader:
 
 ```toml
-# forums/example/characters/character_defaults.toml
+# forums/example/members/character_defaults.toml
 [prompt]
 register = "measured"
 
-# forums/example/characters/local-assistant/character.toml
+# forums/example/members/local-assistant/character.toml
 [prompt]
 register = "energetic"
 ```
@@ -109,8 +138,8 @@ $$(../shared/voice.md)
 You are portraying $${character.display_name} in $${forum.display_name}.
 ```
 
-The initial variable scope is the base `[prompt]` table overlaid by the
-character's `[prompt]` table. When a template or included file is read, a
+The initial variable scope is the definition `[prompt]` table, overlaid by the
+forum-default and member `[prompt]` tables. When a template or included file is read, a
 `[prompt]` table in a template directory's adjacent `config.toml` overlays the inherited
 scope for that file and its descendants. Values may be strings, integers,
 floating-point numbers, or booleans. Variable names may contain ASCII letters,
@@ -119,8 +148,8 @@ digits, `_`, `-`, and `.`.
 Reserved names are `character.id`, `character.display_name`, `forum.id`, and
 `forum.display_name`. They always come from the loader and cannot be overridden
 by a `[prompt]` table. Expansion rejects unknown variables, malformed macros,
-missing or cyclic includes, paths outside the forum, more than 256 includes, an
-active file depth above 16, or output above 1 MiB. Each `SYSTEM.md` and
+missing or cyclic includes, paths outside their layer's containment root, more than 256 includes, an
+active file depth above 16, or output above 1 MiB. Each `CHARACTER.md` and
 `FORUM.md` expansion has its own counters.
 
 The following top-level configuration fields are supported:
@@ -145,7 +174,8 @@ Character files use `display_name` and their directory-derived ID; the removed
 Example:
 
 ```toml
-# forums/example/characters/character_defaults.toml
+# characters/local-assistant/character.toml
+display_name = "Local assistant"
 host = "127.0.0.1"
 port = 8080
 mode = "net"
@@ -156,8 +186,7 @@ reasoning_format = "auto"
 ```
 
 ```toml
-# forums/example/characters/local-assistant/character.toml
-display_name = "Local assistant"
+# forums/example/members/local-assistant/character.toml
 temperature = 0.7
 ```
 
@@ -262,7 +291,7 @@ prompt in that console run.
 forum and character directories and required files, forum/character TOML settings,
 effective required connection settings, character ID and display-name validity
 and uniqueness, the validated persona roster and persona/character collision rules,
-and complete expansion of every character's `SYSTEM.md` and
+and complete expansion of every character's `CHARACTER.md` and
 `FORUM.md`—including variables, includes, containment, cycles, and limits. A
 successful check prints, for example, `Forum 'stoics' is valid (3 characters).`
 and exits with status 0; a validation failure uses the normal `Failed: ...`

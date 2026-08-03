@@ -22,8 +22,8 @@ public:
         : root_(std::filesystem::temp_directory_path() / ("cha_config_"
             + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))),
           definition_(root_ / "definition" / "character.toml"),
-          defaults_(root_ / "forum" / "character_defaults.toml"),
-          member_(root_ / "forum" / "member" / "character.toml") {
+          defaults_(root_ / "forum" / "members" / "character_defaults.toml"),
+          member_(root_ / "forum" / "members" / "member" / "character.toml") {
         std::filesystem::create_directories(definition_.parent_path());
         std::filesystem::create_directories(defaults_.parent_path());
         std::filesystem::create_directories(member_.parent_path());
@@ -85,12 +85,12 @@ constexpr std::string_view complete_definition =
 TEST(Config, LoadsDefinitionOnlyAndKeepsReservedNameDefault) {
     ConfigFiles files;
     files.write(files.definition(), required_definition);
-    const Config config = load_config(files.paths()).config;
-    EXPECT_EQ(config.id, "definition");
-    EXPECT_EQ(config.display_name, "Example");
-    EXPECT_EQ(config.name, "Assistant");
-    EXPECT_EQ(config.host, "definition.example");
-    EXPECT_EQ(config.port, 8080);
+    const Config effective = load_config(files.paths()).config;
+    EXPECT_EQ(effective.id, "definition");
+    EXPECT_EQ(effective.display_name, "Example");
+    EXPECT_EQ(effective.name, Config{}.name);
+    EXPECT_EQ(effective.host, "definition.example");
+    EXPECT_EQ(effective.port, 8080);
 }
 
 TEST(Config, OverlaysEveryRuntimeAndPromptFieldAcrossThreeLayers) {
@@ -102,21 +102,21 @@ TEST(Config, OverlaysEveryRuntimeAndPromptFieldAcrossThreeLayers) {
     files.write(files.member(),
         "host = \"member\"\nport = 8443\nmode = \"net\"\nmodel = \"three\"\nstream = true\ntemperature = 0.3\napi_key = \"three\"\napi_key_env = \"THREE\"\nreasoning_effort = \"high\"\nreasoning_format = \"reasoning_content\"\nhttps = true\n[prompt]\nvalue = \"member\"\nmember = \"member\"\n");
     const LoadedConfig loaded = load_config(files.paths(true, true));
-    const Config& config = loaded.config;
-    EXPECT_EQ(config.id, "definition");
-    EXPECT_EQ(config.display_name, "Example");
-    EXPECT_EQ(config.name, "Assistant");
-    EXPECT_EQ(config.host, "member");
-    EXPECT_EQ(config.port, 8443);
-    EXPECT_EQ(config.mode, Mode::net);
-    EXPECT_EQ(config.model, "three");
-    EXPECT_TRUE(config.stream);
-    EXPECT_DOUBLE_EQ(config.temperature, 0.3);
-    EXPECT_EQ(config.api_key, "three");
-    EXPECT_EQ(config.api_key_env, "THREE");
-    EXPECT_EQ(config.reasoning_effort, "high");
-    EXPECT_EQ(config.reasoning_format, ReasoningFormat::reasoning_content);
-    EXPECT_TRUE(config.https);
+    const Config& effective = loaded.config;
+    EXPECT_EQ(effective.id, "definition");
+    EXPECT_EQ(effective.display_name, "Example");
+    EXPECT_EQ(effective.name, Config{}.name);
+    EXPECT_EQ(effective.host, "member");
+    EXPECT_EQ(effective.port, 8443);
+    EXPECT_EQ(effective.mode, Mode::net);
+    EXPECT_EQ(effective.model, "three");
+    EXPECT_TRUE(effective.stream);
+    EXPECT_DOUBLE_EQ(effective.temperature, 0.3);
+    EXPECT_EQ(effective.api_key, "three");
+    EXPECT_EQ(effective.api_key_env, "THREE");
+    EXPECT_EQ(effective.reasoning_effort, "high");
+    EXPECT_EQ(effective.reasoning_format, ReasoningFormat::reasoning_content);
+    EXPECT_TRUE(effective.https);
     EXPECT_EQ(loaded.prompt_variables.at("value"), "member");
     EXPECT_EQ(loaded.prompt_variables.at("base"), "base");
     EXPECT_EQ(loaded.prompt_variables.at("default"), "default");

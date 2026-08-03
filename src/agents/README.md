@@ -77,9 +77,12 @@ Configuration is a key-wise overlay, not general inheritance. Built-in defaults
 are applied first, then the character definition, the optional forum
 `members/character_defaults.toml`, and the optional per-member override. An omitted field inherits the
 value below it. The character definition directory name provides the ID, and its
-file must define `display_name`; the defaults file must not. The
-removed `id` and `name` fields are rejected. Parsing and validation errors
-identify the file that supplied the invalid value.
+file must define `display_name`; both forum-local layers must not define it or
+`tags`. `tags` are definition-only optional free-form strings: each is trimmed,
+non-empty, free of controls and line breaks, and unique under ASCII case
+folding while retaining authored casing. The removed `id` and `name` fields are
+rejected. Parsing and validation errors identify the file that supplied the
+invalid value.
 
 Identity rules, enforced by `validate_character_id` and `validate_character_name`:
 
@@ -91,7 +94,8 @@ Identity rules, enforced by `validate_character_id` and `validate_character_name
 - within one forum, IDs are unique and names are unique case-insensitively.
 
 Workspace construction rejects persona/character ID collisions and
-case-insensitive display-name collisions across all definitions.
+case-insensitive display-name collisions across all definitions. Tags organize
+definitions only; they never imply membership in a forum.
 
 `AgentRegistry` validates these rules when it accepts backend metadata.
 `ForumCharacters` in `session/` separately owns the ordered identity-only view used
