@@ -41,6 +41,13 @@
 namespace cha::web {
 namespace {
 
+PortBackedSession fake_session(
+    const SessionIdentity& identity,
+    std::unique_ptr<WebSessionController> controller) {
+    return {{identity, "Test forum " + identity.forum_id,
+             "Test session " + identity.session_id}, std::move(controller)};
+}
+
 using namespace std::chrono_literals;
 
 httplib::Client web_client(int port) {
@@ -386,8 +393,8 @@ public:
 
     RealSocketSseServer()
         : settings_(make_settings()),
-          registry_(settings_, [](const SessionKey&, WakeNotifier&) {
-              return std::make_unique<LargeSnapshotController>(8U * 1024U * 1024U);
+          registry_(settings_, [](const SessionIdentity& key, WakeNotifier&) {
+              return fake_session(key, std::make_unique<LargeSnapshotController>(8U * 1024U * 1024U));
           }) {
         server_.set_socket_options([](int socket) {
             const int send_buffer = 16 * 1024;
@@ -524,8 +531,8 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     initialize_diagnostic_logging(log_path, "critical");
     SessionRegistry registry(
         {.session_limit = 1},
-        [](const SessionKey&, WakeNotifier&) {
-            return std::make_unique<PermanentlyBlockedShutdownController>();
+        [](const SessionIdentity& key, WakeNotifier&) {
+            return fake_session(key, std::make_unique<PermanentlyBlockedShutdownController>());
         });
     if (!std::holds_alternative<OpenSessionSuccess>(
             registry.open({"blocked-forum", "blocked-session"}, 500ms))) {
@@ -853,9 +860,9 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     settings.open_deadline = 5s;
     SessionRegistry registry(
         settings,
-        [&gate](const SessionKey&, WakeNotifier&) {
+        [&gate](const SessionIdentity& key, WakeNotifier&) {
             gate.wait();
-            return std::make_unique<IdleController>();
+            return fake_session(key, std::make_unique<IdleController>());
         });
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;

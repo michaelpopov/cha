@@ -23,6 +23,13 @@
 namespace cha::web {
 namespace {
 
+PortBackedSession fake_session(
+    const SessionIdentity& identity,
+    std::unique_ptr<WebSessionController> controller) {
+    return {{identity, "Test forum " + identity.forum_id,
+             "Test session " + identity.session_id}, std::move(controller)};
+}
+
 using namespace std::chrono_literals;
 
 class IdleController final : public WebSessionController {
@@ -117,24 +124,11 @@ bool listed_not_live(TestServer& server, std::string_view id) {
     return false;
 }
 
-WebSessionMetadata load_workspace_metadata(
-    const Workspace& workspace,
-    const SessionKey& key) {
-    const Forum forum = workspace.load_forum(key.forum);
-    const SessionSummary session = workspace.session_summary(
-        key.forum, key.session_id);
-    return {
-        .forum = {forum.name, forum.display_name},
-        .session_id = session.id,
-        .session_label = session.label,
-    };
-}
-
 TEST(LobbyRoutes, ServesPersonaListingHealthAndForumListingWithoutSessionDataInHealth) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<IdleController>();
+    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
     const auto root = server.client().Get("/");
@@ -206,9 +200,9 @@ TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionKey&, WakeNotifier&) {
+    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
-        return std::make_unique<IdleController>();
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
     const auto created = server.client().Post("/api/v1/forums/lobby/sessions", R"({"label":"Notes"})", "application/json");
@@ -248,9 +242,9 @@ TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeRegistry)
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 1}, [&starts](const SessionKey&, WakeNotifier&) {
+    SessionRegistry registry({.session_limit = 1}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
-        return std::make_unique<IdleController>();
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
     const auto invalid = server.client().Post("/api/v1/forums/%2e%2e/sessions/nope/open", "{}", "application/json");
@@ -286,8 +280,8 @@ TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeRegistry)
 TEST(LobbyRoutes, AcceptsConfiguredAndLoopbackAliasOrigins) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<IdleController>();
+    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
 
@@ -317,8 +311,8 @@ TEST(LobbyRoutes, AcceptsConfiguredAndLoopbackAliasOrigins) {
 TEST(LobbyRoutes, RejectsDnsRebindingHostOnReadsAndMutations) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<IdleController>();
+    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
     const httplib::Headers rebound{
@@ -365,8 +359,8 @@ TEST(LobbyRoutes, RejectsDnsRebindingHostOnReadsAndMutations) {
 TEST(LobbyRoutes, ValidatesMissingIdentifiersMethodsAndOriginWithoutOrigin) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<IdleController>();
+    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
 
@@ -402,8 +396,8 @@ TEST(LobbyRoutes, ReportsSessionListingStorageFailuresAsInternalErrors) {
     std::ofstream(fixture.root() / "forums" / "lobby" / "sessions")
         << "not a directory";
     auto workspace = std::make_shared<const Workspace>(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<IdleController>();
+    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
 
@@ -421,9 +415,9 @@ TEST(LobbyRoutes, ReportsCorruptSessionMetadataAsInternalError) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionKey&, WakeNotifier&) {
+    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
-        return std::make_unique<IdleController>();
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
     const std::string id = create_session(server, "Corrupt");
@@ -447,9 +441,9 @@ TEST(LobbyRoutes, ReattachesFromRegistryWithoutReadingStorageAgain) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionKey&, WakeNotifier&) {
+    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
-        return std::make_unique<IdleController>();
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
     const std::string id = create_session(server, "Live");
@@ -488,17 +482,13 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
     SessionRegistry registry(
         settings,
         [workspace, deleted, deleted_database](
-            const SessionKey& key,
+            const SessionIdentity& key,
             WakeNotifier& notifier) {
             if (key.session_id == deleted.id
                 && !std::filesystem::remove(deleted_database)) {
                 throw std::runtime_error("Test session was not deleted");
             }
-            return adapt_session_controller(workspace->open_session(
-                key.forum, key.session_id, notifier));
-        },
-        [workspace](const SessionKey& key) {
-            return load_workspace_metadata(*workspace, key);
+            return RegistryOwnerInput{workspace->open_session(key, notifier)};
         });
     TestServer server(workspace, registry, settings);
 
@@ -531,16 +521,12 @@ TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
     SessionRegistry registry(
         settings,
         [workspace, forum_directory](
-            const SessionKey& key,
+            const SessionIdentity& key,
             WakeNotifier& notifier) {
             if (std::filesystem::remove_all(forum_directory) == 0) {
                 throw std::runtime_error("Test forum was not deleted");
             }
-            return adapt_session_controller(workspace->open_session(
-                key.forum, key.session_id, notifier));
-        },
-        [workspace](const SessionKey& key) {
-            return load_workspace_metadata(*workspace, key);
+            return RegistryOwnerInput{workspace->open_session(key, notifier)};
         });
     TestServer server(workspace, registry, settings);
 
@@ -558,9 +544,9 @@ TEST(LobbyRoutes, ValidatesOpenBodyAndAppliesTheRequestLimit) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionKey&, WakeNotifier&) {
+    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
-        return std::make_unique<IdleController>();
+        return fake_session(key, std::make_unique<IdleController>());
     });
     WebSettings settings{.open_deadline = 500ms, .request_body_limit = 64};
     TestServer server(workspace, registry, settings);
@@ -599,8 +585,8 @@ TEST(LobbyRoutes, ValidatesOpenBodyAndAppliesTheRequestLimit) {
 TEST(LobbyRoutes, WrapsGeneratedAndUnhandledErrorsInTheCommonEnvelope) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<IdleController>();
+    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(
         workspace,
@@ -645,13 +631,13 @@ TEST(LobbyRoutes, WrapsGeneratedAndUnhandledErrorsInTheCommonEnvelope) {
         "The requested resource was not found.");
 }
 
-TEST(LobbyRoutes, CreatedSessionSurvivesBusyOpenAndCanBeRetried) {
+TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     std::atomic<bool> busy{true};
-    SessionRegistry registry({.session_limit = 2}, [&busy](const SessionKey&, WakeNotifier&) {
+    SessionRegistry registry({.session_limit = 2}, [&busy](const SessionIdentity& key, WakeNotifier&) {
         if (busy) throw SessionBusyError("held by test");
-        return std::make_unique<IdleController>();
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
     const std::string id = create_session(server);
@@ -699,13 +685,13 @@ TEST(LobbyRoutes, CreateSucceedsWhileAnotherStoredSessionLeaseIsHeld) {
     registry.begin_shutdown();
 }
 
-TEST(LobbyRoutes, CreatedSessionSurvivesInitializationFailureAndCanBeRetried) {
+TEST(LobbyRoutes, NewStoredSessionSurvivesInitializationFailureAndCanBeRetried) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     std::atomic<bool> fail{true};
-    SessionRegistry registry({.session_limit = 2}, [&fail](const SessionKey&, WakeNotifier&) {
+    SessionRegistry registry({.session_limit = 2}, [&fail](const SessionIdentity& key, WakeNotifier&) {
         if (fail) throw std::runtime_error("initialization failed");
-        return std::make_unique<IdleController>();
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
     const std::string id = create_session(server);
@@ -721,11 +707,11 @@ TEST(LobbyRoutes, CreatedSessionSurvivesInitializationFailureAndCanBeRetried) {
     registry.begin_shutdown();
 }
 
-TEST(LobbyRoutes, CreatedSessionSurvivesLimitOpenAndCanBeRetried) {
+TEST(LobbyRoutes, NewStoredSessionSurvivesLimitOpenAndCanBeRetried) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
-    SessionRegistry registry({.session_limit = 1}, [](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<IdleController>();
+    SessionRegistry registry({.session_limit = 1}, [](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry);
     const std::string occupied = create_session(server, "Occupied");
@@ -760,9 +746,9 @@ TEST(LobbyRoutes, CreatedSessionSurvivesLimitOpenAndCanBeRetried) {
 TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionKey&, WakeNotifier&) {
+    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         std::this_thread::sleep_for(30ms);
-        return std::make_unique<IdleController>();
+        return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(workspace, registry, {.open_deadline = 1ms});
     const std::string id = create_session(server);

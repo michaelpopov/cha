@@ -57,18 +57,10 @@ void write_forum_check(
     const std::string& forum,
     std::ostream& out);
 
-// The session the console is about to run: the controller it drives, and the
-// resolved session ID, which lets a front end report a newly created session
-// without rescanning the catalog.
-struct ConsoleSelection {
-    std::unique_ptr<SessionController> controller;
-    std::string session_id;
-};
-
 // Resolves a validated selection through Workspace. Throws std::runtime_error
 // for a missing forum or session and for a session whose summary carries an
 // error, so console_main can report those as runtime rather than usage failures.
-[[nodiscard]] ConsoleSelection open_console_session(
+[[nodiscard]] OpenedSession open_console_session(
     const Workspace& workspace,
     const ConsoleOptions& options,
     WakeNotifier& notifier);

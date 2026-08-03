@@ -17,13 +17,13 @@
 namespace cha::web {
 namespace {
 
-std::string session_log(const SessionKey& key, std::string_view event) {
-    return "web session forum_id=" + key.forum + " session_id=" + key.session_id
+std::string session_log(const SessionIdentity& key, std::string_view event) {
+    return "web session forum_id=" + key.forum_id + " session_id=" + key.session_id
         + " event=" + std::string(event);
 }
 
-bool valid_key(const SessionKey& key) {
-    return is_url_safe_identifier(key.forum)
+bool valid_key(const SessionIdentity& key) {
+    return is_url_safe_identifier(key.forum_id)
         && is_url_safe_identifier(key.session_id);
 }
 
@@ -77,7 +77,7 @@ struct SessionRegistry::Entry {
 };
 
 struct SessionRegistry::RetiredEntry {
-    SessionKey key;
+    SessionIdentity key;
     std::unique_ptr<Entry> entry;
 };
 
@@ -90,11 +90,9 @@ WebSessionRuntime& SessionHandle::runtime() const { return *runtime_; }
 
 SessionRegistry::SessionRegistry(
     WebSettings settings,
-    RegistryControllerFactory factory,
-    RegistryMetadataFactory metadata_factory)
+    RegistrySessionFactory factory)
     : settings_(std::move(settings)),
-      factory_(std::move(factory)),
-      metadata_factory_(std::move(metadata_factory)) {
+      factory_(std::move(factory)) {
     if (!factory_) throw std::invalid_argument("Session registry needs a controller factory");
     if (settings_.session_limit == 0) {
         throw std::invalid_argument("Web session limit must be positive");
@@ -108,19 +106,9 @@ SessionRegistry SessionRegistry::from_workspace(
     const auto controller_workspace = workspace;
     return SessionRegistry(
         std::move(settings),
-        [controller_workspace](const SessionKey& key, WakeNotifier& notifier) {
-            return adapt_session_controller(
-                controller_workspace->open_session(key.forum, key.session_id, notifier));
-        },
-        [workspace = std::move(workspace)](const SessionKey& key) {
-            const Forum forum = workspace->load_forum(key.forum);
-            const SessionSummary session = workspace->session_summary(
-                key.forum, key.session_id);
-            return WebSessionMetadata{
-                .forum = {forum.name, forum.display_name},
-                .session_id = session.id,
-                .session_label = session.label,
-            };
+        [controller_workspace](const SessionIdentity& key, WakeNotifier& notifier) {
+            return RegistryOwnerInput{
+                controller_workspace->open_session(key, notifier)};
         });
 }
 
@@ -142,12 +130,12 @@ SessionRegistry::~SessionRegistry() {
     for (std::thread* owner : owners) owner->join();
 }
 
-std::string SessionRegistry::path_for(const SessionKey& key) {
-    return "/s/" + key.forum + "/" + key.session_id + "/";
+std::string SessionRegistry::path_for(const SessionIdentity& key) {
+    return "/s/" + key.forum_id + "/" + key.session_id + "/";
 }
 
 RegistryOpenResult SessionRegistry::open(
-    SessionKey key,
+    SessionIdentity key,
     std::chrono::milliseconds deadline) {
     if (!valid_key(key)) return invalid_key_error();
     log_info(session_log(key, "open_requested"));
@@ -235,7 +223,7 @@ RegistryOpenResult SessionRegistry::open(
 }
 
 std::optional<RegistryOpenResult> SessionRegistry::try_reattach(
-    const SessionKey& key) {
+    const SessionIdentity& key) {
     if (!valid_key(key)) return invalid_key_error();
     RetiredEntries retired;
     std::optional<RegistryOpenResult> result;
@@ -263,7 +251,7 @@ std::optional<RegistryOpenResult> SessionRegistry::try_reattach(
     return result;
 }
 
-SessionHandle SessionRegistry::lookup(const SessionKey& key) {
+SessionHandle SessionRegistry::lookup(const SessionIdentity& key) {
     if (!valid_key(key)) return {};
     RetiredEntries retired;
     SessionHandle result;
@@ -344,9 +332,9 @@ bool SessionRegistry::join_shutdown(std::chrono::milliseconds grace) {
     return true;
 }
 
-std::vector<SessionKey> SessionRegistry::unfinished_owners() {
+std::vector<SessionIdentity> SessionRegistry::unfinished_owners() {
     RetiredEntries retired;
-    std::vector<SessionKey> result;
+    std::vector<SessionIdentity> result;
     {
         std::lock_guard lock(mutex_);
         retired = sweep_locked();
@@ -394,7 +382,7 @@ void SessionRegistry::reap(RetiredEntries retired) {
     }
 }
 
-void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> startup) {
+void SessionRegistry::owner_main(SessionIdentity key, std::shared_ptr<StartupResult> startup) {
     // This shared pointer exists only for the construction handoff. At either
     // the commit point or a failed open, ownership moves into the entry before
     // this thread returns. The owner uses runtime_view thereafter and can
@@ -415,15 +403,20 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
         lifecycle_changed_.notify_all();
     };
     try {
-        WebSessionMetadata metadata;
-        if (metadata_factory_) {
-            metadata = metadata_factory_(key);
-        } else {
-            metadata.forum.id = key.forum;
-            metadata.session_id = key.session_id;
+        auto notifier = std::make_shared<WakeNotifier>();
+        RegistryOwnerInput owner_input = factory_(key, *notifier);
+        SessionDescriptor descriptor;
+        std::unique_ptr<WebSessionController> port;
+        std::optional<OpenedSession> opened;
+        if (auto* concrete = std::get_if<OpenedSession>(&owner_input)) {
+            descriptor = concrete->descriptor;
+            opened.emplace(std::move(*concrete));
+        } else if (auto* backed = std::get_if<PortBackedSession>(&owner_input)) {
+            descriptor = std::move(backed->descriptor);
+            port = std::move(backed->controller);
         }
         auto mailbox = std::make_shared<SseMailbox>();
-        runtime = std::make_shared<WebSessionRuntime>(settings_, std::move(metadata), mailbox,
+        runtime = std::make_shared<WebSessionRuntime>(settings_, std::move(descriptor), mailbox,
             WebRuntimeHooks{
                 .mark_registry_stopping = [this, key] {
                     bool transitioned = false;
@@ -446,16 +439,14 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
                     }
                     lifecycle_changed_.notify_all();
                 },
-                .log_fatal = [key](const WebSessionMetadata&) {
+                .log_fatal = [key](const SessionDescriptor&) {
                     log_error(session_log(key, "fatal_contained"));
                 },
-                .log_event = [key](const WebSessionMetadata&, std::string_view event) {
+                .log_event = [key](const SessionDescriptor&, std::string_view event) {
                     log_info(session_log(key, event));
                 },
-            });
+            }, WebRuntimeClock{}, notifier);
         runtime_view = runtime.get();
-        std::unique_ptr<WebSessionController> controller =
-            factory_(key, runtime_view->notifier_for_owner());
         bool stop_now = false;
         bool registry_running = false;
         {
@@ -488,7 +479,8 @@ void SessionRegistry::owner_main(SessionKey key, std::shared_ptr<StartupResult> 
         if (stop_now) {
             runtime_view->request_shutdown(ShutdownReason::server_stopping);
         }
-        runtime_view->run_with_controller(std::move(controller));
+        if (opened) runtime_view->run(std::move(*opened));
+        else runtime_view->run_with_controller(std::move(port));
     } catch (const std::bad_alloc&) {
         std::terminate();
     } catch (const SessionBusyError&) {

@@ -150,20 +150,15 @@ void write_forum_check(
         << ").\n";
 }
 
-ConsoleSelection open_console_session(
+OpenedSession open_console_session(
     const Workspace& workspace,
     const ConsoleOptions& options,
     WakeNotifier& notifier) {
     if (options.new_label) {
-        CreatedSession created =
-            workspace.create_session(
-                options.forum,
-                *options.new_label,
-                notifier);
-        return {
-            .controller = std::move(created.controller),
-            .session_id = std::move(created.id),
-        };
+        return workspace.create_session(
+            options.forum,
+            *options.new_label,
+            notifier);
     }
 
     const std::vector<SessionSummary> sessions =
@@ -181,14 +176,8 @@ ConsoleSelection open_console_session(
     if (!found->error.empty()) {
         throw std::runtime_error(found->error);
     }
-    return {
-        .controller =
-            workspace.open_session(
-                options.forum,
-                options.session_id,
-                notifier),
-        .session_id = options.session_id,
-    };
+    return workspace.open_session(
+        {options.forum, options.session_id}, notifier);
 }
 
 } // namespace cha

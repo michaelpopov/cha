@@ -54,9 +54,9 @@ void ServerShutdownCoordinator::shutdown_now(
     std::chrono::milliseconds grace) {
     registry_.begin_shutdown([this] { server_.stop(); });
     if (!registry_.join_shutdown(grace)) {
-        for (const SessionKey& key : registry_.unfinished_owners()) {
+        for (const SessionIdentity& key : registry_.unfinished_owners()) {
             log_critical(
-                "Web shutdown grace expired: forum_id=" + key.forum
+                "Web shutdown grace expired: forum_id=" + key.forum_id
                 + " session_id=" + key.session_id);
         }
         // A stuck owner cannot be safely joined. The operating system releases

@@ -45,11 +45,11 @@ void set_submission_error(httplib::Response& response, ErrorCode code) {
     }
 }
 
-std::optional<SessionKey> validate_key(
+std::optional<SessionIdentity> validate_key(
     const httplib::Request& request,
     httplib::Response& response) {
-    SessionKey key{request.matches[1], request.matches[2]};
-    if (!is_valid_route_component(key.forum)
+    SessionIdentity key{request.matches[1], request.matches[2]};
+    if (!is_valid_route_component(key.forum_id)
         || !is_valid_route_component(key.session_id)) {
         set_route_not_found(response);
         return std::nullopt;
@@ -62,7 +62,7 @@ SessionHandle resolve(
     httplib::Response& response,
     SessionRegistry& registry,
     bool page) {
-    const std::optional<SessionKey> key = validate_key(request, response);
+    const std::optional<SessionIdentity> key = validate_key(request, response);
     if (!key) return {};
     SessionHandle handle = registry.lookup(*key);
     if (!handle) {
@@ -137,7 +137,7 @@ void SessionRoutes::install(httplib::Server& server) const {
             });
     });
     server.Post(std::string(base) + R"(/api/v1/input)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
-        const std::optional<SessionKey> key = validate_key(request, response);
+        const std::optional<SessionIdentity> key = validate_key(request, response);
         if (!key) return;
         if (!validate_json_mutation(request, response)) return;
         RawCommand command;
@@ -155,7 +155,7 @@ void SessionRoutes::install(httplib::Server& server) const {
         set_command_result(response, handle.runtime().submit(std::move(command), settings.command_deadline));
     });
     server.Post(std::string(base) + R"(/api/v1/actions/stop)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
-        const std::optional<SessionKey> key = validate_key(request, response);
+        const std::optional<SessionIdentity> key = validate_key(request, response);
         if (!key) return;
         if (!validate_json_mutation(request, response)) return;
         if (!parse_route_json_body(request, response, settings.request_body_limit, [](const nlohmann::json& json) { parse_empty_object(json); })) return;
@@ -164,7 +164,7 @@ void SessionRoutes::install(httplib::Server& server) const {
         set_command_result(response, handle.runtime().submit(StopCommand{}, settings.command_deadline));
     });
     server.Post(std::string(base) + R"(/api/v1/actions/default-agent)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
-        const std::optional<SessionKey> key = validate_key(request, response);
+        const std::optional<SessionIdentity> key = validate_key(request, response);
         if (!key) return;
         if (!validate_json_mutation(request, response)) return;
         SetDefaultAgentCommand command;

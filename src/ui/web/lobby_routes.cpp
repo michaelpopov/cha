@@ -22,7 +22,7 @@
 namespace cha::web {
 namespace {
 
-bool is_running(const RegistrySnapshot& snapshot, const SessionKey& key) {
+bool is_running(const RegistrySnapshot& snapshot, const SessionIdentity& key) {
     return std::find(snapshot.running_sessions.begin(), snapshot.running_sessions.end(), key)
         != snapshot.running_sessions.end();
 }
@@ -131,8 +131,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Post(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/open)", [workspace, registry, settings](const httplib::Request& request, httplib::Response& response) {
-        const SessionKey key{request.matches[1], request.matches[2]};
-        if (!is_valid_route_component(key.forum)
+        const SessionIdentity key{request.matches[1], request.matches[2]};
+        if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {
             return set_route_not_found(response);
         }
@@ -146,7 +146,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             return set_open_result(response, *reattached);
         }
         try {
-            workspace->check_session(key.forum, key.session_id);
+            workspace->check_session(key.forum_id, key.session_id);
         } catch (const ForumNotFoundError&) {
             return set_route_not_found(response);
         } catch (const SessionNotFoundError&) {

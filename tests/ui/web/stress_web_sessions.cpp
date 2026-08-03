@@ -22,6 +22,13 @@
 namespace cha::web {
 namespace {
 
+PortBackedSession fake_session(
+    const SessionIdentity& identity,
+    std::unique_ptr<WebSessionController> controller) {
+    return {{identity, "Test forum " + identity.forum_id,
+             "Test session " + identity.session_id}, std::move(controller)};
+}
+
 using namespace std::chrono_literals;
 
 struct Counts {
@@ -142,9 +149,9 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     WebSettings settings{.session_limit = 2, .command_queue_capacity = 64};
     SessionRegistry registry(
         settings,
-        [counts](const SessionKey& key, WakeNotifier&) {
-            return std::make_unique<CountingController>(
-                key.session_id == "first" ? counts->first : counts->second);
+        [counts](const SessionIdentity& key, WakeNotifier&) {
+            return fake_session(key, std::make_unique<CountingController>(
+                key.session_id == "first" ? counts->first : counts->second));
         });
 
     auto open = [&registry](std::string id) {
@@ -186,13 +193,13 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
     std::atomic<unsigned int> healthy_commands{};
     SessionRegistry registry(
         {.session_limit = 2, .command_queue_capacity = 8},
-        [&](const SessionKey& key, WakeNotifier&) {
+        [&](const SessionIdentity& key, WakeNotifier&) {
             if (key.session_id == "blocked") {
-                return std::unique_ptr<WebSessionController>(
-                    std::make_unique<BlockingController>(gate));
+                return fake_session(
+                    key, std::make_unique<BlockingController>(gate));
             }
-            return std::unique_ptr<WebSessionController>(
-                std::make_unique<CountingController>(healthy_commands));
+            return fake_session(
+                key, std::make_unique<CountingController>(healthy_commands));
         });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         registry.open({"forum", "blocked"}, 1s)));
@@ -228,14 +235,14 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
     std::atomic<int> starts{};
     SessionRegistry registry(
         {.session_limit = limit},
-        [&](const SessionKey&, WakeNotifier&) {
+        [&](const SessionIdentity& key, WakeNotifier&) {
             ++starts;
             static std::atomic<unsigned int> ignored_commands{};
-            return std::make_unique<CountingController>(ignored_commands);
+            return fake_session(key, std::make_unique<CountingController>(ignored_commands));
         });
 
     for (int round = 0; round != rounds; ++round) {
-        std::vector<SessionKey> keys;
+        std::vector<SessionIdentity> keys;
         for (int index = 0; index != limit; ++index) {
             keys.push_back({
                 "forum",
@@ -247,7 +254,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
         const std::shared_future<void> start =
             start_signal.get_future().share();
         std::vector<std::future<RegistryOpenResult>> opens;
-        for (const SessionKey& key : keys) {
+        for (const SessionIdentity& key : keys) {
             for (int duplicate = 0; duplicate != 2; ++duplicate) {
                 opens.push_back(std::async(
                     std::launch::async, [&, key, start] {
@@ -268,7 +275,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
             ErrorCode::session_limit_reached);
 
         std::vector<SessionHandle> old_handles;
-        for (const SessionKey& key : keys) {
+        for (const SessionIdentity& key : keys) {
             old_handles.push_back(registry.lookup(key));
             ASSERT_TRUE(old_handles.back());
             old_handles.back().runtime().request_shutdown();
@@ -283,7 +290,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
             }
         });
         std::vector<std::future<SessionHandle>> reopened;
-        for (const SessionKey& key : keys) {
+        for (const SessionIdentity& key : keys) {
             reopened.push_back(std::async(std::launch::async, [&, key] {
                 const auto deadline = std::chrono::steady_clock::now() + 2s;
                 while (std::chrono::steady_clock::now() < deadline) {
@@ -330,16 +337,16 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptGeneratingPeer) {
     std::atomic<unsigned int> healthy_commands{};
     SessionRegistry registry(
         {.session_limit = 2, .command_queue_capacity = 64},
-        [&](const SessionKey& key, WakeNotifier&) {
+        [&](const SessionIdentity& key, WakeNotifier&) {
             if (key.session_id == "failing") {
-                return std::unique_ptr<WebSessionController>(
-                    std::make_unique<FatalRaceController>(fail));
+                return fake_session(
+                    key, std::make_unique<FatalRaceController>(fail));
             }
-            return std::unique_ptr<WebSessionController>(
-                std::make_unique<GeneratingCountingController>(healthy_commands));
+            return fake_session(
+                key, std::make_unique<GeneratingCountingController>(healthy_commands));
         });
-    const SessionKey failing{"forum", "failing"};
-    const SessionKey healthy{"forum", "healthy"};
+    const SessionIdentity failing{"forum", "failing"};
+    const SessionIdentity healthy{"forum", "healthy"};
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         registry.open(failing, 1s)));
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(

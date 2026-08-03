@@ -1,5 +1,6 @@
 #pragma once
 
+#include "session/opened_session.h"
 #include "session/session_update.h"
 #include "ui/web/browser_connection_state.h"
 #include "ui/web/command_queue.h"
@@ -60,12 +61,6 @@ public:
     virtual void shutdown() = 0;
 };
 
-struct WebSessionMetadata {
-    ForumSummary forum;
-    std::string session_id;
-    std::string session_label;
-};
-
 // This is deliberately a transport-neutral final-drain seam. The SSE mailbox
 // and socket writer are later blocks; the owner only publishes immutable data
 // and can wait for one already-published final payload to be acknowledged.
@@ -88,8 +83,8 @@ struct WebRuntimeHooks {
     std::function<void()> mark_finished;
     // Passing metadata makes session identity part of the logging contract;
     // registry wiring does not have to capture and duplicate it correctly.
-    std::function<void(const WebSessionMetadata&)> log_fatal;
-    std::function<void(const WebSessionMetadata&, std::string_view)> log_event;
+    std::function<void(const SessionDescriptor&)> log_fatal;
+    std::function<void(const SessionDescriptor&, std::string_view)> log_event;
 };
 
 // Owner-thread monotonic time seam; an empty function selects steady_clock.
@@ -103,10 +98,11 @@ public:
     // controller and its permanent owner thread the same thread.
     WebSessionRuntime(
         WebSettings settings,
-        WebSessionMetadata metadata,
+        SessionDescriptor descriptor,
         std::shared_ptr<SseMailbox> mailbox,
         WebRuntimeHooks hooks = {},
-        WebRuntimeClock clock = {});
+        WebRuntimeClock clock = {},
+        std::shared_ptr<WakeNotifier> notifier = {});
     ~WebSessionRuntime() = default;
     WebSessionRuntime(const WebSessionRuntime&) = delete;
     WebSessionRuntime& operator=(const WebSessionRuntime&) = delete;
@@ -123,22 +119,26 @@ public:
         std::size_t collapsed_payloads) noexcept;
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
-    [[nodiscard]] WakeNotifier& notifier_for_owner() noexcept { return notifier_; }
+    [[nodiscard]] WakeNotifier& notifier_for_owner() noexcept { return *notifier_; }
     void run_with_controller(std::unique_ptr<WebSessionController> controller);
+    void run(OpenedSession opened);
 
 protected:
     // Threadless transport-neutral seam for tests that replace the production
     // mailbox sink. The derived harness owns and joins its owner thread.
     WebSessionRuntime(
         WebSettings settings,
-        WebSessionMetadata metadata,
+        SessionDescriptor descriptor,
         std::shared_ptr<WebSnapshotSink> sink,
         std::shared_ptr<SseMailbox> mailbox,
         WebRuntimeHooks hooks = {},
-        WebRuntimeClock clock = {});
+        WebRuntimeClock clock = {},
+        std::shared_ptr<WakeNotifier> notifier = {});
 
 private:
-    void owner_loop(std::unique_ptr<WebSessionController> controller);
+    void owner_loop(
+        std::unique_ptr<WebSessionController> controller,
+        bool mark_finished = true);
     void execute(WebSessionController& controller, OwnerCommand command);
     void apply_notification(OwnerNotification notification);
     [[nodiscard]] SessionSnapshot make_snapshot(WebSessionController& controller);
@@ -155,9 +155,11 @@ private:
     void teardown(
         std::unique_ptr<WebSessionController>& controller,
         ShutdownReason reason,
-        bool skip_final_drain) noexcept;
+        bool skip_final_drain,
+        bool mark_finished) noexcept;
+    void mark_finished() noexcept;
 
-    WakeNotifier notifier_;
+    std::shared_ptr<WakeNotifier> notifier_;
     WebSettings settings_;
     CommandQueue commands_;
     // Shared by submitters and the owner thread.
@@ -174,14 +176,17 @@ private:
     bool fatal_logged_{};
     BrowserConnectionState browser_connection_;
     bool has_connected_sse_{};
-    WebSessionMetadata metadata_;
+    SessionDescriptor descriptor_;
     std::shared_ptr<WebSnapshotSink> sink_;
     std::shared_ptr<SseMailbox> sse_mailbox_;
     WebRuntimeHooks hooks_;
     WebRuntimeClock clock_;
 };
 
-// Production adapter; controller construction remains in later runtime/registry work.
+// Production adapter borrows the controller held by OpenedSession for the
+// complete owner loop.
+[[nodiscard]] std::unique_ptr<WebSessionController> adapt_session_controller(
+    SessionController& controller);
 [[nodiscard]] std::unique_ptr<WebSessionController> adapt_session_controller(
     std::unique_ptr<SessionController> controller);
 

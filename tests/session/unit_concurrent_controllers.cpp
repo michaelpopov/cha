@@ -356,9 +356,9 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
         try {
             test::NoopNotifier notifier;
             open_start.arrive_and_wait();
-            auto controller = workspace.open_session("forum", created[0].id, notifier);
+            auto controller = workspace.open_session({"forum", created[0].id}, notifier);
             opened[0] = true;
-            controller->shutdown();
+            controller.controller->shutdown();
         } catch (...) {
             record_failure(std::current_exception());
         }
@@ -367,9 +367,9 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
         try {
             test::NoopNotifier notifier;
             open_start.arrive_and_wait();
-            auto controller = workspace.open_session("forum", created[1].id, notifier);
+            auto controller = workspace.open_session({"forum", created[1].id}, notifier);
             opened[1] = true;
-            controller->shutdown();
+            controller.controller->shutdown();
         } catch (...) {
             record_failure(std::current_exception());
         }

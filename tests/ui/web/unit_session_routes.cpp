@@ -24,6 +24,13 @@
 namespace cha::web {
 namespace {
 
+PortBackedSession fake_session(
+    const SessionIdentity& identity,
+    std::unique_ptr<WebSessionController> controller) {
+    return {{identity, "Test forum " + identity.forum_id,
+             "Test session " + identity.session_id}, std::move(controller)};
+}
+
 using namespace std::chrono_literals;
 
 struct Calls {
@@ -156,8 +163,8 @@ void expect_error(const httplib::Result& result, int status, std::string_view co
 
 TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     const auto calls = std::make_shared<Calls>();
-    SessionRegistry registry({.session_limit = 1}, [calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(calls);
+    SessionRegistry registry({.session_limit = 1}, [calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open({"lobby", "one"}, 1s)));
     RouteServer server(registry);
@@ -219,8 +226,8 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
 
 TEST(SessionRoutes, EventsStartWithASnapshotAndIgnoreLastEventId) {
     const auto calls = std::make_shared<Calls>();
-    SessionRegistry registry({.session_limit = 1}, [calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(calls);
+    SessionRegistry registry({.session_limit = 1}, [calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open({"lobby", "one"}, 1s)));
     RouteServer server(registry);
@@ -252,8 +259,8 @@ TEST(SessionRoutes, EventsStartWithASnapshotAndIgnoreLastEventId) {
 
 TEST(SessionRoutes, RejectsSecondEventStreamWithBrowserStreamInUse) {
     const auto calls = std::make_shared<Calls>();
-    SessionRegistry registry({.session_limit = 1}, [calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(calls);
+    SessionRegistry registry({.session_limit = 1}, [calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         registry.open({"lobby", "one"}, 1s)));
@@ -296,8 +303,8 @@ TEST(SessionRoutes, EventsDeliverAppendWithSequenceOverHttp) {
     const auto calls = std::make_shared<Calls>();
     SessionRegistry registry(
         {.session_limit = 1},
-        [calls](const SessionKey&, WakeNotifier&) {
-            return std::make_unique<RouteController>(calls);
+        [calls](const SessionIdentity& key, WakeNotifier&) {
+            return fake_session(key, std::make_unique<RouteController>(calls));
         });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         registry.open({"lobby", "one"}, 1s)));
@@ -359,10 +366,10 @@ TEST(SessionRoutes, DeliberateStreamCloseFinishesChunkedResponse) {
     const auto calls = std::make_shared<Calls>();
     SessionRegistry registry(
         {.session_limit = 1},
-        [calls](const SessionKey&, WakeNotifier&) {
-            return std::make_unique<RouteController>(calls);
+        [calls](const SessionIdentity& key, WakeNotifier&) {
+            return fake_session(key, std::make_unique<RouteController>(calls));
         });
-    const SessionKey key{"lobby", "one"};
+    const SessionIdentity key{"lobby", "one"};
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         registry.open(key, 1s)));
     SessionHandle handle = registry.lookup(key);
@@ -448,9 +455,9 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
 
 TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLookup) {
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 1}, [&starts](const SessionKey&, WakeNotifier&) {
+    SessionRegistry registry({.session_limit = 1}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
-        return std::make_unique<RouteController>(std::make_shared<Calls>());
+        return fake_session(key, std::make_unique<RouteController>(std::make_shared<Calls>()));
     });
     RouteServer server(registry, {.request_body_limit = 64, .prompt_limit = 8});
 
@@ -473,8 +480,8 @@ TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLook
 
 TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
     const auto calls = std::make_shared<Calls>();
-    SessionRegistry registry({.session_limit = 1}, [calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(calls);
+    SessionRegistry registry({.session_limit = 1}, [calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open({"lobby", "one"}, 1s)));
     RouteServer server(registry);
@@ -513,8 +520,8 @@ TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
 
 TEST(SessionRoutes, RejectsDnsRebindingHostBeforeSnapshotsStreamsAndMutations) {
     const auto calls = std::make_shared<Calls>();
-    SessionRegistry registry({.session_limit = 1}, [calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(calls);
+    SessionRegistry registry({.session_limit = 1}, [calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         registry.open({"lobby", "one"}, 1s)));
@@ -553,8 +560,8 @@ TEST(SessionRoutes, MapsAdmissionAndShutdownOutcomesWithoutExecutingRejectedComm
         .command_queue_capacity = 1,
         .command_deadline = 1s,
     };
-    SessionRegistry full_registry(full_settings, [full_calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(full_calls);
+    SessionRegistry full_registry(full_settings, [full_calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(full_calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(full_registry.open({"lobby", "full"}, 1s)));
     RouteServer full_server(full_registry, full_settings);
@@ -593,8 +600,8 @@ TEST(SessionRoutes, MapsAdmissionAndShutdownOutcomesWithoutExecutingRejectedComm
     full_registry.begin_shutdown();
 
     const auto stopping_calls = std::make_shared<Calls>();
-    SessionRegistry stopping_registry({.session_limit = 1}, [stopping_calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(stopping_calls);
+    SessionRegistry stopping_registry({.session_limit = 1}, [stopping_calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(stopping_calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(stopping_registry.open({"lobby", "stopping"}, 1s)));
     const SessionHandle handle = stopping_registry.lookup({"lobby", "stopping"});
@@ -621,8 +628,8 @@ TEST(SessionRoutes, MapsProcessShutdownDrainToServerStopping) {
         .command_queue_capacity = 2,
         .command_deadline = 1s,
     };
-    SessionRegistry registry(settings, [calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(calls);
+    SessionRegistry registry(settings, [calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open({"lobby", "shutdown"}, 1s)));
     RouteServer server(registry, settings);
@@ -668,8 +675,8 @@ TEST(SessionRoutes, TimeoutAndClientDisconnectLeaveAcceptedCommandRunning) {
         .session_limit = 1,
         .command_deadline = 10ms,
     };
-    SessionRegistry registry(settings, [calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(calls);
+    SessionRegistry registry(settings, [calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open({"lobby", "slow"}, 1s)));
     RouteServer server(registry, settings);
@@ -712,8 +719,8 @@ TEST(SessionRoutes, TimeoutAndClientDisconnectLeaveAcceptedCommandRunning) {
         .session_limit = 1,
         .command_deadline = 1s,
     };
-    SessionRegistry disconnect_registry(disconnect_settings, [disconnect_calls](const SessionKey&, WakeNotifier&) {
-        return std::make_unique<RouteController>(disconnect_calls);
+    SessionRegistry disconnect_registry(disconnect_settings, [disconnect_calls](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<RouteController>(disconnect_calls));
     });
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(disconnect_registry.open({"lobby", "disconnect"}, 1s)));
     RouteServer disconnect_server(disconnect_registry, disconnect_settings);

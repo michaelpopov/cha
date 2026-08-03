@@ -146,32 +146,34 @@ bool same_domain_entry_shape(
 
 class SessionControllerAdapter final : public WebSessionController {
 public:
+    explicit SessionControllerAdapter(SessionController& controller)
+        : controller_(controller) {}
     explicit SessionControllerAdapter(std::unique_ptr<SessionController> controller)
-        : controller_(std::move(controller)) {}
+        : owned_controller_(std::move(controller)), controller_(*owned_controller_) {}
 
     SessionUpdate handle_raw_input(
         std::string_view author_id,
         std::string input) override {
-        return cha::handle_text_input(*controller_, author_id, std::move(input));
+        return cha::handle_text_input(controller_, author_id, std::move(input));
     }
-    SessionUpdate request_stop() override { return controller_->request_stop(); }
+    SessionUpdate request_stop() override { return controller_.request_stop(); }
     SessionUpdate set_default_agent_id(std::string_view id) override {
-        return controller_->set_default_agent_by_id(id);
+        return controller_.set_default_agent_by_id(id);
     }
     SessionEventBatch receive(std::size_t max_events) override {
-        return controller_->receive_events(max_events);
+        return controller_.receive_events(max_events);
     }
     [[nodiscard]] bool is_generating() const override {
-        return controller_->is_generating();
+        return controller_.is_generating();
     }
     SessionSnapshot snapshot() override {
         SessionSnapshot result;
-        result.characters.reserve(controller_->characters().all().size());
-        for (const CharacterInfo& character : controller_->characters().all()) {
+        result.characters.reserve(controller_.characters().all().size());
+        for (const CharacterInfo& character : controller_.characters().all()) {
             result.characters.push_back({character.id, character.name});
         }
-        result.default_character_id = controller_->default_agent_id();
-        const TranscriptView view = controller_->transcript().view();
+        result.default_character_id = controller_.default_agent_id();
+        const TranscriptView view = controller_.transcript().view();
         snapshot_revision_ = view.revision;
         result.transcript.reserve(view.entries.size());
         for (const cha::TranscriptEntry& entry : view.entries) {
@@ -188,7 +190,7 @@ public:
             });
         }
         const GenerationStatusView status =
-            controller_->generation_status_view();
+            controller_.generation_status_view();
         result.generation = {
             .active = status.active,
             .request_id = status.request_id,
@@ -202,14 +204,14 @@ public:
     std::optional<WebAppendCandidate> append_candidate(
         const SessionSnapshot& before) override {
         if (!snapshot_revision_
-            || controller_->default_agent_id()
+            || controller_.default_agent_id()
                 != before.default_character_id) {
             return std::nullopt;
         }
 
-        const TranscriptView transcript = controller_->transcript().view();
+        const TranscriptView transcript = controller_.transcript().view();
         const GenerationStatusView generation =
-            controller_->generation_status_view();
+            controller_.generation_status_view();
         if (transcript.entries.size() != before.transcript.size()
             || !same_generation_structure(generation, before.generation)) {
             return std::nullopt;
@@ -256,10 +258,11 @@ public:
             .text = current.text.substr(previous.text.size()),
         };
     }
-    void shutdown() override { controller_->shutdown(); }
+    void shutdown() override { controller_.shutdown(); }
 
 private:
-    std::unique_ptr<SessionController> controller_;
+    std::unique_ptr<SessionController> owned_controller_;
+    SessionController& controller_;
     std::optional<std::size_t> snapshot_revision_;
 };
 
@@ -269,14 +272,16 @@ static_assert(std::variant_size_v<WebCommand> == 5);
 
 WebSessionRuntime::WebSessionRuntime(
     WebSettings settings,
-    WebSessionMetadata metadata,
+    SessionDescriptor descriptor,
     std::shared_ptr<WebSnapshotSink> sink,
     std::shared_ptr<SseMailbox> mailbox,
     WebRuntimeHooks hooks,
-    WebRuntimeClock clock)
-    : settings_(validate_runtime_settings(std::move(settings))),
+    WebRuntimeClock clock,
+    std::shared_ptr<WakeNotifier> notifier)
+    : notifier_(notifier ? std::move(notifier) : std::make_shared<WakeNotifier>()),
+      settings_(validate_runtime_settings(std::move(settings))),
       commands_(settings_.command_queue_capacity),
-      metadata_(std::move(metadata)),
+      descriptor_(std::move(descriptor)),
       sink_(std::move(sink)),
       sse_mailbox_(std::move(mailbox)),
       hooks_(std::move(hooks)),
@@ -286,17 +291,19 @@ WebSessionRuntime::WebSessionRuntime(
 
 WebSessionRuntime::WebSessionRuntime(
     WebSettings settings,
-    WebSessionMetadata metadata,
+    SessionDescriptor descriptor,
     std::shared_ptr<SseMailbox> mailbox,
     WebRuntimeHooks hooks,
-    WebRuntimeClock clock)
+    WebRuntimeClock clock,
+    std::shared_ptr<WakeNotifier> notifier)
     : WebSessionRuntime(
           std::move(settings),
-          std::move(metadata),
+          std::move(descriptor),
           mailbox,
           mailbox,
           std::move(hooks),
-          std::move(clock)) {
+          std::move(clock),
+          std::move(notifier)) {
     if (!sse_mailbox_) {
         throw std::invalid_argument(
             "Registry-owned web runtime needs an SSE mailbox");
@@ -325,7 +332,7 @@ CommandSubmitResult WebSessionRuntime::submit(
         }
     }
     if (rejection) return *rejection;
-    if (wake_owner) notifier_.wake();
+    if (wake_owner) notifier_->wake();
     if (auto result = completion->wait_for(deadline)) return std::move(*result);
     log_event("command_deadline_expired");
     return ErrorCode::command_timeout;
@@ -346,7 +353,7 @@ void WebSessionRuntime::disconnect_sse(
     std::size_t collapsed_payloads) noexcept {
     if (commands_.push_notification(
             SseDisconnectNotification{connection_id, collapsed_payloads})) {
-        notifier_.wake();
+        notifier_->wake();
     }
 }
 
@@ -356,7 +363,7 @@ void WebSessionRuntime::request_shutdown(ShutdownReason reason) {
         stopping_ = true;
         shutdown_reason_ = keep_higher_priority_reason(shutdown_reason_, reason);
     }
-    notifier_.wake();
+    notifier_->wake();
 }
 
 void WebSessionRuntime::run_with_controller(
@@ -364,8 +371,21 @@ void WebSessionRuntime::run_with_controller(
     owner_loop(std::move(controller));
 }
 
+void WebSessionRuntime::run(OpenedSession opened) {
+    std::unique_ptr<WebSessionController> controller =
+        adapt_session_controller(*opened.controller);
+    owner_loop(std::move(controller), false);
+    // The registry's finished transition permits a same-key owner to start.
+    // Release the real controller (and its cross-process lease) first; the
+    // adapter above only borrowed it and its destruction cannot do that.
+    opened.controller.reset();
+    log_event("lease_released_owner_finished");
+    mark_finished();
+}
+
 void WebSessionRuntime::owner_loop(
-    std::unique_ptr<WebSessionController> controller) {
+    std::unique_ptr<WebSessionController> controller,
+    bool mark_finished_on_teardown) {
     ShutdownReason reason = ShutdownReason::browser_disconnected;
     bool fatal = false;
     try {
@@ -419,7 +439,7 @@ void WebSessionRuntime::owner_loop(
                 break;
             }
             if (processed == settings_.command_batch_size || events.full) continue;
-            (void)notifier_.wait_until(
+            (void)notifier_->wait_until(
                 deadline.value_or(std::chrono::steady_clock::time_point::max()));
         }
     } catch (const std::bad_alloc&) {
@@ -429,7 +449,11 @@ void WebSessionRuntime::owner_loop(
         reason = mark_stopping(ShutdownReason::session_failed);
         log_fatal_once();
     }
-    teardown(controller, reason, fatal || reason == ShutdownReason::server_stopping);
+    teardown(
+        controller,
+        reason,
+        fatal || reason == ShutdownReason::server_stopping,
+        mark_finished_on_teardown);
 }
 
 void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand command) {
@@ -510,9 +534,9 @@ void WebSessionRuntime::apply_notification(OwnerNotification notification) {
 
 SessionSnapshot WebSessionRuntime::make_snapshot(WebSessionController& controller) {
     SessionSnapshot current = controller.snapshot();
-    current.forum = metadata_.forum;
-    current.session_id = metadata_.session_id;
-    current.session_label = metadata_.session_label;
+    current.forum = {descriptor_.identity.forum_id, descriptor_.forum_display_name};
+    current.session_id = descriptor_.identity.session_id;
+    current.session_label = descriptor_.session_label;
     current.notice = notice_;
     current.lifecycle = SessionLifecycle::running;
     current.shutdown_reason.reset();
@@ -612,9 +636,9 @@ void WebSessionRuntime::publish_snapshot(SessionSnapshot snapshot) {
 void WebSessionRuntime::publish_final(WebSessionController& controller, ShutdownReason reason) {
     if (!sink_) return;
     SessionSnapshot snapshot = controller.snapshot();
-    snapshot.forum = metadata_.forum;
-    snapshot.session_id = metadata_.session_id;
-    snapshot.session_label = metadata_.session_label;
+    snapshot.forum = {descriptor_.identity.forum_id, descriptor_.forum_display_name};
+    snapshot.session_id = descriptor_.identity.session_id;
+    snapshot.session_label = descriptor_.session_label;
     snapshot.notice = notice_;
     snapshot.lifecycle = SessionLifecycle::stopping;
     snapshot.shutdown_reason = reason;
@@ -625,19 +649,20 @@ void WebSessionRuntime::log_fatal_once() noexcept {
     if (fatal_logged_) return;
     fatal_logged_ = true;
     if (hooks_.log_fatal) {
-        (void)run_guarded([this] { hooks_.log_fatal(metadata_); });
+        (void)run_guarded([this] { hooks_.log_fatal(descriptor_); });
     }
 }
 
 void WebSessionRuntime::log_event(std::string_view event) noexcept {
     if (!hooks_.log_event) return;
-    (void)run_guarded([this, event] { hooks_.log_event(metadata_, event); });
+    (void)run_guarded([this, event] { hooks_.log_event(descriptor_, event); });
 }
 
 void WebSessionRuntime::teardown(
     std::unique_ptr<WebSessionController>& controller,
     ShutdownReason reason,
-    bool skip_final_drain) noexcept {
+    bool skip_final_drain,
+    bool mark_finished_on_teardown) noexcept {
     {
         std::lock_guard lock(state_mutex_);
         if (teardown_started_) return;
@@ -680,14 +705,22 @@ void WebSessionRuntime::teardown(
             log_fatal_once();
         }
         controller.reset();
-        log_event("lease_released_owner_finished");
     }
+    if (mark_finished_on_teardown) mark_finished();
+}
+
+void WebSessionRuntime::mark_finished() noexcept {
     if (hooks_.mark_finished) {
         (void)run_guarded([this] { hooks_.mark_finished(); });
     }
 }
 
-std::unique_ptr<WebSessionController> adapt_session_controller(std::unique_ptr<SessionController> controller) {
+std::unique_ptr<WebSessionController> adapt_session_controller(SessionController& controller) {
+    return std::make_unique<SessionControllerAdapter>(controller);
+}
+
+std::unique_ptr<WebSessionController> adapt_session_controller(
+    std::unique_ptr<SessionController> controller) {
     return std::make_unique<SessionControllerAdapter>(std::move(controller));
 }
 

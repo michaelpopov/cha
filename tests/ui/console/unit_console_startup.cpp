@@ -1,4 +1,5 @@
 #include "session/session_database.h"
+#include "support/test_notifier.h"
 #include "ui/console/console_startup.h"
 
 #include <gtest/gtest.h>
@@ -217,6 +218,49 @@ TEST(ConsoleStartup, ListForumsWinsOverSelectionFlags) {
     });
     ASSERT_TRUE(std::holds_alternative<ConsoleOptions>(session_listing));
     EXPECT_TRUE(std::get<ConsoleOptions>(session_listing).list_sessions);
+}
+
+TEST(ConsoleStartup, OpensExistingSessionWithItsDescriptor) {
+    ListingWorkspace fixture;
+    const Workspace workspace(fixture.root);
+    test::NoopNotifier notifier;
+    const ConsoleOptions options{
+        .persona = "reader",
+        .forum = "hall",
+        .session_id = "valid",
+    };
+
+    OpenedSession opened = open_console_session(workspace, options, notifier);
+
+    EXPECT_EQ(
+        opened.descriptor,
+        (SessionDescriptor{
+            .identity = {"hall", "valid"},
+            .forum_display_name = "The Hall",
+            .session_label = "Design\treview",
+        }));
+    ASSERT_TRUE(opened.controller);
+    opened.controller->shutdown();
+}
+
+TEST(ConsoleStartup, CreatesSessionWithResolvedDescriptor) {
+    ListingWorkspace fixture;
+    const Workspace workspace(fixture.root);
+    test::NoopNotifier notifier;
+    const ConsoleOptions options{
+        .persona = "reader",
+        .forum = "hall",
+        .new_label = "New session",
+    };
+
+    OpenedSession opened = open_console_session(workspace, options, notifier);
+
+    EXPECT_EQ(opened.descriptor.identity.forum_id, "hall");
+    EXPECT_FALSE(opened.descriptor.identity.session_id.empty());
+    EXPECT_EQ(opened.descriptor.forum_display_name, "The Hall");
+    EXPECT_EQ(opened.descriptor.session_label, "New session");
+    ASSERT_TRUE(opened.controller);
+    opened.controller->shutdown();
 }
 
 } // namespace

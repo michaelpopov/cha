@@ -422,7 +422,7 @@ public:
     TestWebSessionRuntime(
         TestControllerFactory factory,
         WebSettings settings = {},
-        WebSessionMetadata metadata = {},
+        SessionDescriptor metadata = {},
         std::shared_ptr<WebSnapshotSink> sink = {},
         WebRuntimeHooks hooks = {},
         WebRuntimeClock clock = {})
@@ -440,7 +440,7 @@ public:
     TestWebSessionRuntime(
         TestControllerFactory factory,
         WebSettings settings,
-        WebSessionMetadata metadata,
+        SessionDescriptor metadata,
         std::shared_ptr<SseMailbox> mailbox,
         WebRuntimeHooks hooks = {},
         WebRuntimeClock clock = {})
@@ -765,7 +765,7 @@ TEST(WebSessionRuntime, RegistryOwnedRuntimeRequiresMailbox) {
     EXPECT_THROW(
         (void)WebSessionRuntime(
             test_settings(2),
-            WebSessionMetadata{},
+            SessionDescriptor{},
             std::shared_ptr<SseMailbox>{}),
         std::invalid_argument);
 }
@@ -776,7 +776,7 @@ TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
     auto sink = std::make_shared<FakeSnapshotSink>();
     TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(2),
-        {.forum = {"forum", "Forum"}, .session_id = "session", .session_label = "Label"},
+        {.identity = {"forum", "session"}, .forum_display_name = "Forum", .session_label = "Label"},
         sink);
     {
         std::unique_lock lock(sink->mutex);
@@ -1087,7 +1087,7 @@ TEST(WebSessionRuntime, OneActiveStreamRejectsConflictsAndIgnoresStaleCloses) {
     std::vector<std::string> events;
     TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(4), {}, mailbox,
-        {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+        {.log_event = [&](const SessionDescriptor&, std::string_view event) {
             std::lock_guard lock(events_mutex);
             events.emplace_back(event);
         }});
@@ -1341,7 +1341,7 @@ TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
         {
             TestWebSessionRuntime runtime(
                 fake_factory(state), test_settings(2), {}, sink,
-                {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+                {.log_event = [&](const SessionDescriptor&, std::string_view event) {
                     std::lock_guard lock(events_mutex);
                     events.emplace_back(event);
                 }});
@@ -1380,7 +1380,7 @@ TEST(WebSessionRuntime, GenerationRequestChangeLogsTerminalThenNextStart) {
     {
         TestWebSessionRuntime runtime(
             fake_factory(state), test_settings(2), {}, sink,
-            {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+            {.log_event = [&](const SessionDescriptor&, std::string_view event) {
                 std::lock_guard lock(events_mutex);
                 events.emplace_back(event);
             }});
@@ -1442,7 +1442,7 @@ TEST(WebSessionRuntime, ReasoningOnlyCancellationLogsCancelledStatus) {
     {
         TestWebSessionRuntime runtime(
             fake_factory(state), test_settings(2), {}, sink,
-            {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+            {.log_event = [&](const SessionDescriptor&, std::string_view event) {
                 std::lock_guard lock(events_mutex);
                 events.emplace_back(event);
             }});
@@ -1487,6 +1487,53 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     EXPECT_TRUE(after.transcript.empty());
     EXPECT_EQ(before.transcript.front().text, "before");
     adapted->shutdown();
+}
+
+TEST(WebSessionRuntime, OpenedSessionReleasesItsLeaseBeforeFinishedHook) {
+    TemporaryWebSession temporary;
+    auto notifier = std::make_shared<WakeNotifier>();
+    std::promise<bool> lease_released_signal;
+    auto lease_released = lease_released_signal.get_future();
+    WebSessionRuntime runtime(
+        test_settings(2),
+        {
+            .identity = {"forum", "web-runtime"},
+            .forum_display_name = "Forum",
+            .session_label = "Web runtime",
+        },
+        std::make_shared<SseMailbox>(),
+        {.mark_finished = [&] {
+            try {
+                SessionLease lease = SessionLease::acquire(temporary.path);
+                lease_released_signal.set_value(lease.active());
+            } catch (...) {
+                lease_released_signal.set_value(false);
+            }
+        }},
+        {},
+        notifier);
+    OpenedSession opened{
+        .descriptor = {
+            .identity = {"forum", "web-runtime"},
+            .forum_display_name = "Forum",
+            .session_label = "Web runtime",
+        },
+        .controller = SessionController::from_definitions(
+            {test_definition()},
+            PersonaRoster{{.id = "reader", .display_name = "Reader"}},
+            "guide",
+            temporary.path,
+            SessionLease::acquire(temporary.path),
+            *notifier,
+            load_session_state(temporary.path)),
+    };
+
+    runtime.request_shutdown();
+    std::thread owner([&runtime, opened = std::move(opened)]() mutable {
+        runtime.run(std::move(opened));
+    });
+    EXPECT_TRUE(lease_released.get());
+    owner.join();
 }
 
 TEST(WebSessionRuntime, FinalSnapshotUsesBoundedDrainAndHooks) {
@@ -1650,15 +1697,15 @@ TEST(WebSessionRuntime, FatalOwnerFailureIsContainedAndSkipsDrainWait) {
     state->throw_receive = true;
     auto sink = std::make_shared<FakeSnapshotSink>();
     int fatal_logs = 0;
-    std::optional<WebSessionMetadata> logged_metadata;
-    const WebSessionMetadata metadata{
-        .forum = {"forum", "Forum"},
-        .session_id = "session",
+    std::optional<SessionDescriptor> logged_metadata;
+    const SessionDescriptor metadata{
+        .identity = {"forum", "session"},
+        .forum_display_name = "Forum",
         .session_label = "Label",
     };
     TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(2), metadata, sink,
-        {.log_fatal = [&](const WebSessionMetadata& identity) {
+        {.log_fatal = [&](const SessionDescriptor& identity) {
             ++fatal_logs;
             logged_metadata = identity;
         }});
@@ -1671,8 +1718,7 @@ TEST(WebSessionRuntime, FatalOwnerFailureIsContainedAndSkipsDrainWait) {
         ShutdownReason::session_failed);
     EXPECT_EQ(fatal_logs, 1);
     ASSERT_TRUE(logged_metadata);
-    EXPECT_EQ(logged_metadata->forum, metadata.forum);
-    EXPECT_EQ(logged_metadata->session_id, metadata.session_id);
+    EXPECT_EQ(logged_metadata->identity, metadata.identity);
 }
 
 TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
@@ -1682,10 +1728,10 @@ TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
     int fatal_logs = 0;
     std::promise<void> finished_signal;
     auto finished_future = finished_signal.get_future();
-    std::optional<WebSessionMetadata> logged_metadata;
-    const WebSessionMetadata metadata{
-        .forum = {"forum", "Forum"},
-        .session_id = "throwing-shutdown",
+    std::optional<SessionDescriptor> logged_metadata;
+    const SessionDescriptor metadata{
+        .identity = {"forum", "throwing-shutdown"},
+        .forum_display_name = "Forum",
         .session_label = "Throwing shutdown",
     };
     TestWebSessionRuntime runtime(
@@ -1695,7 +1741,7 @@ TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
         sink,
         {
             .mark_finished = [&] { finished_signal.set_value(); },
-            .log_fatal = [&](const WebSessionMetadata& identity) {
+            .log_fatal = [&](const SessionDescriptor& identity) {
                 ++fatal_logs;
                 logged_metadata = identity;
             },
@@ -1715,7 +1761,7 @@ TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
     }
     EXPECT_EQ(fatal_logs, 1);
     ASSERT_TRUE(logged_metadata);
-    EXPECT_EQ(logged_metadata->session_id, metadata.session_id);
+    EXPECT_EQ(logged_metadata->identity.session_id, metadata.identity.session_id);
 }
 
 TEST(WebSessionRuntime, PersistenceFailureReleasesOnlyTheFailingRuntimeLease) {
@@ -1728,9 +1774,9 @@ TEST(WebSessionRuntime, PersistenceFailureReleasesOnlyTheFailingRuntimeLease) {
     auto failing_runtime = std::make_unique<TestWebSessionRuntime>(
         real_factory(failing_session.path),
         test_settings(2),
-        WebSessionMetadata{
-            .forum = {"forum", "Forum"},
-            .session_id = "failing",
+        SessionDescriptor{
+            .identity = {"forum", "failing"},
+            .forum_display_name = "Forum",
             .session_label = "Failing",
         },
         failing_sink,
@@ -1740,9 +1786,9 @@ TEST(WebSessionRuntime, PersistenceFailureReleasesOnlyTheFailingRuntimeLease) {
     TestWebSessionRuntime healthy_runtime(
         real_factory(healthy_session.path),
         test_settings(2),
-        WebSessionMetadata{
-            .forum = {"forum", "Forum"},
-            .session_id = "healthy",
+        SessionDescriptor{
+            .identity = {"forum", "healthy"},
+            .forum_display_name = "Forum",
             .session_label = "Healthy",
         },
         healthy_sink);

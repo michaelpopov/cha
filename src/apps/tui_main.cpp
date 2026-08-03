@@ -70,28 +70,24 @@ int main_internal() {
     }
 
     cha::UvEventLoop event_loop;
-    std::unique_ptr<cha::SessionController> controller;
+    cha::OpenedSession opened;
     if (selected_session->id.empty()) {
         const auto session_label = selector.prompt_session_name();
         if (!session_label) {
             throw std::runtime_error("Session name prompt cancelled");
         }
-        controller =
-            std::move(workspace.create_session(
-                *forum_name,
-                *session_label,
-                event_loop)
-                .controller);
-    } else {
-        controller = workspace.open_session(
+        opened = workspace.create_session(
             *forum_name,
-            selected_session->id,
+            *session_label,
             event_loop);
+    } else {
+        opened = workspace.open_session(
+            {*forum_name, selected_session->id}, event_loop);
     }
 
     cha::run_persona(
         terminal,
-        *controller,
+        *opened.controller,
         event_loop,
         std::move(selected_persona_id));
     cha::log_info("Terminal application stopped");
