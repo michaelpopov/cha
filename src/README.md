@@ -10,19 +10,16 @@ persona-facing manual is the [top-level `README.md`](../README.md).
 ## System overview
 
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
-It runs inside a workspace containing `app.toml`, a persona roster, character definitions, and forums. A character
-definition contains an identity, effective model configuration, and base
-system-prompt template. Its model configuration and prompt variables may be
-overridden by shared values from the selected forum's optional
-`characters/character_defaults.toml`; a later per-member override will have the
-highest precedence after the layout migration. A forum contains an ordered list of the characters participating in
-chats in that forum, together with a forum-specific system-prompt template.
-When the forum is loaded, the character's expanded `SYSTEM.md` is followed by the
-forum's expanded `FORUM.md`, the complete static persona roster, and generated forum
-context identifying the current agent, the forum's other characters, and the
-shared-history encoding. Template
-includes are contained within the forum, so the forum remains a self-contained
-distribution unit.
+It runs inside a workspace containing `app.toml`, a persona roster, workspace-level
+character definitions, and forums. Each definition lives at
+`characters/<id>/` with `character.toml` and `CHARACTER.md`. A forum explicitly
+selects its ordered roster through `forums/<forum>/members/<id>/`; its optional
+`members/character_defaults.toml` and optional member `character.toml` overlay
+the definition per key. A member `CHARACTER.md` replaces the definition prompt.
+When loaded, the expanded character prompt is followed by expanded `FORUM.md`,
+the complete static persona roster, and generated forum context. Includes from
+a definition stay within workspace `characters/`; member and forum includes
+stay within the forum.
 
 During a run, the participating characters are represented as agents. Each agent
 has its own identity, effective system prompt, and model connection, while all

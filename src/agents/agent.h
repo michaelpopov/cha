@@ -34,6 +34,12 @@ struct CharacterInfo {
     std::string name;
 };
 
+// The two filesystem layers that form one forum member's effective agent.
+struct AgentDefinitionSource {
+    std::filesystem::path definition_directory;
+    std::filesystem::path member_directory;
+};
+
 // Public operational information about one initialized agent backend. It is safe to show in
 // diagnostics and never carries connection secrets.
 struct AgentRuntimeInfo {
@@ -80,14 +86,17 @@ struct AgentMessage {
 
 // Loads the forum's character configurations in order and assembles each effective system prompt.
 std::vector<AgentDefinition> load_agent_definitions(
-    const std::vector<std::filesystem::path>& character_directories,
+    const std::vector<AgentDefinitionSource>& sources,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
     const PersonaRoster& personas,
-    std::optional<std::filesystem::path> base_config_path = std::nullopt);
+    std::optional<std::filesystem::path> forum_defaults_path = std::nullopt);
 
 void validate_character_id(std::string_view id);
 void validate_character_name(std::string_view name);
+void validate_persona_character_collisions(
+    const PersonaRoster& personas,
+    const std::vector<CharacterDefinitionMetadata>& definitions);
 
 // Projects typed transcript entries into protocol roles for one stable agent participant ID.
 std::vector<AgentMessage> project_agent_context(

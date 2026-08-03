@@ -431,9 +431,9 @@ TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
     EXPECT_EQ(forum.character_names, (std::vector<std::string>{"guide"}));
     const auto config = load_config({
         .definition = fixture.root()
-            / "forums/lobby/characters/guide/character.toml",
+            / "characters/guide/character.toml",
         .forum_defaults = fixture.root()
-            / "forums/lobby/characters/character_defaults.toml",
+            / "forums/lobby/members/character_defaults.toml",
     }).config;
     EXPECT_EQ(config.mode, Mode::test);
     EXPECT_EQ(config.model, "fake");

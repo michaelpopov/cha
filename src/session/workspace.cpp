@@ -28,22 +28,25 @@ namespace {
 std::vector<AgentDefinition> load_definitions(
     const Forum& forum,
     const PersonaRoster& personas,
-    const std::filesystem::path& base_config_candidate) {
+    const std::filesystem::path& forum_defaults_candidate,
+    const std::filesystem::path& definitions_directory) {
     log_info(
         "Loading forum character definitions: forum_id=" + forum.name
         + " characters=" + std::to_string(forum.character_names.size()));
-    std::vector<std::filesystem::path> character_directories;
-    character_directories.reserve(forum.character_names.size());
+    std::vector<AgentDefinitionSource> sources;
+    sources.reserve(forum.character_names.size());
     for (const std::string& character : forum.character_names) {
-        character_directories.push_back(
-            forum.directory / "characters" / path_from_utf8(character));
+        sources.push_back({
+            .definition_directory = definitions_directory / path_from_utf8(character),
+            .member_directory = forum.directory / "members" / path_from_utf8(character),
+        });
     }
     const std::optional<std::filesystem::path> base_config =
-        std::filesystem::exists(base_config_candidate)
-        ? std::optional<std::filesystem::path>(base_config_candidate)
+        std::filesystem::exists(forum_defaults_candidate)
+        ? std::optional<std::filesystem::path>(forum_defaults_candidate)
         : std::nullopt;
     return load_agent_definitions(
-        character_directories,
+        sources,
         forum.directory,
         forum.display_name,
         personas,
@@ -113,7 +116,7 @@ std::vector<std::string> subdirectory_names(
     return result;
 }
 
-std::string load_display_name(const std::filesystem::path& directory) {
+Forum load_forum_metadata(const std::filesystem::path& directory, std::string name) {
     const std::filesystem::path path = directory / "config.toml";
     std::ifstream file(path, std::ios::binary);
     if (!file) {
@@ -128,7 +131,83 @@ std::string load_display_name(const std::filesystem::path& directory) {
             "Forum config '" + utf8_path(path)
             + "' requires a non-empty string 'display_name'");
     }
-    return *display_name;
+    const std::filesystem::path members_directory = directory / "members";
+    if (!std::filesystem::is_directory(members_directory)) {
+        throw std::runtime_error(
+            "Forum '" + name + "' requires a members/ directory at '"
+            + utf8_path(members_directory) + "'");
+    }
+    const std::vector<std::string> character_names = subdirectory_names(
+        members_directory, SubdirectoryNameKind::path_component);
+    for (const std::string& character_name : character_names) {
+        try {
+            validate_character_id(character_name);
+        } catch (const std::exception& error) {
+            throw std::runtime_error(
+                "Forum '" + name + "' member ID '" + character_name
+                + "' is invalid: " + error.what());
+        }
+    }
+    if (character_names.empty()) {
+        throw std::runtime_error("Members directory '" + utf8_path(directory / "members")
+            + "' does not contain an entry");
+    }
+    std::string default_agent_id;
+    if (table.contains("default_agent")) {
+        const std::optional<std::string> configured = table["default_agent"].value<std::string>();
+        if (!configured || configured->empty()) {
+            throw std::runtime_error("Forum config '" + utf8_path(path)
+                + "' requires a non-empty string 'default_agent'");
+        }
+        if (!std::ranges::binary_search(character_names, *configured)) {
+            throw std::runtime_error("Forum config '" + utf8_path(path)
+                + "' default_agent '" + *configured + "' is not a forum member");
+        }
+        default_agent_id = *configured;
+    } else {
+        default_agent_id = character_names.front();
+    }
+    return {std::move(name), *display_name, character_names, std::move(default_agent_id), directory};
+}
+
+std::vector<CharacterDefinitionMetadata> load_definition_metadata(
+    const std::filesystem::path& definitions_directory) {
+    if (!std::filesystem::is_directory(definitions_directory)) {
+        throw std::runtime_error("Workspace '" + utf8_path(definitions_directory.parent_path())
+            + "' requires a characters/ directory");
+    }
+    std::vector<CharacterDefinitionMetadata> definitions;
+    for (const std::string& id : subdirectory_names(
+             definitions_directory, SubdirectoryNameKind::path_component)) {
+        try {
+            validate_character_id(id);
+            const std::filesystem::path directory = definitions_directory / path_from_utf8(id);
+            const std::filesystem::path prompt = directory / "CHARACTER.md";
+            if (!std::filesystem::is_regular_file(prompt)) {
+                throw std::runtime_error("Character '" + id
+                    + "' requires regular definition CHARACTER.md");
+            }
+            definitions.push_back(load_character_definition_metadata(directory / "character.toml"));
+        } catch (const std::exception& error) {
+            throw std::runtime_error("Character '" + id + "' has invalid definition: " + error.what());
+        }
+    }
+    std::unordered_map<std::string, std::string> display_names;
+    for (const CharacterDefinitionMetadata& definition : definitions) {
+        try {
+            validate_character_name(definition.display_name);
+        } catch (const std::exception& error) {
+            throw std::runtime_error("Character '" + definition.id + "' has invalid definition: " + error.what());
+        }
+        const auto [existing, inserted] = display_names.emplace(
+            fold_ascii(definition.display_name), definition.id);
+        if (!inserted) {
+            throw std::runtime_error("Character display name '" + definition.display_name
+                + "' is not unique: characters '" + existing->second + "' and '"
+                + definition.id + "'");
+        }
+    }
+    return definitions;
 }
 
 bool is_persona_id(std::string_view id) {
@@ -372,6 +451,26 @@ Workspace::Workspace(
             "Workspace '" + utf8_path(root_)
             + "' requires a forums/ directory");
     }
+    const std::filesystem::path definitions_directory = root_ / "characters";
+    const std::vector<CharacterDefinitionMetadata> definitions =
+        load_definition_metadata(definitions_directory);
+    const PersonaRoster personas = load_personas();
+    validate_persona_character_collisions(personas, definitions);
+    const std::unordered_set<std::string> definition_ids = [&definitions] {
+        std::unordered_set<std::string> ids;
+        for (const CharacterDefinitionMetadata& definition : definitions) ids.insert(definition.id);
+        return ids;
+    }();
+    for (const std::string& name : forums()) {
+        const std::filesystem::path directory = forum_directory(name);
+        const Forum forum = load_forum_metadata(directory, name);
+        for (const std::string& member : forum.character_names) {
+            if (!definition_ids.contains(member)) {
+                throw std::runtime_error("Forum '" + name + "' member '" + member
+                    + "' has no matching character definition");
+            }
+        }
+    }
 }
 
 const ApplicationConfig& Workspace::app_config() const {
@@ -423,22 +522,14 @@ Forum Workspace::load_forum(const std::string& name) const {
     if (!std::filesystem::is_directory(directory)) {
         throw ForumNotFoundError("Forum '" + name + "' does not exist");
     }
-    const std::vector<std::string> character_names = subdirectory_names(
-        directory / "characters",
-        SubdirectoryNameKind::path_component);
-    if (character_names.empty()) {
-        throw std::runtime_error(
-            "Characters directory '" + utf8_path(directory / "characters")
-            + "' does not contain an entry");
-    }
-    return {name, load_display_name(directory), character_names, directory};
+    return load_forum_metadata(directory, name);
 }
 
 Forum Workspace::check_forum(const std::string& name) const {
     Forum forum = load_forum(name);
     const PersonaRoster personas = load_personas();
     const std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "characters" / "character_defaults.toml");
+        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters");
     validate_forum_characters(definitions);
     return forum;
 }
@@ -489,7 +580,7 @@ CreatedSession Workspace::create_session(
     Forum forum = load_forum(forum_name);
     PersonaRoster personas = load_personas();
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "characters" / "character_defaults.toml");
+        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters");
     validate_forum_characters(definitions);
 
     const Session stored = store_session(forum, std::move(label));
@@ -527,7 +618,7 @@ std::unique_ptr<SessionController> Workspace::open_session(
     SessionRestore restored = load_session_state(database_path);
     PersonaRoster personas = load_personas();
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "characters" / "character_defaults.toml");
+        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters");
     log_info("Session opened");
     return SessionController::from_definitions(
         std::move(definitions),

@@ -20,6 +20,7 @@ struct Forum {
     std::string name;
     std::string display_name;
     std::vector<std::string> character_names;
+    std::string default_agent_id;
     std::filesystem::path directory;
 };
 

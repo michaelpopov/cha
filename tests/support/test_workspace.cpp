@@ -12,8 +12,10 @@ TestWorkspace::TestWorkspace()
           / ("cha_web_workspace_"
              + std::to_string(
                  std::chrono::steady_clock::now().time_since_epoch().count()))) {
-    const auto character = root_ / "forums" / "lobby" / "characters" / "guide";
-    std::filesystem::create_directories(character);
+    const auto definition = root_ / "characters" / "guide";
+    const auto member = root_ / "forums" / "lobby" / "members" / "guide";
+    std::filesystem::create_directories(definition);
+    std::filesystem::create_directories(member);
     std::filesystem::create_directories(root_ / "personas");
     std::ofstream(root_ / "app.toml")
         << "host = \"127.0.0.1\"\n"
@@ -26,13 +28,13 @@ TestWorkspace::TestWorkspace()
     std::ofstream(root_ / "forums" / "lobby" / "FORUM.md")
         << "Forum instructions\n";
     std::ofstream(
-        root_ / "forums" / "lobby" / "characters" / "character_defaults.toml")
+        root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
         << "host = \"test\"\n"
            "port = 1\n"
            "mode = \"test\"\n"
            "model = \"fake\"\n";
     write_character_config("display_name = \"Guide\"\n");
-    std::ofstream(character / "SYSTEM.md") << "Character instructions\n";
+    std::ofstream(definition / "CHARACTER.md") << "Character instructions\n";
     add_persona("reader", "Reader");
 }
 
@@ -54,13 +56,13 @@ void TestWorkspace::write_app_config(
 
 void TestWorkspace::write_character_config(std::string_view contents) const {
     std::ofstream(
-        root_ / "forums" / "lobby" / "characters" / "guide" / "character.toml")
+        root_ / "characters" / "guide" / "character.toml")
         << contents;
 }
 
 void TestWorkspace::write_character_defaults(std::string_view contents) const {
     std::ofstream(
-        root_ / "forums" / "lobby" / "characters" / "character_defaults.toml")
+        root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
         << contents;
 }
 

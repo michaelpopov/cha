@@ -86,8 +86,8 @@ Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
     Config config = load_config({
-        .definition = workspace_directory / "forums" / "lobby" / "characters" / "Ismael" / "character.toml",
-        .forum_defaults = workspace_directory / "forums" / "lobby" / "characters" / "character_defaults.toml",
+        .definition = workspace_directory / "characters" / "Ismael" / "character.toml",
+        .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
     }).config;
     config.stream = stream;
     return config;
@@ -272,19 +272,21 @@ struct LobbySetup {
 LobbySetup lobby_setup() {
     const Workspace workspace{std::filesystem::path{CHA_WORKSPACE_DIRECTORY}};
     const Forum forum = workspace.load_forum("lobby");
-    std::vector<std::filesystem::path> directories;
+    std::vector<AgentDefinitionSource> sources;
     for (const std::string& character_name : forum.character_names) {
-        directories.push_back(
-            forum.directory / "characters" / character_name);
+        sources.push_back({
+            .definition_directory = std::filesystem::path{CHA_WORKSPACE_DIRECTORY} / "characters" / character_name,
+            .member_directory = forum.directory / "members" / character_name,
+        });
     }
     PersonaRoster personas = workspace.load_personas();
     return {
         .definitions = load_agent_definitions(
-        directories,
+        sources,
         forum.directory,
         forum.display_name,
         personas,
-        forum.directory / "characters" / "character_defaults.toml"),
+        forum.directory / "members" / "character_defaults.toml"),
         .personas = std::move(personas),
     };
 }

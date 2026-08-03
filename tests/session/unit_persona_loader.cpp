@@ -17,6 +17,10 @@ protected:
             / ("cha_personas_" + std::to_string(
                 std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root_ / "forums");
+        std::filesystem::create_directories(root_ / "characters" / "guide");
+        std::ofstream(root_ / "characters" / "guide" / "character.toml")
+            << "display_name = \"Guide\"\n";
+        std::ofstream(root_ / "characters" / "guide" / "CHARACTER.md") << "Guide";
         std::ofstream(root_ / "app.toml")
             << "host = \"127.0.0.1\"\n"
                "port = 8080\n"
