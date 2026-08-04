@@ -225,9 +225,9 @@ sequenceDiagram
     ws->>controller: build with AgentDefinitions and database path
     controller->>controller: restore entries, repair interrupted turns
     alt New session
-        ws-->>main: CreatedSession with controller and assigned id
+        ws-->>main: OpenedSession (descriptor + controller)
     else Existing session
-        ws-->>main: SessionController
+        ws-->>main: OpenedSession (descriptor + controller)
     end
     main->>controller: run_persona
 ```
@@ -267,7 +267,7 @@ sequenceDiagram
     C->>J: start_turn, SQLite transaction
     C->>V: add human entry and install ActiveResponse
     C->>G: open batch gate
-    C-->>U: SessionUpdate, render and clear input
+    C-->>U: SessionChange; text policy returns TextInputResult
 
     W->>W: backend.prepare from immutable history + prompt
     W->>P: POST /v1/chat/completions
@@ -284,7 +284,7 @@ sequenceDiagram
     U->>C: receive
     C->>J: complete_turn, SQLite transaction
     C->>V: finish entry as complete
-    C-->>U: SessionUpdate, render
+    C-->>U: SessionChange, render if state changed
 ```
 
 Two ordering rules are load-bearing:

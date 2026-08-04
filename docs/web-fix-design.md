@@ -1,6 +1,6 @@
 # Web/core boundary correction: design
 
-Status: proposed design, 2026-08-03. Revised the same day after review; the
+Status: implemented; final verification pending, 2026-08-03. Revised the same day after review; the
 revisions are marked in Sections 4.2, 4.5, 6.3, 7.1, 7.2, 7.3, 8.1, 8.2, 11.1,
 13, 14, 15.3, and 16.
 
@@ -1079,3 +1079,8 @@ The durable design is therefore:
 
 > one core live session, several frontend schedulers, and transport-specific
 > presentation adapters.
+
+Implementation note: Blocks 1 through 8 have landed and the final architecture
+documentation has been updated. Verification remains pending until the complete
+configured sanitizer matrix has run successfully; an environmental sanitizer
+failure must be recorded separately from product test results.

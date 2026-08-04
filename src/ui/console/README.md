@@ -1,7 +1,7 @@
 # Console frontend
 
 `ui/console/` implements the line-oriented `chacon` frontend. It reuses
-`Workspace`, `SessionController`, the text command grammar, and the shared
+`Workspace`, `OpenedSession`/`SessionController`, the text command grammar, and the shared
 transcript-writing vocabulary without depending on curses or `ui/tui/`.
 
 ## Process and CLI contract
@@ -33,7 +33,9 @@ over otherwise irrelevant session-selection flags. They do not accept `--persona
 chat startup requires it and resolves the ID from the workspace persona roster
 before opening a session.
 
-Creating a session returns both its controller and its generated ID. With
+Creating or opening returns an `OpenedSession` containing its descriptor and
+owner-thread-only controller. The console calls that controller directly on its
+single libuv owner thread. With
 interactive stdin, the ready banner prints that resolved ID before the first
 prompt, including for `--new` and default session creation, so the session can
 later be reopened with `--session`.

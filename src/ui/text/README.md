@@ -62,7 +62,7 @@ flowchart TD
     kind -->|"agents"| c6["controller.agent_information"]
     kind -->|"set_default"| c7["controller.set_default_agent"]
     kind -->|"stop"| c8["controller.request_stop"]
-    kind -->|"exit"| c9["end_session, handled here"]
+    kind -->|"exit"| c9["exit_requested, handled here"]
     kind -->|"unknown"| c10["notice listing the commands"]
 ```
 
@@ -72,11 +72,14 @@ Two policies live in this file and nowhere else:
   returns the shared in-progress notice *without* clearing the editor, so a
   message typed during generation survives and can be sent afterwards.
 - **`/exit` never reaches the session layer.** Ending a session is a front-end
-  decision, expressed as `end_session` in the returned `SessionUpdate`.
+  decision, expressed as `exit_requested` in `TextInputResult`.
+- **Editor clearing is text policy.** `TextInputResult` combines a semantic
+  `SessionChange` with `clear_input` and `exit_requested`; the controller only
+  reports whether submitted input was consumed.
 
 ## Dependencies
 
-- **Depends on:** `session/` for `SessionController`, `SessionUpdate`, and
+- **Depends on:** `session/` for `SessionController`, `SessionChange`, and
   the shared generation-in-progress notice; `util/` for byte-oriented whitespace
   handling.
 - **Must not depend on:** terminal widgets, curses, session catalogs, or

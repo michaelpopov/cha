@@ -407,9 +407,9 @@ synchronization it cannot see. The native companion-file lease backend is
 exercised by the portable unit tests on every supported platform; the POSIX
 process harness adds cross-process crash-release coverage on Linux and macOS.
 
-[`docs/web-verification.md`](docs/web-verification.md) records which design
-test bullets each suite covers, the two deliberate differences in instrumented
-builds, and which platforms and sanitizers were and were not exercised.
+The complete final verification matrix, including how to record environmental
+sanitizer failures separately from product failures, is in
+[`docs/web-fix-plan.md`](docs/web-fix-plan.md#12-block-8-documentation-and-final-verification).
 
 On macOS and Windows the TUI option defaults to off, so the default build
 produces the console frontend only. The ncurses TUI remains Linux-only.
