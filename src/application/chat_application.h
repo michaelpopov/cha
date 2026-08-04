@@ -14,6 +14,9 @@ public:
     ChatApplication(const ChatApplication&) = delete;
     ChatApplication& operator=(const ChatApplication&) = delete;
     SessionController& controller() noexcept;
+    // Explicitly ends the current controller so frontends can propagate a
+    // clean-path persistence failure rather than relying on destructor cleanup.
+    void shutdown();
     const SessionDescriptor& descriptor() const noexcept;
     std::string_view selected_persona() const noexcept { return selected_persona_; }
     std::string_view selected_author_key() const noexcept { return selected_author_key_; }

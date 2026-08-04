@@ -484,7 +484,10 @@ if(BUILD_TESTING)
         cha_enable_warnings(itest)
         target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
 
-        add_executable(console_tests tests/integration/console_process_test.cpp)
+        add_executable(
+            console_tests
+            tests/integration/console_process_test.cpp
+            tests/support/test_workspace.cpp)
         target_link_libraries(console_tests PRIVATE cha_core GTest::gtest_main)
         target_include_directories(console_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         target_compile_definitions(

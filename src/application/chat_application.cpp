@@ -19,6 +19,7 @@ ChatApplication::~ChatApplication() {
 }
 
 SessionController& ChatApplication::controller() noexcept { return *current_.controller; }
+void ChatApplication::shutdown() { current_.controller->shutdown(); }
 const SessionDescriptor& ChatApplication::descriptor() const noexcept { return current_.descriptor; }
 
 ApplicationResult ChatApplication::error(std::string message, bool consumed) const {

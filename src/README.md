@@ -53,7 +53,7 @@ Each entry point links only its frontend target.
 | --- | --- | --- |
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
 | `ui/tui/` | Curses lifecycle, startup selection, input editing, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
-| `ui/console/` | CLI selection, line input, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
+| `ui/console/` | Line input, application-command dispatch, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
 | `ui/web/` | HTTP/SSE transport, protocol DTOs, presentation state, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
@@ -141,9 +141,10 @@ flowchart LR
 
 Ownership is a strict tree, and destruction order matters:
 
-- Each entry point owns a `Workspace` and selected `SessionController`. The TUI
-  additionally owns its process-wide `Terminal`; the console owns a
-  `SystemConsole` and `TranscriptEmitter`.
+- Each terminal entry point owns a `Workspace` and `ChatApplication`, whose
+  mutable current `SessionController` is owner-thread-only. The TUI additionally
+  owns its process-wide `Terminal`; the console owns a `SystemConsole` and a
+  current-session `TranscriptEmitter`.
 - `run_persona()` owns the TUI chat state. `ConsoleSession::run()` owns the
   console queue and EOF lifecycle.
 - `SessionController` owns the cross-process `SessionLease`, `Transcript`,

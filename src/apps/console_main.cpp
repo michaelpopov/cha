@@ -1,10 +1,8 @@
-#include "session/session_controller.h"
+#include "application/chat_application.h"
 #include "session/workspace.h"
 #include "ui/console/console_session.h"
 #include "ui/console/console_startup.h"
 #include "ui/console/system_console.h"
-#include "ui/console/transcript_emitter.h"
-#include "ui/render/transcript_writer.h"
 #include "util/environment.h"
 #include "util/logging.h"
 #include "util/utf8_path.h"
@@ -13,7 +11,6 @@
 #include <exception>
 #include <iostream>
 #include <memory>
-#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <variant>
@@ -41,40 +38,26 @@ int main_internal(int argc, const char* const* argv) {
     // redirected streams untouched.
     cha::enable_console_output_utf8();
 
-    cha::load_dotenv();
-    const cha::ApplicationConfig app_config =
-        cha::load_application_config();
-    cha::initialize_diagnostic_logging(
-        app_config.log_file,
-        app_config.log_level);
-    cha::log_info("Console application started");
-    cha::Workspace workspace(".", app_config);
     const auto parsed = cha::parse_console_arguments(argc, argv);
     if (const auto* error = std::get_if<cha::ArgumentError>(&parsed)) {
         std::cerr << error->message << '\n';
         return error->exit_code;
     }
     const cha::ConsoleOptions& options = std::get<cha::ConsoleOptions>(parsed);
-    if (options.list_forums) {
-        cha::write_forum_listing(workspace, std::cout);
+
+    cha::load_dotenv();
+    const cha::ApplicationConfig app_config = cha::load_application_config();
+    cha::initialize_diagnostic_logging(
+        app_config.log_file,
+        app_config.log_level);
+    cha::log_info("Console application started");
+    cha::Workspace workspace(".", app_config);
+    if (options.check) {
+        for (const std::string& forum : workspace.forums()) {
+            (void)workspace.check_forum(forum);
+        }
+        std::cout << "Workspace is valid.\n";
         return 0;
-    }
-    if (options.list_sessions) {
-        cha::write_session_listing(workspace, options.forum, std::cout);
-        return 0;
-    }
-    if (options.check_forum) {
-        cha::write_forum_check(workspace, options.forum, std::cout);
-        return 0;
-    }
-    const cha::PersonaRoster personas = workspace.load_personas();
-    if (std::none_of(
-            personas.begin(), personas.end(),
-            [&options](const cha::Persona& persona) {
-                return persona.id == options.persona;
-            })) {
-        std::cerr << "Unknown persona ID '" << options.persona << "'\n";
-        return 2;
     }
 
     const bool input_is_tty =
@@ -91,32 +74,14 @@ int main_internal(int argc, const char* const* argv) {
     cha::SystemConsole console(
         use_color(options.color, output_color_enabled),
         use_color(options.color, error_color_enabled));
-    cha::OpenedSession selection =
-        cha::open_console_session(workspace, options, console);
-    cha::SessionController& controller = *selection.controller;
+    cha::ChatApplication application(workspace, console);
     if (input_is_tty) {
-        // The resolved ID, not the requested one: a session created by --new or
-        // by default has no ID on the command line, so reporting it here avoids
-        // making the persona run a separate listing before reopening it.
-        std::cerr << selection.descriptor.identity.forum_id << " / "
-                  << selection.descriptor.identity.session_id
-                  << " ready\n";
+        std::cerr << "Entrance / Welcome ready\n";
     }
-
-    cha::TranscriptEmitter emitter(
-        console.transcript(),
-        cha::show_addressing(
-            controller.characters(),
-            controller.transcript().view()),
-        // TTY input is already visible when typed; only pipes need a second
-        // copy of the human prompt in the transcript stream.
-        !input_is_tty);
     cha::ConsoleSession session(
         console,
-        controller,
-        emitter,
+        application,
         {
-            .author_id = options.persona,
             .show_prompt = input_is_tty,
             .backpressure_stdin = !input_is_tty,
         });

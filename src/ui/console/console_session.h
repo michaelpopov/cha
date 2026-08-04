@@ -1,11 +1,12 @@
 #pragma once
 
-#include "session/session_controller.h"
+#include "application/chat_application.h"
 #include "ui/console/console_port.h"
 #include "ui/console/transcript_emitter.h"
 
 #include <cstddef>
 #include <deque>
+#include <memory>
 #include <string>
 
 namespace cha {
@@ -17,41 +18,38 @@ inline constexpr std::size_t default_console_queue_limit = 64;
 // Presentation and flow-control choices supplied by the composition root so
 // the session state machine does not inspect process descriptors or TTY state.
 struct ConsoleSessionOptions {
-    // Unit-level console sessions use the same stable fixture author as the
-    // controller's test construction seam. Production passes ConsoleOptions::persona.
-    std::string author_id{"operator"};
     bool show_prompt{};
     bool backpressure_stdin{};
     std::size_t queue_limit{default_console_queue_limit};
 };
 
-// Runs one line-oriented chat over a ConsolePort and SessionController. It
+// Runs one line-oriented chat over a ConsolePort and ChatApplication. It
 // serializes queued submissions, drains agent events after EOF, and advances
 // the TranscriptEmitter only after the port confirms a successful flush.
 class ConsoleSession {
 public:
     ConsoleSession(
         ConsolePort& port,
-        SessionController& controller,
-        TranscriptEmitter& emitter,
+        ChatApplication& application,
         ConsoleSessionOptions options = {});
 
     [[nodiscard]] int run();
 
 private:
-    void apply(SessionChange change);
+    void apply(ApplicationResult result);
     void enqueue(std::vector<std::string> lines);
     void pump();
     bool emit();
     int finish(int exit_code);
 
     ConsolePort& port_;
-    SessionController& controller_;
-    TranscriptEmitter& emitter_;
+    ChatApplication& application_;
+    std::unique_ptr<TranscriptEmitter> emitter_;
     ConsoleSessionOptions options_;
     std::deque<std::string> queue_;
     bool input_done_{};
     bool end_session_{};
+    bool output_failed_{};
     bool prompt_needed_{true};
 };
 
