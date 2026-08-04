@@ -941,6 +941,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     #cha-web-ui-states .cha-side-action,
     #cha-web-ui-states .cha-recent,
     #cha-web-ui-states .cha-list-action,
+    #cha-web-ui-states .cha-character-row,
     #cha-web-ui-states .cha-icon-action,
     #cha-web-ui-states .cha-composer-action {
       appearance: none;
@@ -964,6 +965,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     #cha-web-ui-states .cha-side-action:hover,
     #cha-web-ui-states .cha-recent:hover,
     #cha-web-ui-states .cha-list-action:hover,
+    #cha-web-ui-states .cha-character-row:hover,
     #cha-web-ui-states .cha-icon-action:hover {
       background: var(--accent);
       color: var(--accent-foreground);
@@ -1125,6 +1127,44 @@ html&gt;body{padding:0}&lt;/style&gt;
       font-size: calc(var(--font-size-base, 16px) * 0.78);
     }
     #cha-web-ui-states .cha-persona-row input { accent-color: var(--primary); }
+    #cha-web-ui-states .cha-character-list {
+      display: grid;
+    }
+    #cha-web-ui-states .cha-character-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 0.8rem;
+      padding: 0.8rem 0.65rem;
+      text-align: left;
+      background: transparent;
+      border-bottom: 1px solid var(--border);
+    }
+    #cha-web-ui-states .cha-character-row:last-child { border-bottom: 0; }
+    #cha-web-ui-states .cha-markdown {
+      flex: 1;
+      min-height: 0;
+      width: min(100%, 42rem);
+      margin: 0 auto;
+      overflow: auto;
+      padding-bottom: 1rem;
+    }
+    #cha-web-ui-states .cha-markdown h2,
+    #cha-web-ui-states .cha-markdown h3 {
+      margin: 0.7rem 0 0.35rem;
+      font-size: calc(var(--font-size-base, 16px) * 1.05);
+      font-weight: 500;
+    }
+    #cha-web-ui-states .cha-markdown p { margin: 0.4rem 0; }
+    #cha-web-ui-states .cha-markdown ul {
+      margin: 0.4rem 0;
+      padding-left: 1.25rem;
+    }
+    #cha-web-ui-states .cha-markdown pre {
+      margin: 0.6rem 0;
+      white-space: pre-wrap;
+    }
     #cha-web-ui-states .cha-chat {
       flex-direction: column;
       min-height: 0;
@@ -1194,6 +1234,22 @@ html&gt;body{padding:0}&lt;/style&gt;
       background: var(--primary);
       color: var(--primary-foreground);
     }
+    #cha-web-ui-states .cha-chat-status {
+      width: min(100%, 42rem);
+      min-width: 0;
+      display: flex;
+      gap: 0.8rem;
+      margin: 0.35rem auto 0;
+      padding: 0 0.55rem;
+      color: var(--muted-foreground);
+      font-size: calc(var(--font-size-base, 16px) * 0.78);
+      white-space: nowrap;
+    }
+    #cha-web-ui-states .cha-chat-status span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     #cha-web-ui-states .cha-new-session {
       width: min(100%, 30rem);
       display: grid;
@@ -1241,6 +1297,8 @@ html&gt;body{padding:0}&lt;/style&gt;
       &lt;select class=&quot;form-select&quot; id=&quot;cha-view&quot;&gt;
         &lt;option value=&quot;chat&quot;&gt;Chat&lt;/option&gt;
         &lt;option value=&quot;personas&quot;&gt;Personas&lt;/option&gt;
+        &lt;option value=&quot;characters&quot;&gt;Characters&lt;/option&gt;
+        &lt;option value=&quot;character-detail&quot;&gt;Character detail&lt;/option&gt;
         &lt;option value=&quot;forums&quot;&gt;Forums&lt;/option&gt;
         &lt;option value=&quot;sessions&quot;&gt;Forum sessions&lt;/option&gt;
         &lt;option value=&quot;new-session&quot;&gt;New session&lt;/option&gt;
@@ -1260,11 +1318,14 @@ html&gt;body{padding:0}&lt;/style&gt;
         &lt;nav class=&quot;cha-sidebar-nav&quot; aria-label=&quot;Primary&quot;&gt;
           &lt;button class=&quot;cha-side-action&quot; type=&quot;button&quot; data-view=&quot;personas&quot; data-nav=&quot;personas&quot;&gt;
             &lt;i data-lucide=&quot;users&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
-            &lt;span class=&quot;cha-recent-copy&quot;&gt;&lt;span&gt;Personas&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot; id=&quot;cha-sidebar-persona&quot;&gt;Reader&lt;/span&gt;&lt;/span&gt;
+            &lt;span&gt;Personas&lt;/span&gt;
+          &lt;/button&gt;
+          &lt;button class=&quot;cha-side-action&quot; type=&quot;button&quot; data-view=&quot;characters&quot; data-nav=&quot;characters&quot;&gt;
+            &lt;i data-lucide=&quot;contact&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;span&gt;Characters&lt;/span&gt;
           &lt;/button&gt;
           &lt;button class=&quot;cha-side-action&quot; type=&quot;button&quot; data-view=&quot;forums&quot; data-nav=&quot;forums&quot;&gt;
             &lt;i data-lucide=&quot;messages-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
-            &lt;span class=&quot;cha-recent-copy&quot;&gt;&lt;span&gt;Forums&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot; id=&quot;cha-sidebar-forum&quot;&gt;The Lobby&lt;/span&gt;&lt;/span&gt;
+            &lt;span&gt;Forums&lt;/span&gt;
           &lt;/button&gt;
         &lt;/nav&gt;
         &lt;div class=&quot;cha-section-label&quot;&gt;Recent&lt;/div&gt;
@@ -1314,6 +1375,11 @@ html&gt;body{padding:0}&lt;/style&gt;
             &lt;input id=&quot;cha-message&quot; type=&quot;text&quot; aria-label=&quot;Message&quot; placeholder=&quot;Message The Lobby&quot;&gt;
             &lt;button class=&quot;cha-composer-action cha-send&quot; type=&quot;submit&quot; aria-label=&quot;Send message&quot;&gt;&lt;i data-lucide=&quot;arrow-up&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;
           &lt;/form&gt;
+          &lt;div class=&quot;cha-chat-status&quot; aria-label=&quot;Current chat context&quot;&gt;
+            &lt;span id=&quot;cha-status-forum&quot;&gt;The Lobby&lt;/span&gt;
+            &lt;span&gt;From: &lt;span id=&quot;cha-status-persona&quot;&gt;Reader&lt;/span&gt;&lt;/span&gt;
+            &lt;span&gt;To: &lt;span id=&quot;cha-status-character&quot;&gt;Cheburashka&lt;/span&gt;&lt;/span&gt;
+          &lt;/div&gt;
         &lt;/section&gt;
 
         &lt;section class=&quot;cha-screen cha-navigation&quot; data-screen=&quot;personas&quot; aria-label=&quot;Personas navigation&quot;&gt;
@@ -1334,22 +1400,52 @@ html&gt;body{padding:0}&lt;/style&gt;
           &lt;/div&gt;
         &lt;/section&gt;
 
+        &lt;section class=&quot;cha-screen cha-navigation&quot; data-screen=&quot;characters&quot; aria-label=&quot;Characters navigation&quot;&gt;
+          &lt;div class=&quot;cha-character-list&quot;&gt;
+            &lt;button class=&quot;cha-character-row&quot; type=&quot;button&quot; data-character=&quot;cheburashka&quot;&gt;
+              &lt;span class=&quot;cha-persona-copy&quot;&gt;&lt;span class=&quot;cha-persona-name&quot;&gt;Cheburashka&lt;/span&gt;&lt;span class=&quot;cha-persona-description&quot;&gt;A gentle, big-eared creature learning friendship&lt;/span&gt;&lt;/span&gt;
+              &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;/button&gt;
+            &lt;button class=&quot;cha-character-row&quot; type=&quot;button&quot; data-character=&quot;ismael&quot;&gt;
+              &lt;span class=&quot;cha-persona-copy&quot;&gt;&lt;span class=&quot;cha-persona-name&quot;&gt;Ismael&lt;/span&gt;&lt;span class=&quot;cha-persona-description&quot;&gt;An old sailor obsessed with the white whale&lt;/span&gt;&lt;/span&gt;
+              &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;/button&gt;
+            &lt;button class=&quot;cha-character-row&quot; type=&quot;button&quot; data-character=&quot;epictetus&quot;&gt;
+              &lt;span class=&quot;cha-persona-copy&quot;&gt;&lt;span class=&quot;cha-persona-name&quot;&gt;Epictetus&lt;/span&gt;&lt;span class=&quot;cha-persona-description&quot;&gt;A demanding Stoic teacher of freedom and judgment&lt;/span&gt;&lt;/span&gt;
+              &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;/button&gt;
+            &lt;button class=&quot;cha-character-row&quot; type=&quot;button&quot; data-character=&quot;marcus&quot;&gt;
+              &lt;span class=&quot;cha-persona-copy&quot;&gt;&lt;span class=&quot;cha-persona-name&quot;&gt;Marcus Aurelius&lt;/span&gt;&lt;span class=&quot;cha-persona-description&quot;&gt;A reflective emperor practicing Stoic duty&lt;/span&gt;&lt;/span&gt;
+              &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;/button&gt;
+            &lt;button class=&quot;cha-character-row&quot; type=&quot;button&quot; data-character=&quot;seneca&quot;&gt;
+              &lt;span class=&quot;cha-persona-copy&quot;&gt;&lt;span class=&quot;cha-persona-name&quot;&gt;Seneca&lt;/span&gt;&lt;span class=&quot;cha-persona-description&quot;&gt;A pragmatic Stoic writer on virtue and adversity&lt;/span&gt;&lt;/span&gt;
+              &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
+            &lt;/button&gt;
+          &lt;/div&gt;
+        &lt;/section&gt;
+
+        &lt;section class=&quot;cha-screen cha-navigation&quot; data-screen=&quot;character-detail&quot; aria-label=&quot;Character detail navigation&quot;&gt;
+          &lt;button class=&quot;cha-back-row&quot; type=&quot;button&quot; data-view=&quot;characters&quot;&gt;&lt;i data-lucide=&quot;chevron-left&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;span&gt;Characters&lt;/span&gt;&lt;/button&gt;
+          &lt;article class=&quot;cha-markdown&quot; id=&quot;cha-character-detail&quot;&gt;&lt;/article&gt;
+        &lt;/section&gt;
+
         &lt;section class=&quot;cha-screen cha-navigation&quot; data-screen=&quot;forums&quot; aria-label=&quot;Forums navigation&quot;&gt;
           &lt;h2&gt;Choose a forum&lt;/h2&gt;
           &lt;div class=&quot;cha-list&quot;&gt;
             &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-open-forum=&quot;lobby&quot;&gt;
               &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;messages-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
-              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;The Lobby&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;3 sessions&lt;/span&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;The Lobby&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;Cheburashka, Ismael&lt;/span&gt;&lt;/span&gt;
               &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
             &lt;/button&gt;
             &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-open-forum=&quot;hall&quot;&gt;
               &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;messages-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
-              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;The Hall&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;1 session&lt;/span&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;The Hall&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;Ismael&lt;/span&gt;&lt;/span&gt;
               &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
             &lt;/button&gt;
             &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-open-forum=&quot;stoics&quot;&gt;
               &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;messages-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
-              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;The Stoics Forum&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;4 sessions&lt;/span&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;The Stoics Forum&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;Epictetus, Marcus Aurelius, Seneca&lt;/span&gt;&lt;/span&gt;
               &lt;i class=&quot;cha-chevron&quot; data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
             &lt;/button&gt;
           &lt;/div&gt;
@@ -1365,12 +1461,12 @@ html&gt;body{padding:0}&lt;/style&gt;
             &lt;/button&gt;
             &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-session=&quot;design-review&quot;&gt;
               &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;message-circle&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
-              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;Design review&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;Let’s separate the decision into scope…&lt;/span&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;Design review&lt;/span&gt;&lt;/span&gt;
               &lt;span class=&quot;cha-secondary-line&quot;&gt;Now&lt;/span&gt;
             &lt;/button&gt;
             &lt;button class=&quot;cha-list-action&quot; type=&quot;button&quot; data-session=&quot;welcome&quot;&gt;
               &lt;span class=&quot;cha-list-icon&quot;&gt;&lt;i data-lucide=&quot;message-circle&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;
-              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;Welcome&lt;/span&gt;&lt;span class=&quot;cha-secondary-line&quot;&gt;A first conversation in this forum&lt;/span&gt;&lt;/span&gt;
+              &lt;span class=&quot;cha-list-copy&quot;&gt;&lt;span class=&quot;cha-primary-line&quot;&gt;Welcome&lt;/span&gt;&lt;/span&gt;
               &lt;span class=&quot;cha-secondary-line&quot;&gt;Tue&lt;/span&gt;
             &lt;/button&gt;
           &lt;/div&gt;
@@ -1409,10 +1505,12 @@ html&gt;body{padding:0}&lt;/style&gt;
       const composer = root.querySelector(&#x27;#cha-composer&#x27;);
       const sessionName = root.querySelector(&#x27;#cha-session-name&#x27;);
       const startSession = root.querySelector(&#x27;#cha-start-session&#x27;);
-      const sidebarPersona = root.querySelector(&#x27;#cha-sidebar-persona&#x27;);
-      const sidebarForum = root.querySelector(&#x27;#cha-sidebar-forum&#x27;);
+      const statusForum = root.querySelector(&#x27;#cha-status-forum&#x27;);
+      const statusPersona = root.querySelector(&#x27;#cha-status-persona&#x27;);
+      const statusCharacter = root.querySelector(&#x27;#cha-status-character&#x27;);
       const topbarContext = root.querySelector(&#x27;#cha-topbar-context&#x27;);
       const recentList = root.querySelector(&#x27;.cha-recents&#x27;);
+      const characterDetail = root.querySelector(&#x27;#cha-character-detail&#x27;);
 
       const labels = {
         persona: {reader: &#x27;Reader&#x27;, researcher: &#x27;Researcher&#x27;, editor: &#x27;Editor&#x27;},
@@ -1424,13 +1522,41 @@ html&gt;body{padding:0}&lt;/style&gt;
           welcome: &#x27;Welcome&#x27;
         }
       };
+      const forumDefaultCharacter = {
+        lobby: &#x27;Cheburashka&#x27;,
+        hall: &#x27;Ismael&#x27;,
+        stoics: &#x27;Epictetus&#x27;
+      };
+      const characters = {
+        cheburashka: {
+          name: &#x27;Cheburashka&#x27;,
+          html: &#x27;&lt;p&gt;You are a little furry animal with big ears called Cheburashka from the old Soviet cartoons.&lt;/p&gt;&lt;p&gt;Your best friend is crocodile Gena, who works in a zoo as a crocodile.&lt;/p&gt;&lt;p&gt;You were lonely but now you have friends.&lt;/p&gt;&#x27;
+        },
+        ismael: {
+          name: &#x27;Ismael&#x27;,
+          html: &#x27;&lt;p&gt;Your name is Ismael. You are an old sailor obsessed with hunting down the white whale.&lt;/p&gt;&#x27;
+        },
+        epictetus: {
+          name: &#x27;Epictetus&#x27;,
+          html: &#x27;&lt;h2&gt;Epictetus: Character Dossier&lt;/h2&gt;&lt;h3&gt;Purpose&lt;/h3&gt;&lt;p&gt;This document defines a historically informed dramatic character based on Epictetus during his mature teaching years at Nicopolis.&lt;/p&gt;&lt;p&gt;It is &lt;strong&gt;not&lt;/strong&gt;:&lt;/p&gt;&lt;ul&gt;&lt;li&gt;A summary of Stoic doctrine&lt;/li&gt;&lt;li&gt;A fixed interrogation procedure&lt;/li&gt;&lt;li&gt;A collection of quotations&lt;/li&gt;&lt;/ul&gt;&lt;pre&gt;&lt;code&gt;&amp;lt;character_profile&amp;gt;\n  Mature teacher at Nicopolis\n&amp;lt;/character_profile&amp;gt;&lt;/code&gt;&lt;/pre&gt;&#x27;
+        },
+        marcus: {
+          name: &#x27;Marcus Aurelius&#x27;,
+          html: &#x27;&lt;h2&gt;Marcus Aurelius: Character Dossier&lt;/h2&gt;&lt;p&gt;A Roman emperor whose philosophical practice developed under the pressure of authority, war, illness, and public duty.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Serious and observant&lt;/li&gt;&lt;li&gt;Restrained but emotionally engaged&lt;/li&gt;&lt;li&gt;Committed to duty without claiming perfection&lt;/li&gt;&lt;/ul&gt;&#x27;
+        },
+        seneca: {
+          name: &#x27;Seneca&#x27;,
+          html: &#x27;&lt;h2&gt;Seneca: Character Dossier&lt;/h2&gt;&lt;p&gt;An elderly Roman senator, former imperial adviser, writer, and student of philosophy who does not claim to have completed his own education.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Intellectually energetic&lt;/li&gt;&lt;li&gt;Socially observant&lt;/li&gt;&lt;li&gt;Morally dissatisfied with himself&lt;/li&gt;&lt;/ul&gt;&#x27;
+        }
+      };
       const state = {
         viewport: &#x27;desktop&#x27;,
         view: &#x27;chat&#x27;,
         sidebar: true,
         persona: &#x27;reader&#x27;,
         forum: &#x27;lobby&#x27;,
-        session: &#x27;design-review&#x27;
+        session: &#x27;design-review&#x27;,
+        character: &#x27;epictetus&#x27;
       };
 
       function textFor(group, key) {
@@ -1449,6 +1575,8 @@ html&gt;body{padding:0}&lt;/style&gt;
         });
         const currentNav = state.view === &#x27;personas&#x27;
           ? &#x27;personas&#x27;
+          : [&#x27;characters&#x27;, &#x27;character-detail&#x27;].includes(state.view)
+            ? &#x27;characters&#x27;
           : state.view === &#x27;settings&#x27;
             ? &#x27;settings&#x27;
             : [&#x27;forums&#x27;, &#x27;sessions&#x27;, &#x27;new-session&#x27;].includes(state.view)
@@ -1464,8 +1592,10 @@ html&gt;body{padding:0}&lt;/style&gt;
         const forumName = textFor(&#x27;forum&#x27;, state.forum);
         const personaName = textFor(&#x27;persona&#x27;, state.persona);
         const sessionLabel = textFor(&#x27;session&#x27;, state.session);
-        sidebarPersona.textContent = personaName;
-        sidebarForum.textContent = forumName;
+        const selectedCharacter = characters[state.character];
+        statusForum.textContent = forumName;
+        statusPersona.textContent = personaName;
+        statusCharacter.textContent = forumDefaultCharacter[state.forum];
         root.querySelectorAll(&#x27;.cha-recent[data-session][data-forum]&#x27;).forEach(button =&gt; {
           button.classList.toggle(
             &#x27;is-current&#x27;,
@@ -1474,6 +1604,8 @@ html&gt;body{padding:0}&lt;/style&gt;
         const titles = {
           chat: [&#x27;&#x27;, &#x27;&#x27;],
           personas: [&#x27;Personas&#x27;, &#x27;&#x27;],
+          characters: [&#x27;Characters&#x27;, &#x27;&#x27;],
+          &#x27;character-detail&#x27;: [selectedCharacter.name, &#x27;&#x27;],
           forums: [&#x27;Forums&#x27;, &#x27;&#x27;],
           sessions: [&#x27;Sessions&#x27;, &#x27;&#x27;],
           &#x27;new-session&#x27;: [&#x27;New session&#x27;, &#x27;&#x27;],
@@ -1483,6 +1615,7 @@ html&gt;body{padding:0}&lt;/style&gt;
         title.textContent = titles[state.view][0];
         subtitle.textContent = titles[state.view][1];
         subtitle.hidden = titles[state.view][1] === &#x27;&#x27;;
+        characterDetail.innerHTML = selectedCharacter.html;
         root.querySelector(&#x27;#cha-message&#x27;).placeholder = &#x27;Message &#x27; + forumName;
         selectionLine.textContent =
           (state.viewport === &#x27;desktop&#x27; ? &#x27;Desktop browser&#x27; : &#x27;iPhone browser&#x27;) +
@@ -1491,9 +1624,8 @@ html&gt;body{padding:0}&lt;/style&gt;
           &#x27; · &#x27; + personaName + &#x27; / &#x27; + forumName + &#x27; / &#x27; + sessionLabel;
       }
 
-      function chooseView(view, closeSidebar = true) {
+      function chooseView(view) {
         state.view = view;
-        if (closeSidebar) state.sidebar = false;
         sync();
       }
 
@@ -1501,7 +1633,7 @@ html&gt;body{padding:0}&lt;/style&gt;
         state.viewport = event.target.value;
         sync();
       });
-      viewControl.addEventListener(&#x27;change&#x27;, event =&gt; chooseView(event.target.value, false));
+      viewControl.addEventListener(&#x27;change&#x27;, event =&gt; chooseView(event.target.value));
       sidebarControl.addEventListener(&#x27;change&#x27;, event =&gt; {
         state.sidebar = event.target.checked;
         sync();
@@ -1518,6 +1650,12 @@ html&gt;body{padding:0}&lt;/style&gt;
         button.addEventListener(&#x27;click&#x27;, () =&gt; {
           state.forum = button.dataset.openForum;
           chooseView(&#x27;sessions&#x27;);
+        });
+      });
+      root.querySelectorAll(&#x27;[data-character]&#x27;).forEach(button =&gt; {
+        button.addEventListener(&#x27;click&#x27;, () =&gt; {
+          state.character = button.dataset.character;
+          chooseView(&#x27;character-detail&#x27;);
         });
       });
       function bindSessionButton(button) {
