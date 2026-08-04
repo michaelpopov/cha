@@ -418,11 +418,14 @@ void SessionRegistry::owner_main(SessionIdentity key, std::shared_ptr<StartupRes
                     }
                     lifecycle_changed_.notify_all();
                 },
-                .log_fatal = [key](const SessionDescriptor&) {
-                    log_error(session_log(key, "fatal_contained"));
+                // These two take their identity from the runtime rather than
+                // capturing it, so the logged session can never drift from the
+                // one the runtime is actually reporting about.
+                .log_fatal = [](const SessionDescriptor& descriptor) {
+                    log_error(session_log(descriptor.identity, "fatal_contained"));
                 },
-                .log_event = [key](const SessionDescriptor&, std::string_view event) {
-                    log_info(session_log(key, event));
+                .log_event = [](const SessionDescriptor& descriptor, std::string_view event) {
+                    log_info(session_log(descriptor.identity, event));
                 },
             }, WebRuntimeClock{}, notifier);
         runtime_view = runtime.get();

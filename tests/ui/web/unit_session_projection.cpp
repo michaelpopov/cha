@@ -58,6 +58,19 @@ TEST(SessionProjection, MovesCompleteCoreStateIntoTheProtocolDto) {
         .lifecycle = SessionLifecycle::stopping,
         .shutdown_reason = ShutdownReason::server_stopping,
     }));
+
+    // The publication path builds exactly one owning transcript copy, so the
+    // mapper must move its strings rather than copy them. Assert on the
+    // moved-from source: a mapper that copies leaves these populated.
+    for (const cha::TranscriptEntry& entry : state.transcript) {
+        EXPECT_TRUE(entry.text.empty());
+        EXPECT_TRUE(entry.display_name.empty());
+    }
+    for (const CharacterInfo& character : state.characters) {
+        EXPECT_TRUE(character.name.empty());
+    }
+    EXPECT_TRUE(state.default_agent_id.empty());
+    EXPECT_TRUE(state.generation.reasoning_text.empty());
 }
 
 TEST(SessionProjection, MapsAnsweringStoppingAndInactiveGenerationStates) {

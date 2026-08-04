@@ -65,8 +65,12 @@ void PersonaSession::apply_change(const SessionChange& change) {
     if (change.state_changed) {
         request_render();
     }
-    if (change.notice) {
+    // A notice can change without any session state changing: /info and the
+    // handle commands report through this field alone. Redraw on it here
+    // rather than relying on the caller having already asked for one.
+    if (change.notice && notice_ != *change.notice) {
         notice_ = *change.notice;
+        request_render();
     }
     if (change.controller_ended) {
         running_ = false;

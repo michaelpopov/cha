@@ -321,6 +321,20 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
     EXPECT_FALSE(parse_error.session.input_consumed);
     EXPECT_TRUE(parse_error.clear_input);
 
+    // A recognized command that fails its precondition still consumes the line
+    // it was typed on. Only composed prompt text survives a rejection.
+    const TextInputResult no_span =
+        handle_text_input(*controller, "operator", "/hide");
+    EXPECT_TRUE(no_span.session.input_consumed);
+    EXPECT_TRUE(no_span.clear_input);
+    EXPECT_FALSE(no_span.session.state_changed);
+
+    const TextInputResult nothing_to_restore =
+        handle_text_input(*controller, "operator", "/hide-off");
+    EXPECT_TRUE(nothing_to_restore.session.input_consumed);
+    EXPECT_TRUE(nothing_to_restore.clear_input);
+    EXPECT_FALSE(nothing_to_restore.session.state_changed);
+
     const TextInputResult exit_result =
         handle_text_input(*controller, "operator", "/exit");
     EXPECT_TRUE(exit_result.clear_input);

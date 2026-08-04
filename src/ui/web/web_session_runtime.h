@@ -84,8 +84,9 @@ public:
 struct WebRuntimeHooks {
     std::function<void()> mark_registry_stopping;
     std::function<void()> mark_finished;
-    // Passing metadata makes session identity part of the logging contract;
-    // registry wiring does not have to capture and duplicate it correctly.
+    // The runtime supplies its own descriptor, so session identity is part of
+    // the logging contract and a hook cannot report a session other than the
+    // one it was installed on. Log IDs only: the label is user-supplied text.
     std::function<void(const SessionDescriptor&)> log_fatal;
     std::function<void(const SessionDescriptor&, std::string_view)> log_event;
 };
@@ -192,10 +193,13 @@ private:
     WebRuntimeClock clock_;
 };
 
-// Production adapter borrows the controller held by OpenedSession for the
-// complete owner loop.
+// Production adapter: it borrows the controller held by OpenedSession for the
+// complete owner loop, so releasing the session also releases its lease.
 [[nodiscard]] std::unique_ptr<WebSessionController> adapt_session_controller(
     SessionController& controller);
+// Owning counterpart for tests that drive a real controller through
+// run_with_controller() without assembling an OpenedSession. Production
+// startup always uses the borrowing overload above.
 [[nodiscard]] std::unique_ptr<WebSessionController> adapt_session_controller(
     std::unique_ptr<SessionController> controller);
 
