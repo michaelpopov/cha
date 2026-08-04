@@ -217,6 +217,7 @@ add_library(cha_core STATIC
     src/application/builtins.cpp
     src/application/effective_personas.cpp
     src/application/environment.cpp
+    src/application/chat_application.cpp
     src/application/forum_catalog.cpp
     src/application/session_source.cpp
     src/application/welcome_storage.cpp
@@ -253,6 +254,8 @@ target_link_libraries(
 cha_enable_warnings(cha_core)
 
 add_library(cha_ui_text STATIC
+    src/ui/text/application_command.cpp
+    src/ui/text/application_dispatcher.cpp
     src/ui/text/command.cpp
     src/ui/text/mcast.cpp
     src/ui/text/mention.cpp
@@ -380,8 +383,11 @@ if(BUILD_TESTING)
         tests/application/unit_effective_personas.cpp
         tests/application/unit_forum_catalog.cpp
         tests/application/unit_welcome_storage.cpp
+        tests/application/unit_chat_application.cpp
         tests/support/test_workspace.cpp
         tests/ui/text/unit_command.cpp
+        tests/ui/text/unit_application_command.cpp
+        tests/ui/text/unit_application_dispatcher.cpp
         tests/ui/text/unit_mcast.cpp
         tests/ui/text/unit_mention.cpp
         tests/ui/text/unit_text_input.cpp

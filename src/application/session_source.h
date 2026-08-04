@@ -5,6 +5,7 @@
 #include "session/workspace.h"
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +14,13 @@ namespace cha {
 class WakeNotifier;
 class WorkspaceInventory;
 class WelcomeStorage;
+
+// Signals that durable catalog publication succeeded but controller setup did
+// not, allowing the application transaction to retain the new session.
+class SessionCreatedOpenError final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 class SessionSource {
 public:

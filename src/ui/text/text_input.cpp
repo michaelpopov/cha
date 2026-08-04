@@ -94,7 +94,7 @@ TextInputResult handle_text_input(
     case CommandKind::unknown:
         result.clear_input = true;
         result.session.notice =
-            "Unknown command. Commands: /clear, /hide-on, /hide, /hide-off, /mcast, /info, /agents, /@Name, /stop, /exit";
+            "Unknown command. Commands: /iam, /open, /create, /forums, /sessions, /personas, /help, /clear, /hide-on, /hide, /hide-off, /mcast, /info, /agents, /@Name, /stop, /exit";
         return result;
     case CommandKind::text:
         return result;

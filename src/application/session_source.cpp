@@ -69,8 +69,16 @@ public:
         const std::string public_name = name;
         try {
             PreparedSession prepared = catalog.create_by_name(std::move(name));
-            return build(prepared.session, prepared.database_path, std::move(prepared.lease), notifier);
+            try {
+                return build(prepared.session, prepared.database_path, std::move(prepared.lease), notifier);
+            } catch (const std::exception& error) {
+                throw SessionCreatedOpenError(error.what());
+            }
         } catch (const SessionNameExistsError& error) { rethrow_public_session_error(error, entrance_name, public_name); }
+        catch (const SessionCreatedOpenError&) { throw; }
+        catch (const std::exception&) {
+            throw std::runtime_error("Unable to create session '" + public_name + "' in forum 'Entrance'");
+        }
     }
 private:
     OpenedSession build(const Session& stored, const std::filesystem::path& path, SessionLease lease, WakeNotifier& notifier) const {
@@ -116,8 +124,16 @@ public:
         const std::string public_name = name;
         try {
             PreparedSession prepared = catalog.create_by_name(std::move(name));
-            return build(prepared.session, prepared.database_path, std::move(prepared.lease), notifier);
+            try {
+                return build(prepared.session, prepared.database_path, std::move(prepared.lease), notifier);
+            } catch (const std::exception& error) {
+                throw SessionCreatedOpenError(error.what());
+            }
         } catch (const SessionNameExistsError& error) { rethrow_public_session_error(error, forum_.display_name, public_name); }
+        catch (const SessionCreatedOpenError&) { throw; }
+        catch (const std::exception&) {
+            throw std::runtime_error("Unable to create session '" + public_name + "' in forum '" + forum_.display_name + "'");
+        }
     }
 private:
     OpenedSession build(const Session& stored, const std::filesystem::path& path, SessionLease lease, WakeNotifier& notifier) const {
@@ -146,7 +162,10 @@ public:
         : workspace_(workspace), personas_(std::move(personas)), inventory_(inventory.serialize()), storage_(storage) {}
     std::vector<SessionSummary> list() const override { return {}; }
     OpenedSession open(std::string_view name, WakeNotifier& notifier) override {
-        if (fold_ascii(name) != fold_ascii(welcome_name)) throw std::runtime_error("Unknown session");
+        if (fold_ascii(name) != fold_ascii(welcome_name)) {
+            throw SessionNotFoundError("Session '" + std::string(name)
+                + "' does not exist in forum 'Entrance'");
+        }
         PreparedSession prepared = storage_.prepare();
         auto definitions = builtin_assistant_definitions(workspace_.app_config().provider, inventory_, *personas_);
         return {.descriptor = {.identity = {"builtin-entrance", "builtin-welcome"}, .forum_display_name = std::string(entrance_name), .session_label = std::string(welcome_name)},

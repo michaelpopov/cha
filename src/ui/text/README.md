@@ -92,3 +92,10 @@ Two policies live in this file and nowhere else:
 | `tests/ui/text/unit_command.cpp` | Command recognition, argument splitting, `/@Name`. |
 | `tests/ui/text/unit_mention.cpp` | Mention splitting, `@@` escaping, whitespace and degenerate cases. |
 | `tests/ui/text/unit_text_input.cpp` | Dispatch policy, including the active-generation rules and `/exit`. |
+# Application commands
+
+`application_command.*` owns the fixed-arity terminal navigation grammar for
+`/iam`, `/open`, `/create`, `/forums`, `/sessions`, `/personas`, and `/help`.
+It parses public names (including double-quoted names) only; resolution and
+session switching remain in `application/`. The existing `text_input.*` entry
+point remains controller-scoped for the web frontend.
