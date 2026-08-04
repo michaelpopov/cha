@@ -7,6 +7,7 @@
 #include "session/session_catalog.h"
 #include "session/session_lease.h"
 #include "util/path_name.h"
+#include "util/public_name.h"
 #include "util/text.h"
 #include "util/logging.h"
 #include "util/utf8_path.h"
@@ -29,7 +30,8 @@ std::vector<AgentDefinition> load_definitions(
     const Forum& forum,
     const PersonaRoster& personas,
     const std::filesystem::path& forum_defaults_candidate,
-    const std::filesystem::path& definitions_directory) {
+    const std::filesystem::path& definitions_directory,
+    const ProviderConfig& application_provider) {
     log_info(
         "Loading forum character definitions: forum_id=" + forum.name
         + " characters=" + std::to_string(forum.character_names.size()));
@@ -50,7 +52,8 @@ std::vector<AgentDefinition> load_definitions(
         forum.directory,
         forum.display_name,
         personas,
-        base_config);
+        base_config,
+        application_provider);
 }
 
 void validate_forum_characters(
@@ -126,11 +129,17 @@ Forum load_forum_metadata(const std::filesystem::path& directory, std::string na
     const toml::table table = toml::parse(file, utf8_path(path));
     const std::optional<std::string> display_name =
         table["display_name"].value<std::string>();
-    if (!display_name || display_name->empty()) {
+    if (!display_name) {
         throw std::runtime_error(
             "Forum config '" + utf8_path(path)
             + "' requires a non-empty string 'display_name'");
     }
+    validate_public_name(*display_name, "Forum name", path);
+    const std::optional<std::string> description = table["description"].value<std::string>();
+    if (table.contains("description") && !description) {
+        throw std::runtime_error("Forum config '" + utf8_path(path) + "' requires string 'description'");
+    }
+    if (description) validate_description(*description, "Forum", path);
     const std::filesystem::path members_directory = directory / "members";
     if (!std::filesystem::is_directory(members_directory)) {
         throw std::runtime_error(
@@ -167,7 +176,7 @@ Forum load_forum_metadata(const std::filesystem::path& directory, std::string na
     } else {
         default_agent_id = character_names.front();
     }
-    return {std::move(name), *display_name, character_names, std::move(default_agent_id), directory};
+    return {std::move(name), *display_name, description, character_names, std::move(default_agent_id), directory};
 }
 
 std::vector<CharacterDefinitionMetadata> load_definition_metadata(
@@ -202,9 +211,8 @@ std::vector<CharacterDefinitionMetadata> load_definition_metadata(
         const auto [existing, inserted] = display_names.emplace(
             fold_ascii(definition.display_name), definition.id);
         if (!inserted) {
-            throw std::runtime_error("Character display name '" + definition.display_name
-                + "' is not unique: characters '" + existing->second + "' and '"
-                + definition.id + "'");
+            throw std::runtime_error("Character public name '" + definition.display_name
+                + "' is not unique");
         }
     }
     return definitions;
@@ -236,59 +244,6 @@ bool is_reserved_participant_name(std::string_view name) {
         [&folded](std::string_view reserved) { return folded == reserved; });
 }
 
-char32_t next_utf8_code_point(std::string_view text, std::size_t& offset) {
-    const auto byte = [&text](std::size_t index) {
-        return static_cast<unsigned char>(text[index]);
-    };
-    const unsigned char first = byte(offset++);
-    if (first < 0x80) return first;
-
-    std::size_t continuation_count{};
-    char32_t code_point{};
-    if ((first & 0xe0) == 0xc0) {
-        continuation_count = 1;
-        code_point = first & 0x1f;
-    } else if ((first & 0xf0) == 0xe0) {
-        continuation_count = 2;
-        code_point = first & 0x0f;
-    } else if ((first & 0xf8) == 0xf0) {
-        continuation_count = 3;
-        code_point = first & 0x07;
-    } else {
-        throw std::runtime_error("Persona display name is not valid UTF-8");
-    }
-    if (continuation_count > text.size() - offset) {
-        throw std::runtime_error("Persona display name is not valid UTF-8");
-    }
-    for (std::size_t index = 0; index < continuation_count; ++index) {
-        const unsigned char continuation = byte(offset++);
-        if ((continuation & 0xc0) != 0x80) {
-            throw std::runtime_error("Persona display name is not valid UTF-8");
-        }
-        code_point = (code_point << 6) | (continuation & 0x3f);
-    }
-    return code_point;
-}
-
-bool is_unicode_whitespace(char32_t code_point) {
-    return (code_point >= 0x0009 && code_point <= 0x000d)
-        || code_point == 0x0020
-        || code_point == 0x0085
-        || code_point == 0x00a0
-        || code_point == 0x1680
-        || (code_point >= 0x2000 && code_point <= 0x200a)
-        || code_point == 0x2028
-        || code_point == 0x2029
-        || code_point == 0x202f
-        || code_point == 0x205f
-        || code_point == 0x3000;
-}
-
-bool is_unicode_control(char32_t code_point) {
-    return code_point <= 0x001f
-        || (code_point >= 0x007f && code_point <= 0x009f);
-}
-
 void validate_persona_id(std::string_view id, const std::filesystem::path& directory) {
     if (!is_persona_id(id)) {
         throw std::runtime_error(
@@ -305,33 +260,7 @@ void validate_persona_id(std::string_view id, const std::filesystem::path& direc
 void validate_persona_display_name(
     std::string_view name,
     const std::filesystem::path& path) {
-    if (name.empty()) {
-        throw std::runtime_error(
-            "Persona config '" + utf8_path(path)
-            + "' requires a non-empty string 'display_name'");
-    }
-    if (name.front() == '@' || name.front() == '/') {
-        throw std::runtime_error("Persona display name cannot start with '@' or '/'");
-    }
-    char32_t first_code_point{};
-    char32_t last_code_point{};
-    std::size_t offset{};
-    while (offset < name.size()) {
-        const bool first = offset == 0;
-        const char32_t code_point = next_utf8_code_point(name, offset);
-        if (first) first_code_point = code_point;
-        last_code_point = code_point;
-        if (is_unicode_control(code_point)
-            || code_point == 0x2028
-            || code_point == 0x2029) {
-            throw std::runtime_error(
-                "Persona display name cannot contain control characters or line breaks");
-        }
-    }
-    if (is_unicode_whitespace(first_code_point)
-        || is_unicode_whitespace(last_code_point)) {
-        throw std::runtime_error("Persona display name cannot start or end with whitespace");
-    }
+    validate_public_name(name, "Persona name", path, true);
     if (is_reserved_participant_name(name)) {
         throw std::runtime_error(
             "Persona display name '" + std::string(name) + "' is reserved");
@@ -350,7 +279,7 @@ Persona load_persona(const std::filesystem::path& directory) {
     const toml::table table = toml::parse(config_file, utf8_path(config_path));
     for (const auto& [key, value] : table) {
         (void)value;
-        if (key.str() != "display_name") {
+        if (key.str() != "display_name" && key.str() != "description") {
             throw std::runtime_error(
                 "Persona config '" + utf8_path(config_path)
                 + "' has unknown field '" + std::string(key.str()) + "'");
@@ -379,7 +308,12 @@ Persona load_persona(const std::filesystem::path& directory) {
         throw std::runtime_error(
             "Persona prompt '" + utf8_path(prompt_path) + "' is not a regular file");
     }
-    return {id, *display_name, std::move(prompt)};
+    const std::optional<std::string> description = table["description"].value<std::string>();
+    if (table.contains("description") && !description) {
+        throw std::runtime_error("Persona config '" + utf8_path(config_path) + "' requires string 'description'");
+    }
+    if (description) validate_description(*description, "Persona", config_path);
+    return {id, *display_name, std::move(prompt), description};
 }
 
 } // namespace
@@ -435,6 +369,7 @@ ApplicationConfig load_application_config(const std::filesystem::path& root) {
         .port = *port,
         .log_file = std::move(log_path),
         .log_level = *log_level,
+        .provider = load_provider_config(path),
     };
 }
 
@@ -461,9 +396,17 @@ Workspace::Workspace(
         for (const CharacterDefinitionMetadata& definition : definitions) ids.insert(definition.id);
         return ids;
     }();
+    std::unordered_set<std::string> forum_names;
     for (const std::string& name : forums()) {
         const std::filesystem::path directory = forum_directory(name);
         const Forum forum = load_forum_metadata(directory, name);
+        const std::string folded_name = fold_ascii(forum.display_name);
+        if (!forum_names.insert(folded_name).second) {
+            throw std::runtime_error("Forum public name '" + forum.display_name + "' is not unique");
+        }
+        if (folded_name == "entrance") {
+            throw std::runtime_error("Forum public name '" + forum.display_name + "' is reserved");
+        }
         for (const std::string& member : forum.character_names) {
             if (!definition_ids.contains(member)) {
                 throw std::runtime_error("Forum '" + name + "' member '" + member
@@ -475,6 +418,10 @@ Workspace::Workspace(
 
 const ApplicationConfig& Workspace::app_config() const {
     return app_config_;
+}
+
+std::vector<CharacterDefinitionMetadata> Workspace::character_definitions() const {
+    return load_definition_metadata(root_ / "characters");
 }
 
 std::vector<std::string> Workspace::forums() const {
@@ -496,11 +443,6 @@ PersonaRoster Workspace::load_personas() const {
          std::filesystem::directory_iterator(personas_directory)) {
         if (entry.is_directory()) personas.push_back(load_persona(entry.path()));
     }
-    if (personas.empty()) {
-        throw std::runtime_error(
-            "Personas directory '" + utf8_path(personas_directory)
-            + "' does not contain an entry");
-    }
     std::sort(personas.begin(), personas.end(), [](const Persona& left, const Persona& right) {
         return left.id < right.id;
     });
@@ -510,8 +452,7 @@ PersonaRoster Workspace::load_personas() const {
         const auto [existing, inserted] = display_names.emplace(folded, persona.id);
         if (!inserted) {
             throw std::runtime_error(
-                "Persona display name '" + persona.display_name + "' is not unique: personas '"
-                + existing->second + "' and '" + persona.id + "'");
+                "Persona public name '" + persona.display_name + "' is not unique");
         }
     }
     return personas;
@@ -529,7 +470,7 @@ Forum Workspace::check_forum(const std::string& name) const {
     Forum forum = load_forum(name);
     const PersonaRoster personas = load_personas();
     const std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters");
+        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
     validate_forum_characters(definitions);
     return forum;
 }
@@ -580,7 +521,7 @@ OpenedSession Workspace::create_session(
     Forum forum = load_forum(forum_name);
     PersonaRoster personas = load_personas();
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters");
+        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
     validate_forum_characters(definitions);
 
     const Session stored = store_session(forum, std::move(label));
@@ -623,7 +564,7 @@ OpenedSession Workspace::open_session(
     SessionRestore restored = load_session_state(database_path);
     PersonaRoster personas = load_personas();
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters");
+        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
     log_info("Session opened");
     return {
         .descriptor = {

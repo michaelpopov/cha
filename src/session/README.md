@@ -31,7 +31,7 @@ flowchart TD
     root --> characters["characters/<id>/"]
     characters --> character["character.toml + CHARACTER.md<br/>definition + includes"]
     forums --> forum["forum-name/"]
-    forum --> config["config.toml — required display_name + optional default_agent"]
+    forum --> config["config.toml — required display_name + optional description/default_agent"]
     forum --> members["members/"]
     members --> base["character_defaults.toml<br/>optional forum defaults + [prompt]"]
     members --> member["<id>/character.toml + CHARACTER.md<br/>optional overrides"]
@@ -48,7 +48,8 @@ only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and
 Each forum's `members/` directory must contain at least one member subdirectory,
 also sorted before loading. Member and definition directory names are character
 IDs and are validated with `validate_character_id()`.
-Each forum's `config.toml` must provide a non-empty string `display_name` for
+Each forum's `config.toml` must provide a non-empty string `display_name` and
+may provide an optional single-line `description` for application inventory.
 persona-facing selection and listings; its directory name remains the stable ID.
 Each definition directory likewise supplies its stable ID, while its
 `character.toml` provides the required persona-facing `display_name`. The loader

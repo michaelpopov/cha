@@ -51,15 +51,37 @@ struct Config {
 struct CharacterDefinitionMetadata {
     std::string id;
     std::string display_name;
+    std::optional<std::string> description;
     std::vector<std::string> tags;
 };
 
-// Named configuration paths prevent callers from confusing the three overlay roles.
+// Provider/runtime settings supplied by app.toml. Identity and prompt fields
+// are intentionally absent: they belong to character definitions only.
+struct ProviderConfig {
+    std::filesystem::path source;
+    std::optional<std::string> host;
+    std::optional<int> port;
+    std::optional<Mode> mode;
+    std::optional<std::string> model;
+    std::optional<bool> stream;
+    std::optional<double> temperature;
+    std::optional<std::string> api_key;
+    std::optional<std::string> api_key_env;
+    std::optional<std::string> reasoning_effort;
+    std::optional<ReasoningFormat> reasoning_format;
+    std::optional<bool> https;
+};
+
+// Named configuration inputs prevent callers from confusing the four overlay roles.
 struct CharacterConfigPaths {
+    std::optional<ProviderConfig> application_provider;
     std::filesystem::path definition;
     std::optional<std::filesystem::path> forum_defaults;
     std::optional<std::filesystem::path> member_override;
 };
+
+// Parses the required [provider] table in app.toml without creating a client.
+ProviderConfig load_provider_config(const std::filesystem::path& app_config_path);
 
 // The typed connection configuration and initial template scope after all layers.
 struct LoadedConfig {
@@ -67,7 +89,7 @@ struct LoadedConfig {
     TemplateScope prompt_variables;
 };
 
-// Loads definition, forum defaults, and member override in precedence order.
+// Loads application provider, definition, forum defaults, and member override in precedence order.
 LoadedConfig load_config(const CharacterConfigPaths& paths);
 
 // Loads definition-only identity and tag metadata without requiring provider settings.

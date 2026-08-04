@@ -1,6 +1,7 @@
 #include "agents/config.h"
 
 #include "util/text.h"
+#include "util/public_name.h"
 #include "util/utf8_path.h"
 
 #include <toml++/toml.hpp>
@@ -18,7 +19,7 @@
 namespace cha {
 namespace {
 
-enum class ConfigLayer { definition, forum_defaults, member_override };
+enum class ConfigLayer { application, definition, forum_defaults, member_override };
 
 struct ConfigPatch {
     std::optional<std::string> display_name;
@@ -39,6 +40,7 @@ struct ParsedConfig {
     ConfigPatch patch;
     TemplateScope prompt_variables;
     std::vector<std::string> tags;
+    std::optional<std::string> description;
 };
 
 template<typename Value>
@@ -150,6 +152,9 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
             + "'; use the directory name and 'display_name'");
     }
     const bool definition = layer == ConfigLayer::definition;
+    if (layer == ConfigLayer::application) {
+        throw std::logic_error("application provider must be parsed from app.toml");
+    }
     if (!definition && table.contains("display_name")) {
         throw std::runtime_error("Config file '" + utf8_path(path)
             + "' cannot define definition-only field 'display_name'");
@@ -158,11 +163,17 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
         throw std::runtime_error("Config file '" + utf8_path(path)
             + "' cannot define definition-only field 'tags'");
     }
+    if (!definition && table.contains("description")) {
+        throw std::runtime_error("Config file '" + utf8_path(path)
+            + "' cannot define definition-only field 'description'");
+    }
     const auto display_name = read_optional<std::string>(table, path, "display_name", "string");
     if (definition && (!display_name || display_name->empty())) {
         throw std::runtime_error("Character config file '" + utf8_path(path)
             + "' requires a non-empty string 'display_name' value");
     }
+    const auto description = read_optional<std::string>(table, path, "description", "string");
+    if (description) validate_description(*description, "Character", path);
     return {
         .patch = {
             .display_name = display_name,
@@ -180,6 +191,17 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
         },
         .prompt_variables = template_scope_from_toml(table, prompt_scope_table, utf8_path(path)),
         .tags = definition ? read_tags(table, path) : std::vector<std::string>{},
+        .description = description,
+    };
+}
+
+ConfigPatch provider_patch(const ProviderConfig& provider) {
+    return {
+        .host = provider.host, .port = provider.port, .mode = provider.mode,
+        .model = provider.model, .stream = provider.stream,
+        .temperature = provider.temperature, .api_key = provider.api_key,
+        .api_key_env = provider.api_key_env, .reasoning_effort = provider.reasoning_effort,
+        .reasoning_format = provider.reasoning_format, .https = provider.https,
     };
 }
 
@@ -239,16 +261,66 @@ CharacterDefinitionMetadata load_character_definition_metadata(const std::filesy
     return {
         .id = utf8_path(definition_path.parent_path().filename()),
         .display_name = *definition.patch.display_name,
+        .description = definition.description,
         .tags = definition.tags,
     };
 }
 
+ProviderConfig load_provider_config(const std::filesystem::path& app_config_path) {
+    std::ifstream file(app_config_path, std::ios::binary);
+    if (!file) throw std::runtime_error("Failed to read application config '" + utf8_path(app_config_path) + "'");
+    const toml::table root = toml::parse(file, utf8_path(app_config_path));
+    const toml::table* table = root["provider"].as_table();
+    if (!table) throw std::runtime_error("Application config '" + utf8_path(app_config_path) + "' requires a [provider] table");
+    for (const auto& [key, value] : *table) {
+        (void)value;
+        const std::string_view name = key.str();
+        if (name == "id" || name == "name" || name == "display_name" || name == "tags" || name == "description" || name == "prompt") {
+            throw std::runtime_error("Application config '" + utf8_path(app_config_path) + "' [provider] cannot define '" + std::string(name) + "'");
+        }
+    }
+    ProviderConfig provider{.source = app_config_path,
+        .host = read_optional<std::string>(*table, app_config_path, "host", "string"),
+        .port = read_optional<int>(*table, app_config_path, "port", "integer"),
+        .mode = read_mode(*table, app_config_path),
+        .model = read_optional<std::string>(*table, app_config_path, "model", "string"),
+        .stream = read_optional<bool>(*table, app_config_path, "stream", "boolean"),
+        .temperature = read_optional<double>(*table, app_config_path, "temperature", "numeric"),
+        .api_key = read_optional<std::string>(*table, app_config_path, "api_key", "string"),
+        .api_key_env = read_optional<std::string>(*table, app_config_path, "api_key_env", "string"),
+        .reasoning_effort = read_optional<std::string>(*table, app_config_path, "reasoning_effort", "string"),
+        .reasoning_format = read_reasoning_format(*table, app_config_path),
+        .https = read_optional<bool>(*table, app_config_path, "https", "boolean")};
+    if (!provider.host || provider.host->empty() || !provider.port) {
+        throw std::runtime_error("Application config '" + utf8_path(app_config_path)
+            + "' [provider] requires non-empty string 'host' and integer 'port'");
+    }
+    if (*provider.port < 1 || *provider.port > 65535) {
+        throw std::runtime_error("Application config '" + utf8_path(app_config_path)
+            + "' [provider] requires 'port' between 1 and 65535");
+    }
+    if (provider.temperature && (!std::isfinite(*provider.temperature)
+        || *provider.temperature < 0.0 || *provider.temperature > 2.0)) {
+        throw std::runtime_error("Application config '" + utf8_path(app_config_path)
+            + "' [provider] requires 'temperature' between 0 and 2");
+    }
+    return provider;
+}
+
 LoadedConfig load_config(const CharacterConfigPaths& paths) {
     const ParsedConfig definition = parse_config(paths.definition, ConfigLayer::definition);
-    ConfigPatch effective = definition.patch;
+    ConfigPatch effective;
     TemplateScope prompt_variables = definition.prompt_variables;
     std::filesystem::path port_source = paths.definition;
     std::filesystem::path temperature_source = paths.definition;
+    if (paths.application_provider) {
+        effective = provider_patch(*paths.application_provider);
+        if (effective.port) port_source = paths.application_provider->source;
+        if (effective.temperature) temperature_source = paths.application_provider->source;
+    }
+    if (definition.patch.port) port_source = paths.definition;
+    if (definition.patch.temperature) temperature_source = paths.definition;
+    overlay(effective, definition.patch);
     const auto apply = [&](const std::optional<std::filesystem::path>& path, ConfigLayer layer) {
         if (!path) {
             return;

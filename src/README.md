@@ -10,7 +10,8 @@ persona-facing manual is the [top-level `README.md`](../README.md).
 ## System overview
 
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
-It runs inside a workspace containing `app.toml`, a persona roster, workspace-level
+It runs inside a workspace containing `app.toml` (including the shared `[provider]`
+connection layer), a persona roster, workspace-level
 character definitions, and forums. Each definition lives at
 `characters/<id>/` with `character.toml` and `CHARACTER.md`. A forum explicitly
 selects its ordered roster through `forums/<forum>/members/<id>/`; its optional
@@ -53,6 +54,7 @@ Each entry point links only its frontend target.
 | `ui/web/` | HTTP/SSE transport, protocol DTOs, presentation state, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
+| `application/` | Shared application-facing snapshots and future navigation workflow. | Frontend I/O, argument parsing, and frontend types. |
 | `session/` | Workspace and session operations, `ForumCharacters`, SQLite persistence, live chat coordination, and the owning `SessionState` read model. | Frontends, command syntax, transports. |
 | `agents/` | Character config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the owner-thread-owned live `Transcript`. | Storage, providers, frontends. |
@@ -65,12 +67,13 @@ may include headers only from those listed beside it.
 
 | Directory | May include |
 | --- | --- |
-| `apps/` | `ui/tui/`, `ui/console/`, `ui/web/`, `ui/render/`, `session/`, `transcript/`, `util/` |
-| `ui/tui/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
-| `ui/console/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
+| `apps/` | `ui/tui/`, `ui/console/`, `ui/web/`, `ui/render/`, `application/`, `session/`, `transcript/`, `util/` |
+| `ui/tui/` | `ui/render/`, `ui/text/`, `application/`, `session/`, `transcript/`, `util/` |
+| `ui/console/` | `ui/render/`, `ui/text/`, `application/`, `session/`, `transcript/`, `util/` |
 | `ui/web/` | `ui/text/`, `session/`, `transcript/`, `util/`, and its HTTP transport dependency |
 | `ui/render/` | `session/`, `transcript/` |
 | `ui/text/` | `session/`, `util/` |
+| `application/` | `session/`, `agents/`, `transcript/`, `util/` |
 | `session/` | `agents/`, `transcript/`, `util/` |
 | `agents/` | `transcript/`, `util/` |
 | `transcript/` | Nothing in the project. |

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agents/persona.h"
+#include "agents/config.h"
 #include "session/not_found_error.h"
 #include "session/opened_session.h"
 
@@ -19,6 +20,7 @@ class WakeNotifier;
 struct Forum {
     std::string name;
     std::string display_name;
+    std::optional<std::string> description;
     std::vector<std::string> character_names;
     std::string default_agent_id;
     std::filesystem::path directory;
@@ -40,6 +42,7 @@ struct ApplicationConfig {
     int port{};
     std::filesystem::path log_file;
     std::string log_level;
+    ProviderConfig provider;
 };
 
 // Reads the workspace-level application configuration without validating the
@@ -60,9 +63,11 @@ public:
     Workspace(std::filesystem::path root, ApplicationConfig app_config);
 
     const ApplicationConfig& app_config() const;
+    const std::filesystem::path& root() const noexcept { return root_; }
+    std::vector<CharacterDefinitionMetadata> character_definitions() const;
     std::vector<std::string> forums() const;
-    // Loads and validates the current workspace roster. Raises when personas/ is
-    // missing or empty; re-reads the filesystem on every call.
+    // Loads and validates the current workspace roster. Raises when personas/
+    // is missing; an existing empty directory is valid and it re-reads on every call.
     PersonaRoster load_personas() const;
     Forum load_forum(const std::string& name) const;
     // Fully validates one forum without creating a session or initializing

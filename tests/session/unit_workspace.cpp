@@ -61,6 +61,8 @@ protected:
             std::ofstream app_config(root_ / "app.toml");
             app_config << "host = \"127.0.0.1\"\n"
                        << "port = 8080\n"
+                       << "[provider]\n"
+                       << "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\n"
                        << "[logging]\n"
                        << "file = \"logs/cha.log\"\n"
                        << "level = \"off\"\n";
@@ -110,6 +112,28 @@ TEST_F(ApplicationWorkspaceTest, ListsForumsAndSessionsAsApplicationValues) {
     EXPECT_EQ(workspace.app_config().port, 8080);
     EXPECT_EQ(workspace.app_config().log_file, root_ / "logs" / "cha.log");
     EXPECT_EQ(workspace.app_config().log_level, "off");
+}
+
+TEST_F(ApplicationWorkspaceTest, KeepsBindAndProviderConfigurationDistinct) {
+    std::ofstream(root_ / "app.toml")
+        << "host = \"127.0.0.1\"\nport = 8080\n"
+           "[provider]\nhost = \"provider.example\"\nport = 444\nmode = \"test\"\n"
+           "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
+    const Workspace workspace(root_);
+    EXPECT_EQ(workspace.app_config().host, "127.0.0.1");
+    EXPECT_EQ(workspace.app_config().port, 8080);
+    EXPECT_EQ(*workspace.app_config().provider.host, "provider.example");
+    EXPECT_EQ(*workspace.app_config().provider.port, 444);
+}
+
+TEST_F(ApplicationWorkspaceTest, RequiresValidProviderWithoutAcceptingIdentityFields) {
+    std::ofstream(root_ / "app.toml")
+        << "host = \"127.0.0.1\"\nport = 8080\n[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+    std::ofstream(root_ / "app.toml")
+        << "host = \"127.0.0.1\"\nport = 8080\n[provider]\ndisplay_name = \"No\"\nhost = \"test\"\nport = 1\n"
+           "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
 }
 
 TEST_F(ApplicationWorkspaceTest, RequiresWorkspaceDefinitions) {
@@ -261,12 +285,12 @@ TEST_F(ApplicationWorkspaceTest, RejectsUnknownAndMalformedDefaultAgent) {
     EXPECT_THROW((void)Workspace(root_), std::runtime_error);
 }
 
-TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRequiresValidPersonaRoster) {
+TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRequiresPersonaDirectoryButAllowsItEmpty) {
     std::filesystem::remove_all(root_ / "personas");
     EXPECT_THROW((void)Workspace(root_), std::runtime_error);
 
     std::filesystem::create_directories(root_ / "personas");
-    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+    EXPECT_NO_THROW((void)Workspace(root_));
 }
 
 TEST_F(ApplicationWorkspaceTest, PersonaLoadingDoesNotSkipMalformedDirectories) {
@@ -332,20 +356,12 @@ TEST_F(ApplicationWorkspaceTest, ForumCheckUsesDefinitionDefaultsAndMemberOverri
     EXPECT_NO_THROW((void)Workspace(root_).check_forum("lobby"));
 }
 
-TEST_F(ApplicationWorkspaceTest, ForumCheckRequiresEffectiveSettings) {
+TEST_F(ApplicationWorkspaceTest, ForumCheckInheritsApplicationProviderSettings) {
     std::filesystem::remove(
         root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
     Workspace workspace(root_);
 
-    try {
-        (void)workspace.check_forum("lobby");
-        FAIL() << "expected missing effective settings to fail";
-    } catch (const std::runtime_error& error) {
-        const std::string message = error.what();
-        EXPECT_NE(message.find("guide"), std::string::npos) << message;
-        EXPECT_NE(message.find("host"), std::string::npos) << message;
-        EXPECT_NE(message.find("port"), std::string::npos) << message;
-    }
+    EXPECT_NO_THROW((void)workspace.check_forum("lobby"));
     EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
@@ -384,8 +400,7 @@ TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRejectsDuplicateCharacterD
         FAIL() << "expected duplicate character display name rejection";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("gUiDe"), std::string::npos);
-        EXPECT_NE(std::string(error.what()).find("guide"), std::string::npos);
-        EXPECT_NE(std::string(error.what()).find("other"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("public name"), std::string::npos);
     }
 }
 
@@ -479,17 +494,16 @@ TEST_F(ApplicationWorkspaceTest, ReadsOneStoredSessionSummaryDirectly) {
 TEST_F(ApplicationWorkspaceTest, CreateStoredSessionValidatesBeforePublishing) {
     std::filesystem::remove(
         root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
-    // guide/character.toml supplies only display_name, so removing the shared
-    // defaults leaves the character without the required host or port.
+    // guide/character.toml inherits host and port from app.toml after the
+    // shared defaults are removed.
     Workspace workspace(root_);
 
-    EXPECT_THROW(
-        (void)workspace.create_stored_session("lobby", "Invalid forum"),
-        std::runtime_error);
+    EXPECT_NO_THROW(
+        (void)workspace.create_stored_session("lobby", "Valid with provider"));
     EXPECT_THROW(
         (void)workspace.create_stored_session("../missing", "Invalid forum"),
         std::runtime_error);
-    EXPECT_TRUE(workspace.sessions("lobby").empty());
+    EXPECT_EQ(workspace.sessions("lobby").size(), 1U);
 }
 
 TEST_F(ApplicationWorkspaceTest, OpensAStoredSessionInASeparateStep) {

@@ -83,6 +83,7 @@ public:
         write_file(
             path_ / "app.toml",
             "host = \"127.0.0.1\"\nport = 8080\n"
+            "[provider]\nhost = \"test\"\nport = 1\nmode = \"test\"\n"
             "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
         write_file(
             path_ / "forums" / "hall" / "config.toml",

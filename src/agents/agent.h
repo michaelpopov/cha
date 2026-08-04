@@ -17,7 +17,7 @@ namespace cha {
 
 // Participant names no configured party may claim.
 inline constexpr std::string_view reserved_participant_names[] = {
-    "persona", "system", "error", "human", "assistant", "agent", "you",
+    "persona", "system", "error", "human", "assistant", "agent", "you", "guest",
 };
 
 // A character loaded and ready to run: its Config plus the effective system
@@ -92,7 +92,8 @@ std::vector<AgentDefinition> load_agent_definitions(
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
     const PersonaRoster& personas,
-    std::optional<std::filesystem::path> forum_defaults_path = std::nullopt);
+    std::optional<std::filesystem::path> forum_defaults_path = std::nullopt,
+    std::optional<ProviderConfig> application_provider = std::nullopt);
 
 void validate_character_id(std::string_view id);
 void validate_character_name(std::string_view name);

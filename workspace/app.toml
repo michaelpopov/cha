@@ -1,6 +1,16 @@
 host = "127.0.0.1"
 port = 8080
 
+[provider]
+host = "api.openai.com"
+port = 443
+https = true
+mode = "net"
+model = "gpt-5.6-terra"
+reasoning_effort = "none"
+stream = true
+api_key_env = "OPENAI_API_KEY"
+
 [logging]
 file = "logs/cha.log"
 level = "info"

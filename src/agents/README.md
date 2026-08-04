@@ -25,6 +25,7 @@ completion pool tasks.
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
+        app_cfg["app.toml [provider]"]
         definition_cfg["characters/X/character.toml"]
         definition_prompt["characters/X/CHARACTER.md"]
         base["forums/R/members/character_defaults.toml<br/>optional forum defaults + [prompt]"]
@@ -35,7 +36,7 @@ flowchart LR
         shared["definition includes under characters/;<br/>member/forum includes under the forum"]
     end
 
-    base --> load["load_config<br/>one parsed overlay"]
+    app_cfg --> load["load_config<br/>one parsed overlay"]
     definition_cfg --> load
     base --> load
     member_cfg --> load
@@ -74,10 +75,11 @@ a forum check loads synchronously on its calling thread. `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
 Configuration is a key-wise overlay, not general inheritance. Built-in defaults
-are applied first, then the character definition, the optional forum
+are applied first, then the application `[provider]`, the character definition, the optional forum
 `members/character_defaults.toml`, and the optional per-member override. An omitted field inherits the
 value below it. The character definition directory name provides the ID, and its
-file must define `display_name`; both forum-local layers must not define it or
+file must define `display_name`; it may also carry an optional one-line
+`description`. Both forum-local layers must not define either field or
 `tags`. `tags` are definition-only optional free-form strings: each is trimmed,
 non-empty, free of controls and line breaks, and unique under ASCII case
 folding while retaining authored casing. The removed `id` and `name` fields are

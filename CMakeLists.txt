@@ -192,6 +192,7 @@ add_library(cha_core STATIC
     src/util/environment.cpp
     src/util/logging.cpp
     src/util/path_name.cpp
+    src/util/public_name.cpp
     src/util/text.cpp
     src/util/text_template.cpp
     src/util/thread_pool.cpp
@@ -209,6 +210,8 @@ add_library(cha_core STATIC
     src/session/session_lease.cpp
     src/session/session_state.cpp
     src/session/workspace.cpp
+    src/application/workspace_snapshot.cpp
+    src/application/workspace_inventory.cpp
 )
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
@@ -339,6 +342,7 @@ if(BUILD_TESTING)
         tests/util/unit_concurrent_queue.cpp
         tests/util/unit_text.cpp
         tests/util/unit_text_template.cpp
+        tests/util/unit_public_name.cpp
         tests/util/unit_utf8_path.cpp
         tests/util/unit_uv_event_loop.cpp
         tests/transcript/unit_transcript.cpp
@@ -354,6 +358,9 @@ if(BUILD_TESTING)
         tests/session/unit_session_lease.cpp
         tests/session/unit_persona_loader.cpp
         tests/session/unit_workspace.cpp
+        tests/application/unit_workspace_snapshot.cpp
+        tests/application/unit_workspace_inventory.cpp
+        tests/support/test_workspace.cpp
         tests/ui/text/unit_command.cpp
         tests/ui/text/unit_mcast.cpp
         tests/ui/text/unit_mention.cpp

@@ -35,6 +35,7 @@ public:
         write(
             root / "app.toml",
             "host = \"127.0.0.1\"\nport = 8080\n"
+            "[provider]\nhost = \"test\"\nport = 1\nmode = \"test\"\n"
             "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n");
         write(forum / "config.toml", "display_name = \"The Hall\"\n");
         write(forum / "FORUM.md", "Forum instructions\n");
