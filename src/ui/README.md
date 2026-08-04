@@ -14,7 +14,7 @@ same behavior? If yes, it belongs below `ui/`.
 | --- | --- |
 | `text/` | The reusable textual grammar: slash commands and `@mention` addressing, dispatched to `SessionController`. |
 | `render/` | Shared transcript labels, attributes, and writing operations. |
-| `tui/` | The ncurses front end: terminal lifecycle, startup selection, input editing, screen layout, and redraw planning. |
+| `tui/` | The ncurses front end: terminal lifecycle, application navigation, input editing, overlays, screen layout, and redraw planning. |
 | `console/` | The line-oriented frontend: CLI selection, non-blocking input, queued dispatch, signals, and append-only output. |
 | `web/` | The HTTP/SSE frontend: protocol DTO projection, owner-thread runtime, registry, mailbox, and browser lifecycle policy. |
 

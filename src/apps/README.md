@@ -11,9 +11,9 @@ sources.
 
 ## `tui_main.cpp`
 
-The terminal application. It owns four things — the workspace, the terminal, the
-selector, and the chosen controller — in that order, and hands the last one to
-the chat loop.
+The terminal application constructs a workspace, terminal, event loop, and
+`ChatApplication`, then enters chat immediately in `Guest` / `Entrance` /
+`Welcome`.
 
 ```mermaid
 flowchart TD
@@ -22,21 +22,8 @@ flowchart TD
     config --> log["initialize diagnostic logging"]
     log --> c["construct Workspace<br/>requires app.toml + characters/ + forums/ + personas/"]
     c --> d["construct Terminal<br/>process-wide curses"]
-    d --> personas["Workspace.load_personas"]
-    personas --> e["StartupSelector.select_persona"]
-    e -->|"cancelled"| x["throw, exit 1"]
-    e --> forum["StartupSelector.select_forum"]
-    forum -->|"cancelled"| x
-    forum --> f["Workspace.sessions of forum"]
-    f --> g["StartupSelector.select_session"]
-    g -->|"cancelled"| x
-    g -->|"row carries an error"| x
-    g -->|"empty id, meaning New session"| h["prompt_session_name"]
-    h --> i["Workspace.create_session"]
-    g -->|"existing id"| j["Workspace.open_session"]
-    i -->|"OpenedSession.controller"| k["SessionController"]
-    j -->|"OpenedSession.controller"| k
-    k --> l["run_persona with terminal, controller,<br/>and selected persona ID"]
+    d --> app["construct ChatApplication<br/>opens Guest / Entrance / Welcome"]
+    app --> l["run_application with terminal,<br/>application, and event loop"]
     l --> m["return 0"]
 ```
 
@@ -47,12 +34,12 @@ Two properties matter more than the sequence:
   opens a database. That is what lets a second front end reuse the same startup
   without copying logic.
 - **Failures are reported after the terminal is restored.** `Terminal`'s
-  destructor leaves curses mode during unwinding, and `run_persona()` restores it
+  destructor leaves curses mode during unwinding, and `run_application()` restores it
   explicitly before rethrowing, so the message printed by `main()` reaches a
   normal screen.
 
-Cancelling either selector is an error, not a silent exit: the process reports
-why it stopped.
+There is no startup-selection cancellation path. Workspace, temporary-storage,
+and provider initialization failures are reported after terminal restoration.
 
 ## `console_main.cpp`
 

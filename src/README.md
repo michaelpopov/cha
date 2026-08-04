@@ -52,7 +52,7 @@ Each entry point links only its frontend target.
 | Directory | Owns | Must not know about |
 | --- | --- | --- |
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
-| `ui/tui/` | Curses lifecycle, startup selection, input editing, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
+| `ui/tui/` | Curses lifecycle, application-relative chat input, overlays, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
 | `ui/console/` | Line input, application-command dispatch, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
 | `ui/web/` | HTTP/SSE transport, protocol DTOs, presentation state, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
@@ -145,7 +145,7 @@ Ownership is a strict tree, and destruction order matters:
   mutable current `SessionController` is owner-thread-only. The TUI additionally
   owns its process-wide `Terminal`; the console owns a `SystemConsole` and a
   current-session `TranscriptEmitter`.
-- `run_persona()` owns the TUI chat state. `ConsoleSession::run()` owns the
+- `run_application()` owns the TUI chat state. `ConsoleSession::run()` owns the
   console queue and EOF lifecycle.
 - `SessionController` owns the cross-process `SessionLease`, `Transcript`,
   `ForumCharacters`, the `SessionJournal`, the `AgentRegistry`, the current
@@ -197,46 +197,15 @@ sequenceDiagram
     autonumber
     participant main as tui_main
     participant ws as Workspace
-    participant sel as StartupSelector
-    participant cat as SessionCatalog
-    participant db as Session database
+    participant app as ChatApplication
     participant controller as SessionController
 
     main->>main: load_dotenv
     main->>ws: construct, require characters/, forums/, and personas/
-    main->>ws: use validated PersonaRoster
-    ws-->>main: PersonaRoster
-    main->>sel: select_persona
-    sel-->>main: selected Persona
-    main->>ws: forums
-    ws-->>main: forum names from forums/ subdirectories
-    main->>sel: select_forum
-    sel-->>main: chosen forum
-    main->>ws: sessions of forum
-    ws->>cat: list
-    cat->>db: read metadata, validate id and forum
-    cat-->>ws: Session rows
-    ws-->>main: SessionSummary rows
-    main->>sel: select_session
-    alt New session
-        sel-->>main: empty id
-        main->>sel: prompt_session_name
-        main->>ws: create_session
-        ws->>cat: create, temp file then link
-    else Existing session
-        sel-->>main: session id
-        main->>ws: open_session
-        ws->>db: load_session_state
-        db-->>ws: SessionRestore
-    end
-    ws->>controller: build with AgentDefinitions and database path
-    controller->>controller: restore entries, repair interrupted turns
-    alt New session
-        ws-->>main: OpenedSession (descriptor + controller)
-    else Existing session
-        ws-->>main: OpenedSession (descriptor + controller)
-    end
-    main->>controller: run_persona
+    main->>app: construct with workspace and event loop
+    app->>app: build Guest, Assistant, Entrance, Welcome
+    app->>controller: construct Welcome controller
+    main->>app: run_application
 ```
 
 Character loading happens synchronously on the caller. During session
@@ -457,7 +426,7 @@ never a partially written one.
   becomes `AgentFailed`, an error entry, and a notice; the session continues.
 - **Startup failures abort.** A malformed workspace, forum, character, or session
   database throws before any chat UI is drawn.
-- **Terminal restoration wins.** `run_persona()` restores the terminal before
+- **Terminal restoration wins.** `run_application()` restores the terminal before
   rethrowing, so a stack trace never lands on a screen still in curses mode.
 - **Error messages never carry model output.** Streaming protocol errors report
   sanitized status, content type, and byte counts only.

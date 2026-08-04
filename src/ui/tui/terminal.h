@@ -3,9 +3,9 @@
 namespace cha {
 
 // Owns the process-wide terminal lifecycle, which only one component may. It sets the screen up on
-// construction, switches input and cursor modes as the program moves between startup selection and
-// chat, redraws after a resize, and restores the terminal on exit or destruction. StartupSelector
-// and Tui borrow it rather than configuring the screen themselves.
+// construction, configures chat input and cursor modes, redraws after a resize,
+// and restores the terminal on exit or destruction. Tui borrows it rather than
+// configuring the screen itself. StartupSelector remains only for Block 7 cleanup.
 class Terminal {
 public:
     Terminal();

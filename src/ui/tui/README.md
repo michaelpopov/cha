@@ -1,7 +1,7 @@
 # TUI frontend
 
 `ui/tui/` is the ncurses frontend: it owns the terminal itself,
-the screens shown before a chat starts, the input editor, the transcript
+the application chat, the input editor, transient application overlays, the transcript
 rendering, and the event loop that ties keyboard input and streamed agent output
 together.
 
@@ -14,8 +14,8 @@ directory decides only how it looks and how input reaches it.
 
 | Source | Responsibility |
 | --- | --- |
-| `terminal.*` | The process-wide ncurses lifecycle: setup, mode switching between selection and chat, resize, restoration. |
-| `startup_selector.*` | The persona, forum, and session pickers, plus the new-session name prompt, drawn from presentation-safe values. |
+| `terminal.*` | The process-wide ncurses lifecycle: setup, chat mode, resize, restoration. |
+| `startup_selector.*` | Legacy startup picker source retained temporarily for the cleanup block; it has no caller. |
 
 ### Session input and control
 
@@ -23,8 +23,8 @@ directory decides only how it looks and how input reaches it.
 | --- | --- |
 | `input_editor.*` | Wide-character multiline draft text: cursor movement, editing, continuation lines, UTF-8 on submit. |
 | `session_view.h` | `SessionInput` and the `SessionView` seam that isolates session logic from curses. |
-| `persona_session.*` | The session state machine: input to actions, `TextInputResult` and `SessionChange` to screen. |
-| `persona.*` | `run_persona()` — the shared-input-wait loop and orderly shutdown. |
+| `persona_session.*` | The application-relative state machine: input to application results and controller changes. |
+| `persona.*` | `run_application()` — the shared-input-wait loop and orderly shutdown. |
 
 ### Rendering
 
@@ -44,7 +44,7 @@ threads. There are no timers and no polling intervals.
 
 ```mermaid
 flowchart TD
-    start["run_persona"] --> mk["construct Tui and PersonaSession<br/>render once"]
+    start["run_application"] --> mk["construct Tui and PersonaSession<br/>render Welcome once"]
     mk --> wait["run libuv loop<br/>stdin + resize + agent wake"]
     wait --> res{"result"}
     res -->|"resize"| resize["resize terminal,<br/>redraw if needed"] --> wait
@@ -87,11 +87,17 @@ single repaint.
 | Arrows, `Home`, `End`, `Backspace`, `Delete` | Edit the draft | Same |
 | Resize | Re-lay out through `Terminal` | Same |
 
-Submitted text goes to `handle_text_input()` in [`../text/`](../text/README.md).
-The TUI applies `TextInputResult::clear_input` and `exit_requested` as local
-editor/navigation policy, then applies the embedded `SessionChange` by retaining
-the notice and scheduling a repaint for observable state changes. Its controller
-continues to be called directly on this one owner thread.
+While an application overlay is visible, `Esc` dismisses it; `Page Up`, `Page
+Down`, and arrows scroll it without changing the transcript or draft. `Esc`
+still requests cancellation while generation is active.
+
+Submitted text goes to the shared `ApplicationDispatcher` in
+[`../text/`](../text/README.md). It obtains the current controller and selected
+author from `ChatApplication`; `/open` and `/create` can therefore replace the
+controller without leaving stale references in the TUI. A successful replacement
+clears the editor and resets the transcript planner, pad, viewport, generation
+projection, and application overlay. Lists and `/help` are transient scrollable
+overlays and never become transcript entries.
 
 ## Rendering pipeline
 
@@ -142,17 +148,18 @@ notice when there is one. Active generation phases include the cancel hint;
 ## Terminal ownership
 
 `Terminal` is constructed once in `main()` and shared. It sets the locale,
-enters curses, and switches modes: blocking input with a hidden cursor for the
-startup selectors, non-blocking input with a visible cursor for the chat. Both
-`StartupSelector` and `Tui` borrow it rather than configuring the screen
-themselves, and `restore()` is idempotent so unwinding is safe from anywhere.
+enters curses, configures non-blocking chat input with a visible cursor, and
+redraws after resize. `Tui` borrows it rather than configuring the screen
+itself, and `restore()` is idempotent so unwinding is safe from anywhere. The
+retained `StartupSelector` source is no longer part of the runtime path.
 
-`run_persona()` restores the terminal *before* rethrowing a failure, so an error
+`run_application()` restores the terminal *before* rethrowing a failure, so an error
 message never lands on a screen still in curses mode.
 
 ## Dependencies
 
-- **Depends on:** `session/` for controller operations, generation status,
+- **Depends on:** `application/` for current-session ownership and navigation;
+  `session/` for controller operations, generation status,
   and session summaries; `transcript/` for call-scoped views and entries;
   `ui/text/` for command dispatch; `session/` for forum-character values used in
   labels; wide ncurses and POSIX polling.

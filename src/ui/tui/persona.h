@@ -4,15 +4,14 @@
 
 namespace cha {
 
-class SessionController;
+class ChatApplication;
 class Terminal;
 class UvEventLoop;
 
-// A free function keeps the top-level persona workflow stateless and easy to compose in main.
-void run_persona(
+// Runs one application-relative terminal chat.
+void run_application(
     Terminal& terminal,
-    SessionController& controller,
-    UvEventLoop& event_loop,
-    std::string author_id);
+    ChatApplication& application,
+    UvEventLoop& event_loop);
 
 } // namespace cha

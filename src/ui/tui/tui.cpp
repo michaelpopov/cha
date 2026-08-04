@@ -111,6 +111,33 @@ std::string active_response_layout_text(
     return text + "\n\n";
 }
 
+void write_overlay_text(WINDOW* window, std::string_view text, int columns) {
+    std::mbstate_t state{};
+    const char* bytes = text.data();
+    std::size_t remaining = text.size();
+    int column = 0;
+
+    while (remaining > 0) {
+        wchar_t character = L'\0';
+        const std::size_t consumed = std::mbrtowc(&character, bytes, remaining, &state);
+        if (consumed == static_cast<std::size_t>(-1) || consumed == static_cast<std::size_t>(-2)) {
+            state = {};
+            ++bytes;
+            --remaining;
+            continue;
+        }
+        if (consumed == 0) break;
+
+        if (::iswcntrl(character) != 0) character = L' ';
+        const int width = std::max(0, ::wcwidth(character));
+        if (column + width > columns) break;
+        waddnwstr(window, &character, 1);
+        column += width;
+        bytes += consumed;
+        remaining -= consumed;
+    }
+}
+
 } // namespace
 
 Tui::Tui(Terminal& terminal) : terminal_(terminal) {
@@ -189,7 +216,8 @@ void Tui::render(
     const GenerationStatus& status,
     bool show_addressing,
     std::string_view input_target_name,
-    std::string_view notice) {
+    std::string_view notice,
+    const ApplicationOverlay* overlay) {
     int rows = 0;
     int columns = 0;
     getmaxyx(stdscr, rows, columns);
@@ -241,6 +269,9 @@ void Tui::render(
     render_transcript(
         transcript, status, output_height, columns, show_addressing);
     render_input(editor, input_target_name, input_y, input_height, columns);
+    if (overlay) {
+        render_overlay(*overlay, rows, columns);
+    }
     doupdate();
 }
 
@@ -254,6 +285,47 @@ void Tui::scroll_down() {
 
 void Tui::resize() {
     terminal_.resize();
+}
+
+void Tui::reset_session_view() {
+    transcript_planner_ = {};
+    transcript_viewport_ = {};
+    rendered_generation_ = {};
+    rendered_last_content_y_ = 0;
+    rendered_last_content_x_ = 0;
+    transcript_columns_ = 0;
+    if (transcript_pad_) {
+        werase(transcript_pad_);
+    }
+}
+
+void Tui::render_overlay(const ApplicationOverlay& overlay, int rows, int columns) {
+    const int width = std::max(20, columns - 4);
+    const int height = std::max(4, rows - 4);
+    const int y = std::max(0, (rows - height) / 2);
+    const int x = std::max(0, (columns - width) / 2);
+    WINDOW* window = newwin(height, width, y, x);
+    if (!window) {
+        throw std::runtime_error("Failed to create application overlay");
+    }
+    box(window, 0, 0);
+    const int visible = height - 2;
+    const std::size_t max_first = overlay.rows.empty()
+        ? 0 : overlay.rows.size() - 1;
+    const std::size_t first = std::min(overlay.first_visible, max_first);
+    wmove(window, 0, 2);
+    write_overlay_text(window, overlay.title, std::max(0, width - 4));
+    for (int row = 0; row < visible && first + static_cast<std::size_t>(row) < overlay.rows.size(); ++row) {
+        wmove(window, row + 1, 1);
+        write_overlay_text(
+            window, overlay.rows[first + static_cast<std::size_t>(row)],
+            std::max(0, width - 2));
+    }
+    if (overlay.rows.empty()) {
+        mvwaddnstr(window, 1, 1, "No entries", std::max(0, width - 2));
+    }
+    wnoutrefresh(window);
+    delwin(window);
 }
 
 void Tui::replace_pad(WINDOW*& pad, int rows, int columns) {
