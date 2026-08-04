@@ -34,9 +34,9 @@ using namespace std::chrono_literals;
 
 class IdleController final : public WebSessionController {
 public:
-    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionUpdate request_stop() override { return {}; }
-    SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
+    TextInputResult handle_raw_input(std::string_view, std::string) override { return {}; }
+    SessionChange request_stop() override { return {}; }
+    SessionChange set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}

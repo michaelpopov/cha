@@ -49,8 +49,8 @@ struct FakeState {
     bool receive_entered{};
     bool receive_released{};
     bool flood_notifications{};
-    bool render_on_receive{};
-    bool end_on_receive{};
+    bool state_change_on_receive{};
+    bool controller_end_on_receive{};
     bool shutdown{};
     bool throw_receive{};
     bool throw_shutdown{};
@@ -126,7 +126,7 @@ public:
         state_->entered.notify_all();
     }
 
-    SessionUpdate handle_raw_input(
+    TextInputResult handle_raw_input(
         std::string_view author_id,
         std::string input) override {
         std::unique_lock lock(state_->mutex);
@@ -145,31 +145,34 @@ public:
         else if (command == "clear notice") notice = "";
         else if (command == "replace notice") notice = "replacement";
         return {
-            .render_needed = command == "append"
-                || command == "snapshot"
-                || command == "clear notice"
-                || command == "replace notice",
-            .end_session = state_->raw_inputs.back() == "end session",
+            .session = {
+                .state_changed = command == "append"
+                || command == "snapshot",
+                .controller_ended = state_->raw_inputs.back() == "end session",
+                .notice = std::move(notice),
+            },
             .clear_input = true,
-            .notice = std::move(notice),
+            .exit_requested = command == "/exit",
         };
     }
-    SessionUpdate request_stop() override {
+    SessionChange request_stop() override {
         std::lock_guard lock(state_->mutex);
         check_owner();
         ++state_->stops;
         return {.notice = "stopped"};
     }
-    SessionUpdate set_default_agent_id(std::string_view id) override {
+    SessionChange set_default_agent_id(std::string_view id) override {
         std::lock_guard lock(state_->mutex);
         check_owner();
         state_->default_ids.emplace_back(id);
-        return {.notice = "default"};
+        state_->snapshot.default_agent_id = std::string(id);
+        ++state_->snapshot.revision;
+        return {.state_changed = true};
     }
     SessionEventBatch receive(std::size_t) override {
         bool full = false;
-        bool render_needed = false;
-        bool end_session = false;
+        bool state_changed = false;
+        bool controller_ended = false;
         {
             std::unique_lock lock(state_->mutex);
             check_owner();
@@ -185,25 +188,25 @@ public:
                 throw std::runtime_error("injected receive failure");
             }
             full = state_->flood_notifications;
-            render_needed = state_->render_on_receive;
-            state_->render_on_receive = false;
-            end_session = state_->end_on_receive;
-            state_->end_on_receive = false;
+            state_changed = state_->state_change_on_receive;
+            state_->state_change_on_receive = false;
+            controller_ended = state_->controller_end_on_receive;
+            state_->controller_end_on_receive = false;
         }
         if (full) {
             return {
-                .update = {
-                    .render_needed = true,
-                    .end_session = end_session,
+                .change = {
+                    .state_changed = true,
+                    .controller_ended = controller_ended,
                     .notice = "event",
                 },
                 .full = true,
             };
         }
         return {
-            .update = {
-                .render_needed = render_needed,
-                .end_session = end_session,
+            .change = {
+                .state_changed = state_changed,
+                .controller_ended = controller_ended,
             },
         };
     }
@@ -530,7 +533,7 @@ TEST(WebSessionRuntime, RoutesRawAndTypedCommandsOnOneOwnerThread) {
         std::get<CommandResult>(runtime.submit(
             SetDefaultAgentCommand{"stable-id"},
             1s));
-    EXPECT_EQ(default_changed.notice, "default");
+    EXPECT_FALSE(default_changed.notice);
     EXPECT_FALSE(default_changed.clear_input);
 
     std::lock_guard lock(state->mutex);
@@ -713,7 +716,7 @@ TEST(WebSessionRuntime, NotificationPressureDoesNotStarveCommands) {
         std::vector<std::string>({"during notification pressure"}));
 }
 
-TEST(WebSessionRuntime, CommandEndSessionStopsTheRuntime) {
+TEST(WebSessionRuntime, ControllerEndFromCommandStopsTheRuntime) {
     auto state = std::make_shared<FakeState>();
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
 
@@ -724,9 +727,20 @@ TEST(WebSessionRuntime, CommandEndSessionStopsTheRuntime) {
         ErrorCode::session_not_live);
 }
 
-TEST(WebSessionRuntime, ReceiveEndSessionStopsTheRuntime) {
+TEST(WebSessionRuntime, ExitRequestFromRawInputStopsTheRuntime) {
     auto state = std::make_shared<FakeState>();
-    state->end_on_receive = true;
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
+
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        runtime.submit(RawCommand{"reader", "/exit"}, 1s)));
+    EXPECT_EQ(
+        std::get<ErrorCode>(runtime.submit(StopCommand{}, 1s)),
+        ErrorCode::session_not_live);
+}
+
+TEST(WebSessionRuntime, ControllerEndFromReceiveStopsTheRuntime) {
+    auto state = std::make_shared<FakeState>();
+    state->controller_end_on_receive = true;
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
     {
         std::unique_lock lock(state->mutex);
@@ -1040,7 +1054,7 @@ TEST(WebSessionRuntime, ConnectSnapshotBecomesAppendBaseWhileWriterIsStalled) {
     {
         std::lock_guard lock(state->mutex);
         state->snapshot.transcript[0].text = "one hidden more again";
-        state->render_on_receive = true;
+        state->state_change_on_receive = true;
     }
     runtime.notifier_for_owner().wake();
     {
@@ -1291,7 +1305,7 @@ TEST(WebSessionRuntime, ReconnectCancelsDeadlineAndStartsWithSnapshot) {
     runtime.request_shutdown();
 }
 
-TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
+TEST(WebSessionRuntime, PublishesStateAndPresentationChangesIndependently) {
     auto state = std::make_shared<FakeState>();
     auto sink = std::make_shared<FakeSnapshotSink>();
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
@@ -1300,34 +1314,41 @@ TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 1U; }));
     }
 
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
+    const CommandResult default_changed = std::get<CommandResult>(runtime.submit(
+        SetDefaultAgentCommand{"other-guide"}, 1s));
+    EXPECT_FALSE(default_changed.clear_input);
+    EXPECT_FALSE(default_changed.notice);
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 2U; }));
         const auto& snapshot = std::get<SnapshotEvent>(sink->payloads.back()).snapshot;
-        ASSERT_TRUE(snapshot.notice);
-        EXPECT_EQ(*snapshot.notice, "raw");
-    }
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "clear notice"}, 1s)));
-    {
-        std::unique_lock lock(sink->mutex);
-        ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 3U; }));
-        EXPECT_FALSE(std::get<SnapshotEvent>(sink->payloads.back()).snapshot.notice);
+        EXPECT_EQ(snapshot.default_character_id, "other-guide");
+        EXPECT_FALSE(snapshot.notice);
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "replace notice"}, 1s)));
     {
         std::unique_lock lock(sink->mutex);
-        ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 4U; }));
+        ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 3U; }));
         EXPECT_EQ(std::get<SnapshotEvent>(sink->payloads.back()).snapshot.notice, "replacement");
     }
     {
-        std::lock_guard lock(state->mutex);
-        state->snapshot.transcript[0].status = EntryStatus::complete;
+        std::unique_lock lock(sink->mutex);
+        EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(
+            RawCommand{"reader", "replace notice"}, 1s)));
+        EXPECT_FALSE(sink->changed.wait_for(lock, 50ms, [&] { return sink->payloads.size() > 3U; }));
     }
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
-    std::unique_lock lock(sink->mutex);
-    ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 5U; }));
-    EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(sink->payloads.back()));
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "clear notice"}, 1s)));
+    {
+        std::unique_lock lock(sink->mutex);
+        ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 4U; }));
+        EXPECT_FALSE(std::get<SnapshotEvent>(sink->payloads.back()).snapshot.notice);
+    }
+    {
+        std::unique_lock lock(sink->mutex);
+        EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(
+            RawCommand{"reader", "clear notice"}, 1s)));
+        EXPECT_FALSE(sink->changed.wait_for(lock, 50ms, [&] { return sink->payloads.size() > 4U; }));
+    }
 }
 
 TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
@@ -1486,10 +1507,13 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     EXPECT_EQ(before.characters.front().name, "Guide");
     ASSERT_EQ(before.transcript.size(), 1U);
     EXPECT_EQ(before.transcript.front().text, "before");
-    EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").render_needed);
-    const WebSessionUpdate exit = adapted->handle_raw_input("human", "/exit");
+    EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").session.state_changed);
+    const TextInputResult rejected = adapted->handle_raw_input(
+        "unknown-author", "retained draft");
+    EXPECT_FALSE(rejected.clear_input);
+    const TextInputResult exit = adapted->handle_raw_input("human", "/exit");
     EXPECT_TRUE(exit.clear_input);
-    EXPECT_TRUE(exit.end_session);
+    EXPECT_TRUE(exit.exit_requested);
     const SessionState after = adapted->state();
     EXPECT_TRUE(after.transcript.empty());
     EXPECT_EQ(before.transcript.front().text, "before");

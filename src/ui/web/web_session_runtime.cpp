@@ -112,30 +112,19 @@ public:
     explicit SessionControllerAdapter(std::unique_ptr<SessionController> controller)
         : owned_controller_(std::move(controller)), controller_(*owned_controller_) {}
 
-    WebSessionUpdate handle_raw_input(
+    TextInputResult handle_raw_input(
         std::string_view author_id,
         std::string input) override {
-        TextInputResult result =
-            cha::handle_text_input(controller_, author_id, std::move(input));
-        WebSessionUpdate update = to_web_session_update(
-            std::move(result.session), result.clear_input);
-        // Block 5 keeps the legacy runtime seam: translate text-layer
-        // navigation to its existing terminal signal until Block 6 removes it.
-        update.end_session = update.end_session || result.exit_requested;
-        return update;
+        return cha::handle_text_input(controller_, author_id, std::move(input));
     }
-    WebSessionUpdate request_stop() override {
-        return to_web_session_update(controller_.request_stop());
+    SessionChange request_stop() override {
+        return controller_.request_stop();
     }
-    WebSessionUpdate set_default_agent_id(std::string_view id) override {
-        return to_web_session_update(controller_.set_default_agent_by_id(id));
+    SessionChange set_default_agent_id(std::string_view id) override {
+        return controller_.set_default_agent_by_id(id);
     }
-    WebSessionEventBatch receive(std::size_t max_events) override {
-        cha::SessionEventBatch events = controller_.receive_events(max_events);
-        return {
-            .update = to_web_session_update(std::move(events.change)),
-            .full = events.full,
-        };
+    SessionEventBatch receive(std::size_t max_events) override {
+        return controller_.receive_events(max_events);
     }
     [[nodiscard]] bool is_generating() const override {
         return controller_.is_generating();
@@ -299,17 +288,12 @@ void WebSessionRuntime::owner_loop(
                 std::lock_guard lock(state_mutex_);
                 if (stopping_) { reason = shutdown_reason_; break; }
             }
-            WebSessionEventBatch events = controller->receive(settings_.event_batch_size);
-            const bool notice_changed = events.update.notice.has_value();
-            apply_notice(events.update);
-            if (events.update.render_needed || notice_changed) {
-                publish_change(*controller, notice_changed);
+            SessionEventBatch events = controller->receive(settings_.event_batch_size);
+            const bool presentation_changed = apply_notice(events.change);
+            if (events.change.state_changed || presentation_changed) {
+                publish_change(*controller, presentation_changed);
             }
-            if (events.update.end_session) {
-                // The production controller currently emits end_session only
-                // from its shutdown drain, outside this loop. Keep this
-                // defensive fallback until a distinct controller-ended reason
-                // exists; it must not be read as a real browser signal.
+            if (events.change.controller_ended) {
                 (void)mark_stopping(ShutdownReason::browser_disconnected);
             }
             {
@@ -384,12 +368,26 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
         }
         return;
     }
-    WebSessionUpdate update = std::visit([&controller](auto&& value) -> WebSessionUpdate {
+    struct CommandOutcome {
+        SessionChange change;
+        bool clear_input{};
+        bool exit_requested{};
+    };
+    CommandOutcome outcome = std::visit([&controller](auto&& value) -> CommandOutcome {
         using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, RawCommand>) return controller.handle_raw_input(value.persona, std::move(value.text));
-        else if constexpr (std::is_same_v<T, StopCommand>) return controller.request_stop();
+        if constexpr (std::is_same_v<T, RawCommand>) {
+            TextInputResult result = controller.handle_raw_input(
+                value.persona, std::move(value.text));
+            return {
+                .change = std::move(result.session),
+                .clear_input = result.clear_input,
+                .exit_requested = result.exit_requested,
+            };
+        } else if constexpr (std::is_same_v<T, StopCommand>) {
+            return {.change = controller.request_stop()};
+        }
         else if constexpr (std::is_same_v<T, SetDefaultAgentCommand>) {
-            return controller.set_default_agent_id(value.character_id);
+            return {.change = controller.set_default_agent_id(value.character_id)};
         } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
             throw std::logic_error("Snapshot command handled before dispatch");
         } else if constexpr (std::is_same_v<T, SseConnectCommand>) {
@@ -398,18 +396,15 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
             static_assert(unsupported_web_command<T>);
         }
     }, command.command);
-    const bool notice_changed = update.notice.has_value();
-    apply_notice(update);
-    if (update.render_needed || notice_changed) {
-        publish_change(controller, notice_changed);
+    const bool presentation_changed = apply_notice(outcome.change);
+    if (outcome.change.state_changed || presentation_changed) {
+        publish_change(controller, presentation_changed);
     }
     (void)command.completion->complete(CommandResult{
-        .clear_input = update.clear_input,
-        .notice = update.notice,
+        .clear_input = outcome.clear_input,
+        .notice = outcome.change.notice,
     });
-    if (update.end_session) {
-        // See the receive-path note above. This is a defensive fallback, not
-        // evidence that the browser initiated the controller's terminal event.
+    if (outcome.change.controller_ended || outcome.exit_requested) {
         (void)mark_stopping(ShutdownReason::browser_disconnected);
     }
 }
@@ -437,10 +432,16 @@ WebPresentationState WebSessionRuntime::presentation(
     };
 }
 
-void WebSessionRuntime::apply_notice(const WebSessionUpdate& update) {
-    if (!update.notice) return;
-    if (update.notice->empty()) notice_.reset();
-    else notice_ = *update.notice;
+bool WebSessionRuntime::apply_notice(const SessionChange& change) {
+    if (!change.notice) return false;
+    if (change.notice->empty()) {
+        if (!notice_) return false;
+        notice_.reset();
+        return true;
+    }
+    if (notice_ && *notice_ == *change.notice) return false;
+    notice_ = *change.notice;
+    return true;
 }
 
 ShutdownReason WebSessionRuntime::mark_stopping(ShutdownReason reason) {

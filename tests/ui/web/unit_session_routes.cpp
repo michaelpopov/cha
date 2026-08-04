@@ -51,7 +51,7 @@ class RouteController final : public WebSessionController {
 public:
     explicit RouteController(std::shared_ptr<Calls> calls) : calls_(std::move(calls)) {}
 
-    SessionUpdate handle_raw_input(std::string_view author_id, std::string input) override {
+    TextInputResult handle_raw_input(std::string_view author_id, std::string input) override {
         std::unique_lock lock(calls_->mutex);
         calls_->persona = std::string(author_id);
         calls_->input = std::move(input);
@@ -64,18 +64,19 @@ public:
         }
         ++calls_->completed_inputs;
         calls_->input_changed.notify_all();
+        if (calls_->input == "rejected") return {};
         if (calls_->input == "append") {
             calls_->transcript_text.append(" world");
-            return {.render_needed = true, .clear_input = true};
+            return {.session = {.state_changed = true}, .clear_input = true};
         }
-        return {.clear_input = true, .notice = "input accepted"};
+        return {.session = {.notice = "input accepted"}, .clear_input = true};
     }
-    SessionUpdate request_stop() override {
+    SessionChange request_stop() override {
         std::lock_guard lock(calls_->mutex);
         ++calls_->stops;
         return {.notice = "stop requested"};
     }
-    SessionUpdate set_default_agent_id(std::string_view id) override {
+    SessionChange set_default_agent_id(std::string_view id) override {
         std::lock_guard lock(calls_->mutex);
         calls_->agent = std::string(id);
         return {};
@@ -191,6 +192,11 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     ASSERT_TRUE(input);
     EXPECT_EQ(input->status, 200);
     EXPECT_EQ(json_body(input), nlohmann::json({{"clear_input", true}, {"notice", "input accepted"}}));
+    const auto rejected = server.client().Post(
+        base + "/api/v1/input", R"({"persona":"reader","text":"rejected"})", "application/json");
+    ASSERT_TRUE(rejected);
+    EXPECT_EQ(rejected->status, 200);
+    EXPECT_EQ(json_body(rejected), nlohmann::json({{"clear_input", false}}));
     expect_error(
         server.client().Post(base + "/api/v1/input", R"({"text":"missing persona"})", "application/json"),
         400,
