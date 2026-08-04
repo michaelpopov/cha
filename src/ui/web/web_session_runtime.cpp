@@ -66,35 +66,6 @@ bool run_guarded(Operation&& operation) noexcept {
     }
 }
 
-TranscriptKind web_kind(EntryKind kind) {
-    switch (kind) {
-    case EntryKind::human: return TranscriptKind::human;
-    case EntryKind::agent: return TranscriptKind::agent;
-    case EntryKind::notice: return TranscriptKind::notice;
-    case EntryKind::error: return TranscriptKind::error;
-    }
-    throw std::logic_error("Unsupported transcript entry kind");
-}
-
-TranscriptStatus web_status(EntryStatus status) {
-    switch (status) {
-    case EntryStatus::complete: return TranscriptStatus::complete;
-    case EntryStatus::streaming: return TranscriptStatus::streaming;
-    case EntryStatus::cancelled: return TranscriptStatus::cancelled;
-    case EntryStatus::failed: return TranscriptStatus::failed;
-    }
-    throw std::logic_error("Unsupported transcript entry status");
-}
-
-GenerationPhase web_phase(ResponsePhase phase) {
-    switch (phase) {
-    case ResponsePhase::waiting: return GenerationPhase::waiting;
-    case ResponsePhase::reasoning: return GenerationPhase::reasoning;
-    case ResponsePhase::answering: return GenerationPhase::answering;
-    case ResponsePhase::stopping: return GenerationPhase::stopping;
-    }
-    throw std::logic_error("Unsupported generation phase");
-}
 
 std::string_view generation_terminal_status(
     const SessionSnapshot& snapshot,
@@ -121,27 +92,17 @@ std::string_view generation_terminal_status(
     return "unknown";
 }
 
-bool same_generation_structure(
-    const GenerationStatusView& current,
-    const GenerationState& before) {
-    return current.active == before.active
-        && current.request_id == before.request_id
-        && current.agent_id == before.agent_id
-        && current.agent_name == before.agent_name
-        && web_phase(current.phase) == before.phase;
-}
-
-bool same_domain_entry_shape(
-    const cha::TranscriptEntry& current,
-    const TranscriptEntry& before) {
-    return current.id == before.id
-        && web_kind(current.kind) == before.kind
-        && current.participant_id == before.participant_id
-        && current.display_name == before.display_name
-        && current.addressed_to == before.addressed_to
-        && current.addressed_to_name == before.addressed_to_name
-        && web_status(current.status) == before.status
-        && current.request_id == before.request_id;
+WebAppendCandidate to_web_append(SessionTextAppend append) {
+    WebAppendCandidate result = std::visit([](auto target) -> WebAppendCandidate {
+        using Target = std::decay_t<decltype(target)>;
+        if constexpr (std::is_same_v<Target, EntryTextTarget>) {
+            return {AppendTargetEntry{target.entry_id}, {}};
+        } else {
+            return {AppendTargetReasoning{target.request_id}, {}};
+        }
+    }, std::move(append.target));
+    result.text = std::move(append.text);
+    return result;
 }
 
 class SessionControllerAdapter final : public WebSessionController {
@@ -166,74 +127,16 @@ public:
     [[nodiscard]] bool is_generating() const override {
         return controller_.is_generating();
     }
-    SessionState state() override {
-        SessionState result = controller_.state();
-        snapshot_revision_ = result.revision;
-        return result;
-    }
-    std::optional<WebAppendCandidate> append_candidate(
-        const SessionSnapshot& before) override {
-        if (!snapshot_revision_
-            || controller_.default_agent_id()
-                != before.default_character_id) {
-            return std::nullopt;
-        }
-
-        const TranscriptView transcript = controller_.transcript().view();
-        const GenerationStatusView generation =
-            controller_.generation_status_view();
-        if (transcript.entries.size() != before.transcript.size()
-            || !same_generation_structure(generation, before.generation)) {
-            return std::nullopt;
-        }
-
-        if (transcript.revision == *snapshot_revision_) {
-            if (generation.phase != ResponsePhase::reasoning
-                || !generation.request_id
-                || generation.reasoning_text.size()
-                    <= before.generation.reasoning_text.size()) {
-                return std::nullopt;
-            }
-            // A live request's reasoning buffer is append-only. Equal request
-            // and phase fields plus an unchanged transcript prove continuity.
-            return WebAppendCandidate{
-                .target = AppendTargetReasoning{*generation.request_id},
-                .text = std::string(generation.reasoning_text.substr(
-                    before.generation.reasoning_text.size())),
-            };
-        }
-
-        if (transcript.revision < *snapshot_revision_
-            || generation.phase != ResponsePhase::answering
-            || generation.reasoning_text.size()
-                != before.generation.reasoning_text.size()
-            || !transcript.open_entry_id
-            || transcript.entries.empty()
-            || before.transcript.empty()) {
-            return std::nullopt;
-        }
-        const cha::TranscriptEntry& current = transcript.entries.back();
-        const TranscriptEntry& previous = before.transcript.back();
-        if (*transcript.open_entry_id != current.id
-            || current.status != EntryStatus::streaming
-            || !same_domain_entry_shape(current, previous)
-            || current.text.size() <= previous.text.size()) {
-            return std::nullopt;
-        }
-        // Transcript permits only append_answer() to mutate an open entry's
-        // text. Stable size/open ID/metadata therefore prove the prefix without
-        // rescanning the accumulated answer.
-        return WebAppendCandidate{
-            .target = AppendTargetEntry{current.id},
-            .text = current.text.substr(previous.text.size()),
-        };
+    SessionState state() override { return controller_.state(); }
+    std::optional<SessionAppendProjection> text_append_since(
+        const SessionStateCursor& cursor) override {
+        return controller_.text_append_since(cursor);
     }
     void shutdown() override { controller_.shutdown(); }
 
 private:
     std::unique_ptr<SessionController> owned_controller_;
     SessionController& controller_;
-    std::optional<std::size_t> snapshot_revision_;
 };
 
 static_assert(std::variant_size_v<WebCommand> == 5);
@@ -446,7 +349,11 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
             // append base. This keeps later candidates relative to what the
             // browser actually received even if a controller changed without
             // first emitting a render hint.
-            publish_snapshot(make_snapshot(controller));
+            SessionState state = controller.state();
+            const auto cursor = session_state_cursor(state);
+            publish_snapshot(to_snapshot(
+                descriptor_, std::move(state),
+                presentation(SessionLifecycle::running)), cursor);
             const SseMailbox::Stream stream =
                 sse_mailbox_->begin_stream({*last_snapshot_});
             if (!command.completion->complete(SseConnectResult{
@@ -534,14 +441,19 @@ void WebSessionRuntime::publish_change(
     WebSessionController& controller,
     bool force_snapshot) {
     if (!sink_) return;
-    if (!force_snapshot && last_snapshot_ && append_target_) {
-        if (auto candidate = controller.append_candidate(*last_snapshot_);
-            candidate && publish_append(std::move(*candidate))) {
+    if (!force_snapshot && last_cursor_) {
+        if (auto projection = controller.text_append_since(*last_cursor_);
+            projection && publish_append(
+                to_web_append(std::move(projection->append)),
+                std::move(projection->cursor))) {
             return;
         }
     }
 
-    SessionSnapshot current = make_snapshot(controller);
+    SessionState state = controller.state();
+    const auto cursor = session_state_cursor(state);
+    SessionSnapshot current = to_snapshot(
+        descriptor_, std::move(state), presentation(SessionLifecycle::running));
     const bool was_active = last_snapshot_
         && last_snapshot_->generation.active;
     const bool is_active = current.generation.active;
@@ -564,24 +476,23 @@ void WebSessionRuntime::publish_change(
                 : std::string("none")));
     }
     if (last_snapshot_ && current == *last_snapshot_) return;
-    publish_snapshot(std::move(current));
+    publish_snapshot(std::move(current), cursor);
 }
 
-bool WebSessionRuntime::publish_append(WebAppendCandidate candidate) {
-    if (!sink_ || !last_snapshot_ || !append_target_
-        || candidate.text.empty()
-        || *append_target_ != candidate.target) {
+bool WebSessionRuntime::publish_append(
+    WebAppendCandidate candidate,
+    SessionStateCursor cursor) {
+    if (!sink_ || !last_snapshot_ || candidate.text.empty()) {
         return false;
     }
     if (const auto* entry = std::get_if<AppendTargetEntry>(&candidate.target)) {
-        if (!append_entry_index_
-            || *append_entry_index_ >= last_snapshot_->transcript.size()
-            || last_snapshot_->transcript[*append_entry_index_].id
-                != entry->entry_id) {
+        const auto found = std::find_if(
+            last_snapshot_->transcript.begin(), last_snapshot_->transcript.end(),
+            [entry](const TranscriptEntry& value) { return value.id == entry->entry_id; });
+        if (found == last_snapshot_->transcript.end()) {
             return false;
         }
-        last_snapshot_->transcript[*append_entry_index_].text.append(
-            candidate.text);
+        found->text.append(candidate.text);
     } else {
         const auto& reasoning =
             std::get<AppendTargetReasoning>(candidate.target);
@@ -591,20 +502,16 @@ bool WebSessionRuntime::publish_append(WebAppendCandidate candidate) {
         last_snapshot_->generation.reasoning_text.append(candidate.text);
     }
     sink_->publish_append(std::move(candidate), *last_snapshot_);
+    last_cursor_ = std::move(cursor);
     return true;
 }
 
-void WebSessionRuntime::publish_snapshot(SessionSnapshot snapshot) {
+void WebSessionRuntime::publish_snapshot(
+    SessionSnapshot snapshot,
+    std::optional<SessionStateCursor> cursor) {
     sink_->publish(SnapshotEvent{snapshot});
     last_snapshot_ = std::move(snapshot);
-    const auto selection = snapshot_append_selection(*last_snapshot_);
-    if (selection) {
-        append_target_ = selection->target;
-        append_entry_index_ = selection->transcript_index;
-    } else {
-        append_target_.reset();
-        append_entry_index_.reset();
-    }
+    last_cursor_ = std::move(cursor);
 }
 
 void WebSessionRuntime::publish_final(WebSessionController& controller, ShutdownReason reason) {

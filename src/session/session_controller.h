@@ -76,6 +76,10 @@ public:
     // asynchronous presentation consumers. Borrowed views remain available
     // for direct frontends on that same thread.
     [[nodiscard]] SessionState state() const;
+    // Owner-thread-only proof of a text-only extension since a previously
+    // published core cursor. Any ambiguity deliberately returns no append.
+    [[nodiscard]] std::optional<SessionAppendProjection> text_append_since(
+        const SessionStateCursor& cursor) const;
     const ForumCharacters& characters() const { return characters_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
 

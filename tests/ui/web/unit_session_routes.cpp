@@ -93,25 +93,28 @@ public:
                 .display_name = "Guide",
                 .text = calls_->transcript_text,
                 .status = EntryStatus::streaming,
+                .request_id = 1,
             }},
+            .revision = 1,
+            .open_entry_id = 1,
+            .generation = {.active = true, .request_id = 1,
+                           .agent_id = "guide", .agent_name = "Guide",
+                           .phase = ResponsePhase::answering},
         };
     }
-    std::optional<WebAppendCandidate> append_candidate(
-        const SessionSnapshot& before) override {
+    std::optional<SessionAppendProjection> text_append_since(
+        const SessionStateCursor& before) override {
         std::lock_guard lock(calls_->mutex);
-        if (before.transcript.size() != 1
-            || before.transcript[0].id != 1
-            || !calls_->transcript_text.starts_with(
-                before.transcript[0].text)
+        if (before.phase != ResponsePhase::answering
             || calls_->transcript_text.size()
-                <= before.transcript[0].text.size()) {
+                <= before.answer_length) {
             return std::nullopt;
         }
-        return WebAppendCandidate{
-            .target = AppendTargetEntry{1},
-            .text = calls_->transcript_text.substr(
-                before.transcript[0].text.size()),
-        };
+        SessionStateCursor cursor = before;
+        cursor.answer_length = calls_->transcript_text.size();
+        return SessionAppendProjection{
+            .append = {EntryTextTarget{1}, calls_->transcript_text.substr(before.answer_length)},
+            .cursor = std::move(cursor)};
     }
     void shutdown() override {}
 

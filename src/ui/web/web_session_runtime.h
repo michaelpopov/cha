@@ -56,8 +56,8 @@ public:
     // Controllers may prove a text-only delta without rebuilding a snapshot.
     // Returning nullopt makes the runtime publish a full snapshot; the runtime
     // does not independently infer an append from snapshot differences.
-    virtual std::optional<WebAppendCandidate> append_candidate(
-        const SessionSnapshot&) {
+    virtual std::optional<SessionAppendProjection> text_append_since(
+        const SessionStateCursor&) {
         return std::nullopt;
     }
     virtual void shutdown() = 0;
@@ -152,8 +152,12 @@ private:
     void publish_change(
         WebSessionController& controller,
         bool force_snapshot = false);
-    [[nodiscard]] bool publish_append(WebAppendCandidate candidate);
-    void publish_snapshot(SessionSnapshot snapshot);
+    [[nodiscard]] bool publish_append(
+        WebAppendCandidate candidate,
+        SessionStateCursor cursor);
+    void publish_snapshot(
+        SessionSnapshot snapshot,
+        std::optional<SessionStateCursor> cursor = std::nullopt);
     void publish_final(WebSessionController& controller, ShutdownReason reason);
     void log_fatal_once() noexcept;
     void log_event(std::string_view event) noexcept;
@@ -176,8 +180,7 @@ private:
     // Owner thread only. Snapshot construction must stay on that thread.
     std::optional<std::string> notice_;
     std::optional<SessionSnapshot> last_snapshot_;
-    std::optional<AppendTarget> append_target_;
-    std::optional<std::size_t> append_entry_index_;
+    std::optional<SessionStateCursor> last_cursor_;
     bool fatal_logged_{};
     BrowserConnectionState browser_connection_;
     bool has_connected_sse_{};

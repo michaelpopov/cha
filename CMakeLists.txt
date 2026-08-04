@@ -207,6 +207,7 @@ add_library(cha_core STATIC
     src/session/session_controller.cpp
     src/session/session_database.cpp
     src/session/session_lease.cpp
+    src/session/session_state.cpp
     src/session/workspace.cpp
 )
 

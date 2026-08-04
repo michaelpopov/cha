@@ -340,6 +340,21 @@ For read-only activity checks, `is_generating()` avoids constructing a
 `GenerationStatus` and copying its potentially growing reasoning text.
 Frontends request the full status only when they are about to render it.
 
+### Owning state and append continuity
+
+`state()` builds the owning `SessionState` used when a consumer cannot borrow
+the controller-owned transcript. A consumer may retain a compact
+`SessionStateCursor` beside its published presentation state and ask
+`text_append_since()` for a `SessionTextAppend`. The cursor stores only
+revision, epoch, entry/open-entry identity, default agent, active request and
+phase, plus published text lengths; it never stores transcript or reasoning
+text. The proof relies on transcript revisions changing for every structural
+or answer-text mutation, a single open streaming entry, and the controller's
+owner-thread-only access. Any changed epoch, metadata, request, phase, shape,
+or non-growing text is ambiguous and returns no append, requiring a full state
+replacement. Transport sequence numbers, event names, and mailbox coalescing
+remain frontend policy.
+
 The three off-record commands are the only ones that add a transcript entry
 without a journal write. Each passes the current `next_entry_id_` to the
 matching `Transcript` mutation *without* incrementing it and advances the

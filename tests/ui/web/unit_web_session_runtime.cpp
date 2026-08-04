@@ -68,6 +68,8 @@ struct FakeState {
             .status = EntryStatus::streaming,
             .request_id = 3,
         }},
+        .revision = 1,
+        .open_entry_id = 7,
         .generation = {
             .active = true,
             .request_id = 3,
@@ -224,39 +226,37 @@ public:
         ++state_->snapshot_calls;
         return state_->snapshot;
     }
-    std::optional<WebAppendCandidate> append_candidate(
-        const SessionSnapshot& before) override {
+    std::optional<SessionAppendProjection> text_append_since(
+        const SessionStateCursor& before) override {
         std::lock_guard lock(state_->mutex);
         check_owner();
         ++state_->append_candidate_calls;
         state_->entered.notify_all();
         if (!state_->fast_append_candidates) return std::nullopt;
         const SessionState& after = state_->snapshot;
-        if (!before.transcript.empty()
-            && before.transcript.size() == after.transcript.size()
+        if (before.phase == ResponsePhase::answering
+            && before.open_entry_id
+            && *before.open_entry_id == after.transcript.back().id
             && after.transcript.back().status == EntryStatus::streaming
-            && after.transcript.back().text.starts_with(
-                before.transcript.back().text)
+            && after.transcript.back().text.size() >= before.answer_length
             && after.transcript.back().text.size()
-                > before.transcript.back().text.size()) {
-            return WebAppendCandidate{
-                .target = AppendTargetEntry{after.transcript.back().id},
-                .text = after.transcript.back().text.substr(
-                    before.transcript.back().text.size()),
-            };
+                > before.answer_length) {
+            auto cursor = session_state_cursor(after);
+            if (!cursor) return std::nullopt;
+            return SessionAppendProjection{
+                .append = {EntryTextTarget{after.transcript.back().id},
+                           after.transcript.back().text.substr(before.answer_length)},
+                .cursor = std::move(*cursor)};
         }
-        if (after.generation.request_id
-            && after.generation.reasoning_text.starts_with(
-                before.generation.reasoning_text)
+        if (before.phase == ResponsePhase::reasoning && after.generation.request_id
             && after.generation.reasoning_text.size()
-                > before.generation.reasoning_text.size()) {
-            return WebAppendCandidate{
-                .target = AppendTargetReasoning{
-                    *after.generation.request_id,
-                },
-                .text = after.generation.reasoning_text.substr(
-                    before.generation.reasoning_text.size()),
-            };
+                > before.reasoning_length) {
+            auto cursor = session_state_cursor(after);
+            if (!cursor) return std::nullopt;
+            return SessionAppendProjection{
+                .append = {ReasoningTextTarget{*after.generation.request_id},
+                           after.generation.reasoning_text.substr(before.reasoning_length)},
+                .cursor = std::move(*cursor)};
         }
         return std::nullopt;
     }

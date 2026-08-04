@@ -24,6 +24,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <variant>
 
 namespace cha {
 namespace {
@@ -1810,6 +1811,141 @@ TEST(SessionController, StateOwnsActiveGenerationAndOpenEntry) {
     EXPECT_EQ(state.generation.phase, ResponsePhase::answering);
     EXPECT_EQ(state.generation.reasoning_text, "Thinking");
     EXPECT_EQ(state.transcript.back().status, EntryStatus::streaming);
+}
+
+TEST(SessionController, ProvesSuccessiveReasoningAndAnswerSuffixesFromCoreCursor) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, "Think",
+    });
+    auto cursor = session_state_cursor(controller->state());
+    ASSERT_TRUE(cursor);
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, " more",
+    });
+    auto reasoning = controller->text_append_since(*cursor);
+    ASSERT_TRUE(reasoning);
+    EXPECT_EQ(std::get<ReasoningTextTarget>(reasoning->append.target).request_id, 1U);
+    EXPECT_EQ(reasoning->append.text, " more");
+    EXPECT_EQ(reasoning->cursor.reasoning_length, std::string("Think more").size());
+    EXPECT_EQ(reasoning->cursor.revision, controller->transcript().view().revision);
+
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, " carefully",
+    });
+    reasoning = controller->text_append_since(reasoning->cursor);
+    ASSERT_TRUE(reasoning);
+    EXPECT_EQ(reasoning->append.text, " carefully");
+    EXPECT_EQ(
+        reasoning->cursor.reasoning_length,
+        std::string("Think more carefully").size());
+
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, "Answer",
+    });
+    EXPECT_FALSE(controller->text_append_since(reasoning->cursor));
+    cursor = session_state_cursor(controller->state());
+    ASSERT_TRUE(cursor);
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " again",
+    });
+    auto answer = controller->text_append_since(*cursor);
+    ASSERT_TRUE(answer);
+    EXPECT_EQ(std::get<EntryTextTarget>(answer->append.target).entry_id, 2U);
+    EXPECT_EQ(answer->append.text, " again");
+    EXPECT_EQ(answer->cursor.answer_length, std::string("Answer again").size());
+    EXPECT_EQ(answer->cursor.revision, controller->transcript().view().revision);
+
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " and again",
+    });
+    answer = controller->text_append_since(answer->cursor);
+    ASSERT_TRUE(answer);
+    EXPECT_EQ(answer->append.text, " and again");
+    EXPECT_EQ(
+        answer->cursor.answer_length,
+        std::string("Answer again and again").size());
+
+    // Owner draining may coalesce several controller deltas before checking
+    // its cursor. The proven suffix must cover all of them.
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " in",
+    });
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " one query",
+    });
+    answer = controller->text_append_since(answer->cursor);
+    ASSERT_TRUE(answer);
+    EXPECT_EQ(answer->append.text, " in one query");
+}
+
+TEST(SessionController, RejectsAmbiguousAppendContinuityAndRecoversAfterSnapshot) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+    (void)controller->submit_prompt("operator", "Question");
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, "Think",
+    });
+    const auto cursor = session_state_cursor(controller->state());
+    ASSERT_TRUE(cursor);
+    EXPECT_FALSE(controller->text_append_since(*cursor));
+
+    SessionStateCursor shorter_reasoning = *cursor;
+    ++shorter_reasoning.reasoning_length;
+    EXPECT_FALSE(controller->text_append_since(shorter_reasoning));
+
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, " more",
+    });
+    // A live default cannot change while generating, so mutate a copied
+    // cursor to verify that this continuity fact is load-bearing.
+    SessionStateCursor changed_default = *cursor;
+    changed_default.default_agent_id = "other";
+    EXPECT_FALSE(controller->text_append_since(changed_default));
+
+    SessionStateCursor changed_open_entry = *cursor;
+    changed_open_entry.open_entry_id = 999U;
+    EXPECT_FALSE(controller->text_append_since(changed_open_entry));
+
+    // A phase transition is a required full-snapshot boundary. A fresh cursor
+    // from that snapshot can prove a later answer extension again.
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, "Answer",
+    });
+    EXPECT_FALSE(controller->text_append_since(*cursor));
+    auto answer_cursor = session_state_cursor(controller->state());
+    ASSERT_TRUE(answer_cursor);
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " more",
+    });
+    auto answer = controller->text_append_since(*answer_cursor);
+    ASSERT_TRUE(answer);
+    EXPECT_EQ(answer->append.text, " more");
+
+    SessionStateCursor shorter_answer = answer->cursor;
+    ++shorter_answer.answer_length;
+    EXPECT_FALSE(controller->text_append_since(shorter_answer));
+
+    (void)controller->handle_agent_event(AgentCompleted{1});
+    EXPECT_FALSE(controller->text_append_since(answer->cursor));
+
+    // Starting another request changes the transcript shape, open entry, and
+    // request identity, each of which invalidates the earlier cursor.
+    (void)controller->submit_prompt("operator", "Another question");
+    EXPECT_FALSE(controller->text_append_since(answer->cursor));
+
+    (void)controller->handle_agent_event(AgentCancelled{1});
+    (void)controller->clear_transcript();
+    EXPECT_FALSE(controller->text_append_since(*cursor));
 }
 
 TEST(SessionController, ShutdownJoinsPoolBeforeRegistryCanBeDestroyed) {
