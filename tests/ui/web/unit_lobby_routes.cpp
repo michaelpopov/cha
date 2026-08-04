@@ -14,9 +14,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -40,6 +42,49 @@ public:
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
+};
+
+class ShutdownGate {
+public:
+    void wait() {
+        std::unique_lock lock(mutex_);
+        entered_ = true;
+        changed_.notify_all();
+        changed_.wait(lock, [this] { return released_; });
+    }
+
+    bool wait_until_entered() {
+        std::unique_lock lock(mutex_);
+        return changed_.wait_for(lock, 500ms, [this] { return entered_; });
+    }
+
+    void release() {
+        {
+            std::lock_guard lock(mutex_);
+            released_ = true;
+        }
+        changed_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    bool entered_{};
+    bool released_{};
+};
+
+class GatedShutdownController final : public WebSessionController {
+public:
+    explicit GatedShutdownController(ShutdownGate& gate) : gate_(gate) {}
+    TextInputResult handle_raw_input(std::string_view, std::string) override { return {}; }
+    SessionChange request_stop() override { return {}; }
+    SessionChange set_default_agent_id(std::string_view) override { return {}; }
+    SessionEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] bool is_generating() const override { return false; }
+    void shutdown() override { gate_.wait(); }
+
+private:
+    ShutdownGate& gate_;
 };
 
 class TestServer {
@@ -88,7 +133,8 @@ nlohmann::json body(const httplib::Result& result) {
 void expect_error(
     const httplib::Result& result,
     int status,
-    std::string_view code) {
+    std::string_view code,
+    std::string_view message = {}) {
     ASSERT_TRUE(result);
     EXPECT_EQ(result->status, status);
     const nlohmann::json json = body(result);
@@ -98,6 +144,9 @@ void expect_error(
     EXPECT_EQ(json["error"]["code"], code);
     EXPECT_TRUE(json["error"]["code"].is_string());
     EXPECT_TRUE(json["error"]["message"].is_string());
+    if (!message.empty()) {
+        EXPECT_EQ(json["error"]["message"], message);
+    }
 }
 
 std::string create_session(TestServer& server, std::string_view label = "Notes") {
@@ -643,7 +692,11 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
     const std::string id = create_session(server);
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
-    expect_error(server.client().Post(route, "{}", "application/json"), 409, "session_busy");
+    expect_error(
+        server.client().Post(route, "{}", "application/json"),
+        409,
+        "session_busy",
+        "Session is busy.");
     EXPECT_TRUE(listed_not_live(server, id));
 
     busy = false;
@@ -681,7 +734,8 @@ TEST(LobbyRoutes, CreateSucceedsWhileAnotherStoredSessionLeaseIsHeld) {
             "{}",
             "application/json"),
         409,
-        "session_busy");
+        "session_busy",
+        "Session is busy.");
     registry.begin_shutdown();
 }
 
@@ -697,7 +751,11 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesInitializationFailureAndCanBeRetried) 
     const std::string id = create_session(server);
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
-    expect_error(server.client().Post(route, "{}", "application/json"), 500, "internal_error");
+    expect_error(
+        server.client().Post(route, "{}", "application/json"),
+        500,
+        "internal_error",
+        "Session could not be opened.");
     EXPECT_TRUE(listed_not_live(server, id));
 
     fail = false;
@@ -726,7 +784,11 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesLimitOpenAndCanBeRetried) {
     const std::string id = create_session(server, "Retry later");
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
-    expect_error(server.client().Post(route, "{}", "application/json"), 503, "session_limit_reached");
+    expect_error(
+        server.client().Post(route, "{}", "application/json"),
+        503,
+        "session_limit_reached",
+        "Session limit reached.");
     EXPECT_TRUE(listed_not_live(server, id));
 
     SessionHandle occupied_handle = registry.lookup({"lobby", occupied});
@@ -754,7 +816,11 @@ TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
     const std::string id = create_session(server);
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
-    expect_error(server.client().Post(route, "{}", "application/json"), 503, "session_open_timeout");
+    expect_error(
+        server.client().Post(route, "{}", "application/json"),
+        503,
+        "session_open_timeout",
+        "Session is still opening.");
     EXPECT_TRUE(listed_not_live(server, id));
 
     std::this_thread::sleep_for(40ms);
@@ -762,6 +828,44 @@ TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 200);
     registry.begin_shutdown();
+}
+
+TEST(LobbyRoutes, MapsStoppingAndRegistryShutdownOpenFailuresToExistingEnvelopes) {
+    test::TestWorkspace fixture;
+    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    ShutdownGate gate;
+    std::atomic<int> starts{};
+    SessionRegistry registry({.session_limit = 1}, [&gate, &starts](const SessionIdentity& key, WakeNotifier&) {
+        ++starts;
+        return fake_session(key, std::make_unique<GatedShutdownController>(gate));
+    });
+    TestServer server(workspace, registry);
+    const std::string id = create_session(server, "Stopping");
+    const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
+
+    const auto opened = server.client().Post(route, "{}", "application/json");
+    ASSERT_TRUE(opened);
+    ASSERT_EQ(opened->status, 200);
+    SessionHandle handle = registry.lookup({"lobby", id});
+    ASSERT_TRUE(handle);
+    handle.runtime().request_shutdown();
+    ASSERT_TRUE(gate.wait_until_entered());
+
+    expect_error(
+        server.client().Post(route, "{}", "application/json"),
+        409,
+        "session_stopping",
+        "Session is stopping.");
+    EXPECT_EQ(starts, 1);
+
+    gate.release();
+    registry.sweep();
+    registry.begin_shutdown();
+    expect_error(
+        server.client().Post(route, "{}", "application/json"),
+        503,
+        "server_stopping",
+        "Server is stopping.");
 }
 
 } // namespace

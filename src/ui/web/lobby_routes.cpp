@@ -27,27 +27,38 @@ bool is_running(const RegistrySnapshot& snapshot, const SessionIdentity& key) {
         != snapshot.running_sessions.end();
 }
 
-int status_for(const ErrorCode code) {
-    switch (code) {
-    case ErrorCode::not_found: return 404;
-    case ErrorCode::session_busy:
-    case ErrorCode::session_stopping: return 409;
-    case ErrorCode::session_limit_reached:
-    case ErrorCode::session_open_timeout:
-    case ErrorCode::server_stopping: return 503;
-    default: return 500;
-    }
-}
-
 void set_open_result(
     httplib::Response& response,
+    const SessionIdentity& identity,
     const RegistryOpenResult& result) {
-    if (const auto* success = std::get_if<OpenSessionSuccess>(&result)) {
-        set_json_response(response, 200, nlohmann::json(*success));
+    if (std::holds_alternative<RegistryReady>(result)) {
+        set_json_response(response, 200, nlohmann::json(OpenSessionSuccess{
+            "/s/" + identity.forum_id + "/" + identity.session_id + "/"}));
         return;
     }
-    const Error& error = std::get<Error>(result);
-    set_error_response(response, status_for(error.code), error);
+    switch (std::get<RegistryOpenFailure>(result)) {
+    case RegistryOpenFailure::not_found:
+        set_route_not_found(response);
+        return;
+    case RegistryOpenFailure::busy:
+        set_error_response(response, 409, {ErrorCode::session_busy, "Session is busy."});
+        return;
+    case RegistryOpenFailure::stopping:
+        set_error_response(response, 409, {ErrorCode::session_stopping, "Session is stopping."});
+        return;
+    case RegistryOpenFailure::limit_reached:
+        set_error_response(response, 503, {ErrorCode::session_limit_reached, "Session limit reached."});
+        return;
+    case RegistryOpenFailure::open_timeout:
+        set_error_response(response, 503, {ErrorCode::session_open_timeout, "Session is still opening."});
+        return;
+    case RegistryOpenFailure::registry_stopping:
+        set_error_response(response, 503, {ErrorCode::server_stopping, "Server is stopping."});
+        return;
+    case RegistryOpenFailure::internal_error:
+        set_error_response(response, 500, {ErrorCode::internal_error, "Session could not be opened."});
+        return;
+    }
 }
 
 } // namespace
@@ -143,7 +154,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 settings.request_body_limit,
                 [](const nlohmann::json& json) { parse_empty_object(json); })) return;
         if (const auto reattached = registry->try_reattach(key)) {
-            return set_open_result(response, *reattached);
+            return set_open_result(response, key, *reattached);
         }
         try {
             workspace->check_session(key.forum_id, key.session_id);
@@ -154,7 +165,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
         }
         set_open_result(
             response,
-            registry->open(key, settings.open_deadline));
+            key, registry->open(key, settings.open_deadline));
     });
 }
 

@@ -6,7 +6,6 @@
 #include "session/workspace.h"
 #include "ui/web/sse_mailbox.h"
 #include "util/logging.h"
-#include "util/path_name.h"
 
 #include <condition_variable>
 #include <exception>
@@ -20,15 +19,6 @@ namespace {
 std::string session_log(const SessionIdentity& key, std::string_view event) {
     return "web session forum_id=" + key.forum_id + " session_id=" + key.session_id
         + " event=" + std::string(event);
-}
-
-bool valid_key(const SessionIdentity& key) {
-    return is_url_safe_identifier(key.forum_id)
-        && is_url_safe_identifier(key.session_id);
-}
-
-Error invalid_key_error() {
-    return {ErrorCode::not_found, "That forum or session was not found."};
 }
 
 } // namespace
@@ -130,14 +120,9 @@ SessionRegistry::~SessionRegistry() {
     for (std::thread* owner : owners) owner->join();
 }
 
-std::string SessionRegistry::path_for(const SessionIdentity& key) {
-    return "/s/" + key.forum_id + "/" + key.session_id + "/";
-}
-
 RegistryOpenResult SessionRegistry::open(
     SessionIdentity key,
     std::chrono::milliseconds deadline) {
-    if (!valid_key(key)) return invalid_key_error();
     log_info(session_log(key, "open_requested"));
     RetiredEntries retired;
     std::shared_ptr<StartupResult> startup;
@@ -148,22 +133,21 @@ RegistryOpenResult SessionRegistry::open(
         if (stopping_) {
             lock.unlock();
             reap(std::move(retired));
-            return Error{ErrorCode::server_stopping, "Server is stopping."};
+            return RegistryOpenFailure::registry_stopping;
         }
         const auto found = entries_.find(key);
         if (found != entries_.end()) {
             if (found->second->state == Entry::State::running) {
-                const std::string path = path_for(key);
                 lock.unlock();
                 log_info(session_log(key, "reattached"));
                 reap(std::move(retired));
-                return OpenSessionSuccess{path};
+                return RegistryReady{};
             }
             if (found->second->state == Entry::State::stopping) {
                 lock.unlock();
                 log_warn(session_log(key, "open_rejected_stopping"));
                 reap(std::move(retired));
-                return Error{ErrorCode::session_stopping, "Session is stopping."};
+                return RegistryOpenFailure::stopping;
             }
             startup = found->second->startup;
         } else {
@@ -171,7 +155,7 @@ RegistryOpenResult SessionRegistry::open(
                 lock.unlock();
                 log_warn(session_log(key, "open_rejected_limit"));
                 reap(std::move(retired));
-                return Error{ErrorCode::session_limit_reached, "Session limit reached."};
+                return RegistryOpenFailure::limit_reached;
             }
             auto entry = std::make_unique<Entry>();
             deferred_event = "registry_starting";
@@ -193,10 +177,7 @@ RegistryOpenResult SessionRegistry::open(
                 entries_.erase(position);
                 lock.unlock();
                 reap(std::move(retired));
-                return Error{
-                    ErrorCode::internal_error,
-                    "Session could not be opened.",
-                };
+                return RegistryOpenFailure::internal_error;
             }
         }
     }
@@ -208,41 +189,40 @@ RegistryOpenResult SessionRegistry::open(
         log_warn(session_log(key, "open_deadline_expired"));
         std::lock_guard lock(mutex_);
         return stopping_
-            ? RegistryOpenResult{Error{ErrorCode::server_stopping, "Server is stopping."}}
-            : RegistryOpenResult{Error{ErrorCode::session_open_timeout, "Session is still opening."}};
+            ? RegistryOpenResult{RegistryOpenFailure::registry_stopping}
+            : RegistryOpenResult{RegistryOpenFailure::open_timeout};
     }
     switch (*outcome) {
-    case StartupResult::Value::ready: return OpenSessionSuccess{path_for(key)};
-    case StartupResult::Value::busy: return Error{ErrorCode::session_busy, "Session is busy."};
-    case StartupResult::Value::not_found: return invalid_key_error();
-    case StartupResult::Value::error: return Error{ErrorCode::internal_error, "Session could not be opened."};
+    case StartupResult::Value::ready: return RegistryReady{};
+    case StartupResult::Value::busy: return RegistryOpenFailure::busy;
+    case StartupResult::Value::not_found: return RegistryOpenFailure::not_found;
+    case StartupResult::Value::error: return RegistryOpenFailure::internal_error;
     case StartupResult::Value::shutting_down:
-        return Error{ErrorCode::server_stopping, "Server is stopping."};
+        return RegistryOpenFailure::registry_stopping;
     }
-    return Error{ErrorCode::internal_error, "Session could not be opened."};
+    return RegistryOpenFailure::internal_error;
 }
 
 std::optional<RegistryOpenResult> SessionRegistry::try_reattach(
     const SessionIdentity& key) {
-    if (!valid_key(key)) return invalid_key_error();
     RetiredEntries retired;
     std::optional<RegistryOpenResult> result;
     {
         std::lock_guard lock(mutex_);
         retired = sweep_locked();
         if (stopping_) {
-            result = Error{ErrorCode::server_stopping, "Server is stopping."};
+            result = RegistryOpenFailure::registry_stopping;
         } else {
             const auto found = entries_.find(key);
             if (found != entries_.end()
                 && found->second->state == Entry::State::running) {
-                result = OpenSessionSuccess{path_for(key)};
+                result = RegistryReady{};
             }
         }
     }
     reap(std::move(retired));
     if (result) {
-        if (std::holds_alternative<OpenSessionSuccess>(*result)) {
+        if (std::holds_alternative<RegistryReady>(*result)) {
             log_info(session_log(key, "reattached"));
         } else {
             log_warn(session_log(key, "open_rejected_server_stopping"));
@@ -252,7 +232,6 @@ std::optional<RegistryOpenResult> SessionRegistry::try_reattach(
 }
 
 SessionHandle SessionRegistry::lookup(const SessionIdentity& key) {
-    if (!valid_key(key)) return {};
     RetiredEntries retired;
     SessionHandle result;
     {

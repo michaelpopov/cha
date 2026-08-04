@@ -42,8 +42,8 @@ public:
     static inline std::atomic<int> shutdowns{};
 };
 
-ErrorCode code_of(const RegistryOpenResult& value) {
-    return std::get<Error>(value).code;
+RegistryOpenFailure failure_of(const RegistryOpenResult& value) {
+    return std::get<RegistryOpenFailure>(value);
 }
 
 class ShutdownGate {
@@ -157,43 +157,19 @@ TEST(SessionRegistry, ReusesRunningSessionAndReturnsHandle) {
 
     const auto first = registry.open(key, 500ms);
     const auto second = registry.open(key, 500ms);
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(first));
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(second));
-    EXPECT_EQ(std::get<OpenSessionSuccess>(first).path, "/s/forum/session/");
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(first));
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(second));
     EXPECT_EQ(starts, 1);
     EXPECT_TRUE(registry.lookup(key));
     const auto reattached = registry.try_reattach(key);
     ASSERT_TRUE(reattached);
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(*reattached));
-    EXPECT_EQ(
-        std::get<OpenSessionSuccess>(*reattached).path,
-        "/s/forum/session/");
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(*reattached));
 
     registry.begin_shutdown();
     const auto stopping = registry.try_reattach(key);
     ASSERT_TRUE(stopping);
-    EXPECT_EQ(code_of(*stopping), ErrorCode::server_stopping);
+    EXPECT_EQ(failure_of(*stopping), RegistryOpenFailure::registry_stopping);
     registry.sweep();
-}
-
-TEST(SessionRegistry, RejectsUrlUnsafeKeysBeforeStartingAnOwner) {
-    std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
-        ++starts;
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-
-    EXPECT_EQ(
-        code_of(registry.open({"bad#forum", "session"}, 500ms)),
-        ErrorCode::not_found);
-    EXPECT_EQ(
-        code_of(registry.open({"forum", "bad?session"}, 500ms)),
-        ErrorCode::not_found);
-    const auto reattached = registry.try_reattach({"forum", "bad%session"});
-    ASSERT_TRUE(reattached);
-    EXPECT_EQ(code_of(*reattached), ErrorCode::not_found);
-    EXPECT_FALSE(registry.lookup({"forum", "bad session"}));
-    EXPECT_EQ(starts, 0);
 }
 
 TEST(SessionRegistry, BusyAndLimitHaveStableErrors) {
@@ -202,9 +178,9 @@ TEST(SessionRegistry, BusyAndLimitHaveStableErrors) {
         if (++busy_attempts == 1) throw SessionBusyError("busy");
         return fake_session(key, std::make_unique<IdleController>());
     });
-    EXPECT_EQ(code_of(busy.open({"f", "s"}, 500ms)), ErrorCode::session_busy);
+    EXPECT_EQ(failure_of(busy.open({"f", "s"}, 500ms)), RegistryOpenFailure::busy);
     busy.sweep();
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(
         busy.open({"f", "s"}, 500ms)));
     EXPECT_EQ(busy_attempts, 2);
     busy.begin_shutdown();
@@ -225,7 +201,7 @@ TEST(SessionRegistry, BusyAndLimitHaveStableErrors) {
         std::unique_lock lock(mutex);
         ASSERT_TRUE(entered.wait_for(lock, 500ms, [&] { return started; }));
     }
-    EXPECT_EQ(code_of(limit.open({"f", "two"}, 10ms)), ErrorCode::session_limit_reached);
+    EXPECT_EQ(failure_of(limit.open({"f", "two"}, 10ms)), RegistryOpenFailure::limit_reached);
     {
         std::lock_guard lock(mutex);
         release = true;
@@ -284,10 +260,10 @@ TEST(SessionRegistry, SimultaneousDistinctOpensNeverExceedLimit) {
     int rejected{};
     for (auto& open : opens) {
         RegistryOpenResult result = open.get();
-        if (std::holds_alternative<OpenSessionSuccess>(result)) {
+        if (std::holds_alternative<RegistryReady>(result)) {
             ++successes;
         } else {
-            EXPECT_EQ(code_of(result), ErrorCode::session_limit_reached);
+            EXPECT_EQ(failure_of(result), RegistryOpenFailure::limit_reached);
             ++rejected;
         }
     }
@@ -325,8 +301,8 @@ TEST(SessionRegistry, ConcurrentSameKeyOpensShareOneOwnerAndOutcome) {
         release = true;
     }
     changed.notify_all();
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(first.get()));
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(second.get()));
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(first.get()));
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(second.get()));
     EXPECT_EQ(starts, 1);
     registry.begin_shutdown();
 }
@@ -350,8 +326,8 @@ TEST(SessionRegistry, ConcurrentDifferentKeyOpensProceedIndependently) {
         ASSERT_TRUE(changed.wait_for(lock, 500ms, [&] { return entered == 2; }));
         changed.notify_all();
     }
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(first.get()));
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(second.get()));
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(first.get()));
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(second.get()));
     registry.begin_shutdown();
 }
 
@@ -362,8 +338,8 @@ TEST(SessionRegistry, FailedOpenIsSweptAndCanBeRetried) {
         return fake_session(key, std::make_unique<IdleController>());
     });
     const SessionIdentity key{"f", "retry"};
-    EXPECT_EQ(code_of(registry.open(key, 500ms)), ErrorCode::internal_error);
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open(key, 500ms)));
+    EXPECT_EQ(failure_of(registry.open(key, 500ms)), RegistryOpenFailure::internal_error);
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(registry.open(key, 500ms)));
     EXPECT_EQ(attempts, 2);
     registry.begin_shutdown();
 }
@@ -382,8 +358,8 @@ TEST(SessionRegistry, FactoryFailureReleasesOpenHandoffLease) {
         });
 
     EXPECT_EQ(
-        code_of(registry.open({"f", "failed-lease"}, 500ms)),
-        ErrorCode::internal_error);
+        failure_of(registry.open({"f", "failed-lease"}, 500ms)),
+        RegistryOpenFailure::internal_error);
     SessionLease reopened = SessionLease::acquire(temporary.path);
     EXPECT_TRUE(reopened.active());
     registry.begin_shutdown();
@@ -401,13 +377,13 @@ TEST(SessionRegistry, TimeoutDoesNotCancelTheOpen) {
         return fake_session(key, std::make_unique<IdleController>());
     });
     const SessionIdentity key{"f", "slow"};
-    EXPECT_EQ(code_of(registry.open(key, 10ms)), ErrorCode::session_open_timeout);
+    EXPECT_EQ(failure_of(registry.open(key, 10ms)), RegistryOpenFailure::open_timeout);
     {
         std::lock_guard lock(mutex);
         release = true;
     }
     changed.notify_all();
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open(key, 500ms)));
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(registry.open(key, 500ms)));
     EXPECT_EQ(starts, 1);
     registry.begin_shutdown();
 }
@@ -432,13 +408,13 @@ TEST(SessionRegistry, WaitersHaveIndependentDeadlines) {
     }
     auto long_waiter = std::async(std::launch::async, [&] { return registry.open(key, 500ms); });
     ASSERT_EQ(short_waiter.wait_for(500ms), std::future_status::ready);
-    EXPECT_EQ(code_of(short_waiter.get()), ErrorCode::session_open_timeout);
+    EXPECT_EQ(failure_of(short_waiter.get()), RegistryOpenFailure::open_timeout);
     {
         std::lock_guard lock(mutex);
         release = true;
     }
     changed.notify_all();
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(long_waiter.get()));
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(long_waiter.get()));
     registry.begin_shutdown();
 }
 
@@ -451,13 +427,13 @@ TEST(SessionRegistry, StoppingEntryRejectsOpenConsumesCapacityAndLateHandleStops
         return fake_session(key, std::make_unique<GatedShutdownController>(gate));
     });
     const SessionIdentity key{"f", "stopping"};
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(registry.open(key, 500ms)));
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(registry.open(key, 500ms)));
     SessionHandle handle = registry.lookup(key);
     ASSERT_TRUE(handle);
     handle.runtime().request_shutdown();
     ASSERT_TRUE(gate.wait_until_entered());
-    EXPECT_EQ(code_of(registry.open(key, 10ms)), ErrorCode::session_stopping);
-    EXPECT_EQ(code_of(registry.open({"f", "other"}, 10ms)), ErrorCode::session_limit_reached);
+    EXPECT_EQ(failure_of(registry.open(key, 10ms)), RegistryOpenFailure::stopping);
+    EXPECT_EQ(failure_of(registry.open({"f", "other"}, 10ms)), RegistryOpenFailure::limit_reached);
     gate.release();
     registry.sweep();
     EXPECT_FALSE(registry.lookup(key));
@@ -489,7 +465,7 @@ TEST(SessionRegistry, ShutdownExposesUnfinishedOwnersWithoutCompletingStartup) {
     registry.begin_shutdown();
     EXPECT_EQ(registry.unfinished_owners(), std::vector<SessionIdentity>{key});
     ASSERT_EQ(waiter.wait_for(500ms), std::future_status::ready);
-    EXPECT_EQ(code_of(waiter.get()), ErrorCode::server_stopping);
+    EXPECT_EQ(failure_of(waiter.get()), RegistryOpenFailure::registry_stopping);
     {
         std::lock_guard lock(mutex);
         release = true;
@@ -518,7 +494,7 @@ TEST(SessionRegistry, ShutdownWakesStartingWaitersWithoutWritingTheirResult) {
     }
     registry.begin_shutdown();
     ASSERT_EQ(waiter.wait_for(500ms), std::future_status::ready);
-    EXPECT_EQ(code_of(waiter.get()), ErrorCode::server_stopping);
+    EXPECT_EQ(failure_of(waiter.get()), RegistryOpenFailure::registry_stopping);
     {
         std::lock_guard lock(mutex);
         release = true;
@@ -532,7 +508,7 @@ TEST(SessionRegistry, ShutdownJoinUsesOneBoundedGracePeriod) {
     SessionRegistry registry({.session_limit = 1}, [&](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<GatedShutdownController>(gate));
     });
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open({"f", "blocked"}, 500ms)));
 
     registry.begin_shutdown();
@@ -582,7 +558,7 @@ TEST(SessionRegistry, ShutdownAtCommitNeverPublishesAndTearsDownNewController) {
     registry_pointer = &registry;
     const SessionIdentity key{"f", "commit-race"};
 
-    EXPECT_EQ(code_of(registry.open(key, 500ms)), ErrorCode::server_stopping);
+    EXPECT_EQ(failure_of(registry.open(key, 500ms)), RegistryOpenFailure::registry_stopping);
     ASSERT_EQ(shutdown_complete.wait_for(500ms), std::future_status::ready);
     EXPECT_EQ(factory_calls, 1);
     EXPECT_EQ(shutdowns, 1);
@@ -615,7 +591,7 @@ TEST(SessionRegistry, ReopensSameKeyWhileFinishedOwnerIsBeingJoined) {
     });
     ReleaseGateOnExit release_old_thread(old_thread_exit);
 
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open(original, 500ms)));
     SessionHandle old_handle = registry.lookup(original);
     ASSERT_TRUE(old_handle);
@@ -637,13 +613,13 @@ TEST(SessionRegistry, ReopensSameKeyWhileFinishedOwnerIsBeingJoined) {
     // The old controller released its simulated lease before marking itself
     // finished. The old map entry is already gone, so the same key can be
     // admitted and opened while the other request remains blocked in join().
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open(original, 500ms)));
     EXPECT_EQ(original_starts, 2);
     EXPECT_EQ(lease_conflicts, 0);
 
     old_thread_exit.release();
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(joining_open.get()));
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(joining_open.get()));
     registry.begin_shutdown();
 }
 
@@ -665,7 +641,7 @@ TEST(SessionRegistry, RepeatedOpenUnloadCyclesReapOwnersAndReleaseCapacity) {
     const SessionIdentity key{"forum", "cycled"};
 
     for (int cycle = 0; cycle != cycles; ++cycle) {
-        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        ASSERT_TRUE(std::holds_alternative<RegistryReady>(
             registry.open(key, 500ms)));
         SessionHandle handle = registry.lookup(key);
         ASSERT_TRUE(handle);

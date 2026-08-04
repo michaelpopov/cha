@@ -403,7 +403,7 @@ public:
                 &send_buffer, sizeof(send_buffer));
         });
         SessionRoutes(registry_, settings_).install(server_);
-        if (!std::holds_alternative<OpenSessionSuccess>(
+        if (!std::holds_alternative<RegistryReady>(
                 registry_.open({"forum", "session"}, 1s))) {
             throw std::runtime_error("Could not open real-socket SSE fixture session");
         }
@@ -534,7 +534,7 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
         [](const SessionIdentity& key, WakeNotifier&) {
             return fake_session(key, std::make_unique<PermanentlyBlockedShutdownController>());
         });
-    if (!std::holds_alternative<OpenSessionSuccess>(
+    if (!std::holds_alternative<RegistryReady>(
             registry.open({"blocked-forum", "blocked-session"}, 500ms))) {
         _exit(2);
     }

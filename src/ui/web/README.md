@@ -28,10 +28,12 @@ it actually stores. Its idempotent owner-thread teardown
 uses registry hooks only for lifecycle notifications, drains a final snapshot
 for a bounded interval, and contains controller failures to that runtime.
 `SessionRegistry` is the sole process-local liveness authority. It serializes
-open requests by validated forum/session identity, counts starting and stopping
-entries against the configured bound, and owns the owner threads. It publishes
-only running runtimes through owning `SessionHandle` values, and sweeps finished
-entries in two phases so joins and runtime destruction occur outside its mutex.
+open requests by `SessionIdentity`, counts starting and stopping entries against
+the configured bound, and owns the owner threads. Its outcomes describe only
+owner lifecycle; `LobbyRoutes` validates URL components, builds redirect paths,
+and maps lifecycle failures to HTTP errors. It publishes only running runtimes
+through owning `SessionHandle` values, and sweeps finished entries in two phases
+so joins and runtime destruction occur outside its mutex.
 `SessionRoutes` resolves path-scoped live handles and uses their owner queue
 for snapshots and commands; it never reaches a controller directly. It serves
 the minimal chat/not-open page boundary, session API, and chunked SSE route.

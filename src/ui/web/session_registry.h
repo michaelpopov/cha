@@ -32,7 +32,21 @@ private:
     std::shared_ptr<WebSessionRuntime> runtime_;
 };
 
-using RegistryOpenResult = std::variant<OpenSessionSuccess, Error>;
+// Registry results describe owner lifecycle only. HTTP paths and error
+// envelopes are constructed at the route boundary.
+struct RegistryReady {};
+
+enum class RegistryOpenFailure {
+    not_found,
+    busy,
+    stopping,
+    limit_reached,
+    open_timeout,
+    registry_stopping,
+    internal_error,
+};
+
+using RegistryOpenResult = std::variant<RegistryReady, RegistryOpenFailure>;
 // The port-backed alternative is limited to injected web tests. Production
 // workspace startup always returns the OpenedSession alternative.
 struct PortBackedSession {
@@ -52,7 +66,8 @@ struct RegistrySnapshot {
 
 // The registry is the sole authority for in-process session liveness.  The
 // supplied factory is deliberately the small test seam; production may use
-// from_workspace(), which keeps path validation and leasing in Workspace.
+// from_workspace(), which keeps stored-session validation and leasing in
+// Workspace. Routes validate URL components before entering this registry.
 class SessionRegistry {
 public:
     SessionRegistry(
@@ -104,8 +119,6 @@ private:
     [[nodiscard]] RetiredEntries sweep_locked();
     static void reap(RetiredEntries retired);
     void owner_main(SessionIdentity key, std::shared_ptr<StartupResult> startup);
-    [[nodiscard]] static std::string path_for(const SessionIdentity& key);
-
     WebSettings settings_;
     RegistrySessionFactory factory_;
     std::mutex mutex_;

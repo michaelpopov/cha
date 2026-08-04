@@ -159,8 +159,8 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     };
     auto first_open = std::async(std::launch::async, open, "first");
     auto second_open = std::async(std::launch::async, open, "second");
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(first_open.get()));
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(second_open.get()));
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(first_open.get()));
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(second_open.get()));
 
     SessionHandle first = registry.lookup({"forum", "first"});
     SessionHandle second = registry.lookup({"forum", "second"});
@@ -201,9 +201,9 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
             return fake_session(
                 key, std::make_unique<CountingController>(healthy_commands));
         });
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open({"forum", "blocked"}, 1s)));
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open({"forum", "healthy"}, 1s)));
     SessionHandle blocked = registry.lookup({"forum", "blocked"});
     SessionHandle healthy = registry.lookup({"forum", "healthy"});
@@ -265,14 +265,14 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
         }
         start_signal.set_value();
         for (auto& open : opens) {
-            ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(open.get()));
+            ASSERT_TRUE(std::holds_alternative<RegistryReady>(open.get()));
         }
         const RegistryOpenResult overflow = registry.open(
             {"forum", "overflow-" + std::to_string(round)}, 10ms);
-        ASSERT_TRUE(std::holds_alternative<Error>(overflow));
+        ASSERT_TRUE(std::holds_alternative<RegistryOpenFailure>(overflow));
         EXPECT_EQ(
-            std::get<Error>(overflow).code,
-            ErrorCode::session_limit_reached);
+            std::get<RegistryOpenFailure>(overflow),
+            RegistryOpenFailure::limit_reached);
 
         std::vector<SessionHandle> old_handles;
         for (const SessionIdentity& key : keys) {
@@ -295,7 +295,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
                 const auto deadline = std::chrono::steady_clock::now() + 2s;
                 while (std::chrono::steady_clock::now() < deadline) {
                     const RegistryOpenResult result = registry.open(key, 100ms);
-                    if (std::holds_alternative<OpenSessionSuccess>(result)) {
+                    if (std::holds_alternative<RegistryReady>(result)) {
                         SessionHandle handle = registry.lookup(key);
                         if (handle && std::holds_alternative<SessionSnapshot>(
                                 handle.runtime().snapshot(100ms))) {
@@ -347,9 +347,9 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptGeneratingPeer) {
         });
     const SessionIdentity failing{"forum", "failing"};
     const SessionIdentity healthy{"forum", "healthy"};
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open(failing, 1s)));
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open(healthy, 1s)));
     SessionHandle failing_handle = registry.lookup(failing);
     SessionHandle healthy_handle = registry.lookup(healthy);
@@ -378,7 +378,7 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptGeneratingPeer) {
     EXPECT_EQ(registry.snapshot().live_entry_count, 1U);
     EXPECT_TRUE(registry.lookup(healthy));
     fail = false;
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open(failing, 1s)));
 
     registry.begin_shutdown();
@@ -427,7 +427,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
         }));
     }
     for (auto& open : opens) {
-        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(open.get()));
+        ASSERT_TRUE(std::holds_alternative<RegistryReady>(open.get()));
     }
     EXPECT_EQ(registry.snapshot().live_entry_count, session_count);
 
