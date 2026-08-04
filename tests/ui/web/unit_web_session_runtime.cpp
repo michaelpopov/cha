@@ -1487,6 +1487,9 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     ASSERT_EQ(before.transcript.size(), 1U);
     EXPECT_EQ(before.transcript.front().text, "before");
     EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").render_needed);
+    const WebSessionUpdate exit = adapted->handle_raw_input("human", "/exit");
+    EXPECT_TRUE(exit.clear_input);
+    EXPECT_TRUE(exit.end_session);
     const SessionState after = adapted->state();
     EXPECT_TRUE(after.transcript.empty());
     EXPECT_EQ(before.transcript.front().text, "before");

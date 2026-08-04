@@ -8,11 +8,12 @@
 namespace cha {
 
 class SessionController;
-struct SessionUpdate;
+struct SessionChange;
+struct TextInputResult;
 
 // The state machine of one interactive run. It turns typed input into editing, scrolling,
 // submission, cancellation, or shutdown, sends submitted text on to the controller, and applies
-// the SessionUpdate that comes back by redrawing, clearing the editor, or showing a notice. It
+// semantic controller and text results that come back by redrawing, clearing the editor, or showing a notice. It
 // owns the InputEditor and the pending notice, and reaches the screen only through SessionView,
 // which is what makes the whole session testable without a terminal.
 class PersonaSession {
@@ -34,7 +35,8 @@ public:
 
 private:
     void request_render();
-    void apply_update(const SessionUpdate& update);
+    void apply_change(const SessionChange& change);
+    void apply_text_input(const TextInputResult& result);
     void handle_input(const SessionInput& input);
     void submit_input();
     void request_stop();

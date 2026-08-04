@@ -57,23 +57,26 @@ void PersonaSession::report_terminal_failure() {
 }
 
 void PersonaSession::receive_responses() {
-    const SessionUpdate update = controller_.receive();
-    apply_update(update);
+    const SessionChange change = controller_.receive();
+    apply_change(change);
 }
 
-void PersonaSession::apply_update(const SessionUpdate& update) {
-    if (update.clear_input) {
-        editor_.clear();
-    }
-    if (update.render_needed) {
+void PersonaSession::apply_change(const SessionChange& change) {
+    if (change.state_changed) {
         request_render();
     }
-    if (update.notice) {
-        notice_ = *update.notice;
+    if (change.notice) {
+        notice_ = *change.notice;
     }
-    if (update.end_session) {
+    if (change.controller_ended) {
         running_ = false;
     }
+}
+
+void PersonaSession::apply_text_input(const TextInputResult& result) {
+    if (result.clear_input) editor_.clear();
+    apply_change(result.session);
+    if (result.exit_requested) running_ = false;
 }
 
 void PersonaSession::receive_terminal_input() {
@@ -155,11 +158,11 @@ void PersonaSession::submit_input() {
     }
 
     const std::string input = editor_.value();
-    apply_update(handle_text_input(controller_, author_id_, input));
+    apply_text_input(handle_text_input(controller_, author_id_, input));
 }
 
 void PersonaSession::request_stop() {
-    apply_update(controller_.request_stop());
+    apply_change(controller_.request_stop());
 }
 
 std::string PersonaSession::input_target_name() const {

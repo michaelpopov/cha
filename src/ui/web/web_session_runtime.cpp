@@ -112,17 +112,30 @@ public:
     explicit SessionControllerAdapter(std::unique_ptr<SessionController> controller)
         : owned_controller_(std::move(controller)), controller_(*owned_controller_) {}
 
-    SessionUpdate handle_raw_input(
+    WebSessionUpdate handle_raw_input(
         std::string_view author_id,
         std::string input) override {
-        return cha::handle_text_input(controller_, author_id, std::move(input));
+        TextInputResult result =
+            cha::handle_text_input(controller_, author_id, std::move(input));
+        WebSessionUpdate update = to_web_session_update(
+            std::move(result.session), result.clear_input);
+        // Block 5 keeps the legacy runtime seam: translate text-layer
+        // navigation to its existing terminal signal until Block 6 removes it.
+        update.end_session = update.end_session || result.exit_requested;
+        return update;
     }
-    SessionUpdate request_stop() override { return controller_.request_stop(); }
-    SessionUpdate set_default_agent_id(std::string_view id) override {
-        return controller_.set_default_agent_by_id(id);
+    WebSessionUpdate request_stop() override {
+        return to_web_session_update(controller_.request_stop());
     }
-    SessionEventBatch receive(std::size_t max_events) override {
-        return controller_.receive_events(max_events);
+    WebSessionUpdate set_default_agent_id(std::string_view id) override {
+        return to_web_session_update(controller_.set_default_agent_by_id(id));
+    }
+    WebSessionEventBatch receive(std::size_t max_events) override {
+        cha::SessionEventBatch events = controller_.receive_events(max_events);
+        return {
+            .update = to_web_session_update(std::move(events.change)),
+            .full = events.full,
+        };
     }
     [[nodiscard]] bool is_generating() const override {
         return controller_.is_generating();
@@ -286,7 +299,7 @@ void WebSessionRuntime::owner_loop(
                 std::lock_guard lock(state_mutex_);
                 if (stopping_) { reason = shutdown_reason_; break; }
             }
-            SessionEventBatch events = controller->receive(settings_.event_batch_size);
+            WebSessionEventBatch events = controller->receive(settings_.event_batch_size);
             const bool notice_changed = events.update.notice.has_value();
             apply_notice(events.update);
             if (events.update.render_needed || notice_changed) {
@@ -371,7 +384,7 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
         }
         return;
     }
-    SessionUpdate update = std::visit([&controller](auto&& value) -> SessionUpdate {
+    WebSessionUpdate update = std::visit([&controller](auto&& value) -> WebSessionUpdate {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) return controller.handle_raw_input(value.persona, std::move(value.text));
         else if constexpr (std::is_same_v<T, StopCommand>) return controller.request_stop();
@@ -424,7 +437,7 @@ WebPresentationState WebSessionRuntime::presentation(
     };
 }
 
-void WebSessionRuntime::apply_notice(const SessionUpdate& update) {
+void WebSessionRuntime::apply_notice(const WebSessionUpdate& update) {
     if (!update.notice) return;
     if (update.notice->empty()) notice_.reset();
     else notice_ = *update.notice;

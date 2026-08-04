@@ -2,7 +2,7 @@
 
 #include "session/opened_session.h"
 #include "session/session_state.h"
-#include "session/session_update.h"
+#include "ui/web/web_session_update.h"
 #include "ui/web/browser_connection_state.h"
 #include "ui/web/command_queue.h"
 #include "ui/web/protocol.h"
@@ -43,12 +43,12 @@ struct WebAppendCandidate {
 class WebSessionController {
 public:
     virtual ~WebSessionController() = default;
-    virtual SessionUpdate handle_raw_input(
+    virtual WebSessionUpdate handle_raw_input(
         std::string_view author_id,
         std::string input) = 0;
-    virtual SessionUpdate request_stop() = 0;
-    virtual SessionUpdate set_default_agent_id(std::string_view character_id) = 0;
-    virtual SessionEventBatch receive(std::size_t max_events) = 0;
+    virtual WebSessionUpdate request_stop() = 0;
+    virtual WebSessionUpdate set_default_agent_id(std::string_view character_id) = 0;
+    virtual WebSessionEventBatch receive(std::size_t max_events) = 0;
     [[nodiscard]] virtual bool is_generating() const = 0;
     // Called only by the owner thread. The returned value owns every field and
     // contains no controller or transcript borrows.
@@ -147,7 +147,7 @@ private:
     [[nodiscard]] WebPresentationState presentation(
         SessionLifecycle lifecycle,
         std::optional<ShutdownReason> shutdown_reason = std::nullopt) const;
-    void apply_notice(const SessionUpdate& update);
+    void apply_notice(const WebSessionUpdate& update);
     [[nodiscard]] ShutdownReason mark_stopping(ShutdownReason reason);
     void publish_change(
         WebSessionController& controller,

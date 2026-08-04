@@ -8,7 +8,7 @@
 #include "session/session_database.h"
 #include "session/session_lease.h"
 #include "session/session_state.h"
-#include "session/session_update.h"
+#include "session/session_change.h"
 #include "transcript/transcript.h"
 #include "util/wake_notifier.h"
 #include "util/thread_pool.h"
@@ -27,7 +27,7 @@ namespace cha {
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, forum characters, default agent, generation status) and
 // commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
-// each returning a SessionUpdate instead of touching the UI. It owns the Transcript,
+// each returning a SessionChange instead of touching a frontend. It owns the Transcript,
 // SessionJournal, AgentRegistry, and the state of the in-flight response batch. Command syntax,
 // mentions, and transport formats belong to front ends, not here.
 class SessionController {
@@ -83,36 +83,35 @@ public:
     const ForumCharacters& characters() const { return characters_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
 
-    // --- Session commands (mutate, then report UI side effects) ---------------
-    // Return value carries render/end/clear/notice side effects the UI must apply.
-    [[nodiscard]] SessionUpdate submit_prompt(
+    // --- Session commands (mutate, then report semantic changes) --------------
+    [[nodiscard]] SessionChange submit_prompt(
         std::string_view author_id,
         std::string text,
         std::string handle = {});
-    [[nodiscard]] SessionUpdate clear_transcript();
-    [[nodiscard]] SessionUpdate open_offrecord();
-    [[nodiscard]] SessionUpdate extend_offrecord();
-    [[nodiscard]] SessionUpdate restore_offrecord();
+    [[nodiscard]] SessionChange clear_transcript();
+    [[nodiscard]] SessionChange open_offrecord();
+    [[nodiscard]] SessionChange extend_offrecord();
+    [[nodiscard]] SessionChange restore_offrecord();
     // Text frontends submit handles; resolution and all target validation stay
     // here with the forum's authoritative character set.
-    [[nodiscard]] SessionUpdate start_multicast(
+    [[nodiscard]] SessionChange start_multicast(
         std::string_view author_id,
         std::string text,
         std::vector<std::string> handles);
     // Programmatic clients, including the future HTTP API, submit stable
     // character IDs rather than persona-facing handles.
-    [[nodiscard]] SessionUpdate start_multicast_by_ids(
+    [[nodiscard]] SessionChange start_multicast_by_ids(
         std::string_view author_id,
         std::string text,
         std::vector<ParticipantId> ids);
-    [[nodiscard]] SessionUpdate session_information();
-    [[nodiscard]] SessionUpdate agent_information();
-    [[nodiscard]] SessionUpdate set_default_agent(std::string_view handle);
-    [[nodiscard]] SessionUpdate set_default_agent_by_id(std::string_view id);
-    [[nodiscard]] SessionUpdate request_stop();
-    [[nodiscard]] SessionUpdate handle_agent_event(AgentEvent event);
+    [[nodiscard]] SessionChange session_information();
+    [[nodiscard]] SessionChange agent_information();
+    [[nodiscard]] SessionChange set_default_agent(std::string_view handle);
+    [[nodiscard]] SessionChange set_default_agent_by_id(std::string_view id);
+    [[nodiscard]] SessionChange request_stop();
+    [[nodiscard]] SessionChange handle_agent_event(AgentEvent event);
     [[nodiscard]] SessionEventBatch receive_events(std::size_t max_events);
-    [[nodiscard]] SessionUpdate receive();
+    [[nodiscard]] SessionChange receive();
     void shutdown();
 
 private:
@@ -153,40 +152,40 @@ private:
 
     void initialize(SessionRestore restored);
     bool busy() const noexcept;
-    SessionUpdate busy_notice() const;
+    SessionChange busy_notice() const;
     [[nodiscard]] std::optional<EntryIdentity> resolve_author(
         std::string_view author_id,
-        SessionUpdate& update) const;
+        SessionChange& change) const;
     void start_batch(
         EntryIdentity author,
         std::string text,
         std::vector<CharacterInfo> targets,
         SharedCompletionHistory history,
-        SessionUpdate& update);
-    [[nodiscard]] SessionUpdate start_resolved_multicast(
+        SessionChange& change);
+    [[nodiscard]] SessionChange start_resolved_multicast(
         std::string_view author_id,
         std::string text,
         std::vector<CharacterInfo> targets);
-    [[nodiscard]] SessionUpdate start_multicast_from_ids(
+    [[nodiscard]] SessionChange start_multicast_from_ids(
         std::string_view author_id,
         std::string text,
         std::vector<ParticipantId> ids);
-    void activate_current_run(SessionUpdate& update);
-    void start_next_batch_run(SessionUpdate& update);
-    void finish_batch_run(SessionUpdate& update);
-    void finish_batch(SessionUpdate& update);
-    void finish_aborted_batch(SessionUpdate& update);
-    void poll_abort_cleanup(SessionUpdate& update);
-    void append_batch_notice(const SessionUpdate& update);
+    void activate_current_run(SessionChange& change);
+    void start_next_batch_run(SessionChange& change);
+    void finish_batch_run(SessionChange& change);
+    void finish_batch(SessionChange& change);
+    void finish_aborted_batch(SessionChange& change);
+    void poll_abort_cleanup(SessionChange& change);
+    void append_batch_notice(const SessionChange& change);
     void abandon_batch();
-    void apply(const AgentDelta& event, SessionUpdate& update);
-    void apply(const AgentCompleted& event, SessionUpdate& update);
-    void apply(const AgentCancelled& event, SessionUpdate& update);
-    void apply(const AgentFailed& event, SessionUpdate& update);
+    void apply(const AgentDelta& event, SessionChange& change);
+    void apply(const AgentCompleted& event, SessionChange& change);
+    void apply(const AgentCancelled& event, SessionChange& change);
+    void apply(const AgentFailed& event, SessionChange& change);
     void fail_active_response(
         std::string message,
         ParticipantId participant_id,
-        SessionUpdate& update);
+        SessionChange& change);
     void finish_response_entry(EntryStatus status);
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;

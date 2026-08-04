@@ -10,94 +10,97 @@
 namespace cha {
 namespace {
 
-SessionUpdate handle_multicast_input(
+TextInputResult handle_multicast_input(
     SessionController& controller,
     std::string_view author_id,
     std::string_view argument) {
-    SessionUpdate update{.clear_input = true};
+    TextInputResult result{.clear_input = true};
     MulticastParseResult parsed = parse_multicast_input(argument);
     if (const auto* error = std::get_if<MulticastParseError>(&parsed)) {
-        update.notice = std::string(multicast_parse_error_message(*error));
-        return update;
+        result.session.notice = std::string(multicast_parse_error_message(*error));
+        return result;
     }
 
     MulticastInput input = std::get<MulticastInput>(std::move(parsed));
-    SessionUpdate started = controller.start_multicast(
+    result.session = controller.start_multicast(
         author_id,
         std::move(input.text), std::move(input.handles));
-    started.clear_input = started.clear_input || update.clear_input;
-    return started;
+    result.clear_input = result.clear_input || result.session.input_consumed;
+    return result;
 }
 
 } // namespace
 
-SessionUpdate handle_text_input(
+TextInputResult handle_text_input(
     SessionController& controller,
     std::string_view author_id,
     std::string input) {
-    SessionUpdate update;
+    TextInputResult result;
     if (input.empty()) {
-        return update;
+        return result;
     }
     const Command command = parse_command(input);
     if (controller.is_generating()) {
         if (command.kind == CommandKind::stop && command.argument.empty()) {
-            update = controller.request_stop();
-            update.clear_input = true;
-            return update;
+            result.session = controller.request_stop();
+            result.clear_input = true;
+            return result;
         }
-        update.notice = std::string(generation_in_progress_notice);
-        return update;
+        result.session.notice = std::string(generation_in_progress_notice);
+        return result;
     }
     if (command.kind == CommandKind::text) {
         AddressedPrompt prompt = parse_addressed_prompt(input);
-        return controller.submit_prompt(
+        result.session = controller.submit_prompt(
             author_id,
             std::move(prompt.text),
             std::move(prompt.handle));
+        result.clear_input = result.session.input_consumed;
+        return result;
     }
     if (command.kind == CommandKind::mcast) {
         return handle_multicast_input(controller, author_id, command.argument);
     }
     if (!command.argument.empty() && command.kind != CommandKind::unknown) {
-        update.clear_input = true;
-        update.notice = "Command does not accept arguments";
-        return update;
+        result.clear_input = true;
+        result.session.notice = "Command does not accept arguments";
+        return result;
     }
     switch (command.kind) {
     case CommandKind::clear:
-        return controller.clear_transcript();
+        result.session = controller.clear_transcript(); break;
     case CommandKind::hide_on:
-        return controller.open_offrecord();
+        result.session = controller.open_offrecord(); break;
     case CommandKind::hide:
-        return controller.extend_offrecord();
+        result.session = controller.extend_offrecord(); break;
     case CommandKind::hide_off:
-        return controller.restore_offrecord();
+        result.session = controller.restore_offrecord(); break;
     case CommandKind::mcast:
-        return update;
+        return result;
     case CommandKind::info:
-        return controller.session_information();
+        result.session = controller.session_information(); break;
     case CommandKind::stop:
-        update = controller.request_stop();
-        update.clear_input = true;
-        return update;
+        result.session = controller.request_stop();
+        result.clear_input = true;
+        return result;
     case CommandKind::exit:
-        update.clear_input = true;
-        update.end_session = true;
-        return update;
+        result.clear_input = true;
+        result.exit_requested = true;
+        return result;
     case CommandKind::agents:
-        return controller.agent_information();
+        result.session = controller.agent_information(); break;
     case CommandKind::set_default:
-        return controller.set_default_agent(command.handle);
+        result.session = controller.set_default_agent(command.handle); break;
     case CommandKind::unknown:
-        update.clear_input = true;
-        update.notice =
+        result.clear_input = true;
+        result.session.notice =
             "Unknown command. Commands: /clear, /hide-on, /hide, /hide-off, /mcast, /info, /agents, /@Name, /stop, /exit";
-        return update;
+        return result;
     case CommandKind::text:
-        return update;
+        return result;
     }
-    return update;
+    result.clear_input = result.session.input_consumed;
+    return result;
 }
 
 } // namespace cha

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "session/session_update.h"
+#include "session/session_change.h"
 
 #include <string>
 #include <string_view>
@@ -9,9 +9,16 @@ namespace cha {
 
 class SessionController;
 
+// Text-layer outcome: this grammar decides local widget and navigation effects
+// while preserving the controller's semantic result for each frontend.
+struct TextInputResult {
+    SessionChange session;
+    bool clear_input{};
+    bool exit_requested{};
+};
+
 // Translates the shared textual command grammar into typed session-layer calls.
-// Return value carries render/end/clear/notice side effects the UI must apply.
-[[nodiscard]] SessionUpdate handle_text_input(
+[[nodiscard]] TextInputResult handle_text_input(
     SessionController& controller,
     std::string_view author_id,
     std::string input);
