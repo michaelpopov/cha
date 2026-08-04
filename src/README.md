@@ -33,7 +33,10 @@ is stored on the human entry; projection prefixes ordinary human `persona` messa
 with `from <Name>:` without changing stored or rendered text.
 
 A session is a persistent chat within a forum, stored in a single SQLite
-database. For each turn, `cha` records the persona's prompt before sending it to
+database. Its metadata name is the public session identity; the database stem
+remains a validated private storage key. Catalog creation serializes public
+names with a short-lived directory lease and publishes only after holding the
+new session's lease. For each turn, `cha` records the persona's prompt before sending it to
 the chosen agent on a worker thread. Model output is streamed into the chat
 transcript, and the outcome of the turn—completion, cancellation, or failure—is
 recorded in the database.

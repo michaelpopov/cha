@@ -1,3 +1,5 @@
+#include "session/catalog_lease.h"
+#include "session/session_catalog.h"
 #include "session/session_lease.h"
 #include "support/lease_test_protocol.h"
 
@@ -35,10 +37,30 @@ int hold_lease(const std::filesystem::path& database, int ready_descriptor) {
     }
 }
 
+int create_session(
+    const std::filesystem::path& directory,
+    std::string_view forum,
+    std::string_view name,
+    int ready_descriptor = -1) {
+    cha::PreparedSession prepared = cha::SessionCatalog(directory, std::string(forum))
+        .create_by_name(std::string(name));
+    if (ready_descriptor == -1) return cha::test::catalog_create_succeeded;
+    if (!write_ready(ready_descriptor)) return cha::test::lease_probe_failed;
+    (void)close(ready_descriptor);
+    while (true) pause();
+}
+
+int hold_catalog(const std::filesystem::path& directory, int ready_descriptor) {
+    cha::CatalogLease lease = cha::CatalogLease::acquire(directory);
+    if (!write_ready(ready_descriptor)) return cha::test::lease_probe_failed;
+    (void)close(ready_descriptor);
+    while (true) pause();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 3 && argc != 4) {
+    if (argc != 3 && argc != 4 && argc != 5 && argc != 6) {
         return cha::test::lease_probe_failed;
     }
     try {
@@ -57,8 +79,31 @@ int main(int argc, char** argv) {
             }
             return hold_lease(database, ready_descriptor);
         }
+        if (operation == "create" && argc == 5) {
+            return create_session(database, argv[3], argv[4]);
+        }
+        if (operation == "create-hold" && argc == 6) {
+            std::size_t parsed{};
+            const int ready_descriptor = std::stoi(argv[5], &parsed);
+            if (parsed != std::string_view(argv[5]).size() || ready_descriptor < 0) {
+                return cha::test::lease_probe_failed;
+            }
+            return create_session(database, argv[3], argv[4], ready_descriptor);
+        }
+        if (operation == "catalog-hold" && argc == 4) {
+            std::size_t parsed{};
+            const int ready_descriptor = std::stoi(argv[3], &parsed);
+            if (parsed != std::string_view(argv[3]).size() || ready_descriptor < 0) {
+                return cha::test::lease_probe_failed;
+            }
+            return hold_catalog(database, ready_descriptor);
+        }
     } catch (const cha::SessionBusyError&) {
         return cha::test::lease_probe_busy;
+    } catch (const cha::SessionNameExistsError&) {
+        return cha::test::catalog_create_exists;
+    } catch (const cha::CatalogBusyError&) {
+        return cha::test::catalog_create_busy;
     } catch (...) {
         return cha::test::lease_probe_failed;
     }

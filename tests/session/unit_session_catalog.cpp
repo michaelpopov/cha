@@ -1,6 +1,9 @@
 #include "transcript/transcript.h"
 #include "session/session_database.h"
 #include "session/session_catalog.h"
+#include "session/catalog_lease.h"
+#include "session/session_lease.h"
+#include "support/lease_test_process.h"
 #include "session/workspace.h"
 #include "support/test_session_database.h"
 #include "support/test_transcript.h"
@@ -199,6 +202,163 @@ TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
     EXPECT_EQ(
         load_transcript_entries(sessions.open_database_path(session.id)),
         (std::vector<TranscriptEntry>{prompt}));
+}
+
+TEST_F(WorkspaceTest, ResolvesAndListsPublicSessionNamesWithoutExposingStorageIds) {
+    Workspace workspace(root);
+    const Forum forum = workspace.load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+    const PreparedSession prepared = sessions.create_by_name("Morning discussion");
+    EXPECT_TRUE(prepared.lease.active());
+    EXPECT_EQ(sessions.session_by_name("MORNING DISCUSSION").label, "Morning discussion");
+    const std::vector<Session> listed = sessions.list_by_name();
+    ASSERT_EQ(listed.size(), 1U);
+    EXPECT_EQ(listed.front().label, "Morning discussion");
+    EXPECT_FALSE(listed.front().ambiguous);
+}
+
+TEST_F(WorkspaceTest, PublicListingNeverIncludesLockFiles) {
+    const Forum forum = Workspace(root).load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+    CatalogLease catalog_lease = CatalogLease::acquire(forum.directory / "sessions");
+    SessionLease session_lease = SessionLease::acquire(sessions.database_path("unpublished"));
+
+    EXPECT_TRUE(sessions.list().empty());
+    EXPECT_TRUE(sessions.list_by_name().empty());
+}
+
+TEST_F(WorkspaceTest, DefaultCreatesUseDistinctStemsUnderAFixedClock) {
+    const Forum forum = Workspace(root).load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name, [] { return std::time_t{1234567890}; });
+    const Session first = sessions.create("");
+    const Session second = sessions.create("");
+
+    EXPECT_EQ(first.label, first.id);
+    EXPECT_EQ(second.label, second.id);
+    EXPECT_NE(first.id, second.id);
+}
+
+TEST_F(WorkspaceTest, InvalidPublicNameDiagnosticsDoNotExposeStoragePaths) {
+    Workspace workspace(root);
+    const std::string private_path = (root / "forums" / "lobby" / "sessions").string();
+    try {
+        (void)workspace.prepare_stored_session_by_name("The Lobby", " invalid ");
+        FAIL() << "expected invalid session name";
+    } catch (const std::runtime_error& error) {
+        EXPECT_EQ(std::string(error.what()).find(private_path), std::string::npos);
+    }
+    try {
+        (void)workspace.load_forum_by_name(" invalid ");
+        FAIL() << "expected invalid forum name";
+    } catch (const std::runtime_error& error) {
+        EXPECT_EQ(std::string(error.what()).find(root.string()), std::string::npos);
+    }
+}
+
+TEST_F(WorkspaceTest, ProcessCreatorsSerializeNamesAndRetainThePublishedLease) {
+    const Forum forum = Workspace(root).load_forum("lobby");
+    const std::filesystem::path directory = forum.directory / "sessions";
+    test::CatalogCreateHolderProcess creator(directory, forum.name, "Morning");
+    SessionCatalog catalog(directory, forum.name);
+    const Session created = catalog.session_by_name("Morning");
+
+    EXPECT_EQ(test::probe_lease(catalog.database_path(created.id)), test::LeaseProbeResult::busy);
+    EXPECT_EQ(test::create_catalog_session(directory, forum.name, "MORNING"), test::CatalogCreateResult::exists);
+    EXPECT_EQ(test::create_catalog_session(directory, forum.name, "Afternoon"), test::CatalogCreateResult::succeeded);
+
+    creator.terminate();
+    EXPECT_EQ(test::probe_lease(catalog.database_path(created.id)), test::LeaseProbeResult::acquired);
+    EXPECT_EQ(test::create_catalog_session(directory, forum.name, "Evening"), test::CatalogCreateResult::succeeded);
+}
+
+TEST_F(WorkspaceTest, ProcessCatalogContentionIsBoundedAndCreatorDeathReleasesIt) {
+    const Forum forum = Workspace(root).load_forum("lobby");
+    const std::filesystem::path directory = forum.directory / "sessions";
+    test::CatalogHolderProcess holder(directory);
+
+    EXPECT_EQ(test::create_catalog_session(directory, forum.name, "Morning"), test::CatalogCreateResult::busy);
+    holder.terminate();
+    EXPECT_EQ(test::create_catalog_session(directory, forum.name, "Morning"), test::CatalogCreateResult::succeeded);
+}
+
+TEST_F(WorkspaceTest, SamePublicNameIsAllowedInDifferentForums) {
+    const std::filesystem::path alpha = root / "forums" / "alpha";
+    std::filesystem::create_directories(alpha / "members" / "guide");
+    std::ofstream(alpha / "config.toml") << "display_name = \"Alpha\"\n";
+    std::ofstream(alpha / "FORUM.md") << "Alpha";
+    Workspace workspace(root);
+    const Forum lobby = workspace.load_forum("lobby");
+    const Forum other = workspace.load_forum("alpha");
+    EXPECT_TRUE(SessionCatalog(lobby.directory / "sessions", lobby.name).create_by_name("Shared").lease.active());
+    EXPECT_TRUE(SessionCatalog(other.directory / "sessions", other.name).create_by_name("Shared").lease.active());
+}
+
+TEST_F(WorkspaceTest, AnnotatesAmbiguousPublicNamesAndRefusesResolution) {
+    create_database("first", "Morning");
+    create_database("second", "morning");
+    const Forum forum = Workspace(root).load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+    const std::vector<Session> listed = sessions.list_by_name();
+    ASSERT_EQ(listed.size(), 2U);
+    EXPECT_TRUE(listed[0].ambiguous);
+    EXPECT_TRUE(listed[1].ambiguous);
+    EXPECT_THROW((void)sessions.session_by_name("Morning"), SessionNameAmbiguousError);
+    EXPECT_THROW((void)sessions.create_by_name("MORNING"), SessionNameExistsError);
+}
+
+TEST_F(WorkspaceTest, CorruptDatabasesDoNotExposeStemsOrBlockPublicCreation) {
+    std::ofstream(root / "forums" / "lobby" / "sessions" / "secret-stem.sqlite3") << "bad";
+    const Forum forum = Workspace(root).load_forum("lobby");
+    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+    const std::vector<Session> listed = sessions.list_by_name();
+    ASSERT_EQ(listed.size(), 1U);
+    EXPECT_EQ(listed.front().label, "Unavailable session");
+    EXPECT_EQ(listed.front().error, "Stored session is corrupt");
+    const PreparedSession created = sessions.create_by_name("Healthy session");
+    EXPECT_TRUE(created.lease.active());
+}
+
+TEST_F(WorkspaceTest, InvalidStoredPublicNameUsesTheUnavailablePlaceholder) {
+    create_database("invalid-name", " invalid ");
+    const Forum forum = Workspace(root).load_forum("lobby");
+    const std::vector<Session> listed = SessionCatalog(forum.directory / "sessions", forum.name).list_by_name();
+    ASSERT_EQ(listed.size(), 1U);
+    EXPECT_EQ(listed.front().label, "Unavailable session");
+    EXPECT_EQ(listed.front().error, "Stored session is corrupt");
+}
+
+TEST_F(WorkspaceTest, CorruptRowsDoNotSplitHealthyAmbiguityGroups) {
+    create_database("first", "Unavailable session");
+    create_database("second", "Unavailable session");
+    std::ofstream(root / "forums" / "lobby" / "sessions" / "middle.sqlite3") << "bad";
+    const Forum forum = Workspace(root).load_forum("lobby");
+    const std::vector<Session> listed = SessionCatalog(forum.directory / "sessions", forum.name).list_by_name();
+    ASSERT_EQ(listed.size(), 3U);
+    const auto first = std::find_if(listed.begin(), listed.end(), [](const Session& row) { return row.id == "first"; });
+    const auto second = std::find_if(listed.begin(), listed.end(), [](const Session& row) { return row.id == "second"; });
+    ASSERT_NE(first, listed.end());
+    ASSERT_NE(second, listed.end());
+    EXPECT_TRUE(first->ambiguous);
+    EXPECT_TRUE(second->ambiguous);
+}
+
+TEST_F(WorkspaceTest, WorkspaceNameApisResolvePublicNamesAndKeepDiagnosticsPublic) {
+    Workspace workspace(root);
+    PreparedSession prepared = workspace.prepare_stored_session_by_name(
+        "the lobby", "Saved discussion");
+    EXPECT_EQ(prepared.session.label, "Saved discussion");
+    EXPECT_TRUE(prepared.lease.active());
+    prepared = workspace.prepare_stored_session_by_name("The Lobby", "Second discussion");
+    EXPECT_EQ(
+        workspace.session_summary_by_name("THE LOBBY", "saved DISCUSSION").label,
+        "Saved discussion");
+    try {
+        (void)workspace.create_stored_session_by_name("The Lobby", "SAVED discussion");
+        FAIL() << "expected duplicate public name";
+    } catch (const SessionNameExistsError& error) {
+        EXPECT_NE(std::string(error.what()).find("The Lobby"), std::string::npos);
+        EXPECT_EQ(std::string(error.what()).find("lobby"), std::string::npos);
+    }
 }
 
 TEST(SessionDatabase, CreatesAndReadsFromANonAsciiPath) {
