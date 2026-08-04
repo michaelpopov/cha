@@ -91,14 +91,15 @@ int main_internal(int argc, const char* const* argv) {
     cha::SystemConsole console(
         use_color(options.color, output_color_enabled),
         use_color(options.color, error_color_enabled));
-    cha::ConsoleSelection selection =
+    cha::OpenedSession selection =
         cha::open_console_session(workspace, options, console);
     cha::SessionController& controller = *selection.controller;
     if (input_is_tty) {
         // The resolved ID, not the requested one: a session created by --new or
         // by default has no ID on the command line, so reporting it here avoids
         // making the persona run a separate listing before reopening it.
-        std::cerr << options.forum << " / " << selection.session_id
+        std::cerr << selection.descriptor.identity.forum_id << " / "
+                  << selection.descriptor.identity.session_id
                   << " ready\n";
     }
 

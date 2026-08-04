@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,26 @@ namespace {
 test::NoopNotifier& notifier() {
     static test::NoopNotifier instance;
     return instance;
+}
+
+TEST(SessionIdentity, EqualityAndOrderingUseForumAndSessionIds) {
+    const SessionIdentity first{"alpha", "one"};
+    const SessionIdentity same{"alpha", "one"};
+    const SessionIdentity different_forum{"beta", "one"};
+    const SessionIdentity different_session{"alpha", "two"};
+
+    EXPECT_EQ(first, same);
+    EXPECT_NE(first, different_forum);
+    EXPECT_NE(first, different_session);
+
+    std::map<SessionIdentity, int> ordered{
+        {different_forum, 3}, {different_session, 2}, {first, 1}};
+    std::vector<SessionIdentity> keys;
+    for (const auto& [identity, ignored] : ordered) {
+        (void)ignored;
+        keys.push_back(identity);
+    }
+    EXPECT_EQ(keys, (std::vector<SessionIdentity>{first, different_session, different_forum}));
 }
 
 class ApplicationWorkspaceTest : public testing::Test {
@@ -199,14 +220,23 @@ TEST_F(ApplicationWorkspaceTest, ResolvesDefaultAgentWithoutReorderingMembers) {
     EXPECT_EQ(forum.character_names, (std::vector<std::string>{"alpha", "guide"}));
     EXPECT_EQ(forum.default_agent_id, "guide");
 
-    CreatedSession created = workspace.create_session("lobby", "default", notifier());
+    OpenedSession created = workspace.create_session("lobby", "default", notifier());
     EXPECT_EQ(created.controller->default_agent_id(), "guide");
-    const std::string session_id = created.id;
+    EXPECT_EQ(
+        created.descriptor,
+        (SessionDescriptor{
+            .identity = {"lobby", created.descriptor.identity.session_id},
+            .forum_display_name = "The Lobby",
+            .session_label = "default",
+        }));
+    const std::string session_id = created.descriptor.identity.session_id;
     created.controller->shutdown();
     created.controller.reset();
 
-    std::unique_ptr<SessionController> opened =
-        workspace.open_session("lobby", session_id, notifier());
+    OpenedSession opened_session =
+        workspace.open_session({"lobby", session_id}, notifier());
+    EXPECT_EQ(opened_session.descriptor, created.descriptor);
+    std::unique_ptr<SessionController> opened = std::move(opened_session.controller);
     EXPECT_EQ(opened->default_agent_id(), "guide");
     opened->shutdown();
 }
@@ -386,12 +416,12 @@ TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRejectsPersonaCharacterDis
 TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     Workspace workspace(root_);
 
-    CreatedSession created =
+    OpenedSession created =
         workspace.create_session(
             "lobby",
             "Browser-ready session",
             notifier());
-    const std::string created_id = created.id;
+    const std::string created_id = created.descriptor.identity.session_id;
     created.controller->shutdown();
     created.controller.reset();
 
@@ -404,11 +434,9 @@ TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     EXPECT_EQ(sessions.front().label, "Browser-ready session");
     EXPECT_TRUE(sessions.front().error.empty());
 
-    std::unique_ptr<SessionController> reopened =
-        workspace.open_session(
-            "lobby",
-            sessions.front().id,
-            notifier());
+    OpenedSession reopened_session = workspace.open_session(
+        {"lobby", sessions.front().id}, notifier());
+    std::unique_ptr<SessionController> reopened = std::move(reopened_session.controller);
     EXPECT_TRUE(reopened->transcript().entries().empty());
     reopened->shutdown();
 }
@@ -469,8 +497,9 @@ TEST_F(ApplicationWorkspaceTest, OpensAStoredSessionInASeparateStep) {
     const SessionSummary created =
         workspace.create_stored_session("lobby", "Stored first");
 
-    std::unique_ptr<SessionController> opened = workspace.open_session(
-        "lobby", created.id, notifier());
+    OpenedSession opened_session = workspace.open_session(
+        {"lobby", created.id}, notifier());
+    std::unique_ptr<SessionController> opened = std::move(opened_session.controller);
 
     EXPECT_TRUE(opened->transcript().entries().empty());
     opened->shutdown();
@@ -479,14 +508,14 @@ TEST_F(ApplicationWorkspaceTest, OpensAStoredSessionInASeparateStep) {
 #ifndef _WIN32
 TEST_F(ApplicationWorkspaceTest, HoldsTheLeaseThroughExplicitShutdown) {
     Workspace workspace(root_);
-    CreatedSession created =
+    OpenedSession created =
         workspace.create_session("lobby", "Shutdown lease", notifier());
-    const std::string session_id = created.id;
+    const std::string session_id = created.descriptor.identity.session_id;
     created.controller->shutdown();
     created.controller.reset();
 
-    std::unique_ptr<SessionController> controller =
-        workspace.open_session("lobby", session_id, notifier());
+    OpenedSession opened = workspace.open_session({"lobby", session_id}, notifier());
+    std::unique_ptr<SessionController> controller = std::move(opened.controller);
     const std::filesystem::path database =
         root_ / "forums" / "lobby" / "sessions"
         / (session_id + ".sqlite3");
@@ -534,7 +563,7 @@ TEST_F(ApplicationWorkspaceTest, ReportsContentionBeforeRestoringSessionState) {
     test::LeaseHolderProcess holder(database);
 
     EXPECT_THROW(
-        (void)workspace.open_session("lobby", session_id, notifier()),
+        (void)workspace.open_session({"lobby", session_id}, notifier()),
         SessionBusyError);
     EXPECT_EQ(workspace.sessions("lobby"),
               (std::vector<SessionSummary>{created}));
@@ -553,7 +582,7 @@ TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedCharacterConfig)
     }
     Workspace workspace(root_);
 
-    CreatedSession session =
+    OpenedSession session =
         workspace.create_session(
             "lobby",
             "No shared config",
@@ -564,7 +593,7 @@ TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedCharacterConfig)
 
 TEST_F(ApplicationWorkspaceTest, MapsInvalidStoredSessionDetails) {
     Workspace workspace(root_);
-    CreatedSession created =
+    OpenedSession created =
         workspace.create_session(
             "lobby",
             "Broken later",

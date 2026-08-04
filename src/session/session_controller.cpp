@@ -55,10 +55,9 @@ ForumCharacters make_forum_characters(
     return ForumCharacters(std::move(characters));
 }
 
-void merge_update(SessionUpdate& all, SessionUpdate one) {
-    all.render_needed = all.render_needed || one.render_needed;
-    all.end_session = all.end_session || one.end_session;
-    all.clear_input = all.clear_input || one.clear_input;
+void merge_change(SessionChange& all, SessionChange one) {
+    all.state_changed = all.state_changed || one.state_changed;
+    all.controller_ended = all.controller_ended || one.controller_ended;
     if (one.notice) {
         all.notice = std::move(one.notice);
     }
@@ -266,6 +265,75 @@ GenerationStatusView SessionController::generation_status_view() const noexcept 
     };
 }
 
+SessionState SessionController::state() const {
+    const TranscriptView view = transcript_.view();
+    return {
+        .characters = characters_.all(),
+        .default_agent_id = default_agent_id_,
+        .transcript = {view.entries.begin(), view.entries.end()},
+        .revision = view.revision,
+        .open_entry_id = view.open_entry_id,
+        .history_epoch = view.history_epoch,
+        .generation = generation_status(),
+    };
+}
+
+std::optional<SessionAppendProjection> SessionController::text_append_since(
+    const SessionStateCursor& cursor) const {
+    const TranscriptView transcript = transcript_.view();
+    const GenerationStatusView generation = generation_status_view();
+    if (cursor.history_epoch != transcript.history_epoch
+        || cursor.default_agent_id != default_agent_id_
+        || cursor.entry_count != transcript.entries.size()
+        || cursor.open_entry_id != transcript.open_entry_id
+        || !cursor.request_id || !generation.active
+        || generation.request_id != cursor.request_id
+        || generation.phase != cursor.phase) {
+        return std::nullopt;
+    }
+    if (generation.phase == ResponsePhase::reasoning) {
+        if (transcript.revision != cursor.revision
+            || generation.reasoning_text.size() <= cursor.reasoning_length) {
+            return std::nullopt;
+        }
+        // All of the non-text continuity fields were matched above. Updating
+        // the scalar cursor directly keeps this owner-thread hot path from
+        // materializing an owning SessionState (and copying its transcript).
+        SessionStateCursor next = cursor;
+        next.revision = transcript.revision;
+        next.reasoning_length = generation.reasoning_text.size();
+        return SessionAppendProjection{
+            .append = {ReasoningTextTarget{*generation.request_id},
+                       std::string(generation.reasoning_text.substr(cursor.reasoning_length))},
+            .cursor = std::move(next),
+        };
+    }
+    if (generation.phase != ResponsePhase::answering
+        || transcript.revision <= cursor.revision || !transcript.open_entry_id
+        || transcript.entries.empty()
+        // Reasoning may arrive after answer chunks. It cannot be hidden inside
+        // an answer append, so require that the other appendable text is also
+        // unchanged before proving this target.
+        || generation.reasoning_text.size() != cursor.reasoning_length) {
+        return std::nullopt;
+    }
+    const TranscriptEntry& entry = transcript.entries.back();
+    if (entry.id != *transcript.open_entry_id || entry.status != EntryStatus::streaming
+        || entry.request_id != cursor.request_id
+        || entry.text.size() <= cursor.answer_length) {
+        return std::nullopt;
+    }
+    // The checks above prove that the cursor differs only by answer growth
+    // and the transcript revision caused by that growth.
+    SessionStateCursor next = cursor;
+    next.revision = transcript.revision;
+    next.answer_length = entry.text.size();
+    return SessionAppendProjection{
+        .append = {EntryTextTarget{entry.id}, entry.text.substr(cursor.answer_length)},
+        .cursor = std::move(next),
+    };
+}
+
 bool SessionController::is_generating() const noexcept {
     return busy();
 }
@@ -274,25 +342,24 @@ bool SessionController::busy() const noexcept {
     return active_ || batch_;
 }
 
-SessionUpdate SessionController::busy_notice() const {
+SessionChange SessionController::busy_notice() const {
     return {.notice = std::string(generation_in_progress_notice)};
 }
 
 std::optional<EntryIdentity> SessionController::resolve_author(
     std::string_view author_id,
-    SessionUpdate& update) const {
+    SessionChange& update) const {
     const auto author = std::find_if(
         personas_.begin(), personas_.end(),
         [author_id](const Persona& persona) { return persona.id == author_id; });
     if (author == personas_.end()) {
-        update.clear_input = false;
         update.notice = "Unknown persona ID '" + std::string(author_id) + "'";
         return std::nullopt;
     }
     return EntryIdentity{author->id, author->display_name};
 }
 
-SessionUpdate SessionController::submit_prompt(
+SessionChange SessionController::submit_prompt(
     std::string_view author_id,
     std::string text,
     std::string handle) {
@@ -303,7 +370,7 @@ SessionUpdate SessionController::submit_prompt(
         return {};
     }
 
-    SessionUpdate update;
+    SessionChange update;
     const CharacterInfo* target = nullptr;
     if (handle.empty()) {
         target = characters_.find(default_agent_id_);
@@ -330,7 +397,7 @@ SessionUpdate SessionController::submit_prompt(
     SharedCompletionHistory history =
         std::make_shared<const CompletionHistory>(
             transcript_.completion_history());
-    update.clear_input = true;
+    update.input_consumed = true;
     start_batch(
         std::move(*author),
         std::move(text),
@@ -345,7 +412,7 @@ void SessionController::start_batch(
     std::string text,
     std::vector<CharacterInfo> targets,
     SharedCompletionHistory history,
-    SessionUpdate& update) {
+    SessionChange& update) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
             "Response batch requires history and at least one target");
@@ -375,7 +442,7 @@ void SessionController::start_batch(
     try {
         (void)registry_.stage_batch(std::move(inputs));
     } catch (const std::runtime_error&) {
-        update.clear_input = false;
+        update.input_consumed = false;
         update.notice = "Request could not be dispatched";
         return;
     }
@@ -391,7 +458,7 @@ void SessionController::start_batch(
     }
 }
 
-void SessionController::activate_current_run(SessionUpdate& update) {
+void SessionController::activate_current_run(SessionChange& update) {
     if (!batch_ || batch_->foreground_index >= batch_->runs.size()) {
         throw std::logic_error("Response batch run index is out of range");
     }
@@ -441,11 +508,11 @@ void SessionController::activate_current_run(SessionUpdate& update) {
         throw;
     }
     active_ = std::move(response);
-    update.render_needed = true;
+    update.state_changed = true;
     update.notice = "";
 }
 
-void SessionController::start_next_batch_run(SessionUpdate& update) {
+void SessionController::start_next_batch_run(SessionChange& update) {
     if (!batch_) {
         return;
     }
@@ -466,7 +533,7 @@ void SessionController::start_next_batch_run(SessionUpdate& update) {
     }
 }
 
-void SessionController::finish_batch_run(SessionUpdate& update) {
+void SessionController::finish_batch_run(SessionChange& update) {
     if (!batch_) {
         return;
     }
@@ -490,7 +557,7 @@ void SessionController::finish_batch_run(SessionUpdate& update) {
     start_next_batch_run(update);
 }
 
-void SessionController::finish_batch(SessionUpdate& update) {
+void SessionController::finish_batch(SessionChange& update) {
     if (!batch_) {
         return;
     }
@@ -503,7 +570,7 @@ void SessionController::finish_batch(SessionUpdate& update) {
     }
 }
 
-void SessionController::finish_aborted_batch(SessionUpdate& update) {
+void SessionController::finish_aborted_batch(SessionChange& update) {
     if (!batch_) {
         return;
     }
@@ -514,11 +581,11 @@ void SessionController::finish_aborted_batch(SessionUpdate& update) {
         notices = "Generation stopped";
     }
     abandon_batch();
-    update.render_needed = true;
+    update.state_changed = true;
     update.notice = std::move(notices);
 }
 
-void SessionController::poll_abort_cleanup(SessionUpdate& update) {
+void SessionController::poll_abort_cleanup(SessionChange& update) {
     if (!batch_ || !batch_->abort_requested) {
         return;
     }
@@ -528,7 +595,7 @@ void SessionController::poll_abort_cleanup(SessionUpdate& update) {
     }
 }
 
-void SessionController::append_batch_notice(const SessionUpdate& update) {
+void SessionController::append_batch_notice(const SessionChange& update) {
     if (!batch_ || !update.notice || update.notice->empty()) {
         return;
     }
@@ -542,7 +609,7 @@ void SessionController::abandon_batch() {
     batch_.reset();
 }
 
-SessionUpdate SessionController::clear_transcript() {
+SessionChange SessionController::clear_transcript() {
     if (busy()) {
         return busy_notice();
     }
@@ -554,55 +621,64 @@ SessionUpdate SessionController::clear_transcript() {
     }
     transcript_.clear();
     return {
-        .render_needed = true,
-        .clear_input = true,
+        .state_changed = true,
+        .input_consumed = true,
         .notice = "Transcript cleared",
     };
 }
 
-SessionUpdate SessionController::open_offrecord() {
+SessionChange SessionController::open_offrecord() {
     if (busy()) {
         return busy_notice();
     }
     if (!transcript_.open_offrecord(next_entry_id_)) {
-        return {.notice = "Already off the record; use /hide-off first"};
+        return {
+            .input_consumed = true,
+            .notice = "Already off the record; use /hide-off first",
+        };
     }
     ++next_entry_id_;
     return {
-        .render_needed = true,
-        .clear_input = true,
+        .state_changed = true,
+        .input_consumed = true,
     };
 }
 
-SessionUpdate SessionController::extend_offrecord() {
+SessionChange SessionController::extend_offrecord() {
     if (busy()) {
         return busy_notice();
     }
     if (!transcript_.extend_offrecord(next_entry_id_)) {
-        return {.notice = "No off-record span to extend"};
+        return {
+            .input_consumed = true,
+            .notice = "No off-record span to extend",
+        };
     }
     ++next_entry_id_;
     return {
-        .render_needed = true,
-        .clear_input = true,
+        .state_changed = true,
+        .input_consumed = true,
     };
 }
 
-SessionUpdate SessionController::restore_offrecord() {
+SessionChange SessionController::restore_offrecord() {
     if (busy()) {
         return busy_notice();
     }
     if (!transcript_.restore_offrecord(next_entry_id_)) {
-        return {.notice = "Nothing to restore"};
+        return {
+            .input_consumed = true,
+            .notice = "Nothing to restore",
+        };
     }
     ++next_entry_id_;
     return {
-        .render_needed = true,
-        .clear_input = true,
+        .state_changed = true,
+        .input_consumed = true,
     };
 }
 
-SessionUpdate SessionController::start_multicast(
+SessionChange SessionController::start_multicast(
     std::string_view author_id,
     std::string text,
     std::vector<std::string> handles) {
@@ -625,7 +701,7 @@ SessionUpdate SessionController::start_multicast(
     return start_multicast_from_ids(author_id, std::move(text), std::move(ids));
 }
 
-SessionUpdate SessionController::start_multicast_by_ids(
+SessionChange SessionController::start_multicast_by_ids(
     std::string_view author_id,
     std::string text,
     std::vector<ParticipantId> ids) {
@@ -636,7 +712,7 @@ SessionUpdate SessionController::start_multicast_by_ids(
     return start_multicast_from_ids(author_id, std::move(text), std::move(ids));
 }
 
-SessionUpdate SessionController::start_multicast_from_ids(
+SessionChange SessionController::start_multicast_from_ids(
     std::string_view author_id,
     std::string text,
     std::vector<ParticipantId> ids) {
@@ -660,7 +736,7 @@ SessionUpdate SessionController::start_multicast_from_ids(
     return start_resolved_multicast(author_id, std::move(text), std::move(targets));
 }
 
-SessionUpdate SessionController::start_resolved_multicast(
+SessionChange SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
     std::vector<CharacterInfo> targets) {
@@ -671,7 +747,7 @@ SessionUpdate SessionController::start_resolved_multicast(
         return {.notice = "Multicast has no targets"};
     }
 
-    SessionUpdate update;
+    SessionChange update;
     std::optional<EntryIdentity> author = resolve_author(author_id, update);
     if (!author) return update;
 
@@ -687,7 +763,7 @@ SessionUpdate SessionController::start_resolved_multicast(
         };
     }
 
-    update.clear_input = true;
+    update.input_consumed = true;
     start_batch(
         std::move(*author),
         std::move(text),
@@ -697,13 +773,12 @@ SessionUpdate SessionController::start_resolved_multicast(
     return update;
 }
 
-SessionUpdate SessionController::session_information() {
+SessionChange SessionController::session_information() {
     if (busy()) {
         return busy_notice();
     }
     return {
-        .render_needed = true,
-        .clear_input = true,
+        .input_consumed = true,
         .notice = format_session_information(
             transcript_,
             characters_,
@@ -712,23 +787,22 @@ SessionUpdate SessionController::session_information() {
     };
 }
 
-SessionUpdate SessionController::agent_information() {
+SessionChange SessionController::agent_information() {
     if (busy()) {
         return busy_notice();
     }
     return {
-        .render_needed = true,
-        .clear_input = true,
+        .input_consumed = true,
         .notice = format_characters_notice(
             characters_, registry_.runtime_info(), default_agent_id_),
     };
 }
 
-SessionUpdate SessionController::set_default_agent(std::string_view handle) {
+SessionChange SessionController::set_default_agent(std::string_view handle) {
     if (busy()) {
         return busy_notice();
     }
-    SessionUpdate update{.clear_input = true};
+    SessionChange update{.input_consumed = true};
     if (handle.empty()) {
         update.notice = "Usage: /@AgentName";
         return update;
@@ -739,28 +813,30 @@ SessionUpdate SessionController::set_default_agent(std::string_view handle) {
         return update;
     }
     default_agent_id_ = result.character->id;
+    update.state_changed = true;
     update.notice = "Default agent is now " + result.character->name;
     return update;
 }
 
-SessionUpdate SessionController::set_default_agent_by_id(std::string_view id) {
+SessionChange SessionController::set_default_agent_by_id(std::string_view id) {
     if (busy()) {
         return busy_notice();
     }
     // This typed action submits no editor text, so it never clears a draft.
-    SessionUpdate update;
+    SessionChange update;
     const CharacterInfo* character = characters_.find(id);
     if (!character) {
         update.notice = "Unknown agent";
         return update;
     }
     default_agent_id_ = character->id;
+    update.state_changed = true;
     update.notice = "Default agent is now " + character->name;
     return update;
 }
 
-SessionUpdate SessionController::request_stop() {
-    SessionUpdate update;
+SessionChange SessionController::request_stop() {
+    SessionChange update;
     if (!batch_) {
         update.notice = "No generation is active";
         return update;
@@ -770,6 +846,7 @@ SessionUpdate SessionController::request_stop() {
         log_info("Session generation cancellation requested");
         batch_->abort_requested = true;
         registry_.cancel_batch();
+        update.state_changed = true;
     }
     if (!active_) {
         poll_abort_cleanup(update);
@@ -782,15 +859,15 @@ SessionUpdate SessionController::request_stop() {
     return update;
 }
 
-SessionUpdate SessionController::handle_agent_event(AgentEvent event) {
-    SessionUpdate update;
+SessionChange SessionController::handle_agent_event(AgentEvent event) {
+    SessionChange update;
     std::visit(
         [this, &update](const auto& value) { apply(value, update); },
         event);
     return update;
 }
 
-void SessionController::apply(const AgentDelta& event, SessionUpdate& update) {
+void SessionController::apply(const AgentDelta& event, SessionChange& update) {
     if (!matches(event.request_id) || event.text.empty()) {
         return;
     }
@@ -806,10 +883,10 @@ void SessionController::apply(const AgentDelta& event, SessionUpdate& update) {
             active_->phase = ResponsePhase::reasoning;
         }
     }
-    update.render_needed = true;
+    update.state_changed = true;
 }
 
-void SessionController::apply(const AgentCompleted& event, SessionUpdate& update) {
+void SessionController::apply(const AgentCompleted& event, SessionChange& update) {
     if (!matches(event.request_id)) {
         return;
     }
@@ -831,12 +908,12 @@ void SessionController::apply(const AgentCompleted& event, SessionUpdate& update
         });
     finish_response_entry(EntryStatus::complete);
     active_.reset();
-    update.render_needed = true;
+    update.state_changed = true;
     update.notice = "";
     finish_batch_run(update);
 }
 
-void SessionController::apply(const AgentCancelled& event, SessionUpdate& update) {
+void SessionController::apply(const AgentCancelled& event, SessionChange& update) {
     if (!matches(event.request_id)) {
         return;
     }
@@ -863,13 +940,13 @@ void SessionController::apply(const AgentCancelled& event, SessionUpdate& update
             });
     }
     active_.reset();
-    update.render_needed = true;
+    update.state_changed = true;
     update.notice = "Generation stopped";
     batch_->stop_notice_recorded = true;
     finish_batch_run(update);
 }
 
-void SessionController::apply(const AgentFailed& event, SessionUpdate& update) {
+void SessionController::apply(const AgentFailed& event, SessionChange& update) {
     if (matches(event.request_id)) {
         fail_active_response(event.message, active_->agent_id, update);
         finish_batch_run(update);
@@ -879,7 +956,7 @@ void SessionController::apply(const AgentFailed& event, SessionUpdate& update) {
 void SessionController::fail_active_response(
     std::string message,
     ParticipantId participant_id,
-    SessionUpdate& update) {
+    SessionChange& update) {
     TranscriptEntry error = make_error_entry(
         next_entry_id_++,
         std::move(message),
@@ -899,7 +976,7 @@ void SessionController::fail_active_response(
     }
     transcript_.add_entry(std::move(error));
     active_.reset();
-    update.render_needed = true;
+    update.state_changed = true;
     update.notice = "Generation failed";
 }
 
@@ -929,10 +1006,10 @@ SessionEventBatch SessionController::receive_events(std::size_t max_events) {
     if (max_events == 0) {
         throw std::invalid_argument("Agent event batch size must be positive");
     }
-    SessionUpdate update;
+    SessionChange update;
     if (shutdown_ && !batch_) {
-        update.end_session = true;
-        return {.update = std::move(update)};
+        update.controller_ended = true;
+        return {.change = std::move(update)};
     }
     AgentEvent event = AgentCompleted{};
     std::size_t processed = 0;
@@ -942,19 +1019,19 @@ SessionEventBatch SessionController::receive_events(std::size_t max_events) {
         if (status != ChannelReadStatus::value) {
             break;
         }
-        merge_update(update, handle_agent_event(std::move(event)));
+        merge_change(update, handle_agent_event(std::move(event)));
         ++processed;
     }
     poll_abort_cleanup(update);
     return {
-        .update = std::move(update),
+        .change = std::move(update),
         .full = processed == max_events,
     };
 }
 
-SessionUpdate SessionController::receive() {
+SessionChange SessionController::receive() {
     return std::move(
-        receive_events(std::numeric_limits<std::size_t>::max()).update);
+        receive_events(std::numeric_limits<std::size_t>::max()).change);
 }
 
 void SessionController::shutdown() {

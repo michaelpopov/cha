@@ -22,6 +22,13 @@
 namespace cha::web {
 namespace {
 
+PortBackedSession fake_session(
+    const SessionIdentity& identity,
+    std::unique_ptr<WebSessionController> controller) {
+    return {{identity, "Test forum " + identity.forum_id,
+             "Test session " + identity.session_id}, std::move(controller)};
+}
+
 using namespace std::chrono_literals;
 
 struct Counts {
@@ -33,12 +40,12 @@ class CountingController final : public WebSessionController {
 public:
     explicit CountingController(std::atomic<unsigned int>& count) : count_(count) {}
 
-    SessionUpdate handle_raw_input(std::string_view, std::string) override {
+    TextInputResult handle_raw_input(std::string_view, std::string) override {
         ++count_;
         return {.clear_input = true};
     }
-    SessionUpdate request_stop() override { return {}; }
-    SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
+    SessionChange request_stop() override { return {}; }
+    SessionChange set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
@@ -79,12 +86,12 @@ private:
 class BlockingController final : public WebSessionController {
 public:
     explicit BlockingController(CommandGate& gate) : gate_(gate) {}
-    SessionUpdate handle_raw_input(std::string_view, std::string) override {
+    TextInputResult handle_raw_input(std::string_view, std::string) override {
         gate_.wait();
         return {.clear_input = true};
     }
-    SessionUpdate request_stop() override { return {}; }
-    SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
+    SessionChange request_stop() override { return {}; }
+    SessionChange set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
@@ -96,9 +103,9 @@ private:
 class FatalRaceController final : public WebSessionController {
 public:
     explicit FatalRaceController(std::atomic<bool>& fail) : fail_(fail) {}
-    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionUpdate request_stop() override { return {}; }
-    SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
+    TextInputResult handle_raw_input(std::string_view, std::string) override { return {}; }
+    SessionChange request_stop() override { return {}; }
+    SessionChange set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override {
         if (fail_) throw std::runtime_error("injected fatal race");
         return {};
@@ -114,20 +121,20 @@ class GeneratingCountingController final : public WebSessionController {
 public:
     explicit GeneratingCountingController(std::atomic<unsigned int>& count)
         : count_(count) {}
-    SessionUpdate handle_raw_input(std::string_view, std::string) override {
+    TextInputResult handle_raw_input(std::string_view, std::string) override {
         ++count_;
         return {.clear_input = true};
     }
-    SessionUpdate request_stop() override { return {}; }
-    SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
+    SessionChange request_stop() override { return {}; }
+    SessionChange set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return true; }
-    SessionSnapshot snapshot() override {
+    SessionState state() override {
         return {
             .generation = {
                 .active = true,
                 .request_id = 1,
-                .phase = GenerationPhase::answering,
+                .phase = ResponsePhase::answering,
             },
         };
     }
@@ -142,9 +149,9 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     WebSettings settings{.session_limit = 2, .command_queue_capacity = 64};
     SessionRegistry registry(
         settings,
-        [counts](const SessionKey& key, WakeNotifier&) {
-            return std::make_unique<CountingController>(
-                key.session_id == "first" ? counts->first : counts->second);
+        [counts](const SessionIdentity& key, WakeNotifier&) {
+            return fake_session(key, std::make_unique<CountingController>(
+                key.session_id == "first" ? counts->first : counts->second));
         });
 
     auto open = [&registry](std::string id) {
@@ -152,8 +159,8 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     };
     auto first_open = std::async(std::launch::async, open, "first");
     auto second_open = std::async(std::launch::async, open, "second");
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(first_open.get()));
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(second_open.get()));
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(first_open.get()));
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(second_open.get()));
 
     SessionHandle first = registry.lookup({"forum", "first"});
     SessionHandle second = registry.lookup({"forum", "second"});
@@ -186,17 +193,17 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
     std::atomic<unsigned int> healthy_commands{};
     SessionRegistry registry(
         {.session_limit = 2, .command_queue_capacity = 8},
-        [&](const SessionKey& key, WakeNotifier&) {
+        [&](const SessionIdentity& key, WakeNotifier&) {
             if (key.session_id == "blocked") {
-                return std::unique_ptr<WebSessionController>(
-                    std::make_unique<BlockingController>(gate));
+                return fake_session(
+                    key, std::make_unique<BlockingController>(gate));
             }
-            return std::unique_ptr<WebSessionController>(
-                std::make_unique<CountingController>(healthy_commands));
+            return fake_session(
+                key, std::make_unique<CountingController>(healthy_commands));
         });
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open({"forum", "blocked"}, 1s)));
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open({"forum", "healthy"}, 1s)));
     SessionHandle blocked = registry.lookup({"forum", "blocked"});
     SessionHandle healthy = registry.lookup({"forum", "healthy"});
@@ -228,14 +235,14 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
     std::atomic<int> starts{};
     SessionRegistry registry(
         {.session_limit = limit},
-        [&](const SessionKey&, WakeNotifier&) {
+        [&](const SessionIdentity& key, WakeNotifier&) {
             ++starts;
             static std::atomic<unsigned int> ignored_commands{};
-            return std::make_unique<CountingController>(ignored_commands);
+            return fake_session(key, std::make_unique<CountingController>(ignored_commands));
         });
 
     for (int round = 0; round != rounds; ++round) {
-        std::vector<SessionKey> keys;
+        std::vector<SessionIdentity> keys;
         for (int index = 0; index != limit; ++index) {
             keys.push_back({
                 "forum",
@@ -247,7 +254,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
         const std::shared_future<void> start =
             start_signal.get_future().share();
         std::vector<std::future<RegistryOpenResult>> opens;
-        for (const SessionKey& key : keys) {
+        for (const SessionIdentity& key : keys) {
             for (int duplicate = 0; duplicate != 2; ++duplicate) {
                 opens.push_back(std::async(
                     std::launch::async, [&, key, start] {
@@ -258,17 +265,17 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
         }
         start_signal.set_value();
         for (auto& open : opens) {
-            ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(open.get()));
+            ASSERT_TRUE(std::holds_alternative<RegistryReady>(open.get()));
         }
         const RegistryOpenResult overflow = registry.open(
             {"forum", "overflow-" + std::to_string(round)}, 10ms);
-        ASSERT_TRUE(std::holds_alternative<Error>(overflow));
+        ASSERT_TRUE(std::holds_alternative<RegistryOpenFailure>(overflow));
         EXPECT_EQ(
-            std::get<Error>(overflow).code,
-            ErrorCode::session_limit_reached);
+            std::get<RegistryOpenFailure>(overflow),
+            RegistryOpenFailure::limit_reached);
 
         std::vector<SessionHandle> old_handles;
-        for (const SessionKey& key : keys) {
+        for (const SessionIdentity& key : keys) {
             old_handles.push_back(registry.lookup(key));
             ASSERT_TRUE(old_handles.back());
             old_handles.back().runtime().request_shutdown();
@@ -283,12 +290,12 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
             }
         });
         std::vector<std::future<SessionHandle>> reopened;
-        for (const SessionKey& key : keys) {
+        for (const SessionIdentity& key : keys) {
             reopened.push_back(std::async(std::launch::async, [&, key] {
                 const auto deadline = std::chrono::steady_clock::now() + 2s;
                 while (std::chrono::steady_clock::now() < deadline) {
                     const RegistryOpenResult result = registry.open(key, 100ms);
-                    if (std::holds_alternative<OpenSessionSuccess>(result)) {
+                    if (std::holds_alternative<RegistryReady>(result)) {
                         SessionHandle handle = registry.lookup(key);
                         if (handle && std::holds_alternative<SessionSnapshot>(
                                 handle.runtime().snapshot(100ms))) {
@@ -330,19 +337,19 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptGeneratingPeer) {
     std::atomic<unsigned int> healthy_commands{};
     SessionRegistry registry(
         {.session_limit = 2, .command_queue_capacity = 64},
-        [&](const SessionKey& key, WakeNotifier&) {
+        [&](const SessionIdentity& key, WakeNotifier&) {
             if (key.session_id == "failing") {
-                return std::unique_ptr<WebSessionController>(
-                    std::make_unique<FatalRaceController>(fail));
+                return fake_session(
+                    key, std::make_unique<FatalRaceController>(fail));
             }
-            return std::unique_ptr<WebSessionController>(
-                std::make_unique<GeneratingCountingController>(healthy_commands));
+            return fake_session(
+                key, std::make_unique<GeneratingCountingController>(healthy_commands));
         });
-    const SessionKey failing{"forum", "failing"};
-    const SessionKey healthy{"forum", "healthy"};
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    const SessionIdentity failing{"forum", "failing"};
+    const SessionIdentity healthy{"forum", "healthy"};
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open(failing, 1s)));
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open(healthy, 1s)));
     SessionHandle failing_handle = registry.lookup(failing);
     SessionHandle healthy_handle = registry.lookup(healthy);
@@ -371,7 +378,7 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptGeneratingPeer) {
     EXPECT_EQ(registry.snapshot().live_entry_count, 1U);
     EXPECT_TRUE(registry.lookup(healthy));
     fail = false;
-    EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+    EXPECT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open(failing, 1s)));
 
     registry.begin_shutdown();
@@ -420,7 +427,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
         }));
     }
     for (auto& open : opens) {
-        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(open.get()));
+        ASSERT_TRUE(std::holds_alternative<RegistryReady>(open.get()));
     }
     EXPECT_EQ(registry.snapshot().live_entry_count, session_count);
 

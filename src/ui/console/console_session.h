@@ -39,7 +39,7 @@ public:
     [[nodiscard]] int run();
 
 private:
-    void apply(SessionUpdate update);
+    void apply(SessionChange change);
     void enqueue(std::vector<std::string> lines);
     void pump();
     bool emit();

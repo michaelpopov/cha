@@ -49,29 +49,33 @@ struct FakeState {
     bool receive_entered{};
     bool receive_released{};
     bool flood_notifications{};
-    bool render_on_receive{};
-    bool end_on_receive{};
+    bool state_change_on_receive{};
+    bool controller_end_on_receive{};
     bool shutdown{};
     bool throw_receive{};
     bool throw_shutdown{};
     bool destroyed{};
     bool fast_append_candidates{};
-    SessionSnapshot snapshot{
+    SessionState snapshot{
+        .characters = {{"guide", "Guide"}},
+        .default_agent_id = "guide",
         .transcript = {{
             .id = 7,
-            .kind = TranscriptKind::agent,
+            .kind = EntryKind::agent,
             .participant_id = "guide",
             .display_name = "Guide",
             .text = "one",
-            .status = TranscriptStatus::streaming,
+            .status = EntryStatus::streaming,
             .request_id = 3,
         }},
+        .revision = 1,
+        .open_entry_id = 7,
         .generation = {
             .active = true,
             .request_id = 3,
             .agent_id = "guide",
             .agent_name = "Guide",
-            .phase = GenerationPhase::answering,
+            .phase = ResponsePhase::answering,
         },
     };
 };
@@ -122,7 +126,7 @@ public:
         state_->entered.notify_all();
     }
 
-    SessionUpdate handle_raw_input(
+    TextInputResult handle_raw_input(
         std::string_view author_id,
         std::string input) override {
         std::unique_lock lock(state_->mutex);
@@ -141,31 +145,34 @@ public:
         else if (command == "clear notice") notice = "";
         else if (command == "replace notice") notice = "replacement";
         return {
-            .render_needed = command == "append"
-                || command == "snapshot"
-                || command == "clear notice"
-                || command == "replace notice",
-            .end_session = state_->raw_inputs.back() == "end session",
+            .session = {
+                .state_changed = command == "append"
+                || command == "snapshot",
+                .controller_ended = state_->raw_inputs.back() == "end session",
+                .notice = std::move(notice),
+            },
             .clear_input = true,
-            .notice = std::move(notice),
+            .exit_requested = command == "/exit",
         };
     }
-    SessionUpdate request_stop() override {
+    SessionChange request_stop() override {
         std::lock_guard lock(state_->mutex);
         check_owner();
         ++state_->stops;
         return {.notice = "stopped"};
     }
-    SessionUpdate set_default_agent_id(std::string_view id) override {
+    SessionChange set_default_agent_id(std::string_view id) override {
         std::lock_guard lock(state_->mutex);
         check_owner();
         state_->default_ids.emplace_back(id);
-        return {.notice = "default"};
+        state_->snapshot.default_agent_id = std::string(id);
+        ++state_->snapshot.revision;
+        return {.state_changed = true};
     }
     SessionEventBatch receive(std::size_t) override {
         bool full = false;
-        bool render_needed = false;
-        bool end_session = false;
+        bool state_changed = false;
+        bool controller_ended = false;
         {
             std::unique_lock lock(state_->mutex);
             check_owner();
@@ -181,25 +188,25 @@ public:
                 throw std::runtime_error("injected receive failure");
             }
             full = state_->flood_notifications;
-            render_needed = state_->render_on_receive;
-            state_->render_on_receive = false;
-            end_session = state_->end_on_receive;
-            state_->end_on_receive = false;
+            state_changed = state_->state_change_on_receive;
+            state_->state_change_on_receive = false;
+            controller_ended = state_->controller_end_on_receive;
+            state_->controller_end_on_receive = false;
         }
         if (full) {
             return {
-                .update = {
-                    .render_needed = true,
-                    .end_session = end_session,
+                .change = {
+                    .state_changed = true,
+                    .controller_ended = controller_ended,
                     .notice = "event",
                 },
                 .full = true,
             };
         }
         return {
-            .update = {
-                .render_needed = render_needed,
-                .end_session = end_session,
+            .change = {
+                .state_changed = state_changed,
+                .controller_ended = controller_ended,
             },
         };
     }
@@ -216,45 +223,43 @@ public:
             throw std::runtime_error("injected shutdown failure");
         }
     }
-    SessionSnapshot snapshot() override {
+    SessionState state() override {
         std::lock_guard lock(state_->mutex);
         check_owner();
         ++state_->snapshot_calls;
         return state_->snapshot;
     }
-    std::optional<WebAppendCandidate> append_candidate(
-        const SessionSnapshot& before) override {
+    std::optional<SessionAppendProjection> text_append_since(
+        const SessionStateCursor& before) override {
         std::lock_guard lock(state_->mutex);
         check_owner();
         ++state_->append_candidate_calls;
         state_->entered.notify_all();
         if (!state_->fast_append_candidates) return std::nullopt;
-        const SessionSnapshot& after = state_->snapshot;
-        if (!before.transcript.empty()
-            && before.transcript.size() == after.transcript.size()
-            && after.transcript.back().status == TranscriptStatus::streaming
-            && after.transcript.back().text.starts_with(
-                before.transcript.back().text)
+        const SessionState& after = state_->snapshot;
+        if (before.phase == ResponsePhase::answering
+            && before.open_entry_id
+            && *before.open_entry_id == after.transcript.back().id
+            && after.transcript.back().status == EntryStatus::streaming
+            && after.transcript.back().text.size() >= before.answer_length
             && after.transcript.back().text.size()
-                > before.transcript.back().text.size()) {
-            return WebAppendCandidate{
-                .target = AppendTargetEntry{after.transcript.back().id},
-                .text = after.transcript.back().text.substr(
-                    before.transcript.back().text.size()),
-            };
+                > before.answer_length) {
+            auto cursor = session_state_cursor(after);
+            if (!cursor) return std::nullopt;
+            return SessionAppendProjection{
+                .append = {EntryTextTarget{after.transcript.back().id},
+                           after.transcript.back().text.substr(before.answer_length)},
+                .cursor = std::move(*cursor)};
         }
-        if (after.generation.request_id
-            && after.generation.reasoning_text.starts_with(
-                before.generation.reasoning_text)
+        if (before.phase == ResponsePhase::reasoning && after.generation.request_id
             && after.generation.reasoning_text.size()
-                > before.generation.reasoning_text.size()) {
-            return WebAppendCandidate{
-                .target = AppendTargetReasoning{
-                    *after.generation.request_id,
-                },
-                .text = after.generation.reasoning_text.substr(
-                    before.generation.reasoning_text.size()),
-            };
+                > before.reasoning_length) {
+            auto cursor = session_state_cursor(after);
+            if (!cursor) return std::nullopt;
+            return SessionAppendProjection{
+                .append = {ReasoningTextTarget{*after.generation.request_id},
+                           after.generation.reasoning_text.substr(before.reasoning_length)},
+                .cursor = std::move(*cursor)};
         }
         return std::nullopt;
     }
@@ -422,7 +427,7 @@ public:
     TestWebSessionRuntime(
         TestControllerFactory factory,
         WebSettings settings = {},
-        WebSessionMetadata metadata = {},
+        SessionDescriptor metadata = {},
         std::shared_ptr<WebSnapshotSink> sink = {},
         WebRuntimeHooks hooks = {},
         WebRuntimeClock clock = {})
@@ -440,7 +445,7 @@ public:
     TestWebSessionRuntime(
         TestControllerFactory factory,
         WebSettings settings,
-        WebSessionMetadata metadata,
+        SessionDescriptor metadata,
         std::shared_ptr<SseMailbox> mailbox,
         WebRuntimeHooks hooks = {},
         WebRuntimeClock clock = {})
@@ -528,7 +533,7 @@ TEST(WebSessionRuntime, RoutesRawAndTypedCommandsOnOneOwnerThread) {
         std::get<CommandResult>(runtime.submit(
             SetDefaultAgentCommand{"stable-id"},
             1s));
-    EXPECT_EQ(default_changed.notice, "default");
+    EXPECT_FALSE(default_changed.notice);
     EXPECT_FALSE(default_changed.clear_input);
 
     std::lock_guard lock(state->mutex);
@@ -711,7 +716,7 @@ TEST(WebSessionRuntime, NotificationPressureDoesNotStarveCommands) {
         std::vector<std::string>({"during notification pressure"}));
 }
 
-TEST(WebSessionRuntime, CommandEndSessionStopsTheRuntime) {
+TEST(WebSessionRuntime, ControllerEndFromCommandStopsTheRuntime) {
     auto state = std::make_shared<FakeState>();
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
 
@@ -722,9 +727,20 @@ TEST(WebSessionRuntime, CommandEndSessionStopsTheRuntime) {
         ErrorCode::session_not_live);
 }
 
-TEST(WebSessionRuntime, ReceiveEndSessionStopsTheRuntime) {
+TEST(WebSessionRuntime, ExitRequestFromRawInputStopsTheRuntime) {
     auto state = std::make_shared<FakeState>();
-    state->end_on_receive = true;
+    TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
+
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        runtime.submit(RawCommand{"reader", "/exit"}, 1s)));
+    EXPECT_EQ(
+        std::get<ErrorCode>(runtime.submit(StopCommand{}, 1s)),
+        ErrorCode::session_not_live);
+}
+
+TEST(WebSessionRuntime, ControllerEndFromReceiveStopsTheRuntime) {
+    auto state = std::make_shared<FakeState>();
+    state->controller_end_on_receive = true;
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(2));
     {
         std::unique_lock lock(state->mutex);
@@ -765,7 +781,7 @@ TEST(WebSessionRuntime, RegistryOwnedRuntimeRequiresMailbox) {
     EXPECT_THROW(
         (void)WebSessionRuntime(
             test_settings(2),
-            WebSessionMetadata{},
+            SessionDescriptor{},
             std::shared_ptr<SseMailbox>{}),
         std::invalid_argument);
 }
@@ -776,7 +792,7 @@ TEST(WebSessionRuntime, CopiesSnapshotsAndUsesAppendOnlyWhenSafe) {
     auto sink = std::make_shared<FakeSnapshotSink>();
     TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(2),
-        {.forum = {"forum", "Forum"}, .session_id = "session", .session_label = "Label"},
+        {.identity = {"forum", "session"}, .forum_display_name = "Forum", .session_label = "Label"},
         sink);
     {
         std::unique_lock lock(sink->mutex);
@@ -911,9 +927,9 @@ TEST(WebSessionRuntime, TargetChangePublishesSnapshotBeforeResetSequence) {
         runtime.submit(RawCommand{"reader", "append"}, 1s)));
     {
         std::lock_guard lock(state->mutex);
-        state->snapshot.transcript[0].status = TranscriptStatus::complete;
+        state->snapshot.transcript[0].status = EntryStatus::complete;
         state->snapshot.generation.request_id = 9;
-        state->snapshot.generation.phase = GenerationPhase::reasoning;
+        state->snapshot.generation.phase = ResponsePhase::reasoning;
         state->snapshot.generation.reasoning_text = "think";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
@@ -942,8 +958,8 @@ TEST(WebSessionRuntime, ReasoningGrowthWithStructuralChangeUsesSnapshot) {
     auto state = std::make_shared<FakeState>();
     {
         std::lock_guard lock(state->mutex);
-        state->snapshot.transcript[0].status = TranscriptStatus::complete;
-        state->snapshot.generation.phase = GenerationPhase::reasoning;
+        state->snapshot.transcript[0].status = EntryStatus::complete;
+        state->snapshot.generation.phase = ResponsePhase::reasoning;
         state->snapshot.generation.reasoning_text = "think";
     }
     auto sink = std::make_shared<FakeSnapshotSink>();
@@ -959,7 +975,7 @@ TEST(WebSessionRuntime, ReasoningGrowthWithStructuralChangeUsesSnapshot) {
     {
         std::lock_guard lock(state->mutex);
         state->snapshot.generation.reasoning_text = "think more";
-        state->snapshot.default_character_id = "alternate";
+        state->snapshot.default_agent_id = "alternate";
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         runtime.submit(RawCommand{"reader", "append"}, 1s)));
@@ -1038,7 +1054,7 @@ TEST(WebSessionRuntime, ConnectSnapshotBecomesAppendBaseWhileWriterIsStalled) {
     {
         std::lock_guard lock(state->mutex);
         state->snapshot.transcript[0].text = "one hidden more again";
-        state->render_on_receive = true;
+        state->state_change_on_receive = true;
     }
     runtime.notifier_for_owner().wake();
     {
@@ -1087,7 +1103,7 @@ TEST(WebSessionRuntime, OneActiveStreamRejectsConflictsAndIgnoresStaleCloses) {
     std::vector<std::string> events;
     TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(4), {}, mailbox,
-        {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+        {.log_event = [&](const SessionDescriptor&, std::string_view event) {
             std::lock_guard lock(events_mutex);
             events.emplace_back(event);
         }});
@@ -1289,7 +1305,7 @@ TEST(WebSessionRuntime, ReconnectCancelsDeadlineAndStartsWithSnapshot) {
     runtime.request_shutdown();
 }
 
-TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
+TEST(WebSessionRuntime, PublishesStateAndPresentationChangesIndependently) {
     auto state = std::make_shared<FakeState>();
     auto sink = std::make_shared<FakeSnapshotSink>();
     TestWebSessionRuntime runtime(fake_factory(state), test_settings(2), {}, sink);
@@ -1298,34 +1314,41 @@ TEST(WebSessionRuntime, StructuralChangesAndNoticeSemanticsUseSnapshots) {
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 1U; }));
     }
 
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
+    const CommandResult default_changed = std::get<CommandResult>(runtime.submit(
+        SetDefaultAgentCommand{"other-guide"}, 1s));
+    EXPECT_FALSE(default_changed.clear_input);
+    EXPECT_FALSE(default_changed.notice);
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 2U; }));
         const auto& snapshot = std::get<SnapshotEvent>(sink->payloads.back()).snapshot;
-        ASSERT_TRUE(snapshot.notice);
-        EXPECT_EQ(*snapshot.notice, "raw");
-    }
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "clear notice"}, 1s)));
-    {
-        std::unique_lock lock(sink->mutex);
-        ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 3U; }));
-        EXPECT_FALSE(std::get<SnapshotEvent>(sink->payloads.back()).snapshot.notice);
+        EXPECT_EQ(snapshot.default_character_id, "other-guide");
+        EXPECT_FALSE(snapshot.notice);
     }
     EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "replace notice"}, 1s)));
     {
         std::unique_lock lock(sink->mutex);
-        ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 4U; }));
+        ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 3U; }));
         EXPECT_EQ(std::get<SnapshotEvent>(sink->payloads.back()).snapshot.notice, "replacement");
     }
     {
-        std::lock_guard lock(state->mutex);
-        state->snapshot.transcript[0].status = TranscriptStatus::complete;
+        std::unique_lock lock(sink->mutex);
+        EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(
+            RawCommand{"reader", "replace notice"}, 1s)));
+        EXPECT_FALSE(sink->changed.wait_for(lock, 50ms, [&] { return sink->payloads.size() > 3U; }));
     }
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
-    std::unique_lock lock(sink->mutex);
-    ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 5U; }));
-    EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(sink->payloads.back()));
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(RawCommand{"reader", "clear notice"}, 1s)));
+    {
+        std::unique_lock lock(sink->mutex);
+        ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 4U; }));
+        EXPECT_FALSE(std::get<SnapshotEvent>(sink->payloads.back()).snapshot.notice);
+    }
+    {
+        std::unique_lock lock(sink->mutex);
+        EXPECT_TRUE(std::holds_alternative<CommandResult>(runtime.submit(
+            RawCommand{"reader", "clear notice"}, 1s)));
+        EXPECT_FALSE(sink->changed.wait_for(lock, 50ms, [&] { return sink->payloads.size() > 4U; }));
+    }
 }
 
 TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
@@ -1341,7 +1364,7 @@ TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
         {
             TestWebSessionRuntime runtime(
                 fake_factory(state), test_settings(2), {}, sink,
-                {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+                {.log_event = [&](const SessionDescriptor&, std::string_view event) {
                     std::lock_guard lock(events_mutex);
                     events.emplace_back(event);
                 }});
@@ -1354,9 +1377,9 @@ TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
             {
                 std::lock_guard lock(state->mutex);
                 state->snapshot.generation.active = false;
-                state->snapshot.transcript[0].status = status;
+                state->snapshot.transcript[0].status = static_cast<EntryStatus>(status);
                 if (status == TranscriptStatus::failed) {
-                    state->snapshot.transcript[0].kind = TranscriptKind::error;
+                    state->snapshot.transcript[0].kind = EntryKind::error;
                 }
             }
             ASSERT_TRUE(std::holds_alternative<CommandResult>(
@@ -1380,7 +1403,7 @@ TEST(WebSessionRuntime, GenerationRequestChangeLogsTerminalThenNextStart) {
     {
         TestWebSessionRuntime runtime(
             fake_factory(state), test_settings(2), {}, sink,
-            {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+            {.log_event = [&](const SessionDescriptor&, std::string_view event) {
                 std::lock_guard lock(events_mutex);
                 events.emplace_back(event);
             }});
@@ -1392,19 +1415,19 @@ TEST(WebSessionRuntime, GenerationRequestChangeLogsTerminalThenNextStart) {
         }
         {
             std::lock_guard lock(state->mutex);
-            state->snapshot.transcript[0].status = TranscriptStatus::complete;
+            state->snapshot.transcript[0].status = EntryStatus::complete;
             state->snapshot.transcript.push_back({
                 .id = 8,
-                .kind = TranscriptKind::agent,
+                .kind = EntryKind::agent,
                 .participant_id = "reviewer",
                 .display_name = "Reviewer",
-                .status = TranscriptStatus::streaming,
+                .status = EntryStatus::streaming,
                 .request_id = 4,
             });
             state->snapshot.generation.request_id = 4;
             state->snapshot.generation.agent_id = "reviewer";
             state->snapshot.generation.agent_name = "Reviewer";
-            state->snapshot.generation.phase = GenerationPhase::waiting;
+            state->snapshot.generation.phase = ResponsePhase::waiting;
         }
         ASSERT_TRUE(std::holds_alternative<CommandResult>(
             runtime.submit(RawCommand{"reader", "snapshot"}, 1s)));
@@ -1427,13 +1450,13 @@ TEST(WebSessionRuntime, ReasoningOnlyCancellationLogsCancelledStatus) {
     auto state = std::make_shared<FakeState>();
     state->snapshot.transcript = {{
         .id = 1,
-        .kind = TranscriptKind::human,
+        .kind = EntryKind::human,
         .participant_id = "human",
         .display_name = "You",
         .addressed_to = "guide",
         .addressed_to_name = "Guide",
         .text = "question",
-        .status = TranscriptStatus::complete,
+        .status = EntryStatus::complete,
         .request_id = 3,
     }};
     auto sink = std::make_shared<FakeSnapshotSink>();
@@ -1442,7 +1465,7 @@ TEST(WebSessionRuntime, ReasoningOnlyCancellationLogsCancelledStatus) {
     {
         TestWebSessionRuntime runtime(
             fake_factory(state), test_settings(2), {}, sink,
-            {.log_event = [&](const WebSessionMetadata&, std::string_view event) {
+            {.log_event = [&](const SessionDescriptor&, std::string_view event) {
                 std::lock_guard lock(events_mutex);
                 events.emplace_back(event);
             }});
@@ -1478,15 +1501,70 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     auto adapted = adapt_session_controller(test::from_definitions_for_testing(
         {test_definition()}, temporary.path, notifier, std::move(restore)));
 
-    const SessionSnapshot before = adapted->snapshot();
-    EXPECT_EQ(before.characters, std::vector<CharacterSummary>({{"guide", "Guide"}}));
+    const SessionState before = adapted->state();
+    ASSERT_EQ(before.characters.size(), 1U);
+    EXPECT_EQ(before.characters.front().id, "guide");
+    EXPECT_EQ(before.characters.front().name, "Guide");
     ASSERT_EQ(before.transcript.size(), 1U);
     EXPECT_EQ(before.transcript.front().text, "before");
-    EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").render_needed);
-    const SessionSnapshot after = adapted->snapshot();
+    EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").session.state_changed);
+    const TextInputResult rejected = adapted->handle_raw_input(
+        "unknown-author", "retained draft");
+    EXPECT_FALSE(rejected.clear_input);
+    const TextInputResult exit = adapted->handle_raw_input("human", "/exit");
+    EXPECT_TRUE(exit.clear_input);
+    EXPECT_TRUE(exit.exit_requested);
+    const SessionState after = adapted->state();
     EXPECT_TRUE(after.transcript.empty());
     EXPECT_EQ(before.transcript.front().text, "before");
     adapted->shutdown();
+}
+
+TEST(WebSessionRuntime, OpenedSessionReleasesItsLeaseBeforeFinishedHook) {
+    TemporaryWebSession temporary;
+    auto notifier = std::make_shared<WakeNotifier>();
+    std::promise<bool> lease_released_signal;
+    auto lease_released = lease_released_signal.get_future();
+    WebSessionRuntime runtime(
+        test_settings(2),
+        {
+            .identity = {"forum", "web-runtime"},
+            .forum_display_name = "Forum",
+            .session_label = "Web runtime",
+        },
+        std::make_shared<SseMailbox>(),
+        {.mark_finished = [&] {
+            try {
+                SessionLease lease = SessionLease::acquire(temporary.path);
+                lease_released_signal.set_value(lease.active());
+            } catch (...) {
+                lease_released_signal.set_value(false);
+            }
+        }},
+        {},
+        notifier);
+    OpenedSession opened{
+        .descriptor = {
+            .identity = {"forum", "web-runtime"},
+            .forum_display_name = "Forum",
+            .session_label = "Web runtime",
+        },
+        .controller = SessionController::from_definitions(
+            {test_definition()},
+            PersonaRoster{{.id = "reader", .display_name = "Reader"}},
+            "guide",
+            temporary.path,
+            SessionLease::acquire(temporary.path),
+            *notifier,
+            load_session_state(temporary.path)),
+    };
+
+    runtime.request_shutdown();
+    std::thread owner([&runtime, opened = std::move(opened)]() mutable {
+        runtime.run(std::move(opened));
+    });
+    EXPECT_TRUE(lease_released.get());
+    owner.join();
 }
 
 TEST(WebSessionRuntime, FinalSnapshotUsesBoundedDrainAndHooks) {
@@ -1650,15 +1728,15 @@ TEST(WebSessionRuntime, FatalOwnerFailureIsContainedAndSkipsDrainWait) {
     state->throw_receive = true;
     auto sink = std::make_shared<FakeSnapshotSink>();
     int fatal_logs = 0;
-    std::optional<WebSessionMetadata> logged_metadata;
-    const WebSessionMetadata metadata{
-        .forum = {"forum", "Forum"},
-        .session_id = "session",
+    std::optional<SessionDescriptor> logged_metadata;
+    const SessionDescriptor metadata{
+        .identity = {"forum", "session"},
+        .forum_display_name = "Forum",
         .session_label = "Label",
     };
     TestWebSessionRuntime runtime(
         fake_factory(state), test_settings(2), metadata, sink,
-        {.log_fatal = [&](const WebSessionMetadata& identity) {
+        {.log_fatal = [&](const SessionDescriptor& identity) {
             ++fatal_logs;
             logged_metadata = identity;
         }});
@@ -1671,8 +1749,7 @@ TEST(WebSessionRuntime, FatalOwnerFailureIsContainedAndSkipsDrainWait) {
         ShutdownReason::session_failed);
     EXPECT_EQ(fatal_logs, 1);
     ASSERT_TRUE(logged_metadata);
-    EXPECT_EQ(logged_metadata->forum, metadata.forum);
-    EXPECT_EQ(logged_metadata->session_id, metadata.session_id);
+    EXPECT_EQ(logged_metadata->identity, metadata.identity);
 }
 
 TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
@@ -1682,10 +1759,10 @@ TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
     int fatal_logs = 0;
     std::promise<void> finished_signal;
     auto finished_future = finished_signal.get_future();
-    std::optional<WebSessionMetadata> logged_metadata;
-    const WebSessionMetadata metadata{
-        .forum = {"forum", "Forum"},
-        .session_id = "throwing-shutdown",
+    std::optional<SessionDescriptor> logged_metadata;
+    const SessionDescriptor metadata{
+        .identity = {"forum", "throwing-shutdown"},
+        .forum_display_name = "Forum",
         .session_label = "Throwing shutdown",
     };
     TestWebSessionRuntime runtime(
@@ -1695,7 +1772,7 @@ TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
         sink,
         {
             .mark_finished = [&] { finished_signal.set_value(); },
-            .log_fatal = [&](const WebSessionMetadata& identity) {
+            .log_fatal = [&](const SessionDescriptor& identity) {
                 ++fatal_logs;
                 logged_metadata = identity;
             },
@@ -1715,7 +1792,7 @@ TEST(WebSessionRuntime, ThrowingControllerShutdownStillDestroysAndFinishes) {
     }
     EXPECT_EQ(fatal_logs, 1);
     ASSERT_TRUE(logged_metadata);
-    EXPECT_EQ(logged_metadata->session_id, metadata.session_id);
+    EXPECT_EQ(logged_metadata->identity.session_id, metadata.identity.session_id);
 }
 
 TEST(WebSessionRuntime, PersistenceFailureReleasesOnlyTheFailingRuntimeLease) {
@@ -1728,9 +1805,9 @@ TEST(WebSessionRuntime, PersistenceFailureReleasesOnlyTheFailingRuntimeLease) {
     auto failing_runtime = std::make_unique<TestWebSessionRuntime>(
         real_factory(failing_session.path),
         test_settings(2),
-        WebSessionMetadata{
-            .forum = {"forum", "Forum"},
-            .session_id = "failing",
+        SessionDescriptor{
+            .identity = {"forum", "failing"},
+            .forum_display_name = "Forum",
             .session_label = "Failing",
         },
         failing_sink,
@@ -1740,9 +1817,9 @@ TEST(WebSessionRuntime, PersistenceFailureReleasesOnlyTheFailingRuntimeLease) {
     TestWebSessionRuntime healthy_runtime(
         real_factory(healthy_session.path),
         test_settings(2),
-        WebSessionMetadata{
-            .forum = {"forum", "Forum"},
-            .session_id = "healthy",
+        SessionDescriptor{
+            .identity = {"forum", "healthy"},
+            .forum_display_name = "Forum",
             .session_label = "Healthy",
         },
         healthy_sink);

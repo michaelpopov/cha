@@ -16,7 +16,7 @@ same behavior? If yes, it belongs below `ui/`.
 | `render/` | Shared transcript labels, attributes, and writing operations. |
 | `tui/` | The ncurses front end: terminal lifecycle, startup selection, input editing, screen layout, and redraw planning. |
 | `console/` | The line-oriented frontend: CLI selection, non-blocking input, queued dispatch, signals, and append-only output. |
-| `web/` | The HTTP/SSE frontend boundary: owning protocol values and transport helpers; later blocks add routes and runtimes. |
+| `web/` | The HTTP/SSE frontend: protocol DTO projection, owner-thread runtime, registry, mailbox, and browser lifecycle policy. |
 
 `text/` and `render/` are separate from the frontends because neither the
 command language nor transcript labels are curses concepts. A new input box or
@@ -41,8 +41,8 @@ flowchart TD
     tui -->|"submitted line"| txt
     console -->|"submitted line"| txt
     txt -->|"calls"| controller["SessionController"]
-    controller -->|"SessionUpdate"| tui
-    controller -->|"SessionUpdate"| console
+    controller -->|"SessionChange"| tui
+    controller -->|"SessionChange"| console
     tui -->|"borrows"| convo["TranscriptView<br/>GenerationStatus"]
     console -->|"reads"| convo
     render -->|"reads"| characters["ForumCharacters<br/>names for labels"]
@@ -86,16 +86,19 @@ bodies, and response framing around the same session-layer operations:
 | Command grammar | Reuse `text/`, or skip it if routes already say what to do. |
 | Process wiring and lifetime | A new file in `apps/`. |
 
-`TranscriptEntry` and `GenerationStatus` may be serialized directly when their
-shape already suits the transport. Session-persistence and agent-runtime types
-must not become transport contracts — they are internal, and freezing them into
-a public API would pin down layers that need to stay free to change.
+Web protocol DTOs are explicit projections from core `SessionDescriptor`,
+`SessionState`, and web presentation state. They are not a second domain model;
+their JSON spelling and SSE framing remain web contracts. Session-persistence
+and agent-runtime types must not become transport contracts — they are internal,
+and freezing them into a public API would pin down layers that need to stay free
+to change.
 
-In-process frontends render a call-scoped `TranscriptView`. It borrows the
-main-thread transcript and must not be retained across a controller operation
-or any other transcript mutation. Frontends that need an owning transport
-value must build that value deliberately at their boundary; the live UI does
-not copy the whole transcript on each update.
+TUI and console call their controllers directly on their owner thread and render
+a call-scoped `TranscriptView`. It borrows the main-thread transcript and must
+not be retained across a controller operation or any other transcript mutation.
+The concurrent web transport instead receives owner-thread-produced,
+transport-neutral `SessionState`; its projection consumes that value by move.
+The live terminal UI does not copy the whole transcript on each update.
 Code that only needs the activity bit uses `SessionController::is_generating()`;
 it does not construct a `GenerationStatus` and copy active reasoning text.
 

@@ -39,20 +39,21 @@ recorded in the database.
 
 ## Layer map
 
-The tree is organized by responsibility. CMake keeps curses behind a real
-library boundary: reusable and console code is in static `cha_core`, while the
-ncurses frontend is in static `cha_tui`. Entry points link only the libraries
-they need.
+The tree is organized by responsibility. CMake gives the reusable domain and
+each presentation layer its own static-library target: `cha_core` contains no
+`ui/` sources; `cha_ui_text` and `cha_ui_render` are shared support libraries;
+and `cha_console`, `cha_tui`, and `cha_web` are sibling concrete frontends.
+Each entry point links only its frontend target.
 
 | Directory | Owns | Must not know about |
 | --- | --- | --- |
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
 | `ui/tui/` | Curses lifecycle, startup selection, input editing, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
 | `ui/console/` | CLI selection, line input, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
-| `ui/web/` | HTTP/SSE transport, owning web protocol values, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
+| `ui/web/` | HTTP/SSE transport, protocol DTOs, presentation state, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
-| `session/` | Workspace and session operations, `ForumCharacters`, SQLite persistence, and live chat coordination. | Frontends, command syntax, transports. |
+| `session/` | Workspace and session operations, `ForumCharacters`, SQLite persistence, live chat coordination, and the owning `SessionState` read model. | Frontends, command syntax, transports. |
 | `agents/` | Character config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the owner-thread-owned live `Transcript`. | Storage, providers, frontends. |
 | `util/` | Leaf helpers: text and path rules, `.env`, a portable concurrent queue, and the libuv wake loop. | Anything above it. |
@@ -224,9 +225,9 @@ sequenceDiagram
     ws->>controller: build with AgentDefinitions and database path
     controller->>controller: restore entries, repair interrupted turns
     alt New session
-        ws-->>main: CreatedSession with controller and assigned id
+        ws-->>main: OpenedSession (descriptor + controller)
     else Existing session
-        ws-->>main: SessionController
+        ws-->>main: OpenedSession (descriptor + controller)
     end
     main->>controller: run_persona
 ```
@@ -266,7 +267,7 @@ sequenceDiagram
     C->>J: start_turn, SQLite transaction
     C->>V: add human entry and install ActiveResponse
     C->>G: open batch gate
-    C-->>U: SessionUpdate, render and clear input
+    C-->>U: SessionChange; text policy returns TextInputResult
 
     W->>W: backend.prepare from immutable history + prompt
     W->>P: POST /v1/chat/completions
@@ -283,7 +284,7 @@ sequenceDiagram
     U->>C: receive
     C->>J: complete_turn, SQLite transaction
     C->>V: finish entry as complete
-    C-->>U: SessionUpdate, render
+    C-->>U: SessionChange, render if state changed
 ```
 
 Two ordering rules are load-bearing:
@@ -470,11 +471,16 @@ never a partially written one.
 
 | Target | Contents |
 | --- | --- |
-| `cha_core` | Static reusable core, shared rendering, and console implementation; no curses dependency. |
-| `cha_tui` | Static curses frontend library, built only with `CHA_BUILD_TUI=ON`. |
-| `cha` | Full-screen application: `cha_core`, `cha_tui`, and `apps/tui_main.cpp`. |
-| `chacon` | Line-oriented application: `cha_core` and `apps/console_main.cpp`. |
-| `cha_tests` | Unit and component tests under `tests/`, mirroring this tree. Run with `make test`. |
+| `cha_core` | Static reusable domain and session code: `util/`, `transcript/`, `agents/`, and `session/`; no `ui/` sources. |
+| `cha_ui_text` | Shared textual grammar support, linked to `cha_core`. |
+| `cha_ui_render` | Shared transcript rendering support, linked to `cha_core`. |
+| `cha_console` | Line-oriented frontend implementation, linked to `cha_core`, `cha_ui_text`, and `cha_ui_render`. |
+| `cha_tui` | Static curses frontend library, linked to `cha_core`, the shared UI libraries, and ncurses; built only with `CHA_BUILD_TUI=ON`. |
+| `cha_web` | HTTP/SSE frontend, linked to `cha_core`, `cha_ui_text`, cpp-httplib, and JSON. |
+| `cha` | Full-screen application entry point linked to `cha_tui`. |
+| `chacon` | Line-oriented application entry point linked to `cha_console`. |
+| `chaweb` | Web application entry point linked to `cha_web`. |
+| `cha_tests` | Mixed unit/component test binary. It deliberately links the production libraries covered by its sources and is exempt from production-boundary enforcement. Run with `make test`. |
 | `console_tests` | Registered fork/exec tests for pipes, signals, output failures, and link dependencies. |
 | `itest` | Live integration tests driving the real stack against the checked-in `workspace/`. Run with `make itest`; not part of `make test`. |
 

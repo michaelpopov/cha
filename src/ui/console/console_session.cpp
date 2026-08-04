@@ -108,11 +108,11 @@ int ConsoleSession::run() {
     }
 }
 
-void ConsoleSession::apply(SessionUpdate update) {
-    if (update.notice && !update.notice->empty()) {
-        port_.notices() << *update.notice << '\n';
+void ConsoleSession::apply(SessionChange change) {
+    if (change.notice && !change.notice->empty()) {
+        port_.notices() << *change.notice << '\n';
     }
-    end_session_ = end_session_ || update.end_session;
+    end_session_ = end_session_ || change.controller_ended;
 }
 
 void ConsoleSession::enqueue(std::vector<std::string> lines) {
@@ -141,7 +141,10 @@ void ConsoleSession::pump() {
         && !controller_.is_generating()) {
         std::string line = std::move(queue_.front());
         queue_.pop_front();
-        apply(handle_text_input(controller_, options_.author_id, std::move(line)));
+        const TextInputResult result =
+            handle_text_input(controller_, options_.author_id, std::move(line));
+        apply(result.session);
+        end_session_ = end_session_ || result.exit_requested;
     }
 }
 

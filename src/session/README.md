@@ -15,6 +15,9 @@ code.
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
 | `forum_characters.*` | The ordered character identities in a forum, including validation, lookup, and handle resolution. |
+| `session_identity.h` / `opened_session.h` | Stable `SessionIdentity`, presentation-safe `SessionDescriptor`, and the owner-thread-only `OpenedSession` result. |
+| `session_state.*` | Owning `SessionState` snapshots and transport-neutral append continuity proof. |
+| `session_change.h` | Semantic controller outcomes (`SessionChange`) and bounded event-drain results. |
 | `session_controller.*` | Own one live session: commands, the in-flight response batch, agent events, default agent, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
@@ -136,7 +139,7 @@ sequenceDiagram
     WS->>SL: acquire lease
     WS->>DB: load_session_state
     WS->>CC: from_definitions with the loaded roster
-    WS-->>UI: CreatedSession with controller and assigned id
+    WS-->>UI: OpenedSession (descriptor + controller)
 
     Note over UI,CC: Opening a session
     UI->>WS: open_session forum, id
@@ -149,7 +152,7 @@ sequenceDiagram
     WS->>AG: load_agent_definitions(definition/member pairs, forum, roster)
     WS->>CC: from_definitions with restore
     CC->>CC: repair interrupted turns, then install entries
-    CC-->>UI: controller
+    WS-->>UI: OpenedSession (descriptor + controller)
 ```
 
 `Workspace::create_stored_session()` is the creation primitive. It first
@@ -165,7 +168,9 @@ available for a later ordinary open.
 `Workspace::create_session()` is the terminal convenience operation. It loads
 and validates the forum, roster, and definitions once, publishes the stored
 session, revalidates that database's identity, and constructs the controller
-from the values already loaded. The returned controller's roster is therefore
+from the values already loaded. The returned `OpenedSession` couples its
+controller to a descriptor derived from the same validated forum and stored
+session metadata. The controller's roster is therefore
 the exact roster used to assemble its prompts. Terminal creation logs `Session
 stored` followed by `Session opened`.
 
@@ -314,22 +319,26 @@ terminal outcome before making it visible.
 
 ## Session control
 
-`SessionController` is the whole session behind one object. It has two halves:
-read-only state, and commands that return `SessionUpdate` side effects.
+`SessionController` is the owner-thread-only engine behind one live session. It
+offers borrowed views for direct frontends, `state()` for an owning
+transport-neutral `SessionState`, and commands that return `SessionChange`.
+`SessionChange` reports observable state changes, accepted input, controller
+termination, and a presentation-safe notice; it never tells a widget to clear
+itself or to navigate away.
 
-| Command | Behavior | Update |
+| Command | Behavior | Semantic result |
 | --- | --- | --- |
-| `submit_prompt(author_id, text, handle)` | Resolves the author against the session roster, then resolves the handle or falls back to the default agent and starts a turn. | On success `clear_input` + `render_needed`; an unknown author produces `Unknown persona ID '<id>'` and starts no batch, leaving the draft in the editor; unknown or ambiguous handles and an empty prompt likewise return only a notice and retain the draft. |
-| `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | `render_needed`, `clear_input`, notice. |
-| `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success `render_needed` + `clear_input` and no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
+| `submit_prompt(author_id, text, handle)` | Resolves the author against the session roster, then resolves the handle or falls back to the default agent and starts a turn. | On success, state changes and submitted input is consumed. An unknown author produces `Unknown persona ID '<id>'` and starts no batch; unknown or ambiguous handles and an empty prompt likewise retain the draft. |
+| `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | State changes; the text layer decides how a submitted command affects an editor. |
+| `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success state changes with no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
 | `start_multicast(author_id, text, handles)` / `start_multicast_by_ids(author_id, text, ids)` | Resolves textual handles or stable IDs once, resolves the author against the session roster, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | An unknown author starts no batch; terminal notices are retained until multicast completion or abort cleanup. |
-| `session_information()` | Entry count plus the forum characters and their runtime details. | `render_needed`, `clear_input`, notice. |
-| `agent_information()` | Forum characters and runtime details, marking the default. | `render_needed`, `clear_input`, notice. |
-| `set_default_agent(handle)` | Changes the default for this run only. | `clear_input`, notice. |
+| `session_information()` | Entry count plus the forum characters and their runtime details. | A notice and consumed submitted input; state is unchanged. |
+| `agent_information()` | Forum characters and runtime details, marking the default. | A notice and consumed submitted input; state is unchanged. |
+| `set_default_agent(handle)` | Changes the default for this run only. | A successful change is observable state; a text command may consume its submitted input. |
 | `request_stop()` | Cancels every live execution and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
-| `receive()` | Drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged updates; after shutdown drains its batch, `end_session` is true. |
+| `receive()` | Drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged semantic changes; after shutdown drains its batch, `controller_ended` is true. |
 | `shutdown()` | Cancels executions, commits the retained foreground terminal state, and joins the session pool. | — |
 
 Every command except `request_stop()` and `receive()` is refused while a turn or
@@ -339,6 +348,22 @@ text, `/info` — because their wording belongs to the session, not to a UI.
 For read-only activity checks, `is_generating()` avoids constructing a
 `GenerationStatus` and copying its potentially growing reasoning text.
 Frontends request the full status only when they are about to render it.
+
+### Owning state and append continuity
+
+`state()` builds the owning `SessionState` used when a consumer cannot borrow
+the controller-owned transcript. A consumer may retain a compact
+`SessionStateCursor` beside its published presentation state and ask
+`text_append_since()` for a `SessionTextAppend`. The cursor stores only
+revision, epoch, entry/open-entry identity, default agent, active request and
+phase, plus published text lengths; it never stores transcript or reasoning
+text. The proof relies on transcript revisions changing for every structural
+or answer-text mutation, a single open streaming entry, and the controller's
+owner-thread-only access. Any changed epoch, metadata, request, phase, shape,
+or non-growing text is ambiguous and returns no append, requiring a full state
+replacement. Transport sequence numbers, event names, and mailbox coalescing
+remain frontend policy. `SessionState`, its cursor, and `SessionTextAppend`
+contain no HTTP, JSON, SSE, or mailbox concepts.
 
 The three off-record commands are the only ones that add a transcript entry
 without a journal write. Each passes the current `next_entry_id_` to the

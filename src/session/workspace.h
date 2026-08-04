@@ -2,6 +2,7 @@
 
 #include "agents/persona.h"
 #include "session/not_found_error.h"
+#include "session/opened_session.h"
 
 #include <filesystem>
 #include <memory>
@@ -11,7 +12,6 @@
 
 namespace cha {
 
-class SessionController;
 class WakeNotifier;
 
 // A forum resolved from the workspace: its directory name, persona-facing display
@@ -32,13 +32,6 @@ struct SessionSummary {
     std::string error;
 
     bool operator==(const SessionSummary&) const = default;
-};
-
-// A session just created and opened for a terminal front end: the controller
-// ready to run and the ID assigned to its stored database.
-struct CreatedSession {
-    std::unique_ptr<SessionController> controller;
-    std::string id;
 };
 
 // Process-wide settings stored in the workspace's app.toml.
@@ -94,13 +87,12 @@ public:
     [[nodiscard]] SessionSummary create_stored_session(
         const std::string& forum_name,
         std::string label) const;
-    [[nodiscard]] CreatedSession create_session(
+    [[nodiscard]] OpenedSession create_session(
         const std::string& forum_name,
         std::string label,
         WakeNotifier& notifier) const;
-    [[nodiscard]] std::unique_ptr<SessionController> open_session(
-        const std::string& forum_name,
-        const std::string& session_id,
+    [[nodiscard]] OpenedSession open_session(
+        const SessionIdentity& identity,
         WakeNotifier& notifier) const;
 
 private:

@@ -573,7 +573,7 @@ SessionSummary Workspace::create_stored_session(
     return summarize(store_session(forum, std::move(label)));
 }
 
-CreatedSession Workspace::create_session(
+OpenedSession Workspace::create_session(
     const std::string& forum_name,
     std::string label,
     WakeNotifier& notifier) const {
@@ -601,34 +601,45 @@ CreatedSession Workspace::create_session(
             std::move(restored));
     log_info("Session opened");
     return {
+        .descriptor = {
+            .identity = {forum.name, stored.id},
+            .forum_display_name = forum.display_name,
+            .session_label = stored.label,
+        },
         .controller = std::move(controller),
-        .id = stored.id,
     };
 }
 
-std::unique_ptr<SessionController> Workspace::open_session(
-    const std::string& forum_name,
-    const std::string& session_id,
+OpenedSession Workspace::open_session(
+    const SessionIdentity& identity,
     WakeNotifier& notifier) const {
-    const Forum forum = load_forum(forum_name);
+    const Forum forum = load_forum(identity.forum_id);
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
 
     const std::filesystem::path database_path =
-        catalog.open_database_path(session_id);
+        catalog.open_database_path(identity.session_id);
     SessionLease lease = SessionLease::acquire(database_path);
+    const Session stored = catalog.session(identity.session_id);
     SessionRestore restored = load_session_state(database_path);
     PersonaRoster personas = load_personas();
     std::vector<AgentDefinition> definitions = load_definitions(
         forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters");
     log_info("Session opened");
-    return SessionController::from_definitions(
-        std::move(definitions),
-        std::move(personas),
-        forum.default_agent_id,
-        database_path,
-        std::move(lease),
-        notifier,
-        std::move(restored));
+    return {
+        .descriptor = {
+            .identity = {forum.name, stored.id},
+            .forum_display_name = forum.display_name,
+            .session_label = stored.label,
+        },
+        .controller = SessionController::from_definitions(
+            std::move(definitions),
+            std::move(personas),
+            forum.default_agent_id,
+            database_path,
+            std::move(lease),
+            notifier,
+            std::move(restored)),
+    };
 }
 
 } // namespace cha

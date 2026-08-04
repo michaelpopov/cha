@@ -24,9 +24,11 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <variant>
 
 namespace cha {
 namespace {
+
 
 test::TestNotifier& notifier() {
     static test::TestNotifier instance;
@@ -332,17 +334,17 @@ public:
     bool performed{};
 };
 
-SessionUpdate receive_until_idle(SessionController& controller) {
-    SessionUpdate combined;
+SessionChange receive_until_idle(SessionController& controller) {
+    SessionChange combined;
     while (controller.generation_status().active) {
         const std::size_t observed = notifier().wake_count();
-        const SessionUpdate update = controller.receive();
-        combined.render_needed =
-            combined.render_needed || update.render_needed;
-        combined.end_session =
-            combined.end_session || update.end_session;
-        combined.clear_input =
-            combined.clear_input || update.clear_input;
+        const SessionChange update = controller.receive();
+        combined.state_changed =
+            combined.state_changed || update.state_changed;
+        combined.controller_ended =
+            combined.controller_ended || update.controller_ended;
+        combined.input_consumed =
+            combined.input_consumed || update.input_consumed;
         if (update.notice) {
             combined.notice = update.notice;
         }
@@ -355,11 +357,11 @@ SessionUpdate receive_until_idle(SessionController& controller) {
     return combined;
 }
 
-SessionUpdate receive_when_ready(SessionController& controller) {
+SessionChange receive_when_ready(SessionController& controller) {
     while (true) {
         const std::size_t observed = notifier().wake_count();
-        SessionUpdate update = controller.receive();
-        if (update.render_needed || update.end_session || update.notice) {
+        SessionChange update = controller.receive();
+        if (update.state_changed || update.controller_ended || update.notice) {
             return update;
         }
         if (!notifier().wait_for_wake(observed)) {
@@ -431,12 +433,12 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
         notifier(),
         restore_with({earlier}, 17, 11));
 
-    const SessionUpdate submitted =
+    const SessionChange submitted =
         controller->submit_prompt("operator", "Current");
-    EXPECT_TRUE(submitted.render_needed);
-    const SessionUpdate completed =
+    EXPECT_TRUE(submitted.state_changed);
+    const SessionChange completed =
         receive_until_idle(*controller);
-    EXPECT_FALSE(completed.end_session);
+    EXPECT_FALSE(completed.controller_ended);
 
     ASSERT_EQ(backend_view->inputs.size(), 1U);
     const CompletionInput& request =
@@ -452,7 +454,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
             {AgentRole::persona, "from You:\nEarlier"},
             operator_prompt("Current"),
         }));
-    EXPECT_TRUE(completed.render_needed);
+    EXPECT_TRUE(completed.state_changed);
 
     const auto entries = copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 3U);
@@ -548,9 +550,9 @@ TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
         temporary.path,
         notifier());
 
-    const SessionUpdate unknown_ordinary =
+    const SessionChange unknown_ordinary =
         controller->submit_prompt("unknown", "Question");
-    EXPECT_FALSE(unknown_ordinary.clear_input);
+    EXPECT_FALSE(unknown_ordinary.input_consumed);
     EXPECT_EQ(unknown_ordinary.notice, "Unknown persona ID 'unknown'");
     EXPECT_EQ(
         controller->start_multicast_by_ids(
@@ -696,7 +698,7 @@ TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    const SessionUpdate update =
+    const SessionChange update =
         receive_until_idle(*controller);
 
     ASSERT_TRUE(update.notice);
@@ -834,7 +836,7 @@ TEST(SessionController, RejectsCompletionWithoutResponseContent) {
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    const SessionUpdate update =
+    const SessionChange update =
         receive_until_idle(*controller);
 
     ASSERT_TRUE(update.notice);
@@ -858,7 +860,7 @@ TEST(SessionController, PersistsPreparationFailureAsTheTurnOutcome) {
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    const SessionUpdate update = receive_until_idle(*controller);
+    const SessionChange update = receive_until_idle(*controller);
 
     EXPECT_EQ(update.notice, "Generation failed");
     EXPECT_FALSE(backend_view->performed);
@@ -911,13 +913,13 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
         notifier(),
         restore_with({existing}, 2, 2));
 
-    const SessionUpdate cleared =
+    const SessionChange cleared =
         controller->clear_transcript();
     EXPECT_EQ(cleared.notice, "Transcript cleared");
     EXPECT_TRUE(controller->transcript().entries().empty());
     EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
 
-    const SessionUpdate info = controller->session_information();
+    const SessionChange info = controller->session_information();
     ASSERT_TRUE(info.notice);
     EXPECT_NE(
         info.notice->find("Transcript entries: 0"),
@@ -938,16 +940,22 @@ TEST(SessionController, KeepsOffrecordMarkersOutOfTheSessionDatabase) {
         temporary.path,
         notifier());
 
-    EXPECT_EQ(controller->extend_offrecord().notice, "No off-record span to extend");
-    const SessionUpdate opened = controller->open_offrecord();
-    EXPECT_TRUE(opened.render_needed);
-    EXPECT_TRUE(opened.clear_input);
+    const SessionChange no_span = controller->extend_offrecord();
+    EXPECT_EQ(no_span.notice, "No off-record span to extend");
+    EXPECT_TRUE(no_span.input_consumed);
+    const SessionChange opened = controller->open_offrecord();
+    EXPECT_TRUE(opened.state_changed);
+    EXPECT_TRUE(opened.input_consumed);
     EXPECT_FALSE(opened.notice);
-    EXPECT_EQ(controller->open_offrecord().notice,
+    const SessionChange already_open = controller->open_offrecord();
+    EXPECT_EQ(already_open.notice,
               "Already off the record; use /hide-off first");
-    EXPECT_TRUE(controller->extend_offrecord().render_needed);
-    EXPECT_TRUE(controller->restore_offrecord().render_needed);
-    EXPECT_EQ(controller->restore_offrecord().notice, "Nothing to restore");
+    EXPECT_TRUE(already_open.input_consumed);
+    EXPECT_TRUE(controller->extend_offrecord().state_changed);
+    EXPECT_TRUE(controller->restore_offrecord().state_changed);
+    const SessionChange nothing_to_restore = controller->restore_offrecord();
+    EXPECT_EQ(nothing_to_restore.notice, "Nothing to restore");
+    EXPECT_TRUE(nothing_to_restore.input_consumed);
 
     EXPECT_EQ(
         copy_entries(controller->transcript()),
@@ -1024,7 +1032,7 @@ TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan
         test::one_backend(std::make_unique<ScriptedBackend>()),
         clear_temporary.path,
         notifier());
-    EXPECT_TRUE(clear_controller->open_offrecord().render_needed);
+    EXPECT_TRUE(clear_controller->open_offrecord().state_changed);
     EXPECT_EQ(clear_controller->clear_transcript().notice, "Transcript cleared");
     EXPECT_EQ(clear_controller->extend_offrecord().notice, "No off-record span to extend");
     EXPECT_TRUE(clear_controller->transcript().entries().empty());
@@ -1046,18 +1054,18 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     auto controller = test::from_backends_for_testing(
         std::move(backends), temporary.path, notifier());
 
-    const SessionUpdate started = controller->start_multicast_by_ids("operator",
+    const SessionChange started = controller->start_multicast_by_ids("operator",
         "What time is it?",
         {"one-id", "two-id"});
-    EXPECT_TRUE(started.clear_input);
+    EXPECT_TRUE(started.input_consumed);
     EXPECT_TRUE(controller->generation_status().active);
     EXPECT_EQ(
         controller->transcript().offrecord_span(),
         OffrecordSpan{});
 
-    const SessionUpdate finished = receive_until_idle(*controller);
-    EXPECT_TRUE(finished.render_needed);
-    EXPECT_FALSE(finished.end_session);
+    const SessionChange finished = receive_until_idle(*controller);
+    EXPECT_TRUE(finished.state_changed);
+    EXPECT_FALSE(finished.controller_ended);
     EXPECT_FALSE(controller->generation_status().active);
     EXPECT_EQ(controller->transcript().offrecord_span(), OffrecordSpan{});
 
@@ -1120,9 +1128,9 @@ TEST(SessionController, ResolvesMulticastIdsAndTreatsAnEmptyListAsAllCharacters)
         "Multicast target @One is duplicated");
     EXPECT_TRUE(controller->transcript().entries().empty());
 
-    const SessionUpdate started =
+    const SessionChange started =
         controller->start_multicast_by_ids("operator", "Question", {});
-    EXPECT_TRUE(started.clear_input);
+    EXPECT_TRUE(started.input_consumed);
     receive_until_idle(*controller);
     EXPECT_EQ(one_view->inputs.size(), 1U);
     EXPECT_EQ(two_view->inputs.size(), 1U);
@@ -1173,7 +1181,7 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
     EXPECT_TRUE(stopping.active);
     EXPECT_EQ(stopping.agent_name, "One");
     EXPECT_EQ(stopping.phase, ResponsePhase::stopping);
-    const SessionUpdate stopped = receive_until_idle(*stop_controller);
+    const SessionChange stopped = receive_until_idle(*stop_controller);
     EXPECT_EQ(stopped.notice, "Generation stopped");
     EXPECT_FALSE(stop_controller->generation_status().active);
     // Cancellation may win before the background worker enters prepare(), or
@@ -1211,7 +1219,7 @@ TEST(SessionController, CompletedForegroundWinsTheStopRace) {
     ASSERT_TRUE(first_view->finished.load(std::memory_order_acquire));
 
     EXPECT_EQ(controller->request_stop().notice, "Stopping generation...");
-    const SessionUpdate stopped = receive_until_idle(*controller);
+    const SessionChange stopped = receive_until_idle(*controller);
 
     EXPECT_EQ(stopped.notice, "Generation stopped");
     const std::vector<TranscriptEntry> entries =
@@ -1251,7 +1259,7 @@ TEST(SessionController, StopDoesNotWaitForCancelledBackgroundExecution) {
         && background_view->entered.load(std::memory_order_acquire);
 
     const auto started = std::chrono::steady_clock::now();
-    const SessionUpdate stopping = controller->request_stop();
+    const SessionChange stopping = controller->request_stop();
     const auto elapsed = std::chrono::steady_clock::now() - started;
     release_background.store(true, std::memory_order_release);
 
@@ -1284,7 +1292,7 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
 
     (void)controller->start_multicast_by_ids("operator",
         "Question", {"one-id", "two-id", "three-id"});
-    const SessionUpdate finished = receive_until_idle(*controller);
+    const SessionChange finished = receive_until_idle(*controller);
 
     EXPECT_EQ(finished.notice, "Generation failed\nGeneration stopped");
     ASSERT_EQ(failed_view->inputs.size(), 1U);
@@ -1459,9 +1467,9 @@ TEST(SessionController, FirstActivationFailureTearsDownEveryGatedExecution) {
     EXPECT_TRUE(first_view->inputs.empty());
     EXPECT_TRUE(second_view->inputs.empty());
 
-    const SessionUpdate restarted = controller->start_multicast_by_ids("operator",
+    const SessionChange restarted = controller->start_multicast_by_ids("operator",
         "Retry", {"one-id", "two-id"});
-    EXPECT_TRUE(restarted.clear_input);
+    EXPECT_TRUE(restarted.input_consumed);
     receive_until_idle(*controller);
     EXPECT_EQ(first_view->inputs.size(), 1U);
     EXPECT_EQ(second_view->inputs.size(), 1U);
@@ -1504,9 +1512,9 @@ TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryExecution) 
     EXPECT_EQ(entries[0].addressed_to, "one-id");
     EXPECT_EQ(entries[1].text, "One answer");
 
-    const SessionUpdate restarted = controller->start_multicast_by_ids("operator",
+    const SessionChange restarted = controller->start_multicast_by_ids("operator",
         "Retry", {"one-id", "two-id"});
-    EXPECT_TRUE(restarted.clear_input);
+    EXPECT_TRUE(restarted.input_consumed);
     receive_until_idle(*controller);
     EXPECT_GE(first_view->inputs.size(), 2U);
     EXPECT_GE(second_view->inputs.size(), 1U);
@@ -1523,15 +1531,15 @@ TEST(SessionController, RejectsNewOperationsDuringGeneration) {
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    const SessionUpdate blocked =
+    const SessionChange blocked =
         controller->submit_prompt("operator", "Another");
-    EXPECT_FALSE(blocked.clear_input);
+    EXPECT_FALSE(blocked.input_consumed);
     EXPECT_EQ(
         blocked.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
-    const SessionUpdate stopping =
+    const SessionChange stopping =
         controller->request_stop();
-    EXPECT_FALSE(stopping.clear_input);
+    EXPECT_FALSE(stopping.input_consumed);
     EXPECT_EQ(stopping.notice, "Stopping generation...");
     receive_until_idle(*controller);
 }
@@ -1547,19 +1555,19 @@ TEST(SessionController, IgnoresEventsForAnotherRequest) {
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    const SessionUpdate delta =
+    const SessionChange delta =
         controller->handle_agent_event(
             AgentDelta{
                 999,
                 CompletionDeltaKind::answer,
                 "Wrong response",
             });
-    const SessionUpdate completed =
+    const SessionChange completed =
         controller->handle_agent_event(
             AgentCompleted{999});
 
-    EXPECT_FALSE(delta.render_needed);
-    EXPECT_FALSE(completed.render_needed);
+    EXPECT_FALSE(delta.state_changed);
+    EXPECT_FALSE(completed.state_changed);
     EXPECT_TRUE(controller->generation_status().active);
     const auto entries = copy_entries(controller->transcript());
     ASSERT_EQ(entries.size(), 1U);
@@ -1577,11 +1585,11 @@ TEST(SessionController, StagingFailureLeavesNoDurableTurn) {
         notifier());
     controller->shutdown();
 
-    const SessionUpdate update =
+    const SessionChange update =
         controller->submit_prompt("operator", "Question");
 
     EXPECT_EQ(update.notice, "Request could not be dispatched");
-    EXPECT_FALSE(update.clear_input);
+    EXPECT_FALSE(update.input_consumed);
     const auto restored =
         load_transcript_entries(temporary.path);
     EXPECT_TRUE(restored.empty());
@@ -1659,48 +1667,48 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
     EXPECT_EQ(entries_after_multicast[2].addressed_to, "guide-id");
     EXPECT_EQ(entries_after_multicast[4].addressed_to, "ismael-id");
 
-    const SessionUpdate mentioned =
+    const SessionChange mentioned =
         controller->submit_prompt("operator", "hello", "Ism");
-    EXPECT_TRUE(mentioned.clear_input);
+    EXPECT_TRUE(mentioned.input_consumed);
     receive_until_idle(*controller);
     ASSERT_EQ(ismael_view->inputs.size(), 3U);
     EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
     EXPECT_EQ(guide_view->inputs.size(), 1U);
 
-    const SessionUpdate default_changed =
+    const SessionChange default_changed =
         controller->set_default_agent("Gui");
-    EXPECT_TRUE(default_changed.clear_input);
+    EXPECT_TRUE(default_changed.input_consumed);
     EXPECT_EQ(default_changed.notice, "Default agent is now Guide");
     (void)controller->submit_prompt("operator", "next");
     receive_until_idle(*controller);
     ASSERT_EQ(guide_view->inputs.size(), 2U);
     EXPECT_EQ(guide_view->inputs.back().run.target.id, "guide-id");
 
-    const SessionUpdate stable_id_changed =
+    const SessionChange stable_id_changed =
         controller->set_default_agent_by_id("ismael-id");
-    EXPECT_FALSE(stable_id_changed.clear_input);
+    EXPECT_FALSE(stable_id_changed.input_consumed);
     EXPECT_EQ(stable_id_changed.notice, "Default agent is now Ismael");
     (void)controller->submit_prompt("operator", "by stable ID");
     receive_until_idle(*controller);
     ASSERT_EQ(ismael_view->inputs.size(), 4U);
     EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
 
-    const SessionUpdate unknown_id =
+    const SessionChange unknown_id =
         controller->set_default_agent_by_id("unknown-id");
-    EXPECT_FALSE(unknown_id.clear_input);
+    EXPECT_FALSE(unknown_id.input_consumed);
     EXPECT_EQ(unknown_id.notice, "Unknown agent");
 
     const std::size_t entries_before_rejection = controller->transcript().entries().size();
-    const SessionUpdate rejected =
+    const SessionChange rejected =
         controller->submit_prompt("operator", "text", "nobody");
-    EXPECT_FALSE(rejected.clear_input);
+    EXPECT_FALSE(rejected.input_consumed);
     EXPECT_NE(rejected.notice->find("@nobody"), std::string::npos);
     EXPECT_EQ(controller->transcript().entries().size(), entries_before_rejection);
 
     const std::vector<TranscriptEntry> entries_before_agents =
         copy_entries(controller->transcript());
-    const SessionUpdate agents = controller->agent_information();
-    EXPECT_TRUE(agents.clear_input);
+    const SessionChange agents = controller->agent_information();
+    EXPECT_TRUE(agents.input_consumed);
     ASSERT_TRUE(agents.notice);
     EXPECT_NE(
         agents.notice->find("Any unambiguous prefix works."),
@@ -1709,7 +1717,7 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
     EXPECT_NE(agents.notice->find("@Ismael"), std::string::npos);
     EXPECT_LT(agents.notice->find("@Guide"), agents.notice->find("@Ismael"));
     EXPECT_LT(agents.notice->find("* @Ismael"), agents.notice->find("@Ismael"));
-    const SessionUpdate info = controller->session_information();
+    const SessionChange info = controller->session_information();
     ASSERT_TRUE(info.notice);
     EXPECT_NE(info.notice->find("* @Ismael"), std::string::npos);
     EXPECT_EQ(
@@ -1733,13 +1741,13 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    const SessionUpdate partial = receive_when_ready(*controller);
-    EXPECT_TRUE(partial.render_needed);
+    const SessionChange partial = receive_when_ready(*controller);
+    EXPECT_TRUE(partial.state_changed);
     EXPECT_TRUE(controller->generation_status().active);
     controller->shutdown();
 
     EXPECT_FALSE(controller->generation_status().active);
-    EXPECT_TRUE(controller->receive().end_session);
+    EXPECT_TRUE(controller->receive().controller_ended);
     const auto entries =
         load_transcript_entries(temporary.path);
     ASSERT_EQ(entries.size(), 2U);
@@ -1747,6 +1755,204 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
         entries.back().status,
         EntryStatus::cancelled);
     EXPECT_EQ(entries.back().text, "Partial");
+}
+
+TEST(SessionController, StateOwnsControllerValuesAndTranscriptContinuity) {
+    TemporaryJournal temporary;
+    const TranscriptEntry entry = make_notice_entry(1, "Before");
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier(),
+        restore_with({entry}, 1, 2));
+
+    const SessionState state = controller->state();
+    ASSERT_EQ(state.characters.size(), 1U);
+    EXPECT_EQ(state.characters.front().id, "guide-id");
+    EXPECT_EQ(state.default_agent_id, "guide-id");
+    EXPECT_EQ(state.transcript, std::vector<TranscriptEntry>({entry}));
+    EXPECT_GT(state.revision, 0U);
+    EXPECT_EQ(state.revision, controller->transcript().view().revision);
+    EXPECT_FALSE(state.open_entry_id);
+    EXPECT_EQ(state.history_epoch, controller->transcript().view().history_epoch);
+    EXPECT_FALSE(state.generation.active);
+
+    (void)controller->clear_transcript();
+    EXPECT_EQ(state.transcript, std::vector<TranscriptEntry>({entry}));
+}
+
+TEST(SessionController, StateOwnsActiveGenerationAndOpenEntry) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            CompletionResult{}, std::vector<std::string>{}, true)),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, "Thinking",
+    });
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, "Answer",
+    });
+    const SessionState state = controller->state();
+    const TranscriptView view = controller->transcript().view();
+
+    ASSERT_TRUE(state.open_entry_id);
+    EXPECT_EQ(state.open_entry_id, view.open_entry_id);
+    EXPECT_EQ(state.revision, view.revision);
+    EXPECT_EQ(state.history_epoch, view.history_epoch);
+    EXPECT_EQ(state.generation, controller->generation_status());
+    EXPECT_TRUE(state.generation.active);
+    EXPECT_EQ(state.generation.request_id, 1);
+    EXPECT_EQ(state.generation.agent_id, "guide-id");
+    EXPECT_EQ(state.generation.agent_name, "Guide");
+    EXPECT_EQ(state.generation.phase, ResponsePhase::answering);
+    EXPECT_EQ(state.generation.reasoning_text, "Thinking");
+    ASSERT_EQ(state.transcript.size(), 2U);
+    EXPECT_EQ(state.transcript.back().id, *state.open_entry_id);
+    EXPECT_EQ(state.transcript.back().text, "Answer");
+
+    (void)controller->handle_agent_event(AgentCompleted{1});
+    EXPECT_EQ(state.generation.phase, ResponsePhase::answering);
+    EXPECT_EQ(state.generation.reasoning_text, "Thinking");
+    EXPECT_EQ(state.transcript.back().status, EntryStatus::streaming);
+}
+
+TEST(SessionController, ProvesSuccessiveReasoningAndAnswerSuffixesFromCoreCursor) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, "Think",
+    });
+    auto cursor = session_state_cursor(controller->state());
+    ASSERT_TRUE(cursor);
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, " more",
+    });
+    auto reasoning = controller->text_append_since(*cursor);
+    ASSERT_TRUE(reasoning);
+    EXPECT_EQ(std::get<ReasoningTextTarget>(reasoning->append.target).request_id, 1U);
+    EXPECT_EQ(reasoning->append.text, " more");
+    EXPECT_EQ(reasoning->cursor.reasoning_length, std::string("Think more").size());
+    EXPECT_EQ(reasoning->cursor.revision, controller->transcript().view().revision);
+
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, " carefully",
+    });
+    reasoning = controller->text_append_since(reasoning->cursor);
+    ASSERT_TRUE(reasoning);
+    EXPECT_EQ(reasoning->append.text, " carefully");
+    EXPECT_EQ(
+        reasoning->cursor.reasoning_length,
+        std::string("Think more carefully").size());
+
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, "Answer",
+    });
+    EXPECT_FALSE(controller->text_append_since(reasoning->cursor));
+    cursor = session_state_cursor(controller->state());
+    ASSERT_TRUE(cursor);
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " again",
+    });
+    auto answer = controller->text_append_since(*cursor);
+    ASSERT_TRUE(answer);
+    EXPECT_EQ(std::get<EntryTextTarget>(answer->append.target).entry_id, 2U);
+    EXPECT_EQ(answer->append.text, " again");
+    EXPECT_EQ(answer->cursor.answer_length, std::string("Answer again").size());
+    EXPECT_EQ(answer->cursor.revision, controller->transcript().view().revision);
+
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " and again",
+    });
+    answer = controller->text_append_since(answer->cursor);
+    ASSERT_TRUE(answer);
+    EXPECT_EQ(answer->append.text, " and again");
+    EXPECT_EQ(
+        answer->cursor.answer_length,
+        std::string("Answer again and again").size());
+
+    // Owner draining may coalesce several controller deltas before checking
+    // its cursor. The proven suffix must cover all of them.
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " in",
+    });
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " one query",
+    });
+    answer = controller->text_append_since(answer->cursor);
+    ASSERT_TRUE(answer);
+    EXPECT_EQ(answer->append.text, " in one query");
+}
+
+TEST(SessionController, RejectsAmbiguousAppendContinuityAndRecoversAfterSnapshot) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+    (void)controller->submit_prompt("operator", "Question");
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, "Think",
+    });
+    const auto cursor = session_state_cursor(controller->state());
+    ASSERT_TRUE(cursor);
+    EXPECT_FALSE(controller->text_append_since(*cursor));
+
+    SessionStateCursor shorter_reasoning = *cursor;
+    ++shorter_reasoning.reasoning_length;
+    EXPECT_FALSE(controller->text_append_since(shorter_reasoning));
+
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::reasoning, " more",
+    });
+    // A live default cannot change while generating, so mutate a copied
+    // cursor to verify that this continuity fact is load-bearing.
+    SessionStateCursor changed_default = *cursor;
+    changed_default.default_agent_id = "other";
+    EXPECT_FALSE(controller->text_append_since(changed_default));
+
+    SessionStateCursor changed_open_entry = *cursor;
+    changed_open_entry.open_entry_id = 999U;
+    EXPECT_FALSE(controller->text_append_since(changed_open_entry));
+
+    // A phase transition is a required full-snapshot boundary. A fresh cursor
+    // from that snapshot can prove a later answer extension again.
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, "Answer",
+    });
+    EXPECT_FALSE(controller->text_append_since(*cursor));
+    auto answer_cursor = session_state_cursor(controller->state());
+    ASSERT_TRUE(answer_cursor);
+    (void)controller->handle_agent_event(AgentDelta{
+        1, CompletionDeltaKind::answer, " more",
+    });
+    auto answer = controller->text_append_since(*answer_cursor);
+    ASSERT_TRUE(answer);
+    EXPECT_EQ(answer->append.text, " more");
+
+    SessionStateCursor shorter_answer = answer->cursor;
+    ++shorter_answer.answer_length;
+    EXPECT_FALSE(controller->text_append_since(shorter_answer));
+
+    (void)controller->handle_agent_event(AgentCompleted{1});
+    EXPECT_FALSE(controller->text_append_since(answer->cursor));
+
+    // Starting another request changes the transcript shape, open entry, and
+    // request identity, each of which invalidates the earlier cursor.
+    (void)controller->submit_prompt("operator", "Another question");
+    EXPECT_FALSE(controller->text_append_since(answer->cursor));
+
+    (void)controller->handle_agent_event(AgentCancelled{1});
+    (void)controller->clear_transcript();
+    EXPECT_FALSE(controller->text_append_since(*cursor));
 }
 
 TEST(SessionController, ShutdownJoinsPoolBeforeRegistryCanBeDestroyed) {
@@ -1783,6 +1989,52 @@ TEST(SessionController, ShutdownJoinsPoolBeforeRegistryCanBeDestroyed) {
     ASSERT_TRUE(final_wake_blocked);
     EXPECT_EQ(status, std::future_status::timeout);
     shutdown.get();
+}
+
+TEST(SessionController, ReportsSemanticStateAndInputConsumptionIndependently) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    const SessionChange unknown =
+        controller->submit_prompt("unknown", "Question");
+    EXPECT_FALSE(unknown.state_changed);
+    EXPECT_FALSE(unknown.input_consumed);
+
+    const SessionChange information = controller->session_information();
+    EXPECT_FALSE(information.state_changed);
+    EXPECT_TRUE(information.input_consumed);
+    ASSERT_TRUE(information.notice);
+
+    const SessionChange empty_handle = controller->set_default_agent({});
+    EXPECT_FALSE(empty_handle.state_changed);
+    EXPECT_TRUE(empty_handle.input_consumed);
+
+    const SessionChange typed_default =
+        controller->set_default_agent_by_id("guide-id");
+    EXPECT_TRUE(typed_default.state_changed);
+    EXPECT_FALSE(typed_default.input_consumed);
+
+    const SessionChange submitted =
+        controller->submit_prompt("operator", "Question");
+    EXPECT_TRUE(submitted.state_changed);
+    EXPECT_TRUE(submitted.input_consumed);
+
+    const SessionEventBatch events = controller->receive_events(1);
+    EXPECT_FALSE(events.change.input_consumed);
+
+    controller->shutdown();
+    const SessionChange terminal = controller->receive();
+    EXPECT_TRUE(terminal.controller_ended);
+    EXPECT_FALSE(terminal.input_consumed);
+
+    const SessionChange undispatchable =
+        controller->submit_prompt("operator", "Another question");
+    EXPECT_FALSE(undispatchable.state_changed);
+    EXPECT_FALSE(undispatchable.input_consumed);
+    EXPECT_EQ(undispatchable.notice, "Request could not be dispatched");
 }
 
 } // namespace

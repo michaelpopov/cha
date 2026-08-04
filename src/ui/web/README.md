@@ -1,9 +1,11 @@
 # Web frontend boundary
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and web
-runtime coordination. It may depend on `session/` presentation values but does
-not put web types in `cha_core`. A future session runtime is the sole owner of a
-`SessionController`; HTTP workers exchange only owning web values with it.
+runtime coordination. It depends on core `SessionIdentity`, `SessionDescriptor`,
+`OpenedSession`, `SessionState`, append proof, and `SessionChange`, but puts no
+web type in `cha_core`. Its permanent session-owner thread is the sole owner of
+a `SessionController`; HTTP workers exchange only owning commands and results
+with it.
 
 The lobby selects a workspace persona before a forum and session. `GET
 /api/v1/personas` returns the roster's stable IDs and display names in roster
@@ -20,18 +22,23 @@ threadless `WebSessionRuntime` on it. The runtime owns a condition-variable wake
 notifier and a bounded multi-producer command queue. HTTP-facing callers get
 only owning command results; the owner thread alone reaches a controller and
 continues draining agent notifications without a browser connection. The
-runtime copies controller state into owning, presentation-neutral snapshots
-and publishes them through a small abstract sink, so the SSE writer never
-borrows controller state or blocks the owner. Append candidates cross that seam
-without a sequence number; the mailbox assigns sequence values only to payloads
-it actually stores. Its idempotent owner-thread teardown
+runtime obtains an owning, transport-neutral `SessionState` from the controller
+and explicitly projects it, with the descriptor and web presentation state,
+into a protocol `SessionSnapshot`. The projection consumes state by move, so the
+SSE writer never borrows controller state or blocks the owner. Web DTOs remain
+API compatibility values, not a second transcript or generation domain model.
+Core append candidates cross that seam without a sequence number; the mailbox
+assigns sequence values only to payloads it actually stores. Its idempotent owner-thread teardown
 uses registry hooks only for lifecycle notifications, drains a final snapshot
 for a bounded interval, and contains controller failures to that runtime.
-`SessionRegistry` is the sole process-local liveness authority. It serializes
-open requests by validated forum/session identity, counts starting and stopping
-entries against the configured bound, and owns the owner threads. It publishes
-only running runtimes through owning `SessionHandle` values, and sweeps finished
-entries in two phases so joins and runtime destruction occur outside its mutex.
+`SessionRegistry` is a web host registry and the sole process-local liveness authority.
+It is not a core session abstraction: it serializes
+open requests by `SessionIdentity`, counts starting and stopping entries against
+the configured bound, and owns the owner threads. Its outcomes describe only
+owner lifecycle; `LobbyRoutes` validates URL components, builds redirect paths,
+and maps lifecycle failures to HTTP errors. It publishes only running runtimes
+through owning `SessionHandle` values, and sweeps finished entries in two phases
+so joins and runtime destruction occur outside its mutex.
 `SessionRoutes` resolves path-scoped live handles and uses their owner queue
 for snapshots and commands; it never reaches a controller directly. It serves
 the minimal chat/not-open page boundary, session API, and chunked SSE route.
@@ -84,5 +91,5 @@ Generation logging treats an active request-ID change as a terminal event for
 the old request followed by a start event for the new request, covering
 multicast handoffs that never pass through an inactive snapshot.
 
-`docs/web-verification.md` maps the design's Section 20 test bullets onto these
-suites and records what has not been exercised.
+The complete Block 8 verification matrix is specified in
+[`docs/web-fix-plan.md`](../../../docs/web-fix-plan.md#12-block-8-documentation-and-final-verification).

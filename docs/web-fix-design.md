@@ -1,6 +1,6 @@
 # Web/core boundary correction: design
 
-Status: proposed design, 2026-08-03. Revised the same day after review; the
+Status: implemented; final verification pending, 2026-08-03. Revised the same day after review; the
 revisions are marked in Sections 4.2, 4.5, 6.3, 7.1, 7.2, 7.3, 8.1, 8.2, 11.1,
 13, 14, 15.3, and 16.
 
@@ -621,6 +621,15 @@ existing comment already says so. Any attempt to reconstruct `input_consumed`
 from `state_changed`, from the presence of a notice, or from command kind alone
 gets at least one of these wrong.
 
+The off-record row is the table's one deliberate behavior change. Today
+`/hide-on`, `/hide`, and `/hide-off` retain the draft when they fail their
+precondition, which is inconsistent with every other recognized command: an
+unresolved handle, a disallowed argument, and an unknown command all clear. The
+rule this table encodes is that only *composed prompt text* survives a
+rejection — a slash command that produced a notice has been acted on, and its
+line is consumed. Adopt the consistent behavior and cover it with a test rather
+than preserving the inconsistency.
+
 Phase 5 must not be closed by having `ui/text/` set `clear_input` for every
 recognized command. That satisfies the stated completion condition while
 regressing the two deliberate retain-draft failures — an unknown author ID and an
@@ -1058,9 +1067,11 @@ The correction is complete only when all of the following are true:
 11. Each executable links only its own frontend plus shared/core targets, and the
     test-binary decision from Section 11.1 is recorded.
 12. Existing behavior and web API payloads remain compatible unless a separate
-    API change is explicitly designed. The Section 8.1.1 publication-trigger
-    change is the one sanctioned exception; it alters when a payload is sent,
-    never its contents.
+    API change is explicitly designed. There are exactly two sanctioned
+    exceptions: the Section 8.1.1 publication-trigger change, which alters when
+    a payload is sent and never its contents, and the Section 8.1.2 off-record
+    row, which makes a failed off-record command consume its input line like
+    every other recognized command.
 13. Unit, integration, web process, stress, and applicable sanitizer suites pass.
 
 ## 17. Final boundary decision
@@ -1079,3 +1090,8 @@ The durable design is therefore:
 
 > one core live session, several frontend schedulers, and transport-specific
 > presentation adapters.
+
+Implementation note: Blocks 1 through 8 have landed and the final architecture
+documentation has been updated. Verification remains pending until the complete
+configured sanitizer matrix has run successfully; an environmental sanitizer
+failure must be recorded separately from product test results.

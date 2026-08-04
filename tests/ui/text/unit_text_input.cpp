@@ -21,6 +21,7 @@
 namespace cha {
 namespace {
 
+
 test::NoopNotifier& notifier() {
     static test::NoopNotifier instance;
     return instance;
@@ -114,37 +115,37 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
         temporary.path,
         notifier());
 
-    const SessionUpdate invalid_argument =
+    const TextInputResult invalid_argument =
         handle_text_input(*controller, "operator", "/clear later");
     EXPECT_TRUE(invalid_argument.clear_input);
     EXPECT_EQ(
-        invalid_argument.notice,
+        invalid_argument.session.notice,
         "Command does not accept arguments");
-    const SessionUpdate idle_stop_with_argument =
+    const TextInputResult idle_stop_with_argument =
         handle_text_input(*controller, "operator", "/stop later");
     EXPECT_TRUE(idle_stop_with_argument.clear_input);
     EXPECT_EQ(
-        idle_stop_with_argument.notice,
+        idle_stop_with_argument.session.notice,
         "Command does not accept arguments");
 
-    const SessionUpdate unknown =
+    const TextInputResult unknown =
         handle_text_input(*controller, "operator", "/unknown");
     EXPECT_TRUE(unknown.clear_input);
-    ASSERT_TRUE(unknown.notice);
-    EXPECT_NE(unknown.notice->find("Unknown command"), std::string::npos);
-    EXPECT_NE(unknown.notice->find("/mcast"), std::string::npos);
+    ASSERT_TRUE(unknown.session.notice);
+    EXPECT_NE(unknown.session.notice->find("Unknown command"), std::string::npos);
+    EXPECT_NE(unknown.session.notice->find("/mcast"), std::string::npos);
 
-    const SessionUpdate empty_multicast =
+    const TextInputResult empty_multicast =
         handle_text_input(*controller, "operator", "/mcast");
     EXPECT_TRUE(empty_multicast.clear_input);
-    EXPECT_EQ(empty_multicast.notice, "Multicast prompt is empty");
+    EXPECT_EQ(empty_multicast.session.notice, "Multicast prompt is empty");
 
     EXPECT_EQ(
-        handle_text_input(*controller, "not-a-persona", "/clear").notice,
+        handle_text_input(*controller, "not-a-persona", "/clear").session.notice,
         "Transcript cleared");
-    EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide-on").render_needed);
-    EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide").render_needed);
-    EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide-off").render_needed);
+    EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide-on").session.state_changed);
+    EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide").session.state_changed);
+    EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide-off").session.state_changed);
     EXPECT_EQ(
         copy_entries(controller->transcript()),
         (std::vector<TranscriptEntry>{
@@ -152,29 +153,29 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
             make_hide_marker(2),
             make_hide_off_marker(3),
         }));
-    const SessionUpdate information =
+    const TextInputResult information =
         handle_text_input(*controller, "operator", "/info");
-    ASSERT_TRUE(information.notice);
+    ASSERT_TRUE(information.session.notice);
     EXPECT_NE(
-        information.notice->find("Transcript entries: 3"),
+        information.session.notice->find("Transcript entries: 3"),
         std::string::npos);
-    const SessionUpdate agents =
+    const TextInputResult agents =
         handle_text_input(*controller, "operator", "/agents");
-    ASSERT_TRUE(agents.notice);
-    EXPECT_NE(agents.notice->find("@Guide"), std::string::npos);
+    ASSERT_TRUE(agents.session.notice);
+    EXPECT_NE(agents.session.notice->find("@Guide"), std::string::npos);
     EXPECT_EQ(
-        handle_text_input(*controller, "operator", "/@Gui").notice,
+        handle_text_input(*controller, "operator", "/@Gui").session.notice,
         "Default agent is now Guide");
 
-    const SessionUpdate idle_stop =
+    const TextInputResult idle_stop =
         handle_text_input(*controller, "operator", "/stop");
     EXPECT_TRUE(idle_stop.clear_input);
-    EXPECT_EQ(idle_stop.notice, "No generation is active");
+    EXPECT_EQ(idle_stop.session.notice, "No generation is active");
 
-    const SessionUpdate exit =
+    const TextInputResult exit =
         handle_text_input(*controller, "operator", "/exit");
     EXPECT_TRUE(exit.clear_input);
-    EXPECT_TRUE(exit.end_session);
+    EXPECT_TRUE(exit.exit_requested);
 }
 
 TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
@@ -187,7 +188,7 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
         temporary.path,
         notifier());
 
-    const SessionUpdate submitted =
+    const TextInputResult submitted =
         handle_text_input(*controller, "operator", "  @Ism hello");
     EXPECT_TRUE(submitted.clear_input);
     const std::vector<TranscriptEntry> entries =
@@ -206,7 +207,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
         ordinary_temporary.path,
         notifier());
 
-    const SessionUpdate ordinary =
+    const TextInputResult ordinary =
         handle_text_input(*ordinary_controller, "engineer", "Question");
     EXPECT_TRUE(ordinary.clear_input);
     ASSERT_EQ(ordinary_controller->transcript().entries().size(), 1U);
@@ -225,7 +226,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
         multicast_temporary.path,
         notifier());
 
-    const SessionUpdate multicast = handle_text_input(
+    const TextInputResult multicast = handle_text_input(
         *multicast_controller, "engineer", "/mcast @Guide Question");
     EXPECT_TRUE(multicast.clear_input);
     ASSERT_EQ(multicast_controller->transcript().entries().size(), 1U);
@@ -245,17 +246,17 @@ TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
         temporary.path,
         notifier());
 
-    const SessionUpdate duplicate = handle_text_input(
+    const TextInputResult duplicate = handle_text_input(
         *controller, "operator", "/mcast @Guide @Gui What time is it?");
     EXPECT_TRUE(duplicate.clear_input);
-    EXPECT_EQ(duplicate.notice, "Multicast target @Guide is duplicated");
+    EXPECT_EQ(duplicate.session.notice, "Multicast target @Guide is duplicated");
     EXPECT_TRUE(controller->transcript().entries().empty());
 
-    const SessionUpdate unknown = handle_text_input(
+    const TextInputResult unknown = handle_text_input(
         *controller, "operator", "/mcast @Nobody What time is it?");
     EXPECT_TRUE(unknown.clear_input);
-    ASSERT_TRUE(unknown.notice);
-    EXPECT_NE(unknown.notice->find("Unknown agent @Nobody"), std::string::npos);
+    ASSERT_TRUE(unknown.session.notice);
+    EXPECT_NE(unknown.session.notice->find("Unknown agent @Nobody"), std::string::npos);
     EXPECT_TRUE(controller->transcript().entries().empty());
 }
 
@@ -267,32 +268,84 @@ TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
         notifier());
 
     (void)handle_text_input(*controller, "operator", "Question");
-    const SessionUpdate blocked =
+    const TextInputResult blocked =
         handle_text_input(*controller, "operator", "Another");
     EXPECT_FALSE(blocked.clear_input);
     EXPECT_EQ(
-        blocked.notice,
+        blocked.session.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
 
-    const SessionUpdate hidden_while_active =
+    const TextInputResult hidden_while_active =
         handle_text_input(*controller, "operator", "/hide");
     EXPECT_FALSE(hidden_while_active.clear_input);
     EXPECT_EQ(
-        hidden_while_active.notice,
+        hidden_while_active.session.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
 
-    const SessionUpdate stop_with_argument =
+    const TextInputResult stop_with_argument =
         handle_text_input(*controller, "operator", "/stop later");
     EXPECT_FALSE(stop_with_argument.clear_input);
     EXPECT_EQ(
-        stop_with_argument.notice,
+        stop_with_argument.session.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
 
-    const SessionUpdate stopping =
+    const TextInputResult stopping =
         handle_text_input(*controller, "operator", "/stop");
     EXPECT_TRUE(stopping.clear_input);
-    EXPECT_EQ(stopping.notice, "Stopping generation...");
+    EXPECT_EQ(stopping.session.notice, "Stopping generation...");
     controller->shutdown();
+}
+
+TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
+    TemporaryTextSession temporary;
+    auto controller = test::from_definitions_for_testing(
+        std::vector<AgentDefinition>{definition()}, temporary.path, notifier());
+
+    const TextInputResult unknown_author =
+        handle_text_input(*controller, "unknown", "Question");
+    EXPECT_FALSE(unknown_author.session.input_consumed);
+    EXPECT_FALSE(unknown_author.clear_input);
+
+    const TextInputResult empty_default =
+        handle_text_input(*controller, "operator", "/@");
+    EXPECT_TRUE(empty_default.session.input_consumed);
+    EXPECT_TRUE(empty_default.clear_input);
+
+    const TextInputResult unresolved_default =
+        handle_text_input(*controller, "operator", "/@Nobody");
+    EXPECT_TRUE(unresolved_default.session.input_consumed);
+    EXPECT_TRUE(unresolved_default.clear_input);
+
+    const TextInputResult parse_error =
+        handle_text_input(*controller, "operator", "/clear later");
+    EXPECT_FALSE(parse_error.session.input_consumed);
+    EXPECT_TRUE(parse_error.clear_input);
+
+    // A recognized command that fails its precondition still consumes the line
+    // it was typed on. Only composed prompt text survives a rejection.
+    const TextInputResult no_span =
+        handle_text_input(*controller, "operator", "/hide");
+    EXPECT_TRUE(no_span.session.input_consumed);
+    EXPECT_TRUE(no_span.clear_input);
+    EXPECT_FALSE(no_span.session.state_changed);
+
+    const TextInputResult nothing_to_restore =
+        handle_text_input(*controller, "operator", "/hide-off");
+    EXPECT_TRUE(nothing_to_restore.session.input_consumed);
+    EXPECT_TRUE(nothing_to_restore.clear_input);
+    EXPECT_FALSE(nothing_to_restore.session.state_changed);
+
+    const TextInputResult exit_result =
+        handle_text_input(*controller, "operator", "/exit");
+    EXPECT_TRUE(exit_result.clear_input);
+    EXPECT_TRUE(exit_result.exit_requested);
+    EXPECT_FALSE(exit_result.session.controller_ended);
+
+    controller->shutdown();
+    const TextInputResult undispatchable =
+        handle_text_input(*controller, "operator", "Another question");
+    EXPECT_FALSE(undispatchable.session.input_consumed);
+    EXPECT_FALSE(undispatchable.clear_input);
 }
 
 } // namespace

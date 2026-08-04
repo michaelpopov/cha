@@ -41,6 +41,13 @@
 namespace cha::web {
 namespace {
 
+PortBackedSession fake_session(
+    const SessionIdentity& identity,
+    std::unique_ptr<WebSessionController> controller) {
+    return {{identity, "Test forum " + identity.forum_id,
+             "Test session " + identity.session_id}, std::move(controller)};
+}
+
 using namespace std::chrono_literals;
 
 httplib::Client web_client(int port) {
@@ -160,9 +167,9 @@ private:
 class PermanentlyBlockedShutdownController final
     : public WebSessionController {
 public:
-    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionUpdate request_stop() override { return {}; }
-    SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
+    TextInputResult handle_raw_input(std::string_view, std::string) override { return {}; }
+    SessionChange request_stop() override { return {}; }
+    SessionChange set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {
@@ -216,9 +223,9 @@ private:
 
 class IdleController final : public WebSessionController {
 public:
-    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionUpdate request_stop() override { return {}; }
-    SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
+    TextInputResult handle_raw_input(std::string_view, std::string) override { return {}; }
+    SessionChange request_stop() override { return {}; }
+    SessionChange set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
@@ -332,18 +339,18 @@ public:
     explicit LargeSnapshotController(std::size_t text_size)
         : text_(text_size, 'x') {}
 
-    SessionUpdate handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionUpdate request_stop() override { return {}; }
-    SessionUpdate set_default_agent_id(std::string_view) override { return {}; }
+    TextInputResult handle_raw_input(std::string_view, std::string) override { return {}; }
+    SessionChange request_stop() override { return {}; }
+    SessionChange set_default_agent_id(std::string_view) override { return {}; }
     SessionEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
-    SessionSnapshot snapshot() override {
+    SessionState state() override {
         return {
             .transcript = {{
                 .id = 1,
-                .kind = TranscriptKind::agent,
+                .kind = EntryKind::agent,
                 .text = text_,
-                .status = TranscriptStatus::complete,
+                .status = EntryStatus::complete,
             }},
         };
     }
@@ -386,8 +393,8 @@ public:
 
     RealSocketSseServer()
         : settings_(make_settings()),
-          registry_(settings_, [](const SessionKey&, WakeNotifier&) {
-              return std::make_unique<LargeSnapshotController>(8U * 1024U * 1024U);
+          registry_(settings_, [](const SessionIdentity& key, WakeNotifier&) {
+              return fake_session(key, std::make_unique<LargeSnapshotController>(8U * 1024U * 1024U));
           }) {
         server_.set_socket_options([](int socket) {
             const int send_buffer = 16 * 1024;
@@ -396,7 +403,7 @@ public:
                 &send_buffer, sizeof(send_buffer));
         });
         SessionRoutes(registry_, settings_).install(server_);
-        if (!std::holds_alternative<OpenSessionSuccess>(
+        if (!std::holds_alternative<RegistryReady>(
                 registry_.open({"forum", "session"}, 1s))) {
             throw std::runtime_error("Could not open real-socket SSE fixture session");
         }
@@ -524,10 +531,10 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     initialize_diagnostic_logging(log_path, "critical");
     SessionRegistry registry(
         {.session_limit = 1},
-        [](const SessionKey&, WakeNotifier&) {
-            return std::make_unique<PermanentlyBlockedShutdownController>();
+        [](const SessionIdentity& key, WakeNotifier&) {
+            return fake_session(key, std::make_unique<PermanentlyBlockedShutdownController>());
         });
-    if (!std::holds_alternative<OpenSessionSuccess>(
+    if (!std::holds_alternative<RegistryReady>(
             registry.open({"blocked-forum", "blocked-session"}, 500ms))) {
         _exit(2);
     }
@@ -853,9 +860,9 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     settings.open_deadline = 5s;
     SessionRegistry registry(
         settings,
-        [&gate](const SessionKey&, WakeNotifier&) {
+        [&gate](const SessionIdentity& key, WakeNotifier&) {
             gate.wait();
-            return std::make_unique<IdleController>();
+            return fake_session(key, std::make_unique<IdleController>());
         });
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;

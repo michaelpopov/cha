@@ -5,8 +5,9 @@ into a runnable program, decide top-level object lifetime, and define
 process-level error handling. They contain wiring and workflow — never reusable
 policy.
 
-Only files in this directory are excluded from the `cha_core` library, which is
-what keeps every other layer testable and linkable without a `main()`.
+`apps/` contains no library sources. Each executable links its own frontend
+target plus the shared/core graph; `cha_core` contains no `ui/` or `apps/`
+sources.
 
 ## `tui_main.cpp`
 
@@ -33,8 +34,8 @@ flowchart TD
     g -->|"empty id, meaning New session"| h["prompt_session_name"]
     h --> i["Workspace.create_session"]
     g -->|"existing id"| j["Workspace.open_session"]
-    i -->|"CreatedSession.controller"| k["SessionController"]
-    j --> k
+    i -->|"OpenedSession.controller"| k["SessionController"]
+    j -->|"OpenedSession.controller"| k
     k --> l["run_persona with terminal, controller,<br/>and selected persona ID"]
     l --> m["return 0"]
 ```
@@ -68,8 +69,9 @@ assembles `TranscriptEmitter` and `ConsoleSession`. It also decides
 TTY-dependent behavior: the named `@DefaultAgentName> ` prompt and ready banner
 appear only for interactive stdin, pipe input receives queue backpressure, and
 automatic attributes are enabled independently for terminal stdout and stderr.
-`Workspace::create_session()` returns the generated session ID with the
-controller; the ready banner prints that resolved ID rather than a placeholder
+`Workspace::create_session()` returns an `OpenedSession` whose descriptor
+carries the generated session ID and whose controller remains owner-thread-only;
+the ready banner prints that resolved ID rather than a placeholder
 for newly created sessions.
 
 The libuv signal watcher is started before the controller creates its registry
@@ -108,5 +110,5 @@ Nothing depends on `apps/`.
 
 A second executable — an HTTP server, a scripted client, a benchmark — gets its
 own source file here and its own `add_executable` in `CMakeLists.txt`, linking
-`cha_core`. Its protocol code belongs in a matching `ui/` directory, not
+its own frontend target and any shared/core targets it needs. Its protocol code belongs in a matching `ui/` directory, not
 in this file; this file should stay short enough to read in one sitting.

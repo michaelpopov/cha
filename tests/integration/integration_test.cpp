@@ -451,10 +451,10 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
             notifier());
         (void)handle_text_input(*controller, "reader", "Visible question");
         run_until_idle(*controller);
-        EXPECT_TRUE(handle_text_input(*controller, "reader", "/hide-on").render_needed);
+        EXPECT_TRUE(handle_text_input(*controller, "reader", "/hide-on").session.state_changed);
         (void)handle_text_input(*controller, "reader", "Hidden question");
         run_until_idle(*controller);
-        EXPECT_TRUE(handle_text_input(*controller, "reader", "/hide").render_needed);
+        EXPECT_TRUE(handle_text_input(*controller, "reader", "/hide").session.state_changed);
         (void)handle_text_input(*controller, "reader", "Current question");
         run_until_idle(*controller);
     }
@@ -506,7 +506,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
             controller->characters(), controller->transcript().view()));
 
         // No mention: the first character directory in name order answers.
-        SessionUpdate update = handle_text_input(*controller, "reader", "Who are you?");
+        TextInputResult update = handle_text_input(*controller, "reader", "Who are you?");
         ASSERT_TRUE(update.clear_input);
         run_until_idle(*controller);
 
@@ -577,7 +577,7 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
         auto controller = test::from_definitions_for_testing(
             std::move(definitions), lobby.personas, session.path,
             notifier());
-        const SessionUpdate multicast =
+        const TextInputResult multicast =
             handle_text_input(*controller, "reader", "/mcast What time is it?");
         ASSERT_TRUE(multicast.clear_input);
         run_until_idle(*controller);
@@ -658,7 +658,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
         reopened->characters(), reopened->transcript().view()))
         << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
-        handle_text_input(*reopened, "reader", "@Cheburashka are you there?").notice,
+        handle_text_input(*reopened, "reader", "@Cheburashka are you there?").session.notice,
         "Unknown agent @Cheburashka. Characters in this forum: @Ismael");
 
     (void)handle_text_input(*reopened, "reader", "What did he say?");

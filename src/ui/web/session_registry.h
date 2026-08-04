@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ui/web/protocol.h"
+#include "session/opened_session.h"
 #include "ui/web/web_session_runtime.h"
 
 #include <chrono>
@@ -20,15 +20,6 @@ class Workspace;
 
 namespace cha::web {
 
-struct SessionKey {
-    std::string forum;
-    std::string session_id;
-    bool operator==(const SessionKey&) const = default;
-    bool operator<(const SessionKey& other) const noexcept {
-        return forum == other.forum ? session_id < other.session_id : forum < other.forum;
-    }
-};
-
 class SessionHandle {
 public:
     SessionHandle() = default;
@@ -41,25 +32,47 @@ private:
     std::shared_ptr<WebSessionRuntime> runtime_;
 };
 
-using RegistryOpenResult = std::variant<OpenSessionSuccess, Error>;
-using RegistryControllerFactory = std::function<std::unique_ptr<WebSessionController>(
-    const SessionKey&, WakeNotifier&)>;
-using RegistryMetadataFactory = std::function<WebSessionMetadata(const SessionKey&)>;
+// Registry results describe owner lifecycle only. HTTP paths and error
+// envelopes are constructed at the route boundary.
+struct RegistryReady {};
+
+enum class RegistryOpenFailure {
+    not_found,
+    busy,
+    stopping,
+    limit_reached,
+    open_timeout,
+    registry_stopping,
+    internal_error,
+};
+
+using RegistryOpenResult = std::variant<RegistryReady, RegistryOpenFailure>;
+// The port-backed alternative is limited to injected web tests. Production
+// workspace startup always returns the OpenedSession alternative.
+struct PortBackedSession {
+    SessionDescriptor descriptor;
+    std::unique_ptr<WebSessionController> controller;
+};
+using RegistryOwnerInput = std::variant<
+    OpenedSession,
+    PortBackedSession>;
+using RegistrySessionFactory = std::function<RegistryOwnerInput(
+    const SessionIdentity&, WakeNotifier&)>;
 
 struct RegistrySnapshot {
     std::size_t live_entry_count{};
-    std::vector<SessionKey> running_sessions;
+    std::vector<SessionIdentity> running_sessions;
 };
 
 // The registry is the sole authority for in-process session liveness.  The
 // supplied factory is deliberately the small test seam; production may use
-// from_workspace(), which keeps path validation and leasing in Workspace.
+// from_workspace(), which keeps stored-session validation and leasing in
+// Workspace. Routes validate URL components before entering this registry.
 class SessionRegistry {
 public:
     SessionRegistry(
         WebSettings settings,
-        RegistryControllerFactory factory,
-        RegistryMetadataFactory metadata_factory = {});
+        RegistrySessionFactory factory);
     static SessionRegistry from_workspace(
         WebSettings settings,
         std::shared_ptr<const Workspace> workspace);
@@ -68,13 +81,13 @@ public:
     SessionRegistry& operator=(const SessionRegistry&) = delete;
 
     [[nodiscard]] RegistryOpenResult open(
-        SessionKey key,
+        SessionIdentity key,
         std::chrono::milliseconds deadline);
     // Answers reattach and shutdown cases entirely from registry state. An
     // empty result means the caller must validate storage before open().
     [[nodiscard]] std::optional<RegistryOpenResult> try_reattach(
-        const SessionKey& key);
-    [[nodiscard]] SessionHandle lookup(const SessionKey& key);
+        const SessionIdentity& key);
+    [[nodiscard]] SessionHandle lookup(const SessionIdentity& key);
     // A point-in-time view for lobby listings and health. Starting and
     // stopping entries count against the bound but only running entries are
     // returned as reattachable sessions.
@@ -89,7 +102,7 @@ public:
     // Returns the identities whose owner threads have not yet reported
     // completion.  The process-shutdown coordinator uses this after its
     // bounded grace period to report threads it cannot safely join.
-    [[nodiscard]] std::vector<SessionKey> unfinished_owners();
+    [[nodiscard]] std::vector<SessionIdentity> unfinished_owners();
     // Waits under one process-wide deadline for every owner to report its
     // final state, then reaps them outside the registry mutex. False leaves
     // the stuck owners untouched for the process coordinator to report before
@@ -105,15 +118,12 @@ private:
 
     [[nodiscard]] RetiredEntries sweep_locked();
     static void reap(RetiredEntries retired);
-    void owner_main(SessionKey key, std::shared_ptr<StartupResult> startup);
-    [[nodiscard]] static std::string path_for(const SessionKey& key);
-
+    void owner_main(SessionIdentity key, std::shared_ptr<StartupResult> startup);
     WebSettings settings_;
-    RegistryControllerFactory factory_;
-    RegistryMetadataFactory metadata_factory_;
+    RegistrySessionFactory factory_;
     std::mutex mutex_;
     std::condition_variable lifecycle_changed_;
-    std::map<SessionKey, std::unique_ptr<Entry>, std::less<>> entries_;
+    std::map<SessionIdentity, std::unique_ptr<Entry>, std::less<>> entries_;
     bool stopping_{};
 };
 

@@ -23,7 +23,7 @@ directory decides only how it looks and how input reaches it.
 | --- | --- |
 | `input_editor.*` | Wide-character multiline draft text: cursor movement, editing, continuation lines, UTF-8 on submit. |
 | `session_view.h` | `SessionInput` and the `SessionView` seam that isolates session logic from curses. |
-| `persona_session.*` | The session state machine: input to actions, `SessionUpdate` to screen. |
+| `persona_session.*` | The session state machine: input to actions, `TextInputResult` and `SessionChange` to screen. |
 | `persona.*` | `run_persona()` — the shared-input-wait loop and orderly shutdown. |
 
 ### Rendering
@@ -87,9 +87,11 @@ single repaint.
 | Arrows, `Home`, `End`, `Backspace`, `Delete` | Edit the draft | Same |
 | Resize | Re-lay out through `Terminal` | Same |
 
-Submitted text goes to `handle_text_input()` in [`../text/`](../text/README.md);
-the resulting `SessionUpdate` is applied uniformly — clear the editor, set
-the notice, request a repaint, end the session — whichever fields it sets.
+Submitted text goes to `handle_text_input()` in [`../text/`](../text/README.md).
+The TUI applies `TextInputResult::clear_input` and `exit_requested` as local
+editor/navigation policy, then applies the embedded `SessionChange` by retaining
+the notice and scheduling a repaint for observable state changes. Its controller
+continues to be called directly on this one owner thread.
 
 ## Rendering pipeline
 
