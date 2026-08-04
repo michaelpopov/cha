@@ -95,6 +95,12 @@ std::vector<AgentDefinition> load_agent_definitions(
     std::optional<std::filesystem::path> forum_defaults_path = std::nullopt,
     std::optional<ProviderConfig> application_provider = std::nullopt);
 
+// Adds the standard participant and forum-context sections to definitions
+// assembled by trusted non-filesystem factories.
+void append_standard_prompt_context(
+    std::vector<AgentDefinition>& definitions,
+    const PersonaRoster& personas);
+
 void validate_character_id(std::string_view id);
 void validate_character_name(std::string_view name);
 void validate_persona_character_collisions(

@@ -189,6 +189,7 @@ target_compile_definitions(
 )
 
 add_library(cha_core STATIC
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     src/util/environment.cpp
     src/util/logging.cpp
     src/util/path_name.cpp
@@ -213,7 +214,20 @@ add_library(cha_core STATIC
     src/session/workspace.cpp
     src/application/workspace_snapshot.cpp
     src/application/workspace_inventory.cpp
+    src/application/builtins.cpp
+    src/application/effective_personas.cpp
+    src/application/environment.cpp
+    src/application/forum_catalog.cpp
+    src/application/session_source.cpp
+    src/application/welcome_storage.cpp
 )
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/docs/application-guide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS docs/application-guide.md cmake/embed_text.cmake
+    VERBATIM)
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
 target_include_directories(cha_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -362,6 +376,10 @@ if(BUILD_TESTING)
         tests/session/unit_workspace.cpp
         tests/application/unit_workspace_snapshot.cpp
         tests/application/unit_workspace_inventory.cpp
+        tests/application/unit_builtins.cpp
+        tests/application/unit_effective_personas.cpp
+        tests/application/unit_forum_catalog.cpp
+        tests/application/unit_welcome_storage.cpp
         tests/support/test_workspace.cpp
         tests/ui/text/unit_command.cpp
         tests/ui/text/unit_mcast.cpp

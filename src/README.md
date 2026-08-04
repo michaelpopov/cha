@@ -57,7 +57,7 @@ Each entry point links only its frontend target.
 | `ui/web/` | HTTP/SSE transport, protocol DTOs, presentation state, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
-| `application/` | Shared application-facing snapshots and future navigation workflow. | Frontend I/O, argument parsing, and frontend types. |
+| `application/` | Shared application-facing snapshots, built-ins, and navigation session sources. | Frontend I/O, argument parsing, and frontend types. |
 | `session/` | Workspace and session operations, `ForumCharacters`, SQLite persistence, live chat coordination, and the owning `SessionState` read model. | Frontends, command syntax, transports. |
 | `agents/` | Character config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the owner-thread-owned live `Transcript`. | Storage, providers, frontends. |

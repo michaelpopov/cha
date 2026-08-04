@@ -232,9 +232,15 @@ std::vector<AgentDefinition> load_agent_definitions(
                 forum_defaults_path,
                 application_provider));
     }
+    append_standard_prompt_context(definitions, personas);
+    return definitions;
+}
+
+void append_standard_prompt_context(
+    std::vector<AgentDefinition>& definitions,
+    const PersonaRoster& personas) {
     append_participant_roster(definitions, personas);
     append_forum_context(definitions);
-    return definitions;
 }
 
 void validate_persona_character_collisions(

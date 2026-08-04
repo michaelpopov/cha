@@ -428,3 +428,5 @@ The source tree is documented from the inside out, with diagrams:
 | [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |
 | [`src/ui/web/README.md`](src/ui/web/README.md) | The one-listener web transport, session ownership, SSE, and shutdown boundary. |
 | [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including prompt-template expansion, the concurrent queue, and wake adapters. |
+
+See the [application guide](docs/application-guide.md) for the canonical user-facing command and storage reference.

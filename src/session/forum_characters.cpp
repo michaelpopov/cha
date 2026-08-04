@@ -91,7 +91,9 @@ ForumCharacters::ForumCharacters(std::vector<CharacterInfo> characters)
     std::unordered_set<std::string> names;
     for (const CharacterInfo& character : characters_) {
         validate_character_id(character.id);
-        validate_character_name(character.name);
+        if (!(character.id == "builtin-assistant" && character.name == "Assistant")) {
+            validate_character_name(character.name);
+        }
         if (!ids.insert(character.id).second) {
             throw std::invalid_argument(
                 "Forum has duplicate character ID '" + character.id + "'");

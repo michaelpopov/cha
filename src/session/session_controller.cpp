@@ -124,6 +124,22 @@ std::unique_ptr<SessionController> SessionController::from_definitions(
         std::move(restored)));
 }
 
+std::unique_ptr<SessionController> SessionController::from_shared_definitions(
+    std::vector<AgentDefinition> definitions,
+    SharedPersonaRoster personas,
+    ParticipantId initial_default_agent_id,
+    std::filesystem::path database_path,
+    SessionLease lease,
+    WakeNotifier& notifier,
+    SessionRestore restored) {
+    require_agent_count(definitions.size());
+    if (!personas) throw std::invalid_argument("Session controller requires a persona roster");
+    if (!lease.active()) throw std::invalid_argument("Production session controllers require an active session lease");
+    return std::unique_ptr<SessionController>(new SessionController(
+        std::move(definitions), std::move(personas), std::move(initial_default_agent_id),
+        std::move(database_path), std::move(lease), notifier, std::move(restored)));
+}
+
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
     std::vector<AgentDefinition> definitions,
     PersonaRoster personas,
@@ -174,11 +190,30 @@ SessionController::SessionController(
       worker_pool_(definitions.size()),
       registry_(std::move(definitions), notifier, worker_pool_),
       characters_(make_forum_characters(registry_.runtime_info())),
-      personas_(std::move(personas)),
+      personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
       default_agent_id_(std::move(initial_default_agent_id)) {
     if (!characters_.find(default_agent_id_)) {
         throw std::invalid_argument("Initial default agent ID is not in the forum roster");
     }
+    initialize(std::move(restored));
+}
+
+SessionController::SessionController(
+    std::vector<AgentDefinition> definitions,
+    SharedPersonaRoster personas,
+    ParticipantId initial_default_agent_id,
+    std::filesystem::path path,
+    SessionLease lease,
+    WakeNotifier& notifier,
+    SessionRestore restored)
+    : lease_(std::move(lease)),
+      journal_(std::move(path)),
+      worker_pool_(definitions.size()),
+      registry_(std::move(definitions), notifier, worker_pool_),
+      characters_(make_forum_characters(registry_.runtime_info())),
+      personas_(std::move(personas)),
+      default_agent_id_(std::move(initial_default_agent_id)) {
+    if (!characters_.find(default_agent_id_)) throw std::invalid_argument("Initial default agent ID is not in the forum roster");
     initialize(std::move(restored));
 }
 
@@ -195,7 +230,7 @@ SessionController::SessionController(
       worker_pool_(backends.size()),
       registry_(std::move(backends), notifier, worker_pool_),
       characters_(make_forum_characters(registry_.runtime_info())),
-      personas_(std::move(personas)),
+      personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
       default_agent_id_(std::move(initial_default_agent_id)),
       before_activation_(std::move(before_activation)) {
     if (!characters_.find(default_agent_id_)) {
@@ -350,9 +385,9 @@ std::optional<EntryIdentity> SessionController::resolve_author(
     std::string_view author_id,
     SessionChange& update) const {
     const auto author = std::find_if(
-        personas_.begin(), personas_.end(),
+        personas_->begin(), personas_->end(),
         [author_id](const Persona& persona) { return persona.id == author_id; });
-    if (author == personas_.end()) {
+    if (author == personas_->end()) {
         update.notice = "Unknown persona ID '" + std::string(author_id) + "'";
         return std::nullopt;
     }

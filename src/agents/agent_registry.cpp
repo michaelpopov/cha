@@ -35,7 +35,12 @@ std::vector<AgentRuntimeInfo> build_runtime_info(
         }
         AgentRuntimeInfo info = backend->info();
         validate_character_id(info.character.id);
-        validate_character_name(info.character.name);
+        // Assistant is reserved to workspace definitions, but the trusted
+        // application factory owns this exact private identity.
+        if (!(info.character.id == "builtin-assistant"
+              && info.character.name == "Assistant")) {
+            validate_character_name(info.character.name);
+        }
         if (!ids.insert(info.character.id).second) {
             throw std::invalid_argument(
                 "Agent registry has duplicate character ID '" + info.character.id

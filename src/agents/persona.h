@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -16,5 +17,6 @@ struct Persona {
 
 // Every workspace persona in lexicographic ID order.
 using PersonaRoster = std::vector<Persona>;
+using SharedPersonaRoster = std::shared_ptr<const PersonaRoster>;
 
 } // namespace cha
