@@ -42,7 +42,7 @@ TEST(SessionProjection, MovesCompleteCoreStateIntoTheProtocolDto) {
         descriptor, std::move(state), presentation);
 
     EXPECT_EQ(snapshot, (SessionSnapshot{
-        .forum = {"forum", "Forum"},
+        .forum = {"forum", "Forum", "reviewer", {{"guide", "Guide"}, {"reviewer", "Reviewer"}}},
         .session_id = "session",
         .session_label = "Label",
         .characters = {{"guide", "Guide"}, {"reviewer", "Reviewer"}},

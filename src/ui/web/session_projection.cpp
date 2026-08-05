@@ -46,6 +46,7 @@ SessionSnapshot to_snapshot(
         .forum = {
             .id = descriptor.identity.forum_id,
             .display_name = descriptor.forum_display_name,
+            .default_character_id = state.default_agent_id,
         },
         .session_id = descriptor.identity.session_id,
         .session_label = descriptor.session_label,
@@ -55,7 +56,12 @@ SessionSnapshot to_snapshot(
         .shutdown_reason = presentation.shutdown_reason,
     };
     snapshot.characters.reserve(state.characters.size());
+    snapshot.forum.members.reserve(state.characters.size());
     for (CharacterInfo& character : state.characters) {
+        snapshot.forum.members.push_back({
+            .id = character.id,
+            .display_name = character.name,
+        });
         snapshot.characters.push_back({
             .id = std::move(character.id),
             .display_name = std::move(character.name),

@@ -1,18 +1,23 @@
 #include "ui/web/lobby_routes.h"
 
+#include "application/builtins.h"
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
 #include "session/workspace.h"
 #include "ui/web/http_response.h"
 #include "ui/web/json.h"
 #include "ui/web/protocol.h"
 #include "ui/web/route_support.h"
 #include "ui/web/session_registry.h"
-#include "util/logging.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <new>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -33,7 +38,7 @@ void set_open_result(
     const RegistryOpenResult& result) {
     if (std::holds_alternative<RegistryReady>(result)) {
         set_json_response(response, 200, nlohmann::json(OpenSessionSuccess{
-            "/s/" + identity.forum_id + "/" + identity.session_id + "/"}));
+            identity.forum_id, identity.session_id}));
         return;
     }
     switch (std::get<RegistryOpenFailure>(result)) {
@@ -61,18 +66,66 @@ void set_open_result(
     }
 }
 
+CharacterSummary character_summary(const CharacterDefinitionMetadata& character) {
+    return {character.id, character.display_name, character.description};
+}
+
+ForumSummary forum_summary(const Forum& forum, const WebDiscovery& discovery) {
+    ForumSummary result{.id = forum.name, .display_name = forum.display_name,
+                        .default_character_id = forum.default_agent_id};
+    result.members.reserve(forum.character_names.size());
+    for (const std::string& id : forum.character_names) {
+        const CharacterDefinitionMetadata* character = discovery.find_character(id);
+        if (character == nullptr) throw std::runtime_error("Forum member is absent from discovery");
+        result.members.push_back(character_summary(*character));
+    }
+    std::sort(result.members.begin(), result.members.end(), [](const CharacterSummary& left, const CharacterSummary& right) {
+        return left.display_name < right.display_name;
+    });
+    return result;
+}
+
+std::int64_t updated_at(const std::filesystem::path& path) {
+    const auto time = std::filesystem::last_write_time(path);
+    const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+        time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+    return std::chrono::duration_cast<std::chrono::seconds>(system_time.time_since_epoch()).count();
+}
+
+std::vector<SessionListing> sessions_for(
+    const Workspace& workspace, const WebDiscovery& discovery, const WelcomeStorage& welcome_storage,
+    const RegistrySnapshot& snapshot,
+    std::string_view forum_id) {
+    if (forum_id == entrance_id) {
+        return {{std::string(welcome_id), std::string(welcome_name),
+                 is_running(snapshot, {std::string(entrance_id), std::string(welcome_id)}),
+                 updated_at(welcome_storage.database_path())}};
+    }
+    if (discovery.find_forum(forum_id) == nullptr) throw ForumNotFoundError("Forum not found");
+    std::vector<SessionListing> result;
+    for (const SessionSummary& stored : workspace.sessions(std::string(forum_id))) {
+        result.push_back({stored.id, stored.label, is_running(snapshot, {std::string(forum_id), stored.id}),
+                          updated_at(workspace.root() / "forums" / std::string(forum_id) / "sessions" / (stored.id + ".sqlite3"))});
+    }
+    return result;
+}
+
 } // namespace
 
 LobbyRoutes::LobbyRoutes(
     std::shared_ptr<const Workspace> workspace,
+    const WebDiscovery& discovery,
+    const WelcomeStorage& welcome_storage,
     SessionRegistry& registry,
     WebSettings settings)
-    : workspace_(std::move(workspace)), registry_(registry), settings_(std::move(settings)) {
+    : workspace_(std::move(workspace)), discovery_(discovery), welcome_storage_(welcome_storage), registry_(registry), settings_(std::move(settings)) {
     if (!workspace_) throw std::invalid_argument("Lobby routes need a workspace");
 }
 
 void LobbyRoutes::install(httplib::Server& server) const {
     const auto workspace = workspace_;
+    const WebDiscovery* const discovery = &discovery_;
+    const WelcomeStorage* const welcome_storage = &welcome_storage_;
     SessionRegistry* const registry = &registry_;
     const WebSettings settings = settings_;
     server.Get("/health", [registry](const httplib::Request&, httplib::Response& response) {
@@ -81,41 +134,40 @@ void LobbyRoutes::install(httplib::Server& server) const {
             {"ready", true}, {"live_session_count", snapshot.live_entry_count}});
     });
 
-    server.Get("/api/v1/forums", [workspace](const httplib::Request&, httplib::Response& response) {
-        std::vector<ForumSummary> forums;
-        for (const std::string& name : workspace->forums()) {
-            try {
-                const Forum forum = workspace->load_forum(name);
-                forums.push_back({forum.name, forum.display_name});
-            } catch (const std::bad_alloc&) {
-                throw;
-            } catch (const std::exception& error) {
-                log_warn(
-                    "web server event=forum_omitted forum_id=" + name
-                    + " reason=" + error.what());
+    server.Get("/api/v1/bootstrap", [workspace, discovery, welcome_storage, registry](const httplib::Request&, httplib::Response& response) {
+        Bootstrap bootstrap{.initial_persona_id = std::string(guest_id), .initial_forum_id = std::string(entrance_id), .initial_session_id = std::string(welcome_id)};
+        for (const Persona& persona : discovery->personas()) bootstrap.personas.push_back({persona.id, persona.display_name, persona.description});
+        for (const CharacterDefinitionMetadata& character : discovery->characters()) bootstrap.characters.push_back(character_summary(character));
+        for (const Forum& forum : discovery->forums()) bootstrap.forums.push_back(forum_summary(forum, *discovery));
+        const RegistrySnapshot snapshot = registry->snapshot();
+        for (const Forum& forum : discovery->forums()) {
+            for (const SessionListing& session : sessions_for(*workspace, *discovery, *welcome_storage, snapshot, forum.name)) {
+                bootstrap.recent_sessions.push_back({forum.name, session.id, session.label, session.updated_at});
             }
         }
-        set_json_response(response, 200, nlohmann::json(forums));
+        std::sort(bootstrap.recent_sessions.begin(), bootstrap.recent_sessions.end(), [](const RecentSession& left, const RecentSession& right) { return left.updated_at > right.updated_at; });
+        set_json_response(response, 200, nlohmann::json(bootstrap));
     });
 
-    server.Get("/api/v1/personas", [workspace](const httplib::Request&, httplib::Response& response) {
-        std::vector<PersonaSummary> personas;
-        for (const Persona& persona : workspace->load_personas()) {
-            personas.push_back({persona.id, persona.display_name});
-        }
-        set_json_response(response, 200, nlohmann::json(personas));
+    server.Get(R"(/api/v1/characters/([^/]+))", [workspace, discovery](const httplib::Request& request, httplib::Response& response) {
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)) return set_route_not_found(response);
+        const CharacterDefinitionMetadata* character = discovery->find_character(id);
+        if (character == nullptr) return set_route_not_found(response);
+        if (id == assistant_id) return set_json_response(response, 200, nlohmann::json(CharacterDetail{character_summary(*character), std::string(application_guide())}));
+        const std::filesystem::path path = workspace->root() / "characters" / id / "CHARACTER.md";
+        std::ifstream input(path, std::ios::binary);
+        if (!input) throw std::runtime_error("Character definition is unreadable");
+        const std::string markdown{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        set_json_response(response, 200, nlohmann::json(CharacterDetail{character_summary(*character), markdown}));
     });
 
-    server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, registry](const httplib::Request& request, httplib::Response& response) {
+    server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, discovery, welcome_storage, registry](const httplib::Request& request, httplib::Response& response) {
         const std::string forum = request.matches[1];
         if (!is_valid_route_component(forum)) return set_route_not_found(response);
         try {
             const RegistrySnapshot snapshot = registry->snapshot();
-            std::vector<SessionListing> sessions;
-            for (const SessionSummary& stored : workspace->sessions(forum)) {
-                sessions.push_back({stored.id, stored.label, is_running(snapshot, {forum, stored.id})});
-            }
-            set_json_response(response, 200, nlohmann::json(sessions));
+            set_json_response(response, 200, nlohmann::json(sessions_for(*workspace, *discovery, *welcome_storage, snapshot, forum)));
         } catch (const ForumNotFoundError&) {
             set_route_not_found(response);
         }
@@ -156,12 +208,14 @@ void LobbyRoutes::install(httplib::Server& server) const {
         if (const auto reattached = registry->try_reattach(key)) {
             return set_open_result(response, key, *reattached);
         }
-        try {
-            workspace->check_session(key.forum_id, key.session_id);
-        } catch (const ForumNotFoundError&) {
-            return set_route_not_found(response);
-        } catch (const SessionNotFoundError&) {
-            return set_route_not_found(response);
+        if (key.forum_id != entrance_id) {
+            try {
+                workspace->check_session(key.forum_id, key.session_id);
+            } catch (const ForumNotFoundError&) {
+                return set_route_not_found(response);
+            } catch (const SessionNotFoundError&) {
+                return set_route_not_found(response);
+            }
         }
         set_open_result(
             response,

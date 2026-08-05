@@ -180,7 +180,7 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     ASSERT_TRUE(page);
     EXPECT_EQ(page->status, 200);
     EXPECT_EQ(page->get_header_value("Content-Type"), "text/html; charset=utf-8");
-    EXPECT_NE(page->body.find("<title>cha session</title>"), std::string::npos);
+    EXPECT_NE(page->body.find("<title>cha</title>"), std::string::npos);
     EXPECT_EQ(page->body.find("Session is not open"), std::string::npos);
 
     const auto snapshot = server.client().Get(base + "/api/v1/session");
@@ -458,9 +458,8 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     ASSERT_TRUE(snapshot);
     ASSERT_EQ(snapshot->status, 200);
     const nlohmann::json body = json_body(snapshot);
-    EXPECT_EQ(
-        body["forum"],
-        nlohmann::json({{"id", "lobby"}, {"display_name", "The Lobby"}}));
+    EXPECT_EQ(body["forum"].at("id"), "lobby");
+    EXPECT_EQ(body["forum"].at("display_name"), "The Lobby");
     EXPECT_EQ(body["session_id"], stored.id);
     EXPECT_EQ(body["session_label"], "Named session");
     registry.begin_shutdown();
@@ -477,7 +476,7 @@ TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLook
     const auto page = server.client().Get("/s/lobby/missing/");
     ASSERT_TRUE(page);
     EXPECT_EQ(page->status, 200);
-    EXPECT_NE(page->body.find("href=\"/\""), std::string::npos);
+    EXPECT_NE(page->body.find("The chat browser is not installed yet."), std::string::npos);
     expect_error(server.client().Get("/s/lobby/missing/api/v1/session"), 409, "session_not_live");
     expect_error(server.client().Get("/s/%2e%2e/missing/api/v1/session"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing%23fragment/api/v1/session"), 404, "not_found");

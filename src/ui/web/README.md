@@ -17,8 +17,9 @@ a `SessionController`; HTTP workers exchange only owning commands and results
 with it.
 
 Personas are workspace-wide authors, not forum or session members. `GET
-/api/v1/personas` returns stable IDs and display names and deliberately exposes no
-prompt text. A submitted input body is exactly `{"persona": "<id>", "text":
+/api/v1/bootstrap` returns the immutable discovery view, including stable IDs,
+display summaries, built-ins, and Recent; it deliberately exposes no prompt
+text. A submitted input body is exactly `{"persona": "<id>", "text":
 "<text>"}`. For every submission the HTTP boundary resolves that ID against the
 application-wide workspace-plus-built-ins discovery view and constructs an owning,
 server-trusted author identity. Only that resolved identity crosses the
@@ -49,7 +50,8 @@ for a bounded interval, and contains controller failures to that runtime.
 It is not a core session abstraction: it serializes
 open requests by `SessionIdentity`, counts starting and stopping entries against
 the configured bound, and owns the owner threads. Its outcomes describe only
-owner lifecycle; `LobbyRoutes` validates URL components, builds redirect paths,
+owner lifecycle; `LobbyRoutes` validates URL components, returns stable open
+identities,
 and maps lifecycle failures to HTTP errors. It publishes only running runtimes
 through owning `SessionHandle` values, and sweeps finished entries in two phases
 so joins and runtime destruction occur outside its mutex.
@@ -66,7 +68,7 @@ close notifications. A runtime starts disconnected, cancels its one deadline
 on stream acceptance, and on matching close unloads at `idle_grace` or the
 absolute `orphan_limit` from that same disconnection timestamp while generation
 is active.
-`LobbyRoutes` is the HTTP boundary for stored-session discovery, create-only,
+`LobbyRoutes` is the HTTP boundary for bootstrap discovery, character detail, stored-session discovery, create-only,
 and registry-backed open/reattach. It validates route identifiers before either
 the registry or session storage is consulted; creation reaches only the shared,
 immutable `Workspace`, while opening first asks the registry for a disk-free

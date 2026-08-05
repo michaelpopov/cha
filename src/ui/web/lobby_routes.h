@@ -10,6 +10,8 @@ class Server;
 
 namespace cha {
 class Workspace;
+class WebDiscovery;
+class WelcomeStorage;
 }
 
 namespace cha::web {
@@ -20,6 +22,8 @@ class LobbyRoutes {
 public:
     LobbyRoutes(
         std::shared_ptr<const Workspace> workspace,
+        const WebDiscovery& discovery,
+        const WelcomeStorage& welcome_storage,
         SessionRegistry& registry,
         WebSettings settings);
 
@@ -27,6 +31,8 @@ public:
 
 private:
     std::shared_ptr<const Workspace> workspace_;
+    const WebDiscovery& discovery_;
+    const WelcomeStorage& welcome_storage_;
     SessionRegistry& registry_;
     WebSettings settings_;
 };

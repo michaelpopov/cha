@@ -42,7 +42,7 @@ int main() {
             cha::web::configure_http_server(
                 server, settings, config.host, config.port);
             cha::web::AssetHandler().install(server);
-            cha::web::LobbyRoutes(workspace, registry, settings).install(server);
+            cha::web::LobbyRoutes(workspace, discovery, welcome_storage, registry, settings).install(server);
             cha::web::SessionRoutes(registry, settings).install(server);
             cha::web::ProcessShutdownSignal signals;
             cha::web::ServerShutdownCoordinator shutdown(registry, server);

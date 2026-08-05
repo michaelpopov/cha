@@ -28,17 +28,12 @@ enum class ErrorCode {
     command_queue_full,
 };
 
-struct ForumSummary {
-    std::string id;
-    std::string display_name;
-    bool operator==(const ForumSummary&) const = default;
-};
-
 // The lobby exposes identities only for browser-side attribution selection.
 // A session snapshot deliberately does not carry this workspace-wide roster.
 struct PersonaSummary {
     std::string id;
     std::string display_name;
+    std::optional<std::string> description;
     bool operator==(const PersonaSummary&) const = default;
 };
 
@@ -46,12 +41,22 @@ struct SessionListing {
     std::string id;
     std::string label;
     bool live{};
+    std::int64_t updated_at{};
 };
 
 struct CharacterSummary {
     std::string id;
     std::string display_name;
+    std::optional<std::string> description;
     bool operator==(const CharacterSummary&) const = default;
+};
+
+struct ForumSummary {
+    std::string id;
+    std::string display_name;
+    std::string default_character_id;
+    std::vector<CharacterSummary> members;
+    bool operator==(const ForumSummary&) const = default;
 };
 
 struct TranscriptEntry {
@@ -136,7 +141,30 @@ struct CreateSessionSuccess {
 };
 
 struct OpenSessionSuccess {
-    std::string path;
+    std::string forum_id;
+    std::string session_id;
+};
+
+struct RecentSession {
+    std::string forum_id;
+    std::string session_id;
+    std::string session_label;
+    std::int64_t updated_at{};
+};
+
+struct Bootstrap {
+    std::string initial_persona_id;
+    std::string initial_forum_id;
+    std::string initial_session_id;
+    std::vector<PersonaSummary> personas;
+    std::vector<CharacterSummary> characters;
+    std::vector<ForumSummary> forums;
+    std::vector<RecentSession> recent_sessions;
+};
+
+struct CharacterDetail {
+    CharacterSummary summary;
+    std::string character_markdown;
 };
 
 struct Error {
@@ -196,6 +224,9 @@ void to_json(nlohmann::json& json, const SessionSnapshot& value);
 void to_json(nlohmann::json& json, const CommandResult& value);
 void to_json(nlohmann::json& json, const CreateSessionSuccess& value);
 void to_json(nlohmann::json& json, const OpenSessionSuccess& value);
+void to_json(nlohmann::json& json, const RecentSession& value);
+void to_json(nlohmann::json& json, const Bootstrap& value);
+void to_json(nlohmann::json& json, const CharacterDetail& value);
 void to_json(nlohmann::json& json, const Error& value);
 void to_json(nlohmann::json& json, const AppendTargetEntry& value);
 void to_json(nlohmann::json& json, const AppendTargetReasoning& value);
