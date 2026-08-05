@@ -40,10 +40,8 @@ flowchart TD
     OpenExisting --> Chat["Chat"]
     Sessions -->|"New session"| Name["New session: required name field"]
     Name -->|"Cancel"| Sessions
-    Name -->|"Empty name"| Name
     Name -->|"Start session"| Create["Create stored session"]
-    Create -->|"Failure"| Name
-    Create -->|"Success"| OpenNew["Open new session and add it to Recent"]
+    Create --> OpenNew["Open new session and add it to Recent"]
     OpenNew --> Chat
 ```
 
@@ -56,19 +54,24 @@ flowchart LR
     Sidebar["Sidebar"] -->|"Personas"| Personas["Personas"]
     Personas -->|"Select one radio"| Current["Update current persona"]
     Current --> Next["Next submitted message carries that persona ID"]
+    Next --> Resolve["Server resolves application-wide author identity"]
+    Resolve --> Session["Session records author; no persona membership check"]
     Current --> Status["Update Chat status: From"]
     Current -.-> Unchanged["Forum and active session remain unchanged"]
 ```
+
+Resolution happens for every submission. Guest can write in an ordinary
+workspace forum because personas are not session membership. The browser never
+supplies the display name that is persisted with the message.
 
 ## Chat routing status
 
 ```mermaid
 flowchart LR
-    Forum["Current or active forum"] --> Status["Forum · From: Persona · To: Default character"]
+    Forum["Active forum"] --> Status["Forum · From: Persona · To: Default character"]
     Persona["Current persona"] --> Status
-    Default["Forum/session default character"] --> Status
+    Default["Live session default character"] --> Status
     Snapshot["Live session snapshot or event"] --> Default
 ```
 
 The status line is read-only and appears below the prompt composer. It is the only persistent display of the current persona, forum, and target character in Chat.
-

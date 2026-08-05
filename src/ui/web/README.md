@@ -2,8 +2,9 @@
 
 Workspace characters in the web frontend inherit the shared `[provider]`
 configuration in `app.toml`; the top-level `host` and `port` remain this web
-server's listener settings. The web frontend does not gain the terminal
-Guest/Entrance/Welcome environment or terminal slash-navigation commands.
+server's listener settings. Web discovery has its own HTTP projection, including
+Guest, Assistant, Entrance, and Welcome, but does not use terminal
+slash-navigation commands or their presentation results.
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and web
 runtime coordination. It depends on core `SessionIdentity`, `SessionDescriptor`,
@@ -12,15 +13,20 @@ web type in `cha_core`. Its permanent session-owner thread is the sole owner of
 a `SessionController`; HTTP workers exchange only owning commands and results
 with it.
 
-The lobby selects a workspace persona before a forum and session. `GET
-/api/v1/personas` returns the roster's stable IDs and display names in roster
-order; it deliberately exposes no prompt text. A submitted input body is
-exactly `{"persona": "<id>", "text": "<text>"}`. The owner-thread adapter passes
-that ID through the shared text-input funnel, where `SessionController` resolves
-it against the roster captured when the session opened. Thus persona selection is
-attribution, not authentication, and an unknown ID starts no batch. A live
-session still serves one browser connection at a time; changing personas happens
-between prompts on that same shared session.
+Personas are workspace-wide authors, not forum or session members. `GET
+/api/v1/personas` returns stable IDs and display names and deliberately exposes no
+prompt text. A submitted input body is exactly `{"persona": "<id>", "text":
+"<text>"}`. For every submission the HTTP boundary resolves that ID against the
+application-wide workspace-plus-built-ins discovery view and constructs an owning,
+server-trusted author identity. Only that resolved identity crosses the
+owner-thread queue; the browser cannot supply its display name.
+
+`SessionController` records the supplied author identity but owns no persona
+roster and performs no persona-membership check. Built-in Guest can therefore
+author a message in an ordinary workspace forum. Persona selection is
+attribution, not authentication. A live session still serves one browser
+connection at a time; changing personas happens between prompts on that same
+shared session.
 
 `SessionRegistry` owns one permanent thread per runtime and invokes the
 threadless `WebSessionRuntime` on it. The runtime owns a condition-variable wake
@@ -46,7 +52,7 @@ through owning `SessionHandle` values, and sweeps finished entries in two phases
 so joins and runtime destruction occur outside its mutex.
 `SessionRoutes` resolves path-scoped live handles and uses their owner queue
 for snapshots and commands; it never reaches a controller directly. It serves
-the minimal chat/not-open page boundary, session API, and chunked SSE route.
+the session API and chunked SSE route.
 `SseMailbox` holds at most one immutable in-flight payload and one replaceable
 pending payload; its writer is the HTTP thread, never the session owner. Each
 stream begins with a fresh snapshot, then receives only snapshot or
@@ -56,19 +62,15 @@ per session, assigns an opaque server-local connection ID, and ignores stale
 close notifications. A runtime starts disconnected, cancels its one deadline
 on stream acceptance, and on matching close unloads at `idle_grace` or the
 absolute `orphan_limit` from that same disconnection timestamp while generation
-is active. The later browser page must enable controls only after the accepted
-stream's initial snapshot; a conflict retries briefly, then displays the
-already-open message. An append target or sequence mismatch closes that stream
-and uses bounded reconnect for a fresh snapshot rather than racing a REST
-snapshot against the old stream.
+is active.
 `LobbyRoutes` is the HTTP boundary for stored-session discovery, create-only,
 and registry-backed open/reattach. It validates route identifiers before either
 the registry or session storage is consulted; creation reaches only the shared,
 immutable `Workspace`, while opening first asks the registry for a disk-free
 reattach and directly reads only the selected session's stored metadata before
-a new open. `AssetHandler`
-separately owns the root HTML/asset boundary and currently serves only a
-framework-neutral lobby placeholder. `configure_http_server()` owns the
+a new open. `AssetHandler` separately owns the HTML/asset boundary and serves
+the same client-routed shell at the root and session deep links.
+`configure_http_server()` owns the
 server-global allowed-host check, request pool, read/write timeouts, payload
 limit, and fallback error/exception handlers so route installers cannot
 silently replace one another's policy. The allowed-host check runs before
@@ -95,6 +97,3 @@ uses the common error envelope, which carries no exception detail.
 Generation logging treats an active request-ID change as a terminal event for
 the old request followed by a start event for the new request, covering
 multicast handoffs that never pass through an inactive snapshot.
-
-The complete Block 8 verification matrix is specified in
-[`docs/web-fix-plan.md`](../../../docs/web-fix-plan.md#12-block-8-documentation-and-final-verification).

@@ -18,9 +18,10 @@ selects its ordered roster through `forums/<forum>/members/<id>/`; its optional
 `members/character_defaults.toml` and optional member `character.toml` overlay
 the definition per key. A member `CHARACTER.md` replaces the definition prompt.
 When loaded, the expanded character prompt is followed by expanded `FORUM.md`,
-the complete static persona roster, and generated forum context. Includes from
-a definition stay within workspace `characters/`; member and forum includes
-stay within the forum.
+a static persona-context snapshot, and generated forum context. This snapshot
+helps the model but is not session membership or an author-authorization list.
+Includes from a definition stay within workspace `characters/`; member and forum
+includes stay within the forum.
 
 During a run, the participating characters are represented as agents. Each agent
 has its own identity, effective system prompt, and model connection, while all
@@ -28,9 +29,12 @@ agents use the session's shared chat transcript. A forum's optional validated
 `default_agent` ID selects the default without changing the lexicographic agent
 list; otherwise its first member ID is the default. A prompt beginning with
 `@Name` is sent to another agent.
-Each submitted prompt carries a validated roster persona as its author. That author
-is stored on the human entry; projection prefixes ordinary human `persona` messages
-with `from <Name>:` without changing stored or rendered text.
+Each submitted prompt carries an owning persona identity resolved by the
+frontend/application boundary against the application-wide persona
+directory. The live session accepts that trusted identity without owning or
+consulting a persona roster. The author is stored on the human entry; projection
+prefixes ordinary human `persona` messages with `from <Name>:` without changing
+stored or rendered text.
 
 A session is a persistent chat within a forum, stored in a single SQLite
 database. Its metadata name is the public session identity; the database stem
@@ -232,11 +236,12 @@ sequenceDiagram
     participant W as Regular runner
     participant P as Model server
 
-    U->>T: selected persona ID + submitted line
+    U->>U: resolve selected persona to trusted author identity
+    U->>T: resolved author identity + submitted line
     T->>T: parse_command, then parse_addressed_prompt
-    T->>C: submit_prompt author ID, text, and handle
+    T->>C: submit_prompt resolved author, text, and handle
     C->>C: reject if a turn is active
-    C->>C: resolve author against session roster and handle against ForumCharacters
+    C->>C: resolve handle against ForumCharacters; author is already trusted
     C->>V: capture immutable CompletionHistory
     C->>G: stage one-run batch behind closed gate
     C->>G: select foreground while gate remains closed
@@ -399,8 +404,8 @@ These hold across the whole tree. Breaking one is a design change, not a bug fix
 | Entry and request IDs are positive and strictly increasing. | `Transcript::require_next_id`, `state` table |
 | Durable writes precede visible ones. | `SessionController` |
 | Reasoning exists only while a response is active; it never enters the transcript, persistence, or projection. | `ActiveResponse`, `GenerationStatus`, `TranscriptEntry` shape |
-| A session's roster and system prompt are fixed when it opens; changes under `personas/` take effect on its next open. | `Workspace::load_personas`, `SessionController` |
-| Every prompt author is resolved against that session's roster at one authorization point. | `SessionController::start_batch` |
+| A live session owns its forum-character roster, not a persona roster. Persona authors are resolved against the application-wide directory before input enters the session. | Frontend/application persona resolver, `SessionController` author-value boundary |
+| Static persona context embedded in an agent system prompt is fixed when it opens, but it never gates attribution. | `Workspace::load_personas`, agent-definition construction |
 | Front ends never open storage or call backends. | Include rules above |
 | N controllers may run on N owner threads when no domain object is shared between them. `Workspace` is the deliberate exception: it is immutable, cache-free, and safe to share for concurrent `const` calls. | Session ownership, `Workspace` construction, session-local SQLite and completion clients |
 | A web runtime has one permanent owner thread; HTTP threads exchange only owning commands and results with it. | `ui/web/WebSessionRuntime` |

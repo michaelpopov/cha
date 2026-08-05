@@ -60,6 +60,9 @@ The effective system prompt has four sections in this exact order: expanded
 character `CHARACTER.md`, expanded forum `FORUM.md`, the static persona roster (each
 `PERSONA.md` verbatim under its display-name heading), and generated forum context.
 The roster is in lexicographic ID order and does not change for a live session.
+It is model reference context only, not forum/session membership and not an
+authorization list. Persona authorship is resolved independently at the
+frontend/application input boundary.
 Expansion is implemented in `util/text_template.*`; this layer supplies the
 policy: a definition prompt is contained to workspace `characters/`, while a
 member prompt and `FORUM.md` are contained to the forum directory. It also

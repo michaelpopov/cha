@@ -11,9 +11,13 @@ The browser keeps these related pieces of UI state:
 | Current context | Persona ID and forum ID |
 | Active conversation | Forum ID and session ID |
 | Inspected character | Character ID, used only by Character detail |
-| Current default character | Character ID resolved for the current live session or selected forum |
+| Current default character | Character ID from the active live session |
 
 The Main area is exclusive: Chat and Navigation are never visible together. Opening or closing the sidebar changes layout only; it does not change the Main-area state or any current context.
+
+On startup the active conversation is the shared built-in Welcome session in
+Entrance, the selected persona is Guest, and the current default character is
+Assistant.
 
 ## Sidebar
 
@@ -46,7 +50,12 @@ Only the two-line button changes sidebar visibility. Every other sidebar action 
 | New session row | Shows New session for the current forum | Sidebar state, current persona, and forum |
 | Settings gear | Shows Settings | Sidebar state and all current context |
 
-Selecting a persona affects the next submitted message, including messages in an already-open session. It does not create, close, or switch sessions.
+Selecting a persona affects the next submitted message, including messages in an
+already-open session. It does not create, close, or switch sessions. Personas
+are application-wide authors and never members of a forum or session. On each
+submission the server resolves the selected ID against the application-wide
+persona directory and gives the session a trusted author identity to record;
+the session does not validate against a roster captured when it opened.
 
 ## Chat context line
 
@@ -54,9 +63,9 @@ Chat places one compact, read-only status line directly below the prompt compose
 
 `<Forum>   From: <Persona>   To: <Current default character in the forum>`
 
-- Forum is the active conversation's forum, or the currently selected/default forum before a conversation is active.
+- Forum is the active conversation's forum.
 - From is the currently selected persona and updates immediately after a persona radio selection.
-- To is the current default character for the live session. Before a session is live, it is the selected forum's configured default character.
+- To is the current default character for the live session.
 - A live change to the session's default character updates To from the authoritative session state.
 - The line is not an editor or navigation control.
 
@@ -66,7 +75,7 @@ The current persona and forum do not appear in the sidebar or Chat header.
 
 Characters is a workspace-level, informational navigation area.
 
-- The list contains every character registered in the workspace.
+- The list contains the application-wide character roster, including Assistant.
 - Each row shows the character display name and its short configured description.
 - Selecting a row opens Character detail without changing persona, forum, session, or default character.
 - Character detail renders `CHARACTER.md` as formatted Markdown, including headings, paragraphs, emphasis, lists, and code blocks.
@@ -97,9 +106,7 @@ Rules:
 - Start session remains disabled while the trimmed name is empty.
 - Opening or cancelling New session creates nothing.
 - Cancel returns to Sessions for the same forum.
-- A creation error keeps the entered name and stays on New session.
 - After successful creation, the new session is opened, becomes the active conversation, appears in Recent, and Chat becomes visible.
-- Session-name uniqueness has not been specified; stable session IDs remain the authoritative identity.
 - Users cannot create forums, personas, or characters in this version.
 
 ## Main-area headers
@@ -121,11 +128,6 @@ The component hierarchy and interaction model are identical at desktop and iPhon
 - The Chat context line remains one compact line beneath the composer at both widths.
 - Long Character detail content scrolls within the main content region.
 
-## Empty and failure behavior
+## Empty behavior
 
-- An empty Characters roster is a workspace configuration error rather than a character-creation prompt.
 - A forum with no sessions shows only the New session row.
-- A failed open keeps the user on Sessions and reports the failure without changing the active conversation.
-- A failed creation keeps the user on New session and preserves the typed name.
-- Detailed loading, error-message, and unavailable-session visuals remain to be designed.
-

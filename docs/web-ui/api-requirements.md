@@ -1,126 +1,37 @@
 # Web API implications
 
-This document maps the agreed UI to the current C++ web boundary. Route behavior is implemented in [lobby_routes.cpp](../../src/ui/web/lobby_routes.cpp), [session_routes.cpp](../../src/ui/web/session_routes.cpp), and [protocol.h](../../src/ui/web/protocol.h).
+This document maps the agreed UI to the C++ web boundary. It describes the
+successful browser flow for a valid workspace. Configuration, storage, and
+invariant failures use the server's existing exception boundary; the UI does not
+require recovery-specific API models.
 
 ## Existing capabilities
 
 | UI need | Existing API |
 | --- | --- |
-| List personas | `GET /api/v1/personas` returns stable IDs and display names |
-| List forums | `GET /api/v1/forums` returns stable IDs and display names |
-| List one forum's sessions | `GET /api/v1/forums/{forum}/sessions` returns ID, label, and live state; it correctly has no description field |
-| Create a stored session | `POST /api/v1/forums/{forum}/sessions` with `{"label":"..."}` |
+| List personas | `GET /api/v1/personas` |
+| List forums | `GET /api/v1/forums` |
+| List one forum's sessions | `GET /api/v1/forums/{forum}/sessions` |
+| Create a stored session | `POST /api/v1/forums/{forum}/sessions` |
 | Open or reattach a session | `POST /api/v1/forums/{forum}/sessions/{session}/open` |
-| Load live chat state | `GET /s/{forum}/{session}/api/v1/session` returns forum identity, character roster, and `default_character_id` with the transcript |
+| Load live chat state | `GET /s/{forum}/{session}/api/v1/session` |
 | Stream chat changes | `GET /s/{forum}/{session}/api/v1/events` |
-| Submit as the current persona | `POST /s/{forum}/{session}/api/v1/input` with persona ID and text |
-| Change a live session's default character | `POST /s/{forum}/{session}/api/v1/actions/default-agent` with `character_id` |
+| Submit input | `POST /s/{forum}/{session}/api/v1/input` |
+| Change the default character | `POST /s/{forum}/{session}/api/v1/actions/default-agent` |
 | Stop generation | `POST /s/{forum}/{session}/api/v1/actions/stop` |
 
-The existing per-input persona ID matches the design: changing Personas affects the next message without reopening the session. The live snapshot already contains enough information to render the Chat status line's Forum and To values after a session is open.
+The existing live-session API remains the base. The additions below supply the
+designed navigation and startup data.
 
-## Required additions or changes
+## Startup and discovery
 
-### Defaults
-
-The application needs configured default persona and forum IDs. The browser must receive their resolved IDs and display names during startup. Both values must be validated against the loaded workspace.
-
-Before a session is open, the default forum metadata must also provide its resolved default character. Once a session is live, `SessionSnapshot.default_character_id` is authoritative because the live default can change.
-
-### Forum membership metadata
-
-The Forums screen needs each forum's ordered member roster and configured default character without opening a session. Extend the forum summary or provide equivalent bootstrap data:
+Add a consolidated bootstrap response:
 
 ```json
 {
-  "id": "stoics",
-  "display_name": "The Stoics Forum",
-  "members": [
-    {"id": "epictetus", "display_name": "Epictetus"},
-    {"id": "markus_aurelius", "display_name": "Marcus Aurelius"},
-    {"id": "seneca", "display_name": "Seneca"}
-  ],
-  "default_character_id": "epictetus"
-}
-```
-
-Forum summaries have no description field. Member names are display-only text in this version.
-
-### Workspace characters
-
-The Characters screens need a workspace-level character API. A summary list should return stable ID, display name, and a short description; a detail request should return the raw `CHARACTER.md` text without opening a forum or session.
-
-Recommended boundary:
-
-```text
-GET /api/v1/characters
-GET /api/v1/characters/{character}
-```
-
-Provisional responses:
-
-```json
-[
-  {
-    "id": "epictetus",
-    "display_name": "Epictetus",
-    "description": "A demanding Stoic teacher of freedom and judgment"
-  }
-]
-```
-
-```json
-{
-  "id": "epictetus",
-  "display_name": "Epictetus",
-  "description": "A demanding Stoic teacher of freedom and judgment",
-  "character_markdown": "# Epictetus\n\n..."
-}
-```
-
-The assumed `description` key is not yet defined in `characters/<id>/character.toml`. It is workspace metadata and should not be forum-overridable. Exact validation and fallback behavior remain an implementation decision.
-
-The browser renders a restricted Markdown subset. Headings, paragraphs, emphasis, lists, inline code, and code blocks are supported. Links must not become interactive, images must not be rendered or fetched, and raw HTML must not execute. Returning raw Markdown keeps sanitization policy in one client renderer; returning pre-rendered HTML would require an equally strict server-side sanitizer.
-
-### Persona descriptions
-
-The approved Personas screen shows a short description below each display name, but the current persona protocol exposes only ID and display name. The lobby payload therefore needs a safe short-description field or the design needs an explicit empty-description fallback. Persona prompt text must remain private and must not be reused as the summary.
-
-### Recent sessions
-
-The current API lists sessions only within one forum and provides no cross-forum recency ordering. The sidebar needs an aggregate endpoint or equivalent bootstrap data containing at least:
-
-```json
-[
-  {
-    "forum_id": "lobby",
-    "forum_display_name": "The Lobby",
-    "session_id": "2026-08-02-10-30-00-session",
-    "session_label": "Design review",
-    "updated_at": "2026-08-02T10:42:00-07:00",
-    "live": true
-  }
-]
-```
-
-The server should aggregate and order this list. Requiring the browser to fetch every forum's sessions would create an avoidable fan-out and still would not provide reliable recency data. Recent entries contain no session description.
-
-### Forum-session time metadata
-
-The approved Sessions rows show compact relative time at the trailing edge. The existing `SessionListing` has only ID, label, and live state, so it needs an `updated_at` value or equivalent sortable time metadata. It must not gain a description or transcript-excerpt field.
-
-### Session-name validation
-
-The agreed UI requires a non-empty trimmed session name. The server should enforce the same rule rather than relying only on the browser.
-
-### Startup payload
-
-A consolidated startup response is recommended so the browser can render the sidebar and workspace navigation without sequencing several dependent requests. A provisional shape is:
-
-```json
-{
-  "default_persona_id": "reader",
-  "default_forum_id": "lobby",
+  "initial_persona_id": "builtin-guest",
+  "initial_forum_id": "builtin-entrance",
+  "initial_session_id": "builtin-welcome",
   "personas": [],
   "characters": [],
   "forums": [],
@@ -128,47 +39,148 @@ A consolidated startup response is recommended so the browser can render the sid
 }
 ```
 
-Character detail Markdown can remain a separate request so startup does not transfer every `CHARACTER.md`. This can be a new bootstrap endpoint or an extension of the current lobby boundary. The exact route name is an implementation decision.
+The server loads and validates discovery data at startup. Its HTTP projection
+contains workspace entities plus Guest, Assistant, and Entrance. The browser
+opens the shared Welcome session immediately. Configuration changes take effect
+after a server restart.
 
-## Chat status derivation
+Terminal and HTTP discovery are separate projections over the same workspace
+entities. Terminal commands use public names; HTTP routes use stable IDs. The
+projections reuse domain values and validation but not presentation policy.
 
-No separate mutation endpoint is required for the status line.
+Use the same summary entities wherever their fields fit. Do not introduce
+ID-only reference variants solely to avoid repeating display data.
 
-| Status field | Source before a live session | Source in a live session |
-| --- | --- | --- |
-| Forum | Selected/default forum summary | `SessionSnapshot.forum.display_name` |
-| From | Current client persona selection | Current client persona selection |
-| To | Forum summary `default_character_id`, resolved through `members` | `SessionSnapshot.default_character_id`, resolved through `characters` |
+## Persona attribution
 
-An accepted default-character mutation is reflected by the next authoritative snapshot or event and updates To.
+Personas are application-wide authors, not forum or session members. Every input
+request carries the selected persona ID:
+
+```json
+{"persona":"reader","text":"Hello"}
+```
+
+The HTTP boundary resolves that ID to the server-owned ID and display name
+before queueing the command. The session records the resolved identity and does
+not hold or consult a persona roster. Guest can therefore author a message in
+any forum.
+
+Persona prompt context may be captured when a session opens. It is model context
+only and never controls message attribution.
+
+## Reusable summaries
+
+A persona summary contains `id`, `display_name`, and its configured optional
+`description`. It never contains `PERSONA.md` prompt text.
+
+A character summary contains:
+
+```json
+{
+  "id": "epictetus",
+  "display_name": "Epictetus",
+  "description": "A demanding Stoic teacher of freedom and judgment"
+}
+```
+
+The Characters roster, forum membership, and live session snapshots reuse this
+summary.
+
+A forum summary contains:
+
+```json
+{
+  "id": "stoics",
+  "display_name": "The Stoics Forum",
+  "default_character_id": "epictetus",
+  "members": [
+    {
+      "id": "epictetus",
+      "display_name": "Epictetus",
+      "description": "A demanding Stoic teacher of freedom and judgment"
+    }
+  ]
+}
+```
+
+Members are sorted by display name. Forums have no description.
+
+## Character detail
+
+Add:
+
+```text
+GET /api/v1/characters
+GET /api/v1/characters/{character_id}
+```
+
+The detail response contains the character summary fields plus
+`character_markdown`. For workspace characters this is the definition
+`characters/<id>/CHARACTER.md`. Assistant uses the embedded application guide.
+
+The short description comes from `character.toml`. There is no `DISPLAY.md`,
+separate display template, or additional character entity. Character browsing
+does not load provider configuration or forum-local overrides.
+
+The browser renders a restricted Markdown subset. Headings, paragraphs,
+emphasis, lists, inline code, and code blocks are supported. Links are not
+interactive, images are not fetched, and raw HTML does not execute.
+
+## Sessions and Recent
+
+Add `updated_at` to each session listing. Stored-session rows contain ID, label,
+live state, and time; they contain no description or transcript excerpt.
+
+Bootstrap includes all sessions across forums, ordered by database mtime, with
+Welcome first:
+
+```json
+{
+  "forum_id": "stoics",
+  "session_id": "2026-08-02-10-30-00-session",
+  "session_label": "Design review",
+  "updated_at": "2026-08-02T17:42:00Z",
+  "live": true
+}
+```
+
+The browser resolves the forum display from the forum roster. It trims the New
+session name and submits only a non-empty label.
+
+## Shell and opening
+
+The server serves the same client-routed shell at `/` and
+`/s/{forum}/{session}/`. Successful open returns:
+
+```json
+{"forum_id":"stoics","session_id":"2026-08-02-10-30-00-session"}
+```
+
+The browser changes its active conversation without a full page load.
+
+## Chat status
+
+No separate endpoint is needed.
+
+| Field | Source |
+| --- | --- |
+| Forum | Active session's forum summary |
+| From | Current client persona selection |
+| To | Live `default_character_id`, resolved through the character summaries |
 
 ## Client-owned state
 
-The following state does not require a server mutation endpoint:
+Sidebar visibility, Navigation state, selected persona, selected forum,
+inspected character, and the highlighted Recent row require no mutation API.
 
-- Sidebar open or closed.
-- Current Navigation screen.
-- Inspected Character detail ID.
-- Current persona selection, provided its ID is included with each input.
-- Current forum selection while browsing.
-- Which Recent row is highlighted, derived from the active session route.
-
-Browser persistence for persona and forum selections is optional; server-provided defaults remain the fallback.
-
-## Explicit non-requirements
+## Non-requirements
 
 - No create, edit, or delete endpoints for forums, personas, or characters.
 - No forum description.
-- No session description or transcript excerpt in session listings.
-- No forum membership links from Character detail.
-- No need to expose character provider settings, secrets, expanded prompts, or forum-local overrides.
+- No session description or transcript excerpt.
+- No forum links from Character detail.
+- No provider settings, secrets, or forum-local prompt overrides.
+- Settings and attachments remain outside the API contract.
 
-## Still unresolved
-
-- Where default persona and default forum are configured.
-- Whether the initial default-forum Chat is a draft, an immediately persisted session, or a reusable default session.
-- The Settings data model and mutation endpoints.
-- The maximum Recent count and pagination or overflow strategy.
-- Whether duplicate session display names are allowed within a forum.
-- Validation and fallback rules for persona and character short descriptions.
-
+Invalid state uses the server's exception boundary and has no separate browser
+API model.

@@ -47,8 +47,10 @@ out of callers.
 `make_human_entry` takes one `HumanEntrySpec`; designated `author` and
 `addressed_to` fields preserve the human's stored identity separately from the
 agent they addressed without relying on positional arguments of the same type.
-The author is a validated workspace persona ID and display name; the clean `text`
-is stored and rendered unchanged. Model-context projection, outside this layer,
+The author is a workspace persona ID and trusted display name resolved before
+the entry reaches the session/transcript layer; the clean `text` is stored and
+rendered unchanged. The transcript performs no session-membership lookup.
+Model-context projection, outside this layer,
 adds `from <display name>:` only when it makes an ordinary `persona` message.
 `make_hide_on_marker`, `make_hide_marker`, and `make_hide_off_marker` build the
 off-record markers the same way: notices with empty text whose display names

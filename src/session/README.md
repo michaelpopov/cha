@@ -10,7 +10,7 @@ code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, load the validated persona roster, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. |
+| `workspace.*` | Resolve the workspace layout, load persona context for agent definitions, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. Persona selection and author resolution remain outside live sessions. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
@@ -73,9 +73,11 @@ contained to workspace `characters/`; a member `CHARACTER.md` and `FORUM.md`
 are contained to their forum directory.
 
 `Workspace` supplies validated storage-facing metadata and forum definitions.
-The terminal `application/` layer owns its one immutable effective roster and
-passes that same roster to each controller it opens. The agent layer applies the
-shared provider layer, definition, forum-default, and member override policy,
+The terminal `application/` layer owns its immutable effective persona catalog
+and resolves selected authors there. Workspace persona data may also be used
+while agent definitions build static model context, but it is not passed to a
+controller as session membership. The agent layer applies the shared provider
+layer, definition, forum-default, and member override policy,
 deriving the definition containment root from the definition directory's parent
 and otherwise receiving resolved workspace paths explicitly.
 
@@ -141,7 +143,7 @@ sequenceDiagram
     WS->>SC: open_database_path assigned ID
     WS->>SL: acquire lease
     WS->>DB: load_session_state
-    WS->>CC: from_definitions with the loaded roster
+    WS->>CC: from_definitions; no persona membership roster
     WS-->>UI: OpenedSession (descriptor + controller)
 
     Note over UI,CC: Opening a session
@@ -153,7 +155,7 @@ sequenceDiagram
     DB-->>WS: SessionRestore
     WS->>WS: load_personas
     WS->>AG: load_agent_definitions(definition/member pairs, forum, roster)
-    WS->>CC: from_definitions with restore
+    WS->>CC: from_definitions with restore; no persona membership roster
     CC->>CC: repair interrupted turns, then install entries
     WS-->>UI: OpenedSession (descriptor + controller)
 ```
@@ -173,9 +175,9 @@ and validates the forum, roster, and definitions once, publishes the stored
 session, revalidates that database's identity, and constructs the controller
 from the values already loaded. The returned `OpenedSession` couples its
 controller to a descriptor derived from the same validated forum and stored
-session metadata. The controller's roster is therefore
-the exact roster used to assemble its prompts. Terminal creation logs `Session
-stored` followed by `Session opened`.
+session metadata. Persona data used to assemble static prompts is not retained
+by the controller as membership. Terminal creation logs `Session stored`
+followed by `Session opened`.
 
 Listing is tolerant: a file that fails validation still appears, with its error
 attached, so the selector can show it instead of hiding a broken session.
@@ -331,12 +333,12 @@ itself or to navigate away.
 
 | Command | Behavior | Semantic result |
 | --- | --- | --- |
-| `submit_prompt(author_id, text, handle)` | Resolves the author against the session roster, then resolves the handle or falls back to the default agent and starts a turn. | On success, state changes and submitted input is consumed. An unknown author produces `Unknown persona ID '<id>'` and starts no batch; unknown or ambiguous handles and an empty prompt likewise retain the draft. |
+| `submit_prompt(author, text, handle)` | Accepts an owning author identity already resolved by the frontend/application boundary, then resolves the character handle or falls back to the default agent and starts a turn. | On success, state changes and submitted input is consumed. Unknown or ambiguous character handles and an empty prompt retain the draft; persona availability is not session state. |
 | `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | State changes; the text layer decides how a submitted command affects an editor. |
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success state changes with no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
-| `start_multicast(author_id, text, handles)` / `start_multicast_by_ids(author_id, text, ids)` | Resolves textual handles or stable IDs once, resolves the author against the session roster, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | An unknown author starts no batch; terminal notices are retained until multicast completion or abort cleanup. |
+| `start_multicast(author, text, handles)` / `start_multicast_by_ids(author, text, ids)` | Accepts the already-resolved author, resolves textual character handles or stable IDs once, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Target validation failures start no batch; terminal notices are retained until multicast completion or abort cleanup. |
 | `session_information()` | Entry count plus the forum characters and their runtime details. | A notice and consumed submitted input; state is unchanged. |
 | `agent_information()` | Forum characters and runtime details, marking the default. | A notice and consumed submitted input; state is unchanged. |
 | `set_default_agent(handle)` | Changes the default for this run only. | A successful change is observable state; a text command may consume its submitted input. |

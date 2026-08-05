@@ -1,50 +1,98 @@
 # HTTP API gaps for the designed web UI
 
-Status: API review completed 2026-08-03.
+Status: simplified 2026-08-05 against the design in
+[web-ui/](web-ui/README.md).
 
-This document compares the current HTTP API with the agreed browser design in
-[web-ui/](web-ui/README.md). The live-session API is mostly sufficient. The
-blocking gaps are workspace bootstrap and discovery metadata: defaults,
-Characters, forum membership, Recent sessions, and timestamps.
+The existing HTTP API already supports stored-session listing, creation,
+opening, live snapshots, SSE updates, input, default-character changes, and
+stopping generation. The designed UI additionally needs one shell, built-in
+startup state, richer discovery, character detail, Recent, and timestamps.
+
+## Supported scenario
+
+This contract covers one valid workspace and requests produced by the designed
+browser UI. The server loads and validates workspace discovery data at startup.
+Configuration, storage, I/O, and invariant failures propagate to the existing
+exception boundary. Invalid state gets no additional API model or recovery work.
+
+Rough edges are acceptable. When two designs both satisfy the happy path, the
+one with less code wins.
+
+## Boundary rules
+
+HTTP routes and mutations address entities by stable ID. Server-produced
+summaries carry the display data required to render them and may be reused in
+multiple responses. Do not introduce smaller reference entities solely to avoid
+repeating an existing summary.
+
+Transcript entries keep their persisted `display_name` and `addressed_to_name`;
+those values preserve historical attribution. Session labels also remain display
+text.
 
 ## Coverage summary
 
-| Designed feature | Status | Missing |
+| Designed feature | Current status | Required work |
 | --- | --- | --- |
-| Persona selection and message attribution | Partial | Persona IDs/names and per-message attribution work; short descriptions and the default persona do not exist |
-| Characters list | Missing | No workspace Characters route and no short-description field |
-| Character detail | Missing | No route or defined browser-safe `CHARACTER.md` representation |
-| Forums list | Partial | Forum IDs/names work; members and the default character are omitted |
-| Sessions list | Partial | IDs, labels, and live state work; timestamps are missing |
-| Session descriptions | Complete | The API correctly has no description field |
-| Session creation and opening | Mostly complete | The server does not enforce the designed trimmed, non-empty name rule |
-| Recent sessions | Missing | No cross-forum aggregate or recency metadata |
-| Live chat and status line | Mostly complete | Active-session Forum/To data exists; pre-session defaults are missing |
-| Sidebar and Navigation state | Complete client-side | No API is needed |
-| Settings | Undetermined | Settings content has not been designed |
+| One browser shell | Missing | Serve the same shell at `/` and session deep links; return session identity from `open` |
+| Startup | Missing | Add `GET /api/v1/bootstrap` with built-in initial IDs and every discovery collection |
+| Personas | Partial | Add configured short descriptions and Guest |
+| Characters | Missing route | Add summaries, Assistant, and `CHARACTER.md` detail |
+| Forums | Partial | Add member summaries, default character, and Entrance |
+| Sessions | Partial | Add `updated_at` |
+| Recent | Missing | Add a cross-forum mtime-ordered aggregate |
+| Persona attribution | Complete | No work — see below |
+| Live chat | Complete | Reuse the current live runtime and session actions |
+| Settings | Undesigned | No API work |
 
-The current lobby routes expose only forums, personas, per-forum sessions,
-session creation, and session opening. See
-[`lobby_routes.cpp`](../src/ui/web/lobby_routes.cpp). Their DTOs are
-correspondingly narrow: forum and persona summaries contain only ID and display
-name, while session listings contain only ID, label, and live state. See
-[`protocol.h`](../src/ui/web/protocol.h).
+## Existing foundations that remove work
+
+- `WorkspaceSnapshot` already loads and validates personas, characters, and
+  forums. The HTTP projection wraps it rather than re-scanning the workspace.
+- `Persona`, `CharacterDefinitionMetadata`, and `Forum` already carry every
+  discovery field the UI shows, including `Forum::default_agent_id` and member
+  IDs.
+- **`EffectivePersonas` already builds `Guest` + workspace personas as a
+  `SharedPersonaRoster`**, and `SessionController::resolve_author()` already
+  matches **by persona ID** — exactly what the browser submits. No persona
+  refactor is needed. The only gap is that `Workspace::open_session()` hardcodes
+  `load_personas()`, which omits Guest; pass the effective roster in instead.
+- `SessionRegistry` already owns live web sessions and takes a session factory,
+  so built-in dispatch is a branch, not a redesign.
+- `Guest`, Assistant, Entrance, and Welcome already exist in the application
+  layer.
+
+HTTP handlers reuse these values and operations. They must not execute terminal
+commands or parse `ApplicationResult` presentation strings.
 
 ## Required API work
 
-### 1. Add workspace bootstrap and defaults
+### 1. Serve one shell
 
-The UI needs configured `default_persona_id` and `default_forum_id` values.
-`ApplicationConfig` currently contains only host, port, and logging settings.
-See [`workspace.h`](../src/session/workspace.h) and
-[`workspace.cpp`](../src/session/workspace.cpp).
+The server currently presents a lobby at `/` and a different chat document at
+`/s/{forum}/{session}/`, and successful `open` returns a navigation path.
 
-A bootstrap response should provide:
+- `/` and `/s/{forum}/{session}/` serve the same document;
+- successful `open` returns `{forum_id, session_id}`;
+- the standalone session-not-open document is removed.
+
+The shell itself stays the existing placeholder. This is a route-contract change,
+not a UI.
+
+### 2. Add bootstrap, and delete the routes it replaces
+
+Construct one HTTP discovery projection at server startup, wrapping
+`WorkspaceSnapshot` and adding Guest to the persona roster, Assistant to the
+character roster, and Entrance to the forum roster with Assistant as its member
+and default character. Lookup is by linear scan over a handful of entities; no
+index is warranted.
+
+Add `GET /api/v1/bootstrap`:
 
 ```json
 {
-  "default_persona_id": "reader",
-  "default_forum_id": "lobby",
+  "initial_persona_id": "builtin-guest",
+  "initial_forum_id": "builtin-entrance",
+  "initial_session_id": "builtin-welcome",
   "personas": [],
   "characters": [],
   "forums": [],
@@ -52,240 +100,117 @@ A bootstrap response should provide:
 }
 ```
 
-This could be `GET /api/v1/bootstrap` or equivalent composed requests. A single
-response avoids dependent startup requests and per-forum fan-out. The exact
-route name remains an implementation decision.
+The browser starts in Welcome using those IDs. There are no configurable web
+defaults in `app.toml`.
 
-Both configured defaults must be resolved and validated against the loaded
-workspace before they are returned.
+**Delete `GET /api/v1/personas`, `GET /api/v1/forums`, and do not add
+`GET /api/v1/characters`.** Bootstrap returns all three rosters and the browser
+navigates from client-held state, so separate list routes would duplicate the
+same summary work and its tests.
 
-### 2. Expose forum members and the default character
+The surviving lobby surface is bootstrap, `GET /api/v1/characters/{id}`,
+`GET /api/v1/forums/{forum}/sessions`, create, and open.
 
-The underlying `Forum` already contains ordered member IDs and
-`default_agent_id`, but the HTTP `ForumSummary` discards both. The HTTP boundary
-must resolve member display names and expose approximately:
+### 3. Persona, character, and forum summaries
 
-```json
-{
-  "id": "stoics",
-  "display_name": "The Stoics Forum",
-  "default_character_id": "epictetus",
-  "members": [
-    {"id": "epictetus", "display_name": "Epictetus"},
-    {"id": "markus_aurelius", "display_name": "Marcus Aurelius"},
-    {"id": "seneca", "display_name": "Seneca"}
-  ]
-}
-```
+- `PersonaSummary` gains the configured optional `Persona::description`. Guest
+  has none; an absent description is fine. `PERSONA.md` is never reused as a
+  description.
+- One reusable `CharacterSummary` carries `id`, `display_name`, and optional
+  `description` from `character.toml`.
+- `ForumSummary` gains `default_character_id` and `members`, reusing
+  `CharacterSummary` and sorted by display name. Forums have no description and
+  member names are not links.
 
-The required source data is visible in the `Forum` type in
-[`workspace.h`](../src/session/workspace.h). No forum description should be
-added. Member names are plain display text in this UI and do not need links or
-member-detail routes scoped through a forum.
+### 4. Character detail
 
-### 3. Add workspace Characters routes
+Add `GET /api/v1/characters/{character_id}`, returning the summary fields plus
+`character_markdown`.
 
-Recommended minimum routes:
+For a workspace character this is the verbatim contents of
+`characters/<id>/CHARACTER.md`. It does not expand includes, load a forum
+override, or initialize a provider. Definitions that are include-only will render
+their directives as text; that is an accepted rough edge. Assistant returns the
+embedded application guide because it has no workspace file.
 
-```text
-GET /api/v1/characters
-GET /api/v1/characters/{character_id}
-```
+Do not add `DISPLAY.md`, another browsing file, or another character entity.
 
-The list needs stable ID, display name, and a short description. Character
-detail needs the Markdown used by the Character detail screen.
+### 5. Expose Entrance and Welcome through the web runtime
 
-Provisional list response:
+The browser's initial session uses application built-ins the web composition root
+does not construct.
 
-```json
-[
-  {
-    "id": "epictetus",
-    "display_name": "Epictetus",
-    "description": "A demanding Stoic teacher of freedom and judgment"
-  }
-]
-```
+- Own one `WelcomeStorage` per server process, shared by all browsers.
+- Extract the existing Entrance session construction after ID resolution into a
+  shared primitive and call it with IDs from the web.
+- Teach the `SessionRegistry` factory to dispatch Entrance and Welcome IDs.
+- Include Entrance in the bootstrap forum roster.
+- **Entrance's session list is exactly `[Welcome]`.** The web does not read the
+  stored Entrance catalog under `var/system/entrance/sessions`, and creating a
+  session in Entrance is not supported — that request already fails through the
+  existing not-found path, which is an acceptable rough edge.
 
-Provisional detail response:
+### 6. Timestamps and Recent
 
-```json
-{
-  "id": "epictetus",
-  "display_name": "Epictetus",
-  "description": "A demanding Stoic teacher of freedom and judgment",
-  "character_markdown": "# Epictetus\n\n..."
-}
-```
+Add `updated_at` to `SessionListing`, taken from the session database's
+`last_write_time` and serialized as **epoch seconds**. An integer avoids the
+`file_clock` conversion and formatting that ISO-8601 would require. Session rows
+stay limited to ID, label, live state, and time.
 
-The typed character metadata currently contains only ID, display name, and
-tags. See [`config.h`](../src/agents/config.h). The assumed `description` field
-therefore requires a model/config-loader change as well as a new HTTP DTO. It is
-workspace metadata and should not be forum-overridable. Exact validation and
-fallback behavior remain to be defined.
-
-The detail route must validate the character ID as a safe route component and
-must not expose provider configuration, credentials, expanded forum prompts, or
-forum-local overrides.
-
-### 4. Define `CHARACTER.md` browsing semantics
-
-This is not only an endpoint gap; the current content model is ambiguous for a
-forum-independent browser screen.
-
-Returning the raw root file will not necessarily produce the designed full
-description. For example,
-[`workspace/characters/epictetus/CHARACTER.md`](../workspace/characters/epictetus/CHARACTER.md)
-mainly contains template includes. Existing prompt expansion also injects forum
-variables and can select forum-local overrides. See
-[`agent.cpp`](../src/agents/agent.cpp).
-
-The API contract must choose one of these representations:
-
-1. Raw workspace-level `CHARACTER.md` source.
-2. Workspace-definition Markdown with includes expanded under a
-   forum-independent browsing scope.
-3. A separate display document distinct from the prompt template.
-
-Option 2 is closest to the approved visual design, but it must define the
-behavior of forum variables and must never apply a forum member override.
-
-Whatever representation is selected, the browser must render a restricted
-Markdown subset. Headings, paragraphs, emphasis, lists, inline code, and code
-blocks are supported. Links must not become interactive, images must not be
-rendered or fetched, and raw HTML must not execute. Returning Markdown rather
-than pre-rendered HTML keeps this sanitization policy in one browser renderer.
-
-### 5. Add persona short descriptions
-
-The Personas panel shows a short descriptor below each display name, but the
-current `Persona` contains only ID, display name, and private prompt text. See
-[`persona.h`](../src/agents/persona.h). The HTTP summary likewise exposes only
-ID and display name.
-
-`persona.toml` currently rejects every field except `display_name`, so adding a
-safe `description` requires an explicit loader and model change. See
-[`workspace.cpp`](../src/session/workspace.cpp). `PERSONA.md` must not be reused
-as the short description because it is prompt content.
-
-### 6. Add Recent sessions and timestamp metadata
-
-There is no cross-forum Recent endpoint. The browser could fetch every forum's
-session list, but that would create startup fan-out and still would not provide
-authoritative recency ordering.
-
-A Recent entry needs at least:
+Populate bootstrap's `recent_sessions` by merging the per-forum session listings
+and sorting newest first. There is no cap, no pagination, and no pinning —
+Welcome's database is created at process start, so it already sorts first until
+another session is used. A Recent entry is:
 
 ```json
 {
-  "forum_id": "lobby",
-  "forum_display_name": "The Lobby",
-  "session_id": "2026-08-03-12-00-00-session",
+  "forum_id": "stoics",
+  "session_id": "2026-08-02-10-30-00-session",
   "session_label": "Design review",
-  "updated_at": "2026-08-03T12:00:00-07:00",
-  "live": true
+  "updated_at": 1754153000
 }
 ```
 
-The stored session metadata currently contains only ID, forum, and label. See
-[`session_database.h`](../src/session/session_database.h). An authoritative
-`updated_at` must therefore be persisted or derived under a clearly defined
-filesystem policy.
+There is no `live` field: nothing in the design renders live state, and it is the
+only reason Recent would need to consult `SessionRegistry`. The browser resolves
+the forum display name through the bootstrap forum roster.
 
-The same time value can support the compact `Now`/`Tue` presentation in the
-per-forum Sessions screen. `SessionListing` should gain an ISO timestamp or
-equivalent sortable value. It must not gain a description or transcript
-excerpt.
-
-Recent entries also contain no description or transcript excerpt.
-
-### 7. Enforce session-name validation on the server
-
-The request parser accepts any string unchanged. See
-[`json.cpp`](../src/ui/web/json.cpp). An empty label is then silently replaced
-with the generated session ID, while a whitespace-only label remains
-whitespace. See [`session_catalog.cpp`](../src/session/session_catalog.cpp).
-
-The server must trim the submitted label and return `400 bad_request` when the
-result is empty. Browser-side disabled-button behavior is not sufficient
+The browser trims the required New session name and submits a non-empty label.
+The server keeps its existing ID-based create/open workflow and adds no
 validation.
 
 ## Chat status derivation
 
-No separate status endpoint or mutation is needed.
+No new status endpoint is required.
 
-| Status field | Before a live session | In a live session |
-| --- | --- | --- |
-| Forum | Selected/default forum summary | `SessionSnapshot.forum.display_name` |
-| From | Current client persona selection | Current client persona selection |
-| To | Forum summary `default_character_id`, resolved through `members` | `SessionSnapshot.default_character_id`, resolved through `characters` |
-
-The current live snapshot already contains forum identity, the forum character
-roster, and `default_character_id`, together with transcript and generation
-state. See [`protocol.h`](../src/ui/web/protocol.h) and
-[`session_projection.cpp`](../src/ui/web/session_projection.cpp).
-
-Persona attribution is already correctly submitted with each prompt. A
-successful default-character action marks session state as changed, and the web
-runtime publishes authoritative updated state through SSE. See
-[`session_controller.cpp`](../src/session/session_controller.cpp) and
-[`web_session_runtime.cpp`](../src/ui/web/web_session_runtime.cpp).
-
-## Existing API capabilities that should be retained
-
-| Capability | Current boundary |
+| Field | Source |
 | --- | --- |
-| List persona IDs and display names | `GET /api/v1/personas` |
-| List forum IDs and display names | `GET /api/v1/forums` |
-| List a forum's session IDs, labels, and live state | `GET /api/v1/forums/{forum}/sessions` |
-| Create a stored session | `POST /api/v1/forums/{forum}/sessions` |
-| Open or reattach a session | `POST /api/v1/forums/{forum}/sessions/{session}/open` |
-| Load a live snapshot | `GET /s/{forum}/{session}/api/v1/session` |
-| Stream snapshots and append events | `GET /s/{forum}/{session}/api/v1/events` |
-| Submit text as the current persona | `POST /s/{forum}/{session}/api/v1/input` |
-| Change a live session's default character | `POST /s/{forum}/{session}/api/v1/actions/default-agent` |
-| Stop generation | `POST /s/{forum}/{session}/api/v1/actions/stop` |
+| Forum | Active session's `ForumSummary` |
+| From | Current browser persona selection |
+| To | `SessionSnapshot.default_character_id`, resolved through its character summaries |
 
-The live chat transport does not need redesign to support the current visual
-specification.
+An accepted default-character mutation is reflected by the next snapshot or SSE
+event.
 
-## Client-owned state and explicit non-requirements
+## Existing capabilities to retain
 
-No server mutation endpoint is needed for:
+- One owner thread per live session and owning commands across the HTTP seam.
+- One SSE connection per live session.
+- Reattachment through `SessionRegistry`.
+- Server-owned transcript attribution.
+- No session descriptions or transcript excerpts in listings.
+- No create, edit, or delete endpoints for personas, characters, or forums.
 
-- Sidebar open or closed.
-- Current Navigation screen.
-- Inspected Character detail ID.
-- Current persona selection, provided its ID accompanies each input.
-- Current forum selection while browsing.
-- The highlighted Recent row, derived from the active session route.
+## Client-owned state
 
-Do not add:
+No server mutation is needed for sidebar visibility, Navigation state, selected
+persona, selected forum, inspected character, or highlighted Recent row. A page
+load starts from the bootstrap initial IDs.
 
-- Create, update, or delete endpoints for forums, personas, or characters.
-- Forum descriptions.
-- Session descriptions or transcript excerpts in listings.
-- Forum membership links from Character detail.
-- A separate chat-status endpoint.
+## Out of scope
 
-Settings content remains undesigned, so no Settings API can be specified yet.
+Only the success-path work above is part of the contract. Invalid state gets no
+API model or recovery work. Settings, attachments, and additional character
+display entities are not part of the designed UI.
 
-## Attachment-button inconsistency
-
-The approved mockup currently contains a `+` button in the prompt composer, but
-neither its behavior nor an attachment/upload API has been defined. The current
-application has no corresponding HTTP or session-domain capability.
-
-The button must be removed or disabled unless attachments become an explicit
-feature with a separate design and API contract.
-
-## Recommended implementation order
-
-1. Define and validate default persona/default forum configuration.
-2. Add public workspace summary access for personas, characters, forums,
-   members, and forum defaults.
-3. Add the bootstrap response and Character list route.
-4. Resolve Character detail Markdown semantics and add its detail route.
-5. Add persisted or authoritative session time metadata and Recent aggregation.
-6. Enforce trimmed, non-empty session labels server-side.
-7. Decide whether the composer attachment button remains in the design.
+The executable development plan is [api_plan.md](api_plan.md).

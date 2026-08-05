@@ -14,6 +14,8 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - Sidebar references change the main-area state without closing or opening the sidebar.
 - The main surface displays either Chat or one Navigation state, never both.
 - The sidebar contains Personas, Characters, Forums, Recent session references, and the Settings gear. It does not show the current persona or forum.
+- The browser starts in the shared Welcome session in Entrance, with Guest selected and Assistant as the current target.
+- Personas are application-wide authors, never forum or session members. The server resolves the selected persona on each submission; switching personas never requires reopening a session.
 - Chat has no title or context header. A compact line below the composer shows `<Forum>   From: <Persona>   To: <current default character>`.
 - Characters is informational. It lists workspace characters and opens a read-only rendering of a character's `CHARACTER.md`.
 - Forums list member character names beneath each forum title. Forum descriptions do not exist, and member names are not links.
@@ -73,11 +75,7 @@ The Sessions title does not repeat the selected forum. Session rows do not conta
 - [Navigation flows](flows.md)
 - [Web API implications](api-requirements.md)
 
-## Pending visual or product decisions
+## Out of scope
 
 - Settings content beyond its entry point.
-- Loading, unavailable-session, and recoverable-error presentation.
-- The initial Chat lifecycle before a persisted session has been selected or created.
-- Recent-session count, ordering details, and overflow behavior.
-- The exact configuration schema and fallback behavior for short persona and character descriptions.
-
+- Invalid application state has no separate browser presentation contract.

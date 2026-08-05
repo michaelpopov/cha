@@ -14,6 +14,12 @@ commands and turns their results into frontend presentation. `/help` is a built-
 remains available while a response is generating. The other application
 commands reject immediately during generation.
 
+Persona resolution stops here. `/iam` resolves one workspace-wide persona, and
+ordinary input passes that owning ID/display-name identity to the current
+controller. A session records the author but does not own the effective persona
+catalog or repeat a membership lookup. Opening or switching sessions therefore
+does not constrain which selected application persona can author the next turn.
+
 The application catalog uses public names only. Built-ins are omitted from
 discovery lists by provenance but remain valid explicit targets. Welcome is an
 ephemeral source separate from Entrance's persistent session source, which is
@@ -21,9 +27,10 @@ why it can be opened by name without appearing in an Entrance stored-session
 list. Persistent Entrance sessions are application-owned storage, not
 workspace-defined forum configuration.
 
-The web frontend does not use this layer: it keeps its key-based routes and
-workspace/session lifecycle. It shares only the workspace provider configuration
-through the layers below this directory.
+The web frontend does not use `ChatApplication` or terminal presentation
+results: it keeps key-based routes and its own session lifecycle. It may reuse
+shared domain loaders and built-in session construction, but not the terminal
+discovery projection. It resolves web persona IDs at its own HTTP boundary.
 
 ## Dependencies
 

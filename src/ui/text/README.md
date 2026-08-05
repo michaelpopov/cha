@@ -12,7 +12,7 @@ curses, storage, or providers.
 | `command.*` | `parse_command()` — recognizes `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/mcast`, `/info`, `/agents`, `/stop`, `/exit`, and `/@Name`, splitting off any argument. |
 | `mcast.*` | `parse_multicast_input()` — parses recipient lists and prompts for `/mcast`. |
 | `mention.*` | `parse_addressed_prompt()` — splits a leading `@Name` from the prompt text, with `@@` as the escape for a literal at-sign. |
-| `text_input.*` | `handle_text_input()` — the policy layer that turns a parsed line and its author ID into controller calls. |
+| `text_input.*` | `handle_text_input()` — the policy layer that turns a parsed line and its already-resolved author identity into controller calls. |
 
 ## The grammar
 
@@ -32,11 +32,12 @@ Mentions are recognized only at the start of a line, after leading whitespace.
 Trailing punctuation on a handle (`@Ada, hello`) is tolerated during resolution
 in `ForumCharacters`, not here.
 
-The parser never resolves a handle. `handle_text_input()` receives the selected
-author's stable persona ID and hands it with text and multicast handles through
-to `SessionController`. The controller resolves the author against the
-session's captured persona roster and the handles against `ForumCharacters`, so the
-grammar cannot go stale when the characters in a forum change.
+The parser never resolves a persona or character handle. `handle_text_input()`
+receives an owning author identity already resolved by its frontend/application
+boundary and hands it with text and multicast handles through to
+`SessionController`. The controller trusts that server-resolved author value for
+attribution and resolves only character handles against `ForumCharacters`.
+Persona availability is application-wide rather than session state.
 
 ## Dispatch
 
@@ -51,8 +52,8 @@ flowchart TD
     stopq -->|"no"| notice["in-progress notice,<br/>input left untouched"]
     busy -->|"no"| kind{"command kind"}
     kind -->|"text"| mention["parse_addressed_prompt"]
-    mention --> submit["controller.submit_prompt(author, text, handle)"]
-    kind -->|"mcast"| multicast["parse_multicast_input, then controller.start_multicast(author, text, handles)"]
+    mention --> submit["controller.submit_prompt(resolved author, text, handle)"]
+    kind -->|"mcast"| multicast["parse_multicast_input, then controller.start_multicast(resolved author, text, handles)"]
     kind -->|"has an argument"| argerr["notice: takes no arguments"]
     kind -->|"clear"| c1["controller.clear_transcript"]
     kind -->|"hide_on"| c2["controller.open_offrecord"]
