@@ -277,12 +277,16 @@ void validate_character_id(std::string_view id) {
     }
 }
 
-void validate_character_name(std::string_view name) {
+void validate_character_name_syntax(std::string_view name) {
     try {
         validate_public_name(name, "Character name", "character.toml", true);
     } catch (const std::runtime_error& error) {
         throw std::invalid_argument(error.what());
     }
+}
+
+void validate_character_name(std::string_view name) {
+    validate_character_name_syntax(name);
     const std::string folded = fold_ascii(name);
     for (const std::string_view reserved : reserved_participant_names) {
         if (folded == reserved) {

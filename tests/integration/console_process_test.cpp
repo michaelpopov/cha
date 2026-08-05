@@ -56,7 +56,14 @@ ProcessResult run_console(
     int status{};
     const auto deadline = std::chrono::steady_clock::now()
         + std::chrono::seconds(5);
-    while (::waitpid(child, &status, WNOHANG) == 0) {
+    while (true) {
+        const pid_t waited = ::waitpid(child, &status, WNOHANG);
+        if (waited == child) break;
+        if (waited == -1 && errno == EINTR) continue;
+        if (waited == -1) {
+            (void)::kill(child, SIGKILL);
+            throw std::runtime_error("Failed to wait for console process");
+        }
         if (std::chrono::steady_clock::now() >= deadline) {
             (void)::kill(child, SIGKILL);
             (void)::waitpid(child, &status, 0);
@@ -96,6 +103,65 @@ TEST(ConsoleProcess, WholeWorkspaceCheckNeedsNoProviderCredential) {
     const ProcessResult result = run_console(workspace.root(), "", true);
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_EQ(result.output, "Workspace is valid.\n");
+}
+
+TEST(ConsoleProcess, SeveralRedirectedPromptsRunInOrder) {
+    test::TestWorkspace workspace;
+    const ProcessResult result = run_console(workspace.root(), "one\ntwo\nthree\n");
+    ASSERT_EQ(result.exit_code, 0) << result.errors;
+    const std::size_t first = result.output.find("[Guest] one");
+    const std::size_t second = result.output.find("[Guest] two");
+    const std::size_t third = result.output.find("[Guest] three");
+    ASSERT_NE(first, std::string::npos);
+    ASSERT_NE(second, std::string::npos);
+    ASSERT_NE(third, std::string::npos);
+    EXPECT_LT(first, second);
+    EXPECT_LT(second, third);
+}
+
+TEST(ConsoleProcess, EscapeInjectionInTranscriptIsNeutralized) {
+    test::TestWorkspace workspace;
+    const ProcessResult result = run_console(
+        workspace.root(), std::string("hello ") + "\x1b]0;pwned\x07\n");
+    ASSERT_EQ(result.exit_code, 0) << result.errors;
+    EXPECT_EQ(result.output.find('\x1b'), std::string::npos);
+    EXPECT_NE(result.output.find("^[]0;pwned^G"), std::string::npos);
+}
+
+TEST(ConsoleProcess, ConsoleBinaryDoesNotLinkNcurses) {
+    int output_pipe[2]{};
+    ASSERT_EQ(::pipe(output_pipe), 0);
+    const pid_t child = ::fork();
+    ASSERT_NE(child, -1);
+    if (child == 0) {
+        (void)::dup2(output_pipe[1], STDOUT_FILENO);
+        (void)::dup2(output_pipe[1], STDERR_FILENO);
+        ::close(output_pipe[0]);
+        ::close(output_pipe[1]);
+#if defined(__APPLE__) && defined(__MACH__)
+        ::execlp("otool", "otool", "-L", CHA_CONSOLE_BINARY,
+            static_cast<char*>(nullptr));
+#else
+        ::execlp("ldd", "ldd", CHA_CONSOLE_BINARY,
+            static_cast<char*>(nullptr));
+#endif
+        _exit(127);
+    }
+    ::close(output_pipe[1]);
+    std::string output;
+    std::array<char, 4096> buffer{};
+    while (true) {
+        const ssize_t count = ::read(output_pipe[0], buffer.data(), buffer.size());
+        if (count > 0) output.append(buffer.data(), static_cast<std::size_t>(count));
+        else if (count == -1 && errno == EINTR) continue;
+        else break;
+    }
+    ::close(output_pipe[0]);
+    int status{};
+    ASSERT_EQ(::waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(WEXITSTATUS(status), 0) << output;
+    EXPECT_EQ(output.find("ncurses"), std::string::npos) << output;
 }
 
 } // namespace

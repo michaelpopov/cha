@@ -134,6 +134,16 @@ TEST_F(ApplicationWorkspaceTest, RequiresValidProviderWithoutAcceptingIdentityFi
         << "host = \"127.0.0.1\"\nport = 8080\n[provider]\ndisplay_name = \"No\"\nhost = \"test\"\nport = 1\n"
            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
     EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+
+    std::ofstream(root_ / "app.toml")
+        << "host = \"127.0.0.1\"\nport = 8080\n[provider]\nhost = \"test\"\nport = 1\nhtps = true\n"
+           "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
+
+    std::ofstream(root_ / "app.toml")
+        << "host = \"127.0.0.1\"\nport = 8080\n[provider]\nhost = \"test\"\nport = 1\napi_key = \"secret\"\n"
+           "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
+    EXPECT_THROW((void)Workspace(root_), std::runtime_error);
 }
 
 TEST_F(ApplicationWorkspaceTest, RequiresWorkspaceDefinitions) {

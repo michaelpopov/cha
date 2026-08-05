@@ -532,6 +532,13 @@ SessionSummary Workspace::session_summary_by_name(
     } catch (const SessionNotFoundError&) {
         throw SessionNotFoundError("Session '" + session_name
             + "' does not exist in forum '" + forum.display_name + "'");
+    } catch (const InvalidSessionNameError&) {
+        throw;
+    } catch (const std::exception& error) {
+        log_warn("Failed to read session summary for forum_id=" + forum.name
+            + ": " + error.what());
+        throw std::runtime_error("Unable to read session '" + session_name
+            + "' in forum '" + forum.display_name + "'");
     }
 }
 
@@ -546,8 +553,7 @@ SessionSummary Workspace::create_stored_session(
     std::string label) const {
     const Forum forum = check_forum(forum_name);
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    if (label.empty()) return summarize(catalog.create(std::move(label)));
-    return summarize(catalog.create_by_name(std::move(label)).session);
+    return summarize(catalog.create(std::move(label)));
 }
 
 SessionSummary Workspace::create_stored_session_by_name(
@@ -580,22 +586,9 @@ OpenedSession Workspace::create_session(
     validate_forum_characters(definitions);
 
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    // Empty labels are retained only for the established key-based API. The
-    // public-name path always uses create_by_name and transfers its lease.
-    if (label.empty()) {
-        const Session stored = catalog.create(std::move(label));
-        const std::filesystem::path database_path = catalog.open_database_path(stored.id);
-        SessionLease lease = SessionLease::acquire(database_path);
-        SessionRestore restored = load_session_state(database_path);
-        return {
-            .descriptor = {.identity = {forum.name, stored.id}, .forum_display_name = forum.display_name, .session_label = stored.label},
-            .controller = SessionController::from_definitions(std::move(definitions), std::move(personas), forum.default_agent_id, database_path, std::move(lease), notifier, std::move(restored)),
-        };
-    }
-    PreparedSession prepared = catalog.create_by_name(std::move(label));
-    const Session stored = prepared.session;
-    const std::filesystem::path database_path = prepared.database_path;
-    SessionLease lease = std::move(prepared.lease);
+    const Session stored = catalog.create(std::move(label));
+    const std::filesystem::path database_path = catalog.open_database_path(stored.id);
+    SessionLease lease = SessionLease::acquire(database_path);
     SessionRestore restored = load_session_state(database_path);
     std::unique_ptr<SessionController> controller =
         SessionController::from_definitions(
@@ -634,6 +627,13 @@ OpenedSession Workspace::open_session_by_name(
             + "' does not exist in forum '" + forum.display_name + "'");
     } catch (const SessionBusyError&) {
         throw SessionBusyError("Session '" + session_name + "' is in use elsewhere");
+    } catch (const InvalidSessionNameError&) {
+        throw;
+    } catch (const std::exception& error) {
+        log_warn("Failed to open session for forum_id=" + forum.name
+            + ": " + error.what());
+        throw std::runtime_error("Unable to open session '" + session_name
+            + "' in forum '" + forum.display_name + "'");
     }
 }
 

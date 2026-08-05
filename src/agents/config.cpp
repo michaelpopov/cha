@@ -199,7 +199,7 @@ ConfigPatch provider_patch(const ProviderConfig& provider) {
     return {
         .host = provider.host, .port = provider.port, .mode = provider.mode,
         .model = provider.model, .stream = provider.stream,
-        .temperature = provider.temperature, .api_key = provider.api_key,
+        .temperature = provider.temperature,
         .api_key_env = provider.api_key_env, .reasoning_effort = provider.reasoning_effort,
         .reasoning_format = provider.reasoning_format, .https = provider.https,
     };
@@ -272,11 +272,15 @@ ProviderConfig load_provider_config(const std::filesystem::path& app_config_path
     const toml::table root = toml::parse(file, utf8_path(app_config_path));
     const toml::table* table = root["provider"].as_table();
     if (!table) throw std::runtime_error("Application config '" + utf8_path(app_config_path) + "' requires a [provider] table");
+    static const std::unordered_set<std::string_view> allowed{
+        "host", "port", "mode", "model", "stream", "temperature",
+        "api_key_env", "reasoning_effort", "reasoning_format", "https"};
     for (const auto& [key, value] : *table) {
         (void)value;
         const std::string_view name = key.str();
-        if (name == "id" || name == "name" || name == "display_name" || name == "tags" || name == "description" || name == "prompt") {
-            throw std::runtime_error("Application config '" + utf8_path(app_config_path) + "' [provider] cannot define '" + std::string(name) + "'");
+        if (!allowed.contains(name)) {
+            throw std::runtime_error("Application config '" + utf8_path(app_config_path)
+                + "' [provider] has unsupported field '" + std::string(name) + "'");
         }
     }
     ProviderConfig provider{.source = app_config_path,
@@ -286,7 +290,6 @@ ProviderConfig load_provider_config(const std::filesystem::path& app_config_path
         .model = read_optional<std::string>(*table, app_config_path, "model", "string"),
         .stream = read_optional<bool>(*table, app_config_path, "stream", "boolean"),
         .temperature = read_optional<double>(*table, app_config_path, "temperature", "numeric"),
-        .api_key = read_optional<std::string>(*table, app_config_path, "api_key", "string"),
         .api_key_env = read_optional<std::string>(*table, app_config_path, "api_key_env", "string"),
         .reasoning_effort = read_optional<std::string>(*table, app_config_path, "reasoning_effort", "string"),
         .reasoning_format = read_reasoning_format(*table, app_config_path),

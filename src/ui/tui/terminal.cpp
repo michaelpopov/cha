@@ -19,11 +19,6 @@ Terminal::~Terminal() {
     restore();
 }
 
-void Terminal::configure_selector() {
-    nodelay(stdscr, false);
-    curs_set(0);
-}
-
 void Terminal::configure_chat() {
     nodelay(stdscr, true);
     curs_set(1);

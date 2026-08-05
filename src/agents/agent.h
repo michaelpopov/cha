@@ -102,6 +102,9 @@ void append_standard_prompt_context(
     const PersonaRoster& personas);
 
 void validate_character_id(std::string_view id);
+// Validates the transport/runtime shape only. Workspace definitions must use
+// validate_character_name(), which additionally enforces reserved names.
+void validate_character_name_syntax(std::string_view name);
 void validate_character_name(std::string_view name);
 void validate_persona_character_collisions(
     const PersonaRoster& personas,

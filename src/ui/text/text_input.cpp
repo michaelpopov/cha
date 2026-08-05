@@ -1,6 +1,7 @@
 #include "ui/text/text_input.h"
 
 #include "session/session_controller.h"
+#include "ui/text/application_command.h"
 #include "ui/text/command.h"
 #include "ui/text/mcast.h"
 #include "ui/text/mention.h"
@@ -93,8 +94,7 @@ TextInputResult handle_text_input(
         result.session = controller.set_default_agent(command.handle); break;
     case CommandKind::unknown:
         result.clear_input = true;
-        result.session.notice =
-            "Unknown command. Commands: /iam, /open, /create, /forums, /sessions, /personas, /help, /clear, /hide-on, /hide, /hide-off, /mcast, /info, /agents, /@Name, /stop, /exit";
+        result.session.notice = "Unknown command. Commands: " + command_names();
         return result;
     case CommandKind::text:
         return result;

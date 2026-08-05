@@ -28,7 +28,9 @@ struct HandleResolution {
 // non-empty and that character IDs and case-folded names are unique.
 class ForumCharacters {
 public:
-    explicit ForumCharacters(std::vector<CharacterInfo> characters);
+    explicit ForumCharacters(
+        std::vector<CharacterInfo> characters,
+        bool allow_reserved_names = false);
 
     const std::vector<CharacterInfo>& all() const noexcept;
     const CharacterInfo& first() const;

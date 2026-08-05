@@ -50,7 +50,7 @@ void validate_requested_session_name(std::string_view name) {
     try {
         validate_public_name(name, "Session name", "requested session");
     } catch (const std::exception&) {
-        throw std::runtime_error("Session name is not a valid public name");
+        throw InvalidSessionNameError("Session name is not a valid public name");
     }
 }
 
@@ -203,19 +203,18 @@ Session SessionCatalog::session(const std::string& session_id) const {
 }
 
 Session SessionCatalog::create(std::string label) const {
-    if (!label.empty()) return create_by_name(std::move(label)).session;
-
     std::filesystem::create_directories(directory_);
     CatalogLease catalog_lease = CatalogLease::acquire(directory_);
     const std::string base_id = timestamp_name(clock_());
-    for (std::size_t suffix = 2;; ++suffix) {
-        const std::string id = suffix == 2 ? base_id : base_id + "-" + std::to_string(suffix);
+    for (std::size_t suffix = 1;; ++suffix) {
+        const std::string id = suffix == 1 ? base_id : base_id + "-" + std::to_string(suffix);
         const std::filesystem::path path = database_path(id);
         if (std::filesystem::exists(path)) continue;
         try {
             SessionLease lease = SessionLease::acquire(path);
-            if (create_session_database(path, {.id = id, .forum = forum_name_, .label = id})) {
-                return {id, id};
+            const std::string effective_label = label.empty() ? id : label;
+            if (create_session_database(path, {.id = id, .forum = forum_name_, .label = effective_label})) {
+                return {id, effective_label};
             }
         } catch (const SessionBusyError&) {
             // A stale companion file is harmless; its held kernel lock means
@@ -231,10 +230,10 @@ Session SessionCatalog::session_by_name(const std::string& name) const {
         if (candidate.error.empty() && fold_ascii(candidate.label) == fold_ascii(name)) matches.push_back(candidate);
     }
     if (matches.empty()) {
-        throw SessionNotFoundError("Session '" + name + "' does not exist in forum '" + forum_name_ + "'");
+        throw SessionNotFoundError("Session '" + name + "' does not exist");
     }
     if (matches.size() != 1 || matches.front().ambiguous) {
-        throw SessionNameAmbiguousError("Session name '" + name + "' is ambiguous in forum '" + forum_name_ + "'");
+        throw SessionNameAmbiguousError("Session name '" + name + "' is ambiguous");
     }
     return matches.front();
 }
@@ -247,7 +246,8 @@ PreparedSession SessionCatalog::create_by_name(std::string name) const {
     CatalogLease catalog_lease = CatalogLease::acquire(directory_);
     for (const Session& existing : list_by_name()) {
         if (existing.error.empty() && fold_ascii(existing.label) == fold_ascii(name)) {
-            throw SessionNameExistsError("Session '" + name + "' already exists in forum '" + forum_name_ + "'; use /open");
+            throw SessionNameExistsError(
+                "Session '" + name + "' already exists; use /open");
         }
     }
     const std::string base_id = timestamp_name(clock_());
@@ -262,7 +262,8 @@ PreparedSession SessionCatalog::create_by_name(std::string name) const {
         try {
             lease.emplace(SessionLease::acquire(path));
         } catch (const SessionBusyError&) {
-            if (!std::filesystem::exists(path)) throw;
+            // A held companion lock makes this stem unavailable even when its
+            // database has not yet been published. Try the next candidate.
         }
         if (!lease) {
             id = base_id + "-" + std::to_string(suffix);

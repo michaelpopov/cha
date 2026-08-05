@@ -28,3 +28,16 @@ TEST(WorkspaceSnapshot, RejectsDuplicateAndReservedForumPublicNames) {
     std::ofstream(forum / "config.toml") << "display_name = \"Entrance\"\n";
     EXPECT_THROW((void)cha::Workspace(fixture.root()), std::runtime_error);
 }
+
+TEST(WorkspaceSnapshot, RejectsCharacterIdsReservedForBuiltins) {
+    cha::test::TestWorkspace fixture;
+    const auto definition = fixture.root() / "characters" / "builtin-guest";
+    const auto member = fixture.root() / "forums" / "lobby" / "members" / "builtin-guest";
+    std::filesystem::create_directories(definition);
+    std::filesystem::create_directories(member);
+    std::ofstream(definition / "character.toml") << "display_name = \"Impostor\"\n";
+    std::ofstream(definition / "CHARACTER.md") << "Prompt\n";
+
+    const cha::Workspace workspace(fixture.root());
+    EXPECT_THROW((void)cha::WorkspaceSnapshot(workspace), std::runtime_error);
+}

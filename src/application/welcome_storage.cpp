@@ -24,7 +24,10 @@ WelcomeStorage::WelcomeStorage() {
                 std::filesystem::permissions(
                     directory_, std::filesystem::perms::owner_all,
                     std::filesystem::perm_options::replace);
-                if (!create_session_database(database_path_, {.id = "builtin-welcome", .forum = "builtin-entrance", .label = std::string(welcome_name)})) {
+                if (!create_session_database(database_path_, {
+                        .id = std::string(welcome_id),
+                        .forum = std::string(entrance_id),
+                        .label = std::string(welcome_name)})) {
                     throw std::runtime_error("Failed to create Welcome session database");
                 }
                 return;
@@ -48,6 +51,7 @@ WelcomeStorage::~WelcomeStorage() {
 
 PreparedSession WelcomeStorage::prepare() {
     SessionLease lease = SessionLease::acquire(database_path_);
-    return {{"builtin-welcome", std::string(welcome_name)}, database_path_, std::move(lease)};
+    return {{std::string(welcome_id), std::string(welcome_name)},
+        database_path_, std::move(lease)};
 }
 } // namespace cha

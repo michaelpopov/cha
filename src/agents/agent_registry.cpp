@@ -35,12 +35,7 @@ std::vector<AgentRuntimeInfo> build_runtime_info(
         }
         AgentRuntimeInfo info = backend->info();
         validate_character_id(info.character.id);
-        // Assistant is reserved to workspace definitions, but the trusted
-        // application factory owns this exact private identity.
-        if (!(info.character.id == "builtin-assistant"
-              && info.character.name == "Assistant")) {
-            validate_character_name(info.character.name);
-        }
+        validate_character_name_syntax(info.character.name);
         if (!ids.insert(info.character.id).second) {
             throw std::invalid_argument(
                 "Agent registry has duplicate character ID '" + info.character.id
@@ -67,9 +62,11 @@ std::vector<std::unique_ptr<CompletionBackend>> build_backends(
             backends.push_back(
                 std::make_unique<CompletionClient>(std::move(definition)));
         } catch (const std::exception& error) {
+            log_error("Character initialization failed: agent_id=" + id
+                + " reason=" + error.what());
             throw std::runtime_error(
-                "Character '" + name + "' (agent ID '" + id
-                + "') failed to initialize: " + error.what());
+                "Character '" + name + "' failed to initialize: "
+                + error.what());
         }
     }
     return backends;

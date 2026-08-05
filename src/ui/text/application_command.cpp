@@ -1,32 +1,57 @@
 #include "ui/text/application_command.h"
 
 #include <cctype>
+#include <array>
 #include <optional>
 
 namespace cha {
 namespace {
 bool ascii_space(char value) { return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\f' || value == '\v'; }
-std::optional<ApplicationCommandKind> kind_for(std::string_view name) {
-    if (name == "/iam") return ApplicationCommandKind::iam;
-    if (name == "/open") return ApplicationCommandKind::open;
-    if (name == "/create") return ApplicationCommandKind::create;
-    if (name == "/forums") return ApplicationCommandKind::forums;
-    if (name == "/sessions") return ApplicationCommandKind::sessions;
-    if (name == "/personas") return ApplicationCommandKind::personas;
-    if (name == "/help") return ApplicationCommandKind::help;
-    return std::nullopt;
+constexpr std::array descriptors{
+    CommandDescriptor{"/iam", "/iam <persona>", "Change the current persona.", ApplicationCommandKind::iam, 1},
+    CommandDescriptor{"/open", "/open <forum> <session>", "Open a session.", ApplicationCommandKind::open, 2},
+    CommandDescriptor{"/create", "/create <forum> <session>", "Create and open a session.", ApplicationCommandKind::create, 2},
+    CommandDescriptor{"/forums", "/forums", "List workspace forums.", ApplicationCommandKind::forums, 0},
+    CommandDescriptor{"/sessions", "/sessions <forum>", "List stored sessions.", ApplicationCommandKind::sessions, 1},
+    CommandDescriptor{"/personas", "/personas", "List workspace personas.", ApplicationCommandKind::personas, 0},
+    CommandDescriptor{"/help", "/help", "List commands.", ApplicationCommandKind::help, 0},
+    CommandDescriptor{"/clear", "/clear", "Clear the transcript.", std::nullopt, 0},
+    CommandDescriptor{"/hide-on", "/hide-on", "Begin an off-record span.", std::nullopt, 0},
+    CommandDescriptor{"/hide", "/hide", "Extend an off-record span.", std::nullopt, 0},
+    CommandDescriptor{"/hide-off", "/hide-off", "End an off-record span.", std::nullopt, 0},
+    CommandDescriptor{"/mcast", "/mcast <targets> <text>", "Send a multicast prompt.", std::nullopt, 0},
+    CommandDescriptor{"/info", "/info", "Show session information.", std::nullopt, 0},
+    CommandDescriptor{"/agents", "/agents", "List forum agents.", std::nullopt, 0},
+    CommandDescriptor{"/@Name", "/@Name", "Set the default agent.", std::nullopt, 0},
+    CommandDescriptor{"/stop", "/stop", "Stop generation.", std::nullopt, 0},
+    CommandDescriptor{"/exit", "/exit", "Exit the application.", std::nullopt, 0},
+};
+
+const CommandDescriptor* application_descriptor(std::string_view name) {
+    for (const CommandDescriptor& descriptor : descriptors) {
+        if (descriptor.application_kind && descriptor.name == name) return &descriptor;
+    }
+    return nullptr;
 }
-std::size_t arity(ApplicationCommandKind kind) {
-    switch (kind) { case ApplicationCommandKind::iam: case ApplicationCommandKind::sessions: return 1; case ApplicationCommandKind::open: case ApplicationCommandKind::create: return 2; default: return 0; }
 }
+
+std::span<const CommandDescriptor> command_descriptors() { return descriptors; }
+
+std::string command_names() {
+    std::string result;
+    for (const CommandDescriptor& descriptor : descriptors) {
+        if (!result.empty()) result += ", ";
+        result += descriptor.name;
+    }
+    return result;
 }
 
 std::optional<ApplicationCommandParseResult> parse_application_command(std::string_view input) {
     if (!input.starts_with('/')) return std::nullopt;
     std::size_t pos{};
     while (pos < input.size() && !ascii_space(input[pos])) ++pos;
-    const auto kind = kind_for(input.substr(0, pos));
-    if (!kind) return std::nullopt;
+    const CommandDescriptor* descriptor = application_descriptor(input.substr(0, pos));
+    if (descriptor == nullptr) return std::nullopt;
     std::vector<std::string> names;
     while (pos < input.size()) {
         while (pos < input.size() && ascii_space(input[pos])) ++pos;
@@ -53,9 +78,9 @@ std::optional<ApplicationCommandParseResult> parse_application_command(std::stri
         }
         names.push_back(std::move(value));
     }
-    if (names.size() < arity(*kind)) return ApplicationCommandParseError::missing_argument;
-    if (names.size() > arity(*kind)) return ApplicationCommandParseError::extra_argument;
-    return ApplicationCommand{*kind, std::move(names)};
+    if (names.size() < descriptor->arity) return ApplicationCommandParseError::missing_argument;
+    if (names.size() > descriptor->arity) return ApplicationCommandParseError::extra_argument;
+    return ApplicationCommand{*descriptor->application_kind, std::move(names)};
 }
 std::string_view application_command_parse_error_message(ApplicationCommandParseError error) {
     switch (error) {

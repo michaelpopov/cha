@@ -82,7 +82,9 @@ bool starts_with_name_word(std::string_view name, std::string_view handle) {
 
 } // namespace
 
-ForumCharacters::ForumCharacters(std::vector<CharacterInfo> characters)
+ForumCharacters::ForumCharacters(
+    std::vector<CharacterInfo> characters,
+    bool allow_reserved_names)
     : characters_(std::move(characters)) {
     if (characters_.empty()) {
         throw std::invalid_argument("A forum must contain at least one character");
@@ -91,9 +93,8 @@ ForumCharacters::ForumCharacters(std::vector<CharacterInfo> characters)
     std::unordered_set<std::string> names;
     for (const CharacterInfo& character : characters_) {
         validate_character_id(character.id);
-        if (!(character.id == "builtin-assistant" && character.name == "Assistant")) {
-            validate_character_name(character.name);
-        }
+        if (allow_reserved_names) validate_character_name_syntax(character.name);
+        else validate_character_name(character.name);
         if (!ids.insert(character.id).second) {
             throw std::invalid_argument(
                 "Forum has duplicate character ID '" + character.id + "'");

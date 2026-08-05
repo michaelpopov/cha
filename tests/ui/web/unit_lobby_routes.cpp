@@ -287,6 +287,25 @@ TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {
     registry.begin_shutdown();
 }
 
+TEST(LobbyRoutes, KeyBasedCreationAllowsDuplicateLabels) {
+    test::TestWorkspace fixture;
+    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
+        return fake_session(key, std::make_unique<IdleController>());
+    });
+    TestServer server(workspace, registry);
+
+    const std::string first = create_session(server, "Repeated");
+    const std::string second = create_session(server, "Repeated");
+    EXPECT_NE(first, second);
+    const auto listed = server.client().Get("/api/v1/forums/lobby/sessions");
+    ASSERT_TRUE(listed);
+    ASSERT_EQ(listed->status, 200);
+    ASSERT_EQ(body(listed).size(), 2U);
+    EXPECT_EQ(body(listed)[0]["label"], "Repeated");
+    EXPECT_EQ(body(listed)[1]["label"], "Repeated");
+}
+
 TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeRegistry) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());

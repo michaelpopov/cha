@@ -238,6 +238,23 @@ TEST_F(WorkspaceTest, DefaultCreatesUseDistinctStemsUnderAFixedClock) {
     EXPECT_NE(first.id, second.id);
 }
 
+TEST_F(WorkspaceTest, PublicNameCreationSkipsABusyUnpublishedStem) {
+    const Forum forum = Workspace(root).load_forum("lobby");
+    SessionCatalog sessions(
+        forum.directory / "sessions", forum.name,
+        [] { return std::time_t{1234567890}; });
+    const Session candidate = sessions.create("Temporary candidate");
+    const std::filesystem::path candidate_path =
+        sessions.database_path(candidate.id);
+    SessionLease held_lease = SessionLease::acquire(candidate_path);
+    ASSERT_TRUE(std::filesystem::remove(candidate_path));
+
+    PreparedSession created = sessions.create_by_name("Morning discussion");
+
+    EXPECT_EQ(created.session.id, candidate.id + "-2");
+    EXPECT_TRUE(created.lease.active());
+}
+
 TEST_F(WorkspaceTest, InvalidPublicNameDiagnosticsDoNotExposeStoragePaths) {
     Workspace workspace(root);
     const std::string private_path = (root / "forums" / "lobby" / "sessions").string();
@@ -357,6 +374,49 @@ TEST_F(WorkspaceTest, WorkspaceNameApisResolvePublicNamesAndKeepDiagnosticsPubli
         FAIL() << "expected duplicate public name";
     } catch (const SessionNameExistsError& error) {
         EXPECT_NE(std::string(error.what()).find("The Lobby"), std::string::npos);
+        EXPECT_EQ(std::string(error.what()).find("lobby"), std::string::npos);
+    }
+}
+
+TEST_F(WorkspaceTest, CatalogNameErrorsNeverContainTheForumStorageKey) {
+    constexpr std::string_view private_forum = "private-forum-key";
+    const Forum forum = Workspace(root).load_forum("lobby");
+    SessionCatalog sessions(
+        forum.directory / "sessions", std::string(private_forum));
+
+    const auto expect_private_key_absent = [&](const auto& operation) {
+        try {
+            operation();
+            FAIL() << "expected a session name error";
+        } catch (const std::runtime_error& error) {
+            EXPECT_EQ(
+                std::string(error.what()).find(private_forum),
+                std::string::npos);
+        }
+    };
+
+    expect_private_key_absent([&] { (void)sessions.session_by_name("Missing"); });
+    PreparedSession created = sessions.create_by_name("Existing");
+    expect_private_key_absent([&] { (void)sessions.create_by_name("existing"); });
+    (void)create_database("first", "Duplicate", std::string(private_forum));
+    (void)create_database("second", "duplicate", std::string(private_forum));
+    expect_private_key_absent([&] { (void)sessions.session_by_name("Duplicate"); });
+}
+
+TEST_F(WorkspaceTest, WorkspaceNameLookupHidesUnexpectedStoragePaths) {
+    Workspace workspace(root);
+    const std::filesystem::path sessions_directory =
+        root / "forums" / "lobby" / "sessions";
+    std::filesystem::remove_all(sessions_directory);
+    std::ofstream(sessions_directory) << "not a directory";
+
+    try {
+        (void)workspace.session_summary_by_name("The Lobby", "Discussion");
+        FAIL() << "expected a storage error";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("The Lobby"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("Discussion"), std::string::npos);
+        EXPECT_EQ(std::string(error.what()).find(root.string()), std::string::npos);
         EXPECT_EQ(std::string(error.what()).find("lobby"), std::string::npos);
     }
 }

@@ -45,22 +45,25 @@ bool control(char32_t value) { return value <= 0x001f || (value >= 0x007f && val
 
 void validate_text(std::string_view value, std::string_view entity, const std::filesystem::path& source) {
     if (value.empty()) throw std::runtime_error(std::string(entity) + " in '" + utf8_path(source) + "' must not be empty");
+    char32_t first{};
     char32_t last{};
+    bool is_first = true;
     try {
         for (std::size_t offset{}; offset < value.size();) {
             const char32_t point = next_code_point(value, offset);
             if (control(point) || point == 0x2028 || point == 0x2029) {
                 throw std::runtime_error("contains a control character or line break");
             }
+            if (is_first) {
+                first = point;
+                is_first = false;
+            }
             last = point;
         }
     } catch (const std::runtime_error& error) {
         throw std::runtime_error(std::string(entity) + " in '" + utf8_path(source) + "' " + error.what());
     }
-    // The loop's first-code-point bookkeeping above intentionally avoids byte indexing.
-    std::size_t first_offset{};
-    const char32_t actual_first = next_code_point(value, first_offset);
-    if (whitespace(actual_first) || whitespace(last)) {
+    if (whitespace(first) || whitespace(last)) {
         throw std::runtime_error(std::string(entity) + " in '" + utf8_path(source) + "' cannot start or end with whitespace");
     }
 }

@@ -8,7 +8,9 @@
 
 namespace cha {
 ForumCatalog::ForumCatalog(const Workspace& workspace, const WorkspaceSnapshot& snapshot, SharedPersonaRoster personas, const WorkspaceInventory& inventory)
-    : snapshot_(snapshot), entrance_source_(make_entrance_session_source(workspace, personas, inventory)) {
+    : snapshot_(snapshot),
+      entrance_source_(make_entrance_session_source(
+          workspace, personas, inventory, welcome_storage_)) {
     workspace_sources_.reserve(snapshot_.forums().size());
     for (const Forum& forum : snapshot_.forums()) {
         workspace_sources_.emplace_back(

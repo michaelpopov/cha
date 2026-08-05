@@ -22,6 +22,13 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// Marks text that was deliberately constructed only from public names. Other
+// exception text is diagnostic-only and must not cross a frontend boundary.
+class PublicApplicationError final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class SessionSource {
 public:
     virtual ~SessionSource() = default;
@@ -33,14 +40,10 @@ public:
 std::unique_ptr<SessionSource> make_entrance_session_source(
     const Workspace& workspace,
     SharedPersonaRoster personas,
-    const WorkspaceInventory& inventory);
+    const WorkspaceInventory& inventory,
+    WelcomeStorage& welcome_storage);
 std::unique_ptr<SessionSource> make_workspace_session_source(
     const Workspace& workspace,
     Forum forum,
     SharedPersonaRoster personas);
-std::unique_ptr<SessionSource> make_welcome_session_source(
-    const Workspace& workspace,
-    SharedPersonaRoster personas,
-    const WorkspaceInventory& inventory,
-    WelcomeStorage& storage);
 } // namespace cha

@@ -1,10 +1,13 @@
 #include "application/chat_application.h"
 #include "session/generation_status.h"
+#include "session/catalog_lease.h"
 #include "support/test_notifier.h"
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 namespace cha {
@@ -69,6 +72,52 @@ TEST_F(ChatApplicationTest, UsesPublicNamesAndPreservesStateOnRecoverableFailure
     EXPECT_EQ(*same.notice, "Session 'Welcome' is already open");
 }
 
+TEST_F(ChatApplicationTest, RepeatingTheCurrentPersonaIsAnIdempotentSuccess) {
+    const ApplicationResult guest = application.iam("guest");
+    EXPECT_TRUE(guest.input_consumed);
+    EXPECT_FALSE(guest.persona_changed);
+    ASSERT_TRUE(guest.notice);
+    EXPECT_EQ(*guest.notice, "Already speaking as Guest");
+
+    ASSERT_TRUE(application.iam("Reader").persona_changed);
+    const ApplicationResult reader = application.iam("reader");
+    EXPECT_TRUE(reader.input_consumed);
+    EXPECT_FALSE(reader.persona_changed);
+    ASSERT_TRUE(reader.notice);
+    EXPECT_EQ(*reader.notice, "Already speaking as Reader");
+}
+
+TEST_F(ChatApplicationTest, PreservesPublicInvalidSessionNameDiagnostics) {
+    const ApplicationResult created = application.create("The Lobby", " invalid");
+    ASSERT_TRUE(created.notice);
+    EXPECT_EQ(*created.notice, "Session name is not a valid public name");
+
+    const ApplicationResult opened = application.open("The Lobby", " invalid");
+    ASSERT_TRUE(opened.notice);
+    EXPECT_EQ(*opened.notice, "Session name is not a valid public name");
+    EXPECT_EQ(application.descriptor().session_label, "Welcome");
+}
+
+TEST_F(ChatApplicationTest, ReportsCatalogContentionAsARetryablePublicError) {
+    const std::filesystem::path sessions =
+        fixture.root() / "forums" / "lobby" / "sessions";
+    std::filesystem::create_directories(sessions);
+    {
+        CatalogLease held = CatalogLease::acquire(sessions);
+        const ApplicationResult result =
+            application.create("The Lobby", "Contended");
+        ASSERT_TRUE(result.notice);
+        EXPECT_EQ(*result.notice,
+            "Session catalog for forum 'The Lobby' is busy; try again");
+        EXPECT_FALSE(result.session_changed);
+        EXPECT_EQ(application.descriptor().session_label, "Welcome");
+    }
+
+    const ApplicationResult retried =
+        application.create("The Lobby", "Contended");
+    EXPECT_TRUE(retried.session_changed);
+}
+
 TEST_F(ChatApplicationTest, ListsCustomEntitiesAndKeepsAuthoredCasingInEmptyMessages) {
     const ApplicationResult forum_rows = application.forums();
     ASSERT_TRUE(forum_rows.list);
@@ -81,6 +130,60 @@ TEST_F(ChatApplicationTest, ListsCustomEntitiesAndKeepsAuthoredCasingInEmptyMess
     const ApplicationResult empty = application.sessions("entrance");
     ASSERT_TRUE(empty.notice);
     EXPECT_EQ(*empty.notice, "No stored sessions in forum 'Entrance'");
+}
+
+TEST_F(ChatApplicationTest, DoesNotExposeStoragePathsInListingFailures) {
+    const std::filesystem::path sessions =
+        fixture.root() / "forums" / "lobby" / "sessions";
+    std::ofstream(sessions) << "not a directory";
+
+    const ApplicationResult result = application.sessions("The Lobby");
+    ASSERT_TRUE(result.notice);
+    EXPECT_EQ(*result.notice, "Unable to list sessions in forum 'The Lobby'");
+    EXPECT_EQ(result.notice->find(fixture.root().string()), std::string::npos);
+    EXPECT_EQ(result.notice->find("lobby/sessions"), std::string::npos);
+}
+
+TEST_F(ChatApplicationTest, ValidatesDefinitionsBeforePublishingANewSession) {
+    std::ofstream(fixture.root() / "characters" / "guide" / "character.toml")
+        << "display_name = [invalid";
+
+    const ApplicationResult result = application.create("The Lobby", "Broken");
+    ASSERT_TRUE(result.notice);
+    EXPECT_EQ(*result.notice,
+        "Unable to create session 'Broken' in forum 'The Lobby'");
+    const std::filesystem::path sessions =
+        fixture.root() / "forums" / "lobby" / "sessions";
+    EXPECT_FALSE(std::filesystem::exists(sessions));
+}
+
+TEST_F(ChatApplicationTest, RetainsAndReleasesAPublishedSessionWhenControllerConstructionFails) {
+    fixture.write_character_defaults(
+        "host = \"test\"\n"
+        "port = 1\n"
+        "mode = \"test\"\n"
+        "model = \"fake\"\n"
+        "api_key_env = \"__CHA_TEST_MISSING_PUBLISHED_SESSION_KEY__\"\n");
+
+    const ApplicationResult failed = application.create("The Lobby", "Published");
+    ASSERT_TRUE(failed.notice);
+    EXPECT_EQ(*failed.notice,
+        "Session 'Published' was created in forum 'The Lobby' but could not be opened: session initialization failed");
+    EXPECT_FALSE(failed.session_changed);
+    EXPECT_EQ(application.descriptor().session_label, "Welcome");
+
+    const ApplicationResult listed = application.sessions("The Lobby");
+    ASSERT_TRUE(listed.list);
+    EXPECT_EQ(listed.list->rows, (std::vector<std::string>{"Published"}));
+
+    fixture.write_character_defaults(
+        "host = \"test\"\n"
+        "port = 1\n"
+        "mode = \"test\"\n"
+        "model = \"fake\"\n");
+    const ApplicationResult opened = application.open("The Lobby", "Published");
+    EXPECT_TRUE(opened.session_changed);
+    EXPECT_EQ(application.descriptor().session_label, "Published");
 }
 
 TEST_F(ChatApplicationTest, RejectsEveryStatefulApplicationOperationDuringGeneration) {

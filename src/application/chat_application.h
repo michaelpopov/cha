@@ -31,8 +31,8 @@ private:
     ApplicationResult error(std::string message, bool consumed = true) const;
     ApplicationEnvironment environment_;
     WakeNotifier& notifier_;
-    std::string selected_persona_{"Guest"};
-    std::string selected_author_key_{"builtin-guest"};
+    std::string selected_persona_;
+    std::string selected_author_key_;
     OpenedSession current_;
 };
 } // namespace cha

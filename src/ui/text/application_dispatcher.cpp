@@ -23,25 +23,14 @@ ApplicationResult ApplicationDispatcher::handle(std::string input) {
 
     const ApplicationCommand& command = std::get<ApplicationCommand>(*parsed);
     if (command.kind == ApplicationCommandKind::help) {
+        std::vector<std::string> rows;
+        rows.reserve(command_descriptors().size());
+        for (const CommandDescriptor& descriptor : command_descriptors()) {
+            rows.push_back(std::string(descriptor.syntax) + " — "
+                + std::string(descriptor.description));
+        }
         return {.input_consumed = true,
-                .list = ApplicationList{"Commands",
-                                        {"/iam <persona> — Change the current persona.",
-                                         "/open <forum> <session> — Open a session.",
-                                         "/create <forum> <session> — Create and open a session.",
-                                         "/forums — List workspace forums.",
-                                         "/sessions <forum> — List stored sessions.",
-                                         "/personas — List workspace personas.",
-                                         "/help — List commands.",
-                                         "/clear — Clear the transcript.",
-                                         "/hide-on — Begin an off-record span.",
-                                         "/hide — Extend an off-record span.",
-                                         "/hide-off — End an off-record span.",
-                                         "/mcast <targets> <text> — Send a multicast prompt.",
-                                         "/info — Show session information.",
-                                         "/agents — List forum agents.",
-                                         "/@Name — Set the default agent.",
-                                         "/stop — Stop generation.",
-                                         "/exit — Exit the application."}}};
+                .list = ApplicationList{"Commands", std::move(rows)}};
     }
 
     switch (command.kind) {

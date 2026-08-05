@@ -14,7 +14,6 @@ public:
     Terminal(const Terminal&) = delete;
     Terminal& operator=(const Terminal&) = delete;
 
-    void configure_selector();
     void configure_chat();
     void resize();
     // Leaves ncurses mode; repeated calls are harmless.

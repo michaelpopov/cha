@@ -13,6 +13,10 @@ inline constexpr std::string_view guest_name = "Guest";
 inline constexpr std::string_view assistant_name = "Assistant";
 inline constexpr std::string_view entrance_name = "Entrance";
 inline constexpr std::string_view welcome_name = "Welcome";
+inline constexpr std::string_view guest_id = "builtin-guest";
+inline constexpr std::string_view assistant_id = "builtin-assistant";
+inline constexpr std::string_view entrance_id = "builtin-entrance";
+inline constexpr std::string_view welcome_id = "builtin-welcome";
 
 const Persona& builtin_guest();
 const Forum& builtin_entrance();

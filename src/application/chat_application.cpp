@@ -3,6 +3,7 @@
 #include "application/builtins.h"
 #include "session/generation_status.h"
 #include "session/session_controller.h"
+#include "util/logging.h"
 #include "util/text.h"
 
 #include <exception>
@@ -10,7 +11,10 @@
 
 namespace cha {
 ChatApplication::ChatApplication(const Workspace& workspace, WakeNotifier& notifier)
-    : environment_(workspace), notifier_(notifier), current_(environment_.open_welcome(notifier_)) {}
+    : environment_(workspace), notifier_(notifier),
+      selected_persona_(builtin_guest().display_name),
+      selected_author_key_(builtin_guest().id),
+      current_(environment_.open_welcome(notifier_)) {}
 
 ChatApplication::~ChatApplication() {
     if (current_.controller) {
@@ -30,6 +34,10 @@ ApplicationResult ChatApplication::iam(std::string_view name) {
     if (current_.controller->is_generating()) return error(std::string(generation_in_progress_notice), false);
     const Persona* persona = environment_.personas().find(name);
     if (persona == nullptr) return error("Unknown persona '" + std::string(name) + "'");
+    if (selected_author_key_ == persona->id) {
+        return {.input_consumed = true,
+                .notice = "Already speaking as " + persona->display_name};
+    }
     selected_persona_ = persona->display_name;
     selected_author_key_ = persona->id;
     return {.input_consumed = true, .persona_changed = true,
@@ -65,7 +73,12 @@ ApplicationResult ChatApplication::sessions(std::string_view forum) {
         }
         if (rows.empty()) return {.input_consumed = true, .notice = "No stored sessions in forum '" + resolved->display_name + "'"};
         return {.input_consumed = true, .list = ApplicationList{"Sessions in " + resolved->display_name, std::move(rows)}};
-    } catch (const std::exception& exception) { return error(exception.what()); }
+    } catch (const PublicApplicationError& exception) {
+        return error(exception.what());
+    } catch (const std::exception& exception) {
+        log_warn("Application session listing failed: " + std::string(exception.what()));
+        return error("Unable to list sessions in forum '" + std::string(forum) + "'");
+    }
 }
 
 ApplicationResult ChatApplication::switch_to(OpenedSession prepared, bool consumed) {
@@ -87,11 +100,20 @@ ApplicationResult ChatApplication::open(std::string_view forum, std::string_view
     }
     OpenedSession prepared;
     try {
-        prepared = resolved == &builtin_entrance()
-            && fold_ascii(session) == fold_ascii(welcome_name)
-            ? environment_.open_welcome(notifier_)
-            : environment_.forums().source_for(forum).open(session, notifier_);
-    } catch (const std::exception& exception) { return error(exception.what()); }
+        prepared = environment_.forums().source_for(forum).open(session, notifier_);
+    } catch (const PublicApplicationError& exception) {
+        return error(exception.what());
+    } catch (const SessionNameAmbiguousError& exception) {
+        return error(exception.what());
+    } catch (const SessionNotFoundError& exception) {
+        return error(exception.what());
+    } catch (const SessionBusyError& exception) {
+        return error(exception.what());
+    } catch (const std::exception& exception) {
+        log_warn("Application session open failed: " + std::string(exception.what()));
+        return error("Unable to open session '" + std::string(session)
+            + "' in forum '" + resolved->display_name + "'");
+    }
     return switch_to(std::move(prepared));
 }
 
@@ -107,7 +129,13 @@ ApplicationResult ChatApplication::create(std::string forum, std::string session
         return error("Session '" + public_session + "' was created in forum '" + public_forum
             + "' but could not be opened: " + exception.what());
     }
-    catch (const std::exception& exception) { return error(exception.what()); }
+    catch (const PublicApplicationError& exception) { return error(exception.what()); }
+    catch (const SessionNameExistsError& exception) { return error(exception.what()); }
+    catch (const std::exception& exception) {
+        log_warn("Application session creation failed: " + std::string(exception.what()));
+        return error("Unable to create session '" + public_session
+            + "' in forum '" + public_forum + "'");
+    }
     return switch_to(std::move(prepared));
 }
 } // namespace cha

@@ -43,6 +43,24 @@ TEST(ForumCatalog, SourcesOpenAndCreatePersistentSessionsWithTheSharedRoster) {
     EXPECT_EQ(reopened_workspace.controller->persona_roster().get(), personas.roster().get());
 }
 
+TEST(ForumCatalog, EntranceSourceRoutesWelcomeToItsEphemeralSource) {
+    cha::test::TestWorkspace fixture;
+    cha::Workspace workspace(fixture.root());
+    cha::WorkspaceSnapshot snapshot(workspace);
+    cha::EffectivePersonas personas(snapshot);
+    cha::WorkspaceInventory inventory(snapshot);
+    cha::ForumCatalog catalog(
+        workspace, snapshot, personas.roster(), inventory);
+    cha::test::NoopNotifier notifier;
+
+    auto welcome = catalog.source_for("entrance").open("welcome", notifier);
+
+    EXPECT_EQ(welcome.descriptor.forum_display_name, "Entrance");
+    EXPECT_EQ(welcome.descriptor.session_label, "Welcome");
+    EXPECT_EQ(
+        welcome.controller->persona_roster().get(), personas.roster().get());
+}
+
 TEST(ForumCatalog, EntranceErrorsUseOnlyPublicNames) {
     cha::test::TestWorkspace fixture;
     cha::Workspace workspace(fixture.root());

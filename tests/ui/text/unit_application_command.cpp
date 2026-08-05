@@ -48,4 +48,14 @@ TEST(ApplicationCommand, LeavesOtherSlashCommandsForTheSessionDispatcher) {
     EXPECT_FALSE(parse_application_command("/not-a-command"));
     EXPECT_FALSE(parse_application_command("ordinary text"));
 }
+TEST(ApplicationCommand, ExposesOneCompleteRuntimeCommandCatalog) {
+    EXPECT_EQ(command_descriptors().size(), 17U);
+    EXPECT_EQ(command_names(),
+        "/iam, /open, /create, /forums, /sessions, /personas, /help, /clear, /hide-on, /hide, /hide-off, /mcast, /info, /agents, /@Name, /stop, /exit");
+    for (const CommandDescriptor& descriptor : command_descriptors()) {
+        EXPECT_FALSE(descriptor.name.empty());
+        EXPECT_FALSE(descriptor.syntax.empty());
+        EXPECT_FALSE(descriptor.description.empty());
+    }
+}
 } }

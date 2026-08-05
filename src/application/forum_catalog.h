@@ -1,6 +1,7 @@
 #pragma once
 
 #include "application/session_source.h"
+#include "application/welcome_storage.h"
 #include "application/workspace_snapshot.h"
 
 #include <memory>
@@ -18,6 +19,8 @@ public:
     SessionSource& source_for(std::string_view forum_name) const;
 private:
     const WorkspaceSnapshot& snapshot_;
+    // The composite Entrance source is destroyed before its ephemeral storage.
+    WelcomeStorage welcome_storage_;
     std::unique_ptr<SessionSource> entrance_source_;
     std::vector<std::pair<std::string, std::unique_ptr<SessionSource>>> workspace_sources_;
 };

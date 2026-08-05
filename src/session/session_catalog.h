@@ -48,6 +48,11 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+class InvalidSessionNameError final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 // Owns the session files of one forum, so no other component has to know how sessions are laid out
 // on disk. It lists them, checking the identity embedded in each against the file it came from,
 // creates new ones without ever overwriting an existing destination, and resolves a session ID to

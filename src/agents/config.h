@@ -65,7 +65,6 @@ struct ProviderConfig {
     std::optional<std::string> model;
     std::optional<bool> stream;
     std::optional<double> temperature;
-    std::optional<std::string> api_key;
     std::optional<std::string> api_key_env;
     std::optional<std::string> reasoning_effort;
     std::optional<ReasoningFormat> reasoning_format;

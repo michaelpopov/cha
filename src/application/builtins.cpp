@@ -6,15 +6,15 @@ namespace cha {
 std::string_view embedded_application_guide();
 
 const Persona& builtin_guest() {
-    static const Persona guest{.id = "builtin-guest", .display_name = std::string(guest_name),
+    static const Persona guest{.id = std::string(guest_id), .display_name = std::string(guest_name),
                                .prompt = "The current application user. No workspace persona has been selected."};
     return guest;
 }
 
 const Forum& builtin_entrance() {
-    static const Forum entrance{.name = "builtin-entrance", .display_name = std::string(entrance_name),
-                                .character_names = {"builtin-assistant"},
-                                .default_agent_id = "builtin-assistant"};
+    static const Forum entrance{.name = std::string(entrance_id), .display_name = std::string(entrance_name),
+                                .character_names = {std::string(assistant_id)},
+                                .default_agent_id = std::string(assistant_id)};
     return entrance;
 }
 
@@ -28,7 +28,7 @@ std::vector<AgentDefinition> builtin_assistant_definitions(
         throw std::runtime_error("app.toml provider configuration is incomplete for Assistant");
     }
     Config config;
-    config.id = "builtin-assistant";
+    config.id = assistant_id;
     config.name = std::string(assistant_name);
     config.display_name = std::string(assistant_name);
     config.host = *provider.host;
@@ -37,7 +37,6 @@ std::vector<AgentDefinition> builtin_assistant_definitions(
     if (provider.model) config.model = *provider.model;
     if (provider.stream) config.stream = *provider.stream;
     if (provider.temperature) config.temperature = *provider.temperature;
-    if (provider.api_key) config.api_key = *provider.api_key;
     if (provider.api_key_env) config.api_key_env = *provider.api_key_env;
     if (provider.reasoning_effort) config.reasoning_effort = *provider.reasoning_effort;
     if (provider.reasoning_format) config.reasoning_format = *provider.reasoning_format;

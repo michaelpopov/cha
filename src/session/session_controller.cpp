@@ -52,7 +52,9 @@ ForumCharacters make_forum_characters(
     for (const AgentRuntimeInfo& agent : runtime_info) {
         characters.push_back(agent.character);
     }
-    return ForumCharacters(std::move(characters));
+    // Definitions reached the controller through either the validated
+    // workspace boundary or a trusted application built-in factory.
+    return ForumCharacters(std::move(characters), true);
 }
 
 void merge_change(SessionChange& all, SessionChange one) {

@@ -1,5 +1,6 @@
 #include "application/workspace_snapshot.h"
 
+#include "application/builtins.h"
 #include "agents/agent.h"
 #include "util/text.h"
 
@@ -9,6 +10,11 @@
 
 namespace cha {
 namespace {
+
+bool builtin_id(std::string_view id) {
+    return id == guest_id || id == assistant_id
+        || id == entrance_id || id == welcome_id;
+}
 
 template<typename Value, typename Name>
 void require_unique(const std::vector<Value>& values, Name name, std::string_view entity) {
@@ -33,6 +39,16 @@ void sort_by_name(std::vector<Value>& values, Name name) {
 WorkspaceSnapshot::WorkspaceSnapshot(const Workspace& workspace)
     : personas_(workspace.load_personas()), characters_(workspace.character_definitions()) {
     for (const std::string& key : workspace.forums()) forums_.push_back(workspace.load_forum(key));
+    for (const CharacterDefinitionMetadata& character : characters_) {
+        if (builtin_id(character.id)) {
+            throw std::runtime_error("Character ID '" + character.id + "' is reserved");
+        }
+    }
+    for (const Forum& forum : forums_) {
+        if (builtin_id(forum.name)) {
+            throw std::runtime_error("Forum ID '" + forum.name + "' is reserved");
+        }
+    }
     require_unique(forums_, [](const Forum& value) -> const std::string& { return value.display_name; }, "Forum");
     for (const Forum& forum : forums_) {
         if (fold_ascii(forum.display_name) == "entrance") {
