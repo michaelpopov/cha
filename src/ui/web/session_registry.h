@@ -16,6 +16,8 @@
 
 namespace cha {
 class Workspace;
+class WebDiscovery;
+class WelcomeStorage;
 }
 
 namespace cha::web {
@@ -75,7 +77,9 @@ public:
         RegistrySessionFactory factory);
     static SessionRegistry from_workspace(
         WebSettings settings,
-        std::shared_ptr<const Workspace> workspace);
+        std::shared_ptr<const Workspace> workspace,
+        const WebDiscovery& discovery,
+        WelcomeStorage& welcome_storage);
     ~SessionRegistry();
     SessionRegistry(const SessionRegistry&) = delete;
     SessionRegistry& operator=(const SessionRegistry&) = delete;

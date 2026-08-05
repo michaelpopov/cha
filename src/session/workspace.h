@@ -116,7 +116,8 @@ public:
         WakeNotifier& notifier) const;
     [[nodiscard]] OpenedSession open_session(
         const SessionIdentity& identity,
-        WakeNotifier& notifier) const;
+        WakeNotifier& notifier,
+        SharedPersonaRoster personas = {}) const;
     [[nodiscard]] OpenedSession open_session_by_name(
         std::string_view forum_name,
         const std::string& session_name,

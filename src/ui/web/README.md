@@ -7,9 +7,12 @@ Guest, Assistant, Entrance, and Welcome, but does not use terminal
 slash-navigation commands or their presentation results.
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and web
-runtime coordination. It depends on core `SessionIdentity`, `SessionDescriptor`,
+runtime coordination. The composition root builds one immutable `WebDiscovery`
+and one process-wide `WelcomeStorage`; the registry uses them to open the
+built-in Welcome session and gives every web-opened session the Guest-plus-
+workspace persona roster. It depends on core `SessionIdentity`, `SessionDescriptor`,
 `OpenedSession`, `SessionState`, append proof, and `SessionChange`, but puts no
-web type in `cha_core`. Its permanent session-owner thread is the sole owner of
+HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
 a `SessionController`; HTTP workers exchange only owning commands and results
 with it.
 

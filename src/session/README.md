@@ -153,9 +153,9 @@ sequenceDiagram
     WS->>SL: acquire `<database>.cha-lock` without waiting
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
-    WS->>WS: load_personas
+    WS->>WS: load_personas, unless the caller supplies an effective roster
     WS->>AG: load_agent_definitions(definition/member pairs, forum, roster)
-    WS->>CC: from_definitions with restore; no persona membership roster
+    WS->>CC: from_definitions with restore; supplied effective rosters retain Guest for browser-authored input, while terminal callers use workspace personas as before
     CC->>CC: repair interrupted turns, then install entries
     WS-->>UI: OpenedSession (descriptor + controller)
 ```

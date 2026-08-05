@@ -1,4 +1,6 @@
 #include "application/workspace_snapshot.h"
+#include "application/web_discovery.h"
+#include "application/builtins.h"
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
@@ -40,4 +42,17 @@ TEST(WorkspaceSnapshot, RejectsCharacterIdsReservedForBuiltins) {
 
     const cha::Workspace workspace(fixture.root());
     EXPECT_THROW((void)cha::WorkspaceSnapshot(workspace), std::runtime_error);
+}
+
+TEST(WebDiscovery, IncludesBuiltinsWithExpectedIdsAndEntranceMembership) {
+    cha::test::TestWorkspace fixture;
+    const cha::Workspace workspace(fixture.root());
+    const cha::WebDiscovery discovery(workspace);
+
+    ASSERT_NE(discovery.find_persona(cha::guest_id), nullptr);
+    ASSERT_NE(discovery.find_character(cha::assistant_id), nullptr);
+    const cha::Forum* entrance = discovery.find_forum(cha::entrance_id);
+    ASSERT_NE(entrance, nullptr);
+    EXPECT_EQ(entrance->character_names, std::vector<std::string>({std::string(cha::assistant_id)}));
+    EXPECT_EQ(entrance->default_agent_id, cha::assistant_id);
 }

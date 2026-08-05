@@ -1,5 +1,11 @@
 #include "ui/web/session_registry.h"
+
+#include "application/builtins.h"
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
 #include "session/session_lease.h"
+#include "session/workspace.h"
+#include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
 
@@ -170,6 +176,56 @@ TEST(SessionRegistry, ReusesRunningSessionAndReturnsHandle) {
     ASSERT_TRUE(stopping);
     EXPECT_EQ(failure_of(*stopping), RegistryOpenFailure::registry_stopping);
     registry.sweep();
+}
+
+TEST(SessionRegistry, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSessions) {
+    test::TestWorkspace fixture;
+    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    WebDiscovery discovery(*workspace);
+    WelcomeStorage welcome_storage;
+    SessionRegistry registry = SessionRegistry::from_workspace(
+        {.session_limit = 2}, workspace, discovery, welcome_storage);
+
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
+        registry.open({std::string(entrance_id), std::string(welcome_id)}, 1s)));
+    SessionHandle welcome = registry.lookup({std::string(entrance_id), std::string(welcome_id)});
+    ASSERT_TRUE(welcome);
+    const CommandSubmitResult welcome_state = welcome.runtime().snapshot(1s);
+    const auto* welcome_snapshot = std::get_if<SessionSnapshot>(&welcome_state);
+    ASSERT_NE(welcome_snapshot, nullptr);
+    EXPECT_EQ(welcome_snapshot->forum.id, entrance_id);
+    EXPECT_EQ(welcome_snapshot->forum.display_name, entrance_name);
+    EXPECT_EQ(welcome_snapshot->session_id, welcome_id);
+    EXPECT_EQ(welcome_snapshot->session_label, welcome_name);
+    ASSERT_EQ(welcome_snapshot->characters.size(), 1U);
+    EXPECT_EQ(welcome_snapshot->characters.front().id, assistant_id);
+
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        welcome.runtime().submit(RawCommand{std::string(guest_id), "Welcome"}, 1s)));
+    const CommandSubmitResult attributed_welcome_state = welcome.runtime().snapshot(1s);
+    const auto* attributed_welcome = std::get_if<SessionSnapshot>(
+        &attributed_welcome_state);
+    ASSERT_NE(attributed_welcome, nullptr);
+    ASSERT_FALSE(attributed_welcome->transcript.empty());
+    EXPECT_EQ(attributed_welcome->transcript.front().participant_id, guest_id);
+    EXPECT_EQ(attributed_welcome->transcript.front().display_name, guest_name);
+
+    const SessionSummary stored = workspace->create_stored_session("lobby", "Guest session");
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
+        registry.open({"lobby", stored.id}, 1s)));
+    SessionHandle ordinary = registry.lookup({"lobby", stored.id});
+    ASSERT_TRUE(ordinary);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        ordinary.runtime().submit(RawCommand{std::string(guest_id), "Ordinary"}, 1s)));
+    const CommandSubmitResult attributed_ordinary_state = ordinary.runtime().snapshot(1s);
+    const auto* attributed_ordinary = std::get_if<SessionSnapshot>(
+        &attributed_ordinary_state);
+    ASSERT_NE(attributed_ordinary, nullptr);
+    ASSERT_FALSE(attributed_ordinary->transcript.empty());
+    EXPECT_EQ(attributed_ordinary->transcript.front().participant_id, guest_id);
+    EXPECT_EQ(attributed_ordinary->transcript.front().display_name, guest_name);
+
+    registry.begin_shutdown();
 }
 
 TEST(SessionRegistry, BusyAndLimitHaveStableErrors) {

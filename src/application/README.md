@@ -28,9 +28,11 @@ list. Persistent Entrance sessions are application-owned storage, not
 workspace-defined forum configuration.
 
 The web frontend does not use `ChatApplication` or terminal presentation
-results: it keeps key-based routes and its own session lifecycle. It may reuse
-shared domain loaders and built-in session construction, but not the terminal
-discovery projection. It resolves web persona IDs at its own HTTP boundary.
+results: it keeps key-based routes and its own session lifecycle. Its one
+startup `WebDiscovery` wraps a validated `WorkspaceSnapshot`, adds Guest,
+Assistant, and Entrance, and supplies the effective roster and built-in session
+construction inputs to the registry. It resolves web persona IDs at its own
+HTTP boundary.
 
 ## Dependencies
 

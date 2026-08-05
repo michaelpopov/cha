@@ -4,6 +4,9 @@
 #include "ui/web/session_registry.h"
 #include "support/test_workspace.h"
 
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
+
 #include "session/session_controller.h"
 #include "session/session_lease.h"
 #include "session/workspace.h"
@@ -730,8 +733,10 @@ TEST(LobbyRoutes, CreateSucceedsWhileAnotherStoredSessionLeaseIsHeld) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
+    WebDiscovery discovery(*workspace);
+    WelcomeStorage welcome_storage;
     SessionRegistry registry =
-        SessionRegistry::from_workspace(settings, workspace);
+        SessionRegistry::from_workspace(settings, workspace, discovery, welcome_storage);
     TestServer server(workspace, registry, settings);
     const std::string leased_id = create_session(server, "Externally held");
     SessionLease held = SessionLease::acquire(

@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -639,7 +640,8 @@ OpenedSession Workspace::open_session_by_name(
 
 OpenedSession Workspace::open_session(
     const SessionIdentity& identity,
-    WakeNotifier& notifier) const {
+    WakeNotifier& notifier,
+    SharedPersonaRoster personas) const {
     const Forum forum = load_forum(identity.forum_id);
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
 
@@ -648,9 +650,9 @@ OpenedSession Workspace::open_session(
     SessionLease lease = SessionLease::acquire(database_path);
     const Session stored = catalog.session(identity.session_id);
     SessionRestore restored = load_session_state(database_path);
-    PersonaRoster personas = load_personas();
+    if (!personas) personas = std::make_shared<const PersonaRoster>(load_personas());
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
+        forum, *personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
     log_info("Session opened");
     return {
         .descriptor = {
@@ -658,7 +660,7 @@ OpenedSession Workspace::open_session(
             .forum_display_name = forum.display_name,
             .session_label = stored.label,
         },
-        .controller = SessionController::from_definitions(
+        .controller = SessionController::from_shared_definitions(
             std::move(definitions),
             std::move(personas),
             forum.default_agent_id,

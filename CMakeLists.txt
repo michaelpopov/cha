@@ -213,6 +213,7 @@ add_library(cha_core STATIC
     src/session/session_state.cpp
     src/session/workspace.cpp
     src/application/workspace_snapshot.cpp
+    src/application/web_discovery.cpp
     src/application/workspace_inventory.cpp
     src/application/builtins.cpp
     src/application/effective_personas.cpp

@@ -1,6 +1,8 @@
 #include "ui/web/asset_handler.h"
 #include "ui/web/http_server.h"
 #include "ui/web/session_registry.h"
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
 #include "ui/web/session_routes.h"
 #include "support/test_workspace.h"
 
@@ -438,8 +440,10 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
         .open_deadline = 1s,
         .command_deadline = 1s,
     };
+    WebDiscovery discovery(*workspace);
+    WelcomeStorage welcome_storage;
     SessionRegistry registry =
-        SessionRegistry::from_workspace(settings, workspace);
+        SessionRegistry::from_workspace(settings, workspace, discovery, welcome_storage);
 
     const RegistryOpenResult unavailable =
         registry.open({"lobby", "missing"}, 1s);

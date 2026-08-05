@@ -1,5 +1,9 @@
 #include "ui/web/session_registry.h"
 
+#include "application/builtins.h"
+#include "application/session_source.h"
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
 #include "session/not_found_error.h"
 #include "session/session_lease.h"
 #include "session/session_controller.h"
@@ -91,14 +95,25 @@ SessionRegistry::SessionRegistry(
 
 SessionRegistry SessionRegistry::from_workspace(
     WebSettings settings,
-    std::shared_ptr<const Workspace> workspace) {
+    std::shared_ptr<const Workspace> workspace,
+    const WebDiscovery& discovery,
+    WelcomeStorage& welcome_storage) {
     if (!workspace) throw std::invalid_argument("Session registry needs a workspace");
     const auto controller_workspace = workspace;
+    const SharedPersonaRoster personas = discovery.effective_personas().roster();
+    const std::string inventory = discovery.inventory().serialize();
     return SessionRegistry(
         std::move(settings),
-        [controller_workspace](const SessionIdentity& key, WakeNotifier& notifier) {
+        [controller_workspace, personas, inventory, &welcome_storage](
+            const SessionIdentity& key, WakeNotifier& notifier) {
+            if (key.forum_id == entrance_id) {
+                if (key.session_id != welcome_id) throw SessionNotFoundError("Session not found");
+                return RegistryOwnerInput{open_entrance_session(
+                    *controller_workspace, personas, inventory,
+                    welcome_storage.prepare(), notifier)};
+            }
             return RegistryOwnerInput{
-                controller_workspace->open_session(key, notifier)};
+                controller_workspace->open_session(key, notifier, personas)};
         });
 }
 
