@@ -1,6 +1,5 @@
-#include "session/session_controller.h"
+#include "application/chat_application.h"
 #include "session/workspace.h"
-#include "ui/tui/startup_selector.h"
 #include "ui/tui/terminal.h"
 #include "ui/tui/persona.h"
 #include "util/environment.h"
@@ -9,12 +8,6 @@
 
 #include <exception>
 #include <iostream>
-#include <memory>
-#include <optional>
-#include <stdexcept>
-#include <string>
-#include <utility>
-#include <vector>
 
 static int main_internal();
 
@@ -39,57 +32,9 @@ int main_internal() {
     cha::log_info("Terminal application started");
     cha::Workspace workspace(".", app_config);
     cha::Terminal terminal;
-    cha::StartupSelector selector(terminal);
-
-    std::string selected_persona_id;
-    {
-        const cha::PersonaRoster personas = workspace.load_personas();
-        const auto selected_persona = selector.select_persona(personas);
-        if (!selected_persona) {
-            throw std::runtime_error("Persona selection cancelled");
-        }
-        selected_persona_id = selected_persona->id;
-    }
-
-    std::vector<cha::Forum> forums;
-    for (const std::string& forum_name : workspace.forums()) {
-        forums.push_back(workspace.load_forum(forum_name));
-    }
-    const auto forum_name = selector.select_forum(forums);
-    if (!forum_name) {
-        throw std::runtime_error("Forum selection cancelled");
-    }
-
-    const auto selected_session = selector.select_session(
-        workspace.sessions(*forum_name));
-    if (!selected_session) {
-        throw std::runtime_error("Session selection cancelled");
-    }
-    if (!selected_session->error.empty()) {
-        throw std::runtime_error(selected_session->error);
-    }
-
     cha::UvEventLoop event_loop;
-    cha::OpenedSession opened;
-    if (selected_session->id.empty()) {
-        const auto session_label = selector.prompt_session_name();
-        if (!session_label) {
-            throw std::runtime_error("Session name prompt cancelled");
-        }
-        opened = workspace.create_session(
-            *forum_name,
-            *session_label,
-            event_loop);
-    } else {
-        opened = workspace.open_session(
-            {*forum_name, selected_session->id}, event_loop);
-    }
-
-    cha::run_persona(
-        terminal,
-        *opened.controller,
-        event_loop,
-        std::move(selected_persona_id));
+    cha::ChatApplication application(workspace, event_loop);
+    cha::run_application(terminal, application, event_loop);
     cha::log_info("Terminal application stopped");
     return 0;
 }

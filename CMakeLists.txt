@@ -189,9 +189,11 @@ target_compile_definitions(
 )
 
 add_library(cha_core STATIC
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     src/util/environment.cpp
     src/util/logging.cpp
     src/util/path_name.cpp
+    src/util/public_name.cpp
     src/util/text.cpp
     src/util/text_template.cpp
     src/util/thread_pool.cpp
@@ -203,13 +205,30 @@ add_library(cha_core STATIC
     src/agents/completion_client.cpp
     src/agents/config.cpp
     src/session/forum_characters.cpp
+    src/session/catalog_lease.cpp
     src/session/session_catalog.cpp
     src/session/session_controller.cpp
     src/session/session_database.cpp
     src/session/session_lease.cpp
     src/session/session_state.cpp
     src/session/workspace.cpp
+    src/application/workspace_snapshot.cpp
+    src/application/workspace_inventory.cpp
+    src/application/builtins.cpp
+    src/application/effective_personas.cpp
+    src/application/environment.cpp
+    src/application/chat_application.cpp
+    src/application/forum_catalog.cpp
+    src/application/session_source.cpp
+    src/application/welcome_storage.cpp
 )
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/docs/application-guide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS docs/application-guide.md cmake/embed_text.cmake
+    VERBATIM)
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
 target_include_directories(cha_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -235,6 +254,8 @@ target_link_libraries(
 cha_enable_warnings(cha_core)
 
 add_library(cha_ui_text STATIC
+    src/ui/text/application_command.cpp
+    src/ui/text/application_dispatcher.cpp
     src/ui/text/command.cpp
     src/ui/text/mcast.cpp
     src/ui/text/mention.cpp
@@ -295,7 +316,6 @@ if(CHA_BUILD_TUI)
         src/ui/tui/input_editor.cpp
         src/ui/tui/render_plan.cpp
         src/ui/tui/screen_layout.cpp
-        src/ui/tui/startup_selector.cpp
         src/ui/tui/terminal.cpp
         src/ui/tui/tui.cpp
         src/ui/tui/persona.cpp
@@ -339,6 +359,7 @@ if(BUILD_TESTING)
         tests/util/unit_concurrent_queue.cpp
         tests/util/unit_text.cpp
         tests/util/unit_text_template.cpp
+        tests/util/unit_public_name.cpp
         tests/util/unit_utf8_path.cpp
         tests/util/unit_uv_event_loop.cpp
         tests/transcript/unit_transcript.cpp
@@ -350,11 +371,22 @@ if(BUILD_TESTING)
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_forum_characters.cpp
         tests/session/unit_session_catalog.cpp
+        tests/session/unit_catalog_lease.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
         tests/session/unit_persona_loader.cpp
         tests/session/unit_workspace.cpp
+        tests/application/unit_workspace_snapshot.cpp
+        tests/application/unit_workspace_inventory.cpp
+        tests/application/unit_builtins.cpp
+        tests/application/unit_effective_personas.cpp
+        tests/application/unit_forum_catalog.cpp
+        tests/application/unit_welcome_storage.cpp
+        tests/application/unit_chat_application.cpp
+        tests/support/test_workspace.cpp
         tests/ui/text/unit_command.cpp
+        tests/ui/text/unit_application_command.cpp
+        tests/ui/text/unit_application_dispatcher.cpp
         tests/ui/text/unit_mcast.cpp
         tests/ui/text/unit_mention.cpp
         tests/ui/text/unit_text_input.cpp
@@ -451,7 +483,10 @@ if(BUILD_TESTING)
         cha_enable_warnings(itest)
         target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
 
-        add_executable(console_tests tests/integration/console_process_test.cpp)
+        add_executable(
+            console_tests
+            tests/integration/console_process_test.cpp
+            tests/support/test_workspace.cpp)
         target_link_libraries(console_tests PRIVATE cha_core GTest::gtest_main)
         target_include_directories(console_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         target_compile_definitions(

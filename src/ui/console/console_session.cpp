@@ -1,8 +1,9 @@
 #include "ui/console/console_session.h"
 
 #include "ui/console/console_writer.h"
+#include "ui/text/application_command.h"
+#include "ui/text/application_dispatcher.h"
 #include "ui/text/command.h"
-#include "ui/text/text_input.h"
 
 #include <ostream>
 #include <stdexcept>
@@ -12,12 +13,16 @@ namespace cha {
 
 ConsoleSession::ConsoleSession(
     ConsolePort& port,
-    SessionController& controller,
-    TranscriptEmitter& emitter,
+    ChatApplication& application,
     ConsoleSessionOptions options)
     : port_(port),
-      controller_(controller),
-      emitter_(emitter),
+      application_(application),
+      emitter_(std::make_unique<TranscriptEmitter>(
+          port.transcript(),
+          show_addressing(
+              application.controller().characters(),
+              application.controller().transcript().view()),
+          !options.show_prompt)),
       options_(options) {
 }
 
@@ -29,21 +34,21 @@ int ConsoleSession::run() {
     while (true) {
         if (end_session_
             || (input_done_ && queue_.empty()
-                && !controller_.is_generating())) {
-            return finish(0);
+                && !application_.controller().is_generating())) {
+            return finish(output_failed_ ? 1 : 0);
         }
 
         // Only arm the prompt while the session can accept a new submission.
         // Printing it as soon as stdin wakes leaves a stray ">" in front of the
         // next agent line, and never restores one after the turn goes idle.
         if (options_.show_prompt && prompt_needed_
-            && !controller_.is_generating()
+            && !application_.controller().is_generating()
             && queue_.empty()
             && !input_done_
             && !end_session_) {
             const CharacterInfo* default_agent =
-                controller_.characters().find(
-                    controller_.default_agent_id());
+                application_.controller().characters().find(
+                    application_.controller().default_agent_id());
             if (!default_agent) {
                 throw std::logic_error(
                     "Default agent is not a forum character");
@@ -70,8 +75,8 @@ int ConsoleSession::run() {
         }
 
         if (ready.signal_ready() && port_.take_interrupt()) {
-            if (controller_.is_generating()) {
-                apply(controller_.request_stop());
+            if (application_.controller().is_generating()) {
+                apply({.session = application_.controller().request_stop()});
             } else {
                 return finish(0);
             }
@@ -79,11 +84,11 @@ int ConsoleSession::run() {
 
         if (ready.notification_ready()) {
             const bool was_generating =
-                controller_.is_generating();
-            apply(controller_.receive());
+                application_.controller().is_generating();
+            apply({.session = application_.controller().receive()});
             // A finished turn must offer a fresh prompt even when no further
             // stdin activity re-armed it (for example after Ctrl-C cancel).
-            if (was_generating && !controller_.is_generating()) {
+            if (was_generating && !application_.controller().is_generating()) {
                 prompt_needed_ = true;
             }
         }
@@ -108,22 +113,72 @@ int ConsoleSession::run() {
     }
 }
 
-void ConsoleSession::apply(SessionChange change) {
-    if (change.notice && !change.notice->empty()) {
-        port_.notices() << *change.notice << '\n';
+void ConsoleSession::apply(ApplicationResult result) {
+    if (result.notice && !result.notice->empty()) {
+        port_.notices() << sanitize_console_text(*result.notice) << '\n';
     }
-    end_session_ = end_session_ || change.controller_ended;
+    if (result.list) {
+        port_.notices() << sanitize_console_text(result.list->title) << ":\n";
+        for (const std::string& row : result.list->rows) {
+            port_.notices() << sanitize_console_text(row) << '\n';
+        }
+    }
+    if (result.session_changed) {
+        emitter_ = std::make_unique<TranscriptEmitter>(
+            port_.transcript(),
+            show_addressing(
+                application_.controller().characters(),
+                application_.controller().transcript().view()),
+            !options_.show_prompt);
+        // A fresh emitter must observe restored entries before subsequent
+        // input can add to the target transcript.  Otherwise those entries
+        // are mistaken for restored history and can be echoed on a TTY.
+        if (!emit()) {
+            output_failed_ = true;
+            end_session_ = true;
+            return;
+        }
+        prompt_needed_ = true;
+    }
+    end_session_ = end_session_ || result.exit_requested || result.session.controller_ended;
 }
 
 void ConsoleSession::enqueue(std::vector<std::string> lines) {
     for (std::string& line : lines) {
-        const Command command = parse_command(line);
-        if (command.kind == CommandKind::stop && command.argument.empty()) {
-            apply(controller_.request_stop());
+        // A completion notification and more input may arrive in the same
+        // wait.  Drain already-read ordinary work first so a navigation
+        // command cannot overtake it into a different session.
+        pump();
+        if (end_session_) {
+            return;
+        }
+        // Application commands have deliberately different busy semantics:
+        // /help is available and navigation is rejected immediately, never
+        // silently retained behind a model response.
+        const auto application_command = parse_application_command(line);
+        if (application_command) {
+            if (const auto* command = std::get_if<ApplicationCommand>(
+                    &*application_command);
+                command != nullptr
+                && !application_.controller().is_generating()
+                && (command->kind == ApplicationCommandKind::open
+                    || command->kind == ApplicationCommandKind::create)
+                && !emit()) {
+                output_failed_ = true;
+                end_session_ = true;
+                return;
+            }
+            ApplicationDispatcher dispatcher(application_);
+            apply(dispatcher.handle(std::move(line)));
             continue;
         }
-        if (command.kind == CommandKind::exit
-            && command.argument.empty()) {
+        const Command command = parse_command(line);
+        if (command.kind == CommandKind::stop && command.argument.empty()) {
+            ApplicationDispatcher dispatcher(application_);
+            apply(dispatcher.handle(std::move(line)));
+            continue;
+        }
+        if (command.kind == CommandKind::exit && command.argument.empty()) {
             end_session_ = true;
             queue_.clear();
             return;
@@ -138,23 +193,33 @@ void ConsoleSession::enqueue(std::vector<std::string> lines) {
 
 void ConsoleSession::pump() {
     while (!end_session_ && !queue_.empty()
-        && !controller_.is_generating()) {
+        && !application_.controller().is_generating()) {
         std::string line = std::move(queue_.front());
         queue_.pop_front();
-        const TextInputResult result =
-            handle_text_input(controller_, options_.author_id, std::move(line));
-        apply(result.session);
-        end_session_ = end_session_ || result.exit_requested;
+        const auto application_command = parse_application_command(line);
+        if (application_command
+            && std::holds_alternative<ApplicationCommand>(*application_command)) {
+            const ApplicationCommandKind kind =
+                std::get<ApplicationCommand>(*application_command).kind;
+            if ((kind == ApplicationCommandKind::open || kind == ApplicationCommandKind::create)
+                && !emit()) {
+                output_failed_ = true;
+                end_session_ = true;
+                return;
+            }
+        }
+        ApplicationDispatcher dispatcher(application_);
+        apply(dispatcher.handle(std::move(line)));
     }
 }
 
 bool ConsoleSession::emit() {
-    emitter_.write(controller_.transcript().view());
+    emitter_->write(application_.controller().transcript().view());
     if (!port_.flush()) {
         port_.notices() << "Failed to write console transcript.\n";
         return false;
     }
-    emitter_.commit();
+    emitter_->commit();
     return true;
 }
 
@@ -164,7 +229,7 @@ int ConsoleSession::finish(int exit_code) {
         exit_code = 1;
     }
     try {
-        controller_.shutdown();
+        application_.shutdown();
     } catch (...) {
         if (exit_code == 0) {
             throw;

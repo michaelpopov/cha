@@ -1,9 +1,11 @@
 #include "session/session_controller.h"
+#include "application/chat_application.h"
 #include "agents/completion_backend.h"
 #include "session/session_database.h"
 #include "support/test_notifier.h"
 #include "support/test_controller.h"
 #include "support/test_session_database.h"
+#include "support/test_workspace.h"
 #include "ui/tui/input_editor.h"
 #include "ui/tui/session_view.h"
 #include "support/test_backends.h"
@@ -84,7 +86,8 @@ public:
         const GenerationStatus& status,
         bool show_addressing,
         std::string_view input_target_name,
-        std::string_view notice) override {
+        std::string_view notice,
+        const ApplicationOverlay* overlay) override {
         ++render_count;
         rendered_entries.assign(
             transcript.entries.begin(),
@@ -96,6 +99,7 @@ public:
         rendered_show_addressing = show_addressing;
         rendered_input_target_name = input_target_name;
         rendered_notice = notice;
+        rendered_overlay = overlay ? std::optional<ApplicationOverlay>(*overlay) : std::nullopt;
     }
 
     void scroll_up() override {
@@ -108,6 +112,10 @@ public:
 
     void resize() override {
         ++resize_count;
+    }
+
+    void reset_session_view() override {
+        ++reset_session_count;
     }
 
     void type(std::string_view text) {
@@ -132,10 +140,12 @@ public:
     ResponsePhase rendered_phase{ResponsePhase::waiting};
     bool rendered_show_addressing{};
     std::string rendered_input_target_name;
+    std::optional<ApplicationOverlay> rendered_overlay;
     int render_count{};
     int scroll_up_count{};
     int scroll_down_count{};
     int resize_count{};
+    int reset_session_count{};
 };
 
 // Echoes or blocks a completion so UI-to-controller behavior is deterministic.
@@ -238,6 +248,118 @@ TEST(PersonaSession, SubmitsEditedInputThroughTheController) {
     EXPECT_EQ(entries.front().text, "Question");
     EXPECT_EQ(entries.back().text, "Answer to Question");
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+}
+
+TEST(PersonaSession, ApplicationCommandsUseOverlayAndResetOnlyAfterASwitch) {
+    test::TestWorkspace fixture;
+    Workspace workspace(fixture.root());
+    test::TestNotifier application_notifier;
+    ChatApplication application(workspace, application_notifier);
+    FakeSessionView view;
+    PersonaSession session(view, application);
+
+    // Application construction enters the chat directly; no selector supplies
+    // either the initial session or the input target.
+    session.resize();
+    session.render_if_needed();
+    EXPECT_EQ(application.descriptor().forum_display_name, "Entrance");
+    EXPECT_EQ(application.descriptor().session_label, "Welcome");
+    EXPECT_EQ(view.rendered_input_target_name, "Assistant");
+
+    enter(view, "/help");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    ASSERT_TRUE(view.rendered_overlay);
+    EXPECT_EQ(view.rendered_overlay->title, "Commands");
+    EXPECT_EQ(application.controller().transcript().entries().size(), 0U);
+
+    for (int index = 0; index != 8; ++index) {
+        view.push(SessionInputKind::page_down);
+    }
+    view.push(SessionInputKind::resize);
+    session.receive_terminal_input();
+    session.render_if_needed();
+    ASSERT_TRUE(view.rendered_overlay);
+    EXPECT_EQ(view.rendered_overlay->first_visible,
+              view.rendered_overlay->rows.size() - 1);
+    EXPECT_EQ(view.scroll_down_count, 0);
+    EXPECT_EQ(view.resize_count, 2);
+
+    view.push(SessionInputKind::escape);
+    session.receive_terminal_input();
+    session.render_if_needed();
+    EXPECT_FALSE(view.rendered_overlay);
+
+    enter(view, "/forums");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    ASSERT_TRUE(view.rendered_overlay);
+    EXPECT_EQ(view.rendered_overlay->title, "Forums");
+    EXPECT_EQ(view.rendered_overlay->rows, std::vector<std::string>{"The Lobby"});
+    view.push(SessionInputKind::escape);
+
+    enter(view, "/personas");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    ASSERT_TRUE(view.rendered_overlay);
+    EXPECT_EQ(view.rendered_overlay->title, "Personas");
+    EXPECT_EQ(view.rendered_overlay->rows, std::vector<std::string>{"Reader"});
+    view.push(SessionInputKind::escape);
+
+    enter(view, "/iam Reader");
+    enter(view, "/create \"The Lobby\" \"TUI discussion\"");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    EXPECT_EQ(application.selected_persona(), "Reader");
+    EXPECT_EQ(application.descriptor().forum_display_name, "The Lobby");
+    EXPECT_EQ(application.descriptor().session_label, "TUI discussion");
+    EXPECT_EQ(view.reset_session_count, 1);
+    EXPECT_TRUE(view.rendered_input.empty());
+    EXPECT_EQ(view.rendered_input_target_name, "Guide");
+
+    enter(view, "/sessions \"The Lobby\"");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    ASSERT_TRUE(view.rendered_overlay);
+    EXPECT_EQ(view.rendered_overlay->title, "Sessions in The Lobby");
+    EXPECT_EQ(view.rendered_overlay->rows, std::vector<std::string>{"TUI discussion"});
+    EXPECT_TRUE(view.rendered_entries.empty());
+    view.push(SessionInputKind::escape);
+    session.receive_terminal_input();
+
+    SessionController* const before_failed_open = &application.controller();
+    enter(view, "/open \"The Lobby\" \"Missing\"");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    EXPECT_EQ(&application.controller(), before_failed_open);
+    EXPECT_EQ(view.reset_session_count, 1);
+    EXPECT_EQ(view.rendered_input_target_name, "Guide");
+
+    // The old chat remains usable after a recoverable switch failure.
+    view.type("draft after failed open");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    EXPECT_EQ(view.rendered_input, "draft after failed open");
+
+    // Stateful application commands are rejected immediately while generation
+    // is active and remain available as a draft rather than being delayed.
+    view.push(SessionInputKind::escape);
+    session.receive_terminal_input();
+    enter(view, "Keep working");
+    session.receive_terminal_input();
+    ASSERT_TRUE(application.controller().is_generating());
+    enter(view, "/forums");
+    session.receive_terminal_input();
+    session.render_if_needed();
+    EXPECT_EQ(view.rendered_input, "/forums");
+    EXPECT_EQ(view.rendered_notice,
+              "Generation in progress; use /stop, Esc, or Ctrl-C");
+    EXPECT_FALSE(view.rendered_overlay);
+
+    session.shutdown();
+    session.report_terminal_failure();
+    session.render_if_needed();
+    EXPECT_FALSE(session.running());
 }
 
 TEST(PersonaSession, DelegatesClearAndInfoCommandsToTheController) {

@@ -5,11 +5,11 @@
 #include "util/logging.h"
 #include "util/text.h"
 #include "util/text_template.h"
+#include "util/public_name.h"
 #include "util/utf8_path.h"
 
 #include <nlohmann/json.hpp>
 
-#include <cctype>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -48,7 +48,8 @@ AgentDefinition load_definition_files(
     const AgentDefinitionSource& source,
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
-    std::optional<std::filesystem::path> forum_defaults_path) {
+    std::optional<std::filesystem::path> forum_defaults_path,
+    std::optional<ProviderConfig> application_provider) {
     const std::string character_name = utf8_path(source.definition_directory.filename());
     const std::filesystem::path member_config = source.member_directory / "character.toml";
     const std::filesystem::path member_prompt = source.member_directory / "CHARACTER.md";
@@ -63,7 +64,8 @@ AgentDefinition load_definition_files(
     LoadedConfig loaded;
     try {
         loaded = load_config(
-            {.definition = source.definition_directory / "character.toml",
+            {.application_provider = application_provider,
+             .definition = source.definition_directory / "character.toml",
              .forum_defaults = forum_defaults_path
                  ? optional_regular_file(*forum_defaults_path) : std::nullopt,
              .member_override = optional_regular_file(member_config)});
@@ -217,7 +219,8 @@ std::vector<AgentDefinition> load_agent_definitions(
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
     const PersonaRoster& personas,
-    std::optional<std::filesystem::path> forum_defaults_path) {
+    std::optional<std::filesystem::path> forum_defaults_path,
+    std::optional<ProviderConfig> application_provider) {
     std::vector<AgentDefinition> definitions;
     definitions.reserve(sources.size());
     for (const AgentDefinitionSource& source : sources) {
@@ -226,11 +229,18 @@ std::vector<AgentDefinition> load_agent_definitions(
                 source,
                 forum_directory,
                 forum_display_name,
-                forum_defaults_path));
+                forum_defaults_path,
+                application_provider));
     }
+    append_standard_prompt_context(definitions, personas);
+    return definitions;
+}
+
+void append_standard_prompt_context(
+    std::vector<AgentDefinition>& definitions,
+    const PersonaRoster& personas) {
     append_participant_roster(definitions, personas);
     append_forum_context(definitions);
-    return definitions;
 }
 
 void validate_persona_character_collisions(
@@ -267,18 +277,16 @@ void validate_character_id(std::string_view id) {
     }
 }
 
+void validate_character_name_syntax(std::string_view name) {
+    try {
+        validate_public_name(name, "Character name", "character.toml", true);
+    } catch (const std::runtime_error& error) {
+        throw std::invalid_argument(error.what());
+    }
+}
+
 void validate_character_name(std::string_view name) {
-    if (name.empty()) {
-        throw std::invalid_argument("Character name cannot be empty");
-    }
-    if (name.front() == '@' || name.front() == '/') {
-        throw std::invalid_argument("Character name cannot start with '@' or '/'");
-    }
-    if (std::isspace(static_cast<unsigned char>(name.front()))
-        || std::isspace(static_cast<unsigned char>(name.back()))) {
-        throw std::invalid_argument(
-            "Character name cannot start or end with whitespace");
-    }
+    validate_character_name_syntax(name);
     const std::string folded = fold_ascii(name);
     for (const std::string_view reserved : reserved_participant_names) {
         if (folded == reserved) {

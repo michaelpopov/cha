@@ -3,13 +3,16 @@
 #include "ui/tui/input_editor.h"
 #include "ui/tui/session_view.h"
 
+#include <optional>
 #include <string>
 
 namespace cha {
 
 class SessionController;
+class ChatApplication;
 struct SessionChange;
 struct TextInputResult;
+struct ApplicationResult;
 
 // The state machine of one interactive run. It turns typed input into editing, scrolling,
 // submission, cancellation, or shutdown, sends submitted text on to the controller, and applies
@@ -22,6 +25,7 @@ public:
         SessionView& view,
         SessionController& controller,
         std::string author_id);
+    PersonaSession(SessionView& view, ChatApplication& application);
 
     bool running() const;
     void render();
@@ -37,6 +41,7 @@ private:
     void request_render();
     void apply_change(const SessionChange& change);
     void apply_text_input(const TextInputResult& result);
+    void apply_application_result(ApplicationResult result);
     void handle_input(const SessionInput& input);
     void submit_input();
     void request_stop();
@@ -44,11 +49,13 @@ private:
 
     SessionView& view_;
     InputEditor editor_;
-    SessionController& controller_;
+    SessionController* controller_{};
+    ChatApplication* application_{};
     std::string author_id_;
     bool running_{true};
     bool render_needed_{false};
     std::string notice_;
+    std::optional<ApplicationOverlay> overlay_;
 };
 
 } // namespace cha

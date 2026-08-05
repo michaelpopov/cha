@@ -20,6 +20,10 @@ TestWorkspace::TestWorkspace()
     std::ofstream(root_ / "app.toml")
         << "host = \"127.0.0.1\"\n"
            "port = 8080\n"
+           "[provider]\n"
+           "host = \"test\"\n"
+           "port = 1\n"
+           "mode = \"test\"\n"
            "[logging]\n"
            "file = \"logs/cha.log\"\n"
            "level = \"off\"\n";
@@ -49,6 +53,10 @@ void TestWorkspace::write_app_config(
     std::ofstream(root_ / "app.toml")
         << "host = \"127.0.0.1\"\n"
            "port = " << port << "\n"
+           "[provider]\n"
+           "host = \"test\"\n"
+           "port = 1\n"
+           "mode = \"test\"\n"
            "[logging]\n"
            "file = \"logs/cha.log\"\n"
            "level = \"" << log_level << "\"\n";

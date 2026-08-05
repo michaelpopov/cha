@@ -11,9 +11,9 @@ sources.
 
 ## `tui_main.cpp`
 
-The terminal application. It owns four things — the workspace, the terminal, the
-selector, and the chosen controller — in that order, and hands the last one to
-the chat loop.
+The terminal application constructs a workspace, terminal, event loop, and
+`ChatApplication`, then enters chat immediately in `Guest` / `Entrance` /
+`Welcome`.
 
 ```mermaid
 flowchart TD
@@ -22,21 +22,8 @@ flowchart TD
     config --> log["initialize diagnostic logging"]
     log --> c["construct Workspace<br/>requires app.toml + characters/ + forums/ + personas/"]
     c --> d["construct Terminal<br/>process-wide curses"]
-    d --> personas["Workspace.load_personas"]
-    personas --> e["StartupSelector.select_persona"]
-    e -->|"cancelled"| x["throw, exit 1"]
-    e --> forum["StartupSelector.select_forum"]
-    forum -->|"cancelled"| x
-    forum --> f["Workspace.sessions of forum"]
-    f --> g["StartupSelector.select_session"]
-    g -->|"cancelled"| x
-    g -->|"row carries an error"| x
-    g -->|"empty id, meaning New session"| h["prompt_session_name"]
-    h --> i["Workspace.create_session"]
-    g -->|"existing id"| j["Workspace.open_session"]
-    i -->|"OpenedSession.controller"| k["SessionController"]
-    j -->|"OpenedSession.controller"| k
-    k --> l["run_persona with terminal, controller,<br/>and selected persona ID"]
+    d --> app["construct ChatApplication<br/>opens Guest / Entrance / Welcome"]
+    app --> l["run_application with terminal,<br/>application, and event loop"]
     l --> m["return 0"]
 ```
 
@@ -47,42 +34,35 @@ Two properties matter more than the sequence:
   opens a database. That is what lets a second front end reuse the same startup
   without copying logic.
 - **Failures are reported after the terminal is restored.** `Terminal`'s
-  destructor leaves curses mode during unwinding, and `run_persona()` restores it
+  destructor leaves curses mode during unwinding, and `run_application()` restores it
   explicitly before rethrowing, so the message printed by `main()` reaches a
   normal screen.
 
-Cancelling either selector is an error, not a silent exit: the process reports
-why it stopped.
+There is no startup-selection cancellation path. Workspace, temporary-storage,
+and provider initialization failures are reported after terminal restoration.
 
 ## `console_main.cpp`
 
-The line-oriented application parses forum/session selection and handles
-forum/session listings or `--forum ID --check` before constructing any console
-or session object. A chat run requires `--persona ID`, which it resolves against
-`Workspace::load_personas()`; listings and `--check` reject that flag. A forum
-check loads and validates the static definitions through `Workspace`, then exits
-without provider initialization.
+The line-oriented application accepts only `--color` for an interactive run or
+argument-free `--check`. `--check` constructs and structurally validates the
+whole workspace, including every forum, before returning without a provider or
+session. An interactive run constructs `SystemConsole` and `ChatApplication`,
+which opens Guest in Entrance / Welcome before stdin is read. The console owns
+no entity-selection flow: persona and session navigation are shared slash
+commands handled through `ChatApplication`.
 
-For a chat run, the entry point constructs a `SystemConsole` whose libuv loop
-handles SIGINT and stdin, opens the controller through `Workspace`, and
-assembles `TranscriptEmitter` and `ConsoleSession`. It also decides
-TTY-dependent behavior: the named `@DefaultAgentName> ` prompt and ready banner
-appear only for interactive stdin, pipe input receives queue backpressure, and
-automatic attributes are enabled independently for terminal stdout and stderr.
-`Workspace::create_session()` returns an `OpenedSession` whose descriptor
-carries the generated session ID and whose controller remains owner-thread-only;
-the ready banner prints that resolved ID rather than a placeholder
-for newly created sessions.
+TTY-dependent behavior remains in the composition root: `Entrance / Welcome
+ready` and the named `@DefaultAgentName> ` prompt appear only for interactive
+stdin, pipe input receives queue backpressure, and automatic attributes are
+enabled independently for terminal stdout and stderr.
 
 The libuv signal watcher is started before the controller creates its registry
 runner threads. On POSIX, SIGPIPE is ignored so `ConsoleSession` can turn a
 closed stdout into exit code 1 with an error on stderr.
 
-Listings and checks return before any session or console object is constructed.
-`--list-forums` takes global precedence; `--list-sessions` takes precedence over
-session-selection validation but conflicts with `--check`. Usage errors return
-2, runtime and validation errors return 1, and a successful listing/check,
-orderly EOF, `/exit`, or idle Ctrl-C returns 0. Before a successful chat return,
+`--check` returns before any console, built-in environment, or session object
+is constructed. Usage errors return 2, runtime and validation errors return 1,
+and a successful check, orderly EOF, `/exit`, or idle Ctrl-C returns 0. Before a successful chat return,
 the console explicitly finalizes sanitizer state and checks the last stdout
 flush; destruction does not perform hidden output.
 
@@ -101,7 +81,7 @@ destructors so operating-system lease cleanup can proceed.
 
 A composition root may depend on any concrete component it needs to assemble a
 program. `tui_main.cpp` uses `session/`, `ui/tui/`, and `util/`.
-`console_main.cpp` uses `session/`, `ui/console/`, `ui/render/`, and `util/`.
+`console_main.cpp` uses `application/`, `session/`, `ui/console/`, and `util/`.
 `web_main.cpp` links `cha_web`; HTTP/SSE policy remains in `ui/web/`.
 
 Nothing depends on `apps/`.

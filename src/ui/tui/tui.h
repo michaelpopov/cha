@@ -36,10 +36,12 @@ public:
         const GenerationStatus& status,
         bool show_addressing,
         std::string_view input_target_name,
-        std::string_view notice = {}) override;
+        std::string_view notice,
+        const ApplicationOverlay* overlay) override;
     void scroll_up() override;
     void scroll_down() override;
     void resize() override;
+    void reset_session_view() override;
 
 private:
     void replace_pad(WINDOW*& pad, int rows, int columns);
@@ -67,6 +69,7 @@ private:
         int input_y,
         int input_height,
         int columns);
+    void render_overlay(const ApplicationOverlay& overlay, int rows, int columns);
 
     WINDOW* transcript_pad_{};
     WINDOW* input_pad_{};

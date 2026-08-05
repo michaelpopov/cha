@@ -27,22 +27,26 @@ public:
         std::filesystem::create_directories(definition_.parent_path());
         std::filesystem::create_directories(defaults_.parent_path());
         std::filesystem::create_directories(member_.parent_path());
+        write(application_, "host = \"application\"\nport = 81\nmode = \"test\"\n");
     }
     ~ConfigFiles() { std::filesystem::remove_all(root_); }
     void write(const std::filesystem::path& path, std::string_view contents) const {
         std::ofstream file(path);
         file << contents;
     }
-    CharacterConfigPaths paths(bool defaults = false, bool member = false) const {
-        return {.definition = definition_,
+    CharacterConfigPaths paths(bool defaults = false, bool member = false, bool application = false) const {
+        return {.application_provider = application ? std::optional{ProviderConfig{
+                    .source = application_, .host = "application", .port = 81, .mode = Mode::test}} : std::nullopt,
+            .definition = definition_,
             .forum_defaults = defaults ? std::optional{defaults_} : std::nullopt,
             .member_override = member ? std::optional{member_} : std::nullopt};
     }
     const std::filesystem::path& definition() const { return definition_; }
     const std::filesystem::path& defaults() const { return defaults_; }
     const std::filesystem::path& member() const { return member_; }
+    const std::filesystem::path& application() const { return application_; }
 private:
-    std::filesystem::path root_, definition_, defaults_, member_;
+    std::filesystem::path root_, application_ = root_ / "app.toml", definition_, defaults_, member_;
 };
 
 constexpr std::string_view required_definition =
@@ -186,9 +190,9 @@ TEST(Config, RejectsDefinitionOnlyAndRemovedIdentityFieldsInEveryLayer) {
 TEST(Config, AttributesEffectiveValidationToHighestPrecedenceSource) {
     ConfigFiles files;
     files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 65536\n");
-    expect_error_containing([&] { (void)load_config(files.paths()); }, files.definition(), "port");
+    expect_error_containing([&] { (void)load_config(files.paths(false, false, true)); }, files.definition(), "port");
     files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 80\ntemperature = 2.1\n");
-    expect_error_containing([&] { (void)load_config(files.paths()); }, files.definition(), "temperature");
+    expect_error_containing([&] { (void)load_config(files.paths(false, false, true)); }, files.definition(), "temperature");
     files.write(files.definition(), required_definition);
     files.write(files.defaults(), "port = 65536\n");
     expect_error_containing([&] { (void)load_config(files.paths(true)); }, files.defaults(), "port");
@@ -199,6 +203,28 @@ TEST(Config, AttributesEffectiveValidationToHighestPrecedenceSource) {
     expect_error_containing([&] { (void)load_config(files.paths(true, true)); }, files.member(), "port");
     files.write(files.member(), "temperature = 2.1\n");
     expect_error_containing([&] { (void)load_config(files.paths(true, true)); }, files.member(), "temperature");
+}
+
+TEST(Config, InheritsApplicationProviderAndTracksAllFourLayers) {
+    ConfigFiles files;
+    files.write(files.definition(), "display_name = \"Example\"\n");
+    EXPECT_EQ(load_config(files.paths(false, false, true)).config.host, "application");
+    EXPECT_EQ(load_config(files.paths(false, false, true)).config.port, 81);
+    files.write(files.definition(), "display_name = \"Example\"\nhost = \"definition\"\n");
+    files.write(files.defaults(), "host = \"defaults\"\n");
+    files.write(files.member(), "host = \"member\"\n");
+    EXPECT_EQ(load_config(files.paths(true, true, true)).config.host, "member");
+}
+
+TEST(Config, ValidatesCharacterDescriptionsAndRejectsThemOutsideDefinitions) {
+    ConfigFiles files;
+    files.write(files.definition(), "display_name = \"Example\"\ndescription = \"Useful character\"\n");
+    EXPECT_EQ(load_character_definition_metadata(files.definition()).description, "Useful character");
+    files.write(files.definition(), "display_name = \"Example\"\ndescription = \" bad\"\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+    files.write(files.definition(), "display_name = \"Example\"\n");
+    files.write(files.defaults(), "description = \"Not here\"\n");
+    EXPECT_THROW((void)load_config(files.paths(true)), std::runtime_error);
 }
 
 TEST(Config, LoadsAndValidatesDefinitionMetadataTags) {

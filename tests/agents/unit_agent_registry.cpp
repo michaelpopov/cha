@@ -225,7 +225,7 @@ TEST(AgentRegistry, IdentifiesCharacterWhoseDefinitionStartupFails) {
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
         EXPECT_NE(message.find("Character 'Alpha'"), std::string::npos);
-        EXPECT_NE(message.find("alpha-id"), std::string::npos);
+        EXPECT_EQ(message.find("alpha-id"), std::string::npos);
     }
 }
 

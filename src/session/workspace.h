@@ -1,8 +1,10 @@
 #pragma once
 
 #include "agents/persona.h"
+#include "agents/config.h"
 #include "session/not_found_error.h"
 #include "session/opened_session.h"
+#include "session/session_catalog.h"
 
 #include <filesystem>
 #include <memory>
@@ -19,6 +21,7 @@ class WakeNotifier;
 struct Forum {
     std::string name;
     std::string display_name;
+    std::optional<std::string> description;
     std::vector<std::string> character_names;
     std::string default_agent_id;
     std::filesystem::path directory;
@@ -30,6 +33,7 @@ struct SessionSummary {
     std::string id;
     std::string label;
     std::string error;
+    bool ambiguous{false};
 
     bool operator==(const SessionSummary&) const = default;
 };
@@ -40,6 +44,7 @@ struct ApplicationConfig {
     int port{};
     std::filesystem::path log_file;
     std::string log_level;
+    ProviderConfig provider;
 };
 
 // Reads the workspace-level application configuration without validating the
@@ -60,20 +65,30 @@ public:
     Workspace(std::filesystem::path root, ApplicationConfig app_config);
 
     const ApplicationConfig& app_config() const;
+    const std::filesystem::path& root() const noexcept { return root_; }
+    std::vector<CharacterDefinitionMetadata> character_definitions() const;
     std::vector<std::string> forums() const;
-    // Loads and validates the current workspace roster. Raises when personas/ is
-    // missing or empty; re-reads the filesystem on every call.
+    // Loads and validates the current workspace roster. Raises when personas/
+    // is missing; an existing empty directory is valid and it re-reads on every call.
     PersonaRoster load_personas() const;
     Forum load_forum(const std::string& name) const;
     // Fully validates one forum without creating a session or initializing
     // completion providers. Returns its resolved metadata on success.
     Forum check_forum(const std::string& name) const;
     std::vector<SessionSummary> sessions(const std::string& forum_name) const;
+    // Name-facing counterparts for terminal/application callers. They resolve
+    // public forum and session names while the established key APIs above stay
+    // available to the web protocol.
+    std::vector<SessionSummary> sessions_by_name(const std::string& forum_name) const;
+    [[nodiscard]] Forum load_forum_by_name(std::string_view name) const;
     // Reads one stored session's validated metadata directly, without listing
     // or reading any other session in the forum.
     [[nodiscard]] SessionSummary session_summary(
         const std::string& forum_name,
         const std::string& session_id) const;
+    [[nodiscard]] SessionSummary session_summary_by_name(
+        std::string_view forum_name,
+        const std::string& session_name) const;
     // Validates a stored session identity and its on-disk metadata without
     // acquiring a lease, constructing a controller, or restoring a session.
     // The web lobby uses this before asking its live-session registry to open.
@@ -87,12 +102,24 @@ public:
     [[nodiscard]] SessionSummary create_stored_session(
         const std::string& forum_name,
         std::string label) const;
+    [[nodiscard]] SessionSummary create_stored_session_by_name(
+        std::string_view forum_name,
+        std::string session_name) const;
+    // Name-based callers that will immediately construct a controller retain
+    // this prepared lease instead of opening a publication race.
+    [[nodiscard]] PreparedSession prepare_stored_session_by_name(
+        std::string_view forum_name,
+        std::string session_name) const;
     [[nodiscard]] OpenedSession create_session(
         const std::string& forum_name,
         std::string label,
         WakeNotifier& notifier) const;
     [[nodiscard]] OpenedSession open_session(
         const SessionIdentity& identity,
+        WakeNotifier& notifier) const;
+    [[nodiscard]] OpenedSession open_session_by_name(
+        std::string_view forum_name,
+        const std::string& session_name,
         WakeNotifier& notifier) const;
 
 private:

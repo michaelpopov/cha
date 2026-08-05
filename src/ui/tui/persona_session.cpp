@@ -1,10 +1,13 @@
 #include "ui/tui/persona_session.h"
 
+#include "application/chat_application.h"
 #include "session/session_controller.h"
 #include "ui/render/transcript_writer.h"
 #include "ui/text/text_input.h"
+#include "ui/text/application_dispatcher.h"
 #include "ui/text/mention.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace cha {
@@ -15,23 +18,28 @@ PersonaSession::PersonaSession(
     SessionController& controller,
     std::string author_id)
   : view_(view),
-    controller_(controller),
+    controller_(&controller),
     author_id_(std::move(author_id)) {
 }
+
+PersonaSession::PersonaSession(SessionView& view, ChatApplication& application)
+  : view_(view), controller_(&application.controller()), application_(&application) {}
 
 bool PersonaSession::running() const {
     return running_;
 }
 
 void PersonaSession::render() {
-    const TranscriptView transcript = controller_.transcript().view();
+    SessionController& controller = application_ ? application_->controller() : *controller_;
+    const TranscriptView transcript = controller.transcript().view();
     view_.render(
         transcript,
         editor_,
-        controller_.generation_status(),
-        show_addressing(controller_.characters(), transcript),
+        controller.generation_status(),
+        show_addressing(controller.characters(), transcript),
         input_target_name(),
-        notice_);
+        notice_,
+        overlay_ ? &*overlay_ : nullptr);
     render_needed_ = false;
 }
 
@@ -57,8 +65,28 @@ void PersonaSession::report_terminal_failure() {
 }
 
 void PersonaSession::receive_responses() {
-    const SessionChange change = controller_.receive();
+    SessionController& controller = application_ ? application_->controller() : *controller_;
+    const SessionChange change = controller.receive();
     apply_change(change);
+}
+
+void PersonaSession::apply_application_result(ApplicationResult result) {
+    if (result.input_consumed) editor_.clear();
+    if (result.session_changed) {
+        controller_ = &application_->controller();
+        overlay_.reset();
+        view_.reset_session_view();
+    }
+    if (result.list) {
+        overlay_ = ApplicationOverlay{.title = std::move(result.list->title),
+                                      .rows = std::move(result.list->rows)};
+    }
+    if (result.notice && notice_ != *result.notice) {
+        notice_ = std::move(*result.notice);
+    }
+    apply_change(result.session);
+    if (result.exit_requested) running_ = false;
+    request_render();
 }
 
 void PersonaSession::apply_change(const SessionChange& change) {
@@ -98,6 +126,49 @@ void PersonaSession::request_render() {
 }
 
 void PersonaSession::handle_input(const SessionInput& input) {
+    const SessionController& current = application_ ? application_->controller() : *controller_;
+    if (overlay_ && !(input.kind == SessionInputKind::escape && current.is_generating())) {
+        switch (input.kind) {
+        case SessionInputKind::escape:
+            overlay_.reset();
+            request_render();
+            return;
+        case SessionInputKind::page_up:
+            overlay_->first_visible = overlay_->first_visible > 5
+                ? overlay_->first_visible - 5 : 0;
+            request_render();
+            return;
+        case SessionInputKind::up:
+            if (overlay_->first_visible > 0) --overlay_->first_visible;
+            request_render();
+            return;
+        case SessionInputKind::page_down:
+            if (!overlay_->rows.empty()) {
+                overlay_->first_visible = std::min(
+                    overlay_->rows.size() - 1, overlay_->first_visible + 5);
+            }
+            request_render();
+            return;
+        case SessionInputKind::down:
+            if (!overlay_->rows.empty()
+                && overlay_->first_visible < overlay_->rows.size() - 1) {
+                ++overlay_->first_visible;
+            }
+            request_render();
+            return;
+        case SessionInputKind::resize:
+            view_.resize();
+            request_render();
+            return;
+        case SessionInputKind::interrupt:
+            break;
+        default:
+            // An overlay is modal for editor input.  It must not let hidden
+            // keystrokes alter the draft while it is being scrolled.
+            return;
+        }
+    }
+    SessionController& controller = application_ ? application_->controller() : *controller_;
     switch (input.kind) {
     case SessionInputKind::resize:
         view_.resize();
@@ -134,7 +205,7 @@ void PersonaSession::handle_input(const SessionInput& input) {
         break;
     case SessionInputKind::escape:
     case SessionInputKind::interrupt:
-        if (controller_.is_generating()) {
+        if (controller.is_generating()) {
             request_stop();
         } else if (input.kind == SessionInputKind::interrupt) {
             running_ = false;
@@ -162,20 +233,27 @@ void PersonaSession::submit_input() {
     }
 
     const std::string input = editor_.value();
-    apply_text_input(handle_text_input(controller_, author_id_, input));
+    if (application_) {
+        ApplicationDispatcher dispatcher(*application_);
+        apply_application_result(dispatcher.handle(input));
+    } else {
+        apply_text_input(handle_text_input(*controller_, author_id_, input));
+    }
 }
 
 void PersonaSession::request_stop() {
-    apply_change(controller_.request_stop());
+    SessionController& controller = application_ ? application_->controller() : *controller_;
+    apply_change(controller.request_stop());
 }
 
 std::string PersonaSession::input_target_name() const {
+    const SessionController& controller = application_ ? application_->controller() : *controller_;
     const CharacterInfo* target =
-        controller_.characters().find(controller_.default_agent_id());
+        controller.characters().find(controller.default_agent_id());
     const AddressedPrompt prompt = parse_addressed_prompt(editor_.value());
     if (!prompt.handle.empty()) {
         const HandleResolution resolution =
-            controller_.characters().resolve_handle(prompt.handle);
+            controller.characters().resolve_handle(prompt.handle);
         if (resolution.match == HandleMatch::resolved) {
             target = resolution.character;
         }
@@ -184,7 +262,8 @@ std::string PersonaSession::input_target_name() const {
 }
 
 void PersonaSession::shutdown() {
-    controller_.shutdown();
+    if (application_) application_->shutdown();
+    else controller_->shutdown();
 }
 
 } // namespace cha

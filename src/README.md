@@ -10,7 +10,8 @@ persona-facing manual is the [top-level `README.md`](../README.md).
 ## System overview
 
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
-It runs inside a workspace containing `app.toml`, a persona roster, workspace-level
+It runs inside a workspace containing `app.toml` (including the shared `[provider]`
+connection layer), a persona roster, workspace-level
 character definitions, and forums. Each definition lives at
 `characters/<id>/` with `character.toml` and `CHARACTER.md`. A forum explicitly
 selects its ordered roster through `forums/<forum>/members/<id>/`; its optional
@@ -32,7 +33,10 @@ is stored on the human entry; projection prefixes ordinary human `persona` messa
 with `from <Name>:` without changing stored or rendered text.
 
 A session is a persistent chat within a forum, stored in a single SQLite
-database. For each turn, `cha` records the persona's prompt before sending it to
+database. Its metadata name is the public session identity; the database stem
+remains a validated private storage key. Catalog creation serializes public
+names with a short-lived directory lease and publishes only after holding the
+new session's lease. For each turn, `cha` records the persona's prompt before sending it to
 the chosen agent on a worker thread. Model output is streamed into the chat
 transcript, and the outcome of the turn—completion, cancellation, or failure—is
 recorded in the database.
@@ -48,11 +52,12 @@ Each entry point links only its frontend target.
 | Directory | Owns | Must not know about |
 | --- | --- | --- |
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
-| `ui/tui/` | Curses lifecycle, startup selection, input editing, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
-| `ui/console/` | CLI selection, line input, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
+| `ui/tui/` | Curses lifecycle, application-relative chat input, overlays, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
+| `ui/console/` | Line input, application-command dispatch, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
 | `ui/web/` | HTTP/SSE transport, protocol DTOs, presentation state, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
+| `application/` | Shared application-facing snapshots, built-ins, and navigation session sources. | Frontend I/O, argument parsing, and frontend types. |
 | `session/` | Workspace and session operations, `ForumCharacters`, SQLite persistence, live chat coordination, and the owning `SessionState` read model. | Frontends, command syntax, transports. |
 | `agents/` | Character config, agent runtime metadata, model-context projection, staged runners, and HTTP transport. | Workspace layout, sessions, frontends. |
 | `transcript/` | The transcript model: entry types, validation, and the owner-thread-owned live `Transcript`. | Storage, providers, frontends. |
@@ -65,12 +70,13 @@ may include headers only from those listed beside it.
 
 | Directory | May include |
 | --- | --- |
-| `apps/` | `ui/tui/`, `ui/console/`, `ui/web/`, `ui/render/`, `session/`, `transcript/`, `util/` |
-| `ui/tui/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
-| `ui/console/` | `ui/render/`, `ui/text/`, `session/`, `transcript/`, `util/` |
+| `apps/` | `ui/tui/`, `ui/console/`, `ui/web/`, `ui/render/`, `application/`, `session/`, `transcript/`, `util/` |
+| `ui/tui/` | `ui/render/`, `ui/text/`, `application/`, `session/`, `transcript/`, `util/` |
+| `ui/console/` | `ui/render/`, `ui/text/`, `application/`, `session/`, `transcript/`, `util/` |
 | `ui/web/` | `ui/text/`, `session/`, `transcript/`, `util/`, and its HTTP transport dependency |
 | `ui/render/` | `session/`, `transcript/` |
 | `ui/text/` | `session/`, `util/` |
+| `application/` | `session/`, `agents/`, `transcript/`, `util/` |
 | `session/` | `agents/`, `transcript/`, `util/` |
 | `agents/` | `transcript/`, `util/` |
 | `transcript/` | Nothing in the project. |
@@ -135,10 +141,11 @@ flowchart LR
 
 Ownership is a strict tree, and destruction order matters:
 
-- Each entry point owns a `Workspace` and selected `SessionController`. The TUI
-  additionally owns its process-wide `Terminal`; the console owns a
-  `SystemConsole` and `TranscriptEmitter`.
-- `run_persona()` owns the TUI chat state. `ConsoleSession::run()` owns the
+- Each terminal entry point owns a `Workspace` and `ChatApplication`, whose
+  mutable current `SessionController` is owner-thread-only. The TUI additionally
+  owns its process-wide `Terminal`; the console owns a `SystemConsole` and a
+  current-session `TranscriptEmitter`.
+- `run_application()` owns the TUI chat state. `ConsoleSession::run()` owns the
   console queue and EOF lifecycle.
 - `SessionController` owns the cross-process `SessionLease`, `Transcript`,
   `ForumCharacters`, the `SessionJournal`, the `AgentRegistry`, the current
@@ -190,46 +197,15 @@ sequenceDiagram
     autonumber
     participant main as tui_main
     participant ws as Workspace
-    participant sel as StartupSelector
-    participant cat as SessionCatalog
-    participant db as Session database
+    participant app as ChatApplication
     participant controller as SessionController
 
     main->>main: load_dotenv
     main->>ws: construct, require characters/, forums/, and personas/
-    main->>ws: use validated PersonaRoster
-    ws-->>main: PersonaRoster
-    main->>sel: select_persona
-    sel-->>main: selected Persona
-    main->>ws: forums
-    ws-->>main: forum names from forums/ subdirectories
-    main->>sel: select_forum
-    sel-->>main: chosen forum
-    main->>ws: sessions of forum
-    ws->>cat: list
-    cat->>db: read metadata, validate id and forum
-    cat-->>ws: Session rows
-    ws-->>main: SessionSummary rows
-    main->>sel: select_session
-    alt New session
-        sel-->>main: empty id
-        main->>sel: prompt_session_name
-        main->>ws: create_session
-        ws->>cat: create, temp file then link
-    else Existing session
-        sel-->>main: session id
-        main->>ws: open_session
-        ws->>db: load_session_state
-        db-->>ws: SessionRestore
-    end
-    ws->>controller: build with AgentDefinitions and database path
-    controller->>controller: restore entries, repair interrupted turns
-    alt New session
-        ws-->>main: OpenedSession (descriptor + controller)
-    else Existing session
-        ws-->>main: OpenedSession (descriptor + controller)
-    end
-    main->>controller: run_persona
+    main->>app: construct with workspace and event loop
+    app->>app: build Guest, Assistant, Entrance, Welcome
+    app->>controller: construct Welcome controller
+    main->>app: run_application
 ```
 
 Character loading happens synchronously on the caller. During session
@@ -450,7 +426,7 @@ never a partially written one.
   becomes `AgentFailed`, an error entry, and a notice; the session continues.
 - **Startup failures abort.** A malformed workspace, forum, character, or session
   database throws before any chat UI is drawn.
-- **Terminal restoration wins.** `run_persona()` restores the terminal before
+- **Terminal restoration wins.** `run_application()` restores the terminal before
   rethrowing, so a stack trace never lands on a screen still in curses mode.
 - **Error messages never carry model output.** Streaming protocol errors report
   sanitized status, content type, and byte counts only.
@@ -507,6 +483,7 @@ installed.
 
 | Layer | Document |
 | --- | --- |
+| Terminal application workflow | [`application/README.md`](application/README.md) |
 | Transcript model | [`transcript/README.md`](transcript/README.md) |
 | Agent runtime and transport | [`agents/README.md`](agents/README.md) |
 | Operations and persistence | [`session/README.md`](session/README.md) |

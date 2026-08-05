@@ -127,6 +127,10 @@ public:
     }
 
     bool flush() override {
+        ++flush_count_;
+        if (fail_flush_on_ == flush_count_) {
+            return false;
+        }
         if (fail_flush_) {
             fail_flush_ = false;
             return false;
@@ -144,6 +148,10 @@ public:
 
     void fail_next_flush() {
         fail_flush_ = true;
+    }
+
+    void fail_flush_on(std::size_t call) {
+        fail_flush_on_ = call;
     }
 
     void fail_next_finish() {
@@ -192,6 +200,8 @@ private:
     bool interrupt_{};
     bool closed_{};
     bool fail_flush_{};
+    std::size_t fail_flush_on_{};
+    std::size_t flush_count_{};
     bool fail_finish_{};
     bool last_wait_included_input_{true};
     std::mutex wake_mutex_;

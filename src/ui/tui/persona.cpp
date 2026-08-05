@@ -1,6 +1,6 @@
 #include "ui/tui/persona.h"
 
-#include "session/session_controller.h"
+#include "application/chat_application.h"
 #include "ui/tui/terminal.h"
 #include "ui/tui/tui.h"
 #include "ui/tui/persona_session.h"
@@ -168,16 +168,15 @@ private:
 
 // Coordinate semantic events here while leaving libuv handles and mutable UI
 // state to their respective modules.
-void run_persona(
+void run_application(
     Terminal& terminal,
-    SessionController& controller,
-    UvEventLoop& event_loop,
-    std::string author_id) {
+    ChatApplication& application,
+    UvEventLoop& event_loop) {
 
     std::exception_ptr failure;
     {
         Tui tui(terminal);
-        PersonaSession session(tui, controller, std::move(author_id));
+        PersonaSession session(tui, application);
         try {
             TuiEventSource events(event_loop);
             session.render();
@@ -217,7 +216,7 @@ void run_persona(
     if (failure) {
         terminal.restore();
         try {
-            controller.shutdown();
+            application.shutdown();
         } catch (...) {
             // Preserve the operation failure that ended the session.
         }

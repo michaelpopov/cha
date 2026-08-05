@@ -24,6 +24,8 @@ protected:
         std::ofstream(root_ / "app.toml")
             << "host = \"127.0.0.1\"\n"
                "port = 8080\n"
+               "[provider]\n"
+               "host = \"test\"\nport = 1\nmode = \"test\"\n"
                "[logging]\n"
                "file = \"cha.log\"\n"
                "level = \"off\"\n";
@@ -60,6 +62,17 @@ TEST_F(PersonaLoaderTest, LoadsPersonasInLexicographicIdOrderAndReadsOptionalPro
     EXPECT_EQ(personas[1].prompt, "Verbatim\ntext");
 }
 
+TEST_F(PersonaLoaderTest, LoadsOptionalDescriptionAndRejectsMalformedDescription) {
+    add_persona("ada", "Ada");
+    const auto config = root_ / "personas" / "ada" / "persona.toml";
+    std::ofstream(config) << "display_name = \"Ada\"\ndescription = \"A careful reader\"\n";
+    const PersonaRoster personas = Workspace(root_).load_personas();
+    ASSERT_TRUE(personas[0].description);
+    EXPECT_EQ(*personas[0].description, "A careful reader");
+    std::ofstream(config) << "display_name = \"Ada\"\ndescription = \" bad\"\n";
+    EXPECT_THROW((void)Workspace(root_).load_personas(), std::runtime_error);
+}
+
 TEST_F(PersonaLoaderTest, ReloadsTheRosterOnEveryCall) {
     add_persona("ada", "Ada");
     Workspace workspace(root_);
@@ -72,11 +85,11 @@ TEST_F(PersonaLoaderTest, ReloadsTheRosterOnEveryCall) {
     EXPECT_EQ(personas[1].id, "bert");
 }
 
-TEST_F(PersonaLoaderTest, RequiresPersonasDirectoryAndAtLeastOnePersona) {
+TEST_F(PersonaLoaderTest, RequiresPersonasDirectoryButAllowsAnEmptyCollection) {
     EXPECT_THROW((void)Workspace(root_).load_personas(), std::runtime_error);
 
     std::filesystem::create_directories(root_ / "personas");
-    EXPECT_THROW((void)Workspace(root_).load_personas(), std::runtime_error);
+    EXPECT_TRUE(Workspace(root_).load_personas().empty());
 }
 
 TEST_F(PersonaLoaderTest, RequiresAPersonaTomlForEveryPersonaDirectory) {

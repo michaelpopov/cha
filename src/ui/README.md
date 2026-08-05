@@ -1,9 +1,10 @@
 # UI
 
-`ui/` holds everything the persona touches: the front ends, and the input grammar
-they share. A front end may interpret input, keep protocol-specific state, and
-render session-layer values — but chat policy, agent execution, and persistence
-stay in `session/` and below.
+`ui/` holds everything the persona touches: the front ends and their shared input
+grammar. A front end may interpret input, keep protocol-specific state, and
+render session-layer values. Terminal session navigation belongs to
+`application/`; chat policy, agent execution, and persistence stay in
+`session/` and below.
 
 The test for whether code belongs here: could a different front end need the
 same behavior? If yes, it belongs below `ui/`.
@@ -12,10 +13,10 @@ same behavior? If yes, it belongs below `ui/`.
 
 | Directory | Responsibility |
 | --- | --- |
-| `text/` | The reusable textual grammar: slash commands and `@mention` addressing, dispatched to `SessionController`. |
+| `text/` | The reusable textual grammar: controller commands, `@mention` addressing, and terminal application commands. |
 | `render/` | Shared transcript labels, attributes, and writing operations. |
-| `tui/` | The ncurses front end: terminal lifecycle, startup selection, input editing, screen layout, and redraw planning. |
-| `console/` | The line-oriented frontend: CLI selection, non-blocking input, queued dispatch, signals, and append-only output. |
+| `tui/` | The ncurses front end: terminal lifecycle, application navigation, input editing, overlays, screen layout, and redraw planning. |
+| `console/` | The line-oriented frontend: minimal CLI parsing, non-blocking input, queued dispatch, signals, and append-only output. |
 | `web/` | The HTTP/SSE frontend: protocol DTO projection, owner-thread runtime, registry, mailbox, and browser lifecycle policy. |
 
 `text/` and `render/` are separate from the frontends because neither the
@@ -40,7 +41,9 @@ flowchart TD
     console --> render
     tui -->|"submitted line"| txt
     console -->|"submitted line"| txt
-    txt -->|"calls"| controller["SessionController"]
+    txt -->|"controller commands"| controller["SessionController"]
+    txt -->|"navigation commands"| application["ChatApplication"]
+    application --> controller
     controller -->|"SessionChange"| tui
     controller -->|"SessionChange"| console
     tui -->|"borrows"| convo["TranscriptView<br/>GenerationStatus"]
@@ -51,14 +54,16 @@ flowchart TD
 ```
 
 The dashed edge is the rule: a front end never opens a session catalog, reads
-workspace layout files, or calls a completion backend. If a front end needs
-something it cannot express through `SessionController` or `Workspace`, the fix
-is a new operation there — not a shortcut here.
+workspace layout files, or calls a completion backend. Terminal navigation goes
+through `ChatApplication`; the web frontend keeps its existing key-based
+workspace/session path.
 
 ## Dependency contract
 
 Code under `ui/` may depend on:
 
+- `application/` for terminal navigation through `ChatApplication`; the web
+  frontend stays on its existing key-based `session/` path;
 - `session/` for controller operations, generation status, and presentation-safe
   summaries such as `SessionSummary`;
 - `transcript/` for presentation-ready transcript values;

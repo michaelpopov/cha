@@ -1,10 +1,5 @@
 #pragma once
 
-#include "session/workspace.h"
-
-#include <iosfwd>
-#include <memory>
-#include <optional>
 #include <string>
 #include <variant>
 
@@ -19,17 +14,10 @@ enum class ColorMode {
     never,
 };
 
-// The filesystem-independent result of parsing chacon's selection, listing,
-// and color flags. The startup helpers later resolve it through Workspace.
+// The filesystem-independent result of parsing chacon's remaining frontend
+// flags. Entity navigation belongs to ChatApplication slash commands.
 struct ConsoleOptions {
-    // Stable author ID passed with every chat submission.
-    std::string persona;
-    std::string forum;
-    std::string session_id;
-    std::optional<std::string> new_label;
-    bool list_forums{};
-    bool list_sessions{};
-    bool check_forum{};
+    bool check{};
     ColorMode color{ColorMode::automatic};
 };
 
@@ -45,24 +33,5 @@ struct ArgumentError {
 std::variant<ConsoleOptions, ArgumentError> parse_console_arguments(
     int argc,
     const char* const* argv);
-
-// Writes stable, sanitized, uncolored records for scripts.
-void write_forum_listing(const Workspace& workspace, std::ostream& out);
-void write_session_listing(
-    const Workspace& workspace,
-    const std::string& forum,
-    std::ostream& out);
-void write_forum_check(
-    const Workspace& workspace,
-    const std::string& forum,
-    std::ostream& out);
-
-// Resolves a validated selection through Workspace. Throws std::runtime_error
-// for a missing forum or session and for a session whose summary carries an
-// error, so console_main can report those as runtime rather than usage failures.
-[[nodiscard]] OpenedSession open_console_session(
-    const Workspace& workspace,
-    const ConsoleOptions& options,
-    WakeNotifier& notifier);
 
 } // namespace cha

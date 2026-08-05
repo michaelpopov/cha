@@ -44,6 +44,14 @@ public:
         SessionLease lease,
         WakeNotifier& notifier,
         SessionRestore restored = {});
+    [[nodiscard]] static std::unique_ptr<SessionController> from_shared_definitions(
+        std::vector<AgentDefinition> definitions,
+        SharedPersonaRoster personas,
+        ParticipantId initial_default_agent_id,
+        std::filesystem::path database_path,
+        SessionLease lease,
+        WakeNotifier& notifier,
+        SessionRestore restored = {});
     // Test-only counterpart for controller tests that intentionally do not
     // claim a fixture database's production lease.
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
@@ -82,6 +90,7 @@ public:
         const SessionStateCursor& cursor) const;
     const ForumCharacters& characters() const { return characters_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
+    const SharedPersonaRoster& persona_roster() const noexcept { return personas_; }
 
     // --- Session commands (mutate, then report semantic changes) --------------
     [[nodiscard]] SessionChange submit_prompt(
@@ -136,6 +145,14 @@ private:
     SessionController(
         std::vector<AgentDefinition> definitions,
         PersonaRoster personas,
+        ParticipantId initial_default_agent_id,
+        std::filesystem::path database_path,
+        SessionLease lease,
+        WakeNotifier& notifier,
+        SessionRestore restored);
+    SessionController(
+        std::vector<AgentDefinition> definitions,
+        SharedPersonaRoster personas,
         ParticipantId initial_default_agent_id,
         std::filesystem::path database_path,
         SessionLease lease,
@@ -201,7 +218,7 @@ private:
     ThreadPool worker_pool_;
     AgentRegistry registry_;
     ForumCharacters characters_;
-    PersonaRoster personas_;
+    SharedPersonaRoster personas_;
     ParticipantId default_agent_id_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
