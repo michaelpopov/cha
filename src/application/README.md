@@ -8,9 +8,9 @@ transactions. It has no terminal output, frontend event-loop, or process-argumen
 dependency.
 
 `ChatApplication` owns the selected persona and current `OpenedSession`. Its
-operations implement `/iam`, `/open`, `/create`, `/forums`, `/sessions`, and
-`/personas`; `ui/text/application_dispatcher.*` parses those commands and turns
-their results into frontend presentation. `/help` is a built-in result so it
+operations implement `/iam`, `/open`, `/create`, `/forums`, `/sessions`,
+`/members`, and `/personas`; `ui/text/application_dispatcher.*` parses those
+commands and turns their results into frontend presentation. `/help` is a built-in result so it
 remains available while a response is generating. The other application
 commands reject immediately during generation.
 

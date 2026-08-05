@@ -15,6 +15,9 @@ public:
     ForumCatalog(const Workspace& workspace, const WorkspaceSnapshot& snapshot, SharedPersonaRoster personas, const WorkspaceInventory& inventory);
     const Forum* find(std::string_view public_name) const;
     std::vector<std::string> custom_names() const;
+    // Public character names of one forum's members, including Entrance, whose
+    // only member is the built-in Assistant.
+    std::vector<std::string> member_names(std::string_view forum_name) const;
     SessionSource& entrance_source() noexcept { return *entrance_source_; }
     SessionSource& source_for(std::string_view forum_name) const;
 private:

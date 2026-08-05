@@ -13,6 +13,7 @@ constexpr std::array descriptors{
     CommandDescriptor{"/create", "/create <forum> <session>", "Create and open a session.", ApplicationCommandKind::create, 2},
     CommandDescriptor{"/forums", "/forums", "List workspace forums.", ApplicationCommandKind::forums, 0},
     CommandDescriptor{"/sessions", "/sessions <forum>", "List stored sessions.", ApplicationCommandKind::sessions, 1},
+    CommandDescriptor{"/members", "/members <forum>", "List a forum's members.", ApplicationCommandKind::members, 1},
     CommandDescriptor{"/personas", "/personas", "List workspace personas.", ApplicationCommandKind::personas, 0},
     CommandDescriptor{"/help", "/help", "List commands.", ApplicationCommandKind::help, 0},
     CommandDescriptor{"/clear", "/clear", "Clear the transcript.", std::nullopt, 0},

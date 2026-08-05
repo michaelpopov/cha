@@ -39,6 +39,7 @@ ApplicationResult ApplicationDispatcher::handle(std::string input) {
     case ApplicationCommandKind::create: return application_.create(command.names[0], command.names[1]);
     case ApplicationCommandKind::forums: return application_.forums();
     case ApplicationCommandKind::sessions: return application_.sessions(command.names[0]);
+    case ApplicationCommandKind::members: return application_.members(command.names[0]);
     case ApplicationCommandKind::personas: return application_.personas();
     case ApplicationCommandKind::help: break;
     }

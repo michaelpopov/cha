@@ -51,8 +51,9 @@ The implementation must:
    every process start.
 6. Keep the current run's `Welcome` transcript when the user switches away and
    later returns during that same process.
-7. Let the user change persona, inspect the workspace, create a session, and
-   open a session through shared slash commands.
+7. Let the user change persona, inspect workspace entities and forum
+   membership, create a session, and open a session through shared slash
+   commands.
 8. Name the complete command set without a completion request.
 9. Use one public name for every persona, forum, character, and session.
 10. Allow whitespace in names through double-quoted command arguments.
@@ -88,8 +89,10 @@ This change does not:
 A user-visible entity has one field called `name`.
 
 - `/personas` prints persona names, and `/iam` accepts those same names.
-- `/forums` prints forum names, and `/open`, `/create`, and `/sessions` accept
-  those same names.
+- `/forums` prints forum names, and `/open`, `/create`, `/sessions`, and
+  `/members` accept those same names.
+- `/members` prints character names using the same public names used for
+  addressing and other character presentation.
 - `/sessions` prints session names, and `/open` accepts those same names.
 - Transcript labels, status messages, ready banners, and errors use the same
   names.
@@ -289,8 +292,9 @@ instructions.
 Capturing the inventory once keeps it consistent with the effective persona
 roster and the validated workspace used throughout the run. Files edited after
 startup are reflected on the next application start. Commands such as
-`/forums`, `/personas`, and `/sessions` still provide direct application output
-when the user wants an authoritative list rather than an Assistant paraphrase.
+`/forums`, `/personas`, `/sessions`, and `/members` still provide direct
+application output when the user wants an authoritative list rather than an
+Assistant paraphrase.
 
 ### 5.3 Application provider configuration
 
@@ -582,7 +586,7 @@ a destructive side effect.
 
 ### 7.5 Active generation
 
-Six of the seven new application commands are accepted only while the current
+Seven of the eight new application commands are accepted only while the current
 controller is idle:
 
 ```text
@@ -591,6 +595,7 @@ controller is idle:
 /create
 /forums
 /sessions
+/members
 /personas
 ```
 
@@ -622,6 +627,7 @@ The shared text layer adds:
 | `/create <forum> <session>` | 2 | Create a persistent session, open it, and switch to it. |
 | `/forums` | 0 | List workspace forum names, excluding `Entrance`. |
 | `/sessions <forum>` | 1 | List stored session names in the named forum, excluding built-in `Welcome`. |
+| `/members <forum>` | 1 | List the public character names belonging to the named forum. |
 | `/personas` | 0 | List workspace persona names, excluding `Guest`. |
 | `/help` | 0 | List every command with its arity and one-line description. |
 
@@ -633,7 +639,8 @@ is the discovery path that does not cost a completion request: `Assistant` can
 describe the commands, but it is a language model reached over the network, and
 a user who has just switched to a workspace forum no longer has it in the
 conversation at all. `/help` renders through the same list presentation as
-`/forums` and `/personas`, so it never enters a session transcript.
+`/forums`, `/members`, and `/personas`, so it never enters a session
+transcript.
 
 ### 8.2 Quoted-name lexer
 
@@ -661,6 +668,7 @@ Examples:
 /open "The Stoics Forum" "Morning Discussion"
 /create "The Stoics Forum" "Questions about control"
 /sessions "The Stoics Forum"
+/members "The Stoics Forum"
 ```
 
 The lexer applies only to commands whose grammar is a fixed sequence of entity
@@ -716,6 +724,15 @@ as transcript entries.
 - Omits built-in `Guest`.
 - Uses the effective roster captured at process startup.
 - Reports an explicit empty-list message when `Guest` is the only persona.
+
+### 9.4 `/members <forum>`
+
+- Resolves both built-in and workspace forum names.
+- Lists every forum member by public character name in folded-name order.
+- Lists `Assistant` as the sole member of `Entrance`.
+- Never prints member directory names or character storage keys.
+- Uses the immutable workspace snapshot and does not initialize a provider.
+- Is never persisted as a transcript entry.
 
 The exclusion rules are based on built-in provenance, not text filtering. A
 session named `Welcome` in a different forum remains visible, for example.
@@ -1103,6 +1120,9 @@ must not silently redefine existing HTTP URLs.
 - List a forum containing two folded-equal session names: every healthy row is
   printed and the colliding rows are marked ambiguous.
 - `/open` on that ambiguous name fails and changes nothing.
+- `/members` resolves a forum by public name, returns public character names in
+  folded-name order, and never exposes member storage keys.
+- `/members Entrance` returns exactly `Assistant`.
 - `/help` lists every command and is answered during generation.
 - Prove that no listing or diagnostic exposes a private key.
 
@@ -1182,8 +1202,10 @@ must not silently redefine existing HTTP URLs.
 - The new controller receives the same persona roster instance as the old one,
   not a re-read of the workspace.
 - Opening the current session is a no-op.
-- The six stateful or catalog-reading application commands are rejected during
-  generation, while `/help` remains available.
+- The seven stateful or catalog-reading application commands are rejected
+  during generation, while `/help` remains available.
+- `/members` leaves the current persona, session, controller, and transcript
+  unchanged.
 - Built-ins are omitted from lists but remain directly addressable.
 - `/create Entrance Welcome` is rejected.
 
@@ -1271,14 +1293,15 @@ The user can then type:
 /help
 /forums
 /sessions "The Stoics Forum"
+/members "The Stoics Forum"
 /personas
 /iam Reader
 /open "The Stoics Forum" "Morning Discussion"
 /create "The Stoics Forum" "Questions about control"
 ```
 
-`/help` names the command set without a completion request, the next three
-discover user-defined entities, `/iam` changes authorship, and the last two both
-replace the current chat on success. The user never needs to know a persona ID,
-forum directory, session database stem, or any other second identity for the
-name they see.
+`/help` names the command set without a completion request; the listing
+commands discover user-defined entities and forum membership; `/iam` changes
+authorship; and the last two commands replace the current chat on success. The
+user never needs to know a persona ID, forum directory, character directory,
+session database stem, or any other second identity for the name they see.

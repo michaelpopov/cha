@@ -19,7 +19,7 @@ TEST(ApplicationDispatcher, HelpIsHandledWithoutEnteringTheTranscript) {
     ASSERT_TRUE(result.list);
     EXPECT_TRUE(result.input_consumed);
     EXPECT_EQ(application.controller().transcript().entries().size(), 0U);
-    EXPECT_EQ(result.list->rows.size(), 17U);
+    EXPECT_EQ(result.list->rows.size(), 18U);
 }
 
 TEST(ApplicationDispatcher, HelpRemainsAvailableDuringGeneration) {
@@ -37,7 +37,7 @@ TEST(ApplicationDispatcher, HelpRemainsAvailableDuringGeneration) {
     const ApplicationResult result = dispatcher.handle("/help");
     ASSERT_TRUE(result.list);
     EXPECT_TRUE(result.input_consumed);
-    EXPECT_EQ(result.list->rows.size(), 17U);
+    EXPECT_EQ(result.list->rows.size(), 18U);
     EXPECT_TRUE(application.controller().is_generating());
     EXPECT_EQ(application.controller().transcript().entries().size(),
         transcript_size);
@@ -53,6 +53,12 @@ TEST(ApplicationDispatcher, RoutesApplicationCommandsThroughTheCoordinator) {
     const ApplicationResult result = dispatcher.handle("/iam reader");
     EXPECT_TRUE(result.persona_changed);
     EXPECT_EQ(application.selected_persona(), "Reader");
+
+    const ApplicationResult members = dispatcher.handle("/members \"the lobby\"");
+    ASSERT_TRUE(members.list);
+    EXPECT_EQ(members.list->title, "Members of The Lobby");
+    EXPECT_EQ(members.list->rows, (std::vector<std::string>{"Guide"}));
+    EXPECT_EQ(application.controller().transcript().entries().size(), 0U);
 }
 
 } // namespace

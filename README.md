@@ -33,6 +33,7 @@ following commands are also available without a completion request:
 | `/iam <persona>` | Change the author for future prompts. |
 | `/forums` | List workspace forums. |
 | `/sessions <forum>` | List stored sessions in a forum. |
+| `/members <forum>` | List the characters that belong to a forum. |
 | `/open <forum> <session>` | Switch to a stored session. |
 | `/create <forum> <session>` | Create a durable session and switch to it. |
 | `/clear`, `/hide-on`, `/hide`, `/hide-off` | Manage visible and model context history. |

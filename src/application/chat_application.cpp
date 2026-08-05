@@ -81,6 +81,20 @@ ApplicationResult ChatApplication::sessions(std::string_view forum) {
     }
 }
 
+ApplicationResult ChatApplication::members(std::string_view forum) const {
+    if (current_.controller->is_generating()) return error(std::string(generation_in_progress_notice), false);
+    const Forum* resolved = environment_.forums().find(forum);
+    if (resolved == nullptr) return error("Unknown forum '" + std::string(forum) + "'");
+    try {
+        return {.input_consumed = true,
+                .list = ApplicationList{"Members of " + resolved->display_name,
+                    environment_.forums().member_names(forum)}};
+    } catch (const std::exception& exception) {
+        log_warn("Application member listing failed: " + std::string(exception.what()));
+        return error("Unable to list members of forum '" + resolved->display_name + "'");
+    }
+}
+
 ApplicationResult ChatApplication::switch_to(OpenedSession prepared, bool consumed) {
     current_.controller->shutdown();
     current_.controller.reset();

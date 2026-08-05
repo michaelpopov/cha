@@ -10,6 +10,7 @@ and characters.
 - `/personas` lists workspace personas; `/iam <persona>` changes authorship.
 - `/forums` lists workspace forums.
 - `/sessions <forum>` lists stored sessions.
+- `/members <forum>` lists the characters belonging to a forum.
 - `/open <forum> <session>` opens a stored session.
 - `/create <forum> <session>` creates and opens a stored session.
 - `/clear` clears the transcript.

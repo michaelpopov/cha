@@ -16,7 +16,7 @@ Interactive startup constructs `ChatApplication`, which opens `Guest` in
 `Entrance / Welcome`. A TTY receives `Entrance / Welcome ready` on the notice
 stream and the initial prompt names `Assistant`. Entity selection and listing
 flags are intentionally unsupported; use `/iam`, `/open`, `/create`,
-`/forums`, `/sessions`, and `/personas` in chat.
+`/forums`, `/sessions`, `/members`, and `/personas` in chat.
 
 `--check` validates the application configuration and every workspace persona,
 definition, forum, member override, and prompt file. It opens no session,
@@ -30,7 +30,7 @@ returns 0 on success; validation failures return 1 and usage failures return 2.
 `ConsoleSession` queries `application.controller()` for every operation, so
 signals, input, prompts, and notifications always address the current session.
 It keeps FIFO and pipe backpressure for ordinary prompts. Bare `/stop` remains
-immediate. `/help` is immediate during generation; the six navigation/list
+immediate. `/help` is immediate during generation; the seven navigation/list
 commands are dispatched immediately and rejected while generation is active,
 never deferred behind it.
 

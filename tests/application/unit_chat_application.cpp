@@ -72,6 +72,43 @@ TEST_F(ChatApplicationTest, UsesPublicNamesAndPreservesStateOnRecoverableFailure
     EXPECT_EQ(*same.notice, "Session 'Welcome' is already open");
 }
 
+TEST_F(ChatApplicationTest, ListsForumMembersByPublicNameWithoutChangingSession) {
+    const ApplicationResult lobby = application.members("the lobby");
+    ASSERT_TRUE(lobby.list);
+    EXPECT_EQ(lobby.list->title, "Members of The Lobby");
+    EXPECT_EQ(lobby.list->rows, (std::vector<std::string>{"Guide"}));
+    EXPECT_TRUE(lobby.input_consumed);
+    EXPECT_FALSE(lobby.session_changed);
+    EXPECT_EQ(application.descriptor().session_label, "Welcome");
+
+    const ApplicationResult entrance = application.members("Entrance");
+    ASSERT_TRUE(entrance.list);
+    EXPECT_EQ(entrance.list->rows, (std::vector<std::string>{"Assistant"}));
+
+    const ApplicationResult unknown = application.members("Missing");
+    EXPECT_FALSE(unknown.list);
+    ASSERT_TRUE(unknown.notice);
+    EXPECT_EQ(*unknown.notice, "Unknown forum 'Missing'");
+
+    // The members directory name is a private storage key, not a public name.
+    const ApplicationResult key = application.members("lobby");
+    EXPECT_FALSE(key.list);
+    ASSERT_TRUE(key.notice);
+    EXPECT_EQ(*key.notice, "Unknown forum 'lobby'");
+}
+
+TEST_F(ChatApplicationTest, MemberListingIsRefusedWhileGenerating) {
+    (void)application.controller().submit_prompt(
+        application.selected_author_key(), "Keep working");
+    ASSERT_TRUE(application.controller().is_generating());
+
+    const ApplicationResult result = application.members("The Lobby");
+    EXPECT_FALSE(result.list);
+    EXPECT_FALSE(result.input_consumed);
+    ASSERT_TRUE(result.notice);
+    EXPECT_EQ(*result.notice, std::string(generation_in_progress_notice));
+}
+
 TEST_F(ChatApplicationTest, RepeatingTheCurrentPersonaIsAnIdempotentSuccess) {
     const ApplicationResult guest = application.iam("guest");
     EXPECT_TRUE(guest.input_consumed);

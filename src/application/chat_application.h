@@ -24,6 +24,7 @@ public:
     ApplicationResult forums() const;
     ApplicationResult personas() const;
     ApplicationResult sessions(std::string_view forum);
+    ApplicationResult members(std::string_view forum) const;
     ApplicationResult open(std::string_view forum, std::string_view session);
     ApplicationResult create(std::string forum, std::string session);
 private:

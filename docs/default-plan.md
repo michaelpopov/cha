@@ -79,8 +79,9 @@ plan:
   lease. Publication is the point of no return.
 - `/open` and `/create` are available after every successful switch, including
   in workspace sessions and persistent Entrance sessions.
-- Six commands are rejected immediately during generation: `/iam`, `/open`,
-  `/create`, `/forums`, `/sessions`, and `/personas`. `/help` remains available.
+- Seven commands are rejected immediately during generation: `/iam`, `/open`,
+  `/create`, `/forums`, `/sessions`, `/members`, and `/personas`. `/help`
+  remains available.
 - The web UI does not gain the built-in environment or terminal navigation
   commands. Only the shared provider-layer change affects it.
 
@@ -679,6 +680,11 @@ Add an application `ForumCatalog` over:
 - folded public-name lookup;
 - custom-only public listing in folded-name order.
 
+It also resolves a built-in or custom forum to its public member character
+names, ordered by folded public name. `Entrance` returns exactly `Assistant`;
+workspace forums join validated member storage keys to character public names
+inside the catalog boundary.
+
 Resolve each forum to a `SessionSource` abstraction that can:
 
 - list persistent sessions by public name;
@@ -868,6 +874,8 @@ Add UI-independent operations:
 - `personas()` returns custom public persona names only;
 - `sessions(forum_name)` resolves built-in or custom forums and returns stored
   public rows, excluding run-scoped Welcome;
+- `members(forum_name)` resolves built-in or custom forums and returns public
+  character names in folded-name order, including Assistant for Entrance;
 - empty results return explicit empty-list messages;
 - corrupt/ambiguous session rows retain their annotations without exposing
   database filenames.
@@ -942,6 +950,7 @@ parser in `ui/text` for:
 - `/create` — two names;
 - `/forums` — zero names;
 - `/sessions` — one name;
+- `/members` — one name;
 - `/personas` — zero names;
 - `/help` — zero names.
 
@@ -961,7 +970,7 @@ Add a terminal application dispatcher that:
 
 1. recognizes application commands;
 2. answers `/help` from a built-in complete command table at any time;
-3. rejects the other six immediately while generation is active;
+3. rejects the other seven immediately while generation is active;
 4. invokes `ChatApplication` for application operations;
 5. delegates ordinary text and existing session commands to the current
    `handle_text_input(SessionController&, author_key, input)` path;
@@ -996,8 +1005,11 @@ Use fake session sources/backends and temporary databases to cover:
   crossing into the target controller;
 - same shared persona-roster identity before and after switching;
 - built-ins omitted from lists but directly resolvable;
+- `/members` lists public character names without changing the current
+  persona, session, controller, or transcript, and `/members Entrance` returns
+  exactly Assistant;
 - `/create Entrance Welcome` rejected;
-- all six stateful/catalog commands rejected during generation;
+- all seven stateful/catalog commands rejected during generation;
 - `/help` available during generation and complete;
 - no public result or error containing fixture private keys.
 
@@ -1127,7 +1139,7 @@ The current queue waits to process ordinary lines until the controller is
 idle. Add application-command classification at enqueue time so:
 
 - `/help` is answered immediately even during generation;
-- the other six application commands are rejected immediately during
+- the other seven application commands are rejected immediately during
   generation and never retained for later execution;
 - `/stop` remains immediate;
 - ordinary prompts retain existing FIFO and backpressure behavior;
@@ -1149,6 +1161,8 @@ and whole-workspace check. Extend unit and process tests to cover:
 - exact public ready banner;
 - Guest authorship before `/iam` and selected authorship afterwards;
 - `/open` and `/create` with quoted names;
+- `/members` with a quoted forum name, including public-name ordering and
+  Entrance's Assistant row;
 - switching flush order and one-time restored history;
 - notice/list output staying off stdout's transcript contract;
 - prompt default-agent update after forum switch;
@@ -1288,8 +1302,8 @@ While generation is active:
 
 - Escape and interrupt retain the current explicit stop/exit behavior;
 - `/help` renders immediately;
-- the six other application commands produce the generation-in-progress notice
-  and do not mutate catalogs or selections.
+- the seven other application commands produce the generation-in-progress
+  notice and do not mutate catalogs or selections.
 
 Typing ordinary characters clears stale notices under the current policy.
 Decide overlay key routing before editor routing so scrolling a visible overlay
@@ -1431,6 +1445,7 @@ Document:
 
 - immediate Guest / Entrance / Welcome startup in both terminal variants;
 - the complete slash-command table and quoted-name examples;
+- forum-member discovery through `/members <forum>`;
 - public-name-only behavior and ASCII-folded lookup;
 - transient Welcome versus persistent created sessions;
 - persistent Entrance session location at a conceptual level without exposing
@@ -1500,9 +1515,10 @@ verify both frontends:
 1. Start with no selection input and confirm Guest / Entrance / Welcome /
    Assistant.
 2. Ask Assistant an application question and receive a documented answer.
-3. Run `/forums`, `/personas`, `/sessions Entrance`, and `/help`; confirm
-   built-ins are omitted from the first three and no output enters the
-   transcript.
+3. Run `/forums`, `/personas`, `/sessions Entrance`, `/members Entrance`, and
+   `/help`; confirm Entrance, Guest, and Welcome are omitted from their
+   discovery listings, Assistant is Entrance's sole member, and no output
+   enters the transcript.
 4. Use quoted multi-word names with `/iam`, `/create`, and `/open`.
 5. Switch from Welcome to a workspace session, then directly to another forum
    and session, then back to `Entrance Welcome`.
@@ -1567,8 +1583,9 @@ The feature is complete only when every statement below is true:
   agents, and web workspace agents.
 - One immutable effective persona roster object is shared by every terminal
   controller opened during the run.
-- `/iam`, `/open`, `/create`, `/forums`, `/sessions`, `/personas`, and `/help`
-  implement the approved quoting, listing, generation, and diagnostic rules.
+- `/iam`, `/open`, `/create`, `/forums`, `/sessions`, `/members`, `/personas`,
+  and `/help` implement the approved quoting, listing, generation, and
+  diagnostic rules.
 - `/open` remains available after switching to any other session.
 - `/create` publishes atomically while holding both the catalog lease and its
   prepared target session lease in the approved order.

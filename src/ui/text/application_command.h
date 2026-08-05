@@ -12,7 +12,7 @@ namespace cha {
 
 // Typed grammar for fixed-arity terminal application commands.  It deliberately
 // stays separate from free-form controller commands such as /mcast.
-enum class ApplicationCommandKind { iam, open, create, forums, sessions, personas, help };
+enum class ApplicationCommandKind { iam, open, create, forums, sessions, members, personas, help };
 struct CommandDescriptor {
     std::string_view name;
     std::string_view syntax;

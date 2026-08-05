@@ -95,9 +95,11 @@ Two policies live in this file and nowhere else:
 # Application commands
 
 `application_command.*` owns the fixed-arity terminal navigation grammar for
-`/iam`, `/open`, `/create`, `/forums`, `/sessions`, `/personas`, and `/help`.
+`/iam`, `/open`, `/create`, `/forums`, `/sessions`, `/members`, `/personas`,
+and `/help`.
 It parses public names (including double-quoted names) only; resolution and
 session switching remain in `application/`. The existing `text_input.*` entry
 point remains controller-scoped for the web frontend. The terminal command set
-is `/iam`, `/open`, `/create`, `/forums`, `/sessions`, `/personas`, and
-`/help`; names use ASCII-folded lookup and double quotes preserve whitespace.
+is `/iam`, `/open`, `/create`, `/forums`, `/sessions`, `/members`, `/personas`,
+and `/help`; names use ASCII-folded lookup and double quotes preserve
+whitespace.
