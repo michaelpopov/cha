@@ -1,10 +1,25 @@
 #include "application/welcome_storage.h"
 #include "application/environment.h"
+#include "session/generation_status.h"
 #include "session/session_database.h"
 #include "support/test_notifier.h"
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
+
+namespace {
+
+void receive_until_idle(cha::SessionController& controller, cha::test::TestNotifier& notifier) {
+    while (controller.generation_status().active) {
+        const std::size_t observed = notifier.wake_count();
+        (void)controller.receive();
+        if (controller.generation_status().active) {
+            ASSERT_TRUE(notifier.wait_for_wake(observed));
+        }
+    }
+}
+
+} // namespace
 
 TEST(WelcomeStorage, IsFreshAndPrivateToItsOwner) {
     cha::WelcomeStorage first;
@@ -40,17 +55,18 @@ TEST(WelcomeStorage, EnvironmentOpensGuestEntranceWelcomeWithSharedRoster) {
 TEST(WelcomeStorage, ReopensOnlyTheSameEnvironmentWelcomeTranscript) {
     cha::test::TestWorkspace fixture;
     cha::Workspace workspace(fixture.root());
-    cha::test::NoopNotifier notifier;
+    cha::test::TestNotifier notifier;
     cha::ApplicationEnvironment first(workspace);
     cha::ApplicationEnvironment second(workspace);
 
     auto opened = first.open_welcome(notifier);
     (void)opened.controller->submit_prompt("builtin-guest", "Remember this");
-    ASSERT_EQ(opened.controller->transcript().entries().size(), 1U);
+    receive_until_idle(*opened.controller, notifier);
+    ASSERT_EQ(opened.controller->transcript().entries().size(), 2U);
     opened.controller.reset();
 
     auto reopened = first.open_welcome(notifier);
-    EXPECT_EQ(reopened.controller->transcript().entries().size(), 1U);
+    EXPECT_EQ(reopened.controller->transcript().entries().size(), 2U);
     reopened.controller.reset();
     auto other = second.open_welcome(notifier);
     EXPECT_TRUE(other.controller->transcript().entries().empty());

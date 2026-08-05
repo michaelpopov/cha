@@ -1,432 +1,122 @@
 # cha
 
-`cha` is a C++20 chat client for servers exposing the OpenAI-compatible
-chat-completions API. It provides the full-screen `cha` TUI and the
-line-oriented `chacon` console frontend.
+`cha` is a C++20 chat client for OpenAI-compatible chat-completions servers.
+It provides the full-screen `cha` terminal UI, the line-oriented `chacon`
+console, and the existing key-based `chaweb` frontend.
+
+## Start chatting
+
+Both terminal applications start immediately in the built-in help conversation:
+
+```text
+persona: Guest
+forum: Entrance
+session: Welcome
+agent: Assistant
+```
+
+`Welcome` is a disposable SQLite-backed conversation for this process run.
+It remains available if you switch away and return during that run, but a new
+process receives a fresh Welcome. Sessions created with `/create` are durable,
+including those in Entrance. Durable Entrance sessions are application-managed
+stored chats, separate from workspace forum configuration; Welcome is not a
+stored-session list entry.
+
+Assistant has the embedded [application guide](docs/application-guide.md) and
+a startup snapshot of the workspace. It can explain the application, but the
+following commands are also available without a completion request:
+
+| Command | Purpose |
+| --- | --- |
+| `/help` | List the complete command set. |
+| `/personas` | List workspace personas. |
+| `/iam <persona>` | Change the author for future prompts. |
+| `/forums` | List workspace forums. |
+| `/sessions <forum>` | List stored sessions in a forum. |
+| `/open <forum> <session>` | Switch to a stored session. |
+| `/create <forum> <session>` | Create a durable session and switch to it. |
+| `/clear`, `/hide-on`, `/hide`, `/hide-off` | Manage visible and model context history. |
+| `/mcast`, `/agents`, `/info`, `/@Name` | Select and inspect agents. |
+| `/stop`, `/exit` | Stop generation or leave the application. |
+
+Commands use public names only and look them up with ASCII case folding. Quote
+names containing whitespace, for example:
+
+```text
+/iam "Technical Writer"
+/create "The Stoics Forum" "Questions about control"
+/open Entrance Welcome
+```
+
+Directory names, participant keys, and database filenames are implementation
+details; terminal commands, listings, notices, and diagnostics do not use them.
 
 ## Workspace configuration
 
-Run either executable from a workspace containing `app.toml`, `characters/`,
-`forums/`, and a valid non-empty `personas/` roster. `Workspace` construction
-is all-or-nothing: it requires `characters/`, `forums/`, and the roster, so
-forum listing is unavailable before a roster has been created.
-Each immediate subdirectory of `forums/` is a forum; forums are presented in
-lexicographic name order. At `cha` startup, a terminal selector lets you choose
-a persona, then a forum, and then an existing session or **New session**. `chacon` makes the same
-selection through command-line options.
+A workspace contains `app.toml`, `characters/`, `forums/`, and `personas/`.
+The `personas/` directory may be empty: the built-in Guest persona keeps the
+terminal roster non-empty. Workspace personas, character definitions, and
+forums have a public `display_name` and may have an optional one-line
+`description`; Assistant uses those descriptions in its inventory.
 
-`app.toml` configures application-wide behavior. Its top-level `host` and
-`port` settings define the web frontend's listener address. The logging section
-requires a log file and level; relative log paths are resolved from the
-workspace root. `chaweb` also uses that host and port as its allowed browser
-authority to prevent DNS rebinding; loopback configurations additionally allow
-`localhost`, `127.0.0.1`, and `[::1]` with the configured port. For network
-access, configure the concrete address or hostname clients will use rather than
-a wildcard listener address.
+`app.toml` keeps the web listener separate from the shared provider layer:
 
 ```toml
-# app.toml
+# Web listener only.
 host = "127.0.0.1"
 port = 8080
+
+[provider]
+host = "api.openai.com"
+port = 443
+https = true
+mode = "net"
+model = "gpt-5.6-terra"
+stream = true
+api_key_env = "OPENAI_API_KEY"
 
 [logging]
 file = "logs/cha.log"
 level = "info"
 ```
 
-Supported levels are `trace`, `debug`, `info`, `warn`, `error`, `critical`,
-and `off`. When logging is enabled, missing parent directories for `file` are
-created automatically. Logs rotate at 10 MiB and retain three files.
+`[provider]` is the lowest configuration layer for Assistant and every
+workspace character, including web characters. Character definitions and forum
+overrides need only specify fields that intentionally differ. Provider secrets
+belong in the environment, not in the workspace. The web frontend inherits
+this provider configuration but does not gain the terminal built-ins or slash
+navigation workflow.
 
-Each direct subdirectory of `personas/` is a persona. Its directory name is the
-stable ID recorded in transcript rows and must be a C++ identifier
-`[A-Za-z_][A-Za-z0-9_]*`; `persona.toml` must contain only a `display_name`, and
-an optional `PERSONA.md` is fixed verbatim prompt text (not a template). Persona display
-names may contain ordinary spaces and punctuation, but cannot be empty or
-edge-whitespace, start with `@` or `/`, contain controls or line breaks, be
-reserved, or duplicate another persona case-insensitively. The shared reserved
-names are `persona`, `system`, `error`, `human`, `assistant`, `agent`, and `you`;
-they are rejected case-insensitively for both persona IDs and display names, and for character display
-names. Personas are loaded in lexicographic ID order. There is no `--list-personas`:
-the console's `--persona` takes the directory ID, while the TUI and web lobby show
-display names. A persona ID cannot equal a character ID, and a persona display name
-cannot equal a character display name case-insensitively.
+Public names preserve authored spelling and compare with ASCII folding. They
+must be valid UTF-8, non-empty, control-free, and free of leading or trailing
+whitespace. Session names are unique within a forum. Existing stored sessions
+remain compatible; their labels are now their public session names.
 
-Character definitions live once at `characters/<character>/`, with required
-`character.toml` and `CHARACTER.md`. A forum has `config.toml` with a required
-`display_name`, `FORUM.md`, and a required non-empty `members/` directory. Each
-`members/<character>/` directory is an explicit membership record; it may be
-empty, or may contain optional `character.toml` and `CHARACTER.md` overrides.
-The optional `members/character_defaults.toml` provides forum-wide overrides.
-When present, a member `CHARACTER.md` replaces the definition prompt entirely;
-it is never merged. Each effective system prompt retains its four sections in
-order: expanded `CHARACTER.md`, expanded `FORUM.md`, the complete static persona
-roster, and generated forum context.
-The forum directory name is the stable ID used by `chacon --forum`; it may
-contain only RFC 3986 unreserved ASCII characters (letters, digits, `-`, `.`,
-`_`, and `~`), excluding `.` and `..`. A member must name an existing workspace
-definition, and an optional `default_agent = "character-id"` in `config.toml`
-must name a member. Without it, the lexicographically first member ID is the
-default; an explicit default never changes roster order. Workspace validation is
-all-or-nothing: invalid definitions, members, defaults, or identity collisions
-prevent loading.
-
-Each definition directory's name is its stable ID and identifies transcript
-entries; its required `display_name` is the visible `@mention` handle. It is
-the sole authorable identity key: `id` and `name` are rejected in every
-configuration layer, and `display_name` is rejected in both forum-local layers.
-Display names cannot start or end with whitespace, start with `@` or `/`, or be
-a reserved participant name (case-insensitively). A multi-word display name can
-be addressed through any unique word or word prefix—for example, `@Winston` or
-`@Churchill` for `Winston Churchill`. Character IDs and display names are unique
-workspace-wide, including against personas. Definitions may belong to no forum;
-removing a member does not alter durable names in existing session transcripts.
-Start a prompt with `@Name` to choose another agent; names match
-case-insensitively and an unambiguous prefix works. Use `@@` to send a literal
-leading `@`.
-All agents use the session's shared chat transcript. Exchanges involving another
-agent are supplied as escaped JSON Lines so the receiving agent can treat the
-other speaker's first-person statements as quoted history rather than its own
-identity.
-
-Each session is stored in one self-contained `sessions/<id>.sqlite3` database. Session IDs use the same URL-safe character set as forum IDs; files whose stems do not follow that rule are ignored. Its embedded version, ID, and forum must match the selected forum before the transcript can be restored. A new session can be given an optional display name. Its database uses a local-time `YYYY-MM-DD-HH-MM-SS-session` base name (with a numeric suffix only on collision), while the display name is stored inside the database and is not subject to the ID restriction. Each submitted turn and its identified completion, cancellation, or failure is committed as an SQLite transaction. A turn without a terminal state is reported as interrupted when the session is restored. Cancelled partial answers remain visible but are not sent back to the model as completed history. Successful responses require non-empty answer text; streaming responses also require a `[DONE]` marker, after which further data is ignored.
-
-Configuration is overlaid one key at a time: built-in defaults, then
-`characters/<id>/character.toml`, optional
-`forums/<forum>/members/character_defaults.toml`, and optional
-`forums/<forum>/members/<id>/character.toml`. The `[prompt]` table uses the
-same precedence. `display_name` and `tags` belong only in the definition and
-are errors in either forum-local layer.
-
-Definition tags are optional free-form strings used only for future navigation;
-they never create membership. Each tag is trimmed, cannot be empty or contain a
-control character or line break, and must be unique within one definition under
-ASCII case folding. Its authored casing is retained for display.
-
-### Prompt templates
-
-`CHARACTER.md` and `FORUM.md` are expanded separately for each character before they
-are concatenated. Two expansion forms and one escape are recognized; everything
-else is copied unchanged:
-
-| Macro | Meaning |
-| --- | --- |
-| `$$(path)` | Include another file, relative to the file containing the macro. |
-| `$${name}` | Substitute a variable. |
-| `$$$` | Escape the next macro prefix by producing a literal `$$`. For example, `$$$(file.md)` becomes `$$(file.md)`. |
-
-Include paths are trimmed, resolved relative to the including file, and inserted
-without adding separators or newlines. Definition `CHARACTER.md` includes must
-remain under workspace `characters/`; member `CHARACTER.md` and `FORUM.md`
-includes must remain in that forum, including after symlink resolution.
-
-Variables come from a `[prompt]` table (never from top-level connection fields
-such as `api_key`) and from reserved names supplied by the loader:
-
-```toml
-# forums/example/members/character_defaults.toml
-[prompt]
-register = "measured"
-
-# forums/example/members/local-assistant/character.toml
-[prompt]
-register = "energetic"
-```
-
-```markdown
-$$(../shared/voice.md)
-You are portraying $${character.display_name} in $${forum.display_name}.
-```
-
-The initial variable scope is the definition `[prompt]` table, overlaid by the
-forum-default and member `[prompt]` tables. When a template or included file is read, a
-`[prompt]` table in a template directory's adjacent `config.toml` overlays the inherited
-scope for that file and its descendants. Values may be strings, integers,
-floating-point numbers, or booleans. Variable names may contain ASCII letters,
-digits, `_`, `-`, and `.`.
-
-Reserved names are `character.id`, `character.display_name`, `forum.id`, and
-`forum.display_name`. They always come from the loader and cannot be overridden
-by a `[prompt]` table. Expansion rejects unknown variables, malformed macros,
-missing or cyclic includes, paths outside their layer's containment root, more than 256 includes, an
-active file depth above 16, or output above 1 MiB. Each `CHARACTER.md` and
-`FORUM.md` expansion has its own counters.
-
-The following top-level configuration fields are supported:
-
-- `host`: required server host name or address.
-- `port`: required server port.
-- `display_name`: required display name and `@mention` handle. It cannot start or end with whitespace, start with `@` or `/`, or be a reserved participant name case-insensitively. Internal whitespace is allowed. The character directory name is its stable identifier and must contain only ASCII letters, digits, underscores, and hyphens.
-- `mode`: `net` for an OpenAI-compatible HTTP server or `test` for the built-in echo backend; defaults to `test`.
-- `model`: optional model name sent in chat-completions requests. If omitted, the first model returned by the endpoint's `/v1/models` API is used.
-- `stream`: whether to request streamed SSE responses; defaults to `true`.
-- `temperature`: numeric sampling temperature from `0` to `2`; defaults to
-  `1.0` and is included in every completion request.
-- `api_key`: optional bearer token. An empty string disables authentication.
-- `api_key_env`: optional environment-variable name containing a bearer token. It takes precedence over `api_key`.
-- `reasoning_effort`: optional reasoning level sent with chat-completions requests, such as `medium`.
-- `reasoning_format`: representation used for provider-visible reasoning output; defaults to `auto`. Supported values are `auto`, `none`, `reasoning_content`, and `reasoning`.
-- `https`: use HTTPS instead of HTTP; defaults to `false`.
-
-Character files use `display_name` and their directory-derived ID; the removed
-`name` and `id` fields are rejected.
-
-Example:
-
-```toml
-# characters/local-assistant/character.toml
-display_name = "Local assistant"
-host = "127.0.0.1"
-port = 8080
-mode = "net"
-model = "local-model"
-stream = true
-api_key = ""
-reasoning_format = "auto"
-```
-
-```toml
-# forums/example/members/local-assistant/character.toml
-temperature = 0.7
-```
-
-`reasoning_effort` requests a generation policy; `reasoning_format` describes
-how to interpret the response. They are independent. In `auto` mode, `cha`
-recognizes `choices[0].delta.reasoning_content` and `.reasoning` (or the
-corresponding non-streaming `message` fields), preferring
-`reasoning_content` when both are present. `none` disables extraction, while
-the two named formats strictly select one field. Ordinary `content` always
-remains answer text.
-
-Reasoning is labeled and dimmed only while its turn is active. It never enters
-the chat transcript, SQLite, or later model context, and is cleared when the
-turn ends. A cancellation containing only reasoning has no response entry; a
-cancellation with reasoning and a partial answer retains only that answer.
-
-Reasoning embedded inside ordinary `content`, including `<think>` tags, is not
-parsed. Such content is displayed, stored, and replayed as answer text because
-there is no structured semantic boundary. Malformed successful streaming
-responses report only sanitized HTTP status, content type, and byte-count
-metadata; model-output body bytes are not copied into the error.
-
-In net mode, `cha` sends HTTP requests to:
+## Console
 
 ```text
-http://HOST:PORT/v1/chat/completions
+chacon [--color=auto|always|never]
+chacon --check
 ```
 
-Chat requests deliberately have no overall or low-speed timeout so long
-generations can complete. Use `/stop`, Escape, or Ctrl-C to cancel the current
-request, including every live runner in a multicast batch.
+`--check` validates the whole workspace and exits before constructing a
+provider, built-in environment, or session. The removed `--persona`, `--forum`,
+`--session`, `--new`, `--list-forums`, and `--list-sessions` flags are not
+supported. For a migrated script, start `chacon` and send `/open` or `/create`
+as normal input instead.
 
-HTTPS servers require a libcurl build with a TLS backend. The bundled libcurl
-uses Schannel on Windows, Secure Transport on macOS, and OpenSSL on other
-platforms. Unix-like builds require OpenSSL so HTTPS is always available.
-
-Before loading server configuration, the application optionally reads `.env` from the working directory. It accepts `NAME=value` entries, ignores blank lines and `#` comments, and does not replace variables already set in the process environment.
-
-### Diagnostic logging
-
-Diagnostic logging is configured by the workspace's `app.toml`. Set
-`[logging].level` to `off` to disable it; otherwise logs append to
-`[logging].file`. The application records lifecycle events at `info`, routine
-cancellations at `info`, agent and persistence failures at `error`, and
-unhandled top-level failures at `critical`. `debug` and `trace` are available
-for detailed transport diagnostics.
-
-Logs never write to the transcript or terminal streams. They do not record
-prompts, response text, credentials, or provider error bodies.
-
-## Commands
-
-- `/clear` starts a new visible history while retaining the system prompt.
-  Earlier transcript rows remain in the session database.
-- `/hide-on` marks the start of a span to remove from later model context.
-- `/hide` closes or extends that span to the current boundary; the transcript
-  remains visible, but the enclosed entries are omitted from later requests.
-- `/hide-off` removes the span and returns its entries to later model context.
-- `/mcast [@Name, ... .] prompt` sends the same prompt to every character, or the
-  selected characters in order, while keeping earlier multicast answers out of
-  later multicast requests.
-- `/info` displays the transcript entry count followed by the current forum's characters.
-- `/agents` displays the current forum's characters and marks the default agent.
-- `/@Name` changes the default agent for this run only.
-- `/stop` cancels every live model run in the current request. If a
-  foreground response completed before the stop request was processed, that
-  completion is committed normally while the remaining multicast work is
-  cancelled.
-- `/exit` exits the application.
-
-## Full-screen UI
-
-The UI has a scrollable chat transcript, a generation-status line, and a persistent multiline input pane. Input remains available while a response is streaming.
-
-The status changes from `generating` to `reasoning` when structured reasoning
-arrives, then to `responding` when answer text begins. After cancellation it
-shows `stopping` until background cleanup has retired the batch's runners.
-
-- Press `Page Up` and `Page Down` to scroll through the transcript.
-- Press `Esc` or `Ctrl-C` while generating to request cancellation immediately.
-- Press `Ctrl-C` while idle to exit.
-- End an input line with `\` to continue on the next visual line. Continued lines are concatenated before being sent.
-- Arrow, Home, End, Backspace, and Delete keys edit the input buffer.
-
-## Console frontend
-
-`chacon` is intended for pipes, logs, and simple interactive terminals. It
-requires a forum except when listing all forums:
-
-```text
-chacon --list-forums
-chacon --forum FORUM --list-sessions
-chacon --forum FORUM --check
-chacon --persona PERSONA --forum FORUM [--session ID | --new LABEL] [--color=auto|always|never]
-```
-
-`--persona` is required for chat startup and is not accepted by listing or
-`--check` modes. It selects the stable persona-directory ID that attributes every
-prompt in that console run.
-
-`--check` performs a read-only validation of the forum and exits. It checks the
-forum and character directories and required files, forum/character TOML settings,
-effective required connection settings, character ID and display-name validity
-and uniqueness, the validated persona roster and persona/character collision rules,
-and complete expansion of every character's `CHARACTER.md` and
-`FORUM.md`—including variables, includes, containment, cycles, and limits. A
-successful check prints, for example, `Forum 'stoics' is valid (3 characters).`
-and exits with status 0; a validation failure uses the normal `Failed: ...`
-diagnostic and exits with status 1.
-
-The check does not inspect `sessions/` or arbitrary Markdown hyperlinks. It
-does not create a session, require the environment variable named by
-`api_key_env` to be set, initialize provider clients, discover a model, or make
-network requests.
-
-If neither `--session` nor `--new` is supplied, `chacon` creates a new session
-with the default timestamp label. On an interactive terminal it reports the forum
-and the resolved session ID before the first prompt, so a session created by
-`--new` or by default can be reopened later with `--session`. The interactive
-prompt is a bold `@DefaultAgentName> ` marker, for example `@Ismael> `, so it
-always identifies the agent that will receive an unaddressed submission.
-Running `/@Name` changes both the run-local default and the next prompt marker.
-Forum listings contain one display name per line. Session listings contain exactly three tab-separated
-fields—ID, label, and error—with no header, padding, or color. Invalid sessions
-remain visible in the listing. Listing modes ignore session-selection flags;
-selection validation applies only when opening or creating a session.
-
-Each input line is one submission. A trailing `\` continues the submission on
-the next line and the lines are concatenated without a newline. CRLF input is
-normalized by removing the trailing carriage return. Piped submissions are
-queued and run one at a time. Bare `/stop` and `/exit` take effect immediately;
-forms with arguments retain FIFO order and receive the shared “does not accept
-arguments” notice. An immediate `/exit` cancels an active response instead of
-waiting for it. EOF stops input but lets the active response and queued prompts
-finish. Ctrl-C cancels an active response and exits when idle.
-
-Transcript text is an append-only log on stdout; prompts, responses, and
-restored history are never rewritten. Notices and the named interactive prompt
-go to stderr, keeping stdout suitable for redirection. With `--color=auto`, the
-prompt uses stderr's terminal status for bold styling independently of stdout;
-`always` and `never` force styling for both streams. Console and redirected
-streams use UTF-8 bytes; on Windows, the attached console is configured to
-interpret those bytes as UTF-8. Windows command-line arguments are converted
-from UTF-16 to UTF-8 before parsing. Automatic color enables
-virtual-terminal processing and stays off if the console host does not support
-it. Model text is sanitized so it cannot inject terminal
-control sequences, including a C1 sequence split across streaming chunks.
-Final sanitizer state is emitted before a checked
-stdout flush, so a late output failure still produces exit code 1.
-
-Human prompt text remains clean in the transcript and database, but each plain
-human message sent to a model is projected as `from <display name>:\n<text>`.
-The same prefix is used for the live request and replayed history; quoted
-shared-history JSONL already has a speaker field and is not prefixed.
-
-Pre-existing checked-in session databases were deleted rather than migrated:
-their historical `human` participant IDs do not denote a workspace persona.
+Console transcript output is append-only on stdout; prompts and application
+notices use stderr. The terminal UI renders application lists in a transient
+overlay, so lists never become part of a session transcript.
 
 ## Build and test
 
-The build uses an installed libcurl development package when available.
-Otherwise CMake downloads and builds a pinned libcurl automatically. It also
-downloads a pinned libuv for portable console input, signal handling, and
-cross-thread wakeups, and cpp-httplib for the web frontend.
-
 ```bash
-make
-make test
-make run
-make run-console
-```
-
-Live integration tests are built as the `itest` application but are not included in `make test`:
-
-```bash
+cmake --preset ninja
+cmake --build --preset ninja
+ctest --test-dir build/ninja -j8 --output-on-failure
 make itest
 ```
 
-The console and core library can be built without curses:
-
-```bash
-cmake --preset console
-cmake --build --preset console
-ctest --test-dir build/console
-```
-
-The `console` preset explicitly sets `CHA_BUILD_TUI=OFF`, making it the
-appropriate preset for console-only CI on every platform.
-
-`chaweb` is built by the same preset as one process with the configured
-`app.toml` host and port. It has one listener and no child-session or
-per-session-port mode. The ordinary suite excludes the socket/process and
-long-concurrency groups; run all three groups for web changes:
-
-```bash
-ctest --test-dir build/console --output-on-failure -LE "web_process|web_stress"
-ctest --test-dir build/console --output-on-failure -L web_process
-ctest --test-dir build/console --output-on-failure -L web_stress
-```
-
-GNU- and Clang-family toolchains also provide reproducible hardening presets,
-which take the same three test groups:
-
-```bash
-cmake --preset console-asan-ubsan
-cmake --build --preset console-asan-ubsan
-ctest --test-dir build/console-asan-ubsan --output-on-failure -LE "web_process|web_stress"
-
-cmake --preset console-tsan
-cmake --build --preset console-tsan
-ctest --test-dir build/console-tsan --output-on-failure -LE "web_process|web_stress"
-```
-
-The sanitizer presets require a compiler that supports the selected runtime and
-are intentionally off by default. They instrument the fetched dependencies as
-well as this project, because ThreadSanitizer reports false races against
-synchronization it cannot see. The native companion-file lease backend is
-exercised by the portable unit tests on every supported platform; the POSIX
-process harness adds cross-process crash-release coverage on Linux and macOS.
-
-The complete final verification matrix, including how to record environmental
-sanitizer failures separately from product failures, is in
-[`docs/web-fix-plan.md`](docs/web-fix-plan.md#12-block-8-documentation-and-final-verification).
-
-On macOS and Windows the TUI option defaults to off, so the default build
-produces the console frontend only. The ncurses TUI remains Linux-only.
-
-## Architecture
-
-The source tree is documented from the inside out, with diagrams:
-
-| Document | Covers |
-| --- | --- |
-| [`src/README.md`](src/README.md) | High-level architecture: layers, threading, the life of a turn, persistence, and the invariants that hold everywhere. Start here. |
-| [`src/transcript/README.md`](src/transcript/README.md) | The transcript model shared by every layer. |
-| [`src/agents/README.md`](src/agents/README.md) | Character loading, staged runner threads, and the HTTP transport. |
-| [`src/session/README.md`](src/session/README.md) | Workspace and session operations, SQLite persistence, chat coordination. |
-| [`src/ui/README.md`](src/ui/README.md) | The UI contract, with shared [`render/`](src/ui/render/README.md) and [`text/`](src/ui/text/README.md), plus the [`tui/`](src/ui/tui/README.md) and [`console/`](src/ui/console/README.md) frontends. |
-| [`src/apps/README.md`](src/apps/README.md) | Executable composition roots. |
-| [`src/ui/web/README.md`](src/ui/web/README.md) | The one-listener web transport, session ownership, SSE, and shutdown boundary. |
-| [`src/util/README.md`](src/util/README.md) | Shared leaf helpers, including prompt-template expansion, the concurrent queue, and wake adapters. |
-
-See the [application guide](docs/application-guide.md) for the canonical user-facing command and storage reference.
+See [src/README.md](src/README.md) for architecture and the per-layer READMEs
+for implementation contracts.

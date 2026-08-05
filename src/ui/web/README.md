@@ -1,5 +1,10 @@
 # Web frontend boundary
 
+Workspace characters in the web frontend inherit the shared `[provider]`
+configuration in `app.toml`; the top-level `host` and `port` remain this web
+server's listener settings. The web frontend does not gain the terminal
+Guest/Entrance/Welcome environment or terminal slash-navigation commands.
+
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and web
 runtime coordination. It depends on core `SessionIdentity`, `SessionDescriptor`,
 `OpenedSession`, `SessionState`, append proof, and `SessionChange`, but puts no

@@ -316,7 +316,6 @@ if(CHA_BUILD_TUI)
         src/ui/tui/input_editor.cpp
         src/ui/tui/render_plan.cpp
         src/ui/tui/screen_layout.cpp
-        src/ui/tui/startup_selector.cpp
         src/ui/tui/terminal.cpp
         src/ui/tui/tui.cpp
         src/ui/tui/persona.cpp

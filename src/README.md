@@ -483,6 +483,7 @@ installed.
 
 | Layer | Document |
 | --- | --- |
+| Terminal application workflow | [`application/README.md`](application/README.md) |
 | Transcript model | [`transcript/README.md`](transcript/README.md) |
 | Agent runtime and transport | [`agents/README.md`](agents/README.md) |
 | Operations and persistence | [`session/README.md`](session/README.md) |

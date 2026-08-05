@@ -40,7 +40,9 @@ flowchart TD
 ```
 
 `Workspace` refuses to construct unless `forums/`, `characters/`, and a valid
-non-empty `personas/` roster exist.
+`personas/` directory exist. The directory may contain no custom personas;
+the terminal application's built-in Guest persona makes its effective roster
+non-empty.
 The `forums/` directory may be temporarily empty; its valid forum names are
 sorted before presentation. Forum IDs and session database stems may contain
 only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and
@@ -70,12 +72,12 @@ Template containment follows the file's layer: a definition `CHARACTER.md` is
 contained to workspace `characters/`; a member `CHARACTER.md` and `FORUM.md`
 are contained to their forum directory.
 
-When a session is created or opened, `Workspace` loads the validated roster once and checks for
-`members/character_defaults.toml` within the selected forum and explicitly passes that optional path, the
-forum directory, the forum display name, and the roster to the agent loaders along with each
-definition/member pair. The agent layer applies shared configuration and template
-policy, deriving the definition containment root from the definition directory's
-parent and otherwise receiving resolved workspace paths explicitly.
+`Workspace` supplies validated storage-facing metadata and forum definitions.
+The terminal `application/` layer owns its one immutable effective roster and
+passes that same roster to each controller it opens. The agent layer applies the
+shared provider layer, definition, forum-default, and member override policy,
+deriving the definition containment root from the definition directory's parent
+and otherwise receiving resolved workspace paths explicitly.
 
 `Workspace::check_forum()` follows the same loading path without creating or
 opening a session. It also constructs `ForumCharacters` to validate character IDs,

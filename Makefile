@@ -18,7 +18,7 @@ run: build
 	cd workspace && ../build/ninja/cha
 
 run-console: build
-	cd workspace && ../build/ninja/chacon --persona reader --forum lobby --new dev
+	cd workspace && ../build/ninja/chacon
 
 run-web: build-web
 	cd workspace && ../build/ninja/chaweb

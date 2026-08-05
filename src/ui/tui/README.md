@@ -15,7 +15,6 @@ directory decides only how it looks and how input reaches it.
 | Source | Responsibility |
 | --- | --- |
 | `terminal.*` | The process-wide ncurses lifecycle: setup, chat mode, resize, restoration. |
-| `startup_selector.*` | Legacy startup picker source retained temporarily for the cleanup block; it has no caller. |
 
 ### Session input and control
 
@@ -150,8 +149,7 @@ notice when there is one. Active generation phases include the cancel hint;
 `Terminal` is constructed once in `main()` and shared. It sets the locale,
 enters curses, configures non-blocking chat input with a visible cursor, and
 redraws after resize. `Tui` borrows it rather than configuring the screen
-itself, and `restore()` is idempotent so unwinding is safe from anywhere. The
-retained `StartupSelector` source is no longer part of the runtime path.
+itself, and `restore()` is idempotent so unwinding is safe from anywhere.
 
 `run_application()` restores the terminal *before* rethrowing a failure, so an error
 message never lands on a screen still in curses mode.
