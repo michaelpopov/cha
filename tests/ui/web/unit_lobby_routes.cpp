@@ -182,6 +182,9 @@ bool listed_not_live(TestServer& server, std::string_view id) {
 
 TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     test::TestWorkspace fixture;
+    fixture.write_character_config(
+        "display_name = \"Guide\"\n"
+        "description = \"Explains the workspace\"\n");
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
@@ -201,14 +204,20 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     const auto bootstrap = server.client().Get("/api/v1/bootstrap");
     ASSERT_TRUE(bootstrap);
     EXPECT_EQ(bootstrap->status, 200);
-    EXPECT_EQ(body(bootstrap)["initial_persona_id"], "builtin-guest");
-    EXPECT_EQ(body(bootstrap)["initial_forum_id"], "builtin-entrance");
-    EXPECT_EQ(body(bootstrap)["initial_session_id"], "builtin-welcome");
-    EXPECT_EQ(body(bootstrap)["forums"].size(), 2);
-    EXPECT_EQ(body(bootstrap)["personas"].size(), 2);
-    EXPECT_EQ(body(bootstrap)["characters"].size(), 2);
-    EXPECT_TRUE(body(bootstrap)["recent_sessions"].is_array());
-    const nlohmann::json forums = body(bootstrap)["forums"];
+    const nlohmann::json bootstrap_body = body(bootstrap);
+    EXPECT_EQ(bootstrap_body["initial_persona_id"], "builtin-guest");
+    EXPECT_EQ(bootstrap_body["initial_forum_id"], "builtin-entrance");
+    EXPECT_EQ(bootstrap_body["initial_session_id"], "builtin-welcome");
+    EXPECT_EQ(bootstrap_body["forums"].size(), 2);
+    EXPECT_EQ(bootstrap_body["personas"].size(), 2);
+    EXPECT_EQ(bootstrap_body["characters"].size(), 2);
+    const auto guide = std::find_if(
+        bootstrap_body["characters"].begin(), bootstrap_body["characters"].end(),
+        [](const nlohmann::json& character) { return character["id"] == "guide"; });
+    ASSERT_NE(guide, bootstrap_body["characters"].end());
+    EXPECT_EQ((*guide)["description"], "Explains the workspace");
+    EXPECT_TRUE(bootstrap_body["recent_sessions"].is_array());
+    const nlohmann::json forums = bootstrap_body["forums"];
     const auto entrance = std::find_if(forums.begin(), forums.end(), [](const nlohmann::json& forum) {
         return forum["id"] == "builtin-entrance";
     });

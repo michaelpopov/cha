@@ -419,6 +419,25 @@ std::vector<CharacterDefinitionMetadata> Workspace::character_definitions() cons
     return load_definition_metadata(root_ / "characters");
 }
 
+std::string Workspace::character_definition_markdown(
+    const std::string& character_id) const {
+    validate_character_id(character_id);
+    const std::filesystem::path path =
+        root_ / "characters" / path_from_utf8(character_id) / "CHARACTER.md";
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error(
+            "Failed to read character definition '" + utf8_path(path) + "'");
+    }
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    if (!input.good() && !input.eof()) {
+        throw std::runtime_error(
+            "Failed to read character definition '" + utf8_path(path) + "'");
+    }
+    return std::move(contents).str();
+}
+
 std::vector<std::string> Workspace::forums() const {
     const std::filesystem::path forums_directory = root_ / "forums";
     return subdirectory_names(
@@ -487,6 +506,15 @@ std::vector<SessionSummary> Workspace::sessions(
         result.push_back(summarize(session));
     }
     return result;
+}
+
+std::filesystem::file_time_type Workspace::session_last_write_time(
+    const std::string& forum_name,
+    const std::string& session_id) const {
+    const Forum forum = load_forum(forum_name);
+    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
+    return std::filesystem::last_write_time(
+        catalog.open_database_path(session_id));
 }
 
 Forum Workspace::load_forum_by_name(std::string_view name) const {
@@ -606,6 +634,7 @@ OpenedSession Workspace::create_session(
             .identity = {forum.name, stored.id},
             .forum_display_name = forum.display_name,
             .session_label = stored.label,
+            .forum_default_character_id = forum.default_agent_id,
         },
         .controller = std::move(controller),
     };
@@ -659,6 +688,7 @@ OpenedSession Workspace::open_session(
             .identity = {forum.name, stored.id},
             .forum_display_name = forum.display_name,
             .session_label = stored.label,
+            .forum_default_character_id = forum.default_agent_id,
         },
         .controller = SessionController::from_shared_definitions(
             std::move(definitions),

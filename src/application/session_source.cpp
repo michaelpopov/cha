@@ -24,7 +24,8 @@ OpenedSession build_entrance_session(
     return {
         .descriptor = {.identity = {std::string(entrance_id), prepared.session.id},
             .forum_display_name = std::string(entrance_name),
-            .session_label = prepared.session.label},
+            .session_label = prepared.session.label,
+            .forum_default_character_id = std::string(assistant_id)},
         .controller = SessionController::from_shared_definitions(
             std::move(definitions), std::move(personas), std::string(assistant_id),
             prepared.database_path, std::move(prepared.lease), notifier, restored)};
@@ -217,7 +218,7 @@ private:
     OpenedSession build(const Session& stored, const std::filesystem::path& path,
                         SessionLease lease, WakeNotifier& notifier,
                         std::vector<AgentDefinition> definitions) const {
-        return {.descriptor = {.identity = {forum_.name, stored.id}, .forum_display_name = forum_.display_name, .session_label = stored.label},
+        return {.descriptor = {.identity = {forum_.name, stored.id}, .forum_display_name = forum_.display_name, .session_label = stored.label, .forum_default_character_id = forum_.default_agent_id},
                 .controller = SessionController::from_shared_definitions(std::move(definitions), personas_, forum_.default_agent_id, path, std::move(lease), notifier, load_session_state(path))};
     }
     const Workspace& workspace_;

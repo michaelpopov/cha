@@ -9,6 +9,7 @@
 #include "ui/web/protocol.h"
 #include "ui/web/route_support.h"
 #include "ui/web/session_registry.h"
+#include "util/text.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -16,8 +17,6 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -80,13 +79,12 @@ ForumSummary forum_summary(const Forum& forum, const WebDiscovery& discovery) {
         result.members.push_back(character_summary(*character));
     }
     std::sort(result.members.begin(), result.members.end(), [](const CharacterSummary& left, const CharacterSummary& right) {
-        return left.display_name < right.display_name;
+        return fold_ascii(left.display_name) < fold_ascii(right.display_name);
     });
     return result;
 }
 
-std::int64_t updated_at(const std::filesystem::path& path) {
-    const auto time = std::filesystem::last_write_time(path);
+std::int64_t updated_at(std::filesystem::file_time_type time) {
     const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
         time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
     return std::chrono::duration_cast<std::chrono::seconds>(system_time.time_since_epoch()).count();
@@ -99,14 +97,40 @@ std::vector<SessionListing> sessions_for(
     if (forum_id == entrance_id) {
         return {{std::string(welcome_id), std::string(welcome_name),
                  is_running(snapshot, {std::string(entrance_id), std::string(welcome_id)}),
-                 updated_at(welcome_storage.database_path())}};
+                 updated_at(welcome_storage.last_write_time())}};
     }
     if (discovery.find_forum(forum_id) == nullptr) throw ForumNotFoundError("Forum not found");
     std::vector<SessionListing> result;
     for (const SessionSummary& stored : workspace.sessions(std::string(forum_id))) {
         result.push_back({stored.id, stored.label, is_running(snapshot, {std::string(forum_id), stored.id}),
-                          updated_at(workspace.root() / "forums" / std::string(forum_id) / "sessions" / (stored.id + ".sqlite3"))});
+                          updated_at(workspace.session_last_write_time(
+                              std::string(forum_id), stored.id))});
     }
+    return result;
+}
+
+std::vector<RecentSession> recent_sessions(
+    const Workspace& workspace,
+    const WebDiscovery& discovery,
+    const WelcomeStorage& welcome_storage) {
+    std::vector<RecentSession> result;
+    for (const Forum& forum : discovery.forums()) {
+        if (forum.name == entrance_id) {
+            result.push_back({std::string(entrance_id), std::string(welcome_id),
+                std::string(welcome_name),
+                updated_at(welcome_storage.last_write_time())});
+            continue;
+        }
+        for (const SessionSummary& stored : workspace.sessions(forum.name)) {
+            result.push_back({forum.name, stored.id, stored.label,
+                updated_at(workspace.session_last_write_time(
+                    forum.name, stored.id))});
+        }
+    }
+    std::sort(result.begin(), result.end(),
+        [](const RecentSession& left, const RecentSession& right) {
+            return left.updated_at > right.updated_at;
+        });
     return result;
 }
 
@@ -134,18 +158,13 @@ void LobbyRoutes::install(httplib::Server& server) const {
             {"ready", true}, {"live_session_count", snapshot.live_entry_count}});
     });
 
-    server.Get("/api/v1/bootstrap", [workspace, discovery, welcome_storage, registry](const httplib::Request&, httplib::Response& response) {
+    server.Get("/api/v1/bootstrap", [workspace, discovery, welcome_storage](const httplib::Request&, httplib::Response& response) {
         Bootstrap bootstrap{.initial_persona_id = std::string(guest_id), .initial_forum_id = std::string(entrance_id), .initial_session_id = std::string(welcome_id)};
         for (const Persona& persona : discovery->personas()) bootstrap.personas.push_back({persona.id, persona.display_name, persona.description});
         for (const CharacterDefinitionMetadata& character : discovery->characters()) bootstrap.characters.push_back(character_summary(character));
         for (const Forum& forum : discovery->forums()) bootstrap.forums.push_back(forum_summary(forum, *discovery));
-        const RegistrySnapshot snapshot = registry->snapshot();
-        for (const Forum& forum : discovery->forums()) {
-            for (const SessionListing& session : sessions_for(*workspace, *discovery, *welcome_storage, snapshot, forum.name)) {
-                bootstrap.recent_sessions.push_back({forum.name, session.id, session.label, session.updated_at});
-            }
-        }
-        std::sort(bootstrap.recent_sessions.begin(), bootstrap.recent_sessions.end(), [](const RecentSession& left, const RecentSession& right) { return left.updated_at > right.updated_at; });
+        bootstrap.recent_sessions = recent_sessions(
+            *workspace, *discovery, *welcome_storage);
         set_json_response(response, 200, nlohmann::json(bootstrap));
     });
 
@@ -155,11 +174,9 @@ void LobbyRoutes::install(httplib::Server& server) const {
         const CharacterDefinitionMetadata* character = discovery->find_character(id);
         if (character == nullptr) return set_route_not_found(response);
         if (id == assistant_id) return set_json_response(response, 200, nlohmann::json(CharacterDetail{character_summary(*character), std::string(application_guide())}));
-        const std::filesystem::path path = workspace->root() / "characters" / id / "CHARACTER.md";
-        std::ifstream input(path, std::ios::binary);
-        if (!input) throw std::runtime_error("Character definition is unreadable");
-        const std::string markdown{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-        set_json_response(response, 200, nlohmann::json(CharacterDetail{character_summary(*character), markdown}));
+        set_json_response(response, 200, nlohmann::json(CharacterDetail{
+            character_summary(*character),
+            workspace->character_definition_markdown(id)}));
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, discovery, welcome_storage, registry](const httplib::Request& request, httplib::Response& response) {

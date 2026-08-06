@@ -431,6 +431,9 @@ TEST(SessionRoutes, DeliberateStreamCloseFinishesChunkedResponse) {
 
 TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     test::TestWorkspace fixture;
+    fixture.write_character_config(
+        "display_name = \"Guide\"\n"
+        "description = \"Explains the workspace\"\n");
     auto mutable_workspace = std::make_shared<Workspace>(fixture.root());
     const SessionSummary stored =
         mutable_workspace->create_stored_session("lobby", "Named session");
@@ -460,6 +463,13 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     const nlohmann::json body = json_body(snapshot);
     EXPECT_EQ(body["forum"].at("id"), "lobby");
     EXPECT_EQ(body["forum"].at("display_name"), "The Lobby");
+    EXPECT_EQ(body["forum"].at("default_character_id"), "guide");
+    EXPECT_EQ(body["forum"].at("members"), nlohmann::json::array({{
+        {"id", "guide"},
+        {"display_name", "Guide"},
+        {"description", "Explains the workspace"},
+    }}));
+    EXPECT_EQ(body["characters"], body["forum"].at("members"));
     EXPECT_EQ(body["session_id"], stored.id);
     EXPECT_EQ(body["session_label"], "Named session");
     registry.begin_shutdown();

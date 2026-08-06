@@ -5,12 +5,12 @@ successful browser flow for a valid workspace. Configuration, storage, and
 invariant failures use the server's existing exception boundary; the UI does not
 require recovery-specific API models.
 
-## Existing capabilities
+## HTTP surface
 
-| UI need | Existing API |
+| UI need | API |
 | --- | --- |
-| List personas | `GET /api/v1/personas` |
-| List forums | `GET /api/v1/forums` |
+| Load startup and discovery data | `GET /api/v1/bootstrap` |
+| Read character detail | `GET /api/v1/characters/{character_id}` |
 | List one forum's sessions | `GET /api/v1/forums/{forum}/sessions` |
 | Create a stored session | `POST /api/v1/forums/{forum}/sessions` |
 | Open or reattach a session | `POST /api/v1/forums/{forum}/sessions/{session}/open` |
@@ -20,12 +20,12 @@ require recovery-specific API models.
 | Change the default character | `POST /s/{forum}/{session}/api/v1/actions/default-agent` |
 | Stop generation | `POST /s/{forum}/{session}/api/v1/actions/stop` |
 
-The existing live-session API remains the base. The additions below supply the
-designed navigation and startup data.
+Bootstrap replaces separate persona, character, and forum list routes. The
+existing live-session API remains the base for Chat.
 
 ## Startup and discovery
 
-Add a consolidated bootstrap response:
+`GET /api/v1/bootstrap` returns:
 
 ```json
 {
@@ -60,10 +60,11 @@ request carries the selected persona ID:
 {"persona":"reader","text":"Hello"}
 ```
 
-The HTTP boundary resolves that ID to the server-owned ID and display name
-before queueing the command. The session records the resolved identity and does
-not hold or consult a persona roster. Guest can therefore author a message in
-any forum.
+The owning command carries that ID to the session. `SessionController` resolves
+it to the server-owned ID and display name against the effective roster captured
+when the web session opened. That roster is Guest plus every workspace persona;
+it is application-wide and independent of forum membership, so Guest and every
+configured persona can author in any forum.
 
 Persona prompt context may be captured when a session opens. It is model context
 only and never controls message attribution.
@@ -107,10 +108,9 @@ Members are sorted by display name. Forums have no description.
 
 ## Character detail
 
-Add:
+Character summaries come from bootstrap. Detail uses:
 
 ```text
-GET /api/v1/characters
 GET /api/v1/characters/{character_id}
 ```
 
@@ -131,21 +131,21 @@ interactive, images are not fetched, and raw HTML does not execute.
 Add `updated_at` to each session listing. Stored-session rows contain ID, label,
 live state, and time; they contain no description or transcript excerpt.
 
-Bootstrap includes all sessions across forums, ordered by database mtime, with
-Welcome first:
+Bootstrap includes all sessions across forums, ordered newest first by database
+mtime. Welcome is newest when the process starts, until another session is used:
 
 ```json
 {
   "forum_id": "stoics",
   "session_id": "2026-08-02-10-30-00-session",
   "session_label": "Design review",
-  "updated_at": "2026-08-02T17:42:00Z",
-  "live": true
+  "updated_at": 1754153000
 }
 ```
 
-The browser resolves the forum display from the forum roster. It trims the New
-session name and submits only a non-empty label.
+`updated_at` is epoch seconds. Recent has no `live` field and does not consult
+the live-session registry. The browser resolves the forum display from the forum
+roster. It trims the New session name and submits only a non-empty label.
 
 ## Shell and opening
 

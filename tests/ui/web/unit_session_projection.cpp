@@ -7,7 +7,10 @@ namespace {
 
 TEST(SessionProjection, MovesCompleteCoreStateIntoTheProtocolDto) {
     SessionState state{
-        .characters = {{"guide", "Guide"}, {"reviewer", "Reviewer"}},
+        .characters = {
+            {"reviewer", "Reviewer", "Checks details"},
+            {"guide", "guide", "Explains things"},
+        },
         .default_agent_id = "reviewer",
         .transcript = {
             {1, EntryKind::human, "persona", "Persona", "guide", "Guide", "Question", EntryStatus::complete, 7},
@@ -31,6 +34,7 @@ TEST(SessionProjection, MovesCompleteCoreStateIntoTheProtocolDto) {
         .identity = {"forum", "session"},
         .forum_display_name = "Forum",
         .session_label = "Label",
+        .forum_default_character_id = "guide",
     };
     const WebPresentationState presentation{
         .notice = "Current notice",
@@ -42,10 +46,16 @@ TEST(SessionProjection, MovesCompleteCoreStateIntoTheProtocolDto) {
         descriptor, std::move(state), presentation);
 
     EXPECT_EQ(snapshot, (SessionSnapshot{
-        .forum = {"forum", "Forum", "reviewer", {{"guide", "Guide"}, {"reviewer", "Reviewer"}}},
+        .forum = {"forum", "Forum", "guide", {
+            {"guide", "guide", "Explains things"},
+            {"reviewer", "Reviewer", "Checks details"},
+        }},
         .session_id = "session",
         .session_label = "Label",
-        .characters = {{"guide", "Guide"}, {"reviewer", "Reviewer"}},
+        .characters = {
+            {"reviewer", "Reviewer", "Checks details"},
+            {"guide", "guide", "Explains things"},
+        },
         .default_character_id = "reviewer",
         .transcript = {
             {1, TranscriptKind::human, "persona", "Persona", "guide", "Guide", "Question", TranscriptStatus::complete, 7},
@@ -74,7 +84,7 @@ TEST(SessionProjection, MovesCompleteCoreStateIntoTheProtocolDto) {
 }
 
 TEST(SessionProjection, MapsAnsweringStoppingAndInactiveGenerationStates) {
-    const SessionDescriptor descriptor{{"forum", "session"}, "Forum", "Label"};
+    const SessionDescriptor descriptor{{"forum", "session"}, "Forum", "Label", "guide"};
     const WebPresentationState presentation{.lifecycle = SessionLifecycle::running};
 
     for (const GenerationStatus& generation : std::vector<GenerationStatus>{

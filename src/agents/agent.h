@@ -32,6 +32,7 @@ struct AgentDefinition {
 struct CharacterInfo {
     std::string id;
     std::string name;
+    std::optional<std::string> description;
 
     bool operator==(const CharacterInfo&) const = default;
 };

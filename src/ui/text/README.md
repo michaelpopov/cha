@@ -33,11 +33,11 @@ Trailing punctuation on a handle (`@Ada, hello`) is tolerated during resolution
 in `ForumCharacters`, not here.
 
 The parser never resolves a persona or character handle. `handle_text_input()`
-receives an owning author identity already resolved by its frontend/application
-boundary and hands it with text and multicast handles through to
-`SessionController`. The controller trusts that server-resolved author value for
-attribution and resolves only character handles against `ForumCharacters`.
-Persona availability is application-wide rather than session state.
+receives a stable author ID selected by its frontend/application boundary and
+hands it with text and multicast handles through to `SessionController`. The
+controller resolves that ID against its effective application-wide roster and
+resolves character handles against `ForumCharacters`. The persona roster is not
+forum membership.
 
 ## Dispatch
 

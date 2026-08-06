@@ -20,15 +20,13 @@ Personas are workspace-wide authors, not forum or session members. `GET
 /api/v1/bootstrap` returns the immutable discovery view, including stable IDs,
 display summaries, built-ins, and Recent; it deliberately exposes no prompt
 text. A submitted input body is exactly `{"persona": "<id>", "text":
-"<text>"}`. For every submission the HTTP boundary resolves that ID against the
-application-wide workspace-plus-built-ins discovery view and constructs an owning,
-server-trusted author identity. Only that resolved identity crosses the
-owner-thread queue; the browser cannot supply its display name.
-
-`SessionController` records the supplied author identity but owns no persona
-roster and performs no persona-membership check. Built-in Guest can therefore
-author a message in an ordinary workspace forum. Persona selection is
-attribution, not authentication. A live session still serves one browser
+"<text>"}`. The HTTP boundary accepts only that stable ID; the browser cannot
+supply the persisted display name. The owning command carries the ID to
+`SessionController`, which resolves it against the process-wide effective roster
+captured when the web session opened. That roster is Guest plus every workspace
+persona, independent of forum membership, so Guest and every configured persona
+can author in any forum. Persona selection is attribution, not authentication.
+A live session still serves one browser
 connection at a time; changing personas happens between prompts on that same
 shared session.
 

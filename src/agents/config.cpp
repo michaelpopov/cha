@@ -340,6 +340,7 @@ LoadedConfig load_config(const CharacterConfigPaths& paths) {
     Config config;
     config.id = utf8_path(paths.definition.parent_path().filename());
     config.display_name = *definition.patch.display_name;
+    config.description = definition.description;
     config.host = *effective.host;
     config.port = *effective.port;
     if (effective.mode) {
