@@ -511,10 +511,11 @@ std::vector<SessionSummary> Workspace::sessions(
 std::filesystem::file_time_type Workspace::session_last_write_time(
     const std::string& forum_name,
     const std::string& session_id) const {
-    const Forum forum = load_forum(forum_name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    return std::filesystem::last_write_time(
-        catalog.open_database_path(session_id));
+    // The caller already listed this session, so the forum configuration and
+    // the embedded identity do not need reading a second time.
+    const SessionCatalog catalog(
+        forum_directory(forum_name) / "sessions", forum_name);
+    return std::filesystem::last_write_time(catalog.database_path(session_id));
 }
 
 Forum Workspace::load_forum_by_name(std::string_view name) const {

@@ -181,7 +181,6 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     EXPECT_EQ(page->status, 200);
     EXPECT_EQ(page->get_header_value("Content-Type"), "text/html; charset=utf-8");
     EXPECT_NE(page->body.find("<title>cha</title>"), std::string::npos);
-    EXPECT_EQ(page->body.find("Session is not open"), std::string::npos);
 
     const auto snapshot = server.client().Get(base + "/api/v1/session");
     ASSERT_TRUE(snapshot);
@@ -475,7 +474,7 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     registry.begin_shutdown();
 }
 
-TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLookup) {
+TEST(SessionRoutes, ServesTheShellForANonLiveSessionAndRejectsInvalidBodiesBeforeLookup) {
     std::atomic<int> starts{};
     SessionRegistry registry({.session_limit = 1}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;

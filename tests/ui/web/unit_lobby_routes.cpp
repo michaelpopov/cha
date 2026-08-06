@@ -217,6 +217,11 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_NE(guide, bootstrap_body["characters"].end());
     EXPECT_EQ((*guide)["description"], "Explains the workspace");
     EXPECT_TRUE(bootstrap_body["recent_sessions"].is_array());
+    // Built-ins take their place in display-name order rather than trailing it.
+    EXPECT_EQ(bootstrap_body["characters"][0]["id"], "builtin-assistant");
+    EXPECT_EQ(bootstrap_body["characters"][1]["id"], "guide");
+    EXPECT_EQ(bootstrap_body["forums"][0]["id"], "builtin-entrance");
+    EXPECT_EQ(bootstrap_body["forums"][1]["id"], "lobby");
     const nlohmann::json forums = bootstrap_body["forums"];
     const auto entrance = std::find_if(forums.begin(), forums.end(), [](const nlohmann::json& forum) {
         return forum["id"] == "builtin-entrance";

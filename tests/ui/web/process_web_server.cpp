@@ -605,11 +605,11 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     ASSERT_TRUE(page);
     EXPECT_EQ(page->status, 200);
     EXPECT_EQ(page->body.find("://"), std::string::npos);
-    const auto not_open_page = client.Get("/s/lobby/not-open/");
-    ASSERT_TRUE(not_open_page);
-    EXPECT_EQ(not_open_page->status, 200);
-    EXPECT_NE(not_open_page->body.find("The chat browser is not installed yet."), std::string::npos);
-    EXPECT_EQ(not_open_page->body.find("://"), std::string::npos);
+    const auto non_live_page = client.Get("/s/lobby/not-open/");
+    ASSERT_TRUE(non_live_page);
+    EXPECT_EQ(non_live_page->status, 200);
+    EXPECT_NE(non_live_page->body.find("The chat browser is not installed yet."), std::string::npos);
+    EXPECT_EQ(non_live_page->body.find("://"), std::string::npos);
     const auto health = client.Get("/health");
     ASSERT_TRUE(health);
     EXPECT_EQ(health->status, 200);
