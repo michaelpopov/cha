@@ -22,7 +22,7 @@ including those in Entrance. Durable Entrance sessions are application-managed
 stored chats, separate from workspace forum configuration; Welcome is not a
 stored-session list entry.
 
-Assistant has the embedded [application guide](docs/application-guide.md) and
+Assistant has the embedded [application guide](resources/application-guide.md) and
 a startup snapshot of the workspace. It can explain the application, but the
 following commands are also available without a completion request:
 

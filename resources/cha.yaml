@@ -1,0 +1,950 @@
+openapi: 3.1.0
+info:
+  title: CHA Web API
+  version: 1.0.0
+  description: |
+    HTTP and server-sent event interface exposed by `chaweb`.
+
+    `/` and `/s/{forum_id}/{session_id}/` serve the same client-routed HTML
+    shell. Discovery and stored-session operations use root-scoped `/api/v1`
+    routes. Operations on an open session are scoped beneath
+    `/s/{forum_id}/{session_id}/api/v1`.
+
+    The API has no authentication mechanism. Persona IDs select transcript
+    attribution and are not credentials. The server accepts requests only when
+    the `Host` header matches its configured listener authority, compared
+    case-insensitively. A loopback listener also accepts the other loopback
+    authorities, so `127.0.0.1`, `localhost`, and `[::1]` are interchangeable
+    for a listener bound to any of them. The port is part of the authority and
+    must be present, except on port 80, where a bare host is also accepted.
+
+    JSON mutations that include an `Origin` header additionally require that
+    origin's authority to equal `Host`.
+servers:
+  - url: http://{host}:{port}
+    description: Locally configured CHA web listener
+    variables:
+      host:
+        default: 127.0.0.1
+      port:
+        default: "8080"
+
+tags:
+  - name: Shell
+  - name: Service
+  - name: Discovery
+  - name: Stored sessions
+  - name: Live sessions
+
+paths:
+  /:
+    get:
+      tags: [Shell]
+      operationId: getShell
+      summary: Get the browser application shell
+      description: |
+        Returns the single client-routed HTML document. The browser loads its
+        state from `/api/v1/bootstrap` and routes between conversations itself
+        without requesting another document.
+      responses:
+        "200":
+          $ref: "#/components/responses/Shell"
+        "403":
+          $ref: "#/components/responses/ForbiddenHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /s/{forum_id}/{session_id}/:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [Shell]
+      operationId: getSessionShell
+      summary: Get the shell for a session deep link
+      description: |
+        Returns the same document as `/`. The trailing slash is required.
+
+        The identifiers are neither validated nor resolved here: an unknown,
+        malformed, or unopened session still receives the shell with status 200.
+        The browser reads them from its own location and opens the session
+        through `POST /api/v1/forums/{forum_id}/sessions/{session_id}/open`.
+      responses:
+        "200":
+          $ref: "#/components/responses/Shell"
+        "403":
+          $ref: "#/components/responses/ForbiddenHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /health:
+    get:
+      tags: [Service]
+      operationId: getHealth
+      summary: Check service readiness
+      responses:
+        "200":
+          description: The server is ready to accept requests.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "403":
+          $ref: "#/components/responses/ForbiddenHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/bootstrap:
+    get:
+      tags: [Discovery]
+      operationId: getBootstrap
+      summary: Get initial navigation and discovery state
+      description: |
+        Returns the initial built-in IDs, the effective persona and character
+        rosters, forum membership, and all recent sessions ordered newest first.
+
+        The persona, character, and forum rosters are loaded once at server
+        startup, so workspace configuration changes require a restart. Sessions
+        are read from storage on every request, so `recent_sessions` includes
+        sessions created since startup.
+      responses:
+        "200":
+          description: Bootstrap state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bootstrap"
+        "403":
+          $ref: "#/components/responses/ForbiddenHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/characters/{character_id}:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    get:
+      tags: [Discovery]
+      operationId: getCharacter
+      summary: Get character details
+      description: |
+        Returns the character summary and its verbatim Markdown definition.
+        The built-in Assistant returns the embedded application guide.
+      responses:
+        "200":
+          description: Character details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "403":
+          $ref: "#/components/responses/ForbiddenHost"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/forums/{forum_id}/sessions:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+    get:
+      tags: [Stored sessions]
+      operationId: listSessions
+      summary: List a forum's sessions
+      description: |
+        Lists stored sessions and whether each has a live runtime. The built-in
+        Entrance forum returns only its process-local Welcome session.
+      responses:
+        "200":
+          description: Session list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SessionListing"
+        "403":
+          $ref: "#/components/responses/ForbiddenHost"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Stored sessions]
+      operationId: createSession
+      summary: Create a stored session
+      description: |
+        Creates the session without opening a live runtime for it. The label is
+        stored as given; an empty label is replaced by the generated session ID,
+        so the returned label may differ from the requested one.
+
+        Only workspace forums accept creation. The built-in Entrance forum has no
+        workspace directory, so creating a session in it answers `404` with
+        `not_found`; its Welcome session is the only session it ever lists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: Session created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateSessionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/forums/{forum_id}/sessions/{session_id}/open:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [Stored sessions]
+      operationId: openSession
+      summary: Open or reattach to a session
+      description: |
+        Starts the session's live runtime, or reattaches to its existing runtime.
+        On success, live-session operations become available beneath the session's
+        `/s/{forum_id}/{session_id}/api/v1` path.
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "200":
+          description: Session is open.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenSessionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The session is busy or stopping. `error.code` is `session_busy` when
+            its storage lease is held elsewhere, such as by a terminal frontend,
+            or `session_stopping` while its previous runtime is still shutting
+            down. Both are retryable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: |
+            Session limit, open timeout, or server shutdown prevented opening.
+            `error.code` is `session_limit_reached`, `session_open_timeout`, or
+            `server_stopping`. On `session_open_timeout` the session may still
+            finish opening, so the request can be retried.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /s/{forum_id}/{session_id}/api/v1/session:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [Live sessions]
+      operationId: getSessionSnapshot
+      summary: Get the authoritative live-session snapshot
+      responses:
+        "200":
+          description: Current session state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionSnapshot"
+        "403":
+          $ref: "#/components/responses/ForbiddenHost"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SessionNotLive"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/CommandUnavailable"
+
+  /s/{forum_id}/{session_id}/api/v1/events:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [Live sessions]
+      operationId: streamSessionEvents
+      summary: Stream live-session updates
+      description: |
+        Opens the session's single allowed Server-Sent Events connection.
+        The first record is a `snapshot` event whose JSON data is a
+        `SessionSnapshot`. Later records are either replacement `snapshot`
+        events or `append` events whose JSON data is an `AppendEvent`.
+        Comment-only `: heartbeat` records keep an idle connection alive.
+
+        `Last-Event-ID` is ignored; reconnecting starts with a fresh snapshot.
+      responses:
+        "200":
+          description: |
+            SSE stream containing `snapshot` and `append` events. Event data is
+            one compact JSON value on the `data:` line.
+          x-sse-events:
+            snapshot:
+              payload:
+                $ref: "#/components/schemas/SessionSnapshot"
+            append:
+              payload:
+                $ref: "#/components/schemas/AppendEvent"
+            heartbeat:
+              description: "Comment-only `: heartbeat` record with no data payload."
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-cache
+            X-Accel-Buffering:
+              schema:
+                type: string
+                const: "no"
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                snapshot:
+                  summary: Initial event shape
+                  value: |-
+                    event: snapshot
+                    data: {"forum":{"id":"lobby","display_name":"Lobby","default_character_id":"guide","members":[]},"session_id":"one","session_label":"One","characters":[],"default_character_id":"guide","transcript":[],"generation":{"active":false,"agent_id":"","agent_name":"","phase":"waiting","reasoning_text":""},"lifecycle":"running"}
+                append:
+                  summary: Incremental transcript append
+                  value: |-
+                    event: append
+                    data: {"target":{"kind":"entry","entry_id":1},"text":" more text","seq":0}
+
+        "403":
+          $ref: "#/components/responses/ForbiddenHost"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Session is not live or already has an event stream. `error.code` is
+            `session_not_live`, or `browser_stream_in_use` when the session's one
+            allowed connection is already held by another browser page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/CommandUnavailable"
+
+  /s/{forum_id}/{session_id}/api/v1/input:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [Live sessions]
+      operationId: submitInput
+      summary: Submit user input
+      description: |
+        Submits text through the session's shared input path. `persona` is a
+        stable attribution ID, not an authentication identity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InputRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SessionNotLive"
+        "413":
+          description: |
+            Request body or prompt text exceeds its configured limit.
+            `error.code` is `body_too_large` for the whole request body, or
+            `prompt_too_large` for the `text` field alone.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/CommandUnavailable"
+
+  /s/{forum_id}/{session_id}/api/v1/actions/stop:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [Live sessions]
+      operationId: stopGeneration
+      summary: Request that generation stop
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SessionNotLive"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/CommandUnavailable"
+
+  /s/{forum_id}/{session_id}/api/v1/actions/default-agent:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [Live sessions]
+      operationId: setDefaultCharacter
+      summary: Change the session's default character
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetDefaultCharacterRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SessionNotLive"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/CommandUnavailable"
+
+components:
+  parameters:
+    ForumId:
+      name: forum_id
+      in: path
+      required: true
+      description: Stable URL-safe forum identifier.
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      description: Stable URL-safe session identifier.
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    CharacterId:
+      name: character_id
+      in: path
+      required: true
+      description: Stable URL-safe character identifier.
+      schema:
+        $ref: "#/components/schemas/Identifier"
+
+  requestBodies:
+    EmptyJsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EmptyObject"
+
+  responses:
+    BadRequest:
+      description: |
+        Content type is not JSON, or the JSON body has an invalid shape.
+        `error.code` is `bad_request`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ForbiddenHost:
+      description: |
+        The Host header does not identify the configured listener.
+        `error.code` is `forbidden_host`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ForbiddenMutation:
+      description: |
+        The Host header is forbidden, or Origin does not match Host.
+        `error.code` is `forbidden_host` or `forbidden_origin`; the status alone
+        does not distinguish them.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: |
+        The route identifier or selected resource was not found.
+        `error.code` is `not_found`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    SessionNotLive:
+      description: |
+        The selected session does not have a live runtime.
+        `error.code` is `session_not_live`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BodyTooLarge:
+      description: |
+        The JSON request body exceeds the configured size limit.
+        `error.code` is `body_too_large`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: |
+        The request failed unexpectedly.
+        `error.code` is `internal_error`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Shell:
+      description: The client-routed application document, served as UTF-8 HTML.
+      content:
+        text/html:
+          schema:
+            type: string
+    CommandUnavailable:
+      description: |
+        The command queue is full, the command timed out, or the server is
+        stopping. `error.code` is `command_queue_full`, `command_timeout`, or
+        `server_stopping`. On `command_timeout` the command's outcome is
+        unknown: it may still be applied.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    CommandAccepted:
+      description: Command completed at the live-session boundary.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CommandResult"
+
+  schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      pattern: "^(?!\\.{1,2}$)[A-Za-z0-9._~-]+$"
+      examples: [lobby]
+
+    EmptyObject:
+      type: object
+      additionalProperties: false
+
+    Health:
+      type: object
+      additionalProperties: false
+      required: [ready, live_session_count]
+      properties:
+        ready:
+          type: boolean
+          const: true
+        live_session_count:
+          type: integer
+          minimum: 0
+
+    PersonaSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+
+    CharacterSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+
+    ForumSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, default_character_id, members]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        default_character_id:
+          $ref: "#/components/schemas/Identifier"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/CharacterSummary"
+
+    SessionListing:
+      type: object
+      additionalProperties: false
+      required: [id, label, live, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+        live:
+          type: boolean
+        updated_at:
+          $ref: "#/components/schemas/UnixTimestamp"
+
+    RecentSession:
+      type: object
+      additionalProperties: false
+      required: [forum_id, session_id, session_label, updated_at]
+      properties:
+        forum_id:
+          $ref: "#/components/schemas/Identifier"
+        session_id:
+          $ref: "#/components/schemas/Identifier"
+        session_label:
+          type: string
+        updated_at:
+          $ref: "#/components/schemas/UnixTimestamp"
+
+    Bootstrap:
+      type: object
+      additionalProperties: false
+      required:
+        - initial_persona_id
+        - initial_forum_id
+        - initial_session_id
+        - personas
+        - characters
+        - forums
+        - recent_sessions
+      properties:
+        initial_persona_id:
+          $ref: "#/components/schemas/Identifier"
+        initial_forum_id:
+          $ref: "#/components/schemas/Identifier"
+        initial_session_id:
+          $ref: "#/components/schemas/Identifier"
+        personas:
+          type: array
+          items:
+            $ref: "#/components/schemas/PersonaSummary"
+        characters:
+          type: array
+          items:
+            $ref: "#/components/schemas/CharacterSummary"
+        forums:
+          type: array
+          items:
+            $ref: "#/components/schemas/ForumSummary"
+        recent_sessions:
+          type: array
+          description: All sessions ordered by `updated_at` descending.
+          items:
+            $ref: "#/components/schemas/RecentSession"
+
+    CharacterDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, character_markdown]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        character_markdown:
+          type: string
+
+    CreateSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label:
+          type: string
+
+    CreateSessionResult:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+
+    OpenSessionResult:
+      type: object
+      additionalProperties: false
+      required: [forum_id, session_id]
+      properties:
+        forum_id:
+          $ref: "#/components/schemas/Identifier"
+        session_id:
+          $ref: "#/components/schemas/Identifier"
+
+    InputRequest:
+      type: object
+      additionalProperties: false
+      required: [persona, text]
+      properties:
+        persona:
+          type: string
+          minLength: 1
+          description: Stable persona attribution ID; not an authentication credential.
+        text:
+          type: string
+          description: Input text, limited by the server's configured prompt byte limit.
+
+    SetDefaultCharacterRequest:
+      type: object
+      additionalProperties: false
+      required: [character_id]
+      properties:
+        character_id:
+          type: string
+          minLength: 1
+
+    CommandResult:
+      type: object
+      additionalProperties: false
+      required: [clear_input]
+      properties:
+        clear_input:
+          type: boolean
+        notice:
+          type: string
+
+    TranscriptEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - participant_id
+        - display_name
+        - addressed_to
+        - addressed_to_name
+        - text
+        - status
+      properties:
+        id:
+          $ref: "#/components/schemas/UnsignedInteger"
+        kind:
+          type: string
+          enum: [human, agent, notice, error]
+        participant_id:
+          type: string
+        display_name:
+          type: string
+        addressed_to:
+          type: string
+        addressed_to_name:
+          type: string
+        text:
+          type: string
+        status:
+          type: string
+          enum: [complete, streaming, cancelled, failed]
+        request_id:
+          $ref: "#/components/schemas/UnsignedInteger"
+
+    GenerationState:
+      type: object
+      additionalProperties: false
+      required: [active, agent_id, agent_name, phase, reasoning_text]
+      properties:
+        active:
+          type: boolean
+        request_id:
+          $ref: "#/components/schemas/UnsignedInteger"
+        agent_id:
+          type: string
+        agent_name:
+          type: string
+        phase:
+          type: string
+          enum: [waiting, reasoning, answering, stopping]
+        reasoning_text:
+          type: string
+
+    SessionSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - forum
+        - session_id
+        - session_label
+        - characters
+        - default_character_id
+        - transcript
+        - generation
+        - lifecycle
+      properties:
+        forum:
+          $ref: "#/components/schemas/ForumSummary"
+        session_id:
+          $ref: "#/components/schemas/Identifier"
+        session_label:
+          type: string
+        characters:
+          type: array
+          items:
+            $ref: "#/components/schemas/CharacterSummary"
+        default_character_id:
+          $ref: "#/components/schemas/Identifier"
+        transcript:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptEntry"
+        generation:
+          $ref: "#/components/schemas/GenerationState"
+        notice:
+          type: string
+        lifecycle:
+          type: string
+          enum: [starting, running, stopping]
+        shutdown_reason:
+          type: string
+          enum: [browser_disconnected, session_failed, server_stopping]
+
+    AppendTargetEntry:
+      type: object
+      additionalProperties: false
+      required: [kind, entry_id]
+      properties:
+        kind:
+          type: string
+          const: entry
+        entry_id:
+          $ref: "#/components/schemas/UnsignedInteger"
+
+    AppendTargetReasoning:
+      type: object
+      additionalProperties: false
+      required: [kind, request_id]
+      properties:
+        kind:
+          type: string
+          const: reasoning
+        request_id:
+          $ref: "#/components/schemas/UnsignedInteger"
+
+    AppendTarget:
+      oneOf:
+        - $ref: "#/components/schemas/AppendTargetEntry"
+        - $ref: "#/components/schemas/AppendTargetReasoning"
+      discriminator:
+        propertyName: kind
+        mapping:
+          entry: "#/components/schemas/AppendTargetEntry"
+          reasoning: "#/components/schemas/AppendTargetReasoning"
+
+    AppendEvent:
+      type: object
+      additionalProperties: false
+      required: [target, text, seq]
+      properties:
+        target:
+          $ref: "#/components/schemas/AppendTarget"
+        text:
+          type: string
+        seq:
+          $ref: "#/components/schemas/UnsignedInteger"
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - not_found
+                - bad_request
+                - body_too_large
+                - prompt_too_large
+                - forbidden_host
+                - forbidden_origin
+                - internal_error
+                - session_busy
+                - session_stopping
+                - session_limit_reached
+                - session_open_timeout
+                - server_stopping
+                - session_not_live
+                - browser_stream_in_use
+                - command_timeout
+                - command_queue_full
+            message:
+              type: string
+
+    UnixTimestamp:
+      type: integer
+      format: int64
+      description: Whole seconds since the Unix epoch.
+
+    UnsignedInteger:
+      type: integer
+      minimum: 0

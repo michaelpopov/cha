@@ -227,8 +227,8 @@ add_library(cha_core STATIC
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
-    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/docs/application-guide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
-    DEPENDS docs/application-guide.md cmake/embed_text.cmake
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/application-guide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/application-guide.md cmake/embed_text.cmake
     VERBATIM)
 
 target_compile_features(cha_core PUBLIC cxx_std_20)
