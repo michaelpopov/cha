@@ -53,9 +53,9 @@ Only the two-line button changes sidebar visibility. Every other sidebar action 
 Selecting a persona affects the next submitted message, including messages in an
 already-open session. It does not create, close, or switch sessions. Personas
 are application-wide authors and never members of a forum or session. On each
-submission the server resolves the selected ID against the application-wide
-persona directory and gives the session a trusted author identity to record;
-the session does not validate against a roster captured when it opened.
+submission the session resolves the selected ID against the effective
+application-wide roster it received when it opened. That roster contains Guest
+and every workspace persona and is not derived from forum membership.
 
 ## Chat context line
 

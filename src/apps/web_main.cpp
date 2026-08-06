@@ -1,3 +1,5 @@
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
 #include "session/workspace.h"
 #include "ui/web/asset_handler.h"
 #include "ui/web/http_server.h"
@@ -30,14 +32,17 @@ int main() {
         {
             auto workspace =
                 std::make_shared<const cha::Workspace>(".", config);
+            cha::WebDiscovery discovery(*workspace);
+            cha::WelcomeStorage welcome_storage;
             cha::web::WebSettings settings;
             cha::web::SessionRegistry registry =
-                cha::web::SessionRegistry::from_workspace(settings, workspace);
+                cha::web::SessionRegistry::from_workspace(
+                    settings, workspace, discovery, welcome_storage);
             httplib::Server server;
             cha::web::configure_http_server(
                 server, settings, config.host, config.port);
             cha::web::AssetHandler().install(server);
-            cha::web::LobbyRoutes(workspace, registry, settings).install(server);
+            cha::web::LobbyRoutes(workspace, discovery, welcome_storage, registry, settings).install(server);
             cha::web::SessionRoutes(registry, settings).install(server);
             cha::web::ProcessShutdownSignal signals;
             cha::web::ServerShutdownCoordinator shutdown(registry, server);

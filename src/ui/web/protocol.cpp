@@ -131,6 +131,8 @@ void to_json(nlohmann::json& json, const ForumSummary& value) {
     json = {
         {"id", value.id},
         {"display_name", value.display_name},
+        {"default_character_id", value.default_character_id},
+        {"members", value.members},
     };
 }
 
@@ -139,6 +141,7 @@ void to_json(nlohmann::json& json, const PersonaSummary& value) {
         {"id", value.id},
         {"display_name", value.display_name},
     };
+    put_optional(json, "description", value.description);
 }
 
 void to_json(nlohmann::json& json, const SessionListing& value) {
@@ -146,6 +149,7 @@ void to_json(nlohmann::json& json, const SessionListing& value) {
         {"id", value.id},
         {"label", value.label},
         {"live", value.live},
+        {"updated_at", value.updated_at},
     };
 }
 
@@ -154,6 +158,7 @@ void to_json(nlohmann::json& json, const CharacterSummary& value) {
         {"id", value.id},
         {"display_name", value.display_name},
     };
+    put_optional(json, "description", value.description);
 }
 
 void to_json(nlohmann::json& json, const TranscriptEntry& value) {
@@ -211,7 +216,25 @@ void to_json(nlohmann::json& json, const CreateSessionSuccess& value) {
 }
 
 void to_json(nlohmann::json& json, const OpenSessionSuccess& value) {
-    json = {{"path", value.path}};
+    json = {{"forum_id", value.forum_id}, {"session_id", value.session_id}};
+}
+
+void to_json(nlohmann::json& json, const RecentSession& value) {
+    json = {{"forum_id", value.forum_id}, {"session_id", value.session_id},
+            {"session_label", value.session_label}, {"updated_at", value.updated_at}};
+}
+
+void to_json(nlohmann::json& json, const Bootstrap& value) {
+    json = {{"initial_persona_id", value.initial_persona_id},
+            {"initial_forum_id", value.initial_forum_id},
+            {"initial_session_id", value.initial_session_id}, {"personas", value.personas},
+            {"characters", value.characters}, {"forums", value.forums},
+            {"recent_sessions", value.recent_sessions}};
+}
+
+void to_json(nlohmann::json& json, const CharacterDetail& value) {
+    json = nlohmann::json(value.summary);
+    json["character_markdown"] = value.character_markdown;
 }
 
 void to_json(nlohmann::json& json, const Error& value) {

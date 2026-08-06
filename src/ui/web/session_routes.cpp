@@ -60,15 +60,11 @@ std::optional<SessionIdentity> validate_key(
 SessionHandle resolve(
     const httplib::Request& request,
     httplib::Response& response,
-    SessionRegistry& registry,
-    bool page) {
+    SessionRegistry& registry) {
     const std::optional<SessionIdentity> key = validate_key(request, response);
     if (!key) return {};
     SessionHandle handle = registry.lookup(*key);
-    if (!handle) {
-        if (page) AssetHandler::set_session_not_open_page(response);
-        else set_not_live(response);
-    }
+    if (!handle) set_not_live(response);
     return handle;
 }
 
@@ -92,11 +88,11 @@ void SessionRoutes::install(httplib::Server& server) const {
     const WebSettings settings = settings_;
     constexpr auto base = R"(/s/([^/]+)/([^/]+))";
 
-    server.Get(std::string(base) + R"(/)", [registry](const httplib::Request& request, httplib::Response& response) {
-        if (resolve(request, response, *registry, true)) AssetHandler::set_chat_page(response);
+    server.Get(std::string(base) + R"(/)", [](const httplib::Request&, httplib::Response& response) {
+        AssetHandler::set_shell(response);
     });
     server.Get(std::string(base) + R"(/api/v1/session)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
-        SessionHandle handle = resolve(request, response, *registry, false);
+        SessionHandle handle = resolve(request, response, *registry);
         if (!handle) return;
         CommandSubmitResult result = handle.runtime().snapshot(settings.command_deadline);
         if (const auto* snapshot = std::get_if<SessionSnapshot>(&result)) {
@@ -108,7 +104,7 @@ void SessionRoutes::install(httplib::Server& server) const {
         }
     });
     server.Get(std::string(base) + R"(/api/v1/events)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
-        SessionHandle handle = resolve(request, response, *registry, false);
+        SessionHandle handle = resolve(request, response, *registry);
         if (!handle) return;
         CommandSubmitResult result = handle.runtime().connect_sse(settings.command_deadline);
         const auto* connection = std::get_if<SseConnectResult>(&result);

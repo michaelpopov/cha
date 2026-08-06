@@ -14,11 +14,11 @@ commands and turns their results into frontend presentation. `/help` is a built-
 remains available while a response is generating. The other application
 commands reject immediately during generation.
 
-Persona resolution stops here. `/iam` resolves one workspace-wide persona, and
-ordinary input passes that owning ID/display-name identity to the current
-controller. A session records the author but does not own the effective persona
-catalog or repeat a membership lookup. Opening or switching sessions therefore
-does not constrain which selected application persona can author the next turn.
+`/iam` selects one workspace-wide persona. Ordinary input passes its stable ID
+to the current controller, which resolves the persisted ID/display-name identity
+against the effective application-wide roster it received when it opened. That
+roster is independent of forum membership, so opening or switching sessions does
+not constrain which selected application persona can author the next turn.
 
 The application catalog uses public names only. Built-ins are omitted from
 discovery lists by provenance but remain valid explicit targets. Welcome is an
@@ -28,9 +28,12 @@ list. Persistent Entrance sessions are application-owned storage, not
 workspace-defined forum configuration.
 
 The web frontend does not use `ChatApplication` or terminal presentation
-results: it keeps key-based routes and its own session lifecycle. It may reuse
-shared domain loaders and built-in session construction, but not the terminal
-discovery projection. It resolves web persona IDs at its own HTTP boundary.
+results: it keeps key-based routes and its own session lifecycle. Its one
+startup `WebDiscovery` wraps a validated `WorkspaceSnapshot`, adds Guest,
+Assistant, and Entrance, and supplies the effective roster and built-in session
+construction inputs to the registry. Web commands carry persona IDs to the
+session controller, which resolves them against that effective application-wide
+roster.
 
 ## Dependencies
 

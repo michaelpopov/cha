@@ -22,6 +22,7 @@ struct SessionDescriptor {
     SessionIdentity identity;
     std::string forum_display_name;
     std::string session_label;
+    std::string forum_default_character_id;
 
     bool operator==(const SessionDescriptor&) const = default;
 };

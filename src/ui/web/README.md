@@ -7,24 +7,26 @@ Guest, Assistant, Entrance, and Welcome, but does not use terminal
 slash-navigation commands or their presentation results.
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and web
-runtime coordination. It depends on core `SessionIdentity`, `SessionDescriptor`,
+runtime coordination. The composition root builds one immutable `WebDiscovery`
+and one process-wide `WelcomeStorage`; the registry uses them to open the
+built-in Welcome session and gives every web-opened session the Guest-plus-
+workspace persona roster. It depends on core `SessionIdentity`, `SessionDescriptor`,
 `OpenedSession`, `SessionState`, append proof, and `SessionChange`, but puts no
-web type in `cha_core`. Its permanent session-owner thread is the sole owner of
+HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
 a `SessionController`; HTTP workers exchange only owning commands and results
 with it.
 
 Personas are workspace-wide authors, not forum or session members. `GET
-/api/v1/personas` returns stable IDs and display names and deliberately exposes no
-prompt text. A submitted input body is exactly `{"persona": "<id>", "text":
-"<text>"}`. For every submission the HTTP boundary resolves that ID against the
-application-wide workspace-plus-built-ins discovery view and constructs an owning,
-server-trusted author identity. Only that resolved identity crosses the
-owner-thread queue; the browser cannot supply its display name.
-
-`SessionController` records the supplied author identity but owns no persona
-roster and performs no persona-membership check. Built-in Guest can therefore
-author a message in an ordinary workspace forum. Persona selection is
-attribution, not authentication. A live session still serves one browser
+/api/v1/bootstrap` returns the immutable discovery view, including stable IDs,
+display summaries, built-ins, and Recent; it deliberately exposes no prompt
+text. A submitted input body is exactly `{"persona": "<id>", "text":
+"<text>"}`. The HTTP boundary accepts only that stable ID; the browser cannot
+supply the persisted display name. The owning command carries the ID to
+`SessionController`, which resolves it against the process-wide effective roster
+captured when the web session opened. That roster is Guest plus every workspace
+persona, independent of forum membership, so Guest and every configured persona
+can author in any forum. Persona selection is attribution, not authentication.
+A live session still serves one browser
 connection at a time; changing personas happens between prompts on that same
 shared session.
 
@@ -46,7 +48,8 @@ for a bounded interval, and contains controller failures to that runtime.
 It is not a core session abstraction: it serializes
 open requests by `SessionIdentity`, counts starting and stopping entries against
 the configured bound, and owns the owner threads. Its outcomes describe only
-owner lifecycle; `LobbyRoutes` validates URL components, builds redirect paths,
+owner lifecycle; `LobbyRoutes` validates URL components, returns stable open
+identities,
 and maps lifecycle failures to HTTP errors. It publishes only running runtimes
 through owning `SessionHandle` values, and sweeps finished entries in two phases
 so joins and runtime destruction occur outside its mutex.
@@ -63,7 +66,7 @@ close notifications. A runtime starts disconnected, cancels its one deadline
 on stream acceptance, and on matching close unloads at `idle_grace` or the
 absolute `orphan_limit` from that same disconnection timestamp while generation
 is active.
-`LobbyRoutes` is the HTTP boundary for stored-session discovery, create-only,
+`LobbyRoutes` is the HTTP boundary for bootstrap discovery, character detail, stored-session discovery, create-only,
 and registry-backed open/reattach. It validates route identifiers before either
 the registry or session storage is consulted; creation reaches only the shared,
 immutable `Workspace`, while opening first asks the registry for a disk-free

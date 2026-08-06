@@ -1,6 +1,8 @@
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "support/web_server_process.h"
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
 #include "session/workspace.h"
 #include "ui/web/http_server.h"
 #include "ui/web/lobby_routes.h"
@@ -104,8 +106,9 @@ std::string open_session(httplib::Client& client, std::string_view id) {
     if (!opened) return {};
     EXPECT_EQ(opened->status, 200) << opened->body;
     if (opened->status != 200) return {};
-    const std::string path =
-        nlohmann::json::parse(opened->body).at("path").get<std::string>();
+    const nlohmann::json result = nlohmann::json::parse(opened->body);
+    const std::string path = "/s/" + result.at("forum_id").get<std::string>()
+        + "/" + result.at("session_id").get<std::string>() + "/";
     EXPECT_TRUE(path.starts_with('/'));
     EXPECT_FALSE(path.starts_with("//"));
     EXPECT_EQ(path.find("://"), std::string::npos);
@@ -559,10 +562,10 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     EXPECT_EQ(lobby->status, 200);
     EXPECT_EQ(lobby->body.find("http://"), std::string::npos);
     EXPECT_EQ(lobby->body.find("https://"), std::string::npos);
-    const auto forums = client.Get("/api/v1/forums");
-    ASSERT_TRUE(forums);
-    ASSERT_EQ(forums->status, 200);
-    expect_same_origin_payload(nlohmann::json::parse(forums->body));
+    const auto bootstrap = client.Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    expect_same_origin_payload(nlohmann::json::parse(bootstrap->body));
 
     constexpr std::size_t session_limit = 8;
     std::vector<std::string> session_ids;
@@ -602,11 +605,11 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     ASSERT_TRUE(page);
     EXPECT_EQ(page->status, 200);
     EXPECT_EQ(page->body.find("://"), std::string::npos);
-    const auto not_open_page = client.Get("/s/lobby/not-open/");
-    ASSERT_TRUE(not_open_page);
-    EXPECT_EQ(not_open_page->status, 200);
-    EXPECT_NE(not_open_page->body.find("href=\"/\""), std::string::npos);
-    EXPECT_EQ(not_open_page->body.find("://"), std::string::npos);
+    const auto non_live_page = client.Get("/s/lobby/not-open/");
+    ASSERT_TRUE(non_live_page);
+    EXPECT_EQ(non_live_page->status, 200);
+    EXPECT_NE(non_live_page->body.find("The chat browser is not installed yet."), std::string::npos);
+    EXPECT_EQ(non_live_page->body.find("://"), std::string::npos);
     const auto health = client.Get("/health");
     ASSERT_TRUE(health);
     EXPECT_EQ(health->status, 200);
@@ -866,7 +869,9 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
         });
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;
-    LobbyRoutes(workspace, registry, settings).install(server);
+    WebDiscovery discovery(*workspace);
+    WelcomeStorage welcome_storage;
+    LobbyRoutes(workspace, discovery, welcome_storage, registry, settings).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
     configure_http_server(server, settings, "127.0.0.1", port);

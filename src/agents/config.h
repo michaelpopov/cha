@@ -26,14 +26,15 @@ enum class ReasoningFormat {
     reasoning,
 };
 
-// Everything needed to reach one character's provider and shape its replies: identity, endpoint and
+// Everything needed to initialize one character: public metadata plus endpoint,
 // credentials, model, streaming, and reasoning settings. The character directory
-// provides the stable ID; its config provides the display name.
+// provides the stable ID; its config provides display metadata.
 struct Config {
     std::string id{"assistant"};
     // Reserved for a future character-name concept distinct from display name.
     std::string name{"Assistant"};
     std::string display_name{"Assistant"};
+    std::optional<std::string> description;
     std::string host;
     int port{};
     Mode mode{Mode::test};

@@ -67,6 +67,8 @@ public:
     const ApplicationConfig& app_config() const;
     const std::filesystem::path& root() const noexcept { return root_; }
     std::vector<CharacterDefinitionMetadata> character_definitions() const;
+    std::string character_definition_markdown(
+        const std::string& character_id) const;
     std::vector<std::string> forums() const;
     // Loads and validates the current workspace roster. Raises when personas/
     // is missing; an existing empty directory is valid and it re-reads on every call.
@@ -76,6 +78,9 @@ public:
     // completion providers. Returns its resolved metadata on success.
     Forum check_forum(const std::string& name) const;
     std::vector<SessionSummary> sessions(const std::string& forum_name) const;
+    std::filesystem::file_time_type session_last_write_time(
+        const std::string& forum_name,
+        const std::string& session_id) const;
     // Name-facing counterparts for terminal/application callers. They resolve
     // public forum and session names while the established key APIs above stay
     // available to the web protocol.
@@ -116,7 +121,8 @@ public:
         WakeNotifier& notifier) const;
     [[nodiscard]] OpenedSession open_session(
         const SessionIdentity& identity,
-        WakeNotifier& notifier) const;
+        WakeNotifier& notifier,
+        SharedPersonaRoster personas = {}) const;
     [[nodiscard]] OpenedSession open_session_by_name(
         std::string_view forum_name,
         const std::string& session_name,

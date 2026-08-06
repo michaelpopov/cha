@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -418,6 +419,25 @@ std::vector<CharacterDefinitionMetadata> Workspace::character_definitions() cons
     return load_definition_metadata(root_ / "characters");
 }
 
+std::string Workspace::character_definition_markdown(
+    const std::string& character_id) const {
+    validate_character_id(character_id);
+    const std::filesystem::path path =
+        root_ / "characters" / path_from_utf8(character_id) / "CHARACTER.md";
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error(
+            "Failed to read character definition '" + utf8_path(path) + "'");
+    }
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    if (!input.good() && !input.eof()) {
+        throw std::runtime_error(
+            "Failed to read character definition '" + utf8_path(path) + "'");
+    }
+    return std::move(contents).str();
+}
+
 std::vector<std::string> Workspace::forums() const {
     const std::filesystem::path forums_directory = root_ / "forums";
     return subdirectory_names(
@@ -486,6 +506,16 @@ std::vector<SessionSummary> Workspace::sessions(
         result.push_back(summarize(session));
     }
     return result;
+}
+
+std::filesystem::file_time_type Workspace::session_last_write_time(
+    const std::string& forum_name,
+    const std::string& session_id) const {
+    // The caller already listed this session, so the forum configuration and
+    // the embedded identity do not need reading a second time.
+    const SessionCatalog catalog(
+        forum_directory(forum_name) / "sessions", forum_name);
+    return std::filesystem::last_write_time(catalog.database_path(session_id));
 }
 
 Forum Workspace::load_forum_by_name(std::string_view name) const {
@@ -605,6 +635,7 @@ OpenedSession Workspace::create_session(
             .identity = {forum.name, stored.id},
             .forum_display_name = forum.display_name,
             .session_label = stored.label,
+            .forum_default_character_id = forum.default_agent_id,
         },
         .controller = std::move(controller),
     };
@@ -639,7 +670,8 @@ OpenedSession Workspace::open_session_by_name(
 
 OpenedSession Workspace::open_session(
     const SessionIdentity& identity,
-    WakeNotifier& notifier) const {
+    WakeNotifier& notifier,
+    SharedPersonaRoster personas) const {
     const Forum forum = load_forum(identity.forum_id);
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
 
@@ -648,17 +680,18 @@ OpenedSession Workspace::open_session(
     SessionLease lease = SessionLease::acquire(database_path);
     const Session stored = catalog.session(identity.session_id);
     SessionRestore restored = load_session_state(database_path);
-    PersonaRoster personas = load_personas();
+    if (!personas) personas = std::make_shared<const PersonaRoster>(load_personas());
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
+        forum, *personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
     log_info("Session opened");
     return {
         .descriptor = {
             .identity = {forum.name, stored.id},
             .forum_display_name = forum.display_name,
             .session_label = stored.label,
+            .forum_default_character_id = forum.default_agent_id,
         },
-        .controller = SessionController::from_definitions(
+        .controller = SessionController::from_shared_definitions(
             std::move(definitions),
             std::move(personas),
             forum.default_agent_id,

@@ -1,6 +1,8 @@
 #include "ui/web/asset_handler.h"
 #include "ui/web/http_server.h"
 #include "ui/web/session_registry.h"
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
 #include "ui/web/session_routes.h"
 #include "support/test_workspace.h"
 
@@ -178,8 +180,7 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     ASSERT_TRUE(page);
     EXPECT_EQ(page->status, 200);
     EXPECT_EQ(page->get_header_value("Content-Type"), "text/html; charset=utf-8");
-    EXPECT_NE(page->body.find("<title>cha session</title>"), std::string::npos);
-    EXPECT_EQ(page->body.find("Session is not open"), std::string::npos);
+    EXPECT_NE(page->body.find("<title>cha</title>"), std::string::npos);
 
     const auto snapshot = server.client().Get(base + "/api/v1/session");
     ASSERT_TRUE(snapshot);
@@ -429,6 +430,9 @@ TEST(SessionRoutes, DeliberateStreamCloseFinishesChunkedResponse) {
 
 TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     test::TestWorkspace fixture;
+    fixture.write_character_config(
+        "display_name = \"Guide\"\n"
+        "description = \"Explains the workspace\"\n");
     auto mutable_workspace = std::make_shared<Workspace>(fixture.root());
     const SessionSummary stored =
         mutable_workspace->create_stored_session("lobby", "Named session");
@@ -438,8 +442,10 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
         .open_deadline = 1s,
         .command_deadline = 1s,
     };
+    WebDiscovery discovery(*workspace);
+    WelcomeStorage welcome_storage;
     SessionRegistry registry =
-        SessionRegistry::from_workspace(settings, workspace);
+        SessionRegistry::from_workspace(settings, workspace, discovery, welcome_storage);
 
     const RegistryOpenResult unavailable =
         registry.open({"lobby", "missing"}, 1s);
@@ -454,15 +460,21 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     ASSERT_TRUE(snapshot);
     ASSERT_EQ(snapshot->status, 200);
     const nlohmann::json body = json_body(snapshot);
-    EXPECT_EQ(
-        body["forum"],
-        nlohmann::json({{"id", "lobby"}, {"display_name", "The Lobby"}}));
+    EXPECT_EQ(body["forum"].at("id"), "lobby");
+    EXPECT_EQ(body["forum"].at("display_name"), "The Lobby");
+    EXPECT_EQ(body["forum"].at("default_character_id"), "guide");
+    EXPECT_EQ(body["forum"].at("members"), nlohmann::json::array({{
+        {"id", "guide"},
+        {"display_name", "Guide"},
+        {"description", "Explains the workspace"},
+    }}));
+    EXPECT_EQ(body["characters"], body["forum"].at("members"));
     EXPECT_EQ(body["session_id"], stored.id);
     EXPECT_EQ(body["session_label"], "Named session");
     registry.begin_shutdown();
 }
 
-TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLookup) {
+TEST(SessionRoutes, ServesTheShellForANonLiveSessionAndRejectsInvalidBodiesBeforeLookup) {
     std::atomic<int> starts{};
     SessionRegistry registry({.session_limit = 1}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
@@ -473,7 +485,7 @@ TEST(SessionRoutes, SeparatesNonLivePageFromApiAndRejectsInvalidBodiesBeforeLook
     const auto page = server.client().Get("/s/lobby/missing/");
     ASSERT_TRUE(page);
     EXPECT_EQ(page->status, 200);
-    EXPECT_NE(page->body.find("href=\"/\""), std::string::npos);
+    EXPECT_NE(page->body.find("The chat browser is not installed yet."), std::string::npos);
     expect_error(server.client().Get("/s/lobby/missing/api/v1/session"), 409, "session_not_live");
     expect_error(server.client().Get("/s/%2e%2e/missing/api/v1/session"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing%23fragment/api/v1/session"), 404, "not_found");

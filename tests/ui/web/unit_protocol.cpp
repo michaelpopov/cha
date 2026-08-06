@@ -63,17 +63,17 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json(CreateSessionSuccess{"s1", "Notes"}),
         nlohmann::json({{"id", "s1"}, {"label", "Notes"}}));
     EXPECT_EQ(
-        nlohmann::json(OpenSessionSuccess{"/s/forum/s1/"}),
-        nlohmann::json({{"path", "/s/forum/s1/"}}));
+        nlohmann::json(OpenSessionSuccess{"forum", "s1"}),
+        nlohmann::json({{"forum_id", "forum"}, {"session_id", "s1"}}));
     EXPECT_EQ(
-        nlohmann::json(ForumSummary{"forum", "Forum"}),
-        nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}}));
+        nlohmann::json(ForumSummary{"forum", "Forum", "guide", {{"guide", "Guide"}}}),
+        nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"members", {{{"id", "guide"}, {"display_name", "Guide"}}}}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
         nlohmann::json({{"display_name", "Reader"}, {"id", "reader"}}));
     EXPECT_EQ(
-        nlohmann::json(SessionListing{"s1", "Notes", true}),
-        nlohmann::json({{"id", "s1"}, {"label", "Notes"}, {"live", true}}));
+        nlohmann::json(SessionListing{"s1", "Notes", true, 12}),
+        nlohmann::json({{"id", "s1"}, {"label", "Notes"}, {"live", true}, {"updated_at", 12}}));
     EXPECT_EQ(
         nlohmann::json(CharacterSummary{"guide", "Guide"}),
         nlohmann::json({{"display_name", "Guide"}, {"id", "guide"}}));
@@ -126,7 +126,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
     const auto value = nlohmann::json(SnapshotEvent{std::move(snapshot)});
     const nlohmann::json expected = {
         {"default_character_id", "guide"},
-        {"forum", {{"display_name", "Forum"}, {"id", "forum"}}},
+        {"forum", {{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", ""}, {"members", nlohmann::json::array()}}},
         {"generation",
          {
              {"active", true},

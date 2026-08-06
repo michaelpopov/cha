@@ -117,6 +117,7 @@ TEST(CompletionClient, EchoesOnePromptInTestMode) {
     Config config;
     config.id = "assistant";
     config.display_name = "Assistant";
+    config.description = "Helpful character";
     std::atomic_bool cancellation{false};
     CompletionClient client({.config = config});
     Transcript transcript;
@@ -133,6 +134,7 @@ TEST(CompletionClient, EchoesOnePromptInTestMode) {
 
     EXPECT_EQ(result.outcome, CompletionOutcome::completed);
     EXPECT_EQ(deltas, (std::vector<std::string>{"hello"}));
+    EXPECT_EQ(client.info().character.description, "Helpful character");
 }
 
 TEST(CompletionClient, ConstructsSessionLocalNetworkClientsConcurrently) {

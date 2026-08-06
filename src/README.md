@@ -58,7 +58,7 @@ Each entry point links only its frontend target.
 | `apps/` | Executable composition roots and process-level error handling. | Reusable policy — it only wires. |
 | `ui/tui/` | Curses lifecycle, application-relative chat input, overlays, layout, redraw planning, and its event loop. | Console code, workspace files, catalogs, backends. |
 | `ui/console/` | Line input, application-command dispatch, submission queue, signals, append-only emission, and stream sanitizing. | TUI code, workspace files, catalogs, backends. |
-| `ui/web/` | HTTP/SSE transport, protocol DTOs, presentation state, and session-runtime coordination. | Web types in `cha_core`, storage internals, and controller access from HTTP workers. |
+| `ui/web/` | HTTP/SSE transport, protocol DTOs, presentation state, and session-runtime coordination. | HTTP/protocol types in `cha_core`, storage internals, and controller access from HTTP workers. |
 | `ui/render/` | Shared transcript labels, attributes, and surface-writing operations. | Frontend layout, descriptors, curses. |
 | `ui/text/` | The textual grammar: slash commands and `@mention` addressing. | Frontend widgets, storage, backends. |
 | `application/` | Shared application-facing snapshots, built-ins, and navigation session sources. | Frontend I/O, argument parsing, and frontend types. |
@@ -77,7 +77,7 @@ may include headers only from those listed beside it.
 | `apps/` | `ui/tui/`, `ui/console/`, `ui/web/`, `ui/render/`, `application/`, `session/`, `transcript/`, `util/` |
 | `ui/tui/` | `ui/render/`, `ui/text/`, `application/`, `session/`, `transcript/`, `util/` |
 | `ui/console/` | `ui/render/`, `ui/text/`, `application/`, `session/`, `transcript/`, `util/` |
-| `ui/web/` | `ui/text/`, `session/`, `transcript/`, `util/`, and its HTTP transport dependency |
+| `ui/web/` | `ui/text/`, `application/`, `session/`, `transcript/`, `util/`, and its HTTP transport dependency |
 | `ui/render/` | `session/`, `transcript/` |
 | `ui/text/` | `session/`, `util/` |
 | `application/` | `session/`, `agents/`, `transcript/`, `util/` |

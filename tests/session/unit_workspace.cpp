@@ -262,6 +262,7 @@ TEST_F(ApplicationWorkspaceTest, ResolvesDefaultAgentWithoutReorderingMembers) {
             .identity = {"lobby", created.descriptor.identity.session_id},
             .forum_display_name = "The Lobby",
             .session_label = "default",
+            .forum_default_character_id = "guide",
         }));
     const std::string session_id = created.descriptor.identity.session_id;
     created.controller->shutdown();

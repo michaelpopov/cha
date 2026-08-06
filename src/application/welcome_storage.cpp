@@ -49,6 +49,10 @@ WelcomeStorage::~WelcomeStorage() {
     if (error) log_warn("Failed to clean up Welcome storage");
 }
 
+std::filesystem::file_time_type WelcomeStorage::last_write_time() const {
+    return std::filesystem::last_write_time(database_path_);
+}
+
 PreparedSession WelcomeStorage::prepare() {
     SessionLease lease = SessionLease::acquire(database_path_);
     return {{std::string(welcome_id), std::string(welcome_name)},

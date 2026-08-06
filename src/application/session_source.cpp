@@ -14,6 +14,38 @@
 
 namespace cha {
 namespace {
+
+OpenedSession build_entrance_session(
+    SharedPersonaRoster personas,
+    PreparedSession prepared,
+    WakeNotifier& notifier,
+    std::vector<AgentDefinition> definitions) {
+    const SessionRestore restored = load_session_state(prepared.database_path);
+    return {
+        .descriptor = {.identity = {std::string(entrance_id), prepared.session.id},
+            .forum_display_name = std::string(entrance_name),
+            .session_label = prepared.session.label,
+            .forum_default_character_id = std::string(assistant_id)},
+        .controller = SessionController::from_shared_definitions(
+            std::move(definitions), std::move(personas), std::string(assistant_id),
+            prepared.database_path, std::move(prepared.lease), notifier, restored)};
+}
+
+} // namespace
+
+OpenedSession open_entrance_session(
+    const Workspace& workspace,
+    SharedPersonaRoster personas,
+    std::string_view inventory,
+    PreparedSession prepared,
+    WakeNotifier& notifier) {
+    auto definitions = builtin_assistant_definitions(
+        workspace.app_config().provider, std::string(inventory), *personas);
+    return build_entrance_session(
+        std::move(personas), std::move(prepared), notifier, std::move(definitions));
+}
+
+namespace {
 [[noreturn]] void rethrow_public_session_error(
     const SessionNameAmbiguousError&, std::string_view forum, std::string_view session) {
     throw SessionNameAmbiguousError("Session name '" + std::string(session)
@@ -60,10 +92,8 @@ public:
             const Session stored = catalog.session_by_name(std::string(name));
             const auto path = catalog.open_database_path(stored.id);
             SessionLease lease = SessionLease::acquire(path);
-            auto definitions = builtin_assistant_definitions(
-                workspace_.app_config().provider, inventory_, *personas_);
-            return build(stored, path, std::move(lease), notifier,
-                std::move(definitions));
+            return open_entrance_session(workspace_, personas_, inventory_,
+                {stored, path, std::move(lease)}, notifier);
         } catch (const SessionNameAmbiguousError& error) { rethrow_public_session_error(error, entrance_name, name); }
         catch (const SessionNotFoundError& error) { rethrow_public_session_error(error, entrance_name, name); }
         catch (const SessionBusyError& error) { rethrow_public_session_error(error, entrance_name, name); }
@@ -82,8 +112,8 @@ public:
                 workspace_.app_config().provider, inventory_, *personas_);
             PreparedSession prepared = catalog.create_by_name(std::move(name));
             try {
-                return build(prepared.session, prepared.database_path,
-                    std::move(prepared.lease), notifier, std::move(definitions));
+                return build_entrance_session(personas_, std::move(prepared), notifier,
+                    std::move(definitions));
             } catch (const std::exception& error) {
                 log_warn("Created Entrance session could not be opened: " + std::string(error.what()));
                 throw SessionCreatedOpenError("session initialization failed");
@@ -101,12 +131,6 @@ public:
         }
     }
 private:
-    OpenedSession build(const Session& stored, const std::filesystem::path& path,
-                        SessionLease lease, WakeNotifier& notifier,
-                        std::vector<AgentDefinition> definitions) const {
-        return {.descriptor = {.identity = {std::string(entrance_id), stored.id}, .forum_display_name = std::string(entrance_name), .session_label = stored.label},
-                .controller = SessionController::from_shared_definitions(std::move(definitions), personas_, std::string(assistant_id), path, std::move(lease), notifier, load_session_state(path))};
-    }
     const Workspace& workspace_;
     SharedPersonaRoster personas_;
     std::string inventory_;
@@ -194,7 +218,7 @@ private:
     OpenedSession build(const Session& stored, const std::filesystem::path& path,
                         SessionLease lease, WakeNotifier& notifier,
                         std::vector<AgentDefinition> definitions) const {
-        return {.descriptor = {.identity = {forum_.name, stored.id}, .forum_display_name = forum_.display_name, .session_label = stored.label},
+        return {.descriptor = {.identity = {forum_.name, stored.id}, .forum_display_name = forum_.display_name, .session_label = stored.label, .forum_default_character_id = forum_.default_agent_id},
                 .controller = SessionController::from_shared_definitions(std::move(definitions), personas_, forum_.default_agent_id, path, std::move(lease), notifier, load_session_state(path))};
     }
     const Workspace& workspace_;
@@ -210,9 +234,8 @@ public:
         : workspace_(workspace), personas_(std::move(personas)), inventory_(inventory.serialize()), storage_(storage) {}
     OpenedSession open(WakeNotifier& notifier) {
         PreparedSession prepared = storage_.prepare();
-        auto definitions = builtin_assistant_definitions(workspace_.app_config().provider, inventory_, *personas_);
-        return {.descriptor = {.identity = {std::string(entrance_id), std::string(welcome_id)}, .forum_display_name = std::string(entrance_name), .session_label = std::string(welcome_name)},
-                .controller = SessionController::from_shared_definitions(std::move(definitions), personas_, std::string(assistant_id), prepared.database_path, std::move(prepared.lease), notifier, load_session_state(prepared.database_path))};
+        return open_entrance_session(workspace_, personas_, inventory_,
+            std::move(prepared), notifier);
     }
 private:
     const Workspace& workspace_;

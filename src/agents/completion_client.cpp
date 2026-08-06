@@ -758,6 +758,7 @@ AgentRuntimeInfo CompletionClient::info() const {
         .character = {
             .id = config_.id,
             .name = config_.display_name,
+            .description = config_.description,
         },
         .model = config_.model,
         .api = endpoint(),

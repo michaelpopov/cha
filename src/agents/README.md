@@ -12,7 +12,7 @@ completion pool tasks.
 
 | Source | Responsibility |
 | --- | --- |
-| `config.*` | `LoadedConfig` — typed connection settings plus prompt variables from one TOML overlay, with field validation. |
+| `config.*` | `LoadedConfig` — typed character metadata, connection settings, and prompt variables from one TOML overlay, with field validation. |
 | `persona.h` | `Persona` and the ordered `PersonaRoster` values passed down from workspace discovery. |
 | `agent.*` | `AgentDefinition`, `CharacterInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
 | `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |

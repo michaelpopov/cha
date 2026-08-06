@@ -1,4 +1,6 @@
 #include "ui/web/session_registry.h"
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
 #include "ui/web/sse_mailbox.h"
 
 #include "session/session_lease.h"
@@ -417,8 +419,10 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     WebSettings settings;
     settings.session_limit = session_count;
     settings.command_queue_capacity = 16;
+    WebDiscovery discovery(*workspace);
+    WelcomeStorage welcome_storage;
     SessionRegistry registry = SessionRegistry::from_workspace(
-        settings, workspace);
+        settings, workspace, discovery, welcome_storage);
     std::vector<std::future<RegistryOpenResult>> opens;
     opens.reserve(session_count);
     for (const SessionSummary& session : sessions) {

@@ -4,6 +4,9 @@
 #include "ui/web/session_registry.h"
 #include "support/test_workspace.h"
 
+#include "application/web_discovery.h"
+#include "application/welcome_storage.h"
+
 #include "session/session_controller.h"
 #include "session/session_lease.h"
 #include "session/workspace.h"
@@ -15,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -95,9 +99,10 @@ public:
         std::shared_ptr<const Workspace> workspace,
         SessionRegistry& registry,
         WebSettings settings = {.open_deadline = 500ms},
-        Installer installer = {}) {
+        Installer installer = {})
+        : discovery_(std::make_unique<WebDiscovery>(*workspace)) {
         AssetHandler().install(server_);
-        LobbyRoutes(workspace, registry, settings).install(server_);
+        LobbyRoutes(workspace, *discovery_, welcome_storage_, registry, settings).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
@@ -117,6 +122,8 @@ public:
     int port() const noexcept { return port_; }
 
 private:
+    WelcomeStorage welcome_storage_;
+    std::unique_ptr<WebDiscovery> discovery_;
     httplib::Server server_;
     int port_{};
     std::thread thread_;
@@ -173,8 +180,11 @@ bool listed_not_live(TestServer& server, std::string_view id) {
     return false;
 }
 
-TEST(LobbyRoutes, ServesPersonaListingHealthAndForumListingWithoutSessionDataInHealth) {
+TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     test::TestWorkspace fixture;
+    fixture.write_character_config(
+        "display_name = \"Guide\"\n"
+        "description = \"Explains the workspace\"\n");
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
@@ -184,38 +194,63 @@ TEST(LobbyRoutes, ServesPersonaListingHealthAndForumListingWithoutSessionDataInH
     ASSERT_TRUE(root);
     EXPECT_EQ(root->status, 200);
     EXPECT_EQ(root->get_header_value("Content-Type"), "text/html; charset=utf-8");
-    EXPECT_NE(root->body.find("Choose a persona"), std::string::npos);
-    EXPECT_NE(root->body.find("/api/v1/personas"), std::string::npos);
+    EXPECT_NE(root->body.find("The chat browser is not installed yet."), std::string::npos);
 
     const auto health = server.client().Get("/health");
     ASSERT_TRUE(health);
     EXPECT_EQ(health->status, 200);
     EXPECT_EQ(body(health), nlohmann::json({{"ready", true}, {"live_session_count", 0}}));
 
-    const auto forums = server.client().Get("/api/v1/forums");
-    ASSERT_TRUE(forums);
-    EXPECT_EQ(forums->status, 200);
-    EXPECT_EQ(body(forums), nlohmann::json::array({{{"id", "lobby"}, {"display_name", "The Lobby"}}}));
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    EXPECT_EQ(bootstrap->status, 200);
+    const nlohmann::json bootstrap_body = body(bootstrap);
+    EXPECT_EQ(bootstrap_body["initial_persona_id"], "builtin-guest");
+    EXPECT_EQ(bootstrap_body["initial_forum_id"], "builtin-entrance");
+    EXPECT_EQ(bootstrap_body["initial_session_id"], "builtin-welcome");
+    EXPECT_EQ(bootstrap_body["forums"].size(), 2);
+    EXPECT_EQ(bootstrap_body["personas"].size(), 2);
+    EXPECT_EQ(bootstrap_body["characters"].size(), 2);
+    const auto guide = std::find_if(
+        bootstrap_body["characters"].begin(), bootstrap_body["characters"].end(),
+        [](const nlohmann::json& character) { return character["id"] == "guide"; });
+    ASSERT_NE(guide, bootstrap_body["characters"].end());
+    EXPECT_EQ((*guide)["description"], "Explains the workspace");
+    EXPECT_TRUE(bootstrap_body["recent_sessions"].is_array());
+    // Built-ins take their place in display-name order rather than trailing it.
+    EXPECT_EQ(bootstrap_body["characters"][0]["id"], "builtin-assistant");
+    EXPECT_EQ(bootstrap_body["characters"][1]["id"], "guide");
+    EXPECT_EQ(bootstrap_body["forums"][0]["id"], "builtin-entrance");
+    EXPECT_EQ(bootstrap_body["forums"][1]["id"], "lobby");
+    const nlohmann::json forums = bootstrap_body["forums"];
+    const auto entrance = std::find_if(forums.begin(), forums.end(), [](const nlohmann::json& forum) {
+        return forum["id"] == "builtin-entrance";
+    });
+    ASSERT_NE(entrance, forums.end());
+    EXPECT_EQ((*entrance)["default_character_id"], "builtin-assistant");
+    EXPECT_EQ((*entrance)["members"], nlohmann::json::array({{
+        {"id", "builtin-assistant"}, {"display_name", "Assistant"},
+    }}));
 
-    const auto personas = server.client().Get("/api/v1/personas");
-    ASSERT_TRUE(personas);
-    EXPECT_EQ(personas->status, 200);
-    EXPECT_EQ(personas->get_header_value("Content-Type"), "application/json");
-    EXPECT_EQ(
-        body(personas),
-        nlohmann::json::array({{{"id", "reader"}, {"display_name", "Reader"}}}));
+    const auto workspace_character = server.client().Get("/api/v1/characters/guide");
+    ASSERT_TRUE(workspace_character);
+    ASSERT_EQ(workspace_character->status, 200);
+    EXPECT_EQ(body(workspace_character)["character_markdown"], "Character instructions\n");
 
-    fixture.add_persona("author", "Author", "This prompt is not sent to the browser.");
-    const auto refreshed = server.client().Get("/api/v1/personas");
-    ASSERT_TRUE(refreshed);
-    EXPECT_EQ(refreshed->status, 200);
-    EXPECT_EQ(refreshed->body.find("This prompt is not sent to the browser."), std::string::npos);
-    EXPECT_EQ(
-        body(refreshed),
-        nlohmann::json::array({
-            {{"id", "author"}, {"display_name", "Author"}},
-            {{"id", "reader"}, {"display_name", "Reader"}},
-        }));
+    const auto assistant_character = server.client().Get("/api/v1/characters/builtin-assistant");
+    ASSERT_TRUE(assistant_character);
+    ASSERT_EQ(assistant_character->status, 200);
+    EXPECT_FALSE(body(assistant_character)["character_markdown"].get<std::string>().empty());
+
+    const auto entrance_sessions = server.client().Get("/api/v1/forums/builtin-entrance/sessions");
+    ASSERT_TRUE(entrance_sessions);
+    ASSERT_EQ(entrance_sessions->status, 200);
+    const nlohmann::json sessions = body(entrance_sessions);
+    ASSERT_EQ(sessions.size(), 1);
+    EXPECT_EQ(sessions[0]["id"], "builtin-welcome");
+    EXPECT_EQ(sessions[0]["label"], "Welcome");
+    EXPECT_FALSE(sessions[0]["live"]);
+    EXPECT_GT(sessions[0]["updated_at"].get<std::int64_t>(), 0);
 }
 
 TEST(LobbyRoutes, RejectsMissingPersonasAtWorkspaceConstruction) {
@@ -269,11 +304,23 @@ TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {
     ASSERT_EQ(listed->status, 200);
     ASSERT_EQ(body(listed).size(), 1);
     EXPECT_FALSE(body(listed)[0]["live"]);
+    EXPECT_GT(body(listed)[0]["updated_at"].get<std::int64_t>(), 0);
+
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    const nlohmann::json recent_sessions = body(bootstrap)["recent_sessions"];
+    ASSERT_EQ(recent_sessions.size(), 2);
+    EXPECT_GE(recent_sessions[0]["updated_at"], recent_sessions[1]["updated_at"]);
+    EXPECT_TRUE(std::any_of(recent_sessions.begin(), recent_sessions.end(), [&id](const nlohmann::json& recent) {
+        return recent["forum_id"] == "lobby" && recent["session_id"] == id
+            && recent["session_label"] == "Notes";
+    }));
 
     const auto opened = server.client().Post("/api/v1/forums/lobby/sessions/" + id + "/open", "{}", "application/json");
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 200);
-    EXPECT_EQ(body(opened), nlohmann::json({{"path", "/s/lobby/" + id + "/"}}));
+    EXPECT_EQ(body(opened), nlohmann::json({{"forum_id", "lobby"}, {"session_id", id}}));
     EXPECT_EQ(starts, 1);
 
     const auto reopened = server.client().Post("/api/v1/forums/lobby/sessions/" + id + "/open", "{}", "application/json");
@@ -531,7 +578,7 @@ TEST(LobbyRoutes, ReattachesFromRegistryWithoutReadingStorageAgain) {
     EXPECT_EQ(reattached->status, 200);
     EXPECT_EQ(
         body(reattached),
-        nlohmann::json({{"path", "/s/lobby/" + id + "/"}}));
+        nlohmann::json({{"forum_id", "lobby"}, {"session_id", id}}));
     EXPECT_EQ(starts, 1);
     registry.begin_shutdown();
 }
@@ -722,7 +769,7 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
     const auto opened = server.client().Post(route, "{}", "application/json");
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 200);
-    EXPECT_EQ(body(opened), nlohmann::json({{"path", "/s/lobby/" + id + "/"}}));
+    EXPECT_EQ(body(opened), nlohmann::json({{"forum_id", "lobby"}, {"session_id", id}}));
     registry.begin_shutdown();
 }
 
@@ -730,8 +777,10 @@ TEST(LobbyRoutes, CreateSucceedsWhileAnotherStoredSessionLeaseIsHeld) {
     test::TestWorkspace fixture;
     auto workspace = std::make_shared<const Workspace>(fixture.root());
     const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
+    WebDiscovery discovery(*workspace);
+    WelcomeStorage welcome_storage;
     SessionRegistry registry =
-        SessionRegistry::from_workspace(settings, workspace);
+        SessionRegistry::from_workspace(settings, workspace, discovery, welcome_storage);
     TestServer server(workspace, registry, settings);
     const std::string leased_id = create_session(server, "Externally held");
     SessionLease held = SessionLease::acquire(

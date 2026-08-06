@@ -88,10 +88,12 @@ constexpr std::string_view complete_definition =
 
 TEST(Config, LoadsDefinitionOnlyAndKeepsReservedNameDefault) {
     ConfigFiles files;
-    files.write(files.definition(), required_definition);
+    files.write(files.definition(),
+        std::string(required_definition) + "description = \"Useful character\"\n");
     const Config effective = load_config(files.paths()).config;
     EXPECT_EQ(effective.id, "definition");
     EXPECT_EQ(effective.display_name, "Example");
+    EXPECT_EQ(effective.description, "Useful character");
     EXPECT_EQ(effective.name, Config{}.name);
     EXPECT_EQ(effective.host, "definition.example");
     EXPECT_EQ(effective.port, 8080);

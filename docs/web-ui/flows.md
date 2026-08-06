@@ -54,15 +54,17 @@ flowchart LR
     Sidebar["Sidebar"] -->|"Personas"| Personas["Personas"]
     Personas -->|"Select one radio"| Current["Update current persona"]
     Current --> Next["Next submitted message carries that persona ID"]
-    Next --> Resolve["Server resolves application-wide author identity"]
-    Resolve --> Session["Session records author; no persona membership check"]
+    Next --> Resolve["Session resolves ID in application-wide roster"]
+    Resolve --> Session["Session records author; roster is not forum membership"]
     Current --> Status["Update Chat status: From"]
     Current -.-> Unchanged["Forum and active session remain unchanged"]
 ```
 
-Resolution happens for every submission. Guest can write in an ordinary
-workspace forum because personas are not session membership. The browser never
-supplies the display name that is persisted with the message.
+Resolution happens for every submission against the effective Guest-plus-
+workspace roster captured when the session opened. Guest can write in an
+ordinary workspace forum because that roster is application-wide, not forum
+membership. The browser never supplies the display name that is persisted with
+the message.
 
 ## Chat routing status
 

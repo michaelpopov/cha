@@ -15,6 +15,16 @@ class WakeNotifier;
 class WorkspaceInventory;
 class WelcomeStorage;
 
+// Opens a resolved Entrance session from its already-prepared database. Both
+// terminal navigation and the web registry use this after choosing either a
+// stored Entrance session or the process-wide Welcome database.
+[[nodiscard]] OpenedSession open_entrance_session(
+    const Workspace& workspace,
+    SharedPersonaRoster personas,
+    std::string_view inventory,
+    PreparedSession prepared,
+    WakeNotifier& notifier);
+
 // Signals that durable catalog publication succeeded but controller setup did
 // not, allowing the application transaction to retain the new session.
 class SessionCreatedOpenError final : public std::runtime_error {
