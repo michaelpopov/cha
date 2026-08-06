@@ -24,13 +24,13 @@ int main() {
 int main_internal() {
     cha::load_dotenv();
 
-    const cha::ApplicationConfig app_config =
-        cha::load_application_config();
+    const cha::WorkspaceConfig workspace_config =
+        cha::load_workspace_config();
     cha::initialize_diagnostic_logging(
-        app_config.log_file,
-        app_config.log_level);
+        workspace_config.log_file,
+        workspace_config.log_level);
     cha::log_info("Terminal application started");
-    cha::Workspace workspace(".", app_config);
+    cha::Workspace workspace(".", workspace_config);
     cha::Terminal terminal;
     cha::UvEventLoop event_loop;
     cha::ChatApplication application(workspace, event_loop);

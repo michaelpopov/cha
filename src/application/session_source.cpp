@@ -40,7 +40,7 @@ OpenedSession open_entrance_session(
     PreparedSession prepared,
     WakeNotifier& notifier) {
     auto definitions = builtin_assistant_definitions(
-        workspace.app_config().provider, std::string(inventory), *personas);
+        workspace.workspace_config().provider, std::string(inventory), *personas);
     return build_entrance_session(
         std::move(personas), std::move(prepared), notifier, std::move(definitions));
 }
@@ -109,7 +109,7 @@ public:
         const std::string public_name = name;
         try {
             auto definitions = builtin_assistant_definitions(
-                workspace_.app_config().provider, inventory_, *personas_);
+                workspace_.workspace_config().provider, inventory_, *personas_);
             PreparedSession prepared = catalog.create_by_name(std::move(name));
             try {
                 return build_entrance_session(personas_, std::move(prepared), notifier,
@@ -213,7 +213,7 @@ private:
         const std::optional<std::filesystem::path> base = std::filesystem::exists(defaults)
             ? std::optional<std::filesystem::path>(defaults) : std::nullopt;
         return load_agent_definitions(sources, forum_.directory, forum_.display_name,
-            *personas_, base, workspace_.app_config().provider);
+            *personas_, base, workspace_.workspace_config().provider);
     }
     OpenedSession build(const Session& stored, const std::filesystem::path& path,
                         SessionLease lease, WakeNotifier& notifier,

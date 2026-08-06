@@ -128,8 +128,9 @@ private:
 class RouteServer {
 public:
     RouteServer(SessionRegistry& registry, WebSettings settings = {}) {
-        AssetHandler().install(server_);
-        SessionRoutes(registry, settings).install(server_);
+        const AssetHandler assets(fixture_.root() / "web");
+        assets.install(server_);
+        SessionRoutes(registry, settings, assets).install(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
         configure_http_server(server_, settings, "127.0.0.1", port_);
@@ -148,6 +149,7 @@ public:
     int port() const noexcept { return port_; }
 
 private:
+    test::TestWorkspace fixture_;
     httplib::Server server_;
     int port_{};
     std::thread thread_;
@@ -177,8 +179,11 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     const std::string base = "/s/lobby/one";
 
     const auto page = server.client().Get(base + "/");
+    const auto root_page = server.client().Get("/");
     ASSERT_TRUE(page);
+    ASSERT_TRUE(root_page);
     EXPECT_EQ(page->status, 200);
+    EXPECT_EQ(page->body, root_page->body);
     EXPECT_EQ(page->get_header_value("Content-Type"), "text/html; charset=utf-8");
     EXPECT_NE(page->body.find("<title>cha</title>"), std::string::npos);
 
@@ -485,7 +490,7 @@ TEST(SessionRoutes, ServesTheShellForANonLiveSessionAndRejectsInvalidBodiesBefor
     const auto page = server.client().Get("/s/lobby/missing/");
     ASSERT_TRUE(page);
     EXPECT_EQ(page->status, 200);
-    EXPECT_NE(page->body.find("The chat browser is not installed yet."), std::string::npos);
+    EXPECT_NE(page->body.find("test shell"), std::string::npos);
     expect_error(server.client().Get("/s/lobby/missing/api/v1/session"), 409, "session_not_live");
     expect_error(server.client().Get("/s/%2e%2e/missing/api/v1/session"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing%23fragment/api/v1/session"), 404, "not_found");

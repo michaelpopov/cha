@@ -25,7 +25,7 @@ completion pool tasks.
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
-        app_cfg["app.toml [provider]"]
+        app_cfg["workspace.toml [provider]"]
         definition_cfg["characters/X/character.toml"]
         definition_prompt["characters/X/CHARACTER.md"]
         base["forums/R/members/character_defaults.toml<br/>optional forum defaults + [prompt]"]

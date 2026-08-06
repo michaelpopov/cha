@@ -97,6 +97,8 @@ WebServerProcess::WebServerProcess(
     const std::filesystem::path& workspace,
     int port)
     : port_(port) {
+    const std::string workspace_text = workspace.string();
+    const std::string port_text = std::to_string(port);
     int output_pipe[2]{-1, -1};
     int error_pipe[2]{-1, -1};
     if (::pipe(output_pipe) == -1 || ::pipe(error_pipe) == -1) {
@@ -133,8 +135,19 @@ WebServerProcess::WebServerProcess(
         close_descriptor(error_pipe[0]);
         close_descriptor(error_pipe[1]);
         reset_child_signals();
-        if (::chdir(workspace.c_str()) != 0) _exit(126);
-        ::execl(CHA_WEB_BINARY, CHA_WEB_BINARY, static_cast<char*>(nullptr));
+        if (::chdir("/") != 0) _exit(126);
+        ::execl(
+            CHA_WEB_BINARY,
+            CHA_WEB_BINARY,
+            "--root",
+            workspace_text.c_str(),
+            "--workspace",
+            workspace_text.c_str(),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            port_text.c_str(),
+            static_cast<char*>(nullptr));
         _exit(127);
     }
 

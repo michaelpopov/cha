@@ -2,7 +2,7 @@
 
 `cha` is a C++20 chat client for OpenAI-compatible chat-completions servers.
 It provides the full-screen `cha` terminal UI, the line-oriented `chacon`
-console, and the existing key-based `chaweb` frontend.
+console, and the browser-based `chaweb` frontend.
 
 ## Start chatting
 
@@ -54,19 +54,16 @@ details; terminal commands, listings, notices, and diagnostics do not use them.
 
 ## Workspace configuration
 
-A workspace contains `app.toml`, `characters/`, `forums/`, and `personas/`.
+A workspace contains `workspace.toml`, `characters/`, `forums/`, and `personas/`.
 The `personas/` directory may be empty: the built-in Guest persona keeps the
 terminal roster non-empty. Workspace personas, character definitions, and
 forums have a public `display_name` and may have an optional one-line
 `description`; Assistant uses those descriptions in its inventory.
 
-`app.toml` keeps the web listener separate from the shared provider layer:
+`workspace.toml` contains the provider and logging settings shared by all three
+frontends:
 
 ```toml
-# Web listener only.
-host = "127.0.0.1"
-port = 8080
-
 [provider]
 host = "api.openai.com"
 port = 443
@@ -87,6 +84,11 @@ overrides need only specify fields that intentionally differ. Provider secrets
 belong in the environment, not in the workspace. The web frontend inherits
 this provider configuration but does not gain the terminal built-ins or slash
 navigation workflow.
+
+`chaweb` separately reads `app.toml` beside its executable. That file contains
+`host`, `port`, and the workspace path. The same values can be supplied or
+overridden with `--host`, `--port`, and `--workspace`; `--root` selects the
+application directory containing `web/`.
 
 Public names preserve authored spelling and compare with ASCII folding. They
 must be valid UTF-8, non-empty, control-free, and free of leading or trailing
@@ -118,6 +120,9 @@ cmake --build --preset ninja
 ctest --test-dir build/ninja -j8 --output-on-failure
 make itest
 ```
+
+The browser source and its commands are documented in
+[src/resources/webapp/README.md](src/resources/webapp/README.md).
 
 See [src/README.md](src/README.md) for architecture and the per-layer READMEs
 for implementation contracts.

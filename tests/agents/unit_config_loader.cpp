@@ -46,7 +46,7 @@ public:
     const std::filesystem::path& member() const { return member_; }
     const std::filesystem::path& application() const { return application_; }
 private:
-    std::filesystem::path root_, application_ = root_ / "app.toml", definition_, defaults_, member_;
+    std::filesystem::path root_, application_ = root_ / "workspace.toml", definition_, defaults_, member_;
 };
 
 constexpr std::string_view required_definition =

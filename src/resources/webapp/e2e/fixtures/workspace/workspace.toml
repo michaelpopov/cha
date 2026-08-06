@@ -1,0 +1,8 @@
+[provider]
+host = "test"
+port = 1
+mode = "test"
+
+[logging]
+file = "logs/cha.log"
+level = "off"

@@ -6,6 +6,13 @@
 /bin/*
 !/bin/start-cha.sh
 
+# Browser build and test output
+/src/resources/webapp/node_modules/
+/src/resources/webapp/dist/
+/src/resources/webapp/test-results/
+/src/resources/webapp/playwright-report/
+/src/resources/webapp/.web-stage-*/
+
 # In-source CMake artifacts
 /CMakeFiles/
 CMakeCache.txt

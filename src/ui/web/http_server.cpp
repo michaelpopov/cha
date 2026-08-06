@@ -6,11 +6,18 @@
 
 #include <httplib.h>
 
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -70,6 +77,48 @@ std::unordered_set<std::string> allowed_host_authorities(
         add("localhost");
     }
     return allowed;
+}
+
+bool is_ip_literal(std::string_view host) {
+    in_addr ipv4{};
+    in6_addr ipv6{};
+    const std::string value(host);
+    return ::inet_pton(AF_INET, value.c_str(), &ipv4) == 1
+        || ::inet_pton(AF_INET6, value.c_str(), &ipv6) == 1;
+}
+
+bool wildcard_authority_allowed(
+    std::string authority,
+    int listener_port) {
+    authority = lowercase_ascii(std::move(authority));
+    std::string host;
+    std::string port;
+    if (!authority.empty() && authority.front() == '[') {
+        const std::size_t closing = authority.find(']');
+        if (closing == std::string::npos) return false;
+        host = authority.substr(1, closing - 1);
+        if (closing + 1 == authority.size() && listener_port == 80) {
+            port = "80";
+        } else if (closing + 1 < authority.size()
+                   && authority[closing + 1] == ':') {
+            port = authority.substr(closing + 2);
+        } else {
+            return false;
+        }
+    } else {
+        const std::size_t colon = authority.rfind(':');
+        if (colon == std::string::npos) {
+            if (listener_port != 80) return false;
+            host = std::move(authority);
+            port = "80";
+        } else {
+            if (authority.find(':') != colon) return false;
+            host = authority.substr(0, colon);
+            port = authority.substr(colon + 1);
+        }
+    }
+    return port == std::to_string(listener_port)
+        && (host == "localhost" || is_ip_literal(host));
 }
 
 void set_generated_error(httplib::Response& response) {
@@ -138,6 +187,9 @@ void configure_http_server(
         throw std::invalid_argument(
             "Web pending-request limit must cover the HTTP request pool");
     }
+    const std::string normalized_listener = unbracketed_host(listener_host);
+    const bool wildcard_listener = normalized_listener == "0.0.0.0"
+        || normalized_listener == "::";
     const auto allowed_hosts = allowed_host_authorities(
         std::move(listener_host), listener_port);
     server.new_task_queue = [settings] {
@@ -152,12 +204,15 @@ void configure_http_server(
     // so this bounds lack of progress rather than total stream duration.
     server.set_write_timeout(settings.http_write_timeout);
     server.set_pre_routing_handler(
-        [allowed_hosts](
+        [allowed_hosts, wildcard_listener, listener_port](
             const httplib::Request& request,
             httplib::Response& response) {
-            const bool allowed = request.get_header_value_count("Host") == 1
-                && allowed_hosts.contains(lowercase_ascii(
-                    request.get_header_value("Host")));
+            const bool one_host = request.get_header_value_count("Host") == 1;
+            const std::string authority = request.get_header_value("Host");
+            const bool allowed = one_host
+                && (allowed_hosts.contains(lowercase_ascii(authority))
+                    || (wildcard_listener
+                        && wildcard_authority_allowed(authority, listener_port)));
             if (allowed) return httplib::Server::HandlerResponse::Unhandled;
             set_error_response(
                 response,

@@ -86,7 +86,7 @@ Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
     Config config = load_config({
-        .application_provider = load_provider_config(workspace_directory / "app.toml"),
+        .application_provider = load_provider_config(workspace_directory / "workspace.toml"),
         .definition = workspace_directory / "characters" / "Ismael" / "character.toml",
         .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
     }).config;
@@ -288,7 +288,7 @@ LobbySetup lobby_setup() {
         forum.display_name,
         personas,
         forum.directory / "members" / "character_defaults.toml",
-        workspace.app_config().provider),
+        workspace.workspace_config().provider),
         .personas = std::move(personas),
     };
 }

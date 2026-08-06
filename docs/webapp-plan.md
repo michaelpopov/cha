@@ -63,7 +63,7 @@ while implementing.
 | OpenAPI | Generate types only. The client is written by hand. |
 | Asset base | Vite `base: '/'`. Never relative. |
 | Shell | One document served at `/` and `/s/{forum}/{session}/`. |
-| Directories | Two, always separate. The application directory holds the executable, `web/`, and the launcher and is replaced by an upgrade. The workspace holds `app.toml`, `.env`, characters, personas, forums with their stored conversations, and `logs/`. Its path is set once at setup and may be anywhere. |
+| Directories | Two, always separate. The application directory holds the executable, `web/`, `app.toml`, and the launcher and is replaced by an upgrade. The workspace holds `workspace.toml`, `.env`, characters, personas, forums with their stored conversations, and `logs/`. Its path is set once at setup and may be anywhere. |
 | Binding | Configurable. The shipped `app.toml` sets `0.0.0.0` so another machine on the same network can open the application. No authentication and no transport security in v1. |
 | Configuration | Two files. `app.toml` in the application directory holds `host`, `port`, and the workspace path; `--config` names it and `--host`, `--port`, `--workspace` override it. `workspace.toml` in the workspace holds `[provider]` and `[logging]`. |
 | Settings screen | Removed in v1, not deferred. There is no gear and no Settings view. |
@@ -234,8 +234,12 @@ answered `403 forbidden_host`.
     three assignments at the top of the file, so a development run needs no
     configuration file at all; `bin/` is otherwise generated, which
     [`.gitignore`](../.gitignore) expresses as `/bin/*` with the script negated.
-    Command-line settings override `app.toml` by design, so a developer who
-    prefers a configuration file can drop one into `bin/` and delete the flags.
+    The step also seeds `bin/app.toml` the first time, and never rewrites it
+    afterwards: it is a file a developer edits to try a different port or
+    workspace, and a build that reverted it every time would be worse than not
+    writing it at all. Command-line settings override it by design, so a
+    developer who prefers configuring the application can edit that file and
+    delete the flags from the script.
 
     Block 2 extends the same step with `web/`, and from then on
     `cmake --build` followed by `./bin/start-cha.sh` is the ordinary way to run
@@ -409,7 +413,12 @@ development loop.
 9. **Establish Playwright now.** Add its configuration and Chromium browser,
    plus a deterministic test workspace using the existing test-mode provider.
    The browser suite starts and stops a real test `chaweb` and never requires a
-   provider key, Internet access, or paid model request.
+   provider key, Internet access, or paid model request. Downloading the
+   browser is not enough to run it: it links against system libraries that
+   `sudo npx playwright install-deps chromium` installs separately, which
+   [the webapp README](../src/resources/webapp/README.md) records. Treat a
+   machine where that step has not been run as a machine where this suite has
+   not been run, and never report the block complete on its strength.
 10. **Ignore generated directories**: `src/resources/webapp/node_modules/`,
     `src/resources/webapp/dist/`, Playwright output, and local staged package
     directories. `/bin/` was ignored in Block 1.

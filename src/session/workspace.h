@@ -38,18 +38,16 @@ struct SessionSummary {
     bool operator==(const SessionSummary&) const = default;
 };
 
-// Process-wide settings stored in the workspace's app.toml.
-struct ApplicationConfig {
-    std::string host;
-    int port{};
+// Provider and logging settings stored in the workspace's workspace.toml.
+struct WorkspaceConfig {
     std::filesystem::path log_file;
     std::string log_level;
     ProviderConfig provider;
 };
 
-// Reads the workspace-level application configuration without validating the
+// Reads the workspace configuration without validating the
 // forums directory. Entry points use this to start logging before Workspace.
-ApplicationConfig load_application_config(
+WorkspaceConfig load_workspace_config(
     const std::filesystem::path& root = ".");
 
 // The way into a workspace directory and the place where a chat session is assembled. It resolves
@@ -62,9 +60,9 @@ ApplicationConfig load_application_config(
 class Workspace {
 public:
     explicit Workspace(std::filesystem::path root = ".");
-    Workspace(std::filesystem::path root, ApplicationConfig app_config);
+    Workspace(std::filesystem::path root, WorkspaceConfig workspace_config);
 
-    const ApplicationConfig& app_config() const;
+    const WorkspaceConfig& workspace_config() const;
     const std::filesystem::path& root() const noexcept { return root_; }
     std::vector<CharacterDefinitionMetadata> character_definitions() const;
     std::string character_definition_markdown(
@@ -131,7 +129,7 @@ public:
 private:
     std::filesystem::path forum_directory(const std::string& name) const;
     std::filesystem::path root_;
-    ApplicationConfig app_config_;
+    WorkspaceConfig workspace_config_;
 };
 
 } // namespace cha

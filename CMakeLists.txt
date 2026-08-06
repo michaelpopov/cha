@@ -191,6 +191,7 @@ target_compile_definitions(
 add_library(cha_core STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     src/util/environment.cpp
+    src/util/executable_path.cpp
     src/util/logging.cpp
     src/util/path_name.cpp
     src/util/public_name.cpp
@@ -283,6 +284,7 @@ target_link_libraries(cha_console PUBLIC cha_core cha_ui_text cha_ui_render)
 cha_enable_warnings(cha_console)
 
 add_library(cha_web STATIC
+    src/ui/web/application_config.cpp
     src/ui/web/asset_handler.cpp
     src/ui/web/browser_connection_state.cpp
     src/ui/web/command_queue.cpp
@@ -448,6 +450,8 @@ if(BUILD_TESTING)
 
     add_executable(
         cha_web_tests
+        tests/ui/web/unit_application_config.cpp
+        tests/ui/web/unit_asset_handler.cpp
         tests/ui/web/unit_protocol.cpp
         tests/ui/web/unit_session_projection.cpp
         tests/ui/web/unit_browser_connection_state.cpp
@@ -553,3 +557,14 @@ add_executable(chaweb_app src/apps/web_main.cpp)
 target_link_libraries(chaweb_app PRIVATE cha_web)
 set_target_properties(chaweb_app PROPERTIES OUTPUT_NAME chaweb)
 cha_enable_warnings(chaweb_app)
+add_custom_command(
+    TARGET chaweb_app
+    POST_BUILD
+    COMMAND
+        ${CMAKE_COMMAND}
+        -DEXECUTABLE=$<TARGET_FILE:chaweb_app>
+        -DOUTPUT_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/bin
+        -DWEBAPP_DIST=${CMAKE_CURRENT_SOURCE_DIR}/src/resources/webapp/dist
+        -DWORKSPACE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/workspace
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/stage_local_deployment.cmake
+    VERBATIM)

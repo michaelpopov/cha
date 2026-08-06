@@ -18,9 +18,9 @@ The terminal application constructs a workspace, terminal, event loop, and
 ```mermaid
 flowchart TD
     a["main<br/>catch and report any exception"] --> b["load_dotenv"]
-    b --> config["load app.toml"]
+    b --> config["load workspace.toml"]
     config --> log["initialize diagnostic logging"]
-    log --> c["construct Workspace<br/>requires app.toml + characters/ + forums/ + personas/"]
+    log --> c["construct Workspace<br/>requires workspace.toml + characters/ + forums/ + personas/"]
     c --> d["construct Terminal<br/>process-wide curses"]
     d --> app["construct ChatApplication<br/>opens Guest / Entrance / Welcome"]
     app --> l["run_application with terminal,<br/>application, and event loop"]
@@ -68,9 +68,12 @@ flush; destruction does not perform hidden output.
 
 ## `web_main.cpp`
 
-`chaweb` is the one-process web composition root. It loads configuration and
-logging, assembles one immutable `Workspace`, `SessionRegistry`, route set, and
-HTTP listener, then bridges process signals into normal bounded shutdown. It
+`chaweb` is the one-process web composition root. It resolves its executable
+directory, reads listener and workspace settings from application `app.toml`
+plus command-line overrides, then loads provider and logging settings from the
+selected workspace's `workspace.toml`. It assembles one immutable `Workspace`,
+`SessionRegistry`, static browser asset handler, route set, and HTTP listener,
+then bridges process signals into normal bounded shutdown. It
 never constructs a `SessionController`: those live only on registry owner
 threads. A shutdown signal stops new HTTP acceptance, wakes open waiters,
 requests every live owner to stop, and waits for one configured grace period.

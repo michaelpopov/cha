@@ -313,45 +313,32 @@ Persona load_persona(const std::filesystem::path& directory) {
 
 } // namespace
 
-ApplicationConfig load_application_config(const std::filesystem::path& root) {
-    const std::filesystem::path path = root / "app.toml";
+WorkspaceConfig load_workspace_config(const std::filesystem::path& root) {
+    const std::filesystem::path path = root / "workspace.toml";
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         throw std::runtime_error(
-            "Failed to read application config '" + utf8_path(path) + "'");
+            "Failed to read workspace config '" + utf8_path(path) + "'");
     }
     const toml::table table = toml::parse(file, utf8_path(path));
-    const std::optional<std::string> host =
-        table["host"].value<std::string>();
-    if (!host || host->empty()) {
-        throw std::runtime_error(
-            "Application config '" + utf8_path(path)
-            + "' requires a non-empty string 'host'");
-    }
-    const std::optional<int> port = table["port"].value<int>();
-    if (!port || *port < 1 || *port > 65535) {
-        throw std::runtime_error(
-            "Application config '" + utf8_path(path)
-            + "' requires an integer 'port' between 1 and 65535");
-    }
     const toml::table* logging = table["logging"].as_table();
     if (!logging) {
         throw std::runtime_error(
-            "Application config '" + utf8_path(path)
+            "Workspace config '" + utf8_path(path)
             + "' requires a [logging] table");
     }
     const std::optional<std::string> log_file =
         (*logging)["file"].value<std::string>();
     if (!log_file || log_file->empty()) {
         throw std::runtime_error(
-            "Application config '" + utf8_path(path)
+            "Workspace config '" + utf8_path(path)
             + "' requires a non-empty string 'logging.file'");
     }
     const std::optional<std::string> log_level =
         (*logging)["level"].value<std::string>();
     if (!log_level || log_level->empty()) {
         throw std::runtime_error(
-            "Application config '" + utf8_path(path)
+            "Workspace config '" + utf8_path(path)
             + "' requires a non-empty string 'logging.level'");
     }
 
@@ -360,8 +347,6 @@ ApplicationConfig load_application_config(const std::filesystem::path& root) {
         log_path = root / log_path;
     }
     return {
-        .host = *host,
-        .port = *port,
         .log_file = std::move(log_path),
         .log_level = *log_level,
         .provider = load_provider_config(path),
@@ -369,13 +354,13 @@ ApplicationConfig load_application_config(const std::filesystem::path& root) {
 }
 
 Workspace::Workspace(std::filesystem::path root)
-    : Workspace(root, load_application_config(root)) {
+    : Workspace(root, load_workspace_config(root)) {
 }
 
 Workspace::Workspace(
     std::filesystem::path root,
-    ApplicationConfig app_config)
-    : root_(std::move(root)), app_config_(std::move(app_config)) {
+    WorkspaceConfig workspace_config)
+    : root_(std::move(root)), workspace_config_(std::move(workspace_config)) {
     if (!std::filesystem::is_directory(root_ / "forums")) {
         throw std::runtime_error(
             "Workspace '" + utf8_path(root_)
@@ -411,8 +396,8 @@ Workspace::Workspace(
     }
 }
 
-const ApplicationConfig& Workspace::app_config() const {
-    return app_config_;
+const WorkspaceConfig& Workspace::workspace_config() const {
+    return workspace_config_;
 }
 
 std::vector<CharacterDefinitionMetadata> Workspace::character_definitions() const {
@@ -484,7 +469,7 @@ Forum Workspace::check_forum(const std::string& name) const {
     Forum forum = load_forum(name);
     const PersonaRoster personas = load_personas();
     const std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
+        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", workspace_config_.provider);
     validate_forum_characters(definitions);
     return forum;
 }
@@ -612,7 +597,7 @@ OpenedSession Workspace::create_session(
     Forum forum = load_forum(forum_name);
     PersonaRoster personas = load_personas();
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
+        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", workspace_config_.provider);
     validate_forum_characters(definitions);
 
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
@@ -682,7 +667,7 @@ OpenedSession Workspace::open_session(
     SessionRestore restored = load_session_state(database_path);
     if (!personas) personas = std::make_shared<const PersonaRoster>(load_personas());
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, *personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
+        forum, *personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", workspace_config_.provider);
     log_info("Session opened");
     return {
         .descriptor = {

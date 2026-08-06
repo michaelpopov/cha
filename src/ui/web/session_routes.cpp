@@ -80,16 +80,22 @@ void set_command_result(httplib::Response& response, CommandSubmitResult result)
 
 } // namespace
 
-SessionRoutes::SessionRoutes(SessionRegistry& registry, WebSettings settings)
-    : registry_(registry), settings_(std::move(settings)) {}
+SessionRoutes::SessionRoutes(
+    SessionRegistry& registry,
+    WebSettings settings,
+    AssetHandler assets)
+    : registry_(registry),
+      settings_(std::move(settings)),
+      assets_(std::move(assets)) {}
 
 void SessionRoutes::install(httplib::Server& server) const {
     SessionRegistry* const registry = &registry_;
     const WebSettings settings = settings_;
+    const AssetHandler assets = assets_;
     constexpr auto base = R"(/s/([^/]+)/([^/]+))";
 
-    server.Get(std::string(base) + R"(/)", [](const httplib::Request&, httplib::Response& response) {
-        AssetHandler::set_shell(response);
+    server.Get(std::string(base) + R"(/)", [assets](const httplib::Request&, httplib::Response& response) {
+        assets.set_shell(response);
     });
     server.Get(std::string(base) + R"(/api/v1/session)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
         SessionHandle handle = resolve(request, response, *registry);

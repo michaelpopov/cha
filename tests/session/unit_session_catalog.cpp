@@ -33,7 +33,7 @@ protected:
         std::filesystem::create_directories(root / "personas" / "reader");
         std::filesystem::create_directories(root / "forums" / "lobby" / "sessions");
         {
-            std::ofstream file(root / "app.toml");
+            std::ofstream file(root / "workspace.toml");
             file << "host = \"127.0.0.1\"\n"
                  << "port = 8080\n"
                  << "[provider]\n"

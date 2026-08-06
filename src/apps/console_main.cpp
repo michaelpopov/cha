@@ -46,12 +46,12 @@ int main_internal(int argc, const char* const* argv) {
     const cha::ConsoleOptions& options = std::get<cha::ConsoleOptions>(parsed);
 
     cha::load_dotenv();
-    const cha::ApplicationConfig app_config = cha::load_application_config();
+    const cha::WorkspaceConfig workspace_config = cha::load_workspace_config();
     cha::initialize_diagnostic_logging(
-        app_config.log_file,
-        app_config.log_level);
+        workspace_config.log_file,
+        workspace_config.log_level);
     cha::log_info("Console application started");
-    cha::Workspace workspace(".", app_config);
+    cha::Workspace workspace(".", workspace_config);
     if (options.check) {
         for (const std::string& forum : workspace.forums()) {
             (void)workspace.check_forum(forum);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/web/asset_handler.h"
 #include "ui/web/web_settings.h"
 
 namespace httplib {
@@ -17,13 +18,17 @@ class SessionRegistry;
 // the server's ordinary not-found response.
 class SessionRoutes {
 public:
-    SessionRoutes(SessionRegistry& registry, WebSettings settings);
+    SessionRoutes(
+        SessionRegistry& registry,
+        WebSettings settings,
+        AssetHandler assets);
 
     void install(httplib::Server& server) const;
 
 private:
     SessionRegistry& registry_;
     WebSettings settings_;
+    AssetHandler assets_;
 };
 
 } // namespace cha::web

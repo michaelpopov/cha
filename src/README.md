@@ -10,7 +10,7 @@ persona-facing manual is the [top-level `README.md`](../README.md).
 ## System overview
 
 `cha` is a terminal chat client for OpenAI-compatible chat-completion servers.
-It runs inside a workspace containing `app.toml` (including the shared `[provider]`
+It runs inside a workspace containing `workspace.toml` (including the shared `[provider]`
 connection layer), a persona roster, workspace-level
 character definitions, and forums. Each definition lives at
 `characters/<id>/` with `character.toml` and `CHARACTER.md`. A forum explicitly

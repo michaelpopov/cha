@@ -101,7 +101,7 @@ public:
         WebSettings settings = {.open_deadline = 500ms},
         Installer installer = {})
         : discovery_(std::make_unique<WebDiscovery>(*workspace)) {
-        AssetHandler().install(server_);
+        AssetHandler(workspace->root() / "web").install(server_);
         LobbyRoutes(workspace, *discovery_, welcome_storage_, registry, settings).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
@@ -194,7 +194,7 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_TRUE(root);
     EXPECT_EQ(root->status, 200);
     EXPECT_EQ(root->get_header_value("Content-Type"), "text/html; charset=utf-8");
-    EXPECT_NE(root->body.find("The chat browser is not installed yet."), std::string::npos);
+    EXPECT_NE(root->body.find("test shell"), std::string::npos);
 
     const auto health = server.client().Get("/health");
     ASSERT_TRUE(health);

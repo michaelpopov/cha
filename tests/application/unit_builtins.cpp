@@ -20,7 +20,7 @@ TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {
     cha::WorkspaceInventory inventory(snapshot);
     cha::EffectivePersonas personas(snapshot);
     const auto definitions = cha::builtin_assistant_definitions(
-        workspace.app_config().provider, inventory.serialize(), *personas.roster());
+        workspace.workspace_config().provider, inventory.serialize(), *personas.roster());
     ASSERT_EQ(definitions.size(), 1U);
     const std::string& prompt = definitions.front().system_prompt;
     EXPECT_NE(prompt.find("CHA application guide"), std::string::npos);

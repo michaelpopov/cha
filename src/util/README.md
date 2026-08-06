@@ -85,7 +85,7 @@ environment always win, so a shell export beats the file — which is what makes
 ## Diagnostic logging
 
 `initialize_diagnostic_logging()` is called by each composition root after it
-loads the workspace's `app.toml` and before any worker starts. The configured
+loads the workspace's `workspace.toml` and before any worker starts. The configured
 level `off` leaves logging disabled; supported levels are `trace`, `debug`,
 `info`, `warn`, `error`, and `critical`. Every enabled level creates any missing
 parent directories and opens the named, synchronous, thread-safe spdlog file
