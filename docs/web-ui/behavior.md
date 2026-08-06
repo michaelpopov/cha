@@ -49,6 +49,9 @@ Only the two-line button changes sidebar visibility. Every other sidebar action 
 | Recent session | Sets that forum/session as active, opens or reattaches it, and shows Chat | Sidebar state and current persona |
 | New session row | Shows New session for the current forum | Sidebar state, current persona, and forum |
 | Settings gear | Shows Settings | Sidebar state and all current context |
+| Target-character chooser | Lists the active session's characters; selecting one requests it as the default | Sidebar state, current persona, forum, session, and draft |
+| Send | Submits the draft as the selected persona while generation is inactive | Sidebar state and active conversation |
+| Stop | Replaces Send while generation is active and requests that generation stop | Sidebar state, active conversation, and draft |
 
 Selecting a persona affects the next submitted message, including messages in an
 already-open session. It does not create, close, or switch sessions. Personas
@@ -70,6 +73,21 @@ Chat places one compact, read-only status line directly below the prompt compose
 - The line is not an editor or navigation control.
 
 The current persona and forum do not appear in the sidebar or Chat header.
+
+## Chat composer controls
+
+The lower-left composer action is the target-character chooser. It occupies the
+position used by the attachment `+` in the original mockup because attachments
+are not supported. It lists only the active session's character summaries.
+Selecting a character calls the default-character action; the `To` status does
+not change until an authoritative snapshot or event confirms the new
+`default_character_id`.
+
+The trailing composer action is Send while generation is inactive. While
+`generation.active` is true, the same location and button become Stop with a
+square icon. Stop requests cancellation and remains visible until authoritative
+session state reports that generation is inactive. A failed Send preserves the
+draft. Target selection and Stop never change sidebar visibility.
 
 ## Characters
 

@@ -1,6 +1,6 @@
 # cha web UI design
 
-Status: working visual specification, agreed on 2026-08-02 and updated on 2026-08-03.
+Status: working visual specification, agreed on 2026-08-02 and updated on 2026-08-06.
 
 This directory is the design contract for the browser UI. It documents the visual hierarchy, navigation states, and expected behavior before implementation begins.
 
@@ -17,6 +17,8 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - The browser starts in the shared Welcome session in Entrance, with Guest selected and Assistant as the current target.
 - Personas are application-wide authors, never forum or session members. The server resolves the selected persona on each submission; switching personas never requires reopening a session.
 - Chat has no title or context header. A compact line below the composer shows `<Forum>   From: <Persona>   To: <current default character>`.
+- The composer's lower-left action chooses the target character. It replaces the unsupported attachment button shown in the original mockup.
+- The composer's trailing action is Send while idle and becomes Stop while generation is active.
 - Characters is informational. It lists workspace characters and opens a read-only rendering of a character's `CHARACTER.md`.
 - Forums list member character names beneath each forum title. Forum descriptions do not exist, and member names are not links.
 - Sessions show names and compact time metadata, never descriptions.
@@ -26,6 +28,11 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - The round gear button at the bottom-right of the sidebar opens Settings.
 
 ## Screen catalogue
+
+The screen images and interactive mockup predate the target-character amendment:
+where they show an attachment `+`, the production UI shows the target chooser.
+Their Send state remains the correct idle state; the same button shows Stop only
+while generation is active.
 
 ### Chat
 

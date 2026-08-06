@@ -1,6 +1,6 @@
 # CHA web application proposal
 
-Status: proposal for discussion, 2026-08-05.
+Status: accepted, 2026-08-06.
 
 ## Purpose
 
@@ -38,7 +38,7 @@ Browser UI
     │
     │ HTTP requests and one live event stream
     ▼
-chaweb on 127.0.0.1
+chaweb on port 8080, reachable at 127.0.0.1 and on the local network
     │
     ├── workspace and stored sessions
     └── configured model provider
@@ -58,6 +58,10 @@ Use:
 - Vite for the development and production build;
 - the existing visual design as the source for layout and styling; and
 - local, bundled dependencies only.
+
+The initial production browser target is current Chrome and Edge. Routine
+browser automation uses Playwright Chromium. Firefox and Safari may be added to
+the supported matrix when a customer platform requires them.
 
 React is useful here because Chat, navigation, session state, streaming text,
 forms, and responsive layout must update together. No server-rendering framework
@@ -107,7 +111,8 @@ A Windows-oriented example is:
 CHA/
 ├── chaweb.exe
 ├── app.toml
-├── .env
+├── .env.example
+├── .env                    # created locally by the customer
 ├── web/
 │   ├── index.html
 │   └── assets/
@@ -121,7 +126,8 @@ CHA/
 ```
 
 The executable name changes by platform, but the logical layout remains the
-same. A real API key must never be included in a distributed package.
+same. The distributed directory contains `.env.example`; the customer creates
+`.env` locally. A real API key must never be included in a distributed package.
 
 The package should be treated as one versioned unit. Mixing a `chaweb` binary
 from one release with browser files from another release is unsupported.
@@ -203,7 +209,10 @@ user is doing, not with `fetch`, headers, status codes, or JSON parsing.
 
 Event streaming belongs beside this module. It opens the browser's native
 `EventSource`, distinguishes `snapshot` from `append` events, and passes typed
-events to the application state layer.
+events to the application state layer. Its error callback reports only that the
+stream failed. Recovery uses an ordinary snapshot request to determine whether
+the session remains live; it never expects `EventSource` to reveal an HTTP error
+body.
 
 ### OpenAPI's role
 
@@ -278,24 +287,29 @@ wifi change, or a VPN transition all end it. Two server behaviors make recovery
 more than reconnecting.
 
 A session accepts one event stream at a time and answers a second attempt with
-`409 browser_stream_in_use`. `EventSource` reconnects on its own only after a
-clean disconnect; any refusal is fatal to that object, and it stops permanently.
-An immediate retry can therefore race the server's own disconnect handling and
-kill streaming for the rest of the page's life. Reconnection must be owned by
-the application: create a new `EventSource`, back off between attempts, and give
-up after a bounded number of tries with a visible, retryable state.
+`409 browser_stream_in_use`. A non-successful HTTP response is fatal to that
+`EventSource`, and its generic error event exposes neither the status nor the
+JSON error body. An immediate retry can also race the server's own disconnect
+handling. Reconnection must therefore be owned by the application.
 
-A session whose browser has gone away is unloaded after roughly thirty seconds
-of inactivity, or after several minutes if it is still generating. Any
-interruption longer than that leaves nothing to reconnect to, and the reconnect
-attempt fails with `409 session_not_live`. Recovery must then escalate: re-open
-the session, load a fresh snapshot, and connect a new stream. Because a sleeping
-laptop always exceeds thirty seconds, this is the common path rather than the
-rare one.
+That one-stream rule also decides what happens when two browsers open the same
+session, which network access makes routine. For the first release the second
+browser is told the session is open elsewhere and shows the snapshot it already
+loaded, rather than retrying at a slot that will not free. Letting several
+browsers watch one session at once is a server change and is not part of this
+release.
 
-The two `409` cases must be distinguished by their `error.code`, because they
-call for opposite responses: `browser_stream_in_use` means wait and retry the
-stream, while `session_not_live` means re-open the session first.
+On a stream error, the browser closes that `EventSource` and calls the ordinary
+session-snapshot endpoint. A successful snapshot proves the session is live, so
+the browser waits briefly and creates a new stream. A `409 session_not_live`
+snapshot response means the runtime has unloaded; the browser re-opens the
+session, loads a fresh snapshot, and then creates a new stream. Network and
+server failures remain in the retry path.
+
+Recovery uses delays of 250 milliseconds, 500 milliseconds, 1 second, 2
+seconds, and 4 seconds. After those attempts it stops automatically and shows a
+visible Retry action. This bounds load on the local server and prevents an
+infinite reconnect loop.
 
 ## UI implementation scope
 
@@ -318,6 +332,13 @@ The visual mockup is not production source. It contains hard-coded content and
 loads its icon script externally. Its structure and CSS are useful references,
 but production components must render API data and bundle icons locally.
 
+The production composer makes two explicit changes to the mockup. The position
+occupied by the unsupported attachment button becomes a target-character
+chooser listing the active session's characters. The Send arrow becomes a Stop
+square while authoritative session state says generation is active. The compact
+Forum/From/To line below the composer remains read-only and reflects the chosen
+target only after the server returns it in session state.
+
 ### Features without backend support
 
 Attachments and functional Settings are outside the current API contract.
@@ -325,7 +346,8 @@ Controls that appear usable but do nothing should not ship.
 
 For the first release:
 
-- omit the attachment button; and
+- omit attachment functionality and use the former attachment-button position
+  for the target chooser; and
 - either omit Settings or make it a clearly informational page with no editable
   controls.
 
@@ -359,6 +381,7 @@ small, consistent set of operational states:
 - recoverable request error;
 - event stream reconnecting;
 - session no longer live;
+- session already open in another browser window;
 - too many live sessions;
 - application API unavailable; and
 - incompatible or malformed response.
@@ -368,10 +391,12 @@ ordinary use. The server keeps a bounded number of sessions live, and a session
 the user has navigated away from holds its place for about thirty seconds
 afterwards. Moving briskly through Recent can therefore exhaust the bound and
 produce `503 session_limit_reached` for no reason the customer can perceive.
-Because the places free themselves, the correct response is a transient
-"one moment" state and an automatic retry, not a hard error. Raising the
-server's bound is a fallback if testing shows the retry is not enough; it is
-coupled to the HTTP worker pool size and is not a single-value change.
+Because the places normally free themselves, the initial response is a
+transient `Waiting for another session to close` state and the same bounded
+retry schedule used for stream recovery. If the retries are exhausted, the UI
+shows Retry and return-to-Welcome actions rather than an endless spinner.
+Raising the server's bound is a fallback if testing shows this is not enough; it
+is coupled to the HTTP worker pool size and is not a single-value change.
 
 While an operation is pending, prevent duplicate creates, opens, or submissions.
 Errors should use the server's public message when appropriate and retain the
@@ -386,6 +411,13 @@ leave navigation usable.
 
 Frontend development should not require rebuilding C++ after every CSS or
 component change.
+
+Development uses the Node.js version recorded by the frontend project. npm
+installs all frontend packages locally under `webapp/node_modules/`; no React,
+Vite, TypeScript, OpenAPI, or browser-test package is installed globally. The
+standard frontend commands are `npm ci`, `npm run dev`, `npm run build`,
+`npm run check`, and `npm run e2e`. These are build-time tools only and never
+enter the customer directory.
 
 During development:
 
@@ -449,11 +481,18 @@ For a production build:
 2. Generate TypeScript API types from `resources/cha.yaml`.
 3. Type-check and test the frontend.
 4. Run the Vite production build.
-5. Copy `webapp/dist/` to the package's `web/` directory.
-6. Build and copy `chaweb` plus the prepared workspace and configuration.
+5. Build `chaweb` with CMake.
+6. Run the packaging script, which creates a clean versioned directory and
+   copies `webapp/dist/` as `web/` together with the executable, prepared
+   workspace, configuration, and `.env.example`.
 
 Node.js and frontend packages are build-time dependencies only. They are not
 included in the customer package.
+
+npm owns browser generation and tests, CMake owns the native build, and the
+packaging script is the only step which assembles the two outputs. One packaging
+command performs the complete sequence so a release cannot accidentally contain
+stale browser files.
 
 ## Testing strategy
 
@@ -463,8 +502,10 @@ Use three layers:
    process tests.
 2. **Frontend unit and component tests.** Test state transitions, rendering,
    form validation, error handling, snapshot replacement, and append events.
-3. **End-to-end browser tests.** Start a real test `chaweb`, open the application
-   in a browser, and cover the principal user flows.
+3. **End-to-end browser tests.** Start a real test `chaweb` with a deterministic
+   test-mode workspace, open the application in Playwright Chromium, and cover
+   the principal user flows. These tests require no provider key, Internet
+   connection, or paid model request.
 
 The minimum end-to-end flows are:
 
@@ -501,9 +542,17 @@ bounded shutdown path. A tray application, OS service, installer, signing, and
 automatic updates can be considered after the basic packaged application is
 proven.
 
-Bind only to `127.0.0.1`. Remote LAN access would require a separate security
-design, including authentication and transport security, and is not part of
-this proposal.
+Bind to `0.0.0.0` so the application can also be opened from another machine on
+the same network, amending this proposal's original loopback-only decision.
+This is deliberate and its consequence is accepted: there is no authentication
+and no transport security, so anyone who can reach the port can read and
+continue the stored conversations. It suits a trusted home or office network
+and must not be exposed to the Internet.
+
+The server's existing `Host` and `Origin` checks stay in force. They need one
+adjustment, because both derive from the configured listener host and a
+wildcard address matches nothing a browser would send; see Block 1 of
+[webapp-plan.md](webapp-plan.md).
 
 ## Recommended implementation stages
 
@@ -515,6 +564,8 @@ this proposal.
 - Reproduce the static visual shell with production components and local icons.
 - Make `chaweb` serve the production HTML and assets from `web/`.
 - Establish the development proxy and production build.
+- Establish Playwright and its deterministic local test server before later
+  stages add browser scenarios.
 
 Done when the real shell loads from `chaweb` at both `/` and a session deep
 link, the same deep link reloads correctly against the development server, one
@@ -545,10 +596,12 @@ Done when a user can browse, create, open, and revisit sessions.
 - Load snapshots and connect SSE.
 - Render transcripts and generation state.
 - Submit input using the selected persona.
-- Implement default-character selection and Stop.
+- Put target-character selection in the attachment position and change Send to
+  Stop while generation is active.
 - Add session-switch cleanup and application-owned stream recovery, including
   re-opening a session that the server has already unloaded.
-- Handle a temporarily exhausted session bound as a transient retry.
+- Handle a temporarily exhausted session bound with bounded automatic retries
+  followed by visible Retry and return-to-Welcome actions.
 
 Done when the principal chat workflow operates end to end, including after the
 machine has slept long enough for the server to unload the conversation.
@@ -557,7 +610,8 @@ machine has slept long enough for the server to unload the conversation.
 
 - Complete loading, empty, and failure states.
 - Add the Content Security Policy and production cache behavior.
-- Add component and browser tests.
+- Complete and run the component and browser tests accumulated in earlier
+  stages.
 - Build the deployment directory and platform launcher.
 - Test on a clean machine representative of the customer's laptop.
 
@@ -566,23 +620,22 @@ started, used in the browser, and stopped without development tools.
 
 ## Decisions still required
 
-The following product and packaging choices should be settled before Stage 5;
-the first three should be settled before implementation begins:
+The following product and packaging choices should be settled before Stage 5.
+They do not block implementation of the browser frontend:
 
 1. **Primary operating system.** Windows, macOS, or Linux determines the first
-   launcher, packaging checks, and supported default browser.
+   launcher and clean-machine package test. Executable-root support is
+   implemented for all three earlier.
 2. **Workspace ownership.** Decide whether the delivered workspace is prepared
    for the customer or whether customers must edit characters, personas, and
    forums themselves. This proposal recommends a prepared workspace.
-3. **API-key setup.** Decide whether editing `.env` with written instructions is
-   sufficient for the first release. This proposal recommends that approach
-   before building a configuration UI.
-4. **Browser support.** This proposal recommends current Chrome and Edge on the
-   primary OS, with Firefox tested as well. Safari becomes required with a macOS
-   target.
-5. **Settings entry point.** Decide whether to omit it or ship an informational
+3. **API-key setup.** Decide whether asking the customer to create `.env` from
+   `.env.example`, using written instructions, is sufficient for the first
+   release. This proposal recommends that approach before building a
+   configuration UI.
+4. **Settings entry point.** Decide whether to omit it or ship an informational
    page until editable settings have an API.
-6. **Port conflicts.** The first release can use fixed port 8080 and show a clear
+5. **Port conflicts.** The first release can use fixed port 8080 and show a clear
    startup error. Automatic port selection can be added later if customer
    environments require it.
 

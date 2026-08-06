@@ -77,3 +77,19 @@ flowchart LR
 ```
 
 The status line is read-only and appears below the prompt composer. It is the only persistent display of the current persona, forum, and target character in Chat.
+
+## Chat controls
+
+```mermaid
+flowchart TD
+    Target["Target chooser"] -->|"Select character"| Request["Request default-character change"]
+    Request --> Snapshot["Snapshot or event confirms default character"]
+    Snapshot --> Status["Update read-only To status"]
+    Idle["Generation inactive"] --> Send["Send draft as selected persona"]
+    Active["Generation active"] --> Stop["Same button becomes Stop"]
+    Stop --> Stopping["Request stop; wait for authoritative inactive state"]
+```
+
+The target chooser replaces the unsupported attachment action in the original
+mockup. Send and Stop share one composer location; they are never shown at the
+same time.

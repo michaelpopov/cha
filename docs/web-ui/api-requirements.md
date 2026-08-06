@@ -168,6 +168,12 @@ No separate endpoint is needed.
 | From | Current client persona selection |
 | To | Live `default_character_id`, resolved through the character summaries |
 
+The composer's target chooser calls the default-character action. The UI does
+not update `To` optimistically; it waits for the next authoritative session
+snapshot or event. While generation is active, the composer replaces Send with
+Stop and calls the stop action. These controls do not require additional API
+routes.
+
 ## Client-owned state
 
 Sidebar visibility, Navigation state, selected persona, selected forum,
