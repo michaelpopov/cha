@@ -11,7 +11,6 @@ flowchart TD
     Sidebar -->|"Characters"| Characters["Characters"]
     Sidebar -->|"Forums"| Forums["Forums"]
     Sidebar -->|"Recent session"| Open["Open or reattach selected session"]
-    Sidebar -->|"Settings gear"| Settings["Settings"]
     Characters -->|"Select character"| Detail["Character detail"]
     Detail -->|"Characters back row"| Characters
     Forums -->|"Select forum"| Sessions["Sessions"]

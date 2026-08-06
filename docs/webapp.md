@@ -5,12 +5,15 @@ Status: accepted, 2026-08-06.
 ## Purpose
 
 CHA should be easy to place on a customer's laptop, start, and use through the
-default browser at `http://127.0.0.1:8080/`.
+default browser at the address it prints on startup, `http://127.0.0.1:8080/`
+by default configuration.
 
-A single-file executable is not required. The intended deliverable is one
-self-contained directory containing the native executable, browser assets,
-workspace data, and configuration. The customer should not need Node.js, a web
-server, or a frontend development tool.
+A single-file executable is not required. The intended deliverable is a pair of
+directories: an application directory holding the native executable and browser
+assets, and a separate workspace holding the customer's configuration,
+characters, and stored conversations. Keeping them apart is what makes an
+upgrade safe. The customer should not need Node.js, a web server, or a frontend
+development tool.
 
 This proposal connects the two pieces that already exist:
 
@@ -38,7 +41,7 @@ Browser UI
     │
     │ HTTP requests and one live event stream
     ▼
-chaweb on port 8080, reachable at 127.0.0.1 and on the local network
+chaweb on the configured port, reachable locally and on the local network
     │
     ├── workspace and stored sessions
     └── configured model provider
@@ -79,10 +82,11 @@ provider.
 
 ### Source and output directories
 
-Keep frontend source separate from both C++ source and generated files:
+Frontend source lives under `src/resources/`, beside the C++ source it ships
+with but in its own tree:
 
 ```text
-webapp/
+src/resources/webapp/
 ├── package.json
 ├── package-lock.json
 ├── vite.config.ts
@@ -95,42 +99,79 @@ webapp/
     └── main.tsx
 ```
 
-The Vite build produces generated files under `webapp/dist/`. Those generated
-files are copied into the deployment package as `web/`. They are not maintained
-by hand.
+The Vite build produces generated files under `src/resources/webapp/dist/`.
+Those generated files are copied into a deployment as `web/`. They are not
+maintained by hand.
 
 The repository's top-level `resources/` directory remains the location for
 source resources such as the application guide and OpenAPI description. It is
 not the production web root.
 
-### Production deployment directory
+### The local deployment directory
 
-A Windows-oriented example is:
+The repository also has a `bin/` directory beside `src/` and `workspace/`,
+which is a real deployment rather than a build tree: the executable, `web/`,
+and `start-cha.sh`. Building copies the freshly built `chaweb` into it, and
+copies the current frontend build in as `web/` when one exists, so
+`./bin/start-cha.sh` runs the application exactly the way a customer's launcher
+will. Its contents are generated apart from the script itself, which is the
+same shape as the launcher a release ships.
+
+This matters more than convenience. The two-directory split, the application
+configuration file, and the asset root are all things a build tree cannot
+exercise, so without `bin/` the first genuine test of the deployment layout
+would be the customer's laptop.
+
+### Production deployment directories
+
+A release is two directories that must never be merged. Linux is the first
+target:
 
 ```text
-CHA/
-├── chaweb.exe
-├── app.toml
-├── .env.example
+cha/                        # the application directory: replaced by an upgrade
+├── chaweb
+├── app.toml                # host, port, and the workspace path
+├── start-cha.sh
+└── web/
+    ├── index.html
+    └── assets/
+        ├── app-<hash>.js
+        ├── app-<hash>.css
+        └── bundled icons
+
+<anywhere>/cha-workspace/   # kept across upgrades; its path is set in app.toml
+├── workspace.toml          # provider and logging settings
 ├── .env                    # created locally by the customer
-├── web/
-│   ├── index.html
-│   └── assets/
-│       ├── app-<hash>.js
-│       ├── app-<hash>.css
-│       └── bundled icons and fonts
 ├── characters/
-├── forums/
+├── forums/                 # stored conversations live here, per forum
 ├── personas/
 └── logs/
 ```
 
-The executable name changes by platform, but the logical layout remains the
-same. The distributed directory contains `.env.example`; the customer creates
-`.env` locally. A real API key must never be included in a distributed package.
+The executable name changes by platform, but the logical division does not. The
+application directory holds only what ships with a release. The workspace holds
+everything the customer owns or accumulates: their provider key, their
+characters and personas, every stored conversation, and the log.
 
-The package should be treated as one versioned unit. Mixing a `chaweb` binary
-from one release with browser files from another release is unsupported.
+Packaging builds the application directory only. A workspace is assumed to
+exist; how it is prepared is outside this proposal.
+
+The split exists so that upgrading is safe. A new release replaces the
+application directory outright; if the workspace lived inside it, that would
+delete the customer's conversations, characters, and API key. Keeping them apart
+makes the upgrade procedure "replace one directory, leave the other alone".
+
+The workspace path is not fixed by the layout. It is written into `app.toml`
+during setup, so the workspace may sit anywhere, including a drive shared with
+other machines. Neither directory has to contain the other.
+
+The customer creates `.env` in the workspace, holding the provider key named by
+`workspace.toml`. A plain text file and a line of written instruction is the
+whole of key setup; anything more belongs to a configuration feature that does
+not exist. A real API key must never be included in a distributed package.
+
+A release should be treated as one versioned unit. Mixing a `chaweb` binary from
+one release with browser files from another is unsupported.
 
 ### Finding application files
 
@@ -142,14 +183,40 @@ launched. Starting from a shortcut, a pinned taskbar item, or another drive can
 leave `chaweb` unable to find its workspace, or writing logs somewhere the
 customer will not think to look.
 
-The application should instead have an explicit application root:
+The application should instead resolve two explicit roots.
 
-- default to the directory containing the executable; and
-- optionally accept a command-line override for development and testing.
+The **application root** defaults to the directory containing the executable
+and holds only `web/`, beside the executable, launcher, and `app.toml` that
+define it.
 
-The application root contains `.env`, `app.toml`, the workspace directories,
-`logs/`, and `web/`. This makes the package behave consistently whether it is
-started from a terminal, a shortcut, or a file browser.
+The **workspace root** holds `workspace.toml`, `.env`, `characters/`,
+`personas/`, `forums/` with their stored conversations, and `logs/`. Its path is
+set during setup, so it can live anywhere and does not have to sit near the
+application. A relative `logging.file` resolves beneath it, which puts the log
+with the data it describes rather than in a directory an upgrade will replace.
+
+Together these make the package behave consistently whether it is started from
+a terminal, a shortcut, or a file browser, and they keep customer data outside
+everything a release overwrites.
+
+### Two configuration files
+
+The single `app.toml` in the workspace should become two files, divided the same
+way the directories are.
+
+`app.toml`, in the application directory, holds `host`, `port`, and the
+workspace path. Only `chaweb` reads it. `--config` names it, and `--host`,
+`--port`, and `--workspace` override individual values on the command line.
+These settings have to be readable before a workspace is located, because one
+of them says where the workspace is.
+
+`workspace.toml`, in the workspace, holds the provider and logging settings.
+All three frontends read it, and the terminal frontends need nothing else — they
+have no listener and never wanted `host` or `port`.
+
+Neither the host nor the port is fixed. A port already in use is reported at
+startup by the existing bind failure, which is sufficient: automatic port
+selection can be added if customer machines turn out to need it.
 
 This is a prerequisite for the packaged application rather than a finishing
 touch, so it belongs in Stage 1. Leaving `chaweb` working-directory-relative
@@ -348,12 +415,14 @@ For the first release:
 
 - omit attachment functionality and use the former attachment-button position
   for the target chooser; and
-- either omit Settings or make it a clearly informational page with no editable
-  controls.
+- remove Settings entirely — no gear, no view, no main-area state. An
+  informational page was the alternative and was rejected as work that buys the
+  customer nothing.
 
 Adding provider or workspace configuration through Settings is a separate
 feature because it requires API design, secure file updates, validation, and
-restart behavior.
+restart behavior. Until then, configuration is the two text files described
+above.
 
 ## Markdown safety
 
@@ -413,7 +482,7 @@ Frontend development should not require rebuilding C++ after every CSS or
 component change.
 
 Development uses the Node.js version recorded by the frontend project. npm
-installs all frontend packages locally under `webapp/node_modules/`; no React,
+installs all frontend packages locally under `src/resources/webapp/node_modules/`; no React,
 Vite, TypeScript, OpenAPI, or browser-test package is installed globally. The
 standard frontend commands are `npm ci`, `npm run dev`, `npm run build`,
 `npm run check`, and `npm run e2e`. These are build-time tools only and never
@@ -482,9 +551,10 @@ For a production build:
 3. Type-check and test the frontend.
 4. Run the Vite production build.
 5. Build `chaweb` with CMake.
-6. Run the packaging script, which creates a clean versioned directory and
-   copies `webapp/dist/` as `web/` together with the executable, prepared
-   workspace, configuration, and `.env.example`.
+6. Run the packaging script, which creates a clean versioned application
+   directory holding the executable, `src/resources/webapp/dist/` copied in as
+   `web/`, the
+   launcher, and `app.toml`. It does not build a workspace.
 
 Node.js and frontend packages are build-time dependencies only. They are not
 included in the customer package.
@@ -530,12 +600,18 @@ Firefox, WebKit, and mobile viewport/device emulation; see the
 ## Customer startup and shutdown
 
 The first distributable version does not need an installer or background
-service. A platform-specific launcher can:
+service. The Linux launcher, a shell script beside the executable, can:
 
-1. start `chaweb` with the deployment directory as its application root;
-2. poll `/health` until the listener is ready;
-3. open `http://127.0.0.1:8080/` in the default browser; and
+1. start `chaweb` with its own directory as the application root and the host,
+   port, and workspace path it carries in its first three lines;
+2. wait for the line `chaweb` prints when the listener is ready;
+3. open the address from that line in the default browser; and
 4. keep a visible terminal window through which the process can be stopped.
+
+Reading the printed address is deliberate. The port is configurable, so a
+launcher that assumed one would break the first time it changed, and parsing
+the configuration a second time in shell script is more work than reading a
+line. Waiting for the line also detects a failed start without a timeout.
 
 Closing that window or pressing Ctrl+C stops the process through its existing
 bounded shutdown path. A tray application, OS service, installer, signing, and
@@ -558,8 +634,9 @@ wildcard address matches nothing a browser would send; see Block 1 of
 
 ### Stage 1 — Production shell
 
-- Give `chaweb` an explicit application root, and resolve `.env`, `app.toml`,
-  logging, the workspace, and `web/` beneath it.
+- Give `chaweb` an explicit application root for `web/` and `app.toml`, and a
+  separate workspace root for `.env`, `workspace.toml`, logging, and the
+  workspace contents.
 - Create the TypeScript, React, and Vite project.
 - Reproduce the static visual shell with production components and local icons.
 - Make `chaweb` serve the production HTML and assets from `web/`.
@@ -612,38 +689,36 @@ machine has slept long enough for the server to unload the conversation.
 - Add the Content Security Policy and production cache behavior.
 - Complete and run the component and browser tests accumulated in earlier
   stages.
-- Build the deployment directory and platform launcher.
-- Test on a clean machine representative of the customer's laptop.
+- Build the application directory, the starting workspace, and the platform
+  launcher.
+- Test on a clean machine representative of the customer's laptop, and verify
+  that replacing the application directory leaves an existing workspace intact.
 
 Done when the package can be copied to that machine, configured with an API key,
 started, used in the browser, and stopped without development tools.
 
-## Decisions still required
+## Decisions, now settled
 
-The following product and packaging choices should be settled before Stage 5.
-They do not block implementation of the browser frontend:
+The product and packaging choices this proposal left open have been answered.
 
-1. **Primary operating system.** Windows, macOS, or Linux determines the first
-   launcher and clean-machine package test. Executable-root support is
-   implemented for all three earlier.
-2. **Workspace ownership.** Decide whether the delivered workspace is prepared
-   for the customer or whether customers must edit characters, personas, and
-   forums themselves. This proposal recommends a prepared workspace.
-3. **API-key setup.** Decide whether asking the customer to create `.env` from
-   `.env.example`, using written instructions, is sufficient for the first
-   release. This proposal recommends that approach before building a
-   configuration UI.
-4. **Settings entry point.** Decide whether to omit it or ship an informational
-   page until editable settings have an API.
-5. **Port conflicts.** The first release can use fixed port 8080 and show a clear
-   startup error. Automatic port selection can be added later if customer
-   environments require it.
+1. **Primary operating system.** Linux first, then macOS, then Windows. The
+   first launcher and the clean-machine test are Linux; executable-root support
+   is implemented for all three from the start.
+2. **Workspace ownership.** Out of scope. A prepared workspace is assumed to
+   exist, and packaging neither creates nor ships one.
+3. **API-key setup.** A `.env` text file in the workspace, explained in written
+   instructions. Nothing further is built for it.
+4. **Settings.** Removed from the first release rather than shipped as an
+   informational page.
+5. **Host and port.** Not fixed. Both come from `app.toml` or the command line.
+   A port already in use is reported by the existing startup failure.
 
 ## Definition of a working web application
 
 The proposal is complete when a clean customer-like laptop can:
 
-- receive or extract one CHA directory;
+- receive or extract the application directory and its starting workspace;
+- put the workspace where it wants it and point the launcher at it;
 - add its provider API key without installing development tools;
 - start CHA using the supplied launcher;
 - have the application open at `127.0.0.1` in the default browser;

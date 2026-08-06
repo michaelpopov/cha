@@ -13,7 +13,7 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - The round two-line button is the only control that changes whether the sidebar is open.
 - Sidebar references change the main-area state without closing or opening the sidebar.
 - The main surface displays either Chat or one Navigation state, never both.
-- The sidebar contains Personas, Characters, Forums, Recent session references, and the Settings gear. It does not show the current persona or forum.
+- The sidebar contains Personas, Characters, Forums, and Recent session references. It does not show the current persona or forum.
 - The browser starts in the shared Welcome session in Entrance, with Guest selected and Assistant as the current target.
 - Personas are application-wide authors, never forum or session members. The server resolves the selected persona on each submission; switching personas never requires reopening a session.
 - Chat has no title or context header. A compact line below the composer shows `<Forum>   From: <Persona>   To: <current default character>`.
@@ -25,7 +25,7 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - Recent contains cross-forum session references. The active session is highlighted.
 - There is no Chat shortcut or global New session shortcut in the sidebar.
 - Users cannot create forums, personas, or characters in this version.
-- The round gear button at the bottom-right of the sidebar opens Settings.
+- There is no Settings screen and no gear button. The mockup and the screenshots in this directory still show one at the bottom-right of the sidebar; v1 removes it, and nothing takes its place.
 
 ## Screen catalogue
 
@@ -72,7 +72,6 @@ Chat has no title. Navigation screens use one centered title without a subtitle:
 - Forums
 - Sessions
 - New session
-- Settings
 
 The Sessions title does not repeat the selected forum. Session rows do not contain descriptive excerpts.
 
@@ -84,5 +83,5 @@ The Sessions title does not repeat the selected forum. Session rows do not conta
 
 ## Out of scope
 
-- Settings content beyond its entry point.
+- Settings in any form. It is removed from v1 rather than deferred as an entry point.
 - Invalid application state has no separate browser presentation contract.

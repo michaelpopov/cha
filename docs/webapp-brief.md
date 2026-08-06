@@ -34,6 +34,30 @@ does not need to be installed. It is the designed interface, made real.
 They talk to each other over the machine's own network connection. The customer
 sees one application.
 
+And two folders, kept firmly apart:
+
+**The application folder** holds the program, the page files, and the launcher.
+It is disposable. A new version of CHA replaces it completely.
+
+**The workspace folder** holds everything belonging to the person using it:
+their provider key, their characters and personas, their forums, every stored
+conversation, and the log. It is never touched by an upgrade.
+
+The separation is the whole reason upgrading is safe. If the conversations sat
+inside the application folder, shipping a new version would delete them. The
+customer chooses where the workspace lives when they first set CHA up, so it
+can go anywhere, including a shared drive.
+
+Starting CHA is a small script that sits in the application folder next to the
+program. Its first three lines are the address to listen on, the port, and
+where the workspace is; editing those three lines is what setting CHA up
+means. The workspace has its own settings file saying which model to talk to
+and how to log, and the provider key goes in a plain text file beside it.
+
+That is the whole of configuration. There is no settings screen, nothing asks
+for a password, and an application settings file exists for anyone who would
+rather not edit a script.
+
 ## The route, in seven steps
 
 The steps are ordered so that each one finishes with everything building and
@@ -41,15 +65,22 @@ every test passing. Work can stop between any two of them without leaving a mess
 behind. The first two are work on the existing program; the middle four build
 the page; the last one makes it a product.
 
-**1. Tell the program where it lives.** Today `chaweb` looks for its settings,
-its logs, and its conversations in whichever folder it was started from. That is
-fine when a developer starts it by hand from the right place, and it breaks the
-moment someone launches it from a shortcut or a different drive. It gets an
-explicit home folder instead: the folder holding the program itself. The same
-step makes it reachable from other machines on the network, which needs a small
+**1. Tell the program where things are.** Today `chaweb` looks for its
+settings, its logs, and its conversations in whichever folder it was started
+from. That is fine when a developer starts it by hand from the right place, and
+it breaks the moment someone launches it from a shortcut or a different drive.
+It learns two folders instead — the program's own folder and the workspace,
+described below — and stops caring where it was started from. The same step
+makes it reachable from other machines on the network, which needs a small
 change to how it checks incoming requests.
-*Finished when:* it starts correctly from anywhere, and another computer on the
-network can reach it.
+This step also makes the build assemble a `bin/` folder in the project laid out
+exactly like a real installation, with the same starting script in it, so every
+later step can be tried the way a customer would run it rather than the way a
+developer usually does. That script already exists; what it needs is a program
+that accepts the settings it passes.
+*Finished when:* it starts correctly from anywhere with the two folders in
+unrelated places, another computer on the network can reach it, and running the
+script in `bin/` starts CHA.
 
 **2. Let the program hand out the page.** The placeholder response is replaced
 by proper file serving: only files that genuinely belong to the application,
@@ -94,10 +125,12 @@ machine has been asleep long enough for the program to have put it away.
 **7. Make it something you can hand over.** Every "what if" is given a
 sensible answer: nothing loaded yet, no conversations in this forum, request
 failed, connection dropped, too many conversations open at once. Then one
-command builds the whole package, a launcher starts it and opens the browser,
-and the result is tested on a clean machine that has none of the development
-tools on it.
-*Finished when:* the folder can be copied to a laptop, given a provider key,
+command builds the application folder, the starting script grows up into a
+proper launcher that also opens the browser, and the result is tested on a
+clean machine that has none of the development tools on it — including a test
+that installing a newer version over an existing workspace leaves the
+conversations, characters, and key untouched.
+*Finished when:* the folder can be copied to a laptop, pointed at a workspace,
 started, used, and shut down.
 
 ## What has been decided
@@ -115,24 +148,31 @@ rather than quietly showing a stale page. Letting several windows watch one
 conversation live is a change inside the program and is not part of this
 release.
 
-## What still needs a decision
+**Linux comes first.** The first launcher and the final clean-machine test are
+Linux; macOS and Windows follow, in that order. The program is written from the
+start so that all three work.
 
-None of these blocks the first six steps, so they can be settled at any point
-before packaging begins.
+**There is no Settings screen.** Not a placeholder, not an informational page —
+it is gone, along with the gear button in the corner of the sidebar. Nothing in
+it could have done anything yet, and a control that looks usable but is not is
+worse than no control.
 
-| Question | Why it matters |
-| --- | --- |
-| Which operating system comes first? | Decides which launcher gets written and which kind of laptop the final test happens on. |
-| Is the delivered workspace prepared, or does the customer write their own characters? | Decides what goes in the package. |
-| Is a text file plus written instructions enough for entering the provider key? | The alternative is building a settings screen, which is a separate feature. |
-| Should there be a Settings screen at all yet? | Nothing in it can be editable until the program supports that, so it is either left out or made purely informational. |
-| Is a fixed port acceptable? | If something else on the machine is already using it, CHA will say so and stop rather than guess another one. |
+**Nothing is fixed to one address or port.** Both are settings, so CHA can move
+out of the way of anything else already running on the machine. If the port it
+is told to use is taken, it says so and stops instead of guessing.
+
+**Preparing the workspace is somebody else's problem.** These steps assume a
+workspace already exists, with its characters and personas in it. Building or
+generating one is not part of this work.
 
 ## What is deliberately left out
 
-File attachments and an editable Settings screen, because the program has no
-support for either and a control that looks usable but does nothing is worse
-than its absence. Any way to create or edit personas, characters, or forums from
-the browser. Installers, automatic updates, and background services. Anything
+File attachments, because the program has no support for them. Any way to
+create or edit personas, characters, or forums from the browser, or to prepare
+a workspace. Installers, automatic updates, and background services. Anything
 that would make network access genuinely safe — passwords, encryption, separate
 accounts — which is a project of its own.
+
+Every one of these is left out for the same reason: the goal is a working
+application soon, and each of them is a feature in its own right rather than a
+finishing touch on this one.

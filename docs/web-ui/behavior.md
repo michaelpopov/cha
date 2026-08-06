@@ -7,7 +7,7 @@ The browser keeps these related pieces of UI state:
 | State | Values |
 | --- | --- |
 | Sidebar | Open or closed |
-| Main area | Chat, Personas, Characters, Character detail, Forums, Sessions, New session, or Settings |
+| Main area | Chat, Personas, Characters, Character detail, Forums, Sessions, or New session |
 | Current context | Persona ID and forum ID |
 | Active conversation | Forum ID and session ID |
 | Inspected character | Character ID, used only by Character detail |
@@ -28,7 +28,8 @@ The sidebar contains, from top to bottom:
 3. Characters.
 4. Forums.
 5. Recent cross-forum sessions. Every entry shows the session name and forum name.
-6. A round Settings button with a gear icon at the bottom-right.
+
+There is no sixth element. The mockup's round gear button at the bottom-right is removed in v1 and nothing replaces it.
 
 Personas and Forums have no current-selection secondary lines. The active conversation's Recent entry uses the selected-row treatment. There is no separate Chat button because selecting the active Recent entry already returns to that conversation.
 
@@ -48,7 +49,6 @@ Only the two-line button changes sidebar visibility. Every other sidebar action 
 | Forum row | Sets the current forum and shows Sessions directly | Sidebar state and current persona |
 | Recent session | Sets that forum/session as active, opens or reattaches it, and shows Chat | Sidebar state and current persona |
 | New session row | Shows New session for the current forum | Sidebar state, current persona, and forum |
-| Settings gear | Shows Settings | Sidebar state and all current context |
 | Target-character chooser | Lists the active session's characters; selecting one requests it as the default | Sidebar state, current persona, forum, session, and draft |
 | Send | Submits the draft as the selected persona while generation is inactive | Sidebar state and active conversation |
 | Stop | Replaces Send while generation is active and requests that generation stop | Sidebar state, active conversation, and draft |
