@@ -15,6 +15,8 @@ test('serves the built shell at the root without violating its own policy', asyn
   expect(response?.status()).toBe(200);
   expect(response?.headers()['cache-control']).toBe('no-cache');
   expect(response?.headers()['content-security-policy']).toContain("script-src 'self'");
+  await expect(page.locator('link[rel="icon"]'))
+    .toHaveAttribute('href', /^data:image\/svg\+xml,/);
 
   await expect(page.getByText('cha', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Forums' })).toBeEnabled();

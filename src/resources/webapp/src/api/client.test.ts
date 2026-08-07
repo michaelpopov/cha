@@ -82,6 +82,19 @@ describe('CHA API client', () => {
     await expect(client.getSessionSnapshot('forum', 'session')).rejects.toBeInstanceOf(ChaError);
   });
 
+  it('does not claim an unknown server error code is part of the browser contract', async () => {
+    const client = createChaClient(async () => jsonResponse({
+      error: { code: 'future_private_error', message: 'read /private/provider-key' },
+    }, 500));
+
+    await expect(client.getBootstrap()).rejects.toEqual(expect.objectContaining({
+      name: 'ChaError',
+      status: 500,
+      code: 'internal_error',
+      message: 'CHA returned an invalid error response (500).',
+    }));
+  });
+
   it('rejects a session snapshot whose shape the contract does not describe', async () => {
     const client = createChaClient(async () => jsonResponse({ session_id: 'one' }));
     await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);

@@ -1,4 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+import type { SessionSnapshot } from '../src/api/client';
 
 // Creates a stored session in the workspace forum and leaves the page on it,
 // connected, which is where every live-conversation test starts.
@@ -16,9 +17,12 @@ async function startLobbySession(page: Page, name: string): Promise<string> {
 // Creates a stored session, makes it live, and puts one exchange in it without
 // ever attaching a browser stream. The recovery tests need the session's single
 // stream slot free, so that what they observe is the client's own ladder rather
-// than a slot the previous page is still holding: the server discovers a
-// browser that navigated away only when its next heartbeat fails to write.
-async function seedLiveSession(page: Page, label: string, prompt: string): Promise<string> {
+// than a slot held by setup machinery.
+async function seedLiveSession(
+  page: Page,
+  label: string,
+  prompt: string,
+): Promise<{ sessionId: string; snapshot: SessionSnapshot }> {
   return page.evaluate(async ([sessionLabel, text]) => {
     const post = async (url: string, body: unknown): Promise<Record<string, unknown>> => {
       const response = await fetch(url, {
@@ -33,7 +37,18 @@ async function seedLiveSession(page: Page, label: string, prompt: string): Promi
     const id = String(created.id);
     await post(`/api/v1/forums/lobby/sessions/${id}/open`, {});
     await post(`/s/lobby/${id}/api/v1/input`, { persona: 'reader', text });
-    return id;
+
+    // The recovery scenario is about a lost event stream, not a model request
+    // racing the snapshot probe. Wait until the seeded exchange is durable and
+    // inactive before handing the session to a fresh viewer.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const response = await fetch(`/s/lobby/${id}/api/v1/session`);
+      if (!response.ok) throw new Error(`snapshot answered ${response.status}`);
+      const snapshot = await response.json() as SessionSnapshot;
+      if (!snapshot.generation.active) return { sessionId: id, snapshot };
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('seed generation did not finish');
   }, [label, prompt]);
 }
 
@@ -205,37 +220,43 @@ test('explains a second viewer and reconnects after the first closes', async ({ 
 });
 
 // Seeds a session, then hands back a page that has never streamed anything.
-// The seeding page is closed first because it holds the built-in Welcome
-// stream, whose own reconnect attempts would otherwise be free to consume the
-// one refusal these tests arm.
+// Loading /health establishes the right origin for fetch without starting the
+// browser application and consuming a registry entry for Welcome. The seeding
+// page is closed before the one finite event-stream response is armed.
 async function seedThenOpenFreshViewer(
   page: Page,
   context: BrowserContext,
   label: string,
   prompt: string,
-): Promise<{ viewer: Page; sessionId: string }> {
-  await page.goto('/');
-  const sessionId = await seedLiveSession(page, label, prompt);
+): Promise<{ viewer: Page; sessionId: string; snapshot: SessionSnapshot }> {
+  await page.goto('/health');
+  const seeded = await seedLiveSession(page, label, prompt);
   await page.close();
-  return { viewer: await context.newPage(), sessionId };
+  return { viewer: await context.newPage(), ...seeded };
 }
 
 test('recovers a dropped stream and keeps the conversation on screen', async ({ page, context }) => {
   const prompt = 'Remember this across the reconnect.';
-  const { viewer, sessionId } = await seedThenOpenFreshViewer(
+  const { viewer, sessionId, snapshot } = await seedThenOpenFreshViewer(
     page, context, `Dropped stream ${Date.now()}`, prompt,
   );
 
-  // EventSource reports a refused stream and one that dies mid-flight as the
-  // same bare error, so refusing a single attempt is the client-visible shape
-  // of any drop. Interception lapses with that request, leaving the snapshot
-  // probe and the replacement stream to run against the real server.
-  await viewer.route('**/api/v1/events', (route) => route.abort(), { times: 1 });
+  // A finite, valid event stream delivers state and then reaches EOF. That is
+  // the browser-visible shape of a connection that drops mid-stream, without
+  // the timing ambiguity of aborting a request while it is being dispatched.
+  // Interception lapses afterwards; recovery and the replacement stream use CHA.
+  await viewer.route('**/api/v1/events', (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/event-stream',
+    body: `event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`,
+  }), { times: 1 });
   await viewer.goto(`/s/lobby/${sessionId}/`);
 
   await expect(viewer.getByRole('combobox', { name: 'Choose target character' }))
     .toBeEnabled({ timeout: 15_000 });
   await expect(viewer.locator('.cha-message.is-human').last()).toContainText(prompt);
+  await expect(viewer.locator('.cha-message.is-agent').last()).toContainText(prompt);
+  await expect(viewer.getByRole('button', { name: 'Send message' })).toBeVisible();
 });
 
 test('re-opens after a real disconnect and server idle unload', async ({ page, context }) => {
@@ -246,8 +267,8 @@ test('re-opens after a real disconnect and server idle unload', async ({ page, c
   const viewer = await context.newPage();
   let snapshotRequests = 0;
 
-  // Refuse the first stream before it reaches CHA. The recovery snapshot is
-  // held longer than the test server's idle grace, giving the now-unobserved
+  // End the first stream before it reaches CHA. The recovery snapshot is held
+  // longer than the test server's idle grace, giving the now-unobserved
   // runtime time to unload. Continuing that real request therefore yields
   // session_not_live; the third snapshot can only happen after the client has
   // re-opened the stored session.
@@ -258,7 +279,11 @@ test('re-opens after a real disconnect and server idle unload', async ({ page, c
     }
     await route.continue();
   });
-  await viewer.route('**/api/v1/events', (route) => route.abort(), { times: 1 });
+  await viewer.route('**/api/v1/events', (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/event-stream',
+    body: ': connected\n\n',
+  }), { times: 1 });
   await viewer.goto(sessionUrl);
 
   await expect(viewer.getByRole('combobox', { name: 'Choose target character' }))

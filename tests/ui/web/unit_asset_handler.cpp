@@ -101,6 +101,24 @@ TEST(AssetHandler, RejectsUnsafeAndUnsupportedAssetPaths) {
     }
 }
 
+TEST(AssetHandler, RejectsAssetSymlinkEscapingTheWebRoot) {
+    test::TestWorkspace fixture;
+    const std::filesystem::path outside = fixture.root() / "outside.js";
+    std::ofstream(outside) << "not a browser asset";
+    const std::filesystem::path link =
+        fixture.root() / "web" / "assets" / "escaped.js";
+    std::error_code error;
+    std::filesystem::create_symlink(outside, link, error);
+    if (error) GTEST_SKIP() << "symlink creation is unavailable: " << error.message();
+
+    AssetServer server(fixture.root() / "web");
+    const auto result = server.client().Get("/assets/escaped.js");
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->status, 404);
+    const nlohmann::json body = nlohmann::json::parse(result->body);
+    EXPECT_EQ(body["error"]["code"], "not_found");
+}
+
 TEST(HttpServer, WildcardListenerAcceptsOnlyLocalhostAndIpLiteralAuthorities) {
     httplib::Server server;
     server.Get("/health", [](const httplib::Request&, httplib::Response& response) {

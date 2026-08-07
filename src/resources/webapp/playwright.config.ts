@@ -16,6 +16,7 @@ const api = `http://127.0.0.1:${apiPort}`;
 const dev = `http://127.0.0.1:${devPort}`;
 
 process.env.CHA_API_TARGET ??= api;
+const assembledApplication = Boolean(process.env.CHA_E2E_APPLICATION_ROOT);
 
 export default defineConfig({
   testDir: './e2e',
@@ -57,13 +58,15 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 30_000,
     },
-    {
+    ...(assembledApplication ? [] : [{
+      // Package verification selects only `served`, whose pages talk directly
+      // to chaweb. The development proxy is useful only to the chromium project.
       // The proxy target has to be the server started above, not the port a
       // developer's own `npm run dev` would assume.
       command: `npm run dev -- --port ${devPort}`,
       url: `${dev}/`,
       reuseExistingServer: false,
       timeout: 30_000,
-    },
+    }]),
   ],
 });

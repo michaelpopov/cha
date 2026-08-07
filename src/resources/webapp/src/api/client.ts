@@ -10,6 +10,32 @@ export type CommandResult = components['schemas']['CommandResult'];
 export type InputRequest = components['schemas']['InputRequest'];
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
 
+// Generated API unions are compile-time only. Keeping the runtime list checked
+// against that union prevents a newer or malformed server string from being
+// presented to the rest of the client as a code this browser actually knows.
+const knownErrorCodes = {
+  not_found: true,
+  bad_request: true,
+  body_too_large: true,
+  prompt_too_large: true,
+  forbidden_host: true,
+  forbidden_origin: true,
+  internal_error: true,
+  session_busy: true,
+  session_stopping: true,
+  session_limit_reached: true,
+  session_open_timeout: true,
+  server_stopping: true,
+  session_not_live: true,
+  browser_stream_in_use: true,
+  command_timeout: true,
+  command_queue_full: true,
+} satisfies Record<ErrorCode, true>;
+
+function isErrorCode(value: unknown): value is ErrorCode {
+  return typeof value === 'string' && Object.hasOwn(knownErrorCodes, value);
+}
+
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export class ChaError extends Error {
@@ -86,8 +112,8 @@ export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
 function errorFrom(status: number, payload: unknown): ChaError {
   if (isRecord(payload) && isRecord(payload.error)) {
     const { code, message } = payload.error;
-    if (typeof code === 'string' && typeof message === 'string') {
-      return new ChaError(status, code as ErrorCode, message);
+    if (isErrorCode(code) && typeof message === 'string') {
+      return new ChaError(status, code, message);
     }
   }
   return new ChaError(
