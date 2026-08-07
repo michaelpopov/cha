@@ -16,6 +16,12 @@
   --font-sans: -apple-system, system-ui, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --cha-sidebar-width: 16.5rem;
+  /* The reading column, shared by the transcript, the composer, the lists and a
+     character's description. A phone gets the whole width, a laptop a settled
+     measure, and a large window a share of itself rather than the same narrow
+     strip adrift in it. The 56rem cap is what stops a line from growing past
+     what the eye can track back; raise or lower it to trade the two off. */
+  --cha-column: min(100%, max(42rem, min(76%, 56rem)));
   background: var(--background);
   font-family: var(--font-sans);
 }
@@ -233,7 +239,7 @@ button.cha-recent-row:hover,
    control most of a screen away from the name it belongs to. */
 .cha-navigation {
   flex-direction: column;
-  width: min(100%, 42rem);
+  width: var(--cha-column);
   gap: 0.6rem;
   margin-inline: auto;
   padding: 0.6rem 1.2rem 1.2rem;
@@ -247,7 +253,7 @@ button.cha-recent-row:hover,
 
 .cha-bootstrap-state,
 .cha-state-message {
-  width: min(100%, 42rem);
+  width: var(--cha-column);
   margin: 1.5rem auto;
   padding: 0 1.2rem;
   color: var(--muted-foreground);
@@ -362,10 +368,12 @@ button.cha-recent-row:hover,
   text-align: left;
 }
 
+/* Already inside a navigation screen, which is the column. Applying the column
+   again here would take a share of a share and leave the description narrower
+   than the back link above it. */
 .cha-markdown {
-  width: min(100%, 42rem);
+  width: 100%;
   min-height: 0;
-  margin: 0 auto;
   padding-bottom: 1rem;
   overflow: auto;
 }
@@ -432,7 +440,7 @@ button.cha-recent-row:hover,
 
 .cha-transcript {
   display: flex;
-  width: min(100%, 42rem);
+  width: var(--cha-column);
   min-height: 0;
   flex: 1;
   flex-direction: column;
@@ -523,7 +531,7 @@ button.cha-recent-row:hover,
 .cha-live-state,
 .cha-chat-action-error {
   display: flex;
-  width: min(100%, 42rem);
+  width: var(--cha-column);
   align-items: center;
   justify-content: space-between;
   gap: 0.6rem;
@@ -547,7 +555,7 @@ button.cha-recent-row:hover,
 
 .cha-composer {
   display: grid;
-  width: min(100%, 42rem);
+  width: var(--cha-column);
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.55rem;
@@ -628,7 +636,7 @@ button.cha-recent-row:hover,
 
 .cha-chat-status {
   display: flex;
-  width: min(100%, 42rem);
+  width: var(--cha-column);
   min-width: 0;
   gap: 0.8rem;
   margin: 0.35rem auto 0;
