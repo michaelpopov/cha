@@ -94,6 +94,7 @@ input:disabled {
 }
 
 .cha-side-action,
+.cha-recent-row,
 .cha-list-action,
 .cha-character-row,
 .cha-icon-action,
@@ -142,6 +143,22 @@ input:disabled {
   padding: 0.55rem 0.65rem;
   color: var(--muted-foreground);
   font-size: 0.82rem;
+}
+
+.cha-recent-row {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 0.08rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.75rem;
+  text-align: left;
+}
+
+button.cha-recent-row:hover,
+.cha-recent-row.is-current {
+  color: var(--accent-foreground);
+  background: var(--accent);
 }
 
 .cha-main {
@@ -210,6 +227,35 @@ input:disabled {
   gap: 0.6rem;
   padding: 0.6rem 1.2rem 1.2rem;
   overflow: auto;
+}
+
+.cha-screen-instruction {
+  margin: 0 0 0.35rem;
+  color: var(--foreground);
+}
+
+.cha-bootstrap-state,
+.cha-state-message {
+  width: min(100%, 42rem);
+  margin: 1.5rem auto;
+  padding: 0 1.2rem;
+  color: var(--muted-foreground);
+}
+
+.cha-bootstrap-state h2 {
+  margin: 0 0 0.35rem;
+  color: var(--foreground);
+  font-size: 1rem;
+  font-weight: 540;
+}
+
+.cha-bootstrap-state p,
+.cha-state-message {
+  margin-top: 0;
+}
+
+.cha-error-message {
+  color: light-dark(rgb(174 45 36), rgb(255 145 136));
 }
 
 .cha-list,
@@ -309,14 +355,59 @@ input:disabled {
   overflow: auto;
 }
 
-.cha-markdown h2 {
+.cha-markdown h1,
+.cha-markdown h2,
+.cha-markdown h3,
+.cha-markdown h4,
+.cha-markdown h5,
+.cha-markdown h6 {
   margin: 0.7rem 0 0.35rem;
-  font-size: 1.05rem;
   font-weight: 520;
+}
+
+.cha-markdown h1 {
+  font-size: 1.18rem;
+}
+
+.cha-markdown h2 {
+  font-size: 1.08rem;
+}
+
+.cha-markdown h3,
+.cha-markdown h4,
+.cha-markdown h5,
+.cha-markdown h6 {
+  font-size: 1rem;
 }
 
 .cha-markdown p {
   margin: 0.4rem 0;
+}
+
+.cha-markdown ul,
+.cha-markdown ol {
+  margin: 0.45rem 0;
+  padding-left: 1.35rem;
+}
+
+.cha-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.cha-markdown :not(pre) > code {
+  padding: 0.08rem 0.25rem;
+  border-radius: 0.3rem;
+  background: var(--secondary);
+}
+
+.cha-markdown pre {
+  padding: 0.75rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--secondary);
+  white-space: pre-wrap;
 }
 
 .cha-chat {
