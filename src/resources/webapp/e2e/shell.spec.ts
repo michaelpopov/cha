@@ -1,14 +1,31 @@
 import { expect, test } from '@playwright/test';
 
-test('loads the shell and reloads a session-shaped deep link', async ({ page }) => {
+test('creates a session and restores its conversation after a deep-link reload', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('cha', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Hide sidebar' })).toBeVisible();
 
-  await page.goto('/s/entrance/welcome/');
+  await page.getByRole('button', { name: 'Forums' }).click();
+  await page.getByRole('button', { name: /The Lobby\s+Guide/ }).click();
+  await page.getByRole('button', { name: /New session\s+Enter a name to begin/ }).click();
+  await page.getByRole('textbox', { name: 'Session name' }).fill('Reloaded planning');
+  await page.getByRole('button', { name: 'Start session' }).click();
+  await expect(page).toHaveURL(/\/s\/lobby\/[^/]+\/$/);
+  await expect(page.getByLabel('Current chat context')).toContainText('The Lobby');
+
   await page.reload();
   await expect(page.getByText('cha', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Current chat context')).toContainText('The Lobby');
+  await expect(page.getByRole('button', { name: /Reloaded planning\s+The Lobby/ }))
+    .toHaveAttribute('aria-current', 'page');
+
+  await page.goBack();
+  await expect(page).toHaveURL(/:4173\/$/);
   await expect(page.getByLabel('Current chat context')).toContainText('Entrance');
+
+  await page.goForward();
+  await expect(page).toHaveURL(/\/s\/lobby\/[^/]+\/$/);
+  await expect(page.getByLabel('Current chat context')).toContainText('The Lobby');
 });
 
 test('forwards a JSON mutation with matching Host and Origin', async ({ page }) => {

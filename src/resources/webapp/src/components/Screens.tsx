@@ -1,12 +1,14 @@
-import { useEffect, useState, type Dispatch } from 'react';
+import { useEffect, useState, type Dispatch, type FormEvent } from 'react';
 
-import type { ChaClient, CharacterDetail } from '../api/client';
-import type { AppAction, AppState } from '../state/view';
+import type { ChaClient, CharacterDetail, SessionListing } from '../api/client';
+import { sessionOperationState, type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ForumsIcon,
+  MessageIcon,
+  PlusIcon,
   SendIcon,
   TargetIcon,
 } from './Icons';
@@ -197,28 +199,212 @@ export function ForumsScreen({ state, dispatch }: DiscoveryScreenProps) {
   );
 }
 
-export function SessionsScreen({ state, dispatch }: DiscoveryScreenProps) {
-  const forum = state.bootstrap?.forums.find(({ id }) => id === state.currentForumId);
+interface SessionsScreenProps extends DiscoveryScreenProps {
+  client: ChaClient;
+  onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
+}
+
+// Opening or creating a session is reported by the screen that started it, so
+// the list stays on screen and a half-typed session name is not thrown away.
+function SessionOperationReport({
+  pending,
+  failure,
+  state,
+}: {
+  pending: boolean;
+  failure: string | null;
+  state: AppState;
+}) {
+  if (pending) {
+    return (
+      <p className="cha-state-message" role="status">
+        {state.sessionOperationMessage ?? 'Opening session…'}
+      </p>
+    );
+  }
+  if (!failure) return null;
+  return (
+    <p className="cha-state-message cha-error-message" role="alert">{failure}</p>
+  );
+}
+
+export function formatSessionTime(updatedAt: number, now = Date.now()): string {
+  const elapsed = Math.max(0, Math.floor(now / 1000) - updatedAt);
+  if (elapsed < 60) return 'Now';
+  if (elapsed < 60 * 60) return `${Math.floor(elapsed / 60)}m`;
+  if (elapsed < 24 * 60 * 60) return `${Math.floor(elapsed / (60 * 60))}h`;
+  if (elapsed < 7 * 24 * 60 * 60) return `${Math.floor(elapsed / (24 * 60 * 60))}d`;
+
+  const date = new Date(updatedAt * 1000);
+  const current = new Date(now);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(date.getFullYear() === current.getFullYear() ? {} : { year: 'numeric' }),
+  }).format(date);
+}
+
+export function SessionsScreen({
+  state,
+  dispatch,
+  client,
+  onOpenSession,
+}: SessionsScreenProps) {
+  const [sessions, setSessions] = useState<SessionListing[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [requestVersion, setRequestVersion] = useState(0);
+  const forumId = state.currentForumId;
+  const { pending: sessionPending, failure: sessionFailure } = sessionOperationState(state);
+
+  useEffect(() => {
+    if (!forumId) return;
+    let current = true;
+    setSessions(null);
+    setError(null);
+    void client.listSessions(forumId).then(
+      (loaded) => {
+        // The listing is not ordered by the server.
+        if (current) setSessions([...loaded].sort((left, right) => right.updated_at - left.updated_at));
+      },
+      (failure: unknown) => {
+        if (current) {
+          setError(failure instanceof Error ? failure.message : 'Sessions could not be loaded.');
+        }
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [client, forumId, requestVersion]);
+
   return (
     <section className="cha-screen cha-navigation" aria-label="Forum sessions navigation">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-forums' })} type="button">
         <ChevronLeftIcon />
         <span>All forums</span>
       </button>
-      <p className="cha-state-message">
-        {forum ? `${forum.display_name} sessions are not loaded yet.` : 'No forum is selected.'}
-      </p>
+      {!forumId && <p className="cha-state-message">No forum is selected.</p>}
+      <SessionOperationReport pending={sessionPending} failure={sessionFailure} state={state} />
+      {forumId && !sessions && !error && (
+        <p className="cha-state-message" role="status">Loading sessions…</p>
+      )}
+      {forumId && error && (
+        <div className="cha-state-message cha-error-message" role="alert">
+          <p>{error}</p>
+          <button
+            className="cha-button cha-button-ghost"
+            onClick={() => setRequestVersion((version) => version + 1)}
+            type="button"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      {forumId && sessions && (
+        <div className="cha-list">
+          <button
+            className="cha-list-action"
+            disabled={sessionPending}
+            onClick={() => dispatch({ type: 'show-new-session' })}
+            type="button"
+          >
+            <span className="cha-list-icon"><PlusIcon /></span>
+            <span className="cha-list-copy">
+              <span className="cha-primary-line">New session</span>
+              <span className="cha-secondary-line">Enter a name to begin</span>
+            </span>
+            <ChevronRightIcon className="cha-chevron" />
+          </button>
+          {sessions.map((session) => {
+            const active = state.activeConversation?.forumId === forumId
+              && state.activeConversation.sessionId === session.id;
+            return (
+              <button
+                aria-current={active ? 'page' : undefined}
+                className={`cha-list-action ${active ? 'is-current' : ''}`}
+                disabled={sessionPending}
+                key={session.id}
+                onClick={() => void onOpenSession(forumId, session.id)}
+                type="button"
+              >
+                <span className="cha-list-icon"><MessageIcon /></span>
+                <span className="cha-list-copy">
+                  <span className="cha-primary-line">{session.label}</span>
+                </span>
+                <time className="cha-secondary-line" dateTime={new Date(session.updated_at * 1000).toISOString()}>
+                  {formatSessionTime(session.updated_at)}
+                </time>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
 
-export function NewSessionScreen({ dispatch }: Pick<DiscoveryScreenProps, 'dispatch'>) {
+interface NewSessionScreenProps extends DiscoveryScreenProps {
+  onCreateSession(forumId: string, label: string): Promise<boolean>;
+}
+
+export function NewSessionScreen({
+  state,
+  dispatch,
+  onCreateSession,
+}: NewSessionScreenProps) {
+  const [name, setName] = useState('');
+  const trimmedName = name.trim();
+  const { pending: sessionPending, failure: sessionFailure } = sessionOperationState(state);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!state.currentForumId || !trimmedName || sessionPending) return;
+    void onCreateSession(state.currentForumId, trimmedName);
+  }
+
   return (
     <section className="cha-screen cha-navigation" aria-label="New session navigation">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-forums' })} type="button">
+      <button
+        className="cha-back-row"
+        disabled={sessionPending}
+        onClick={() => dispatch({ type: 'show-sessions' })}
+        type="button"
+      >
         <ChevronLeftIcon />
         <span>Sessions</span>
       </button>
+      <SessionOperationReport pending={sessionPending} failure={sessionFailure} state={state} />
+      <form className="cha-new-session" onSubmit={submit}>
+        <label htmlFor="cha-session-name">Session name</label>
+        <input
+          autoComplete="off"
+          autoFocus
+          className="cha-form-control"
+          disabled={sessionPending}
+          id="cha-session-name"
+          onChange={(event) => setName(event.target.value)}
+          placeholder="e.g. Architecture review"
+          type="text"
+          value={name}
+        />
+        <div className="cha-new-session-actions">
+          <button
+            className="cha-button cha-button-ghost"
+            disabled={sessionPending}
+            onClick={() => dispatch({ type: 'show-sessions' })}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="cha-button cha-button-primary"
+            disabled={!trimmedName || sessionPending}
+            type="submit"
+          >
+            Start session
+          </button>
+        </div>
+      </form>
     </section>
   );
 }

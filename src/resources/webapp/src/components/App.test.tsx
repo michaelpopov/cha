@@ -1,9 +1,77 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { Bootstrap } from '../api/client';
-import { bootstrapFixture, fixtureClient } from '../test/fixtures';
+import {
+  bootstrapFixture,
+  fixtureClient,
+  snapshotFixture,
+} from '../test/fixtures';
 import { App } from './App';
+
+function lobbySnapshot(sessionId = 'planning', sessionLabel = 'Planning') {
+  return {
+    ...snapshotFixture,
+    forum: bootstrapFixture.forums[1],
+    session_id: sessionId,
+    session_label: sessionLabel,
+    characters: [bootstrapFixture.characters[1]],
+    default_character_id: 'guide',
+  };
+}
+
+function inertSessionEvents() {
+  return { close: vi.fn() };
+}
+
+function recordingSessionEvents() {
+  const connections: { key: string; close: ReturnType<typeof vi.fn> }[] = [];
+  return {
+    connections,
+    connect(forumId: string, sessionId: string) {
+      const connection = { key: `${forumId}/${sessionId}`, close: vi.fn() };
+      connections.push(connection);
+      return connection;
+    },
+  };
+}
+
+// jsdom's history has no user gesture, so a Back is the entry it would restore
+// followed by the event the browser would deliver.
+function goBackTo(pathname: string) {
+  window.history.replaceState(null, '', pathname);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+function deferred() {
+  let settle!: () => void;
+  const promise = new Promise<void>((resolve) => { settle = resolve; });
+  return { promise, settle };
+}
+
+function sessionRow(name: RegExp | string) {
+  return within(screen.getByLabelText('Forum sessions navigation')).getByRole('button', { name });
+}
+
+// Recent also carries a Planning row, so the stored-session row is reached
+// through the sessions list itself.
+async function openPlanningFromTheLobby() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await screen.findByRole('button', { name: 'New sessionEnter a name to begin' });
+  fireEvent.click(sessionRow(/^Planning/));
+}
+
+function storedPlanningClient(overrides = {}) {
+  return fixtureClient({
+    listSessions: async () => [{ id: 'planning', label: 'Planning', live: false, updated_at: 1 }],
+    getSessionSnapshot: async (forumId) => (
+      forumId === 'lobby' ? lobbySnapshot() : snapshotFixture
+    ),
+    ...overrides,
+  });
+}
 
 function renderAt(width: number) {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
@@ -34,7 +102,13 @@ describe.each([
 });
 
 it('renders bootstrap discovery data and preserves conversation context while navigating', async () => {
-  render(<App client={fixtureClient()} />);
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
+    forum_id: forumId,
+    session_id: sessionId,
+  }));
+  render(
+    <App client={fixtureClient({ openSession })} connectSessionEvents={inertSessionEvents} />,
+  );
 
   expect(await screen.findByLabelText('Current chat context')).toHaveTextContent(
     'EntranceFrom: GuestTo: Assistant',
@@ -47,8 +121,18 @@ it('renders bootstrap discovery data and preserves conversation context while na
   fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
   expect(screen.getByText('Thoughtful, curious, and concise')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('radio', { name: /Reader/ }));
+
+  // The startup conversation is active but not yet attached, so Recent opens it.
   fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
-  expect(screen.getByLabelText('Current chat context')).toHaveTextContent('From: Reader');
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('From: Reader'));
+  expect(openSession).toHaveBeenCalledWith('entrance', 'welcome');
+
+  // Attached now, so returning to it is a view change and not a second open.
+  fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
+  fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
+  await waitFor(() => expect(screen.getByLabelText('Current chat context')).toBeInTheDocument());
+  expect(openSession).toHaveBeenCalledTimes(1);
 });
 
 it('loads character detail and renders the restricted Markdown presentation', async () => {
@@ -73,7 +157,262 @@ it('shows real forums and their plain-text character membership', async () => {
   expect(screen.getByRole('button', { name: 'EntranceAssistant' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
-  expect(screen.getByText('The Lobby sessions are not loaded yet.')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }))
+    .toBeInTheDocument();
+});
+
+it('lists sessions with compact time metadata and opens a stored session once', async () => {
+  const open = vi.fn(async (forumId: string, sessionId: string) => ({
+    forum_id: forumId,
+    session_id: sessionId,
+  }));
+  const client = fixtureClient({
+    listSessions: async () => [{
+      id: 'planning',
+      label: 'Planning',
+      live: false,
+      updated_at: Math.floor(Date.now() / 1000) - 2 * 60 * 60,
+    }],
+    openSession: open,
+    getSessionSnapshot: async () => lobbySnapshot(),
+  });
+  render(<App client={client} connectSessionEvents={inertSessionEvents} />);
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  const session = await screen.findByRole('button', { name: 'Planning2h' });
+  expect(session).toHaveTextContent('Planning');
+  expect(session).toHaveTextContent('2h');
+
+  fireEvent.click(session);
+  fireEvent.click(session);
+  await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(window.location.pathname).toBe('/s/lobby/planning/'));
+  expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
+});
+
+it('trims a required name, creates then opens it, and refreshes Recent', async () => {
+  const user = userEvent.setup();
+  const refreshed = structuredClone(bootstrapFixture);
+  refreshed.recent_sessions = [{
+    forum_id: 'lobby',
+    session_id: 'created',
+    session_label: 'Architecture review',
+    updated_at: 3,
+  }, ...refreshed.recent_sessions];
+  const getBootstrap = vi.fn()
+    .mockResolvedValueOnce(bootstrapFixture)
+    .mockResolvedValue(refreshed);
+  const createSession = vi.fn(async (_forumId: string, label: string) => ({
+    id: 'created',
+    label,
+  }));
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
+    forum_id: forumId,
+    session_id: sessionId,
+  }));
+  const connect = vi.fn(inertSessionEvents);
+  const client = fixtureClient({
+    getBootstrap,
+    listSessions: async () => [],
+    createSession,
+    openSession,
+    getSessionSnapshot: async () => lobbySnapshot('created', 'Architecture review'),
+  });
+  render(<App client={client} connectSessionEvents={connect} />);
+
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }));
+
+  const start = screen.getByRole('button', { name: 'Start session' });
+  const name = screen.getByRole('textbox', { name: 'Session name' });
+  expect(start).toBeDisabled();
+  await user.type(name, '   ');
+  expect(start).toBeDisabled();
+  await user.type(name, '  Architecture review  ');
+  expect(start).toBeEnabled();
+  await user.click(start);
+
+  await waitFor(() => expect(createSession).toHaveBeenCalledWith('lobby', 'Architecture review'));
+  expect(openSession).toHaveBeenCalledWith('lobby', 'created');
+  await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(window.location.pathname).toBe('/s/lobby/created/');
+  expect(screen.getByLabelText('Current chat context')).toHaveTextContent(
+    'The LobbyFrom: GuestTo: Guide',
+  );
+  expect(screen.getByRole('button', { name: 'Architecture reviewThe Lobby' }))
+    .toHaveAttribute('aria-current', 'page');
+});
+
+it('restores a deep link and offers Welcome when the requested session cannot open', async () => {
+  window.history.replaceState(null, '', '/s/lobby/planning/');
+  const client = fixtureClient({
+    openSession: async () => { throw new Error('Planning is already open elsewhere.'); },
+  });
+  render(<App client={client} connectSessionEvents={inertSessionEvents} />);
+
+  expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent('already open elsewhere');
+  fireEvent.click(screen.getByRole('button', { name: 'Return to Welcome' }));
+  expect(screen.getByLabelText('Current chat context')).toHaveTextContent('Entrance');
+  expect(window.location.pathname).toBe('/');
+});
+
+it('opens and snapshots a session-shaped deep link before showing Chat', async () => {
+  window.history.replaceState(null, '', '/s/lobby/planning/');
+  const openSession = vi.fn(async () => ({ forum_id: 'lobby', session_id: 'planning' }));
+  const getSessionSnapshot = vi.fn(async () => lobbySnapshot());
+  render(
+    <App
+      client={fixtureClient({ openSession, getSessionSnapshot })}
+      connectSessionEvents={inertSessionEvents}
+    />,
+  );
+
+  await waitFor(() => expect(screen.getByLabelText('Current chat context')).toHaveTextContent(
+    'The LobbyFrom: GuestTo: Guide',
+  ));
+  expect(openSession).toHaveBeenCalledWith('lobby', 'planning');
+  expect(getSessionSnapshot).toHaveBeenCalledWith('lobby', 'planning');
+  expect(window.location.pathname).toBe('/s/lobby/planning/');
+});
+
+it('returns to Welcome and drops the stream when the browser goes back to the root', async () => {
+  const events = recordingSessionEvents();
+  render(<App client={storedPlanningClient()} connectSessionEvents={events.connect} />);
+  await openPlanningFromTheLobby();
+  await waitFor(() => expect(window.location.pathname).toBe('/s/lobby/planning/'));
+  expect(events.connections).toHaveLength(1);
+
+  goBackTo('/');
+
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('Entrance'));
+  expect(events.connections[0].close).toHaveBeenCalled();
+});
+
+it('re-opens the session named by a restored history entry without pushing it again', async () => {
+  const openSession = vi.fn(async () => ({ forum_id: 'lobby', session_id: 'planning' }));
+  const events = recordingSessionEvents();
+  render(
+    <App client={storedPlanningClient({ openSession })} connectSessionEvents={events.connect} />,
+  );
+  await screen.findByLabelText('Current chat context');
+  const entries = window.history.length;
+
+  goBackTo('/s/lobby/planning/');
+
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('The Lobby'));
+  expect(openSession).toHaveBeenCalledWith('lobby', 'planning');
+  expect(events.connections).toEqual([expect.objectContaining({ key: 'lobby/planning' })]);
+  expect(window.location.pathname).toBe('/s/lobby/planning/');
+  expect(window.history.length).toBe(entries);
+});
+
+it('abandons an open that finishes after the browser has already gone back', async () => {
+  const held = deferred();
+  const events = recordingSessionEvents();
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => {
+    await held.promise;
+    return { forum_id: forumId, session_id: sessionId };
+  });
+  render(
+    <App client={storedPlanningClient({ openSession })} connectSessionEvents={events.connect} />,
+  );
+  await openPlanningFromTheLobby();
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Opening session'));
+
+  goBackTo('/');
+  held.settle();
+
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('Entrance'));
+  expect(window.location.pathname).toBe('/');
+  expect(events.connections).toHaveLength(0);
+});
+
+it('lets a second navigation supersede an open that is still in flight', async () => {
+  const held = deferred();
+  const events = recordingSessionEvents();
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => {
+    if (sessionId === 'planning') await held.promise;
+    return { forum_id: forumId, session_id: sessionId };
+  });
+  render(
+    <App client={storedPlanningClient({ openSession })} connectSessionEvents={events.connect} />,
+  );
+  await openPlanningFromTheLobby();
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Opening session'));
+
+  // Back to an earlier session while the first open is still waiting.
+  goBackTo('/s/entrance/welcome/');
+  held.settle();
+
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('Entrance'));
+  expect(openSession).toHaveBeenCalledWith('entrance', 'welcome');
+  expect(events.connections).toEqual([expect.objectContaining({ key: 'entrance/welcome' })]);
+  expect(window.location.pathname).toBe('/s/entrance/welcome/');
+});
+
+it('leaves the successor stream attached when a superseded open finishes late', async () => {
+  const held = deferred();
+  const events = recordingSessionEvents();
+  let bootstraps = 0;
+  const getBootstrap = vi.fn(async () => {
+    bootstraps += 1;
+    // The first open attaches its stream and then stalls refreshing Recent.
+    if (bootstraps === 2) await held.promise;
+    return bootstrapFixture;
+  });
+  render(
+    <App client={storedPlanningClient({ getBootstrap })} connectSessionEvents={events.connect} />,
+  );
+  await openPlanningFromTheLobby();
+  await waitFor(() => expect(events.connections).toHaveLength(1));
+
+  goBackTo('/s/entrance/welcome/');
+  await waitFor(() => expect(events.connections).toHaveLength(2));
+  held.settle();
+
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('Entrance'));
+  expect(events.connections[0].close).toHaveBeenCalled();
+  expect(events.connections[1].close).not.toHaveBeenCalled();
+});
+
+it('reports a failed create on the New session screen and keeps the typed name', async () => {
+  const user = userEvent.setup();
+  const client = fixtureClient({
+    listSessions: async () => [],
+    createSession: async () => { throw new Error('The workspace is read-only.'); },
+  });
+  render(<App client={client} connectSessionEvents={inertSessionEvents} />);
+
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }));
+  await user.type(screen.getByRole('textbox', { name: 'Session name' }), 'Architecture review');
+  await user.click(screen.getByRole('button', { name: 'Start session' }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('The workspace is read-only.');
+  expect(screen.getByRole('textbox', { name: 'Session name' })).toHaveValue('Architecture review');
+  expect(screen.getByRole('button', { name: 'Start session' })).toBeEnabled();
+});
+
+it('reports a failed open on the sessions list without discarding it', async () => {
+  const client = storedPlanningClient({
+    openSession: async () => { throw new Error('Planning is already open elsewhere.'); },
+  });
+  render(<App client={client} connectSessionEvents={inertSessionEvents} />);
+  await openPlanningFromTheLobby();
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('already open elsewhere');
+  expect(sessionRow(/^Planning/)).toBeEnabled();
+  expect(window.location.pathname).toBe('/');
 });
 
 it('shows a clear incompatible-response state instead of a blank screen', async () => {

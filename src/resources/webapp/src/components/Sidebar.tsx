@@ -1,11 +1,12 @@
 import type { Dispatch } from 'react';
 
-import type { AppAction, AppState, MainView } from '../state/view';
+import { sessionOperationState, type AppAction, type AppState, type MainView } from '../state/view';
 import { CharacterIcon, ForumsIcon, PersonasIcon } from './Icons';
 
 interface SidebarProps {
   state: AppState;
   dispatch: Dispatch<AppAction>;
+  onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
 }
 
 const navigation = [
@@ -24,8 +25,11 @@ const navigation = [
   },
 ];
 
-export function Sidebar({ state, dispatch }: SidebarProps) {
+export function Sidebar({ state, dispatch, onOpenSession }: SidebarProps) {
   const forums = new Map(state.bootstrap?.forums.map((forum) => [forum.id, forum]));
+  // The server returns Recent newest first across every forum.
+  const recents = state.bootstrap?.recent_sessions;
+  const { pending: sessionPending } = sessionOperationState(state);
 
   return (
     <aside className="cha-sidebar" aria-label="Sidebar">
@@ -34,7 +38,7 @@ export function Sidebar({ state, dispatch }: SidebarProps) {
         {navigation.map(({ action, views, label, icon: NavigationIcon }) => (
           <button
             className={`cha-side-action ${views.includes(state.mainView) ? 'is-current' : ''}`}
-            disabled={state.bootstrapStatus !== 'ready'}
+            disabled={state.bootstrapStatus !== 'ready' || sessionPending}
             key={action}
             onClick={() => dispatch({ type: action })}
             type="button"
@@ -46,10 +50,8 @@ export function Sidebar({ state, dispatch }: SidebarProps) {
       </nav>
       <div className="cha-section-label">Recent</div>
       <div className="cha-recents" aria-label="Recent sessions">
-        {state.bootstrap?.recent_sessions.length === 0 && (
-          <p className="cha-empty-list">No recent sessions</p>
-        )}
-        {state.bootstrap?.recent_sessions.map((session) => {
+        {recents?.length === 0 && <p className="cha-empty-list">No recent sessions</p>}
+        {recents?.map((session) => {
           const current = state.activeConversation?.forumId === session.forum_id
             && state.activeConversation.sessionId === session.session_id;
           const content = (
@@ -60,20 +62,17 @@ export function Sidebar({ state, dispatch }: SidebarProps) {
               </span>
             </>
           );
-          return current ? (
+          return (
             <button
-              aria-current="page"
-              className="cha-recent-row is-current"
+              aria-current={current ? 'page' : undefined}
+              className={`cha-recent-row ${current ? 'is-current' : ''}`}
+              disabled={sessionPending}
               key={`${session.forum_id}/${session.session_id}`}
-              onClick={() => dispatch({ type: 'show-chat' })}
+              onClick={() => void onOpenSession(session.forum_id, session.session_id)}
               type="button"
             >
               {content}
             </button>
-          ) : (
-            <div className="cha-recent-row" key={`${session.forum_id}/${session.session_id}`}>
-              {content}
-            </div>
           );
         })}
       </div>

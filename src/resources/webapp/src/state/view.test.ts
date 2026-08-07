@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { bootstrapFixture } from '../test/fixtures';
+import { bootstrapFixture, snapshotFixture } from '../test/fixtures';
 import { appReducer, initialAppState, type AppAction, type AppState } from './view';
 
 function readyState(): AppState {
@@ -45,16 +45,46 @@ describe('application navigation reducer', () => {
 
   it('changes active conversation and authoritative default only on their actions', () => {
     let state = readyState();
-    state = appReducer(state, {
-      type: 'activate-conversation',
-      forumId: 'lobby',
-      sessionId: 'planning',
-    });
+    const lobbySnapshot = {
+      ...snapshotFixture,
+      forum: bootstrapFixture.forums[1],
+      session_id: 'planning',
+      session_label: 'Planning',
+      characters: [bootstrapFixture.characters[1]],
+      default_character_id: 'guide',
+    };
+    state = appReducer(state, { type: 'conversation-opened', snapshot: lobbySnapshot });
     expect(state.activeConversation).toEqual({ forumId: 'lobby', sessionId: 'planning' });
     expect(state.mainView).toBe('chat');
 
     state = appReducer(state, { type: 'set-default-character', characterId: 'guide' });
     expect(state.currentDefaultCharacterId).toBe('guide');
     expect(state.activeConversation).toEqual({ forumId: 'lobby', sessionId: 'planning' });
+  });
+
+  it('refreshes Recent without resetting current navigation and returns to startup defaults', () => {
+    let state = readyState();
+    state = appReducer(state, { type: 'select-persona', personaId: 'reader' });
+    state = appReducer(state, { type: 'select-forum', forumId: 'lobby' });
+    const refreshed = structuredClone(bootstrapFixture);
+    refreshed.recent_sessions = [
+      {
+        forum_id: 'lobby',
+        session_id: 'created',
+        session_label: 'Created',
+        updated_at: 3,
+      },
+      ...refreshed.recent_sessions,
+    ];
+
+    state = appReducer(state, { type: 'bootstrap-refreshed', bootstrap: refreshed });
+    expect(state.currentPersonaId).toBe('reader');
+    expect(state.currentForumId).toBe('lobby');
+    expect(state.bootstrap?.recent_sessions[0].session_id).toBe('created');
+
+    state = appReducer(state, { type: 'show-initial-conversation' });
+    expect(state.activeConversation).toEqual({ forumId: 'entrance', sessionId: 'welcome' });
+    expect(state.currentForumId).toBe('entrance');
+    expect(state.mainView).toBe('chat');
   });
 });

@@ -1,4 +1,4 @@
-import type { Bootstrap } from '../api/client';
+import type { Bootstrap, SessionSnapshot } from '../api/client';
 
 export type MainView =
   | 'chat'
@@ -27,6 +27,8 @@ export interface AppState {
   activeConversation: ActiveConversation | null;
   inspectedCharacterId: string | null;
   currentDefaultCharacterId: string | null;
+  sessionOperation: 'idle' | 'pending' | 'failed';
+  sessionOperationMessage: string | null;
 }
 
 export const initialAppState: AppState = {
@@ -40,11 +42,14 @@ export const initialAppState: AppState = {
   activeConversation: null,
   inspectedCharacterId: null,
   currentDefaultCharacterId: null,
+  sessionOperation: 'idle',
+  sessionOperationMessage: null,
 };
 
 export type AppAction =
   | { type: 'bootstrap-loaded'; bootstrap: Bootstrap }
   | { type: 'bootstrap-failed'; message: string; incompatible: boolean }
+  | { type: 'bootstrap-refreshed'; bootstrap: Bootstrap }
   | { type: 'toggle-sidebar' }
   | { type: 'show-personas' }
   | { type: 'select-persona'; personaId: string }
@@ -52,45 +57,68 @@ export type AppAction =
   | { type: 'inspect-character'; characterId: string }
   | { type: 'show-forums' }
   | { type: 'select-forum'; forumId: string }
+  | { type: 'show-sessions' }
   | { type: 'show-new-session' }
   | { type: 'show-chat' }
-  | { type: 'activate-conversation'; forumId: string; sessionId: string }
+  | { type: 'session-operation-started'; message: string }
+  | { type: 'session-operation-failed'; message: string }
+  | { type: 'conversation-opened'; snapshot: SessionSnapshot }
+  | { type: 'session-snapshot'; snapshot: SessionSnapshot }
+  | { type: 'show-initial-conversation' }
   | { type: 'set-default-character'; characterId: string };
+
+function idleSessionOperation() {
+  return { sessionOperation: 'idle' as const, sessionOperationMessage: null };
+}
+
+// The startup conversation and Return to Welcome land on the same place: the
+// initial session named by bootstrap, in the forum that owns it.
+function showInitialConversation(state: AppState, bootstrap: Bootstrap): AppState {
+  const initialForum = bootstrap.forums.find(({ id }) => id === bootstrap.initial_forum_id);
+  return {
+    ...state,
+    mainView: 'chat',
+    currentForumId: bootstrap.initial_forum_id,
+    activeConversation: {
+      forumId: bootstrap.initial_forum_id,
+      sessionId: bootstrap.initial_session_id,
+    },
+    currentDefaultCharacterId: initialForum?.default_character_id ?? null,
+    ...idleSessionOperation(),
+  };
+}
 
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
-    case 'bootstrap-loaded': {
-      const initialForum = action.bootstrap.forums.find(
-        ({ id }) => id === action.bootstrap.initial_forum_id,
-      );
-      return {
+    case 'bootstrap-loaded':
+      return showInitialConversation({
         ...state,
         bootstrapStatus: 'ready',
         bootstrap: action.bootstrap,
         bootstrapMessage: null,
         currentPersonaId: action.bootstrap.initial_persona_id,
-        currentForumId: action.bootstrap.initial_forum_id,
-        activeConversation: {
-          forumId: action.bootstrap.initial_forum_id,
-          sessionId: action.bootstrap.initial_session_id,
-        },
-        currentDefaultCharacterId: initialForum?.default_character_id ?? null,
-      };
-    }
+      }, action.bootstrap);
     case 'bootstrap-failed':
       return {
         ...state,
         bootstrapStatus: action.incompatible ? 'incompatible' : 'failed',
         bootstrapMessage: action.message,
       };
+    case 'bootstrap-refreshed':
+      return { ...state, bootstrap: action.bootstrap };
     case 'toggle-sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'show-personas':
-      return { ...state, mainView: 'personas' };
+      return { ...state, mainView: 'personas', ...idleSessionOperation() };
     case 'select-persona':
       return { ...state, currentPersonaId: action.personaId };
     case 'show-characters':
-      return { ...state, mainView: 'characters', inspectedCharacterId: null };
+      return {
+        ...state,
+        mainView: 'characters',
+        inspectedCharacterId: null,
+        ...idleSessionOperation(),
+      };
     case 'inspect-character':
       return {
         ...state,
@@ -98,23 +126,70 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         inspectedCharacterId: action.characterId,
       };
     case 'show-forums':
-      return { ...state, mainView: 'forums' };
+      return { ...state, mainView: 'forums', ...idleSessionOperation() };
     case 'select-forum':
-      return { ...state, mainView: 'sessions', currentForumId: action.forumId };
+      return {
+        ...state,
+        mainView: 'sessions',
+        currentForumId: action.forumId,
+        ...idleSessionOperation(),
+      };
+    case 'show-sessions':
+      return { ...state, mainView: 'sessions', ...idleSessionOperation() };
     case 'show-new-session':
-      return { ...state, mainView: 'new-session' };
+      return { ...state, mainView: 'new-session', ...idleSessionOperation() };
     case 'show-chat':
-      return { ...state, mainView: 'chat' };
-    case 'activate-conversation':
+      return { ...state, mainView: 'chat', ...idleSessionOperation() };
+    case 'session-operation-started':
+      return {
+        ...state,
+        sessionOperation: 'pending',
+        sessionOperationMessage: action.message,
+      };
+    case 'session-operation-failed':
+      return {
+        ...state,
+        sessionOperation: 'failed',
+        sessionOperationMessage: action.message,
+      };
+    case 'conversation-opened':
       return {
         ...state,
         mainView: 'chat',
-        currentForumId: action.forumId,
-        activeConversation: { forumId: action.forumId, sessionId: action.sessionId },
+        currentForumId: action.snapshot.forum.id,
+        activeConversation: {
+          forumId: action.snapshot.forum.id,
+          sessionId: action.snapshot.session_id,
+        },
+        currentDefaultCharacterId: action.snapshot.default_character_id,
+        ...idleSessionOperation(),
       };
+    case 'session-snapshot':
+      if (state.activeConversation?.forumId !== action.snapshot.forum.id
+          || state.activeConversation.sessionId !== action.snapshot.session_id) {
+        return state;
+      }
+      return {
+        ...state,
+        currentDefaultCharacterId: action.snapshot.default_character_id,
+      };
+    case 'show-initial-conversation':
+      return state.bootstrap ? showInitialConversation(state, state.bootstrap) : state;
     case 'set-default-character':
       return { ...state, currentDefaultCharacterId: action.characterId };
   }
+}
+
+// Pending disables the actions that would start a second operation; a failure
+// carries the message the responsible view reports.
+export function sessionOperationState(state: AppState): {
+  pending: boolean;
+  failure: string | null;
+} {
+  return {
+    pending: state.sessionOperation === 'pending',
+    failure: state.sessionOperation === 'failed' ? state.sessionOperationMessage : null,
+  };
 }
 
 export function navigationTitle(state: AppState): string | null {

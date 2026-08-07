@@ -122,6 +122,7 @@ input:disabled {
 .cha-side-action:hover,
 .cha-side-action.is-current,
 .cha-list-action:hover,
+.cha-list-action.is-current,
 .cha-character-row:hover,
 .cha-icon-action:hover:not(:disabled) {
   color: var(--accent-foreground);
@@ -240,6 +241,10 @@ button.cha-recent-row:hover,
   margin: 1.5rem auto;
   padding: 0 1.2rem;
   color: var(--muted-foreground);
+}
+
+.cha-state-message p {
+  margin-top: 0;
 }
 
 .cha-bootstrap-state h2 {
