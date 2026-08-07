@@ -7,12 +7,13 @@ import {
   type UIEvent,
 } from 'react';
 
-import type {
-  ChaClient,
-  CharacterDetail,
-  CommandResult,
-  SessionListing,
-  SessionSnapshot,
+import {
+  publicErrorMessage,
+  type ChaClient,
+  type CharacterDetail,
+  type CommandResult,
+  type SessionListing,
+  type SessionSnapshot,
 } from '../api/client';
 import { sessionOperationState, type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
@@ -45,7 +46,7 @@ export interface ChatActions {
 type ChatScreenProps = DiscoveryScreenProps & ChatActions;
 
 function actionMessage(failure: unknown): string {
-  return failure instanceof Error ? failure.message : 'The action could not be completed.';
+  return publicErrorMessage(failure, 'The action could not be completed. Try again.');
 }
 
 // How close to the end still counts as following the conversation. A few pixels
@@ -356,6 +357,7 @@ export function CharacterDetailScreen({
 }: CharacterDetailScreenProps) {
   const [detail, setDetail] = useState<CharacterDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [requestVersion, setRequestVersion] = useState(0);
   const characterId = state.inspectedCharacterId;
 
   useEffect(() => {
@@ -369,14 +371,14 @@ export function CharacterDetailScreen({
       },
       (failure: unknown) => {
         if (current) {
-          setError(failure instanceof Error ? failure.message : 'Character detail could not be loaded.');
+          setError(publicErrorMessage(failure, 'Character detail could not be loaded.'));
         }
       },
     );
     return () => {
       current = false;
     };
-  }, [characterId, client]);
+  }, [characterId, client, requestVersion]);
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Character detail navigation">
@@ -392,7 +394,18 @@ export function CharacterDetailScreen({
       {characterId && !detail && !error && (
         <p className="cha-state-message" role="status">Loading character…</p>
       )}
-      {error && <p className="cha-state-message cha-error-message" role="alert">{error}</p>}
+      {error && (
+        <div className="cha-state-message cha-error-message" role="alert">
+          <p>{error}</p>
+          <button
+            className="cha-button cha-button-ghost"
+            onClick={() => setRequestVersion((version) => version + 1)}
+            type="button"
+          >
+            Try again
+          </button>
+        </div>
+      )}
       {detail && <Markdown source={detail.character_markdown} />}
     </section>
   );
@@ -518,7 +531,7 @@ export function SessionsScreen({
       },
       (failure: unknown) => {
         if (current) {
-          setError(failure instanceof Error ? failure.message : 'Sessions could not be loaded.');
+          setError(publicErrorMessage(failure, 'Sessions could not be loaded.'));
         }
       },
     );
@@ -555,6 +568,13 @@ export function SessionsScreen({
             Try again
           </button>
         </div>
+      )}
+      {forumId && sessions?.length === 0 && (
+        <p className="cha-state-message">
+          {canCreateSessions
+            ? 'No sessions in this forum yet. Create the first one below.'
+            : 'This forum has no sessions.'}
+        </p>
       )}
       {forumId && sessions && (
         <div className="cha-list">

@@ -65,6 +65,7 @@ export const initialAppState: AppState = {
 };
 
 export type AppAction =
+  | { type: 'bootstrap-started' }
   | { type: 'bootstrap-loaded'; bootstrap: Bootstrap }
   | { type: 'bootstrap-failed'; message: string; incompatible: boolean }
   | { type: 'bootstrap-refreshed'; bootstrap: Bootstrap }
@@ -147,6 +148,12 @@ function appendSessionEvent(
 
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
+    case 'bootstrap-started':
+      return {
+        ...state,
+        bootstrapStatus: 'loading',
+        bootstrapMessage: null,
+      };
     case 'bootstrap-loaded':
       return showInitialConversation({
         ...state,

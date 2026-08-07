@@ -7,9 +7,14 @@ import { fileURLToPath } from 'node:url';
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repository = resolve(project, '../../..');
-const executable = resolve(repository, 'build/ninja/chaweb');
 const temporary = await mkdtemp(resolve(tmpdir(), 'cha-webapp-e2e-'));
-const application = resolve(temporary, 'application');
+const packagedApplication = process.env.CHA_E2E_APPLICATION_ROOT
+  ? resolve(process.env.CHA_E2E_APPLICATION_ROOT)
+  : null;
+const application = packagedApplication ?? resolve(temporary, 'application');
+const executable = packagedApplication
+  ? resolve(application, 'chaweb')
+  : resolve(repository, 'build/ninja/chaweb');
 const workspace = resolve(temporary, 'workspace');
 const apiPort = Number(process.env.CHA_E2E_PORT ?? '8080');
 const modelPort = apiPort + 2;
@@ -103,14 +108,24 @@ https = false
 
 // The real bundle, not a placeholder: the served suite loads the application
 // from this server with no development server anywhere in the path.
-const bundle = resolve(project, 'dist');
-try {
-  await stat(resolve(bundle, 'index.html'));
-} catch {
-  throw new Error(`No browser build at ${bundle}; run 'npm run build' first.`);
+if (packagedApplication) {
+  for (const required of ['chaweb', 'app.toml', 'start-cha.sh', 'web/index.html']) {
+    try {
+      await stat(resolve(application, required));
+    } catch {
+      throw new Error(`Assembled application is missing ${required}: ${application}`);
+    }
+  }
+} else {
+  const bundle = resolve(project, 'dist');
+  try {
+    await stat(resolve(bundle, 'index.html'));
+  } catch {
+    throw new Error(`No browser build at ${bundle}; run 'npm run build' first.`);
+  }
+  await mkdir(application, { recursive: true });
+  await cp(bundle, resolve(application, 'web'), { recursive: true });
 }
-await mkdir(application, { recursive: true });
-await cp(bundle, resolve(application, 'web'), { recursive: true });
 
 const child = spawn(executable, [
   '--root', application,

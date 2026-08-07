@@ -123,6 +123,8 @@ make itest
 
 The browser source and its commands are documented in
 [src/resources/webapp/README.md](src/resources/webapp/README.md).
+The reproducible Linux customer package, setup, and upgrade procedure are
+documented in [docs/linux-webapp-package.md](docs/linux-webapp-package.md).
 
 See [src/README.md](src/README.md) for architecture and the per-layer READMEs
 for implementation contracts.

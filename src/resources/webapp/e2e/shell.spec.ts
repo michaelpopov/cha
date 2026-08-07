@@ -38,6 +38,7 @@ async function seedLiveSession(page: Page, label: string, prompt: string): Promi
 }
 
 test('creates a session and restores its conversation after a deep-link reload', async ({ page }) => {
+  const sessionName = `Reloaded planning ${Date.now()}`;
   await page.goto('/');
   await expect(page.getByText('cha', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Hide sidebar' })).toBeVisible();
@@ -45,7 +46,7 @@ test('creates a session and restores its conversation after a deep-link reload',
   await page.getByRole('button', { name: 'Forums' }).click();
   await page.getByRole('button', { name: /The Lobby\s+Guide/ }).click();
   await page.getByRole('button', { name: /New session\s+Enter a name to begin/ }).click();
-  await page.getByRole('textbox', { name: 'Session name' }).fill('Reloaded planning');
+  await page.getByRole('textbox', { name: 'Session name' }).fill(sessionName);
   await page.getByRole('button', { name: 'Start session' }).click();
   await expect(page).toHaveURL(/\/s\/lobby\/[^/]+\/$/);
   await expect(page.getByLabel('Current chat context')).toContainText('The Lobby');
@@ -53,7 +54,7 @@ test('creates a session and restores its conversation after a deep-link reload',
   await page.reload();
   await expect(page.getByText('cha', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Current chat context')).toContainText('The Lobby');
-  await expect(page.getByRole('button', { name: /Reloaded planning\s+The Lobby/ }))
+  await expect(page.getByRole('button', { name: new RegExp(`${sessionName}\\s+The Lobby`) }))
     .toHaveAttribute('aria-current', 'page');
 
   await page.goBack();
@@ -65,19 +66,19 @@ test('creates a session and restores its conversation after a deep-link reload',
   await expect(page.getByLabel('Current chat context')).toContainText('The Lobby');
 });
 
-test('forwards a JSON mutation with matching Host and Origin', async ({ page }) => {
+test('accepts a JSON mutation with matching Host and Origin', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {
     const response = await fetch('/api/v1/forums/lobby/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label: 'Proxy smoke test' }),
+      body: JSON.stringify({ label: `Proxy smoke test ${Date.now()}` }),
     });
     return { status: response.status, body: await response.json() };
   });
 
   expect(result.status).toBe(201);
-  expect(result.body).toMatchObject({ label: 'Proxy smoke test' });
+  expect(result.body).toMatchObject({ label: expect.stringMatching(/^Proxy smoke test /) });
 });
 
 test('renders discovery screens from the server workspace', async ({ page }) => {
@@ -97,6 +98,62 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
 
   await page.getByRole('button', { name: 'Forums' }).click();
   await expect(page.getByRole('button', { name: /The Lobby\s+Guide/ })).toBeVisible();
+});
+
+test('recovers when the application API is initially unavailable', async ({ page }) => {
+  await page.route('**/api/v1/bootstrap', (route) => route.abort(), { times: 1 });
+  await page.goto('/');
+
+  await expect(page.getByRole('heading', { name: 'Application API unavailable' })).toBeVisible();
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByLabel('Current chat context')).toContainText('Entrance');
+});
+
+test('keeps the pushed sidebar usable at desktop and iPhone widths', async ({ page }) => {
+  await page.goto('/');
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const app = page.locator('.cha-app');
+    await expect(app).toHaveAttribute('data-sidebar', 'open');
+    await expect(page.getByRole('button', { name: 'Hide sidebar' })).toBeInViewport();
+
+    await page.getByRole('button', { name: 'Hide sidebar' }).click();
+    await expect(app).toHaveAttribute('data-sidebar', 'closed');
+    await expect(page.getByRole('button', { name: 'Show sidebar' })).toBeInViewport();
+    await page.getByRole('button', { name: 'Show sidebar' }).click();
+  }
+});
+
+test('rapid Recent navigation settles on the last requested session without an error', async ({ page }) => {
+  await page.goto('/');
+  const labels = Array.from({ length: 4 }, (_, index) => `Rapid ${Date.now()} ${index + 1}`);
+  await page.evaluate(async (sessionLabels) => {
+    for (const label of sessionLabels) {
+      const response = await fetch('/api/v1/forums/lobby/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label }),
+      });
+      if (!response.ok) throw new Error(`create answered ${response.status}`);
+    }
+  }, labels);
+  await page.reload();
+
+  await page.route('**/api/v1/forums/lobby/sessions/*/open', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await route.continue();
+  });
+  // Session rows intentionally disable during an open, so Playwright performs
+  // these as back-to-back user actions rather than concurrent HTTP requests.
+  // The short idle grace still makes the sequence exercise capacity recovery.
+  for (const label of labels) {
+    await page.getByRole('button', { name: new RegExp(`${label}\\s+The Lobby`) }).click();
+  }
+
+  await expect(page.getByText(labels.at(-1) ?? '', { exact: true }).last()).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Choose target character' }))
+    .toBeEnabled({ timeout: 15_000 });
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
 test('submits as the selected persona and renders the streamed transcript', async ({ page }) => {

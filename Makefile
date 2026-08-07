@@ -1,4 +1,4 @@
-.PHONY: build build-web web-check web-stage web-e2e test itest run run-console run-web run-web-dev clean-san
+.PHONY: build build-web package-linux web-check web-stage web-e2e test itest run run-console run-web run-web-dev clean-san
 
 build:
 	cmake --preset ninja
@@ -7,6 +7,10 @@ build:
 build-web:
 	cmake --preset ninja
 	cmake --build --preset ninja --target chaweb_app
+
+package-linux:
+	@test -n "$(VERSION)" || (echo "usage: make package-linux VERSION=<version>" >&2; exit 2)
+	./scripts/package-linux.sh "$(VERSION)"
 
 web-check:
 	cd src/resources/webapp && npm run check
@@ -38,7 +42,7 @@ run-web: build-web web-stage
 # It stages only because chaweb refuses to start without a web/index.html; the
 # editable loop serves its shell from Vite and never reads the staged one.
 run-web-dev: build-web web-stage
-	./build/ninja/chaweb --root bin --workspace workspace --host 127.0.0.1 --port 8080
+	./build/ninja/chaweb --root bin --workspace workspace --host 127.0.0.1 --port 8888
 
 clean-san:
 	rm -rf build/console-asan-ubsan build/console-tsan

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ChaError, createChaClient, sessionEventsUrl } from './client';
+import {
+  ChaError,
+  ChaUnavailableError,
+  createChaClient,
+  sessionEventsUrl,
+} from './client';
 import { snapshotFixture } from '../test/fixtures';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -80,5 +85,15 @@ describe('CHA API client', () => {
   it('rejects a session snapshot whose shape the contract does not describe', async () => {
     const client = createChaClient(async () => jsonResponse({ session_id: 'one' }));
     await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);
+  });
+
+  it('turns a transport failure into a fixed message without leaking exception details', async () => {
+    const client = createChaClient(async () => {
+      throw new Error('open /private/customer/.env containing a-secret-key');
+    });
+
+    const request = client.getBootstrap();
+    await expect(request).rejects.toBeInstanceOf(ChaUnavailableError);
+    await expect(request).rejects.not.toThrow(/private|secret/i);
   });
 });

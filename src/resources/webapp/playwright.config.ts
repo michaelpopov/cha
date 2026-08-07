@@ -37,7 +37,10 @@ export default defineConfig({
     // begin opening live sessions through the proxy.
     {
       name: 'served',
-      testMatch: /served\.spec\.ts/,
+      // The production server runs the complete customer flow, not only the
+      // three header checks. CHA_E2E_APPLICATION_ROOT makes this the assembled
+      // package verification used by the Linux packaging command.
+      testMatch: /.*\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], baseURL: api },
     },
     // Through the development server, which proxies the API to chaweb.

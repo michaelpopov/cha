@@ -132,7 +132,7 @@ describe('live chat', () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn()
-      .mockRejectedValueOnce(new Error('The prompt was not accepted.'))
+      .mockRejectedValueOnce(new ChaError(400, 'bad_request', 'The prompt was not accepted.'))
       .mockResolvedValueOnce({ clear_input: true });
     render(
       <App

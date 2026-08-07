@@ -4,7 +4,7 @@ import { defineConfig } from 'vite';
 // The browser suite starts its own chaweb on a port it picks, and points this
 // at it. A developer running `npm run dev` by hand gets the port that
 // `make run-web-dev` uses; see README.md.
-const target = process.env.CHA_API_TARGET ?? 'http://127.0.0.1:8080';
+const target = process.env.CHA_API_TARGET ?? 'http://127.0.0.1:8888';
 
 export default defineConfig({
   base: '/',

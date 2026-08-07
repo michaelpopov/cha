@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ChaError, type Bootstrap } from '../api/client';
+import { ChaError, ChaUnavailableError, type Bootstrap } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import {
   bootstrapFixture,
@@ -168,6 +168,25 @@ it('loads character detail and renders the restricted Markdown presentation', as
   expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
 });
 
+it('retries a failed character-detail request without exposing implementation details', async () => {
+  const getCharacter = vi.fn()
+    .mockRejectedValueOnce(new ChaUnavailableError())
+    .mockResolvedValueOnce({
+      id: 'guide',
+      display_name: 'Guide',
+      description: 'A deterministic test character',
+      character_markdown: '# Guide dossier',
+    });
+  render(<App client={fixtureClient({ getCharacter })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
+  fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('application API is unavailable');
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
+  expect(getCharacter).toHaveBeenCalledTimes(2);
+});
+
 it('shows real forums and their plain-text character membership', async () => {
   render(<App client={fixtureClient()} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
@@ -177,6 +196,23 @@ it('shows real forums and their plain-text character membership', async () => {
   expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
   expect(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }))
     .toBeInTheDocument();
+});
+
+it('says a forum has no sessions rather than showing an empty panel', async () => {
+  render(<App client={fixtureClient({ listSessions: async () => [] })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+
+  expect(await screen.findByText(/No sessions in this forum yet/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'New sessionEnter a name to begin' }))
+    .toBeInTheDocument();
+
+  // The built-in forum cannot be given new sessions, so it must explain itself
+  // without pointing at an action that is not there.
+  fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'EntranceAssistant' }));
+  expect(await screen.findByText('This forum has no sessions.')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /New session/ })).not.toBeInTheDocument();
 });
 
 it('lists sessions with compact time metadata and opens a stored session once', async () => {
@@ -270,7 +306,9 @@ it('restores a deep link and offers Welcome when the requested session cannot op
   window.history.replaceState(null, '', '/s/lobby/planning/');
   const client = fixtureClient({
     openSession: async (forumId, sessionId) => {
-      if (sessionId === 'planning') throw new Error('Planning is already open elsewhere.');
+      if (sessionId === 'planning') {
+        throw new ChaError(409, 'session_busy', 'Planning is already open elsewhere.');
+      }
       return { forum_id: forumId, session_id: sessionId };
     },
   });
@@ -476,7 +514,9 @@ it('reports a failed create on the New session screen and keeps the typed name',
   const user = userEvent.setup();
   const client = fixtureClient({
     listSessions: async () => [],
-    createSession: async () => { throw new Error('The workspace is read-only.'); },
+    createSession: async () => {
+      throw new ChaError(500, 'internal_error', 'The workspace is read-only.');
+    },
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
 
@@ -493,7 +533,9 @@ it('reports a failed create on the New session screen and keeps the typed name',
 
 it('reports a failed open on the sessions list without discarding it', async () => {
   const client = storedPlanningClient({
-    openSession: async () => { throw new Error('Planning is already open elsewhere.'); },
+    openSession: async () => {
+      throw new ChaError(409, 'session_busy', 'Planning is already open elsewhere.');
+    },
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
   await openPlanningFromTheLobby();
@@ -554,6 +596,7 @@ it('names the open session in the transcript placeholder', async () => {
 });
 
 it('shows a clear incompatible-response state instead of a blank screen', async () => {
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const client = fixtureClient({
     getBootstrap: async () => ({ personas: [] } as unknown as Bootstrap),
   });
@@ -561,7 +604,29 @@ it('shows a clear incompatible-response state instead of a blank screen', async 
 
   expect(await screen.findByRole('heading', { name: 'Incompatible application response' }))
     .toBeInTheDocument();
-  expect(screen.getByRole('alert')).toHaveTextContent('initial_persona_id');
+  expect(screen.getByRole('alert')).toHaveTextContent('matching browser files');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('initial_persona_id');
+  expect(consoleError).toHaveBeenCalledWith(
+    'CHA bootstrap validation failed.',
+    expect.objectContaining({ message: 'Bootstrap is missing initial_persona_id.' }),
+  );
+  consoleError.mockRestore();
+});
+
+it('names an unavailable API, hides arbitrary exception details, and retries startup', async () => {
+  const getBootstrap = vi.fn()
+    .mockRejectedValueOnce(new Error('read /private/customer/.env: OPENAI_API_KEY=secret'))
+    .mockResolvedValueOnce(bootstrapFixture);
+  render(<App client={fixtureClient({ getBootstrap })} connectSessionEvents={inertSessionEvents} />);
+
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Application API unavailable');
+  expect(alert).not.toHaveTextContent('/private/customer');
+  expect(alert).not.toHaveTextContent('secret');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(await screen.findByLabelText('Current chat context')).toHaveTextContent('Entrance');
+  expect(getBootstrap).toHaveBeenCalledTimes(2);
 });
 
 it('contains the amended chat controls and no Settings entry point', async () => {

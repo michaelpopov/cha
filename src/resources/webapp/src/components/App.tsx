@@ -10,6 +10,7 @@ import {
 import {
   ChaError,
   chaClient,
+  publicErrorMessage,
   type Bootstrap,
   type ChaClient,
 } from '../api/client';
@@ -104,7 +105,7 @@ function Screen({
   }
 }
 
-function BootstrapState({ state }: { state: AppState }) {
+function BootstrapState({ state, onRetry }: { state: AppState; onRetry(): void }) {
   if (state.bootstrapStatus === 'loading') {
     return <p className="cha-bootstrap-state" role="status">Loading workspace…</p>;
   }
@@ -113,9 +114,12 @@ function BootstrapState({ state }: { state: AppState }) {
       <h2>
         {state.bootstrapStatus === 'incompatible'
           ? 'Incompatible application response'
-          : 'Workspace could not be loaded'}
+          : 'Application API unavailable'}
       </h2>
       <p>{state.bootstrapMessage}</p>
+      <button className="cha-button cha-button-primary" onClick={onRetry} type="button">
+        Retry
+      </button>
     </div>
   );
 }
@@ -224,6 +228,7 @@ export function App({
 }: AppProps) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [initialRouteReady, setInitialRouteReady] = useState(false);
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -257,12 +262,14 @@ export function App({
         try {
           dispatch({ type: 'bootstrap-loaded', bootstrap: validateBootstrap(response) });
         } catch (failure: unknown) {
+          // The screen stays deliberately generic: validation errors describe
+          // the response shape, not a recovery action. Keep that detail in the
+          // local developer console so a mismatched package remains diagnosable.
+          console.error('CHA bootstrap validation failed.', failure);
           dispatch({
             type: 'bootstrap-failed',
             incompatible: true,
-            message: failure instanceof Error
-              ? failure.message
-              : 'CHA returned an incompatible bootstrap response.',
+            message: 'CHA returned an incompatible response. Restart CHA with matching browser files.',
           });
         }
       },
@@ -271,14 +278,23 @@ export function App({
         dispatch({
           type: 'bootstrap-failed',
           incompatible: false,
-          message: failure instanceof Error ? failure.message : 'The request failed.',
+          message: publicErrorMessage(
+            failure,
+            'CHA’s application API is unavailable. Check that CHA is running and try again.',
+          ),
         });
       },
     );
     return () => {
       current = false;
     };
-  }, [client]);
+  }, [bootstrapAttempt, client]);
+
+  const retryBootstrap = useCallback(() => {
+    request.current = null;
+    dispatch({ type: 'bootstrap-started' });
+    setBootstrapAttempt((attempt) => attempt + 1);
+  }, []);
 
   const refreshBootstrap = useCallback(async () => {
     try {
@@ -585,9 +601,7 @@ export function App({
           retryable,
           message: limited
             ? 'Another session has not closed yet. Try again.'
-            : failure instanceof Error
-              ? failure.message
-              : 'The requested session could not be opened.',
+            : publicErrorMessage(failure, 'The requested session could not be opened.'),
         });
       }
       return false;
@@ -625,9 +639,7 @@ export function App({
           retryable,
           message: limited
             ? 'Another session has not closed yet. Try again.'
-            : failure instanceof Error
-              ? failure.message
-              : 'The session could not be created.',
+            : publicErrorMessage(failure, 'The session could not be created.'),
         });
       }
       return false;
@@ -795,7 +807,7 @@ export function App({
           <div className="cha-topbar-title">{title && <h1>{title}</h1>}</div>
           <div className="cha-empty-action" aria-hidden="true" />
         </header>
-        {!ready && <BootstrapState state={state} />}
+        {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
         {ready && wholeApplication && (
           <SessionOperationState
             onRetry={retrySessionOpen}

@@ -23,6 +23,31 @@ export class ChaError extends Error {
   }
 }
 
+export class ChaUnavailableError extends Error {
+  constructor() {
+    super('CHA’s application API is unavailable. Check that CHA is running and try again.');
+    this.name = 'ChaUnavailableError';
+  }
+}
+
+export class ChaProtocolError extends TypeError {
+  constructor() {
+    super('CHA returned an incompatible response. Restart CHA with matching browser files.');
+    this.name = 'ChaProtocolError';
+  }
+}
+
+// Only server-authored public API messages and fixed browser messages reach the
+// screen. Arbitrary exception text can contain implementation details and is
+// kept out of the customer interface.
+export function publicErrorMessage(failure: unknown, fallback: string): string {
+  return failure instanceof ChaError
+      || failure instanceof ChaUnavailableError
+      || failure instanceof ChaProtocolError
+    ? failure.message
+    : fallback;
+}
+
 export interface ChaClient {
   getBootstrap(): Promise<Bootstrap>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
@@ -77,20 +102,25 @@ async function requestJson<T>(
   url: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const response = await fetcher(url, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      ...init.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetcher(url, {
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        ...init.headers,
+      },
+    });
+  } catch {
+    throw new ChaUnavailableError();
+  }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
     if (!response.ok) throw errorFrom(response.status, undefined);
-    throw new Error(`CHA returned invalid JSON for ${url}.`);
+    throw new ChaProtocolError();
   }
 
   if (!response.ok) throw errorFrom(response.status, payload);
@@ -151,7 +181,7 @@ export function createChaClient(
         sessionApiUrl(forumId, sessionId, 'session'),
       );
       if (!isSessionSnapshot(snapshot)) {
-        throw new TypeError('CHA returned an incompatible session snapshot.');
+        throw new ChaProtocolError();
       }
       return snapshot;
     },

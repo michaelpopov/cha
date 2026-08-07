@@ -12,6 +12,9 @@
 /src/resources/webapp/test-results/
 /src/resources/webapp/playwright-report/
 
+# Reproducible customer application directories
+/packages/
+
 # In-source CMake artifacts
 /CMakeFiles/
 CMakeCache.txt
