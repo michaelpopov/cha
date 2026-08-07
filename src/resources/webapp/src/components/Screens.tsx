@@ -4,6 +4,7 @@ import {
   useState,
   type Dispatch,
   type FormEvent,
+  type ReactNode,
   type UIEvent,
 } from 'react';
 
@@ -31,6 +32,13 @@ import {
 interface DiscoveryScreenProps {
   state: AppState;
   dispatch: Dispatch<AppAction>;
+}
+
+// Opening a session can be started from anywhere — a Recent entry, a session
+// row, a new name — so every navigation screen shows the outcome in place
+// rather than replacing itself. The node is built once by the router above.
+interface NavigationScreenProps extends DiscoveryScreenProps {
+  sessionReport: ReactNode;
 }
 
 // The chat controls App owns, declared once so the screen and the router that
@@ -294,9 +302,10 @@ export function ChatScreen({
   );
 }
 
-export function PersonasScreen({ state, dispatch }: DiscoveryScreenProps) {
+export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Personas navigation">
+      {sessionReport}
       <p className="cha-screen-instruction">Select a persona</p>
       <div className="cha-persona-list" role="radiogroup" aria-label="Persona">
         {state.bootstrap?.personas.map((persona) => (
@@ -321,9 +330,10 @@ export function PersonasScreen({ state, dispatch }: DiscoveryScreenProps) {
   );
 }
 
-export function CharactersScreen({ state, dispatch }: DiscoveryScreenProps) {
+export function CharactersScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Characters navigation">
+      {sessionReport}
       <div className="cha-character-list">
         {state.bootstrap?.characters.map((character) => (
           <button
@@ -346,7 +356,7 @@ export function CharactersScreen({ state, dispatch }: DiscoveryScreenProps) {
   );
 }
 
-interface CharacterDetailScreenProps extends DiscoveryScreenProps {
+interface CharacterDetailScreenProps extends NavigationScreenProps {
   client: ChaClient;
 }
 
@@ -354,6 +364,7 @@ export function CharacterDetailScreen({
   state,
   dispatch,
   client,
+  sessionReport,
 }: CharacterDetailScreenProps) {
   const [detail, setDetail] = useState<CharacterDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -390,6 +401,7 @@ export function CharacterDetailScreen({
         <ChevronLeftIcon />
         <span>Characters</span>
       </button>
+      {sessionReport}
       {!characterId && <p className="cha-state-message">No character is selected.</p>}
       {characterId && !detail && !error && (
         <p className="cha-state-message" role="status">Loading character…</p>
@@ -411,9 +423,10 @@ export function CharacterDetailScreen({
   );
 }
 
-export function ForumsScreen({ state, dispatch }: DiscoveryScreenProps) {
+export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Forums navigation">
+      {sessionReport}
       <p className="cha-screen-instruction">Choose a forum</p>
       <div className="cha-list">
         {state.bootstrap?.forums.map((forum) => (
@@ -438,28 +451,24 @@ export function ForumsScreen({ state, dispatch }: DiscoveryScreenProps) {
   );
 }
 
-interface SessionsScreenProps extends DiscoveryScreenProps {
+interface SessionsScreenProps extends NavigationScreenProps {
   client: ChaClient;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
-  onRetrySession(): void;
-  onReturnToWelcome(): void;
 }
 
-// Opening or creating a session is reported by the screen that started it, so
-// the list stays on screen and a half-typed session name is not thrown away.
-function SessionOperationReport({
-  pending,
-  failure,
+// Opening or creating a session is reported by the screen the user is looking
+// at, so the list stays on screen and a half-typed session name is not thrown
+// away. Chat is the exception: there the operation is the whole screen.
+export function SessionOperationReport({
   state,
   onRetrySession,
   onReturnToWelcome,
 }: {
-  pending: boolean;
-  failure: string | null;
   state: AppState;
   onRetrySession(): void;
   onReturnToWelcome(): void;
 }) {
+  const { pending, failure } = sessionOperationState(state);
   if (pending) {
     return (
       <p className="cha-state-message" role="status">
@@ -506,14 +515,12 @@ export function SessionsScreen({
   dispatch,
   client,
   onOpenSession,
-  onRetrySession,
-  onReturnToWelcome,
+  sessionReport,
 }: SessionsScreenProps) {
   const [sessions, setSessions] = useState<SessionListing[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [requestVersion, setRequestVersion] = useState(0);
   const forumId = state.currentForumId;
-  const { pending: sessionPending, failure: sessionFailure } = sessionOperationState(state);
   // The forum bootstrap starts in is the built-in one, whose single session the
   // server synthesizes; it stores no forum of its own, so a create there fails
   // as not-found. Offering the action would only produce that error.
@@ -547,13 +554,7 @@ export function SessionsScreen({
         <span>All forums</span>
       </button>
       {!forumId && <p className="cha-state-message">No forum is selected.</p>}
-      <SessionOperationReport
-        failure={sessionFailure}
-        onRetrySession={onRetrySession}
-        onReturnToWelcome={onReturnToWelcome}
-        pending={sessionPending}
-        state={state}
-      />
+      {sessionReport}
       {forumId && !sessions && !error && (
         <p className="cha-state-message" role="status">Loading sessions…</p>
       )}
@@ -619,18 +620,15 @@ export function SessionsScreen({
   );
 }
 
-interface NewSessionScreenProps extends DiscoveryScreenProps {
+interface NewSessionScreenProps extends NavigationScreenProps {
   onCreateSession(forumId: string, label: string): Promise<boolean>;
-  onRetrySession(): void;
-  onReturnToWelcome(): void;
 }
 
 export function NewSessionScreen({
   state,
   dispatch,
   onCreateSession,
-  onRetrySession,
-  onReturnToWelcome,
+  sessionReport,
 }: NewSessionScreenProps) {
   const [name, setName] = useState('');
   const trimmedName = name.trim();
@@ -652,13 +650,7 @@ export function NewSessionScreen({
         <ChevronLeftIcon />
         <span>Sessions</span>
       </button>
-      <SessionOperationReport
-        failure={sessionFailure}
-        onRetrySession={onRetrySession}
-        onReturnToWelcome={onReturnToWelcome}
-        pending={sessionPending}
-        state={state}
-      />
+      {sessionReport}
       <form className="cha-new-session" onSubmit={submit}>
         <label htmlFor="cha-session-name">Session name</label>
         <input

@@ -545,6 +545,28 @@ it('reports a failed open on the sessions list without discarding it', async () 
   expect(window.location.pathname).toBe('/');
 });
 
+// Recent is reachable from every screen, so the screen the user happens to be
+// looking at is where the failure has to appear. Reporting it only on the two
+// screens that start an open themselves loses it silently.
+it('reports a Recent open failure on whichever navigation screen is showing', async () => {
+  const client = fixtureClient({
+    openSession: async (forumId, sessionId) => {
+      if (sessionId === 'planning') throw new ChaError(409, 'session_busy', 'Planning is busy.');
+      return { forum_id: forumId, session_id: sessionId };
+    },
+  });
+  render(<App client={client} connectSessionEvents={inertSessionEvents} />);
+  await screen.findByLabelText('Current chat context');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
+  const recent = within(screen.getByLabelText('Recent sessions'));
+  fireEvent.click(recent.getByRole('button', { name: /^Planning/ }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Planning is busy.');
+  expect(screen.getByLabelText('Personas navigation')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
+});
+
 it('offers New session for a stored forum but not for the built-in one', async () => {
   render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
 

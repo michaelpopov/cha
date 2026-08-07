@@ -188,6 +188,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'character-detail',
         inspectedCharacterId: action.characterId,
+        ...idleSessionOperation(),
       };
     case 'show-forums':
       return { ...state, mainView: 'forums', ...idleSessionOperation() };

@@ -24,7 +24,6 @@
 namespace {
 
 std::string browser_address(std::string host, int port) {
-    if (host == "0.0.0.0" || host == "::") host = "127.0.0.1";
     if (host.find(':') != std::string::npos) host = '[' + host + ']';
     return "http://" + host + ':' + std::to_string(port) + '/';
 }

@@ -22,6 +22,12 @@ import {
 import { validateBootstrap } from '../state/bootstrap';
 import { parseAppRoute, sessionRoute } from '../state/route';
 import {
+  isSessionLimit,
+  recoverSessionStream,
+  reconnectingMessage,
+  sessionProbe,
+} from '../state/sessionRecovery';
+import {
   appReducer,
   initialAppState,
   navigationTitle,
@@ -36,6 +42,7 @@ import {
   ForumsScreen,
   NewSessionScreen,
   PersonasScreen,
+  SessionOperationReport,
   SessionsScreen,
   type ChatActions,
 } from './Screens';
@@ -65,6 +72,17 @@ function Screen({
   onStopGeneration,
   onSubmitInput,
 }: ScreenProps) {
+  // A session can be opened from the sidebar while any navigation screen is
+  // showing, so each one carries the report rather than only the two screens
+  // that start an open themselves.
+  const sessionReport = (
+    <SessionOperationReport
+      onRetrySession={onRetrySession}
+      onReturnToWelcome={onReturnToWelcome}
+      state={state}
+    />
+  );
+
   switch (state.mainView) {
     case 'chat': return (
       <ChatScreen
@@ -77,19 +95,29 @@ function Screen({
         state={state}
       />
     );
-    case 'personas': return <PersonasScreen state={state} dispatch={dispatch} />;
-    case 'characters': return <CharactersScreen state={state} dispatch={dispatch} />;
-    case 'character-detail': return (
-      <CharacterDetailScreen state={state} dispatch={dispatch} client={client} />
+    case 'personas': return (
+      <PersonasScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
     );
-    case 'forums': return <ForumsScreen state={state} dispatch={dispatch} />;
+    case 'characters': return (
+      <CharactersScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
+    );
+    case 'character-detail': return (
+      <CharacterDetailScreen
+        client={client}
+        dispatch={dispatch}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
+    case 'forums': return (
+      <ForumsScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
+    );
     case 'sessions': return (
       <SessionsScreen
         client={client}
         dispatch={dispatch}
         onOpenSession={onOpenSession}
-        onRetrySession={onRetrySession}
-        onReturnToWelcome={onReturnToWelcome}
+        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -97,8 +125,7 @@ function Screen({
       <NewSessionScreen
         dispatch={dispatch}
         onCreateSession={onCreateSession}
-        onRetrySession={onRetrySession}
-        onReturnToWelcome={onReturnToWelcome}
+        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -188,24 +215,18 @@ interface AttachedStream {
   generation: number;
 }
 
-interface StreamRecovery {
-  key: string;
+// Marks a ladder as running, so the attach effect leaves the conversation
+// alone and a second failure cannot start a competing one.
+interface RecoveryRun {
   forumId: string;
   sessionId: string;
   generation: number;
-  nextDelayIndex: number;
-  everyProbeSucceeded: boolean;
-  working: boolean;
 }
 
 interface SessionTarget {
   forumId: string;
   sessionId: string;
   updateHistory: boolean;
-}
-
-function isSessionLimit(failure: unknown): failure is ChaError {
-  return failure instanceof ChaError && failure.code === 'session_limit_reached';
 }
 
 function isRetryableSessionOpen(failure: unknown): failure is ChaError {
@@ -215,10 +236,6 @@ function isRetryableSessionOpen(failure: unknown): failure is ChaError {
     || failure.code === 'session_stopping'
     || failure.code === 'session_open_timeout'
   );
-}
-
-function isSessionNotLive(failure: unknown): failure is ChaError {
-  return failure instanceof ChaError && failure.code === 'session_not_live';
 }
 
 export function App({
@@ -238,9 +255,13 @@ export function App({
   const retryTarget = useRef<SessionTarget | null>(null);
   const pendingMutations = useRef(new Set<string>());
   const connection = useRef<AttachedStream | null>(null);
-  const recovery = useRef<StreamRecovery | null>(null);
+  const recovery = useRef<RecoveryRun | null>(null);
   const retryTimerCancellation = useRef<(() => void) | null>(null);
   const liveGeneration = useRef(0);
+  // A stream that has already delivered a snapshot can fail at any later
+  // moment, and the handler that notices it was built before the ladder that
+  // will answer exists. This ref publishes the current starter to those
+  // closures; nothing else needs it.
   const recoveryStarter = useRef<(
     forumId: string,
     sessionId: string,
@@ -356,23 +377,32 @@ export function App({
     return liveGeneration.current;
   }, [cancelRetryTimer]);
 
+  // `onSettled` belongs to the ladder, which needs to know whether this stream
+  // reached its first snapshot. Without one, a failure simply starts recovery.
   const connectStream = useCallback((
     forumId: string,
     sessionId: string,
     generation: number,
     reconnecting: boolean,
+    onSettled?: (connected: boolean) => void,
   ) => {
-    if (liveGeneration.current !== generation) return false;
+    if (liveGeneration.current !== generation) {
+      onSettled?.(false);
+      return;
+    }
     const key = `${forumId}/${sessionId}`;
     let events: SessionEventConnection | null = null;
+    const failed = () => {
+      if (onSettled) onSettled(false);
+      else recoveryStarter.current(forumId, sessionId, generation);
+    };
     try {
       events = connectSessionEvents(forumId, sessionId, {
         onSnapshot: (snapshot) => {
           if (!events || connection.current?.events !== events) return;
-          recovery.current = null;
-          cancelRetryTimer();
           dispatch({ type: 'session-snapshot', snapshot });
           dispatch({ type: 'stream-state', status: 'connected' });
+          onSettled?.(true);
         },
         onAppend: (event) => {
           if (!events || connection.current?.events !== events) return;
@@ -381,133 +411,91 @@ export function App({
         onError: () => {
           if (!events || connection.current?.events !== events) return;
           detachStream(events);
-          recoveryStarter.current(forumId, sessionId, generation);
+          failed();
         },
       });
       connection.current = { key, events, generation };
       dispatch({
         type: 'stream-state',
         status: reconnecting ? 'reconnecting' : 'connecting',
-        message: reconnecting ? 'Reconnecting live updates…' : 'Connecting live updates…',
+        message: reconnecting ? reconnectingMessage : 'Connecting live updates…',
       });
-      return true;
     } catch {
       if (events) detachStream(events);
-      recoveryStarter.current(forumId, sessionId, generation);
-      return false;
+      failed();
     }
-  }, [cancelRetryTimer, connectSessionEvents, detachStream]);
+  }, [connectSessionEvents, detachStream]);
 
-  const finishRecovery = useCallback((current: StreamRecovery) => {
-    if (recovery.current !== current || liveGeneration.current !== current.generation) return;
-    recovery.current = null;
-    if (current.everyProbeSucceeded) {
-      dispatch({
-        type: 'stream-state',
-        status: 'other-window',
-        message: 'This session is open in another window',
-      });
-    } else {
-      dispatch({
-        type: 'stream-state',
-        status: 'retry',
-        message: 'Live updates could not be restored.',
-      });
-    }
-  }, []);
-
-  const runRecoveryAttempt = useCallback(async (current: StreamRecovery) => {
-    if (recovery.current !== current || liveGeneration.current !== current.generation) return;
-    if (current.nextDelayIndex >= retryDelays.length) {
-      finishRecovery(current);
-      return;
-    }
-
-    current.working = true;
-    const delay = retryDelays[current.nextDelayIndex];
-    current.nextDelayIndex += 1;
-    let readyToConnect = false;
-    let waitingForCapacity = false;
-
-    try {
-      const snapshot = await client.getSessionSnapshot(current.forumId, current.sessionId);
-      if (recovery.current !== current || liveGeneration.current !== current.generation) return;
-      dispatch({ type: 'session-snapshot', snapshot });
-      readyToConnect = true;
-    } catch (failure: unknown) {
-      current.everyProbeSucceeded = false;
-      if (isSessionNotLive(failure)) {
-        try {
-          await client.openSession(current.forumId, current.sessionId);
-          if (recovery.current !== current || liveGeneration.current !== current.generation) return;
-          const snapshot = await client.getSessionSnapshot(current.forumId, current.sessionId);
-          if (recovery.current !== current || liveGeneration.current !== current.generation) return;
-          dispatch({ type: 'session-snapshot', snapshot });
-          readyToConnect = true;
-        } catch (openFailure: unknown) {
-          waitingForCapacity = isSessionLimit(openFailure);
-        }
+  // One ladder rung's attach: resolves true when the new stream delivers its
+  // first snapshot, false when it fails first. A failure after that belongs to
+  // a conversation that was working, so it starts recovery afresh.
+  const attachStream = useCallback((
+    forumId: string,
+    sessionId: string,
+    generation: number,
+  ) => new Promise<boolean>((resolve) => {
+    let settled = false;
+    connectStream(forumId, sessionId, generation, true, (connected) => {
+      if (!settled) {
+        settled = true;
+        resolve(connected);
+      } else if (!connected) {
+        recoveryStarter.current(forumId, sessionId, generation);
       }
-    }
-
-    if (recovery.current !== current || liveGeneration.current !== current.generation) return;
-    dispatch({
-      type: 'stream-state',
-      status: 'reconnecting',
-      message: waitingForCapacity
-        ? 'Waiting for another session to close'
-        : 'Reconnecting live updates…',
     });
-    if (!await waitForRetry(delay, current.generation)) return;
-    if (recovery.current !== current || liveGeneration.current !== current.generation) return;
-    current.working = false;
+  }), [connectStream]);
 
-    if (readyToConnect) {
-      connectStream(current.forumId, current.sessionId, current.generation, true);
-    } else {
-      recoveryStarter.current(current.forumId, current.sessionId, current.generation);
-    }
-  }, [client, connectStream, finishRecovery, retryDelays, waitForRetry]);
-
-  const startRecovery = useCallback((
+  const beginRecovery = useCallback((
     forumId: string,
     sessionId: string,
     generation: number,
   ) => {
-    if (liveGeneration.current !== generation) return;
-    const key = `${forumId}/${sessionId}`;
-    let current = recovery.current;
-    if (!current || current.key !== key || current.generation !== generation) {
-      current = {
-        key,
+    // A ladder already running for this live session owns the retries; a
+    // stale generation belongs to a conversation the user has left.
+    if (liveGeneration.current !== generation || recovery.current) return;
+    const run: RecoveryRun = { forumId, sessionId, generation };
+    recovery.current = run;
+    const cancelled = () => recovery.current !== run
+      || liveGeneration.current !== generation;
+    dispatch({ type: 'stream-state', status: 'reconnecting', message: reconnectingMessage });
+
+    void recoverSessionStream(retryDelays, {
+      cancelled,
+      probe: sessionProbe({
+        client,
         forumId,
         sessionId,
-        generation,
-        nextDelayIndex: 0,
-        everyProbeSucceeded: true,
-        working: false,
-      };
-      recovery.current = current;
-      dispatch({
-        type: 'stream-state',
-        status: 'reconnecting',
-        message: 'Reconnecting live updates…',
-      });
-    }
-    if (current.working) return;
-    if (current.nextDelayIndex >= retryDelays.length) {
-      finishRecovery(current);
-      return;
-    }
-    void runRecoveryAttempt(current);
-  }, [finishRecovery, retryDelays.length, runRecoveryAttempt]);
+        cancelled,
+        onSnapshot: (snapshot) => dispatch({ type: 'session-snapshot', snapshot }),
+      }),
+      report: (message) => dispatch({ type: 'stream-state', status: 'reconnecting', message }),
+      wait: (milliseconds) => waitForRetry(milliseconds, generation),
+      attach: () => attachStream(forumId, sessionId, generation),
+    }).then((outcome) => {
+      if (cancelled()) return;
+      recovery.current = null;
+      if (outcome === 'other-window') {
+        dispatch({
+          type: 'stream-state',
+          status: 'other-window',
+          message: 'This session is open in another window',
+        });
+      } else if (outcome === 'retry') {
+        dispatch({
+          type: 'stream-state',
+          status: 'retry',
+          message: 'Live updates could not be restored.',
+        });
+      }
+    });
+  }, [attachStream, client, retryDelays, waitForRetry]);
 
   // A stream error is the only caller, and a stream cannot exist before the
   // effects of the commit that created it have run, so publishing the current
   // starter here is early enough and keeps the render itself free of writes.
   useEffect(() => {
-    recoveryStarter.current = startRecovery;
-  }, [startRecovery]);
+    recoveryStarter.current = beginRecovery;
+  }, [beginRecovery]);
 
   const openWithCapacityRetry = useCallback(async (
     epoch: number,
@@ -667,8 +655,8 @@ export function App({
     connection.current?.events.close();
     connection.current = null;
     recovery.current = null;
-    startRecovery(active.forumId, active.sessionId, liveGeneration.current);
-  }, [cancelRetryTimer, startRecovery, state.activeConversation]);
+    beginRecovery(active.forumId, active.sessionId, liveGeneration.current);
+  }, [beginRecovery, cancelRetryTimer, state.activeConversation]);
 
   const runMutation = useCallback(async <T,>(key: string, operation: () => Promise<T>) => {
     if (pendingMutations.current.has(key)) {
