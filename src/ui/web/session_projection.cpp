@@ -66,11 +66,13 @@ SessionSnapshot to_snapshot(
             .id = character.id,
             .display_name = character.name,
             .description = character.description,
+            .appearance = character.appearance,
         });
         snapshot.characters.push_back({
             .id = std::move(character.id),
             .display_name = std::move(character.name),
             .description = std::move(character.description),
+            .appearance = character.appearance,
         });
     }
     std::sort(snapshot.forum.members.begin(), snapshot.forum.members.end(),

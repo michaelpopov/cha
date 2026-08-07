@@ -66,7 +66,7 @@ void set_open_result(
 }
 
 CharacterSummary character_summary(const CharacterDefinitionMetadata& character) {
-    return {character.id, character.display_name, character.description};
+    return {character.id, character.display_name, character.description, character.appearance};
 }
 
 ForumSummary forum_summary(const Forum& forum, const WebDiscovery& discovery) {

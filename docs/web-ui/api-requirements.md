@@ -80,12 +80,43 @@ A character summary contains:
 {
   "id": "epictetus",
   "display_name": "Epictetus",
-  "description": "A demanding Stoic teacher of freedom and judgment"
+  "description": "A demanding Stoic teacher of freedom and judgment",
+  "appearance": {
+    "font": "serif",
+    "style": "italic",
+    "weight": "normal",
+    "size": "normal"
+  }
 }
 ```
 
 The Characters roster, forum membership, and live session snapshots reuse this
 summary.
+
+`appearance` says how the browser sets this character's words in a transcript,
+so a reader can tell one speaker from another without reading every name. It
+comes from the optional `[appearance]` table in the character's `character.toml`
+and is always present in the response, defaults included, so the browser never
+has to decide what an absent appearance means.
+
+| Field    | Values                     | Default  |
+| -------- | -------------------------- | -------- |
+| `font`   | `sans`, `serif`, `mono`    | `sans`   |
+| `style`  | `normal`, `italic`         | `normal` |
+| `weight` | `normal`, `bold`           | `normal` |
+| `size`   | `small`, `normal`, `large` | `normal` |
+
+Each field is a closed vocabulary rather than free CSS, for three reasons: the
+browser has to pair every choice with a dark-mode variant, its
+`font-src 'self'` policy admits no downloaded typeface, and a workspace file
+must not be able to reach into the page's styling. The server rejects an
+unknown field or value when the workspace loads, naming the words that would
+have worked. Appearance is definition-only: a forum's `character_defaults.toml`
+or a member override cannot set it, because it belongs to the character rather
+than to one forum's use of it.
+
+Only an agent's message body is set this way. Speaker names, the reader's own
+messages, and every control stay in the interface font.
 
 A forum summary contains:
 
@@ -98,7 +129,13 @@ A forum summary contains:
     {
       "id": "epictetus",
       "display_name": "Epictetus",
-      "description": "A demanding Stoic teacher of freedom and judgment"
+      "description": "A demanding Stoic teacher of freedom and judgment",
+      "appearance": {
+        "font": "serif",
+        "style": "italic",
+        "weight": "normal",
+        "size": "normal"
+      }
     }
   ]
 }

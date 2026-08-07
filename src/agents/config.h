@@ -26,6 +26,31 @@ enum class ReasoningFormat {
     reasoning,
 };
 
+// How one character's words are set on screen, so a reader can tell who is
+// speaking without reading the name above every reply. Deliberately a closed
+// vocabulary rather than free CSS: the browser has to pair each choice with a
+// dark-mode variant, and a workspace must not be able to reach into the page's
+// styling. Every field defaults to the interface's own settings, so a character
+// that says nothing about its appearance looks exactly as it does today.
+enum class CharacterFont { sans, serif, mono };
+enum class CharacterSlant { normal, italic };
+enum class CharacterWeight { normal, bold };
+enum class CharacterScale { small, normal, large };
+
+struct CharacterAppearance {
+    CharacterFont font{CharacterFont::sans};
+    CharacterSlant style{CharacterSlant::normal};
+    CharacterWeight weight{CharacterWeight::normal};
+    CharacterScale size{CharacterScale::normal};
+
+    bool operator==(const CharacterAppearance&) const = default;
+};
+
+std::string_view to_string(CharacterFont value);
+std::string_view to_string(CharacterSlant value);
+std::string_view to_string(CharacterWeight value);
+std::string_view to_string(CharacterScale value);
+
 // Everything needed to initialize one character: public metadata plus endpoint,
 // credentials, model, streaming, and reasoning settings. The character directory
 // provides the stable ID; its config provides display metadata.
@@ -35,6 +60,7 @@ struct Config {
     std::string name{"Assistant"};
     std::string display_name{"Assistant"};
     std::optional<std::string> description;
+    CharacterAppearance appearance;
     std::string host;
     int port{};
     Mode mode{Mode::test};
@@ -54,6 +80,7 @@ struct CharacterDefinitionMetadata {
     std::string display_name;
     std::optional<std::string> description;
     std::vector<std::string> tags;
+    CharacterAppearance appearance;
 };
 
 // Provider/runtime settings supplied by workspace.toml. Identity and prompt fields

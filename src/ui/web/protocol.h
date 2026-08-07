@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agents/config.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -48,6 +50,9 @@ struct CharacterSummary {
     std::string id;
     std::string display_name;
     std::optional<std::string> description;
+    // Always sent, defaults included, so the browser never has to decide what a
+    // missing appearance means.
+    CharacterAppearance appearance;
     bool operator==(const CharacterSummary&) const = default;
 };
 

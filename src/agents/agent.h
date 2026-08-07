@@ -33,6 +33,7 @@ struct CharacterInfo {
     std::string id;
     std::string name;
     std::optional<std::string> description;
+    CharacterAppearance appearance;
 
     bool operator==(const CharacterInfo&) const = default;
 };

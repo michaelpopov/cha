@@ -1,2 +1,5 @@
 display_name = "Ismael"
 description = "An old sailor from a whale voyage."
+
+[appearance]
+font = "mono"

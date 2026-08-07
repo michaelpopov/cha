@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -11,6 +12,7 @@ import {
 import {
   publicErrorMessage,
   type ChaClient,
+  type CharacterAppearance,
   type CharacterDetail,
   type CommandResult,
   type SessionListing,
@@ -62,6 +64,21 @@ function actionMessage(failure: unknown): string {
 // first time it scrolled itself.
 const followSlack = 24;
 
+// A character speaks in its own hand so a reader can tell one voice from another
+// without reading every name. Only the departures from the interface's own
+// settings are named, so an unstyled character adds no classes at all, and the
+// vocabulary stays closed: the server chooses among these words and the
+// stylesheet owns what each one looks like in both themes.
+function voiceClasses(appearance: CharacterAppearance | undefined): string {
+  if (!appearance) return '';
+  const classes: string[] = [];
+  if (appearance.font !== 'sans') classes.push(`cha-font-${appearance.font}`);
+  if (appearance.style === 'italic') classes.push('cha-slant-italic');
+  if (appearance.weight === 'bold') classes.push('cha-weight-bold');
+  if (appearance.size !== 'normal') classes.push(`cha-scale-${appearance.size}`);
+  return classes.length > 0 ? ` ${classes.join(' ')}` : '';
+}
+
 // A final snapshot arrives over a healthy stream, so a session ending is not a
 // stream failure and has to explain itself. Without this the composer would
 // simply go dead until the reconnect ladder gave up on a session that is gone.
@@ -107,6 +124,10 @@ export function ChatScreen({
   const generationActive = generation?.active === true;
   const sessionAvailable = snapshot !== null && !ended;
   const canSend = connected && pendingAction === null && draft.trim().length > 0;
+  const voices = useMemo(
+    () => new Map((snapshot?.characters ?? []).map(({ id, appearance }) => [id, appearance])),
+    [snapshot?.characters],
+  );
 
   // A different conversation starts at its own end rather than inheriting where
   // the reader had left the previous one.
@@ -208,7 +229,13 @@ export function ChatScreen({
             {entry.kind !== 'human' && entry.display_name && (
               <div className="cha-speaker">{entry.display_name}</div>
             )}
-            <div className="cha-message-text">{entry.text}</div>
+            <div
+              className={`cha-message-text${entry.kind === 'agent'
+                ? voiceClasses(voices.get(entry.participant_id))
+                : ''}`}
+            >
+              {entry.text}
+            </div>
             {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
             {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
           </article>

@@ -23,6 +23,12 @@
 namespace cha::web {
 namespace {
 
+// A character that says nothing about its appearance still carries one on the
+// wire, so every expectation below names the defaults rather than omitting them.
+nlohmann::json default_appearance() {
+    return {{"font", "sans"}, {"style", "normal"}, {"weight", "normal"}, {"size", "normal"}};
+}
+
 template<typename Enum>
 void expect_spellings(
     std::initializer_list<std::pair<Enum, std::string_view>> mappings) {
@@ -67,7 +73,8 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json({{"forum_id", "forum"}, {"session_id", "s1"}}));
     EXPECT_EQ(
         nlohmann::json(ForumSummary{"forum", "Forum", "guide", {{"guide", "Guide"}}}),
-        nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"members", {{{"id", "guide"}, {"display_name", "Guide"}}}}}));
+        nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"},
+            {"members", {{{"id", "guide"}, {"display_name", "Guide"}, {"appearance", default_appearance()}}}}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
         nlohmann::json({{"display_name", "Reader"}, {"id", "reader"}}));
@@ -76,7 +83,14 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json({{"id", "s1"}, {"label", "Notes"}, {"live", true}, {"updated_at", 12}}));
     EXPECT_EQ(
         nlohmann::json(CharacterSummary{"guide", "Guide"}),
-        nlohmann::json({{"display_name", "Guide"}, {"id", "guide"}}));
+        nlohmann::json({{"display_name", "Guide"}, {"id", "guide"},
+            {"appearance", default_appearance()}}));
+    EXPECT_EQ(
+        nlohmann::json(CharacterSummary{"seneca", "Seneca", std::nullopt,
+            {CharacterFont::serif, CharacterSlant::italic,
+             CharacterWeight::bold, CharacterScale::large}})["appearance"],
+        nlohmann::json({{"font", "serif"}, {"style", "italic"},
+            {"weight", "bold"}, {"size", "large"}}));
     EXPECT_EQ(
         nlohmann::json(CommandResult{true, std::nullopt}),
         nlohmann::json({{"clear_input", true}}));
@@ -138,7 +152,8 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
          }},
         {"lifecycle", "stopping"},
         {"notice", "<notice>"},
-        {"characters", {{{"display_name", "Guide"}, {"id", "guide"}}}},
+        {"characters", {{{"display_name", "Guide"}, {"id", "guide"},
+            {"appearance", default_appearance()}}}},
         {"session_id", "session"},
         {"session_label", "Label"},
         {"shutdown_reason", "session_failed"},

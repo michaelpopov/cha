@@ -93,6 +93,12 @@ mode = "net"
 model = "browser-test"
 stream = true
 https = false
+
+# Gives the browser tests a character whose words are set apart from the
+# reader's, so the whole path from workspace file to rendered class is covered.
+[appearance]
+font = "serif"
+style = "italic"
 `,
 );
 await writeFile(

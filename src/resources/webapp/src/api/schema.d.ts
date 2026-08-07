@@ -324,10 +324,28 @@ export interface components {
             display_name: string;
             description?: string;
         };
+        /**
+         * @description How the browser sets this character's words, so a reader can tell one
+         *     speaker from another without reading every name. A closed vocabulary:
+         *     the browser owns the actual typefaces and sizes and pairs each choice
+         *     with a dark-mode variant, and a workspace cannot supply styling of its
+         *     own. Always present, defaults included.
+         */
+        CharacterAppearance: {
+            /** @enum {string} */
+            font: "sans" | "serif" | "mono";
+            /** @enum {string} */
+            style: "normal" | "italic";
+            /** @enum {string} */
+            weight: "normal" | "bold";
+            /** @enum {string} */
+            size: "small" | "normal" | "large";
+        };
         CharacterSummary: {
             id: components["schemas"]["Identifier"];
             display_name: string;
             description?: string;
+            appearance: components["schemas"]["CharacterAppearance"];
         };
         ForumSummary: {
             id: components["schemas"]["Identifier"];
@@ -361,6 +379,7 @@ export interface components {
             id: components["schemas"]["Identifier"];
             display_name: string;
             description?: string;
+            appearance: components["schemas"]["CharacterAppearance"];
             character_markdown: string;
         };
         CreateSessionRequest: {

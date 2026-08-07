@@ -1,2 +1,6 @@
 display_name = "Epictetus"
 description = "A Stoic teacher focused on practical judgment."
+
+[appearance]
+font = "serif"
+style = "italic"

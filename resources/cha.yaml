@@ -605,10 +605,34 @@ components:
         description:
           type: string
 
+    CharacterAppearance:
+      type: object
+      additionalProperties: false
+      description: |
+        How the browser sets this character's words, so a reader can tell one
+        speaker from another without reading every name. A closed vocabulary:
+        the browser owns the actual typefaces and sizes and pairs each choice
+        with a dark-mode variant, and a workspace cannot supply styling of its
+        own. Always present, defaults included.
+      required: [font, style, weight, size]
+      properties:
+        font:
+          type: string
+          enum: [sans, serif, mono]
+        style:
+          type: string
+          enum: [normal, italic]
+        weight:
+          type: string
+          enum: [normal, bold]
+        size:
+          type: string
+          enum: [small, normal, large]
+
     CharacterSummary:
       type: object
       additionalProperties: false
-      required: [id, display_name]
+      required: [id, display_name, appearance]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -616,6 +640,8 @@ components:
           type: string
         description:
           type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
 
     ForumSummary:
       type: object
@@ -700,7 +726,7 @@ components:
     CharacterDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, character_markdown]
+      required: [id, display_name, appearance, character_markdown]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -708,6 +734,8 @@ components:
           type: string
         description:
           type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
         character_markdown:
           type: string
 

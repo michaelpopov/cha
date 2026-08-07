@@ -6,9 +6,12 @@
 
 #include <toml++/toml.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <fstream>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -41,6 +44,7 @@ struct ParsedConfig {
     TemplateScope prompt_variables;
     std::vector<std::string> tags;
     std::optional<std::string> description;
+    CharacterAppearance appearance;
 };
 
 template<typename Value>
@@ -59,6 +63,60 @@ std::optional<Value> read_optional(
             + std::string(type) + " '" + std::string(key) + "' value");
     }
     return value;
+}
+
+// Appearance fields are closed vocabularies, so a misspelling is reported with
+// the words that would have worked rather than silently leaving the default.
+std::size_t read_choice(
+    const toml::table& table,
+    const std::filesystem::path& path,
+    std::string_view key,
+    std::span<const std::string_view> allowed,
+    std::size_t fallback) {
+    const auto value = read_optional<std::string>(table, path, key, "string");
+    if (!value) return fallback;
+    const auto found = std::ranges::find(allowed, *value);
+    if (found == allowed.end()) {
+        std::string names;
+        for (const std::string_view name : allowed) {
+            if (!names.empty()) names += ", ";
+            names += name;
+        }
+        throw std::runtime_error("Config file '" + utf8_path(path)
+            + "' [appearance] has unsupported " + std::string(key) + " '" + *value
+            + "'; expected one of " + names);
+    }
+    return static_cast<std::size_t>(found - allowed.begin());
+}
+
+CharacterAppearance read_appearance(
+    const toml::table& table,
+    const std::filesystem::path& path) {
+    const toml::node* node = table.get("appearance");
+    if (!node) return {};
+    const toml::table* appearance = node->as_table();
+    if (!appearance) {
+        throw std::runtime_error("Config file '" + utf8_path(path)
+            + "' requires 'appearance' to be a table");
+    }
+    static constexpr std::string_view fields[]{"font", "style", "weight", "size"};
+    for (const auto& [key, value] : *appearance) {
+        (void)value;
+        if (std::ranges::find(fields, key.str()) == std::end(fields)) {
+            throw std::runtime_error("Config file '" + utf8_path(path)
+                + "' [appearance] has unsupported field '" + std::string(key.str()) + "'");
+        }
+    }
+    static constexpr std::string_view fonts[]{"sans", "serif", "mono"};
+    static constexpr std::string_view slants[]{"normal", "italic"};
+    static constexpr std::string_view weights[]{"normal", "bold"};
+    static constexpr std::string_view scales[]{"small", "normal", "large"};
+    return {
+        .font = static_cast<CharacterFont>(read_choice(*appearance, path, "font", fonts, 0)),
+        .style = static_cast<CharacterSlant>(read_choice(*appearance, path, "style", slants, 0)),
+        .weight = static_cast<CharacterWeight>(read_choice(*appearance, path, "weight", weights, 0)),
+        .size = static_cast<CharacterScale>(read_choice(*appearance, path, "size", scales, 1)),
+    };
 }
 
 std::optional<Mode> read_mode(
@@ -167,6 +225,10 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
         throw std::runtime_error("Config file '" + utf8_path(path)
             + "' cannot define definition-only field 'description'");
     }
+    if (!definition && table.contains("appearance")) {
+        throw std::runtime_error("Config file '" + utf8_path(path)
+            + "' cannot define definition-only field 'appearance'");
+    }
     const auto display_name = read_optional<std::string>(table, path, "display_name", "string");
     if (definition && (!display_name || display_name->empty())) {
         throw std::runtime_error("Character config file '" + utf8_path(path)
@@ -192,6 +254,7 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
         .prompt_variables = template_scope_from_toml(table, prompt_scope_table, utf8_path(path)),
         .tags = definition ? read_tags(table, path) : std::vector<std::string>{},
         .description = description,
+        .appearance = definition ? read_appearance(table, path) : CharacterAppearance{},
     };
 }
 
@@ -263,6 +326,7 @@ CharacterDefinitionMetadata load_character_definition_metadata(const std::filesy
         .display_name = *definition.patch.display_name,
         .description = definition.description,
         .tags = definition.tags,
+        .appearance = definition.appearance,
     };
 }
 
@@ -341,6 +405,7 @@ LoadedConfig load_config(const CharacterConfigPaths& paths) {
     config.id = utf8_path(paths.definition.parent_path().filename());
     config.display_name = *definition.patch.display_name;
     config.description = definition.description;
+    config.appearance = definition.appearance;
     config.host = *effective.host;
     config.port = *effective.port;
     if (effective.mode) {
@@ -371,6 +436,32 @@ LoadedConfig load_config(const CharacterConfigPaths& paths) {
         config.https = *effective.https;
     }
     return {.config = std::move(config), .prompt_variables = std::move(prompt_variables)};
+}
+
+std::string_view to_string(CharacterFont value) {
+    switch (value) {
+        case CharacterFont::sans: return "sans";
+        case CharacterFont::serif: return "serif";
+        case CharacterFont::mono: return "mono";
+    }
+    return "sans";
+}
+
+std::string_view to_string(CharacterSlant value) {
+    return value == CharacterSlant::italic ? "italic" : "normal";
+}
+
+std::string_view to_string(CharacterWeight value) {
+    return value == CharacterWeight::bold ? "bold" : "normal";
+}
+
+std::string_view to_string(CharacterScale value) {
+    switch (value) {
+        case CharacterScale::small: return "small";
+        case CharacterScale::normal: return "normal";
+        case CharacterScale::large: return "large";
+    }
+    return "normal";
 }
 
 } // namespace cha

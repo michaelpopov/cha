@@ -2,6 +2,7 @@ import type { components } from './schema';
 
 export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
+export type CharacterAppearance = components['schemas']['CharacterAppearance'];
 export type SessionListing = components['schemas']['SessionListing'];
 export type CreateSessionResult = components['schemas']['CreateSessionResult'];
 export type OpenSessionResult = components['schemas']['OpenSessionResult'];

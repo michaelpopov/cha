@@ -759,6 +759,7 @@ AgentRuntimeInfo CompletionClient::info() const {
             .id = config_.id,
             .name = config_.display_name,
             .description = config_.description,
+            .appearance = config_.appearance,
         },
         .model = config_.model,
         .api = endpoint(),

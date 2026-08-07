@@ -157,6 +157,12 @@ void to_json(nlohmann::json& json, const CharacterSummary& value) {
     json = {
         {"id", value.id},
         {"display_name", value.display_name},
+        {"appearance", {
+            {"font", to_string(value.appearance.font)},
+            {"style", to_string(value.appearance.style)},
+            {"weight", to_string(value.appearance.weight)},
+            {"size", to_string(value.appearance.size)},
+        }},
     };
     put_optional(json, "description", value.description);
 }

@@ -232,6 +232,15 @@ test('submits as the selected persona and renders the streamed transcript', asyn
   await expect(page.locator('.cha-message.is-human').last()).toContainText(prompt);
   await expect(page.locator('.cha-message.is-agent').last()).toContainText(prompt);
   await expect(page.getByLabel('Current chat context')).toContainText('From: Reader');
+
+  // Guide's character.toml asks for a serif italic voice, so the whole path is
+  // exercised here: the workspace file, the snapshot, and the rendered class.
+  const spoken = page.locator('.cha-message.is-agent .cha-message-text').last();
+  await expect(spoken).toHaveClass(/cha-font-serif/);
+  await expect(spoken).toHaveClass(/cha-slant-italic/);
+  await expect(spoken).toHaveCSS('font-style', 'italic');
+  await expect(page.locator('.cha-message.is-human .cha-message-text').last())
+    .toHaveCSS('font-style', 'normal');
 });
 
 test('stops an active generation through the HTTP action', async ({ page }) => {

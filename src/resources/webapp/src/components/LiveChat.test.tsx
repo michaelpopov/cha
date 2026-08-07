@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
-import { bootstrapFixture, fixtureClient, snapshotFixture } from '../test/fixtures';
+import { bootstrapFixture, fixtureClient, plainVoice, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 
 function drivableEvents() {
@@ -227,6 +227,52 @@ describe('live chat', () => {
       'lobby', 'planning', { persona: 'guest', text: 'Fresh conversation' },
     ));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  // The workspace decides how a character is set; the browser only maps the
+  // words it is given onto classes, and says nothing for a character that asked
+  // for nothing.
+  it('sets each agent in the voice its character was given and leaves the reader alone', async () => {
+    const events = drivableEvents();
+    render(
+      <App client={fixtureClient()} connectSessionEvents={events.connect} />,
+    );
+    await attachInitial(events, {
+      ...snapshotFixture,
+      characters: [
+        {
+          id: 'seneca',
+          display_name: 'Seneca',
+          appearance: { font: 'serif', style: 'italic', weight: 'normal', size: 'large' },
+        },
+        { id: 'assistant', display_name: 'Assistant', appearance: plainVoice },
+      ],
+      transcript: [
+        {
+          id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+          addressed_to: 'seneca', addressed_to_name: 'Seneca',
+          text: 'A question', status: 'complete',
+        },
+        {
+          id: 2, kind: 'agent', participant_id: 'seneca', display_name: 'Seneca',
+          addressed_to: 'guest', addressed_to_name: 'Guest',
+          text: 'A considered answer', status: 'complete',
+        },
+        {
+          id: 3, kind: 'agent', participant_id: 'assistant', display_name: 'Assistant',
+          addressed_to: 'guest', addressed_to_name: 'Guest',
+          text: 'A plain answer', status: 'complete',
+        },
+      ],
+    });
+
+    expect(screen.getByText('A considered answer')).toHaveClass(
+      'cha-message-text', 'cha-font-serif', 'cha-slant-italic', 'cha-scale-large',
+    );
+    expect(screen.getByText('A considered answer')).not.toHaveClass('cha-weight-bold');
+    expect(screen.getByText('A plain answer').className).toBe('cha-message-text');
+    // The reader's own words are never in costume.
+    expect(screen.getByText('A question').className).toBe('cha-message-text');
   });
 
   it('changes the target only after authoritative state confirms it', async () => {

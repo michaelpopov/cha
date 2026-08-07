@@ -1,9 +1,15 @@
 import type {
   Bootstrap,
   ChaClient,
+  CharacterAppearance,
   CharacterDetail,
   SessionSnapshot,
 } from '../api/client';
+
+// A character that configures nothing still carries an appearance on the wire.
+export const plainVoice: CharacterAppearance = {
+  font: 'sans', style: 'normal', weight: 'normal', size: 'normal',
+};
 
 export const bootstrapFixture: Bootstrap = {
   initial_persona_id: 'guest',
@@ -14,21 +20,21 @@ export const bootstrapFixture: Bootstrap = {
     { id: 'reader', display_name: 'Reader', description: 'Thoughtful, curious, and concise' },
   ],
   characters: [
-    { id: 'assistant', display_name: 'Assistant', description: 'CHA application guide' },
-    { id: 'guide', display_name: 'Guide', description: 'A deterministic test character' },
+    { id: 'assistant', display_name: 'Assistant', description: 'CHA application guide', appearance: plainVoice },
+    { id: 'guide', display_name: 'Guide', description: 'A deterministic test character', appearance: plainVoice },
   ],
   forums: [
     {
       id: 'entrance',
       display_name: 'Entrance',
       default_character_id: 'assistant',
-      members: [{ id: 'assistant', display_name: 'Assistant', description: 'CHA application guide' }],
+      members: [{ id: 'assistant', display_name: 'Assistant', description: 'CHA application guide', appearance: plainVoice }],
     },
     {
       id: 'lobby',
       display_name: 'The Lobby',
       default_character_id: 'guide',
-      members: [{ id: 'guide', display_name: 'Guide', description: 'A deterministic test character' }],
+      members: [{ id: 'guide', display_name: 'Guide', description: 'A deterministic test character', appearance: plainVoice }],
     },
   ],
   recent_sessions: [
@@ -51,6 +57,7 @@ export const characterDetailFixture: CharacterDetail = {
   id: 'guide',
   display_name: 'Guide',
   description: 'A deterministic test character',
+  appearance: plainVoice,
   character_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
 };
 

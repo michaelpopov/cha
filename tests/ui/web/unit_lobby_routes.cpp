@@ -230,12 +230,16 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ((*entrance)["default_character_id"], "builtin-assistant");
     EXPECT_EQ((*entrance)["members"], nlohmann::json::array({{
         {"id", "builtin-assistant"}, {"display_name", "Assistant"},
+        {"appearance", {{"font", "sans"}, {"style", "normal"},
+            {"weight", "normal"}, {"size", "normal"}}},
     }}));
 
     const auto workspace_character = server.client().Get("/api/v1/characters/guide");
     ASSERT_TRUE(workspace_character);
     ASSERT_EQ(workspace_character->status, 200);
-    EXPECT_EQ(body(workspace_character)["character_markdown"], "Character instructions\n");
+    const nlohmann::json workspace_character_body = body(workspace_character);
+    EXPECT_EQ(workspace_character_body["character_markdown"], "Character instructions\n");
+    EXPECT_EQ(workspace_character_body["appearance"], (*guide)["appearance"]);
 
     const auto assistant_character = server.client().Get("/api/v1/characters/builtin-assistant");
     ASSERT_TRUE(assistant_character);

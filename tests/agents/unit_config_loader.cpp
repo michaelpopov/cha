@@ -229,6 +229,49 @@ TEST(Config, ValidatesCharacterDescriptionsAndRejectsThemOutsideDefinitions) {
     EXPECT_THROW((void)load_config(files.paths(true)), std::runtime_error);
 }
 
+TEST(Config, DefaultsCharacterAppearanceToTheInterfaceSettings) {
+    ConfigFiles files;
+    files.write(files.definition(), "display_name = \"Example\"\n");
+    const CharacterAppearance appearance =
+        load_character_definition_metadata(files.definition()).appearance;
+    EXPECT_EQ(appearance, CharacterAppearance{});
+    EXPECT_EQ(appearance.font, CharacterFont::sans);
+    EXPECT_EQ(appearance.size, CharacterScale::normal);
+    EXPECT_EQ(load_config(files.paths(false, false, true)).config.appearance, CharacterAppearance{});
+}
+
+TEST(Config, ReadsEveryCharacterAppearanceFieldAndCarriesItIntoTheEffectiveConfig) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        "display_name = \"Seneca\"\n"
+        "[appearance]\n"
+        "font = \"serif\"\n"
+        "style = \"italic\"\n"
+        "weight = \"bold\"\n"
+        "size = \"large\"\n");
+    const CharacterAppearance expected{CharacterFont::serif, CharacterSlant::italic,
+        CharacterWeight::bold, CharacterScale::large};
+    EXPECT_EQ(load_character_definition_metadata(files.definition()).appearance, expected);
+    EXPECT_EQ(load_config(files.paths(false, false, true)).config.appearance, expected);
+}
+
+TEST(Config, RejectsUnknownAppearanceFieldsValuesAndPlacements) {
+    ConfigFiles files;
+    const std::string named = "display_name = \"Example\"\n";
+    files.write(files.definition(), named + "[appearance]\nfont = \"comic\"\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+    files.write(files.definition(), named + "[appearance]\ncolour = \"red\"\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+    files.write(files.definition(), named + "[appearance]\nfont = 3\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+    files.write(files.definition(), named + "appearance = \"serif\"\n");
+    EXPECT_THROW((void)load_character_definition_metadata(files.definition()), std::runtime_error);
+    // Appearance belongs to the character, not to one forum's use of it.
+    files.write(files.definition(), named);
+    files.write(files.defaults(), "[appearance]\nfont = \"serif\"\n");
+    EXPECT_THROW((void)load_config(files.paths(true)), std::runtime_error);
+}
+
 TEST(Config, LoadsAndValidatesDefinitionMetadataTags) {
     ConfigFiles files;
     files.write(files.definition(), "display_name = \"Example\"\n");
