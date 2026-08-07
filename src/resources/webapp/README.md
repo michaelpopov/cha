@@ -57,10 +57,27 @@ pin the API port deliberately. The two projects are:
   Security Policy together. A policy that blocked the bundle would show up here
   as a console error rather than as a blank page in front of a customer.
 
-The suite starts a copied deterministic workspace and a real
-`chaweb`; it never reads an API key or contacts a model provider. Install the
-Playwright Chromium browser and its host libraries once on a development
-machine with:
+The suite starts a copied deterministic workspace, a real `chaweb`, and a tiny
+local OpenAI-compatible streaming provider; it never reads an API key or uses
+the external network. The projects run serially because they share that one
+process and each live session accepts one event stream; a dedicated two-page
+scenario verifies the rejected second viewer and its recovery.
+
+Dropped-stream recovery is covered by refusing one event-stream request and
+letting the snapshot probe and replacement stream run against the real server.
+The unload scenario also refuses the stream, then holds the real recovery probe
+past the server's test-only shortened idle grace. The resulting
+`session_not_live`, re-open, fresh snapshot, and replacement stream are all real
+server behavior; the suite does not synthesize an API response.
+
+The local provider emits small response chunks with a short delay. That makes
+generation observably active long enough for the browser suite to click Stop,
+without adding a delay or special response path to the application itself.
+Component tests additionally verify that Stop and draft editing remain
+available while the event stream is reconnecting.
+
+Install the Playwright Chromium browser and its host libraries once on a
+development machine with:
 
 ```sh
 npx playwright install chromium

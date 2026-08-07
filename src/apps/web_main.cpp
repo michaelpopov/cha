@@ -14,6 +14,8 @@
 
 #include <httplib.h>
 
+#include <algorithm>
+#include <chrono>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -51,6 +53,17 @@ int main(int argc, const char* const* argv) {
             cha::WebDiscovery discovery(*workspace);
             cha::WelcomeStorage welcome_storage;
             cha::web::WebSettings settings;
+            if (application.test_idle_grace_ms) {
+                settings.idle_grace = std::chrono::milliseconds(
+                    *application.test_idle_grace_ms);
+                settings.orphan_limit = std::max(
+                    settings.orphan_limit, settings.idle_grace);
+                settings.sse_heartbeat_interval = std::min(
+                    settings.sse_heartbeat_interval,
+                    std::max(
+                        std::chrono::milliseconds{1},
+                        settings.idle_grace / 2));
+            }
             cha::web::SessionRegistry registry =
                 cha::web::SessionRegistry::from_workspace(
                     settings, workspace, discovery, welcome_storage);

@@ -1,4 +1,41 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+
+// Creates a stored session in the workspace forum and leaves the page on it,
+// connected, which is where every live-conversation test starts.
+async function startLobbySession(page: Page, name: string): Promise<string> {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Forums' }).click();
+  await page.getByRole('button', { name: /The Lobby\s+Guide/ }).click();
+  await page.getByRole('button', { name: /New session\s+Enter a name to begin/ }).click();
+  await page.getByRole('textbox', { name: 'Session name' }).fill(name);
+  await page.getByRole('button', { name: 'Start session' }).click();
+  await expect(page.getByRole('combobox', { name: 'Choose target character' })).toBeEnabled();
+  return page.url();
+}
+
+// Creates a stored session, makes it live, and puts one exchange in it without
+// ever attaching a browser stream. The recovery tests need the session's single
+// stream slot free, so that what they observe is the client's own ladder rather
+// than a slot the previous page is still holding: the server discovers a
+// browser that navigated away only when its next heartbeat fails to write.
+async function seedLiveSession(page: Page, label: string, prompt: string): Promise<string> {
+  return page.evaluate(async ([sessionLabel, text]) => {
+    const post = async (url: string, body: unknown): Promise<Record<string, unknown>> => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(`POST ${url} answered ${response.status}`);
+      return response.json() as Promise<Record<string, unknown>>;
+    };
+    const created = await post('/api/v1/forums/lobby/sessions', { label: sessionLabel });
+    const id = String(created.id);
+    await post(`/api/v1/forums/lobby/sessions/${id}/open`, {});
+    await post(`/s/lobby/${id}/api/v1/input`, { persona: 'reader', text });
+    return id;
+  }, [label, prompt]);
+}
 
 test('creates a session and restores its conversation after a deep-link reload', async ({ page }) => {
   await page.goto('/');
@@ -60,4 +97,115 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
 
   await page.getByRole('button', { name: 'Forums' }).click();
   await expect(page.getByRole('button', { name: /The Lobby\s+Guide/ })).toBeVisible();
+});
+
+test('submits as the selected persona and renders the streamed transcript', async ({ page }) => {
+  const sessionName = `Live browser test ${Date.now()}`;
+  const prompt = 'Stream this browser message back to me.';
+  await startLobbySession(page, sessionName);
+
+  await page.getByRole('button', { name: 'Personas' }).click();
+  await page.getByRole('radio', { name: /Reader/ }).check();
+  await page.getByRole('button', { name: new RegExp(`${sessionName}\\s+The Lobby`) }).click();
+  await page.getByRole('textbox', { name: 'Message' }).fill(prompt);
+  await page.getByRole('button', { name: 'Send message' }).click();
+
+  await expect(page.locator('.cha-message.is-human').last()).toContainText(prompt);
+  await expect(page.locator('.cha-message.is-agent').last()).toContainText(prompt);
+  await expect(page.getByLabel('Current chat context')).toContainText('From: Reader');
+});
+
+test('stops an active generation through the HTTP action', async ({ page }) => {
+  await startLobbySession(page, `Stopped generation ${Date.now()}`);
+  const prompt = `Stop this deterministic response ${'before it finishes '.repeat(40)}`;
+  await page.getByRole('textbox', { name: 'Message' }).fill(prompt);
+  await page.getByRole('button', { name: 'Send message' }).click();
+
+  const stop = page.getByRole('button', { name: 'Stop generation' });
+  await expect(stop).toBeEnabled();
+  await stop.click();
+
+  await expect(page.locator('.cha-entry-status').last()).toHaveText('Stopped');
+  await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible();
+});
+
+test('explains a second viewer and reconnects after the first closes', async ({ page, context }) => {
+  const sessionName = `Two viewers ${Date.now()}`;
+  const sessionUrl = await startLobbySession(page, sessionName);
+
+  const second = await context.newPage();
+  await second.goto(sessionUrl);
+  await expect(second.getByRole('alert')).toContainText(
+    'This session is open in another window',
+    { timeout: 15_000 },
+  );
+  await expect(second.getByText(sessionName, { exact: true }).last()).toBeVisible();
+
+  await page.close();
+  await second.getByRole('button', { name: 'Retry' }).click();
+  await expect(second.getByRole('combobox', { name: 'Choose target character' }))
+    .toBeEnabled({ timeout: 10_000 });
+});
+
+// Seeds a session, then hands back a page that has never streamed anything.
+// The seeding page is closed first because it holds the built-in Welcome
+// stream, whose own reconnect attempts would otherwise be free to consume the
+// one refusal these tests arm.
+async function seedThenOpenFreshViewer(
+  page: Page,
+  context: BrowserContext,
+  label: string,
+  prompt: string,
+): Promise<{ viewer: Page; sessionId: string }> {
+  await page.goto('/');
+  const sessionId = await seedLiveSession(page, label, prompt);
+  await page.close();
+  return { viewer: await context.newPage(), sessionId };
+}
+
+test('recovers a dropped stream and keeps the conversation on screen', async ({ page, context }) => {
+  const prompt = 'Remember this across the reconnect.';
+  const { viewer, sessionId } = await seedThenOpenFreshViewer(
+    page, context, `Dropped stream ${Date.now()}`, prompt,
+  );
+
+  // EventSource reports a refused stream and one that dies mid-flight as the
+  // same bare error, so refusing a single attempt is the client-visible shape
+  // of any drop. Interception lapses with that request, leaving the snapshot
+  // probe and the replacement stream to run against the real server.
+  await viewer.route('**/api/v1/events', (route) => route.abort(), { times: 1 });
+  await viewer.goto(`/s/lobby/${sessionId}/`);
+
+  await expect(viewer.getByRole('combobox', { name: 'Choose target character' }))
+    .toBeEnabled({ timeout: 15_000 });
+  await expect(viewer.locator('.cha-message.is-human').last()).toContainText(prompt);
+});
+
+test('re-opens after a real disconnect and server idle unload', async ({ page, context }) => {
+  const sessionName = `Unloaded session ${Date.now()}`;
+  const sessionUrl = await startLobbySession(page, sessionName);
+  const snapshotPath = `${new URL(sessionUrl).pathname}api/v1/session`;
+  await page.close();
+  const viewer = await context.newPage();
+  let snapshotRequests = 0;
+
+  // Refuse the first stream before it reaches CHA. The recovery snapshot is
+  // held longer than the test server's idle grace, giving the now-unobserved
+  // runtime time to unload. Continuing that real request therefore yields
+  // session_not_live; the third snapshot can only happen after the client has
+  // re-opened the stored session.
+  await viewer.route(`**${snapshotPath}`, async (route) => {
+    snapshotRequests += 1;
+    if (snapshotRequests === 2) {
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+    }
+    await route.continue();
+  });
+  await viewer.route('**/api/v1/events', (route) => route.abort(), { times: 1 });
+  await viewer.goto(sessionUrl);
+
+  await expect(viewer.getByRole('combobox', { name: 'Choose target character' }))
+    .toBeEnabled({ timeout: 15_000 });
+  await expect(viewer.getByText(sessionName, { exact: true }).last()).toBeVisible();
+  expect(snapshotRequests).toBeGreaterThanOrEqual(3);
 });

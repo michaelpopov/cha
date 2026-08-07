@@ -572,6 +572,11 @@ interruption.
    the default-character endpoint. While `generation.active` is true, the Send
    arrow in the composer becomes a Stop square calling the stop endpoint; it
    becomes Send again only when authoritative session state is inactive.
+   A disconnected event stream does not disable the HTTP Stop action, and the
+   composer remains editable so a reconnect never destroys or blocks a draft.
+   Send and target changes still wait for a connected stream: a page that
+   cannot observe updates, especially a second viewer, must not start work it
+   cannot follow.
 5. **Keep exactly one stream.** Close the old one before connecting a new one on
    a session switch.
 6. **Implement application-owned recovery** exactly as

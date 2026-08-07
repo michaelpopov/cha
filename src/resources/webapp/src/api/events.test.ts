@@ -34,20 +34,40 @@ describe('session events', () => {
     );
 
     source.emit('snapshot', snapshotFixture);
-    source.emit('append', { target: { kind: 'entry', entry_id: 4 }, text: 'hello', seq: 1 });
+    source.emit('append', { target: { kind: 'entry', entry_id: 4 }, text: 'hello', seq: 0 });
     expect(onSnapshot).toHaveBeenCalledWith(snapshotFixture);
     expect(onAppend).toHaveBeenCalledWith({
       target: { kind: 'entry', entry_id: 4 },
       text: 'hello',
-      seq: 1,
+      seq: 0,
     });
     expect(onError).not.toHaveBeenCalled();
 
     connection.close();
     connection.close();
     expect(source.close).toHaveBeenCalledTimes(1);
-    source.emit('append', { target: { kind: 'entry', entry_id: 4 }, text: 'ignored', seq: 2 });
+    source.emit('append', { target: { kind: 'entry', entry_id: 4 }, text: 'ignored', seq: 1 });
     expect(onAppend).toHaveBeenCalledTimes(1);
+  });
+
+  it('turns an append sequence gap into stream recovery', () => {
+    const source = new FakeEventSource();
+    const onAppend = vi.fn();
+    const onError = vi.fn();
+    openSessionEvents(
+      'forum',
+      'session',
+      { onSnapshot: vi.fn(), onAppend, onError },
+      () => source,
+    );
+
+    source.emit('snapshot', snapshotFixture);
+    source.emit('append', {
+      target: { kind: 'entry', entry_id: 4 }, text: 'missing predecessor', seq: 1,
+    });
+
+    expect(onAppend).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith({ kind: 'stream_failure' });
   });
 
   it('reports malformed data and source errors only as a stream failure', () => {

@@ -1,0 +1,499 @@
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+
+import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
+import type { SessionEventHandlers } from '../api/events';
+import { bootstrapFixture, fixtureClient, snapshotFixture } from '../test/fixtures';
+import { App } from './App';
+
+function drivableEvents() {
+  const handlers: SessionEventHandlers[] = [];
+  const connections: { key: string; close: ReturnType<typeof vi.fn> }[] = [];
+  return {
+    handlers,
+    connections,
+    connect(forumId: string, sessionId: string, given: SessionEventHandlers) {
+      handlers.push(given);
+      const connection = { key: `${forumId}/${sessionId}`, close: vi.fn() };
+      connections.push(connection);
+      return connection;
+    },
+  };
+}
+
+async function attachInitial(
+  events: ReturnType<typeof drivableEvents>,
+  snapshot: SessionSnapshot = snapshotFixture,
+) {
+  await waitFor(() => expect(events.connections[0]?.key).toBe('entrance/welcome'));
+  act(() => events.handlers[0].onSnapshot(snapshot));
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled());
+}
+
+function transcriptSnapshot(): SessionSnapshot {
+  return {
+    ...snapshotFixture,
+    transcript: [{
+      id: 4,
+      kind: 'agent',
+      participant_id: 'assistant',
+      display_name: 'Assistant',
+      addressed_to: 'guest',
+      addressed_to_name: 'Guest',
+      text: 'Still here',
+      status: 'streaming',
+      request_id: 7,
+    }],
+    generation: {
+      active: true,
+      request_id: 7,
+      agent_id: 'assistant',
+      agent_name: 'Assistant',
+      phase: 'reasoning',
+      reasoning_text: 'Checking',
+    },
+  };
+}
+
+// jsdom has no layout, so the three numbers the transcript reads to decide
+// whether it is still following the newest text have to be supplied directly.
+function placeReadingPosition(
+  element: HTMLElement,
+  position: { scrollTop: number; scrollHeight: number; clientHeight: number },
+) {
+  for (const [name, value] of Object.entries(position)) {
+    Object.defineProperty(element, name, { configurable: true, value });
+  }
+  fireEvent.scroll(element);
+}
+
+describe('live chat', () => {
+  it('opens and attaches the initial conversation on plain startup and Return to Welcome', async () => {
+    const events = drivableEvents();
+    const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
+      forum_id: forumId,
+      session_id: sessionId,
+    }));
+    const client = fixtureClient({
+      openSession,
+      listSessions: async () => [{
+        id: 'planning', label: 'Planning', live: false, updated_at: 1,
+      }],
+      getSessionSnapshot: async (forumId) => forumId === 'lobby'
+        ? {
+            ...snapshotFixture,
+            forum: bootstrapFixture.forums[1],
+            session_id: 'planning',
+            session_label: 'Planning',
+            characters: [bootstrapFixture.characters[1]],
+            default_character_id: 'guide',
+          }
+        : snapshotFixture,
+    });
+    render(<App client={client} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    expect(openSession).toHaveBeenCalledWith('entrance', 'welcome');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
+    fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Planning/ }));
+    await waitFor(() => expect(events.connections.some(({ key }) => key === 'lobby/planning')).toBe(true));
+
+    window.history.replaceState(null, '', '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitFor(() => expect(
+      events.connections.filter(({ key }) => key === 'entrance/welcome'),
+    ).toHaveLength(2));
+    expect(openSession.mock.calls.filter(([, id]) => id === 'welcome')).toHaveLength(2);
+  });
+
+  it('renders snapshot state and applies entry and reasoning append events', async () => {
+    const events = drivableEvents();
+    const snapshot = transcriptSnapshot();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, snapshot);
+
+    expect(screen.getByText('Still here')).toBeInTheDocument();
+    expect(screen.getByText('Checking')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop generation' })).toBeEnabled();
+
+    act(() => events.handlers[0].onAppend({
+      target: { kind: 'entry', entry_id: 4 }, text: ' with you', seq: 0,
+    }));
+    act(() => events.handlers[0].onAppend({
+      target: { kind: 'reasoning', request_id: 7 }, text: ' again', seq: 1,
+    }));
+    expect(screen.getByText('Still here with you')).toBeInTheDocument();
+    expect(screen.getByText('Checking again')).toBeInTheDocument();
+  });
+
+  it('submits with the selected persona, clears accepted input, and preserves a failed draft', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const submitInput = vi.fn()
+      .mockRejectedValueOnce(new Error('The prompt was not accepted.'))
+      .mockResolvedValueOnce({ clear_input: true });
+    render(
+      <App
+        client={fixtureClient({ submitInput })}
+        connectSessionEvents={events.connect}
+      />,
+    );
+    await attachInitial(events);
+
+    await user.click(screen.getByRole('button', { name: 'Personas' }));
+    await user.click(screen.getByRole('radio', { name: /Reader/ }));
+    await user.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    await user.type(input, 'Keep this draft');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('not accepted');
+    expect(input).toHaveValue('Keep this draft');
+    expect(submitInput).toHaveBeenLastCalledWith(
+      'entrance', 'welcome', { persona: 'reader', text: 'Keep this draft' },
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(input).toHaveValue(''));
+  });
+
+  it('changes the target only after authoritative state confirms it', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const setDefaultCharacter = vi.fn(async () => ({ clear_input: false }));
+    const snapshot: SessionSnapshot = {
+      ...snapshotFixture,
+      forum: {
+        ...snapshotFixture.forum,
+        members: bootstrapFixture.characters,
+      },
+      characters: bootstrapFixture.characters,
+    };
+    render(
+      <App
+        client={fixtureClient({ setDefaultCharacter })}
+        connectSessionEvents={events.connect}
+      />,
+    );
+    await attachInitial(events, snapshot);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Choose target character' }),
+      'guide',
+    );
+    await waitFor(() => expect(setDefaultCharacter).toHaveBeenCalledWith(
+      'entrance', 'welcome', 'guide',
+    ));
+    expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Assistant');
+
+    act(() => events.handlers[0].onSnapshot({ ...snapshot, default_character_id: 'guide' }));
+    expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Guide');
+  });
+
+  it('follows new text only while the reader is at the end of the transcript', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+
+    const transcript = screen.getByLabelText('Conversation transcript');
+    scrollIntoView.mockClear();
+    act(() => events.handlers[0].onAppend({
+      target: { kind: 'entry', entry_id: 4 }, text: ' one', seq: 0,
+    }));
+    expect(scrollIntoView).toHaveBeenCalled();
+
+    placeReadingPosition(transcript, { scrollTop: 0, scrollHeight: 900, clientHeight: 300 });
+    scrollIntoView.mockClear();
+    act(() => events.handlers[0].onAppend({
+      target: { kind: 'entry', entry_id: 4 }, text: ' two', seq: 1,
+    }));
+    expect(screen.getByText('Still here one two')).toBeInTheDocument();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    placeReadingPosition(transcript, { scrollTop: 600, scrollHeight: 900, clientHeight: 300 });
+    act(() => events.handlers[0].onAppend({
+      target: { kind: 'entry', entry_id: 4 }, text: ' three', seq: 2,
+    }));
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('explains a session whose end arrives over a healthy stream', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+
+    act(() => events.handlers[0].onSnapshot({
+      ...transcriptSnapshot(),
+      generation: snapshotFixture.generation,
+      lifecycle: 'stopping',
+      shutdown_reason: 'server_stopping',
+    }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('CHA is shutting down');
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
+    // The conversation it already has stays readable rather than going blank.
+    expect(screen.getByText('Still here')).toBeInTheDocument();
+  });
+
+  it('keeps Stop visible until authoritative generation state becomes inactive', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const stopGeneration = vi.fn(async () => ({ clear_input: false }));
+    const active = transcriptSnapshot();
+    render(
+      <App
+        client={fixtureClient({ stopGeneration })}
+        connectSessionEvents={events.connect}
+      />,
+    );
+    await attachInitial(events, active);
+
+    await user.click(screen.getByRole('button', { name: 'Stop generation' }));
+    expect(stopGeneration).toHaveBeenCalledWith('entrance', 'welcome');
+    expect(screen.getByRole('button', { name: 'Stop generation' })).toBeInTheDocument();
+
+    act(() => events.handlers[0].onSnapshot({
+      ...active,
+      generation: snapshotFixture.generation,
+      transcript: [{ ...active.transcript[0], status: 'cancelled' }],
+    }));
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
+    expect(screen.getByText('Stopped')).toBeInTheDocument();
+  });
+
+  it('keeps draft editing and Stop available while live updates reconnect', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const active = transcriptSnapshot();
+    const stopGeneration = vi.fn(async () => ({ clear_input: false }));
+    const getSessionSnapshot = vi.fn()
+      .mockResolvedValueOnce(active)
+      .mockImplementation(() => new Promise<SessionSnapshot>(() => undefined));
+    render(
+      <App
+        client={fixtureClient({ getSessionSnapshot, stopGeneration })}
+        connectSessionEvents={events.connect}
+      />,
+    );
+    await attachInitial(events, active);
+
+    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Reconnecting live updates');
+
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    expect(input).toBeEnabled();
+    await user.type(input, 'Draft while offline');
+    expect(input).toHaveValue('Draft while offline');
+    await user.click(screen.getByRole('button', { name: 'Stop generation' }));
+    expect(stopGeneration).toHaveBeenCalledWith('entrance', 'welcome');
+  });
+});
+
+describe('live stream recovery', () => {
+  it('probes a live session, reconnects, and accepts a fresh stream snapshot', async () => {
+    const events = drivableEvents();
+    const getSessionSnapshot = vi.fn(async () => snapshotFixture);
+    render(
+      <App
+        client={fixtureClient({ getSessionSnapshot })}
+        connectSessionEvents={events.connect}
+        retryDelays={[0]}
+      />,
+    );
+    await attachInitial(events);
+    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+
+    await waitFor(() => expect(events.connections).toHaveLength(2));
+    expect(getSessionSnapshot).toHaveBeenCalledTimes(2);
+    act(() => events.handlers[1].onSnapshot(snapshotFixture));
+    await waitFor(() => expect(screen.queryByText(/Reconnecting live updates/)).not.toBeInTheDocument());
+  });
+
+  it('re-opens a session the server has unloaded before reconnecting', async () => {
+    const events = drivableEvents();
+    const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
+      forum_id: forumId,
+      session_id: sessionId,
+    }));
+    const getSessionSnapshot = vi.fn()
+      .mockResolvedValueOnce(snapshotFixture)
+      .mockRejectedValueOnce(new ChaError(409, 'session_not_live', 'Session is not live.'))
+      .mockResolvedValueOnce(snapshotFixture);
+    render(
+      <App
+        client={fixtureClient({ getSessionSnapshot, openSession })}
+        connectSessionEvents={events.connect}
+        retryDelays={[0]}
+      />,
+    );
+    await attachInitial(events);
+    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+
+    await waitFor(() => expect(events.connections).toHaveLength(2));
+    expect(openSession.mock.calls.filter(([, id]) => id === 'welcome')).toHaveLength(2);
+    expect(getSessionSnapshot).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps temporary server failures in the bounded retry path', async () => {
+    const events = drivableEvents();
+    const getSessionSnapshot = vi.fn()
+      .mockResolvedValueOnce(snapshotFixture)
+      .mockRejectedValueOnce(new Error('Server unavailable'))
+      .mockResolvedValueOnce(snapshotFixture);
+    render(
+      <App
+        client={fixtureClient({ getSessionSnapshot })}
+        connectSessionEvents={events.connect}
+        retryDelays={[0, 0]}
+      />,
+    );
+    await attachInitial(events);
+    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+
+    await waitFor(() => expect(events.connections).toHaveLength(2));
+    expect(getSessionSnapshot).toHaveBeenCalledTimes(3);
+  });
+
+  it('names an occupied stream after successful probes exhaust the ladder and keeps the transcript', async () => {
+    const events = drivableEvents();
+    const snapshot = transcriptSnapshot();
+    render(
+      <App
+        client={fixtureClient({ getSessionSnapshot: async () => snapshot })}
+        connectSessionEvents={events.connect}
+        retryDelays={[0, 0, 0, 0, 0]}
+      />,
+    );
+    await attachInitial(events, snapshot);
+
+    for (let index = 0; index < 5; index += 1) {
+      act(() => events.handlers[index].onError({ kind: 'stream_failure' }));
+      await waitFor(() => expect(events.connections).toHaveLength(index + 2));
+    }
+    act(() => events.handlers[5].onError({ kind: 'stream_failure' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This session is open in another window',
+    );
+    expect(screen.getByText('Still here')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Browse sessions' })).toBeInTheDocument();
+  });
+
+  it('stops after bounded probe failures with an explicit Retry action', async () => {
+    const events = drivableEvents();
+    let snapshots = 0;
+    const client = fixtureClient({
+      getSessionSnapshot: async () => {
+        snapshots += 1;
+        if (snapshots === 1) return snapshotFixture;
+        throw new Error('Server unavailable');
+      },
+    });
+    render(
+      <App
+        client={client}
+        connectSessionEvents={events.connect}
+        retryDelays={[0, 0, 0, 0, 0]}
+      />,
+    );
+    await attachInitial(events);
+    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Live updates could not be restored');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(snapshots).toBe(6);
+  });
+});
+
+describe('live session capacity', () => {
+  function capacityError() {
+    return new ChaError(503, 'session_limit_reached', 'Session limit reached.');
+  }
+
+  it('retries a transient session limit and eventually attaches', async () => {
+    const events = drivableEvents();
+    const openSession = vi.fn()
+      .mockRejectedValueOnce(capacityError())
+      .mockRejectedValueOnce(capacityError())
+      .mockResolvedValueOnce({ forum_id: 'entrance', session_id: 'welcome' });
+    render(
+      <App
+        client={fixtureClient({ openSession })}
+        connectSessionEvents={events.connect}
+        retryDelays={[0, 0]}
+      />,
+    );
+
+    await waitFor(() => expect(events.connections).toHaveLength(1));
+    expect(openSession).toHaveBeenCalledTimes(3);
+  });
+
+  it('offers Retry and Return to Welcome after the session-limit bound is exhausted', async () => {
+    window.history.replaceState(null, '', '/s/lobby/planning/');
+    const openSession = vi.fn(async () => { throw capacityError(); });
+    const client: ChaClient = fixtureClient({ openSession });
+    render(<App client={client} retryDelays={[0, 0]} />);
+
+    expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Another session has not closed yet');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
+    expect(openSession).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries opening a newly created session without creating it twice', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const createSession = vi.fn(async () => ({ id: 'created', label: 'Created once' }));
+    let createdOpens = 0;
+    const openSession = vi.fn(async (forumId: string, sessionId: string) => {
+      if (sessionId === 'created' && (createdOpens += 1) <= 2) throw capacityError();
+      return { forum_id: forumId, session_id: sessionId };
+    });
+    const lobbySnapshot: SessionSnapshot = {
+      ...snapshotFixture,
+      forum: bootstrapFixture.forums[1],
+      session_id: 'created',
+      session_label: 'Created once',
+      characters: [bootstrapFixture.characters[1]],
+      default_character_id: 'guide',
+    };
+    render(
+      <App
+        client={fixtureClient({
+          createSession,
+          getSessionSnapshot: async (forumId) => forumId === 'lobby'
+            ? lobbySnapshot
+            : snapshotFixture,
+          listSessions: async () => [],
+          openSession,
+        })}
+        connectSessionEvents={events.connect}
+        retryDelays={[0]}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Forums' }));
+    await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+    await user.click(await screen.findByRole('button', { name: /New session/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Session name' }), 'Created once');
+    await user.click(screen.getByRole('button', { name: 'Start session' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Another session has not closed yet');
+    expect(screen.getByRole('button', { name: 'Start session' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(events.connections.some(({ key }) => key === 'lobby/created')).toBe(true));
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(openSession.mock.calls.filter(([, id]) => id === 'created')).toHaveLength(3);
+  });
+});

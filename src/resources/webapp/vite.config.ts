@@ -14,8 +14,15 @@ export default defineConfig({
       '^/(api/|s/[^/]+/[^/]+/api/)': {
         target,
         changeOrigin: true,
-        configure: (proxy) =>
-          proxy.on('proxyReq', (request) => request.setHeader('origin', target)),
+        configure: (proxy) => {
+          proxy.on('proxyReq', (request) => request.setHeader('origin', target));
+          // Vite is only a development hop. When a tab or browser context
+          // closes an EventSource, promptly tear down its upstream response as
+          // well so chaweb releases the session's one stream slot.
+          proxy.on('proxyRes', (upstream, _request, downstream) => {
+            downstream.on('close', () => upstream.destroy());
+          });
+        },
       },
     },
   },

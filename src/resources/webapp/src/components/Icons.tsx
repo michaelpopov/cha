@@ -100,6 +100,14 @@ export function SendIcon(props: IconProps) {
   );
 }
 
+export function StopIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect fill="currentColor" height="9" rx="1" width="9" x="7.5" y="7.5" />
+    </Icon>
+  );
+}
+
 export function PlusIcon(props: IconProps) {
   return (
     <Icon {...props}>

@@ -21,6 +21,7 @@ struct Overrides {
     std::optional<std::string> host;
     std::optional<int> port;
     std::optional<std::filesystem::path> workspace;
+    std::optional<int> test_idle_grace_ms;
 };
 
 std::runtime_error argument_error(std::string message) {
@@ -40,13 +41,27 @@ int parse_port(std::string_view value) {
     return port;
 }
 
+int parse_test_idle_grace(std::string_view value) {
+    int milliseconds{};
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), milliseconds);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()
+        || milliseconds < 1) {
+        throw argument_error(
+            "Invalid --test-idle-grace-ms value '" + std::string(value)
+            + "'; expected a positive integer.");
+    }
+    return milliseconds;
+}
+
 Overrides parse_arguments(int argc, const char* const* argv) {
     Overrides result;
     for (int index = 1; index < argc; ++index) {
         const std::string_view option(argv[index]);
         if (option != "--root" && option != "--config"
             && option != "--host" && option != "--port"
-            && option != "--workspace") {
+            && option != "--workspace"
+            && option != "--test-idle-grace-ms") {
             throw argument_error("Unknown option '" + std::string(option) + "'.");
         }
         if (++index >= argc) {
@@ -58,7 +73,8 @@ Overrides parse_arguments(int argc, const char* const* argv) {
         else if (option == "--config") result.config_file = path_from_utf8(value);
         else if (option == "--host") result.host = std::string(value);
         else if (option == "--port") result.port = parse_port(value);
-        else result.workspace = path_from_utf8(value);
+        else if (option == "--workspace") result.workspace = path_from_utf8(value);
+        else result.test_idle_grace_ms = parse_test_idle_grace(value);
     }
     return result;
 }
@@ -157,6 +173,7 @@ ApplicationConfig load_application_config(
         .host = std::move(resolved_host),
         .port = resolved_port,
         .workspace = std::move(resolved_workspace),
+        .test_idle_grace_ms = overrides.test_idle_grace_ms,
     };
 }
 

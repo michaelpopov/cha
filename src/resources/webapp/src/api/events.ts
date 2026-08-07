@@ -33,7 +33,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isAppend(value: unknown): value is AppendEvent {
   if (!isRecord(value) || !isRecord(value.target)) return false;
-  if (typeof value.text !== 'string' || typeof value.seq !== 'number') return false;
+  if (typeof value.text !== 'string'
+      || !Number.isSafeInteger(value.seq)
+      || (value.seq as number) < 0) return false;
   if (value.target.kind === 'entry') return typeof value.target.entry_id === 'number';
   if (value.target.kind === 'reasoning') return typeof value.target.request_id === 'number';
   return false;
@@ -54,6 +56,7 @@ export function openSessionEvents(
   const source = createEventSource(sessionEventsUrl(forumId, sessionId));
   let closed = false;
   let failureReported = false;
+  let nextAppendSequence = 0;
 
   const reportFailure = () => {
     if (closed || failureReported) return;
@@ -65,6 +68,7 @@ export function openSessionEvents(
     if (closed) return;
     try {
       handlers.onSnapshot(parseEvent(event.data, isSessionSnapshot));
+      nextAppendSequence = 0;
     } catch {
       reportFailure();
     }
@@ -72,7 +76,13 @@ export function openSessionEvents(
   source.addEventListener('append', (event) => {
     if (closed) return;
     try {
-      handlers.onAppend(parseEvent(event.data, isAppend));
+      const append = parseEvent(event.data, isAppend);
+      if (append.seq !== nextAppendSequence) {
+        reportFailure();
+        return;
+      }
+      nextAppendSequence += 1;
+      handlers.onAppend(append);
     } catch {
       reportFailure();
     }

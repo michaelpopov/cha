@@ -43,18 +43,21 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
 button:disabled,
-input:disabled {
+input:disabled,
+select:disabled {
   cursor: not-allowed;
   opacity: 0.52;
 }
@@ -426,11 +429,14 @@ button.cha-recent-row:hover,
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 0.85rem;
   margin: 0 auto;
   padding: 0.5rem 0 1rem;
   overflow: auto;
+}
+
+.cha-transcript > :first-child {
+  margin-top: auto;
 }
 
 .cha-chat-welcome {
@@ -446,6 +452,90 @@ button.cha-recent-row:hover,
   color: var(--foreground);
   font-size: 1.05rem;
   font-weight: 520;
+}
+
+.cha-message {
+  display: grid;
+  max-width: 82%;
+  gap: 0.25rem;
+}
+
+.cha-message.is-human {
+  align-self: flex-end;
+  padding: 0.65rem 0.8rem;
+  border-radius: 1rem 1rem 0.3rem 1rem;
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+}
+
+.cha-message.is-notice,
+.cha-message.is-error {
+  max-width: 100%;
+  color: var(--muted-foreground);
+  font-size: 0.84rem;
+}
+
+.cha-message.is-error,
+.cha-entry-status {
+  color: light-dark(rgb(174 45 36), rgb(255 145 136));
+}
+
+.cha-speaker,
+.cha-entry-status {
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.cha-message-text,
+.cha-reasoning-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.cha-generation {
+  display: grid;
+  max-width: 82%;
+  gap: 0.3rem;
+}
+
+.cha-reasoning-text {
+  padding-left: 0.7rem;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 0.88rem;
+}
+
+.cha-session-notice {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.cha-live-state,
+.cha-chat-action-error {
+  display: flex;
+  width: min(100%, 42rem);
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: 0 auto 0.55rem;
+  padding: 0 0.55rem;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+
+.cha-chat-action-error {
+  margin-block: 0 0.35rem;
+}
+
+.cha-live-actions,
+.cha-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
 }
 
 .cha-composer {
@@ -470,6 +560,42 @@ button.cha-recent-row:hover,
   border-radius: 50%;
 }
 
+.cha-target-select {
+  position: relative;
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.cha-target-select:hover {
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+
+.cha-target-select:has(select:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.cha-target-select select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.cha-target-select:has(select:disabled) {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .cha-composer input {
   width: 100%;
   min-width: 0;
@@ -486,6 +612,11 @@ button.cha-recent-row:hover,
 .cha-send {
   color: var(--primary-foreground);
   background: var(--primary);
+}
+
+.cha-stop {
+  color: var(--primary-foreground);
+  background: light-dark(rgb(202 57 45), rgb(255 116 105));
 }
 
 .cha-chat-status {
@@ -559,6 +690,16 @@ button.cha-recent-row:hover,
 
   .cha-navigation {
     padding-inline: 1rem;
+  }
+
+  .cha-message,
+  .cha-generation {
+    max-width: 92%;
+  }
+
+  .cha-live-state {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

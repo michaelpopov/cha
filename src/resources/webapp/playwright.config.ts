@@ -20,6 +20,11 @@ process.env.CHA_API_TARGET ??= api;
 export default defineConfig({
   testDir: './e2e',
   outputDir: './test-results',
+  // Every project shares the one deterministic chaweb process below, and a
+  // live session intentionally permits one event stream. Serial workers keep
+  // unrelated root-page tests from becoming accidental second viewers of the
+  // built-in Welcome session; the dedicated two-page test covers that case.
+  workers: 1,
   fullyParallel: false,
   retries: 0,
   reporter: 'list',
@@ -28,17 +33,18 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   projects: [
+    // Run the direct production-shell checks before development-server tests
+    // begin opening live sessions through the proxy.
+    {
+      name: 'served',
+      testMatch: /served\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], baseURL: api },
+    },
     // Through the development server, which proxies the API to chaweb.
     {
       name: 'chromium',
       testIgnore: /served\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
-    },
-    // Straight from chaweb, serving the production build it was given.
-    {
-      name: 'served',
-      testMatch: /served\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'], baseURL: api },
     },
   ],
   webServer: [

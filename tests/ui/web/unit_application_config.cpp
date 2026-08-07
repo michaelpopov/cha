@@ -80,9 +80,17 @@ TEST_F(ApplicationConfigTest, CommandLineSettingsOverrideTheFile) {
 }
 
 TEST_F(ApplicationConfigTest, CompleteCommandLineDoesNotRequireDefaultConfig) {
-    EXPECT_NO_THROW((void)load({
+    const ApplicationConfig config = load({
         "chaweb", "--root", root_.string(), "--host", "127.0.0.1",
-        "--port", "8080", "--workspace", workspace_.string()}));
+        "--port", "8080", "--workspace", workspace_.string(),
+        "--test-idle-grace-ms", "25"});
+    EXPECT_EQ(config.test_idle_grace_ms, 25);
+    EXPECT_THROW(
+        (void)load({
+            "chaweb", "--root", root_.string(), "--host", "127.0.0.1",
+            "--port", "8080", "--workspace", workspace_.string(),
+            "--test-idle-grace-ms", "0"}),
+        std::runtime_error);
 }
 
 TEST_F(ApplicationConfigTest, MissingAndInvalidInputsNameTheRemedy) {

@@ -1,8 +1,9 @@
+import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Bootstrap } from '../api/client';
+import { ChaError, type Bootstrap } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import {
   bootstrapFixture,
@@ -29,11 +30,15 @@ function inertSessionEvents() {
 // Hands back the handlers so a test can drive the stream the application owns.
 function drivableSessionEvents() {
   const handlers: SessionEventHandlers[] = [];
+  const connections: { key: string; close: ReturnType<typeof vi.fn> }[] = [];
   return {
     handlers,
-    connect(_forumId: string, _sessionId: string, given: SessionEventHandlers) {
+    connections,
+    connect(forumId: string, sessionId: string, given: SessionEventHandlers) {
       handlers.push(given);
-      return { close: vi.fn() };
+      const connection = { key: `${forumId}/${sessionId}`, close: vi.fn() };
+      connections.push(connection);
+      return connection;
     },
   };
 }
@@ -199,7 +204,8 @@ it('lists sessions with compact time metadata and opens a stored session once', 
 
   fireEvent.click(session);
   fireEvent.click(session);
-  await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(open).toHaveBeenCalledWith('lobby', 'planning'));
+  expect(open.mock.calls.filter(([, sessionId]) => sessionId === 'planning')).toHaveLength(1);
   await waitFor(() => expect(window.location.pathname).toBe('/s/lobby/planning/'));
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
 });
@@ -224,7 +230,7 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
     forum_id: forumId,
     session_id: sessionId,
   }));
-  const connect = vi.fn(inertSessionEvents);
+  const connect = vi.fn((_forumId: string, _sessionId: string) => inertSessionEvents());
   const client = fixtureClient({
     getBootstrap,
     listSessions: async () => [],
@@ -250,7 +256,8 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
   await waitFor(() => expect(createSession).toHaveBeenCalledWith('lobby', 'Architecture review'));
   expect(openSession).toHaveBeenCalledWith('lobby', 'created');
   await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
-  expect(connect).toHaveBeenCalledTimes(1);
+  expect(connect).toHaveBeenCalledWith('lobby', 'created', expect.any(Object));
+  expect(connect.mock.calls.filter(([, sessionId]) => sessionId === 'created')).toHaveLength(1);
   expect(window.location.pathname).toBe('/s/lobby/created/');
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent(
     'The LobbyFrom: GuestTo: Guide',
@@ -262,14 +269,17 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
 it('restores a deep link and offers Welcome when the requested session cannot open', async () => {
   window.history.replaceState(null, '', '/s/lobby/planning/');
   const client = fixtureClient({
-    openSession: async () => { throw new Error('Planning is already open elsewhere.'); },
+    openSession: async (forumId, sessionId) => {
+      if (sessionId === 'planning') throw new Error('Planning is already open elsewhere.');
+      return { forum_id: forumId, session_id: sessionId };
+    },
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
 
   expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
   expect(screen.getByRole('alert')).toHaveTextContent('already open elsewhere');
   fireEvent.click(screen.getByRole('button', { name: 'Return to Welcome' }));
-  expect(screen.getByLabelText('Current chat context')).toHaveTextContent('Entrance');
+  await waitFor(() => expect(screen.getByLabelText('Current chat context')).toHaveTextContent('Entrance'));
   expect(window.location.pathname).toBe('/');
 });
 
@@ -291,6 +301,42 @@ it('opens and snapshots a session-shaped deep link before showing Chat', async (
   expect(getSessionSnapshot).toHaveBeenCalledWith('lobby', 'planning');
   expect(window.location.pathname).toBe('/s/lobby/planning/');
 });
+
+it('keeps a live stream attached through StrictMode effect replay', async () => {
+  const events = recordingSessionEvents();
+  render(
+    <StrictMode>
+      <App
+        client={fixtureClient()}
+        connectSessionEvents={events.connect}
+      />
+    </StrictMode>,
+  );
+
+  await waitFor(() => expect(events.connections.length).toBeGreaterThan(0));
+  expect(screen.queryByText('Opening session…')).not.toBeInTheDocument();
+  expect(events.connections.at(-1)?.close).not.toHaveBeenCalled();
+});
+
+it.each(['session_busy', 'session_stopping', 'session_open_timeout'] as const)(
+  'offers Retry when open fails with %s',
+  async (code) => {
+    window.history.replaceState(null, '', '/s/lobby/planning/');
+    render(
+      <App
+        client={fixtureClient({
+          openSession: async () => {
+            throw new ChaError(409, code, `Retryable ${code}`);
+          },
+        })}
+        connectSessionEvents={inertSessionEvents}
+      />,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(`Retryable ${code}`);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  },
+);
 
 it('returns to Welcome and drops the stream when the browser goes back to the root', async () => {
   const events = recordingSessionEvents();
@@ -320,7 +366,8 @@ it('re-opens the session named by a restored history entry without pushing it ag
   await waitFor(() => expect(screen.getByLabelText('Current chat context'))
     .toHaveTextContent('The Lobby'));
   expect(openSession).toHaveBeenCalledWith('lobby', 'planning');
-  expect(events.connections).toEqual([expect.objectContaining({ key: 'lobby/planning' })]);
+  expect(events.connections.filter(({ key }) => key === 'lobby/planning'))
+    .toEqual([expect.objectContaining({ key: 'lobby/planning' })]);
   expect(window.location.pathname).toBe('/s/lobby/planning/');
   expect(window.history.length).toBe(entries);
 });
@@ -470,18 +517,28 @@ it('offers New session for a stored forum but not for the built-in one', async (
   expect(screen.queryByRole('button', { name: /New session/ })).not.toBeInTheDocument();
 });
 
-it('says the view has stopped following the session when its stream fails', async () => {
+it('probes and reconnects when its stream fails', async () => {
   const events = drivableSessionEvents();
-  render(<App client={storedPlanningClient()} connectSessionEvents={events.connect} />);
+  render(
+    <App
+      client={storedPlanningClient()}
+      connectSessionEvents={events.connect}
+      retryDelays={[0]}
+    />,
+  );
   await openPlanningFromTheLobby();
   await waitFor(() => expect(screen.getByLabelText('Current chat context'))
     .toHaveTextContent('The Lobby'));
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  const planning = events.connections.findIndex(({ key }) => key === 'lobby/planning');
+  expect(planning).toBeGreaterThanOrEqual(0);
 
-  act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+  act(() => events.handlers[planning].onError({ kind: 'stream_failure' }));
 
-  expect(screen.getByRole('alert')).toHaveTextContent('Live updates have stopped');
-  // The transcript it already has stays on screen rather than going blank.
+  await waitFor(() => expect(screen.getByRole('status'))
+    .toHaveTextContent('Reconnecting live updates'));
+  await waitFor(() => expect(
+    events.connections.filter(({ key }) => key === 'lobby/planning'),
+  ).toHaveLength(2));
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
 });
 
@@ -509,7 +566,7 @@ it('shows a clear incompatible-response state instead of a blank screen', async 
 
 it('contains the amended chat controls and no Settings entry point', async () => {
   renderAt(1280);
-  expect(await screen.findByRole('button', { name: 'Choose target character' })).toBeDisabled();
+  expect(await screen.findByRole('combobox', { name: 'Choose target character' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
   expect(bootstrapFixture.personas).toHaveLength(2);

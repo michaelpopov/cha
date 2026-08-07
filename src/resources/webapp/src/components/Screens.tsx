@@ -1,6 +1,19 @@
-import { useEffect, useState, type Dispatch, type FormEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type UIEvent,
+} from 'react';
 
-import type { ChaClient, CharacterDetail, SessionListing } from '../api/client';
+import type {
+  ChaClient,
+  CharacterDetail,
+  CommandResult,
+  SessionListing,
+  SessionSnapshot,
+} from '../api/client';
 import { sessionOperationState, type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
 import {
@@ -10,6 +23,7 @@ import {
   MessageIcon,
   PlusIcon,
   SendIcon,
+  StopIcon,
   TargetIcon,
 } from './Icons';
 
@@ -18,52 +32,256 @@ interface DiscoveryScreenProps {
   dispatch: Dispatch<AppAction>;
 }
 
-export function ChatScreen({ state }: { state: AppState }) {
+// The chat controls App owns, declared once so the screen and the router that
+// feeds it cannot drift apart.
+export interface ChatActions {
+  onRetryStream(): void;
+  onReturnToWelcome(): void;
+  onSetDefaultCharacter(characterId: string): Promise<CommandResult>;
+  onStopGeneration(): Promise<CommandResult>;
+  onSubmitInput(text: string): Promise<CommandResult>;
+}
+
+type ChatScreenProps = DiscoveryScreenProps & ChatActions;
+
+function actionMessage(failure: unknown): string {
+  return failure instanceof Error ? failure.message : 'The action could not be completed.';
+}
+
+// How close to the end still counts as following the conversation. A few pixels
+// of slack absorbs sub-pixel rounding, which would otherwise unpin the view the
+// first time it scrolled itself.
+const followSlack = 24;
+
+// A final snapshot arrives over a healthy stream, so a session ending is not a
+// stream failure and has to explain itself. Without this the composer would
+// simply go dead until the reconnect ladder gave up on a session that is gone.
+function endedMessage(snapshot: SessionSnapshot): string {
+  switch (snapshot.shutdown_reason) {
+    case 'server_stopping':
+      return 'CHA is shutting down. This conversation is saved.';
+    case 'session_failed':
+      return 'This session stopped after a failure. Its conversation is saved.';
+    case 'browser_disconnected':
+      return 'This session was released because the browser disconnected.';
+    default:
+      return 'This session is closing. Its conversation is saved.';
+  }
+}
+
+export function ChatScreen({
+  state,
+  dispatch,
+  onRetryStream,
+  onReturnToWelcome,
+  onSetDefaultCharacter,
+  onStopGeneration,
+  onSubmitInput,
+}: ChatScreenProps) {
+  const [draft, setDraft] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<'send' | 'stop' | 'target' | null>(null);
+  const transcriptEnd = useRef<HTMLDivElement | null>(null);
+  const followingLatest = useRef(true);
+  const snapshot = state.sessionSnapshot;
+  const generation = snapshot?.generation;
+  const conversationKey = snapshot && `${snapshot.forum.id}/${snapshot.session_id}`;
   const persona = state.bootstrap?.personas.find(({ id }) => id === state.currentPersonaId);
-  const forum = state.bootstrap?.forums.find(
+  const forum = snapshot?.forum ?? state.bootstrap?.forums.find(
     ({ id }) => id === state.activeConversation?.forumId,
   );
-  const character = state.bootstrap?.characters.find(
+  const character = snapshot?.characters.find(
     ({ id }) => id === state.currentDefaultCharacterId,
-  );
+  ) ?? state.bootstrap?.characters.find(({ id }) => id === state.currentDefaultCharacterId);
+  const ended = snapshot && snapshot.lifecycle !== 'running' ? endedMessage(snapshot) : null;
+  const connected = state.streamStatus === 'connected' && snapshot !== null && !ended;
+  const generationActive = generation?.active === true;
+  const sessionAvailable = snapshot !== null && !ended;
+  const canSend = connected && pendingAction === null && draft.trim().length > 0;
+
+  // A different conversation starts at its own end rather than inheriting where
+  // the reader had left the previous one.
+  useEffect(() => {
+    followingLatest.current = true;
+  }, [conversationKey]);
+
+  // Following the newest text is the default, but a reader who has scrolled up
+  // keeps their place: a stream that yanked the view back on every token would
+  // make the transcript unreadable exactly while it was worth reading.
+  useEffect(() => {
+    if (!followingLatest.current) return;
+    if (typeof transcriptEnd.current?.scrollIntoView === 'function') {
+      transcriptEnd.current.scrollIntoView({ block: 'end' });
+    }
+  }, [conversationKey, generation?.reasoning_text, snapshot?.transcript]);
+
+  // Growing the transcript moves the end away without moving the viewport, so
+  // whether the reader is following has to be recorded when they last scrolled
+  // rather than measured after new text has already landed.
+  function noteReadingPosition(event: UIEvent<HTMLDivElement>) {
+    const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
+    followingLatest.current = scrollHeight - scrollTop - clientHeight <= followSlack;
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (generationActive || !canSend) return;
+    setPendingAction('send');
+    setActionError(null);
+    try {
+      const result = await onSubmitInput(draft);
+      if (result.clear_input) setDraft('');
+    } catch (failure: unknown) {
+      // A failed send deliberately leaves the draft untouched.
+      setActionError(actionMessage(failure));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function stop() {
+    if (!generationActive || !sessionAvailable || pendingAction) return;
+    setPendingAction('stop');
+    setActionError(null);
+    try {
+      await onStopGeneration();
+    } catch (failure: unknown) {
+      setActionError(actionMessage(failure));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function chooseTarget(characterId: string) {
+    if (!characterId || characterId === state.currentDefaultCharacterId || pendingAction) return;
+    setPendingAction('target');
+    setActionError(null);
+    try {
+      await onSetDefaultCharacter(characterId);
+    } catch (failure: unknown) {
+      setActionError(actionMessage(failure));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  // While the stream is down its own narration is the more useful message, so
+  // the ended notice speaks only for a session whose end arrived intact.
+  const liveMessage = state.streamStatus === 'connected' ? ended : state.streamMessage;
+  const showRecoveryActions = state.streamStatus === 'retry'
+    || state.streamStatus === 'other-window'
+    || (state.streamStatus === 'connected' && ended !== null);
 
   return (
     <section className="cha-screen cha-chat" aria-label="Chat area">
-      <div className="cha-transcript">
-        <div className="cha-chat-welcome">
-          <span className="cha-chat-kicker">{state.activeConversationLabel ?? 'Chat'}</span>
-          <p>Your conversation will appear here.</p>
-        </div>
+      <div
+        aria-label="Conversation transcript"
+        className="cha-transcript"
+        onScroll={noteReadingPosition}
+      >
+        {(!snapshot || (snapshot.transcript.length === 0 && !generation?.reasoning_text)) && (
+          <div className="cha-chat-welcome">
+            <span className="cha-chat-kicker">
+              {snapshot?.session_label ?? state.activeConversationLabel ?? 'Chat'}
+            </span>
+            <p>Start the conversation below.</p>
+          </div>
+        )}
+        {snapshot?.transcript.map((entry) => (
+          <article
+            className={`cha-message is-${entry.kind}`}
+            data-status={entry.status}
+            key={entry.id}
+          >
+            {entry.kind !== 'human' && entry.display_name && (
+              <div className="cha-speaker">{entry.display_name}</div>
+            )}
+            <div className="cha-message-text">{entry.text}</div>
+            {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
+            {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
+          </article>
+        ))}
+        {generation?.active && (
+          <div className="cha-generation">
+            {/* Only the phase is announced. Marking the region live would make
+                a screen reader re-read the whole reasoning text per token. */}
+            <div className="cha-speaker" aria-live="polite">
+              {generation.phase === 'reasoning' && `${generation.agent_name} is reasoning…`}
+              {generation.phase === 'answering' && `${generation.agent_name} is answering…`}
+              {generation.phase === 'stopping' && `Stopping ${generation.agent_name}…`}
+              {generation.phase === 'waiting' && `Waiting for ${generation.agent_name}…`}
+            </div>
+            {generation.reasoning_text && (
+              <div className="cha-reasoning-text">{generation.reasoning_text}</div>
+            )}
+          </div>
+        )}
+        {snapshot?.notice && <p className="cha-session-notice">{snapshot.notice}</p>}
+        <div ref={transcriptEnd} />
       </div>
-      {state.streamLost && (
-        // Stage 4 replaces this with the recovery ladder. Until then, say that
-        // the view has stopped following the session rather than let it look
-        // live while it silently is not.
-        <p className="cha-state-message cha-error-message" role="alert">
-          Live updates have stopped. Reload the page to reconnect.
-        </p>
-      )}
-      <form className="cha-composer" onSubmit={(event) => event.preventDefault()}>
-        <button
-          aria-label="Choose target character"
-          className="cha-composer-action"
-          disabled
-          type="button"
+      {liveMessage && (
+        <div
+          className={`cha-live-state ${showRecoveryActions ? 'cha-error-message' : ''}`}
+          role={showRecoveryActions ? 'alert' : 'status'}
         >
+          <span>{liveMessage}</span>
+          {showRecoveryActions && (
+            <span className="cha-live-actions">
+              <button className="cha-button cha-button-ghost" onClick={onRetryStream} type="button">
+                Retry
+              </button>
+              <button
+                className="cha-button cha-button-ghost"
+                onClick={() => {
+                  if (snapshot) dispatch({ type: 'select-forum', forumId: snapshot.forum.id });
+                  else dispatch({ type: 'show-forums' });
+                }}
+                type="button"
+              >
+                Browse sessions
+              </button>
+              <button className="cha-button cha-button-ghost" onClick={onReturnToWelcome} type="button">
+                Return to Welcome
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+      {actionError && (
+        <p className="cha-chat-action-error cha-error-message" role="alert">{actionError}</p>
+      )}
+      <form className="cha-composer" onSubmit={submit}>
+        <label className="cha-target-select" title="Choose target character">
           <TargetIcon />
-        </button>
+          <select
+            aria-label="Choose target character"
+            disabled={!connected || pendingAction !== null}
+            onChange={(event) => void chooseTarget(event.target.value)}
+            value={state.currentDefaultCharacterId ?? ''}
+          >
+            {snapshot?.characters.map((member) => (
+              <option key={member.id} value={member.id}>{member.display_name}</option>
+            ))}
+          </select>
+        </label>
         <input
           aria-label="Message"
-          disabled
+          autoComplete="off"
+          disabled={!sessionAvailable}
+          onChange={(event) => setDraft(event.target.value)}
           placeholder={`Message ${character?.display_name ?? 'character'}`}
+          value={draft}
         />
         <button
-          aria-label="Send message"
-          className="cha-composer-action cha-send"
-          disabled
-          type="submit"
+          aria-label={generationActive ? 'Stop generation' : 'Send message'}
+          className={`cha-composer-action ${generationActive ? 'cha-stop' : 'cha-send'}`}
+          disabled={generationActive
+            ? pendingAction !== null || !sessionAvailable
+            : !canSend}
+          onClick={generationActive ? () => void stop() : undefined}
+          type={generationActive ? 'button' : 'submit'}
         >
-          <SendIcon />
+          {generationActive ? <StopIcon /> : <SendIcon />}
         </button>
       </form>
       <div className="cha-chat-status" aria-label="Current chat context">
@@ -210,6 +428,8 @@ export function ForumsScreen({ state, dispatch }: DiscoveryScreenProps) {
 interface SessionsScreenProps extends DiscoveryScreenProps {
   client: ChaClient;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
+  onRetrySession(): void;
+  onReturnToWelcome(): void;
 }
 
 // Opening or creating a session is reported by the screen that started it, so
@@ -218,10 +438,14 @@ function SessionOperationReport({
   pending,
   failure,
   state,
+  onRetrySession,
+  onReturnToWelcome,
 }: {
   pending: boolean;
   failure: string | null;
   state: AppState;
+  onRetrySession(): void;
+  onReturnToWelcome(): void;
 }) {
   if (pending) {
     return (
@@ -232,7 +456,19 @@ function SessionOperationReport({
   }
   if (!failure) return null;
   return (
-    <p className="cha-state-message cha-error-message" role="alert">{failure}</p>
+    <div className="cha-state-message cha-error-message" role="alert">
+      <p>{failure}</p>
+      {state.sessionOperationRetryable && (
+        <div className="cha-state-actions">
+          <button className="cha-button cha-button-ghost" onClick={onRetrySession} type="button">
+            Retry
+          </button>
+          <button className="cha-button cha-button-ghost" onClick={onReturnToWelcome} type="button">
+            Return to Welcome
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -257,6 +493,8 @@ export function SessionsScreen({
   dispatch,
   client,
   onOpenSession,
+  onRetrySession,
+  onReturnToWelcome,
 }: SessionsScreenProps) {
   const [sessions, setSessions] = useState<SessionListing[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -296,7 +534,13 @@ export function SessionsScreen({
         <span>All forums</span>
       </button>
       {!forumId && <p className="cha-state-message">No forum is selected.</p>}
-      <SessionOperationReport pending={sessionPending} failure={sessionFailure} state={state} />
+      <SessionOperationReport
+        failure={sessionFailure}
+        onRetrySession={onRetrySession}
+        onReturnToWelcome={onReturnToWelcome}
+        pending={sessionPending}
+        state={state}
+      />
       {forumId && !sessions && !error && (
         <p className="cha-state-message" role="status">Loading sessions…</p>
       )}
@@ -357,12 +601,16 @@ export function SessionsScreen({
 
 interface NewSessionScreenProps extends DiscoveryScreenProps {
   onCreateSession(forumId: string, label: string): Promise<boolean>;
+  onRetrySession(): void;
+  onReturnToWelcome(): void;
 }
 
 export function NewSessionScreen({
   state,
   dispatch,
   onCreateSession,
+  onRetrySession,
+  onReturnToWelcome,
 }: NewSessionScreenProps) {
   const [name, setName] = useState('');
   const trimmedName = name.trim();
@@ -384,7 +632,13 @@ export function NewSessionScreen({
         <ChevronLeftIcon />
         <span>Sessions</span>
       </button>
-      <SessionOperationReport pending={sessionPending} failure={sessionFailure} state={state} />
+      <SessionOperationReport
+        failure={sessionFailure}
+        onRetrySession={onRetrySession}
+        onReturnToWelcome={onReturnToWelcome}
+        pending={sessionPending}
+        state={state}
+      />
       <form className="cha-new-session" onSubmit={submit}>
         <label htmlFor="cha-session-name">Session name</label>
         <input
@@ -408,7 +662,7 @@ export function NewSessionScreen({
           </button>
           <button
             className="cha-button cha-button-primary"
-            disabled={!trimmedName || sessionPending}
+            disabled={!trimmedName || sessionPending || state.sessionOperationRetryable}
             type="submit"
           >
             Start session

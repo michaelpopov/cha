@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace cha::web {
@@ -11,6 +12,9 @@ struct ApplicationConfig {
     std::string host;
     int port{};
     std::filesystem::path workspace;
+    // Browser automation uses this command-line-only seam to prove a real
+    // disconnect/unload/reopen cycle without adding thirty seconds per run.
+    std::optional<int> test_idle_grace_ms;
 };
 
 // Resolves the application root, reads app.toml when present, and applies
@@ -22,6 +26,6 @@ ApplicationConfig load_application_config(
 
 inline constexpr const char web_usage[] =
     "Usage: chaweb [--root PATH] [--config PATH] [--host HOST] "
-    "[--port PORT] [--workspace PATH]";
+    "[--port PORT] [--workspace PATH] [--test-idle-grace-ms MS]";
 
 } // namespace cha::web

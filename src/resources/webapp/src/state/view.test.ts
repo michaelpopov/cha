@@ -43,7 +43,7 @@ describe('application navigation reducer', () => {
     expect(state.currentForumId).toBe('lobby');
   });
 
-  it('changes active conversation and authoritative default only on their actions', () => {
+  it('changes active conversation and default character only from authoritative snapshots', () => {
     let state = readyState();
     const lobbySnapshot = {
       ...snapshotFixture,
@@ -56,10 +56,87 @@ describe('application navigation reducer', () => {
     state = appReducer(state, { type: 'conversation-opened', snapshot: lobbySnapshot });
     expect(state.activeConversation).toEqual({ forumId: 'lobby', sessionId: 'planning' });
     expect(state.mainView).toBe('chat');
-
-    state = appReducer(state, { type: 'set-default-character', characterId: 'guide' });
     expect(state.currentDefaultCharacterId).toBe('guide');
+
+    state = appReducer(state, {
+      type: 'session-snapshot',
+      snapshot: { ...lobbySnapshot, default_character_id: 'assistant' },
+    });
+    expect(state.currentDefaultCharacterId).toBe('assistant');
     expect(state.activeConversation).toEqual({ forumId: 'lobby', sessionId: 'planning' });
+  });
+
+  it('replaces snapshots and appends entry and reasoning stream targets', () => {
+    const streamingSnapshot = {
+      ...snapshotFixture,
+      transcript: [{
+        id: 4,
+        kind: 'agent' as const,
+        participant_id: 'assistant',
+        display_name: 'Assistant',
+        addressed_to: 'guest',
+        addressed_to_name: 'Guest',
+        text: 'Hello',
+        status: 'streaming' as const,
+        request_id: 7,
+      }],
+      generation: {
+        active: true,
+        request_id: 7,
+        agent_id: 'assistant',
+        agent_name: 'Assistant',
+        phase: 'reasoning' as const,
+        reasoning_text: 'Think',
+      },
+    };
+    let state = readyState();
+    state = appReducer(state, { type: 'conversation-opened', snapshot: streamingSnapshot });
+    state = appReducer(state, {
+      type: 'session-append',
+      forumId: 'entrance',
+      sessionId: 'welcome',
+      event: { target: { kind: 'entry', entry_id: 4 }, text: ' there', seq: 0 },
+    });
+    state = appReducer(state, {
+      type: 'session-append',
+      forumId: 'entrance',
+      sessionId: 'welcome',
+      event: { target: { kind: 'reasoning', request_id: 7 }, text: ' carefully', seq: 1 },
+    });
+
+    expect(state.sessionSnapshot?.transcript[0].text).toBe('Hello there');
+    expect(state.sessionSnapshot?.generation.reasoning_text).toBe('Think carefully');
+
+    const replacement = { ...streamingSnapshot, transcript: [], generation: snapshotFixture.generation };
+    state = appReducer(state, { type: 'session-snapshot', snapshot: replacement });
+    expect(state.sessionSnapshot).toEqual(replacement);
+  });
+
+  it('ignores append events tagged for a different session', () => {
+    const snapshot = {
+      ...snapshotFixture,
+      transcript: [{
+        id: 4,
+        kind: 'agent' as const,
+        participant_id: 'assistant',
+        display_name: 'Assistant',
+        addressed_to: 'guest',
+        addressed_to_name: 'Guest',
+        text: 'Unchanged',
+        status: 'streaming' as const,
+        request_id: 7,
+      }],
+    };
+    let state = appReducer(readyState(), { type: 'conversation-opened', snapshot });
+
+    state = appReducer(state, {
+      type: 'session-append',
+      forumId: 'lobby',
+      sessionId: 'planning',
+      event: { target: { kind: 'entry', entry_id: 4 }, text: ' wrong', seq: 0 },
+    });
+
+    expect(state.sessionSnapshot?.transcript[0].text).toBe('Unchanged');
   });
 
   it('refreshes Recent without resetting current navigation and returns to startup defaults', () => {
