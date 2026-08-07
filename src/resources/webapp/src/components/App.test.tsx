@@ -302,6 +302,44 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
     .toHaveAttribute('aria-current', 'page');
 });
 
+// Cancelling stops the browser from following the new session, but the server
+// has already written it, so it has to turn up in the lists rather than vanish.
+it('refreshes Recent when a creation lands after the reader cancelled', async () => {
+  const user = userEvent.setup();
+  let finishCreate: (created: { id: string; label: string }) => void = () => {};
+  const createSession = vi.fn(() => new Promise<{ id: string; label: string }>((resolve) => {
+    finishCreate = resolve;
+  }));
+  const getBootstrap = vi.fn().mockResolvedValue(bootstrapFixture);
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
+    forum_id: forumId,
+    session_id: sessionId,
+  }));
+  const client = fixtureClient({
+    getBootstrap,
+    listSessions: async () => [],
+    createSession,
+    openSession,
+  });
+  render(<App client={client} connectSessionEvents={inertSessionEvents} />);
+
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }));
+  await user.type(screen.getByRole('textbox', { name: 'Session name' }), 'Architecture review');
+  await user.click(screen.getByRole('button', { name: 'Start session' }));
+  await waitFor(() => expect(createSession).toHaveBeenCalled());
+  const listedBeforeCancel = getBootstrap.mock.calls.length;
+
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  await act(async () => {
+    finishCreate({ id: 'created', label: 'Architecture review' });
+  });
+
+  expect(openSession).not.toHaveBeenCalledWith('lobby', 'created');
+  await waitFor(() => expect(getBootstrap.mock.calls.length).toBe(listedBeforeCancel + 1));
+});
+
 it('restores a deep link and offers Welcome when the requested session cannot open', async () => {
   window.history.replaceState(null, '', '/s/lobby/planning/');
   const client = fixtureClient({

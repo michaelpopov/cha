@@ -135,11 +135,14 @@ export function ChatScreen({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (generationActive || !canSend) return;
+    const submitted = draft;
     setPendingAction('send');
     setActionError(null);
     try {
-      const result = await onSubmitInput(draft);
-      if (result.clear_input) setDraft('');
+      const result = await onSubmitInput(submitted);
+      // Typing may continue while the send is in flight; only the text that was
+      // actually sent is cleared.
+      if (result.clear_input) setDraft((current) => (current === submitted ? '' : current));
     } catch (failure: unknown) {
       // A failed send deliberately leaves the draft untouched.
       setActionError(actionMessage(failure));

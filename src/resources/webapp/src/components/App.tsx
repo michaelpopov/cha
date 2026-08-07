@@ -510,6 +510,9 @@ export function App({
         return navigation.current === epoch && liveGeneration.current === generation;
       } catch (failure: unknown) {
         if (!isSessionLimit(failure) || attempt >= retryDelays.length) throw failure;
+        // The reader may have left while the request was in flight, in which
+        // case this attempt must not announce itself on their new screen.
+        if (navigation.current !== epoch || liveGeneration.current !== generation) return false;
         dispatch({
           type: 'session-operation-started',
           message: 'Waiting for another session to close',
@@ -606,7 +609,12 @@ export function App({
     dispatch({ type: 'session-operation-started', message: 'Creating session…' });
     try {
       const created = await client.createSession(forumId, label);
-      if (navigation.current !== epoch) return false;
+      // Cancelling does not un-create the session the server already wrote, so
+      // it has to appear in Recent rather than becoming a session nobody sees.
+      if (navigation.current !== epoch) {
+        void refreshBootstrap();
+        return false;
+      }
       retryTarget.current = { forumId, sessionId: created.id, updateHistory: true };
       dispatch({ type: 'session-operation-started', message: 'Opening session…' });
       const opened = await performOpen(epoch, forumId, created.id, true, true);
@@ -634,7 +642,7 @@ export function App({
     } finally {
       if (pendingTarget.current === target) pendingTarget.current = null;
     }
-  }, [beginNavigation, client, performOpen]);
+  }, [beginNavigation, client, performOpen, refreshBootstrap]);
 
   const returnToWelcome = useCallback(() => {
     resetLiveSession();
@@ -658,7 +666,15 @@ export function App({
     beginRecovery(active.forumId, active.sessionId, liveGeneration.current);
   }, [beginRecovery, cancelRetryTimer, state.activeConversation]);
 
-  const runMutation = useCallback(async <T,>(key: string, operation: () => Promise<T>) => {
+  // Keyed by conversation as well as action: the server gives a mutation up to
+  // its command deadline, and a request left behind in one conversation must
+  // not refuse the same action in the one the reader has moved to.
+  const runMutation = useCallback(async <T,>(
+    { forumId, sessionId }: { forumId: string; sessionId: string },
+    action: string,
+    operation: () => Promise<T>,
+  ) => {
+    const key = `${forumId}/${sessionId}/${action}`;
     if (pendingMutations.current.has(key)) {
       throw new Error('That action is already in progress.');
     }
@@ -674,7 +690,7 @@ export function App({
     const active = state.activeConversation;
     const persona = state.currentPersonaId;
     if (!active || !persona) return Promise.reject(new Error('No live conversation is selected.'));
-    return runMutation('submit', () => client.submitInput(
+    return runMutation(active, 'submit', () => client.submitInput(
       active.forumId,
       active.sessionId,
       { persona, text },
@@ -684,13 +700,16 @@ export function App({
   const stopGeneration = useCallback(() => {
     const active = state.activeConversation;
     if (!active) return Promise.reject(new Error('No live conversation is selected.'));
-    return runMutation('stop', () => client.stopGeneration(active.forumId, active.sessionId));
+    return runMutation(active, 'stop', () => client.stopGeneration(
+      active.forumId,
+      active.sessionId,
+    ));
   }, [client, runMutation, state.activeConversation]);
 
   const setDefaultCharacter = useCallback((characterId: string) => {
     const active = state.activeConversation;
     if (!active) return Promise.reject(new Error('No live conversation is selected.'));
-    return runMutation('target', () => client.setDefaultCharacter(
+    return runMutation(active, 'target', () => client.setDefaultCharacter(
       active.forumId,
       active.sessionId,
       characterId,

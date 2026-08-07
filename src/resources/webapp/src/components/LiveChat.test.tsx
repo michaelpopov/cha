@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -157,6 +157,76 @@ describe('live chat', () => {
 
     await user.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(input).toHaveValue(''));
+  });
+
+  it('keeps a draft typed while the previous send was still in flight', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    let accept: (result: { clear_input: boolean }) => void = () => {};
+    const submitInput = vi.fn(() => new Promise<{ clear_input: boolean }>((resolve) => {
+      accept = resolve;
+    }));
+    render(
+      <App
+        client={fixtureClient({ submitInput })}
+        connectSessionEvents={events.connect}
+      />,
+    );
+    await attachInitial(events);
+
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    await user.type(input, 'First message');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await user.clear(input);
+    await user.type(input, 'Second message');
+    await act(async () => accept({ clear_input: true }));
+
+    expect(input).toHaveValue('Second message');
+  });
+
+  // The server holds a mutation until its command deadline, so a request left
+  // behind in one conversation can outlive the reader's presence in it.
+  it('sends in one conversation while another still has a request in flight', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const planning: SessionSnapshot = {
+      ...snapshotFixture,
+      forum: bootstrapFixture.forums[1],
+      session_id: 'planning',
+      session_label: 'Planning',
+      characters: [bootstrapFixture.characters[1]],
+      default_character_id: 'guide',
+    };
+    const submitInput = vi.fn((_forumId: string, sessionId: string) => (
+      sessionId === 'welcome'
+        ? new Promise<{ clear_input: boolean }>(() => {})
+        : Promise.resolve({ clear_input: true })
+    ));
+    const client = fixtureClient({
+      submitInput,
+      getSessionSnapshot: async (forumId) => forumId === 'lobby' ? planning : snapshotFixture,
+    });
+    render(<App client={client} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Stalled');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(submitInput).toHaveBeenCalledTimes(1));
+
+    const recent = within(screen.getByLabelText('Recent sessions'));
+    await user.click(recent.getByRole('button', { name: /^Planning/ }));
+    await waitFor(() => expect(events.connections[1]?.key).toBe('lobby/planning'));
+    act(() => events.handlers[1].onSnapshot(planning));
+
+    const input = await screen.findByRole('textbox', { name: 'Message' });
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, 'Fresh conversation');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith(
+      'lobby', 'planning', { persona: 'guest', text: 'Fresh conversation' },
+    ));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('changes the target only after authoritative state confirms it', async () => {
