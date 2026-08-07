@@ -131,11 +131,58 @@ test('keeps the pushed sidebar usable at desktop and iPhone widths', async ({ pa
     const app = page.locator('.cha-app');
     await expect(app).toHaveAttribute('data-sidebar', 'open');
     await expect(page.getByRole('button', { name: 'Hide sidebar' })).toBeInViewport();
+    // A pushed panel that kept its full width would hang off the right edge and
+    // carry everything centred inside it off-centre with it.
+    await expect(async () => {
+      const panel = await page.locator('.cha-main').boundingBox();
+      expect(panel).not.toBeNull();
+      expect(Math.round((panel?.x ?? 0) + (panel?.width ?? 0))).toBeLessThanOrEqual(width);
+    }).toPass();
 
     await page.getByRole('button', { name: 'Hide sidebar' }).click();
     await expect(app).toHaveAttribute('data-sidebar', 'closed');
     await expect(page.getByRole('button', { name: 'Show sidebar' })).toBeInViewport();
     await page.getByRole('button', { name: 'Show sidebar' }).click();
+  }
+});
+
+test('lays every screen out inside the visible panel', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.goto('/');
+  await expect(page.getByLabel('Current chat context')).toBeVisible();
+
+  // Each step leaves a different screen showing; the chat is already there.
+  // Rows are located within their screen because other tests leave sessions
+  // behind whose sidebar entries would otherwise match the same names.
+  const on = (screen: string) => page.getByLabel(`${screen} navigation`);
+  const steps: (() => Promise<void>)[] = [
+    async () => {},
+    async () => page.getByRole('button', { name: 'Personas' }).click(),
+    async () => page.getByRole('button', { name: 'Characters' }).click(),
+    async () => on('Characters').getByRole('button', { name: /Guide/ }).click(),
+    async () => page.getByRole('button', { name: 'Forums' }).click(),
+    async () => on('Forums').getByRole('button', { name: /The Lobby/ }).click(),
+    async () => on('Forum sessions').getByRole('button', { name: /New session/ }).click(),
+  ];
+
+  for (const step of steps) {
+    await step();
+    // Nothing on a screen may reach past the edge of the window. A panel that
+    // did not give up the width the sidebar pushed it by, or content laid out
+    // against the panel's full width rather than its visible width, both show
+    // up here.
+    await expect(async () => {
+      const escaped = await page.evaluate(() => {
+        const limit = document.documentElement.clientWidth;
+        return [...document.querySelectorAll<HTMLElement>('.cha-main *')]
+          .filter((element) => {
+            const box = element.getBoundingClientRect();
+            return (box.width > 0 || box.height > 0) && box.right > limit + 0.5;
+          })
+          .map((element) => element.className);
+      });
+      expect(escaped).toEqual([]);
+    }).toPass();
   }
 });
 
