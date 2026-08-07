@@ -36,7 +36,7 @@ run: build-web web-stage
 # It stages only because chaweb refuses to start without a web/index.html; the
 # editable loop serves its shell from Vite and never reads the staged one.
 run-web-dev: build-web web-stage
-	./build/ninja/chaweb --root bin --workspace workspace --host 127.0.0.1 --port 8888
+	./build/ninja/chaweb --root bin --workspace workspace --host 0.0.0.0 --port 8086
 
 clean-san:
 	rm -rf build/asan-ubsan build/tsan
