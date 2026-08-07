@@ -53,9 +53,8 @@ std::filesystem::file_time_type WelcomeStorage::last_write_time() const {
     return std::filesystem::last_write_time(database_path_);
 }
 
-PreparedSession WelcomeStorage::prepare() {
+PreparedWelcomeSession WelcomeStorage::prepare() {
     SessionLease lease = SessionLease::acquire(database_path_);
-    return {{std::string(welcome_id), std::string(welcome_name)},
-        database_path_, std::move(lease)};
+    return {database_path_, std::move(lease)};
 }
 } // namespace cha

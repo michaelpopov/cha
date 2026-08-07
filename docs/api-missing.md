@@ -1,5 +1,8 @@
 # HTTP API gaps for the designed web UI
 
+> Historical migration analysis. The browser-only architecture after removal
+> of the earlier application variants is recorded in [removal-plan.md](removal-plan.md).
+
 Status: simplified 2026-08-05 against the design in
 [web-ui/](web-ui/README.md).
 

@@ -95,7 +95,7 @@ void initialize_diagnostic_logging(
     logger->set_pattern(
         "[%Y-%m-%d %H:%M:%S.%f] [thread %t] [%l] %v");
     logger->set_error_handler([](const std::string&) {
-        // A diagnostic sink must not write to the application's terminal.
+        // A diagnostic sink must not write to the server's standard streams.
     });
     logger->flush_on(spdlog::level::trace);
     diagnostic_logger.store(logger, std::memory_order_release);

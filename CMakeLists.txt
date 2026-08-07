@@ -6,27 +6,6 @@ project(cha LANGUAGES C CXX)
 
 include(CTest)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set(CHA_BUILD_TUI_DEFAULT ON)
-else()
-    set(CHA_BUILD_TUI_DEFAULT OFF)
-endif()
-option(
-    CHA_BUILD_TUI
-    "Build the Linux ncurses front end"
-    ${CHA_BUILD_TUI_DEFAULT})
-
-if(CHA_BUILD_TUI)
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        message(FATAL_ERROR
-            "CHA_BUILD_TUI is supported only on Linux; "
-            "configure with -DCHA_BUILD_TUI=OFF to build chacon")
-    endif()
-    set(CURSES_NEED_WIDE TRUE)
-    find_package(Curses REQUIRED)
-    find_library(CURSES_WIDE_LIBRARY NAMES ncursesw REQUIRED)
-endif()
-
 find_package(Threads REQUIRED)
 find_package(CURL QUIET)
 if(WIN32 OR APPLE)
@@ -74,8 +53,8 @@ endif()
 
 include(FetchContent)
 
-# Keep fetched runtime dependencies inside the executables. In particular,
-# Windows console builds must not require a separately copied libcurl DLL.
+# Keep fetched runtime dependencies inside the executable. In particular,
+# Windows builds must not require a separately copied libcurl DLL.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 if(NOT CURL_FOUND)
@@ -199,7 +178,6 @@ add_library(cha_core STATIC
     src/util/text_template.cpp
     src/util/thread_pool.cpp
     src/util/utf8_path.cpp
-    src/util/uv_event_loop.cpp
     src/transcript/transcript.cpp
     src/agents/agent.cpp
     src/agents/agent_registry.cpp
@@ -218,10 +196,6 @@ add_library(cha_core STATIC
     src/application/workspace_inventory.cpp
     src/application/builtins.cpp
     src/application/effective_personas.cpp
-    src/application/environment.cpp
-    src/application/chat_application.cpp
-    src/application/forum_catalog.cpp
-    src/application/session_source.cpp
     src/application/welcome_storage.cpp
 )
 
@@ -256,8 +230,6 @@ target_link_libraries(
 cha_enable_warnings(cha_core)
 
 add_library(cha_ui_text STATIC
-    src/ui/text/application_command.cpp
-    src/ui/text/application_dispatcher.cpp
     src/ui/text/command.cpp
     src/ui/text/mcast.cpp
     src/ui/text/mention.cpp
@@ -265,23 +237,6 @@ add_library(cha_ui_text STATIC
 )
 target_link_libraries(cha_ui_text PUBLIC cha_core)
 cha_enable_warnings(cha_ui_text)
-
-add_library(cha_ui_render STATIC
-    src/ui/render/transcript_writer.cpp
-)
-target_link_libraries(cha_ui_render PUBLIC cha_core)
-cha_enable_warnings(cha_ui_render)
-
-add_library(cha_console STATIC
-    src/ui/console/console_writer.cpp
-    src/ui/console/console_startup.cpp
-    src/ui/console/console_session.cpp
-    src/ui/console/line_reader.cpp
-    src/ui/console/system_console.cpp
-    src/ui/console/transcript_emitter.cpp
-)
-target_link_libraries(cha_console PUBLIC cha_core cha_ui_text cha_ui_render)
-cha_enable_warnings(cha_console)
 
 add_library(cha_web STATIC
     src/ui/web/application_config.cpp
@@ -314,33 +269,6 @@ target_link_libraries(
         nlohmann_json::nlohmann_json)
 cha_enable_warnings(cha_web)
 
-if(CHA_BUILD_TUI)
-    add_library(cha_tui STATIC
-        src/ui/tui/input_editor.cpp
-        src/ui/tui/render_plan.cpp
-        src/ui/tui/screen_layout.cpp
-        src/ui/tui/terminal.cpp
-        src/ui/tui/tui.cpp
-        src/ui/tui/persona.cpp
-        src/ui/tui/persona_session.cpp
-    )
-    target_link_libraries(
-        cha_tui
-        PUBLIC
-            cha_core
-            cha_ui_text
-            cha_ui_render
-            ${CURSES_WIDE_LIBRARY})
-    target_include_directories(cha_tui SYSTEM PUBLIC ${CURSES_INCLUDE_DIRS})
-    target_compile_definitions(cha_tui PUBLIC _XOPEN_SOURCE_EXTENDED)
-    cha_enable_warnings(cha_tui)
-
-    add_executable(cha_tui_app src/apps/tui_main.cpp)
-    target_link_libraries(cha_tui_app PRIVATE cha_tui)
-    set_target_properties(cha_tui_app PROPERTIES OUTPUT_NAME cha)
-    cha_enable_warnings(cha_tui_app)
-endif()
-
 if(BUILD_TESTING)
     if(MSVC)
         # cha_tests uses MSVC's shared CRT by default. Keep the statically
@@ -364,7 +292,6 @@ if(BUILD_TESTING)
         tests/util/unit_text_template.cpp
         tests/util/unit_public_name.cpp
         tests/util/unit_utf8_path.cpp
-        tests/util/unit_uv_event_loop.cpp
         tests/transcript/unit_transcript.cpp
         tests/agents/unit_agent_context.cpp
         tests/agents/unit_agent_definition_loader.cpp
@@ -383,31 +310,13 @@ if(BUILD_TESTING)
         tests/application/unit_workspace_inventory.cpp
         tests/application/unit_builtins.cpp
         tests/application/unit_effective_personas.cpp
-        tests/application/unit_forum_catalog.cpp
         tests/application/unit_welcome_storage.cpp
-        tests/application/unit_chat_application.cpp
         tests/support/test_workspace.cpp
         tests/ui/text/unit_command.cpp
-        tests/ui/text/unit_application_command.cpp
-        tests/ui/text/unit_application_dispatcher.cpp
         tests/ui/text/unit_mcast.cpp
         tests/ui/text/unit_mention.cpp
         tests/ui/text/unit_text_input.cpp
-        tests/ui/render/unit_transcript_writer.cpp
-        tests/ui/console/unit_console_writer.cpp
-        tests/ui/console/unit_console_session.cpp
-        tests/ui/console/unit_console_startup.cpp
-        tests/ui/console/unit_line_reader.cpp
-        tests/ui/console/unit_transcript_emitter.cpp
     )
-    if(CHA_BUILD_TUI)
-        list(APPEND CHA_TEST_SOURCES
-            tests/ui/tui/unit_render_plan.cpp
-            tests/ui/tui/unit_screen_layout.cpp
-            tests/ui/tui/unit_input_editor.cpp
-            tests/ui/tui/unit_persona_session.cpp
-        )
-    endif()
     if(NOT WIN32)
         # The socket fixture used by these transport tests is POSIX-only.
         list(APPEND CHA_TEST_SOURCES
@@ -431,13 +340,8 @@ if(BUILD_TESTING)
         PRIVATE
             cha_core
             cha_ui_text
-            cha_ui_render
-            cha_console
             cha_sqlite3
             GTest::gtest_main)
-    if(CHA_BUILD_TUI)
-        target_link_libraries(cha_tests PRIVATE cha_tui)
-    endif()
     target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     if(TARGET cha_lease_test_helper)
         target_compile_definitions(
@@ -478,30 +382,14 @@ if(BUILD_TESTING)
     cha_enable_warnings(cha_web_stress_tests)
 
     if(NOT WIN32)
-        # These integration harnesses currently use POSIX sockets and
-        # fork/exec. They test the portable console implementation on Linux
-        # and macOS but are not part of the Windows build.
+        # The live-provider and web process harnesses currently use POSIX
+        # sockets and fork/exec, so they are not part of the Windows build.
         add_executable(itest tests/integration/integration_test.cpp)
         target_link_libraries(
-            itest PRIVATE cha_core cha_ui_text cha_ui_render GTest::gtest_main)
+            itest PRIVATE cha_core cha_ui_text GTest::gtest_main)
         target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         cha_enable_warnings(itest)
         target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
-
-        add_executable(
-            console_tests
-            tests/integration/console_process_test.cpp
-            tests/support/test_workspace.cpp)
-        target_link_libraries(console_tests PRIVATE cha_core GTest::gtest_main)
-        target_include_directories(console_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-        target_compile_definitions(
-            console_tests
-            PRIVATE
-                CHA_CONSOLE_BINARY="$<TARGET_FILE:chacon_app>"
-                CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
-        add_dependencies(
-            console_tests chacon_app cha_lease_test_helper)
-        cha_enable_warnings(console_tests)
 
         add_executable(
             cha_web_process_tests
@@ -527,7 +415,6 @@ if(BUILD_TESTING)
             cha_web_tests
             cha_web_stress_tests
             itest
-            console_tests
             cha_web_process_tests)
         if(TARGET ${cha_test_target})
             target_sources(
@@ -540,18 +427,10 @@ if(BUILD_TESTING)
     gtest_discover_tests(cha_tests)
     gtest_discover_tests(cha_web_tests)
     gtest_discover_tests(cha_web_stress_tests PROPERTIES LABELS web_stress)
-    if(TARGET console_tests)
-        gtest_discover_tests(console_tests)
-    endif()
     if(TARGET cha_web_process_tests)
         gtest_discover_tests(cha_web_process_tests PROPERTIES LABELS web_process)
     endif()
 endif()
-
-add_executable(chacon_app src/apps/console_main.cpp)
-target_link_libraries(chacon_app PRIVATE cha_console)
-set_target_properties(chacon_app PROPERTIES OUTPUT_NAME chacon)
-cha_enable_warnings(chacon_app)
 
 add_executable(chaweb_app src/apps/web_main.cpp)
 target_link_libraries(chaweb_app PRIVATE cha_web)

@@ -1,5 +1,8 @@
 # CHA web application implementation plan
 
+> Historical migration plan. The browser-only architecture after removal of
+> the earlier application variants is recorded in [removal-plan.md](removal-plan.md).
+
 Status: plan derived from the accepted [webapp.md](webapp.md), 2026-08-06.
 
 This plan turns the accepted proposal into ordered, verifiable work. It says what

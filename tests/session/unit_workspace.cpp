@@ -257,7 +257,10 @@ TEST_F(ApplicationWorkspaceTest, ResolvesDefaultAgentWithoutReorderingMembers) {
     EXPECT_EQ(forum.character_names, (std::vector<std::string>{"alpha", "guide"}));
     EXPECT_EQ(forum.default_agent_id, "guide");
 
-    OpenedSession created = workspace.create_session("lobby", "default", notifier());
+    const SessionSummary stored =
+        workspace.create_stored_session("lobby", "default");
+    OpenedSession created =
+        workspace.open_session({"lobby", stored.id}, notifier());
     EXPECT_EQ(created.controller->default_agent_id(), "guide");
     EXPECT_EQ(
         created.descriptor,
@@ -441,11 +444,10 @@ TEST_F(ApplicationWorkspaceTest, WorkspaceConstructionRejectsPersonaCharacterDis
 TEST_F(ApplicationWorkspaceTest, CreatesAndReopensAChatSession) {
     Workspace workspace(root_);
 
+    const SessionSummary stored =
+        workspace.create_stored_session("lobby", "Browser-ready session");
     OpenedSession created =
-        workspace.create_session(
-            "lobby",
-            "Browser-ready session",
-            notifier());
+        workspace.open_session({"lobby", stored.id}, notifier());
     const std::string created_id = created.descriptor.identity.session_id;
     created.controller->shutdown();
     created.controller.reset();
@@ -532,8 +534,10 @@ TEST_F(ApplicationWorkspaceTest, OpensAStoredSessionInASeparateStep) {
 #ifndef _WIN32
 TEST_F(ApplicationWorkspaceTest, HoldsTheLeaseThroughExplicitShutdown) {
     Workspace workspace(root_);
+    const SessionSummary stored =
+        workspace.create_stored_session("lobby", "Shutdown lease");
     OpenedSession created =
-        workspace.create_session("lobby", "Shutdown lease", notifier());
+        workspace.open_session({"lobby", stored.id}, notifier());
     const std::string session_id = created.descriptor.identity.session_id;
     created.controller->shutdown();
     created.controller.reset();
@@ -606,28 +610,22 @@ TEST_F(ApplicationWorkspaceTest, SupportsAWorkspaceWithoutSharedCharacterConfig)
     }
     Workspace workspace(root_);
 
+    const SessionSummary stored =
+        workspace.create_stored_session("lobby", "No shared config");
     OpenedSession session =
-        workspace.create_session(
-            "lobby",
-            "No shared config",
-            notifier());
+        workspace.open_session({"lobby", stored.id}, notifier());
 
     session.controller->shutdown();
 }
 
 TEST_F(ApplicationWorkspaceTest, MapsInvalidStoredSessionDetails) {
     Workspace workspace(root_);
-    OpenedSession created =
-        workspace.create_session(
-            "lobby",
-            "Broken later",
-            notifier());
-    created.controller->shutdown();
-    created.controller.reset();
+    const SessionSummary created =
+        workspace.create_stored_session("lobby", "Broken later");
 
     const std::vector<SessionSummary> healthy = workspace.sessions("lobby");
     ASSERT_EQ(healthy.size(), 1U);
-    const std::string id = healthy.front().id;
+    const std::string id = created.id;
     {
         std::ofstream database(
             root_ / "forums" / "lobby" / "sessions" / (id + ".sqlite3"),

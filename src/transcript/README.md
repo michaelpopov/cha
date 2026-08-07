@@ -77,10 +77,9 @@ terminal transcript entry is currently storable.
 ## The live transcript
 
 `Transcript` is the live mutable transcript state. It has a
-single-thread-owned design: the session's owner thread exclusively reads and
-mutates it. That owner is the process main thread in `cha` and `chacon`. The
-class is not thread-safe, and callers must not share a live instance across
-threads.
+single-thread-owned design: the registry-owned session thread exclusively reads
+and mutates it. The class is not thread-safe, and callers must not share a live
+instance across threads.
 Completion runners never read it; the controller captures an immutable
 `CompletionHistory` before staging a batch.
 

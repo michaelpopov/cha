@@ -787,7 +787,7 @@ export interface operations {
             404: components["responses"]["NotFound"];
             /**
              * @description The session is busy or stopping. `error.code` is `session_busy` when
-             *     its storage lease is held elsewhere, such as by a terminal frontend,
+             *     its storage lease is held by another CHA process,
              *     or `session_stopping` while its previous runtime is still shutting
              *     down. Both are retryable.
              */

@@ -30,5 +30,6 @@ struct Command {
 };
 
 Command parse_command(std::string_view input);
+std::string command_names();
 
 } // namespace cha

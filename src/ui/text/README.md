@@ -3,7 +3,7 @@
 `ui/text/` owns the textual grammar a chat input box accepts: slash commands and
 optional leading `@mentions`. It parses a line, applies the rules about what may
 be typed when, and calls `SessionController` operations. It knows nothing about
-curses, storage, or providers.
+browser widgets, storage, or providers.
 
 ## Contents
 
@@ -83,7 +83,7 @@ Two policies live in this file and nowhere else:
 - **Depends on:** `session/` for `SessionController`, `SessionChange`, and
   the shared generation-in-progress notice; `util/` for byte-oriented whitespace
   handling.
-- **Must not depend on:** terminal widgets, curses, session catalogs, or
+- **Must not depend on:** browser widgets, HTTP, session catalogs, or
   agent backends.
 
 ## Tests
@@ -93,14 +93,3 @@ Two policies live in this file and nowhere else:
 | `tests/ui/text/unit_command.cpp` | Command recognition, argument splitting, `/@Name`. |
 | `tests/ui/text/unit_mention.cpp` | Mention splitting, `@@` escaping, whitespace and degenerate cases. |
 | `tests/ui/text/unit_text_input.cpp` | Dispatch policy, including the active-generation rules and `/exit`. |
-# Application commands
-
-`application_command.*` owns the fixed-arity terminal navigation grammar for
-`/iam`, `/open`, `/create`, `/forums`, `/sessions`, `/members`, `/personas`,
-and `/help`.
-It parses public names (including double-quoted names) only; resolution and
-session switching remain in `application/`. The existing `text_input.*` entry
-point remains controller-scoped for the web frontend. The terminal command set
-is `/iam`, `/open`, `/create`, `/forums`, `/sessions`, `/members`, `/personas`,
-and `/help`; names use ASCII-folded lookup and double quotes preserve
-whitespace.

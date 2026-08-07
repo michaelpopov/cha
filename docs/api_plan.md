@@ -1,5 +1,8 @@
 # HTTP API implementation plan
 
+> Historical migration plan. The browser-only architecture after removal of
+> the earlier application variants is recorded in [removal-plan.md](removal-plan.md).
+
 Status: simplified 2026-08-05 from [api-missing.md](api-missing.md) and the
 design in [web-ui/](web-ui/README.md).
 

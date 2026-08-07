@@ -10,7 +10,7 @@ TEST(Builtins, GuideAndTrustedValuesHavePublicNames) {
     EXPECT_EQ(cha::builtin_guest().display_name, "Guest");
     EXPECT_EQ(cha::builtin_entrance().display_name, "Entrance");
     EXPECT_NE(cha::application_guide().find("## Commands"), std::string_view::npos);
-    EXPECT_NE(cha::application_guide().find("/open"), std::string_view::npos);
+    EXPECT_NE(cha::application_guide().find("/mcast"), std::string_view::npos);
 }
 
 TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {

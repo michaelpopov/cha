@@ -29,7 +29,7 @@ deliberately listen on different ports so that neither blocks the other.
 
 | Loop | Command | Serves | Port |
 | --- | --- | --- | --- |
-| Staged | `make run-web` | `bin/web/`, exactly as a release does | 8080 |
+| Staged | `make run` | `bin/web/`, exactly as a release does | 8080 |
 | Editable | `make run-web-dev` plus `npm run dev` | Vite, with hot reloading | 8888 and 5173 |
 
 `npm run dev` serves the editable shell on `http://127.0.0.1:5173/` and proxies

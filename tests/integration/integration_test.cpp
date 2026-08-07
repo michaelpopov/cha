@@ -2,7 +2,6 @@
 #include "agents/agent_registry.h"
 #include "session/session_controller.h"
 #include "agents/config.h"
-#include "ui/render/transcript_writer.h"
 #include "ui/text/text_input.h"
 #include "util/environment.h"
 #include "util/thread_pool.h"
@@ -504,8 +503,6 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
             session.path,
             notifier());
         ASSERT_EQ(controller->characters().first().id, "Cheburashka");
-        EXPECT_TRUE(show_addressing(
-            controller->characters(), controller->transcript().view()));
 
         // No mention: the first character directory in name order answers.
         TextInputResult update = handle_text_input(*controller, "reader", "Who are you?");
@@ -656,9 +653,6 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
         notifier(),
         std::move(restored));
     EXPECT_EQ(reopened->characters().all().size(), 1U);
-    EXPECT_TRUE(show_addressing(
-        reopened->characters(), reopened->transcript().view()))
-        << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
         handle_text_input(*reopened, "reader", "@Cheburashka are you there?").session.notice,
         "Unknown agent @Cheburashka. Characters in this forum: @Ismael");

@@ -30,7 +30,6 @@ enum class LeaseProbeResult {
 
 enum class CatalogCreateResult {
     succeeded,
-    exists,
     busy,
 };
 
@@ -104,7 +103,6 @@ inline CatalogCreateResult create_catalog_session(
     const int result = lease_test_detail::wait_for_process(
         lease_test_detail::spawn_helper(arguments));
     if (result == catalog_create_succeeded) return CatalogCreateResult::succeeded;
-    if (result == catalog_create_exists) return CatalogCreateResult::exists;
     if (result == catalog_create_busy) return CatalogCreateResult::busy;
     throw std::runtime_error("Lease test helper failed with exit code " + std::to_string(result));
 }
@@ -202,52 +200,6 @@ public:
         process_ = -1;
     }
 
-private:
-    pid_t process_{-1};
-};
-
-class CatalogCreateHolderProcess {
-public:
-    CatalogCreateHolderProcess(const std::filesystem::path& directory,
-        const std::string& forum, const std::string& name) {
-        int ready_pipe[2]{};
-        if (pipe(ready_pipe) == -1) throw std::system_error(errno, std::generic_category(), "Failed to create lease test helper pipe");
-        const int flags = fcntl(ready_pipe[0], F_GETFD);
-        if (flags == -1 || fcntl(ready_pipe[0], F_SETFD, flags | FD_CLOEXEC) == -1) {
-            const int error = errno;
-            lease_test_detail::close_descriptor(ready_pipe[0]);
-            lease_test_detail::close_descriptor(ready_pipe[1]);
-            throw std::system_error(error, std::generic_category(), "Failed to configure lease test helper pipe");
-        }
-        std::string directory_text = directory.string();
-        std::string forum_text = forum;
-        std::string name_text = name;
-        std::string ready_descriptor = std::to_string(ready_pipe[1]);
-        char operation[] = "create-hold";
-        char* arguments[]{const_cast<char*>(CHA_LEASE_TEST_HELPER), operation,
-            directory_text.data(), forum_text.data(), name_text.data(), ready_descriptor.data(), nullptr};
-        try { process_ = lease_test_detail::spawn_helper(arguments); }
-        catch (...) { lease_test_detail::close_descriptor(ready_pipe[0]); lease_test_detail::close_descriptor(ready_pipe[1]); throw; }
-        lease_test_detail::close_descriptor(ready_pipe[1]);
-        char ready{};
-        const ssize_t count = lease_test_detail::read_ready(ready_pipe[0], ready);
-        lease_test_detail::close_descriptor(ready_pipe[0]);
-        if (count != 1 || ready != lease_holder_ready) {
-            const int result = lease_test_detail::wait_for_process(process_);
-            process_ = -1;
-            throw std::runtime_error("Catalog creator failed with exit code " + std::to_string(result));
-        }
-    }
-    ~CatalogCreateHolderProcess() { terminate(); }
-    CatalogCreateHolderProcess(const CatalogCreateHolderProcess&) = delete;
-    CatalogCreateHolderProcess& operator=(const CatalogCreateHolderProcess&) = delete;
-    void terminate() noexcept {
-        if (process_ == -1) return;
-        (void)kill(process_, SIGKILL);
-        int status{};
-        while (waitpid(process_, &status, 0) == -1 && errno == EINTR) {}
-        process_ = -1;
-    }
 private:
     pid_t process_{-1};
 };

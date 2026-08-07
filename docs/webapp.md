@@ -1,5 +1,8 @@
 # CHA web application proposal
 
+> Historical proposal. The browser-only architecture after removal of the
+> earlier application variants is recorded in [removal-plan.md](removal-plan.md).
+
 Status: accepted, 2026-08-06.
 
 ## Purpose

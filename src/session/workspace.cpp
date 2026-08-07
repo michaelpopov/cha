@@ -82,7 +82,6 @@ SessionSummary summarize(const Session& stored) {
         .id = stored.id,
         .label = stored.label,
         .error = stored.error,
-        .ambiguous = stored.ambiguous,
     };
 }
 
@@ -503,58 +502,11 @@ std::filesystem::file_time_type Workspace::session_last_write_time(
     return std::filesystem::last_write_time(catalog.database_path(session_id));
 }
 
-Forum Workspace::load_forum_by_name(std::string_view name) const {
-    try {
-        validate_public_name(name, "Forum name", "requested forum");
-    } catch (const std::exception&) {
-        throw std::runtime_error("Forum name is not a valid public name");
-    }
-    std::optional<Forum> found;
-    for (const std::string& id : forums()) {
-        Forum forum = load_forum(id);
-        if (fold_ascii(forum.display_name) != fold_ascii(name)) continue;
-        if (found) throw std::runtime_error("Forum name '" + std::string(name) + "' is ambiguous");
-        found = std::move(forum);
-    }
-    if (!found) throw ForumNotFoundError("Unknown forum '" + std::string(name) + "'");
-    return std::move(*found);
-}
-
-std::vector<SessionSummary> Workspace::sessions_by_name(const std::string& forum_name) const {
-    const Forum forum = load_forum_by_name(forum_name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    std::vector<SessionSummary> result;
-    for (const Session& stored : catalog.list_by_name()) result.push_back(summarize(stored));
-    return result;
-}
-
 SessionSummary Workspace::session_summary(
     const std::string& forum_name,
     const std::string& session_id) const {
     const SessionCatalog catalog = session_catalog(*this, forum_name);
     return summarize(catalog.session(session_id));
-}
-
-SessionSummary Workspace::session_summary_by_name(
-    std::string_view forum_name, const std::string& session_name) const {
-    const Forum forum = load_forum_by_name(forum_name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    try {
-        return summarize(catalog.session_by_name(session_name));
-    } catch (const SessionNameAmbiguousError&) {
-        throw SessionNameAmbiguousError("Session name '" + session_name
-            + "' is ambiguous in forum '" + forum.display_name + "'");
-    } catch (const SessionNotFoundError&) {
-        throw SessionNotFoundError("Session '" + session_name
-            + "' does not exist in forum '" + forum.display_name + "'");
-    } catch (const InvalidSessionNameError&) {
-        throw;
-    } catch (const std::exception& error) {
-        log_warn("Failed to read session summary for forum_id=" + forum.name
-            + ": " + error.what());
-        throw std::runtime_error("Unable to read session '" + session_name
-            + "' in forum '" + forum.display_name + "'");
-    }
 }
 
 void Workspace::check_session(
@@ -569,88 +521,6 @@ SessionSummary Workspace::create_stored_session(
     const Forum forum = check_forum(forum_name);
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
     return summarize(catalog.create(std::move(label)));
-}
-
-SessionSummary Workspace::create_stored_session_by_name(
-    std::string_view forum_name, std::string session_name) const {
-    return summarize(prepare_stored_session_by_name(forum_name, std::move(session_name)).session);
-}
-
-PreparedSession Workspace::prepare_stored_session_by_name(
-    std::string_view forum_name, std::string session_name) const {
-    const Forum forum = load_forum_by_name(forum_name);
-    (void)check_forum(forum.name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    const std::string public_session_name = session_name;
-    try {
-        return catalog.create_by_name(std::move(session_name));
-    } catch (const SessionNameExistsError&) {
-        throw SessionNameExistsError("Session '" + public_session_name
-            + "' already exists in forum '" + forum.display_name + "'; use /open");
-    }
-}
-
-OpenedSession Workspace::create_session(
-    const std::string& forum_name,
-    std::string label,
-    WakeNotifier& notifier) const {
-    Forum forum = load_forum(forum_name);
-    PersonaRoster personas = load_personas();
-    std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", workspace_config_.provider);
-    validate_forum_characters(definitions);
-
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    const Session stored = catalog.create(std::move(label));
-    const std::filesystem::path database_path = catalog.open_database_path(stored.id);
-    SessionLease lease = SessionLease::acquire(database_path);
-    SessionRestore restored = load_session_state(database_path);
-    std::unique_ptr<SessionController> controller =
-        SessionController::from_definitions(
-            std::move(definitions),
-            std::move(personas),
-            forum.default_agent_id,
-            database_path,
-            std::move(lease),
-            notifier,
-            std::move(restored));
-    log_info("Session opened");
-    return {
-        .descriptor = {
-            .identity = {forum.name, stored.id},
-            .forum_display_name = forum.display_name,
-            .session_label = stored.label,
-            .forum_default_character_id = forum.default_agent_id,
-        },
-        .controller = std::move(controller),
-    };
-}
-
-OpenedSession Workspace::open_session_by_name(
-    std::string_view forum_name,
-    const std::string& session_name,
-    WakeNotifier& notifier) const {
-    const Forum forum = load_forum_by_name(forum_name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    try {
-        const Session stored = catalog.session_by_name(session_name);
-        return open_session({forum.name, stored.id}, notifier);
-    } catch (const SessionNameAmbiguousError&) {
-        throw SessionNameAmbiguousError("Session name '" + session_name
-            + "' is ambiguous in forum '" + forum.display_name + "'");
-    } catch (const SessionNotFoundError&) {
-        throw SessionNotFoundError("Session '" + session_name
-            + "' does not exist in forum '" + forum.display_name + "'");
-    } catch (const SessionBusyError&) {
-        throw SessionBusyError("Session '" + session_name + "' is in use elsewhere");
-    } catch (const InvalidSessionNameError&) {
-        throw;
-    } catch (const std::exception& error) {
-        log_warn("Failed to open session for forum_id=" + forum.name
-            + ": " + error.what());
-        throw std::runtime_error("Unable to open session '" + session_name
-            + "' in forum '" + forum.display_name + "'");
-    }
 }
 
 OpenedSession Workspace::open_session(

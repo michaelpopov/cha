@@ -54,8 +54,7 @@ echo "==> Building production browser files"
 echo "==> Building Linux chaweb"
 cmake -S "$repository" -B "$native_build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_TESTING=OFF \
-    -DCHA_BUILD_TUI=OFF
+    -DBUILD_TESTING=OFF
 cmake --build "$native_build" --target chaweb_app
 
 echo "==> Assembling clean application directory"

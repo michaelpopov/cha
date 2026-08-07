@@ -73,8 +73,8 @@ loader values always win. The generated section names the current agent, lists
 the other current characters, and defines how quoted shared history is encoded.
 It is added even for a single-agent forum, because restored history can still
 mention a character that has left. During session construction, loading happens
-on the session's owner thread (the process main thread in `cha` and `chacon`);
-a forum check loads synchronously on its calling thread. `session/` decides
+on the registry-owned session thread; a forum check loads synchronously on its
+calling thread. `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
 Configuration is a key-wise overlay, not general inheritance. Built-in defaults

@@ -1,115 +1,20 @@
 # UI
 
-`ui/` holds everything the persona touches: the front ends and their shared input
-grammar. A front end may interpret input, keep protocol-specific state, and
-render session-layer values. Terminal session navigation belongs to
-`application/`; chat policy, agent execution, and persistence stay in
-`session/` and below.
-
-The test for whether code belongs here: could a different front end need the
-same behavior? If yes, it belongs below `ui/`.
-
-## Contents
+`ui/` contains the supported browser frontend and the textual chat-input grammar
+it reuses.
 
 | Directory | Responsibility |
 | --- | --- |
-| `text/` | The reusable textual grammar: controller commands, `@mention` addressing, and terminal application commands. |
-| `render/` | Shared transcript labels, attributes, and writing operations. |
-| `tui/` | The ncurses front end: terminal lifecycle, application navigation, input editing, overlays, screen layout, and redraw planning. |
-| `console/` | The line-oriented frontend: minimal CLI parsing, non-blocking input, queued dispatch, signals, and append-only output. |
-| `web/` | The HTTP/SSE frontend: protocol DTO projection, owner-thread runtime, registry, mailbox, and browser lifecycle policy. |
+| `web/` | HTTP routes, JSON protocol, SSE projection, session registry, owner-thread runtime, and browser lifecycle. |
+| `text/` | Controller commands, `@mention` addressing, and multicast parsing. |
 
-`text/` and `render/` are separate from the frontends because neither the
-command language nor transcript labels are curses concepts. A new input box or
-streaming protocol can reuse them while retaining its own event and layout
-policy.
+HTTP request threads never call live controllers. Routes validate protocol
+input and enqueue commands to `WebSessionRuntime`; the session owner thread
+executes those commands and projects state into immutable snapshots or proven
+append events. `SseMailbox` provides the bounded handoff to the browser.
 
-## Where a front end sits
+Code under `ui/` may depend on application discovery, session and transcript
+types, and narrow utility helpers. It must not expose storage internals as API
+contracts or access provider backends directly.
 
-```mermaid
-flowchart TD
-    subgraph ui["ui/"]
-        tui["tui/<br/>curses screen and input"]
-        console["console/<br/>line stream and queue"]
-        render["render/<br/>shared transcript writer"]
-        txt["text/<br/>command and mention grammar"]
-    end
-
-    persona(["Persona"]) --> tui
-    persona --> console
-    tui --> render
-    console --> render
-    tui -->|"submitted line"| txt
-    console -->|"submitted line"| txt
-    txt -->|"controller commands"| controller["SessionController"]
-    txt -->|"navigation commands"| application["ChatApplication"]
-    application --> controller
-    controller -->|"SessionChange"| tui
-    controller -->|"SessionChange"| console
-    tui -->|"borrows"| convo["TranscriptView<br/>GenerationStatus"]
-    console -->|"reads"| convo
-    render -->|"reads"| characters["ForumCharacters<br/>names for labels"]
-
-    controller -.->|"never called from ui/"| store["SessionCatalog<br/>SessionJournal<br/>CompletionBackend"]
-```
-
-The dashed edge is the rule: a front end never opens a session catalog, reads
-workspace layout files, or calls a completion backend. Terminal navigation goes
-through `ChatApplication`; the web frontend keeps its existing key-based
-workspace/session path.
-
-## Dependency contract
-
-Code under `ui/` may depend on:
-
-- `application/` for terminal navigation through `ChatApplication`; the web
-  frontend stays on its existing key-based `session/` path;
-- `session/` for controller operations, generation status, and presentation-safe
-  summaries such as `SessionSummary`;
-- `transcript/` for presentation-ready transcript values;
-- the shared grammar and transcript writer;
-- narrowly scoped `util/` helpers where protocol parsing needs them;
-- `ForumCharacters` from `session/` when a presentation needs character names — for
-  example deciding whether to label who a message was addressed to or naming
-  the console's current-default-agent prompt.
-
-It may not depend on `apps/`, on another front end's widgets, or on anything the
-two lists above exclude. In particular, `ui/tui/` and `ui/console/` must never
-include one another.
-
-## Adding another front end
-
-A future `http/` front end would translate routes, authentication, request
-bodies, and response framing around the same session-layer operations:
-
-| Concern | Where it goes |
-| --- | --- |
-| Route table, auth, JSON request and response types | The new front end. |
-| Streaming response framing, e.g. SSE to browsers | The new front end, fed by `SessionController::receive()`. |
-| Session listing and opening | `Workspace`, unchanged. |
-| Turn semantics, persistence, cancellation | `SessionController`, unchanged. |
-| Command grammar | Reuse `text/`, or skip it if routes already say what to do. |
-| Process wiring and lifetime | A new file in `apps/`. |
-
-Web protocol DTOs are explicit projections from core `SessionDescriptor`,
-`SessionState`, and web presentation state. They are not a second domain model;
-their JSON spelling and SSE framing remain web contracts. Session-persistence
-and agent-runtime types must not become transport contracts — they are internal,
-and freezing them into a public API would pin down layers that need to stay free
-to change.
-
-TUI and console call their controllers directly on their owner thread and render
-a call-scoped `TranscriptView`. It borrows the main-thread transcript and must
-not be retained across a controller operation or any other transcript mutation.
-The concurrent web transport instead receives owner-thread-produced,
-transport-neutral `SessionState`; its projection consumes that value by move.
-The live terminal UI does not copy the whole transcript on each update.
-Code that only needs the activity bit uses `SessionController::is_generating()`;
-it does not construct a `GenerationStatus` and copy active reasoning text.
-
-## Documents
-
-- [`text/README.md`](text/README.md) — the grammar and dispatch rules.
-- [`render/README.md`](render/README.md) — shared transcript writing.
-- [`tui/README.md`](tui/README.md) — the ncurses frontend.
-- [`console/README.md`](console/README.md) — the line-oriented frontend.
+See [web/README.md](web/README.md) and [text/README.md](text/README.md).

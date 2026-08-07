@@ -1,4 +1,4 @@
-.PHONY: build build-web package-linux web-check web-stage web-e2e test itest run run-console run-web run-web-dev clean-san
+.PHONY: build build-web package-linux web-check web-stage web-e2e test itest run run-web-dev clean-san
 
 build:
 	cmake --preset ninja
@@ -27,13 +27,7 @@ test: build
 itest: build
 	cd workspace && ../build/ninja/itest
 
-run: build
-	cd workspace && ../build/ninja/cha
-
-run-console: build
-	cd workspace && ../build/ninja/chacon
-
-run-web: build-web web-stage
+run: build-web web-stage
 	./bin/start-cha.sh
 
 # The API server behind 'npm run dev'. It listens on the port the Vite proxy
@@ -45,4 +39,4 @@ run-web-dev: build-web web-stage
 	./build/ninja/chaweb --root bin --workspace workspace --host 127.0.0.1 --port 8888
 
 clean-san:
-	rm -rf build/console-asan-ubsan build/console-tsan
+	rm -rf build/asan-ubsan build/tsan
