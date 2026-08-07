@@ -361,6 +361,7 @@ TEST(WebProtocol, ParsesBodiesAndBuildsJsonResponses) {
     set_error_response(response, 413, error);
     EXPECT_EQ(response.status, 413);
     EXPECT_EQ(response.get_header_value("Content-Type"), "application/json");
+    EXPECT_EQ(response.get_header_value("Cache-Control"), "no-store");
     EXPECT_EQ(
         nlohmann::json::parse(response.body),
         nlohmann::json(Error{ErrorCode::body_too_large, "Too large"}));

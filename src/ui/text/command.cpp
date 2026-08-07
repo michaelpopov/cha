@@ -2,18 +2,40 @@
 
 #include "util/text.h"
 
+#include <array>
+
 namespace cha {
+namespace {
+
+enum class CommandForm {
+    exact,
+    handle_suffix,
+};
+
+struct CommandDescriptor {
+    std::string_view name;
+    CommandKind kind;
+    CommandForm form{CommandForm::exact};
+};
+
+constexpr std::array descriptors{
+    CommandDescriptor{"/clear", CommandKind::clear},
+    CommandDescriptor{"/hide-on", CommandKind::hide_on},
+    CommandDescriptor{"/hide", CommandKind::hide},
+    CommandDescriptor{"/hide-off", CommandKind::hide_off},
+    CommandDescriptor{"/mcast", CommandKind::mcast},
+    CommandDescriptor{"/info", CommandKind::info},
+    CommandDescriptor{"/agents", CommandKind::agents},
+    CommandDescriptor{"/@", CommandKind::set_default, CommandForm::handle_suffix},
+    CommandDescriptor{"/stop", CommandKind::stop},
+    CommandDescriptor{"/exit", CommandKind::exit},
+};
+
+} // namespace
 
 Command parse_command(std::string_view input) {
     if (!input.starts_with('/')) {
         return {};
-    }
-
-    if (input.starts_with("/@")) {
-        const std::size_t separator = find_whitespace(input);
-        const std::string_view handle = input.substr(2, separator == std::string_view::npos ? std::string_view::npos : separator - 2);
-        const std::string argument = separator == std::string_view::npos ? "" : std::string(trim_view(input.substr(separator)));
-        return {CommandKind::set_default, argument, std::string(handle)};
     }
 
     const std::size_t separator = find_whitespace(input);
@@ -21,34 +43,30 @@ Command parse_command(std::string_view input) {
     const std::string argument =
         separator == std::string_view::npos ? "" : std::string(trim_view(input.substr(separator)));
 
-    if (name == "/clear") {
-        return {CommandKind::clear, argument};
-    }
-    if (name == "/hide-on") {
-        return {CommandKind::hide_on, argument};
-    }
-    if (name == "/hide") {
-        return {CommandKind::hide, argument};
-    }
-    if (name == "/hide-off") {
-        return {CommandKind::hide_off, argument};
-    }
-    if (name == "/mcast") {
-        return {CommandKind::mcast, argument};
-    }
-    if (name == "/info") {
-        return {CommandKind::info, argument};
-    }
-    if (name == "/stop") {
-        return {CommandKind::stop, argument};
-    }
-    if (name == "/exit") {
-        return {CommandKind::exit, argument};
-    }
-    if (name == "/agents") {
-        return {CommandKind::agents, argument};
+    for (const CommandDescriptor& descriptor : descriptors) {
+        if (descriptor.form == CommandForm::exact) {
+            if (name == descriptor.name) {
+                return {descriptor.kind, argument};
+            }
+        } else if (name.starts_with(descriptor.name)) {
+            return {
+                descriptor.kind,
+                argument,
+                std::string(name.substr(descriptor.name.size())),
+            };
+        }
     }
     return {CommandKind::unknown, argument};
+}
+
+std::string command_names() {
+    std::string result;
+    for (const CommandDescriptor& descriptor : descriptors) {
+        if (!result.empty()) result += ", ";
+        result += descriptor.name;
+        if (descriptor.form == CommandForm::handle_suffix) result += "Name";
+    }
+    return result;
 }
 
 } // namespace cha

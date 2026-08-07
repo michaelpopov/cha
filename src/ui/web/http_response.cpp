@@ -10,6 +10,7 @@ void set_json_response(
     int status,
     const nlohmann::json& body) {
     response.status = status;
+    response.set_header("Cache-Control", "no-store");
     response.set_content(body.dump(), json_content_type);
 }
 

@@ -40,14 +40,10 @@ int hold_lease(const std::filesystem::path& database, int ready_descriptor) {
 int create_session(
     const std::filesystem::path& directory,
     std::string_view forum,
-    std::string_view name,
-    int ready_descriptor = -1) {
-    cha::PreparedSession prepared = cha::SessionCatalog(directory, std::string(forum))
-        .create_by_name(std::string(name));
-    if (ready_descriptor == -1) return cha::test::catalog_create_succeeded;
-    if (!write_ready(ready_descriptor)) return cha::test::lease_probe_failed;
-    (void)close(ready_descriptor);
-    while (true) pause();
+    std::string_view name) {
+    (void)cha::SessionCatalog(directory, std::string(forum))
+        .create(std::string(name));
+    return cha::test::catalog_create_succeeded;
 }
 
 int hold_catalog(const std::filesystem::path& directory, int ready_descriptor) {
@@ -60,7 +56,7 @@ int hold_catalog(const std::filesystem::path& directory, int ready_descriptor) {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 3 && argc != 4 && argc != 5 && argc != 6) {
+    if (argc != 3 && argc != 4 && argc != 5) {
         return cha::test::lease_probe_failed;
     }
     try {
@@ -82,14 +78,6 @@ int main(int argc, char** argv) {
         if (operation == "create" && argc == 5) {
             return create_session(database, argv[3], argv[4]);
         }
-        if (operation == "create-hold" && argc == 6) {
-            std::size_t parsed{};
-            const int ready_descriptor = std::stoi(argv[5], &parsed);
-            if (parsed != std::string_view(argv[5]).size() || ready_descriptor < 0) {
-                return cha::test::lease_probe_failed;
-            }
-            return create_session(database, argv[3], argv[4], ready_descriptor);
-        }
         if (operation == "catalog-hold" && argc == 4) {
             std::size_t parsed{};
             const int ready_descriptor = std::stoi(argv[3], &parsed);
@@ -100,8 +88,6 @@ int main(int argc, char** argv) {
         }
     } catch (const cha::SessionBusyError&) {
         return cha::test::lease_probe_busy;
-    } catch (const cha::SessionNameExistsError&) {
-        return cha::test::catalog_create_exists;
     } catch (const cha::CatalogBusyError&) {
         return cha::test::catalog_create_busy;
     } catch (...) {

@@ -2,7 +2,6 @@
 #include "agents/agent_registry.h"
 #include "session/session_controller.h"
 #include "agents/config.h"
-#include "ui/render/transcript_writer.h"
 #include "ui/text/text_input.h"
 #include "util/environment.h"
 #include "util/thread_pool.h"
@@ -86,7 +85,7 @@ Config integration_config(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
     Config config = load_config({
-        .application_provider = load_provider_config(workspace_directory / "app.toml"),
+        .application_provider = load_provider_config(workspace_directory / "workspace.toml"),
         .definition = workspace_directory / "characters" / "Ismael" / "character.toml",
         .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
     }).config;
@@ -288,7 +287,7 @@ LobbySetup lobby_setup() {
         forum.display_name,
         personas,
         forum.directory / "members" / "character_defaults.toml",
-        workspace.app_config().provider),
+        workspace.workspace_config().provider),
         .personas = std::move(personas),
     };
 }
@@ -504,8 +503,6 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
             session.path,
             notifier());
         ASSERT_EQ(controller->characters().first().id, "Cheburashka");
-        EXPECT_TRUE(show_addressing(
-            controller->characters(), controller->transcript().view()));
 
         // No mention: the first character directory in name order answers.
         TextInputResult update = handle_text_input(*controller, "reader", "Who are you?");
@@ -656,9 +653,6 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
         notifier(),
         std::move(restored));
     EXPECT_EQ(reopened->characters().all().size(), 1U);
-    EXPECT_TRUE(show_addressing(
-        reopened->characters(), reopened->transcript().view()))
-        << "history involving a departed agent keeps addressing visible";
     EXPECT_EQ(
         handle_text_input(*reopened, "reader", "@Cheburashka are you there?").session.notice,
         "Unknown agent @Cheburashka. Characters in this forum: @Ismael");

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <filesystem>
+#include <string>
+
 namespace httplib {
 class Server;
 struct Response;
@@ -11,8 +14,14 @@ namespace cha::web {
 // API. The lobby owns browser-side persona, forum, and session selection.
 class AssetHandler {
 public:
+    explicit AssetHandler(std::filesystem::path web_root);
+
     void install(httplib::Server& server) const;
-    static void set_shell(httplib::Response& response);
+    void set_shell(httplib::Response& response) const;
+
+private:
+    std::filesystem::path web_root_;
+    std::string shell_;
 };
 
 } // namespace cha::web

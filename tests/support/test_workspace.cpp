@@ -17,16 +17,20 @@ TestWorkspace::TestWorkspace()
     std::filesystem::create_directories(definition);
     std::filesystem::create_directories(member);
     std::filesystem::create_directories(root_ / "personas");
-    std::ofstream(root_ / "app.toml")
-        << "host = \"127.0.0.1\"\n"
-           "port = 8080\n"
-           "[provider]\n"
+    std::ofstream(root_ / "workspace.toml")
+        << "[provider]\n"
            "host = \"test\"\n"
            "port = 1\n"
            "mode = \"test\"\n"
            "[logging]\n"
            "file = \"logs/cha.log\"\n"
            "level = \"off\"\n";
+    std::filesystem::create_directories(root_ / "web" / "assets");
+    std::ofstream(root_ / "web" / "index.html")
+        << "<!doctype html><html><head><title>cha</title></head>"
+           "<body>test shell</body></html>\n";
+    std::ofstream(root_ / "web" / "assets" / "app.js")
+        << "console.log('test asset');\n";
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\n";
     std::ofstream(root_ / "forums" / "lobby" / "FORUM.md")
@@ -47,13 +51,9 @@ TestWorkspace::~TestWorkspace() {
     std::filesystem::remove_all(root_, error);
 }
 
-void TestWorkspace::write_app_config(
-    int port,
-    std::string_view log_level) const {
-    std::ofstream(root_ / "app.toml")
-        << "host = \"127.0.0.1\"\n"
-           "port = " << port << "\n"
-           "[provider]\n"
+void TestWorkspace::write_workspace_config(std::string_view log_level) const {
+    std::ofstream(root_ / "workspace.toml")
+        << "[provider]\n"
            "host = \"test\"\n"
            "port = 1\n"
            "mode = \"test\"\n"

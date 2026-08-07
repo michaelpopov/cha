@@ -1,5 +1,8 @@
 # CHA web application implementation plan
 
+> Historical migration plan. The browser-only architecture after removal of
+> the earlier application variants is recorded in [removal-plan.md](removal-plan.md).
+
 Status: plan derived from the accepted [webapp.md](webapp.md), 2026-08-06.
 
 This plan turns the accepted proposal into ordered, verifiable work. It says what
@@ -63,7 +66,7 @@ while implementing.
 | OpenAPI | Generate types only. The client is written by hand. |
 | Asset base | Vite `base: '/'`. Never relative. |
 | Shell | One document served at `/` and `/s/{forum}/{session}/`. |
-| Directories | Two, always separate. The application directory holds the executable, `web/`, and the launcher and is replaced by an upgrade. The workspace holds `app.toml`, `.env`, characters, personas, forums with their stored conversations, and `logs/`. Its path is set once at setup and may be anywhere. |
+| Directories | Two, always separate. The application directory holds the executable, `web/`, `app.toml`, and the launcher and is replaced by an upgrade. The workspace holds `workspace.toml`, `.env`, characters, personas, forums with their stored conversations, and `logs/`. Its path is set once at setup and may be anywhere. |
 | Binding | Configurable. The shipped `app.toml` sets `0.0.0.0` so another machine on the same network can open the application. No authentication and no transport security in v1. |
 | Configuration | Two files. `app.toml` in the application directory holds `host`, `port`, and the workspace path; `--config` names it and `--host`, `--port`, `--workspace` override it. `workspace.toml` in the workspace holds `[provider]` and `[logging]`. |
 | Settings screen | Removed in v1, not deferred. There is no gear and no Settings view. |
@@ -95,7 +98,7 @@ always run from `src/resources/webapp/`:
 | `npm run dev` | Start the editable frontend through the Vite development server. |
 | `npm run build` | Type-check and produce production files in `src/resources/webapp/dist/`. |
 | `npm run check` | Regenerate/check API types and run type, unit, and component tests. |
-| `npm run e2e` | Run the browser tests against a deterministic local test server. |
+| `npm run e2e` | Build, then run the browser tests against a deterministic local test server: once through the development server, once against the production build served by `chaweb` itself. |
 | `npm run stage` | Build, then replace `bin/web/` with the result. Takes `--root <dir>` to stage somewhere else. |
 
 Frontend dependencies are installed under `src/resources/webapp/node_modules/`,
@@ -126,10 +129,11 @@ accepts a path ([environment.h](../src/util/environment.h#L20)). Only the
 entry point hardcodes `"."`.
 
 **Two roots, not one.** The application directory holds what ships with a
-release and is replaced wholesale by the next one: the executable, `web/`, and
-the launcher. The workspace holds everything belonging to the customer:
-`app.toml`, `.env`, `characters/`, `personas/`, `forums/` — which contain the
-stored conversations as `forums/<forum>/sessions/*.sqlite3` — and `logs/`.
+release and is replaced wholesale by the next one: the executable, `web/`,
+`app.toml`, and the launcher. The workspace holds everything belonging to the
+customer: `workspace.toml`, `.env`, `characters/`, `personas/`, `forums/` —
+which contain the stored conversations as `forums/<forum>/sessions/*.sqlite3` —
+and `logs/`.
 Keeping them apart is what makes an upgrade safe; a single root would put the
 customer's characters, conversations, and provider key inside the directory an
 upgrade overwrites. The workspace path is chosen once during setup and can be
@@ -191,10 +195,11 @@ answered `403 forbidden_host`.
    will usually be a customer's typo rather than a developer's. Report the
    resolved path and the option that sets it, not just a file-not-found error.
 7. **Announce the address on standard output** once the listener is ready, as
-   one predictable line. The port is configurable, so the launcher in Block 7
-   cannot assume `8080`, and reading a line the server prints is simpler and
-   more reliable than parsing the configuration a second time in a shell
-   script. Keep `/health` as it is; the tests use it.
+   one predictable line. It is written for the person starting CHA, who opens
+   that address in a browser themselves: the port is configurable, so neither a
+   customer nor a developer should have to work out what to type from a
+   configuration file. Nothing consumes the line programmatically. Keep
+   `/health` as it is; the tests use it.
 8. **Update `console_main.cpp` and `tui_main.cpp` for the rename only.** They
    call `load_application_config()` with the default `"."`
    ([console_main.cpp](../src/apps/console_main.cpp#L49),
@@ -234,8 +239,12 @@ answered `403 forbidden_host`.
     three assignments at the top of the file, so a development run needs no
     configuration file at all; `bin/` is otherwise generated, which
     [`.gitignore`](../.gitignore) expresses as `/bin/*` with the script negated.
-    Command-line settings override `app.toml` by design, so a developer who
-    prefers a configuration file can drop one into `bin/` and delete the flags.
+    The step also seeds `bin/app.toml` the first time, and never rewrites it
+    afterwards: it is a file a developer edits to try a different port or
+    workspace, and a build that reverted it every time would be worse than not
+    writing it at all. Command-line settings override it by design, so a
+    developer who prefers configuring the application can edit that file and
+    delete the flags from the script.
 
     Block 2 extends the same step with `web/`, and from then on
     `cmake --build` followed by `./bin/start-cha.sh` is the ordinary way to run
@@ -409,7 +418,12 @@ development loop.
 9. **Establish Playwright now.** Add its configuration and Chromium browser,
    plus a deterministic test workspace using the existing test-mode provider.
    The browser suite starts and stops a real test `chaweb` and never requires a
-   provider key, Internet access, or paid model request.
+   provider key, Internet access, or paid model request. Downloading the
+   browser is not enough to run it: it links against system libraries that
+   `sudo npx playwright install-deps chromium` installs separately, which
+   [the webapp README](../src/resources/webapp/README.md) records. Treat a
+   machine where that step has not been run as a machine where this suite has
+   not been run, and never report the block complete on its strength.
 10. **Ignore generated directories**: `src/resources/webapp/node_modules/`,
     `src/resources/webapp/dist/`, Playwright output, and local staged package
     directories. `/bin/` was ignored in Block 1.
@@ -541,6 +555,16 @@ interruption.
    transcript, generation state, and the context line
    `<Forum>   From: <Persona>   To: <default character>` from
    [web-ui/README.md](web-ui/README.md).
+
+   **Including the two paths that reach a conversation without opening it.**
+   Block 5 opens, snapshots, and streams whenever a session is *chosen* — a
+   stored-session row, a Recent entry, a deep link, a restored history entry.
+   Two paths instead adopt the initial conversation from bootstrap and set it
+   active without any request: the plain `/` boot, and Return to Welcome. That
+   is invisible while the transcript is a placeholder and will not be once it
+   is real, so becoming active must drive the open, not the click that caused
+   it. A conversation that is active with no stream attached is the state to
+   look for.
 2. **Apply events**: a `snapshot` event replaces state wholesale; an `append`
    event appends to the entry or reasoning target it names.
 3. **Submit input** as `{"persona": "<id>", "text": "<text>"}` with the selected
@@ -551,6 +575,11 @@ interruption.
    the default-character endpoint. While `generation.active` is true, the Send
    arrow in the composer becomes a Stop square calling the stop endpoint; it
    becomes Send again only when authoritative session state is inactive.
+   A disconnected event stream does not disable the HTTP Stop action, and the
+   composer remains editable so a reconnect never destroys or blocks a draft.
+   Send and target changes still wait for a connected stream: a page that
+   cannot observe updates, especially a second viewer, must not start work it
+   cannot follow.
 5. **Keep exactly one stream.** Close the old one before connecting a new one on
    a session switch.
 6. **Implement application-owned recovery** exactly as
@@ -585,6 +614,8 @@ interruption.
 
 - Reducer tests for snapshot replacement and for appends against both target
   kinds.
+- A plain `/` boot and Return to Welcome each attach a stream to the initial
+  conversation, rather than leaving it active but unattached.
 - A fake event source driving snapshot and append sequences.
 - Recovery tests in which a stream error is followed by a successful snapshot,
   by `session_not_live`, by temporary server unavailability, and by exhausting
@@ -647,15 +678,16 @@ enough for the server to unload the conversation.
    port, and workspace path, and which passes them to `chaweb`. Setup is
    editing those lines. Ship `app.toml` alongside it carrying the same three
    settings, for anyone who would rather configure the application than edit a
-   script; the command line wins where both are present. The script waits for
-   the ready line on standard output, opens
-   that URL in the default browser, and keeps a visible terminal that stops the
-   process. Detect early process exit and show the startup error instead of
-   waiting indefinitely. Because the ready line carries the real address, the
-   script never assumes a port. Print the machine's LAN address next to the
-   local one so the address to give someone else needs no working out, and say
-   plainly that anyone on the network who opens it can read and continue the
-   conversations. macOS and Windows launchers follow later, in that order.
+   script; the command line wins where both are present. It keeps a visible
+   terminal that stops the process, and that is all it does: the customer opens
+   the printed address in a browser themselves, so the script neither launches
+   one nor waits for the ready line to find out where to point it. `exec`
+   therefore stays, and a failed start reports itself in the terminal without
+   any timeout logic. Print the machine's LAN address next to the local one so
+   the address to give someone else needs no working out, and say plainly that
+   anyone on the network who opens it can read and continue the conversations.
+   macOS and Windows launchers follow later, in that order; with no browser to
+   open, they differ from this one only in shell syntax.
 8. **Write the setup and upgrade instructions, and make them true.** Setup is:
    put the workspace somewhere, write its path and the port into the launcher's
    first three lines, create `.env` in the workspace with the provider key, run
@@ -666,7 +698,10 @@ enough for the server to unload the conversation.
 9. **Complete and run the existing Playwright suite** against the assembled
    package, covering the minimum flows in
    [webapp.md](webapp.md#testing-strategy), including interruption and rapid
-   Recent navigation.
+   Recent navigation. The suite's `served` project already loads the production
+   build from `chaweb` with no development server in the path, which is what
+   keeps the Stage 1 criteria proved rather than remembered; extend it here
+   rather than starting a separate package suite.
 10. **Test on a clean Linux machine** representative of the customer's laptop,
     including placing the workspace somewhere the application directory does
     not contain, and running on a port other than 8080.

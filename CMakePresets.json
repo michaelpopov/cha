@@ -8,28 +8,19 @@
       "binaryDir": "${sourceDir}/build/ninja"
     },
     {
-      "name": "console",
-      "displayName": "Console (no TUI)",
+      "name": "asan-ubsan",
+      "displayName": "AddressSanitizer and UBSan",
       "inherits": "ninja",
-      "binaryDir": "${sourceDir}/build/console",
-      "cacheVariables": {
-        "CHA_BUILD_TUI": "OFF"
-      }
-    },
-    {
-      "name": "console-asan-ubsan",
-      "displayName": "Console (AddressSanitizer and UBSan)",
-      "inherits": "console",
-      "binaryDir": "${sourceDir}/build/console-asan-ubsan",
+      "binaryDir": "${sourceDir}/build/asan-ubsan",
       "cacheVariables": {
         "CHA_SANITIZER": "address-undefined"
       }
     },
     {
-      "name": "console-tsan",
-      "displayName": "Console (ThreadSanitizer)",
-      "inherits": "console",
-      "binaryDir": "${sourceDir}/build/console-tsan",
+      "name": "tsan",
+      "displayName": "ThreadSanitizer",
+      "inherits": "ninja",
+      "binaryDir": "${sourceDir}/build/tsan",
       "cacheVariables": {
         "CHA_SANITIZER": "thread"
       }
@@ -41,16 +32,12 @@
       "configurePreset": "ninja"
     },
     {
-      "name": "console",
-      "configurePreset": "console"
+      "name": "asan-ubsan",
+      "configurePreset": "asan-ubsan"
     },
     {
-      "name": "console-asan-ubsan",
-      "configurePreset": "console-asan-ubsan"
-    },
-    {
-      "name": "console-tsan",
-      "configurePreset": "console-tsan"
+      "name": "tsan",
+      "configurePreset": "tsan"
     }
   ]
 }

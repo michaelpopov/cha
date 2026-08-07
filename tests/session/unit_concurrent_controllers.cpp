@@ -138,7 +138,7 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     std::filesystem::create_directories(forum / "members" / "agent");
     std::filesystem::create_directories(root / "personas" / "operator");
     {
-        std::ofstream file(root / "app.toml");
+        std::ofstream file(root / "workspace.toml");
         file << "host = \"127.0.0.1\"\nport = 8080\n[provider]\n"
              << "host = \"test\"\nport = 1\nmode = \"test\"\n[logging]\n"
              << "file = \"cha.log\"\nlevel = \"off\"\n";

@@ -1,7 +1,6 @@
 #include "ui/text/text_input.h"
 
 #include "session/session_controller.h"
-#include "ui/text/application_command.h"
 #include "ui/text/command.h"
 #include "ui/text/mcast.h"
 #include "ui/text/mention.h"

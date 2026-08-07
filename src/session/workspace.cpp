@@ -82,7 +82,6 @@ SessionSummary summarize(const Session& stored) {
         .id = stored.id,
         .label = stored.label,
         .error = stored.error,
-        .ambiguous = stored.ambiguous,
     };
 }
 
@@ -313,45 +312,32 @@ Persona load_persona(const std::filesystem::path& directory) {
 
 } // namespace
 
-ApplicationConfig load_application_config(const std::filesystem::path& root) {
-    const std::filesystem::path path = root / "app.toml";
+WorkspaceConfig load_workspace_config(const std::filesystem::path& root) {
+    const std::filesystem::path path = root / "workspace.toml";
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         throw std::runtime_error(
-            "Failed to read application config '" + utf8_path(path) + "'");
+            "Failed to read workspace config '" + utf8_path(path) + "'");
     }
     const toml::table table = toml::parse(file, utf8_path(path));
-    const std::optional<std::string> host =
-        table["host"].value<std::string>();
-    if (!host || host->empty()) {
-        throw std::runtime_error(
-            "Application config '" + utf8_path(path)
-            + "' requires a non-empty string 'host'");
-    }
-    const std::optional<int> port = table["port"].value<int>();
-    if (!port || *port < 1 || *port > 65535) {
-        throw std::runtime_error(
-            "Application config '" + utf8_path(path)
-            + "' requires an integer 'port' between 1 and 65535");
-    }
     const toml::table* logging = table["logging"].as_table();
     if (!logging) {
         throw std::runtime_error(
-            "Application config '" + utf8_path(path)
+            "Workspace config '" + utf8_path(path)
             + "' requires a [logging] table");
     }
     const std::optional<std::string> log_file =
         (*logging)["file"].value<std::string>();
     if (!log_file || log_file->empty()) {
         throw std::runtime_error(
-            "Application config '" + utf8_path(path)
+            "Workspace config '" + utf8_path(path)
             + "' requires a non-empty string 'logging.file'");
     }
     const std::optional<std::string> log_level =
         (*logging)["level"].value<std::string>();
     if (!log_level || log_level->empty()) {
         throw std::runtime_error(
-            "Application config '" + utf8_path(path)
+            "Workspace config '" + utf8_path(path)
             + "' requires a non-empty string 'logging.level'");
     }
 
@@ -360,8 +346,6 @@ ApplicationConfig load_application_config(const std::filesystem::path& root) {
         log_path = root / log_path;
     }
     return {
-        .host = *host,
-        .port = *port,
         .log_file = std::move(log_path),
         .log_level = *log_level,
         .provider = load_provider_config(path),
@@ -369,13 +353,13 @@ ApplicationConfig load_application_config(const std::filesystem::path& root) {
 }
 
 Workspace::Workspace(std::filesystem::path root)
-    : Workspace(root, load_application_config(root)) {
+    : Workspace(root, load_workspace_config(root)) {
 }
 
 Workspace::Workspace(
     std::filesystem::path root,
-    ApplicationConfig app_config)
-    : root_(std::move(root)), app_config_(std::move(app_config)) {
+    WorkspaceConfig workspace_config)
+    : root_(std::move(root)), workspace_config_(std::move(workspace_config)) {
     if (!std::filesystem::is_directory(root_ / "forums")) {
         throw std::runtime_error(
             "Workspace '" + utf8_path(root_)
@@ -411,8 +395,8 @@ Workspace::Workspace(
     }
 }
 
-const ApplicationConfig& Workspace::app_config() const {
-    return app_config_;
+const WorkspaceConfig& Workspace::workspace_config() const {
+    return workspace_config_;
 }
 
 std::vector<CharacterDefinitionMetadata> Workspace::character_definitions() const {
@@ -484,7 +468,7 @@ Forum Workspace::check_forum(const std::string& name) const {
     Forum forum = load_forum(name);
     const PersonaRoster personas = load_personas();
     const std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
+        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", workspace_config_.provider);
     validate_forum_characters(definitions);
     return forum;
 }
@@ -518,58 +502,11 @@ std::filesystem::file_time_type Workspace::session_last_write_time(
     return std::filesystem::last_write_time(catalog.database_path(session_id));
 }
 
-Forum Workspace::load_forum_by_name(std::string_view name) const {
-    try {
-        validate_public_name(name, "Forum name", "requested forum");
-    } catch (const std::exception&) {
-        throw std::runtime_error("Forum name is not a valid public name");
-    }
-    std::optional<Forum> found;
-    for (const std::string& id : forums()) {
-        Forum forum = load_forum(id);
-        if (fold_ascii(forum.display_name) != fold_ascii(name)) continue;
-        if (found) throw std::runtime_error("Forum name '" + std::string(name) + "' is ambiguous");
-        found = std::move(forum);
-    }
-    if (!found) throw ForumNotFoundError("Unknown forum '" + std::string(name) + "'");
-    return std::move(*found);
-}
-
-std::vector<SessionSummary> Workspace::sessions_by_name(const std::string& forum_name) const {
-    const Forum forum = load_forum_by_name(forum_name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    std::vector<SessionSummary> result;
-    for (const Session& stored : catalog.list_by_name()) result.push_back(summarize(stored));
-    return result;
-}
-
 SessionSummary Workspace::session_summary(
     const std::string& forum_name,
     const std::string& session_id) const {
     const SessionCatalog catalog = session_catalog(*this, forum_name);
     return summarize(catalog.session(session_id));
-}
-
-SessionSummary Workspace::session_summary_by_name(
-    std::string_view forum_name, const std::string& session_name) const {
-    const Forum forum = load_forum_by_name(forum_name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    try {
-        return summarize(catalog.session_by_name(session_name));
-    } catch (const SessionNameAmbiguousError&) {
-        throw SessionNameAmbiguousError("Session name '" + session_name
-            + "' is ambiguous in forum '" + forum.display_name + "'");
-    } catch (const SessionNotFoundError&) {
-        throw SessionNotFoundError("Session '" + session_name
-            + "' does not exist in forum '" + forum.display_name + "'");
-    } catch (const InvalidSessionNameError&) {
-        throw;
-    } catch (const std::exception& error) {
-        log_warn("Failed to read session summary for forum_id=" + forum.name
-            + ": " + error.what());
-        throw std::runtime_error("Unable to read session '" + session_name
-            + "' in forum '" + forum.display_name + "'");
-    }
 }
 
 void Workspace::check_session(
@@ -586,88 +523,6 @@ SessionSummary Workspace::create_stored_session(
     return summarize(catalog.create(std::move(label)));
 }
 
-SessionSummary Workspace::create_stored_session_by_name(
-    std::string_view forum_name, std::string session_name) const {
-    return summarize(prepare_stored_session_by_name(forum_name, std::move(session_name)).session);
-}
-
-PreparedSession Workspace::prepare_stored_session_by_name(
-    std::string_view forum_name, std::string session_name) const {
-    const Forum forum = load_forum_by_name(forum_name);
-    (void)check_forum(forum.name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    const std::string public_session_name = session_name;
-    try {
-        return catalog.create_by_name(std::move(session_name));
-    } catch (const SessionNameExistsError&) {
-        throw SessionNameExistsError("Session '" + public_session_name
-            + "' already exists in forum '" + forum.display_name + "'; use /open");
-    }
-}
-
-OpenedSession Workspace::create_session(
-    const std::string& forum_name,
-    std::string label,
-    WakeNotifier& notifier) const {
-    Forum forum = load_forum(forum_name);
-    PersonaRoster personas = load_personas();
-    std::vector<AgentDefinition> definitions = load_definitions(
-        forum, personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
-    validate_forum_characters(definitions);
-
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    const Session stored = catalog.create(std::move(label));
-    const std::filesystem::path database_path = catalog.open_database_path(stored.id);
-    SessionLease lease = SessionLease::acquire(database_path);
-    SessionRestore restored = load_session_state(database_path);
-    std::unique_ptr<SessionController> controller =
-        SessionController::from_definitions(
-            std::move(definitions),
-            std::move(personas),
-            forum.default_agent_id,
-            database_path,
-            std::move(lease),
-            notifier,
-            std::move(restored));
-    log_info("Session opened");
-    return {
-        .descriptor = {
-            .identity = {forum.name, stored.id},
-            .forum_display_name = forum.display_name,
-            .session_label = stored.label,
-            .forum_default_character_id = forum.default_agent_id,
-        },
-        .controller = std::move(controller),
-    };
-}
-
-OpenedSession Workspace::open_session_by_name(
-    std::string_view forum_name,
-    const std::string& session_name,
-    WakeNotifier& notifier) const {
-    const Forum forum = load_forum_by_name(forum_name);
-    const SessionCatalog catalog(forum.directory / "sessions", forum.name);
-    try {
-        const Session stored = catalog.session_by_name(session_name);
-        return open_session({forum.name, stored.id}, notifier);
-    } catch (const SessionNameAmbiguousError&) {
-        throw SessionNameAmbiguousError("Session name '" + session_name
-            + "' is ambiguous in forum '" + forum.display_name + "'");
-    } catch (const SessionNotFoundError&) {
-        throw SessionNotFoundError("Session '" + session_name
-            + "' does not exist in forum '" + forum.display_name + "'");
-    } catch (const SessionBusyError&) {
-        throw SessionBusyError("Session '" + session_name + "' is in use elsewhere");
-    } catch (const InvalidSessionNameError&) {
-        throw;
-    } catch (const std::exception& error) {
-        log_warn("Failed to open session for forum_id=" + forum.name
-            + ": " + error.what());
-        throw std::runtime_error("Unable to open session '" + session_name
-            + "' in forum '" + forum.display_name + "'");
-    }
-}
-
 OpenedSession Workspace::open_session(
     const SessionIdentity& identity,
     WakeNotifier& notifier,
@@ -682,7 +537,7 @@ OpenedSession Workspace::open_session(
     SessionRestore restored = load_session_state(database_path);
     if (!personas) personas = std::make_shared<const PersonaRoster>(load_personas());
     std::vector<AgentDefinition> definitions = load_definitions(
-        forum, *personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", app_config_.provider);
+        forum, *personas, forum.directory / "members" / "character_defaults.toml", root_ / "characters", workspace_config_.provider);
     log_info("Session opened");
     return {
         .descriptor = {

@@ -85,5 +85,11 @@ TEST(Command, SeparatesTheDefaultAgentHandleFromAnArgument) {
         << "a non-empty argument is what rejects /@Name with trailing words";
 }
 
+TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
+    EXPECT_EQ(
+        command_names(),
+        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /agents, /@Name, /stop, /exit");
+}
+
 } // namespace
 } // namespace cha

@@ -1,8 +1,9 @@
 # Web frontend boundary
 
 Workspace characters in the web frontend inherit the shared `[provider]`
-configuration in `app.toml`; the top-level `host` and `port` remain this web
-server's listener settings. Web discovery has its own HTTP projection, including
+configuration in `workspace.toml`; `host`, `port`, and the workspace path live in
+the application directory's `app.toml` and remain the web server's listener and
+root settings. Web discovery has its own HTTP projection, including
 Guest, Assistant, Entrance, and Welcome, but does not use terminal
 slash-navigation commands or their presentation results.
 
@@ -79,6 +80,13 @@ limit, and fallback error/exception handlers so route installers cannot
 silently replace one another's policy. The allowed-host check runs before
 routing and admits only the configured listener authority; loopback listeners
 also admit the equivalent `localhost`, IPv4, and IPv6 loopback authorities.
+A wildcard listener (`0.0.0.0` or `::`) cannot name the authority a browser
+will send, so it instead admits any `Host` on the listener port whose host part
+is an IP address literal or `localhost`, and rejects every DNS name. Refusing
+names is what denies a hostile page the easiest route to this API: pointing its
+own domain at the machine and letting the browser send that domain as `Host`.
+The `Origin`-must-equal-`Host` rule for JSON mutations is unaffected, because a
+real browser sends the address the user typed in both headers.
 `ServerShutdownCoordinator` implements the bounded process shutdown sequence:
 it waits for signal notification, sets the registry stopping flag, stops HTTP
 acceptance, wakes opening waiters, requests published runtimes to stop, joins

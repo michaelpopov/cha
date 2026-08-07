@@ -5,6 +5,7 @@
 #include "application/welcome_storage.h"
 #include "session/workspace.h"
 #include "ui/web/http_server.h"
+#include "ui/web/asset_handler.h"
 #include "ui/web/lobby_routes.h"
 #include "ui/web/server_shutdown.h"
 #include "ui/web/session_routes.h"
@@ -405,7 +406,9 @@ public:
                 socket, SOL_SOCKET, SO_SNDBUF,
                 &send_buffer, sizeof(send_buffer));
         });
-        SessionRoutes(registry_, settings_).install(server_);
+        SessionRoutes(
+            registry_, settings_, AssetHandler(fixture_.root() / "web"))
+            .install(server_);
         if (!std::holds_alternative<RegistryReady>(
                 registry_.open({"forum", "session"}, 1s))) {
             throw std::runtime_error("Could not open real-socket SSE fixture session");
@@ -440,6 +443,7 @@ private:
         return settings;
     }
 
+    test::TestWorkspace fixture_;
     WebSettings settings_;
     SessionRegistry registry_;
     httplib::Server server_;
@@ -548,15 +552,72 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     _exit(3);
 }
 
+// The whole point of the two-root split is that an upgrade can replace the
+// application directory without touching the customer's files. Every other
+// process test hands the same path to both flags, which would pass just as
+// happily if the two were secretly one root.
+TEST(WebServerProcess, RunsWithAnApplicationRootThatHoldsNoWorkspace) {
+    test::TestWorkspace workspace;
+    workspace.write_workspace_config();
+
+    const std::filesystem::path application =
+        std::filesystem::temp_directory_path()
+        / ("cha_application_root_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(application / "web" / "assets");
+    std::ofstream(application / "web" / "index.html")
+        << "<!doctype html><html><body>split shell</body></html>\n";
+    std::ofstream(application / "web" / "assets" / "app.js")
+        << "console.log('split asset');\n";
+
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(application, workspace.root(), port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    httplib::Client client = web_client(port);
+    // The shell comes from the application root...
+    const auto shell = client.Get("/");
+    ASSERT_TRUE(shell);
+    EXPECT_EQ(shell->status, 200);
+    EXPECT_NE(shell->body.find("split shell"), std::string::npos);
+
+    // ...while the conversations come from the workspace somewhere else.
+    const auto bootstrap = client.Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    EXPECT_EQ(bootstrap->status, 200);
+    EXPECT_NE(bootstrap->body.find("The Lobby"), std::string::npos);
+
+    // Neither directory has grown the other's files.
+    EXPECT_FALSE(std::filesystem::exists(application / "workspace.toml"));
+    EXPECT_FALSE(std::filesystem::exists(workspace.root() / "app.toml"));
+
+    EXPECT_EQ(server.stop(SIGTERM).exit_code, 0);
+    std::error_code removal;
+    std::filesystem::remove_all(application, removal);
+}
+
 TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_app_config(port);
+    workspace.write_workspace_config();
     test::WebServerProcess server(workspace.root(), port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+    EXPECT_NE(
+        server.output().find(
+            "CHA ready at http://127.0.0.1:" + std::to_string(port) + "/"),
+        std::string::npos);
 
     httplib::Client client = web_client(port);
+    const auto shell = client.Get("/");
+    ASSERT_TRUE(shell);
+    EXPECT_EQ(shell->status, 200);
+    EXPECT_NE(shell->body.find("test shell"), std::string::npos);
+    const auto asset = client.Get("/assets/app.js");
+    ASSERT_TRUE(asset);
+    EXPECT_EQ(asset->status, 200);
     const auto lobby = client.Get("/");
     ASSERT_TRUE(lobby);
     EXPECT_EQ(lobby->status, 200);
@@ -608,7 +669,7 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     const auto non_live_page = client.Get("/s/lobby/not-open/");
     ASSERT_TRUE(non_live_page);
     EXPECT_EQ(non_live_page->status, 200);
-    EXPECT_NE(non_live_page->body.find("The chat browser is not installed yet."), std::string::npos);
+    EXPECT_NE(non_live_page->body.find("test shell"), std::string::npos);
     EXPECT_EQ(non_live_page->body.find("://"), std::string::npos);
     const auto health = client.Get("/health");
     ASSERT_TRUE(health);
@@ -630,7 +691,7 @@ TEST(WebServerProcess, InputAuthorReachesTheLiveTranscript) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_app_config(port);
+    workspace.write_workspace_config();
     test::WebServerProcess server(workspace.root(), port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
@@ -669,7 +730,7 @@ TEST(WebServerProcess, RestartReopensLeasesAfterCleanAndForcedExit) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_app_config(port);
+    workspace.write_workspace_config();
     std::string session_id;
 
     {
@@ -709,7 +770,7 @@ TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_app_config(port, "info");
+    workspace.write_workspace_config("info");
     test::WebServerProcess server(workspace.root(), port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
@@ -807,7 +868,7 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
         "stream = true\n");
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_app_config(port);
+    workspace.write_workspace_config();
     test::WebServerProcess server(workspace.root(), port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 

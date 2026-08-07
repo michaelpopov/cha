@@ -21,7 +21,7 @@ protected:
         std::ofstream(root_ / "characters" / "guide" / "character.toml")
             << "display_name = \"Guide\"\n";
         std::ofstream(root_ / "characters" / "guide" / "CHARACTER.md") << "Guide";
-        std::ofstream(root_ / "app.toml")
+        std::ofstream(root_ / "workspace.toml")
             << "host = \"127.0.0.1\"\n"
                "port = 8080\n"
                "[provider]\n"

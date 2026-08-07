@@ -3,8 +3,7 @@
 `session/` owns the reusable operations: it finds the workspace, manages session
 files, persists the transcript, and coordinates one live chat. Every operation
 it exposes is a typed C++ call — no command syntax, no widgets, no HTTP — so the
-terminal front end, a future HTTP front end, and the tests all drive the same
-code.
+web frontend and tests drive the same code.
 
 ## Contents
 
@@ -41,8 +40,7 @@ flowchart TD
 
 `Workspace` refuses to construct unless `forums/`, `characters/`, and a valid
 `personas/` directory exist. The directory may contain no custom personas;
-the terminal application's built-in Guest persona makes its effective roster
-non-empty.
+`WebDiscovery` adds the built-in Guest to the effective browser roster.
 The `forums/` directory may be temporarily empty; its valid forum names are
 sorted before presentation. Forum IDs and session database stems may contain
 only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and
@@ -81,11 +79,9 @@ deriving the definition containment root from the definition directory's parent
 and otherwise receiving resolved workspace paths explicitly.
 
 `Workspace::check_forum()` follows the same loading path without creating or
-opening a session. It also constructs `ForumCharacters` to validate character IDs,
-display names, and uniqueness, giving the console's `--check` mode the same
-static validation a real session receives before provider initialization. It
-does not inspect the optional `sessions/` directory or resolve provider
-credentials and models.
+opening a session. It also constructs `ForumCharacters` to validate character
+IDs, display names, and uniqueness. It does not inspect the optional
+`sessions/` directory or resolve provider credentials and models.
 
 `Workspace::session_summary()` reads one selected stored session's identity,
 label, and metadata directly, without scanning the other session databases or
@@ -135,16 +131,6 @@ sequenceDiagram
     SC->>DB: build hidden temporary sibling, then link into place
     WS-->>UI: SessionSummary with assigned ID and effective label
 
-    Note over UI,CC: Terminal create and open convenience
-    UI->>WS: create_session forum, label
-    WS->>WS: load forum, roster, and definitions once
-    WS->>SC: create label
-    WS->>SC: open_database_path assigned ID
-    WS->>SL: acquire lease
-    WS->>DB: load_session_state
-    WS->>CC: from_definitions; no persona membership roster
-    WS-->>UI: OpenedSession (descriptor + controller)
-
     Note over UI,CC: Opening a session
     UI->>WS: open_session forum, id
     WS->>SC: open_database_path id
@@ -154,7 +140,7 @@ sequenceDiagram
     DB-->>WS: SessionRestore
     WS->>WS: load_personas, unless the caller supplies an effective roster
     WS->>AG: load_agent_definitions(definition/member pairs, forum, roster)
-    WS->>CC: from_definitions with restore; supplied effective rosters retain Guest for browser-authored input, while terminal callers use workspace personas as before
+    WS->>CC: from_definitions with restore and the supplied effective browser roster
     CC->>CC: repair interrupted turns, then install entries
     WS-->>UI: OpenedSession (descriptor + controller)
 ```
@@ -168,15 +154,6 @@ operation returns only a `SessionSummary`: it neither acquires a session lease
 nor constructs a controller or provider. Web callers create and open in
 separate operations, so an open failure leaves the successfully stored session
 available for a later ordinary open.
-
-`Workspace::create_session()` is the terminal convenience operation. It loads
-and validates the forum, roster, and definitions once, publishes the stored
-session, revalidates that database's identity, and constructs the controller
-from the values already loaded. The returned `OpenedSession` couples its
-controller to a descriptor derived from the same validated forum and stored
-session metadata. Persona data used to assemble static prompts is not retained
-by the controller as membership. Terminal creation logs `Session stored`
-followed by `Session opened`.
 
 Listing is tolerant: a file that fails validation still appears, with its error
 attached, so the selector can show it instead of hiding a broken session.
@@ -192,8 +169,8 @@ companion file may remain after a run; only its non-blocking exclusive operating
 system lock means the session is active. `Workspace` acquires the lease after
 resolving a database but before restore, then moves it into `SessionController`.
 The controller keeps it through explicit shutdown and journal destruction, so
-`cha`, `chacon`, and future frontends fail immediately with `SessionBusyError`
-when another process owns that stored session. Test-only controller factories
+`chaweb` fails immediately with `SessionBusyError` when another process owns
+that stored session. Test-only controller factories
 use an explicitly inactive lease instead of locking fixture databases.
 On Windows, the companion handle intentionally omits `FILE_SHARE_DELETE`, so
 the lock file cannot be deleted or renamed while its controller is alive.

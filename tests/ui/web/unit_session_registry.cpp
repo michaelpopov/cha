@@ -228,6 +228,69 @@ TEST(SessionRegistry, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSession
     registry.begin_shutdown();
 }
 
+TEST(SessionRegistry, WelcomeReopensOnlyFromTheSameStorageWithTheEffectiveRoster) {
+    test::TestWorkspace fixture;
+    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    WebDiscovery discovery(*workspace);
+    WelcomeStorage storage;
+    const SessionIdentity welcome_key{
+        std::string(entrance_id), std::string(welcome_id)};
+
+    {
+        SessionRegistry registry = SessionRegistry::from_workspace(
+            {.session_limit = 1}, workspace, discovery, storage);
+        ASSERT_TRUE(std::holds_alternative<RegistryReady>(
+            registry.open(welcome_key, 1s)));
+        SessionHandle welcome = registry.lookup(welcome_key);
+        ASSERT_TRUE(welcome);
+        ASSERT_TRUE(std::holds_alternative<CommandResult>(
+            welcome.runtime().submit(RawCommand{"reader", "Remember this"}, 1s)));
+
+        std::optional<SessionSnapshot> settled;
+        for (int attempt = 0; attempt < 200 && !settled; ++attempt) {
+            CommandSubmitResult state = welcome.runtime().snapshot(1s);
+            if (const auto* snapshot = std::get_if<SessionSnapshot>(&state);
+                snapshot != nullptr && !snapshot->generation.active) {
+                settled = *snapshot;
+                break;
+            }
+            std::this_thread::sleep_for(5ms);
+        }
+        ASSERT_TRUE(settled);
+        ASSERT_EQ(settled->transcript.size(), 2U);
+        EXPECT_EQ(settled->transcript.front().participant_id, "reader");
+        EXPECT_EQ(settled->transcript.front().display_name, "Reader");
+        registry.begin_shutdown();
+    }
+
+    {
+        SessionRegistry registry = SessionRegistry::from_workspace(
+            {.session_limit = 1}, workspace, discovery, storage);
+        ASSERT_TRUE(std::holds_alternative<RegistryReady>(
+            registry.open(welcome_key, 1s)));
+        SessionHandle welcome = registry.lookup(welcome_key);
+        ASSERT_TRUE(welcome);
+        const CommandSubmitResult state = welcome.runtime().snapshot(1s);
+        const auto* snapshot = std::get_if<SessionSnapshot>(&state);
+        ASSERT_NE(snapshot, nullptr);
+        EXPECT_EQ(snapshot->transcript.size(), 2U);
+        registry.begin_shutdown();
+    }
+
+    WelcomeStorage other_storage;
+    SessionRegistry other = SessionRegistry::from_workspace(
+        {.session_limit = 1}, workspace, discovery, other_storage);
+    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
+        other.open(welcome_key, 1s)));
+    SessionHandle fresh = other.lookup(welcome_key);
+    ASSERT_TRUE(fresh);
+    const CommandSubmitResult state = fresh.runtime().snapshot(1s);
+    const auto* snapshot = std::get_if<SessionSnapshot>(&state);
+    ASSERT_NE(snapshot, nullptr);
+    EXPECT_TRUE(snapshot->transcript.empty());
+    other.begin_shutdown();
+}
+
 TEST(SessionRegistry, BusyAndLimitHaveStableErrors) {
     std::atomic<int> busy_attempts{};
     SessionRegistry busy({.session_limit = 1}, [&](const SessionIdentity& key, WakeNotifier&) {

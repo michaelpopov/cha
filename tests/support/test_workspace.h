@@ -17,9 +17,7 @@ public:
     TestWorkspace& operator=(const TestWorkspace&) = delete;
 
     const std::filesystem::path& root() const noexcept { return root_; }
-    void write_app_config(
-        int port,
-        std::string_view log_level = "off") const;
+    void write_workspace_config(std::string_view log_level = "off") const;
     void write_character_config(std::string_view contents) const;
     void write_character_defaults(std::string_view contents) const;
     void add_persona(

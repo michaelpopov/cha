@@ -25,7 +25,7 @@ std::vector<AgentDefinition> builtin_assistant_definitions(
     const std::string& inventory,
     const PersonaRoster& personas) {
     if (!provider.host || !provider.port) {
-        throw std::runtime_error("app.toml provider configuration is incomplete for Assistant");
+        throw std::runtime_error("workspace.toml provider configuration is incomplete for Assistant");
     }
     Config config;
     config.id = assistant_id;

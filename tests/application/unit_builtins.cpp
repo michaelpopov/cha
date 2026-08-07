@@ -10,7 +10,7 @@ TEST(Builtins, GuideAndTrustedValuesHavePublicNames) {
     EXPECT_EQ(cha::builtin_guest().display_name, "Guest");
     EXPECT_EQ(cha::builtin_entrance().display_name, "Entrance");
     EXPECT_NE(cha::application_guide().find("## Commands"), std::string_view::npos);
-    EXPECT_NE(cha::application_guide().find("/open"), std::string_view::npos);
+    EXPECT_NE(cha::application_guide().find("/mcast"), std::string_view::npos);
 }
 
 TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {
@@ -20,7 +20,7 @@ TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {
     cha::WorkspaceInventory inventory(snapshot);
     cha::EffectivePersonas personas(snapshot);
     const auto definitions = cha::builtin_assistant_definitions(
-        workspace.app_config().provider, inventory.serialize(), *personas.roster());
+        workspace.workspace_config().provider, inventory.serialize(), *personas.roster());
     ASSERT_EQ(definitions.size(), 1U);
     const std::string& prompt = definitions.front().system_prompt;
     EXPECT_NE(prompt.find("CHA application guide"), std::string::npos);

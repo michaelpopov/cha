@@ -12,7 +12,7 @@ namespace cha {
 
 // Immutable startup discovery for the browser surface. It wraps the one
 // validated workspace snapshot and adds the application built-ins without
-// changing terminal discovery or rescanning the workspace.
+// rescanning the workspace.
 class WebDiscovery {
 public:
     explicit WebDiscovery(const Workspace& workspace);

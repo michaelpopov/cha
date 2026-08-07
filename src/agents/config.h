@@ -56,7 +56,7 @@ struct CharacterDefinitionMetadata {
     std::vector<std::string> tags;
 };
 
-// Provider/runtime settings supplied by app.toml. Identity and prompt fields
+// Provider/runtime settings supplied by workspace.toml. Identity and prompt fields
 // are intentionally absent: they belong to character definitions only.
 struct ProviderConfig {
     std::filesystem::path source;
@@ -80,8 +80,8 @@ struct CharacterConfigPaths {
     std::optional<std::filesystem::path> member_override;
 };
 
-// Parses the required [provider] table in app.toml without creating a client.
-ProviderConfig load_provider_config(const std::filesystem::path& app_config_path);
+// Parses the required [provider] table in workspace.toml without creating a client.
+ProviderConfig load_provider_config(const std::filesystem::path& workspace_config_path);
 
 // The typed connection configuration and initial template scope after all layers.
 struct LoadedConfig {

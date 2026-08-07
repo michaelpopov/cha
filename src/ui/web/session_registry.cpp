@@ -1,12 +1,11 @@
 #include "ui/web/session_registry.h"
 
 #include "application/builtins.h"
-#include "application/session_source.h"
 #include "application/web_discovery.h"
 #include "application/welcome_storage.h"
 #include "session/not_found_error.h"
-#include "session/session_lease.h"
 #include "session/session_controller.h"
+#include "session/session_database.h"
 #include "session/workspace.h"
 #include "ui/web/sse_mailbox.h"
 #include "util/logging.h"
@@ -23,6 +22,35 @@ namespace {
 std::string session_log(const SessionIdentity& key, std::string_view event) {
     return "web session forum_id=" + key.forum_id + " session_id=" + key.session_id
         + " event=" + std::string(event);
+}
+
+OpenedSession open_welcome_session(
+    const Workspace& workspace,
+    SharedPersonaRoster personas,
+    std::string_view inventory,
+    PreparedWelcomeSession prepared,
+    WakeNotifier& notifier) {
+    auto definitions = builtin_assistant_definitions(
+        workspace.workspace_config().provider,
+        std::string(inventory),
+        *personas);
+    const SessionRestore restored = load_session_state(prepared.database_path);
+    return {
+        .descriptor = {
+            .identity = {std::string(entrance_id), std::string(welcome_id)},
+            .forum_display_name = std::string(entrance_name),
+            .session_label = std::string(welcome_name),
+            .forum_default_character_id = std::string(assistant_id),
+        },
+        .controller = SessionController::from_shared_definitions(
+            std::move(definitions),
+            std::move(personas),
+            std::string(assistant_id),
+            prepared.database_path,
+            std::move(prepared.lease),
+            notifier,
+            restored),
+    };
 }
 
 } // namespace
@@ -108,7 +136,7 @@ SessionRegistry SessionRegistry::from_workspace(
             const SessionIdentity& key, WakeNotifier& notifier) {
             if (key.forum_id == entrance_id) {
                 if (key.session_id != welcome_id) throw SessionNotFoundError("Session not found");
-                return RegistryOwnerInput{open_entrance_session(
+                return RegistryOwnerInput{open_welcome_session(
                     *controller_workspace, personas, inventory,
                     welcome_storage.prepare(), notifier)};
             }
