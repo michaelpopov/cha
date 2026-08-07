@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <exception>
 #include <limits>
-#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -65,35 +64,6 @@ void merge_change(SessionChange& all, SessionChange one) {
     }
 }
 
-std::string format_characters_notice(
-    const ForumCharacters& characters,
-    const std::vector<AgentRuntimeInfo>& runtime_info,
-    const ParticipantId& default_agent_id) {
-    std::ostringstream result;
-    result << "Characters in this forum (" << characters.all().size()
-           << "), * marks the default.";
-    result << " Any unambiguous prefix works.";
-    for (const AgentRuntimeInfo& agent : runtime_info) {
-        result << " | " << (agent.character.id == default_agent_id ? "* " : "")
-               << "@" << agent.character.name << "  " << agent.model << "  "
-               << agent.api << "  "
-               << (agent.streaming ? "streaming" : "non-streaming");
-    }
-    return result.str();
-}
-
-std::string format_session_information(
-    const Transcript& transcript,
-    const ForumCharacters& characters,
-    const std::vector<AgentRuntimeInfo>& runtime_info,
-    const ParticipantId& default_agent_id) {
-    std::ostringstream text;
-    text << "Transcript entries: " << transcript.size()
-         << " | " << format_characters_notice(
-             characters, runtime_info, default_agent_id);
-    return text.str();
-}
-
 void require_agent_count(std::size_t count) {
     if (count == 0) {
         throw std::invalid_argument(
@@ -102,29 +72,6 @@ void require_agent_count(std::size_t count) {
 }
 
 } // namespace
-
-std::unique_ptr<SessionController> SessionController::from_definitions(
-    std::vector<AgentDefinition> definitions,
-    PersonaRoster personas,
-    ParticipantId initial_default_agent_id,
-    std::filesystem::path database_path,
-    SessionLease lease,
-    WakeNotifier& notifier,
-    SessionRestore restored) {
-    require_agent_count(definitions.size());
-    if (!lease.active()) {
-        throw std::invalid_argument(
-            "Production session controllers require an active session lease");
-    }
-    return std::unique_ptr<SessionController>(new SessionController(
-        std::move(definitions),
-        std::move(personas),
-        std::move(initial_default_agent_id),
-        std::move(database_path),
-        std::move(lease),
-        notifier,
-        std::move(restored)));
-}
 
 std::unique_ptr<SessionController> SessionController::from_shared_definitions(
     std::vector<AgentDefinition> definitions,
@@ -152,7 +99,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
     require_agent_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
-        std::move(personas),
+        std::make_shared<const PersonaRoster>(std::move(personas)),
         std::move(initial_default_agent_id),
         std::move(database_path),
         SessionLease::inactive_for_testing(),
@@ -181,27 +128,6 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
 
 SessionController::SessionController(
     std::vector<AgentDefinition> definitions,
-    PersonaRoster personas,
-    ParticipantId initial_default_agent_id,
-    std::filesystem::path path,
-    SessionLease lease,
-    WakeNotifier& notifier,
-    SessionRestore restored)
-    : lease_(std::move(lease)),
-      journal_(std::move(path)),
-      worker_pool_(definitions.size()),
-      registry_(std::move(definitions), notifier, worker_pool_),
-      characters_(make_forum_characters(registry_.runtime_info())),
-      personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
-      default_agent_id_(std::move(initial_default_agent_id)) {
-    if (!characters_.find(default_agent_id_)) {
-        throw std::invalid_argument("Initial default agent ID is not in the forum roster");
-    }
-    initialize(std::move(restored));
-}
-
-SessionController::SessionController(
-    std::vector<AgentDefinition> definitions,
     SharedPersonaRoster personas,
     ParticipantId initial_default_agent_id,
     std::filesystem::path path,
@@ -215,7 +141,6 @@ SessionController::SessionController(
       characters_(make_forum_characters(registry_.runtime_info())),
       personas_(std::move(personas)),
       default_agent_id_(std::move(initial_default_agent_id)) {
-    if (!characters_.find(default_agent_id_)) throw std::invalid_argument("Initial default agent ID is not in the forum roster");
     initialize(std::move(restored));
 }
 
@@ -235,9 +160,6 @@ SessionController::SessionController(
       personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
       default_agent_id_(std::move(initial_default_agent_id)),
       before_activation_(std::move(before_activation)) {
-    if (!characters_.find(default_agent_id_)) {
-        throw std::invalid_argument("Initial default agent ID is not in the forum roster");
-    }
     initialize(std::move(restored));
 }
 
@@ -249,6 +171,10 @@ SessionController::~SessionController() {
 }
 
 void SessionController::initialize(SessionRestore restored) {
+    if (!characters_.find(default_agent_id_)) {
+        throw std::invalid_argument(
+            "Initial default agent ID is not in the forum roster");
+    }
     transcript_.replace_entries(std::move(restored.entries));
     next_request_id_ = restored.next_request_id;
     next_entry_id_ = restored.next_entry_id;
@@ -265,8 +191,8 @@ void SessionController::initialize(SessionRestore restored) {
     }
 }
 
-GenerationStatus SessionController::generation_status() const {
-    const GenerationStatusView view = generation_status_view();
+GenerationStatus SessionController::snapshot_generation() const {
+    const GenerationView view = generation_view();
     return {
         .active = view.active,
         .request_id = view.request_id,
@@ -277,7 +203,8 @@ GenerationStatus SessionController::generation_status() const {
     };
 }
 
-GenerationStatusView SessionController::generation_status_view() const noexcept {
+SessionController::GenerationView
+SessionController::generation_view() const noexcept {
     if (batch_ && batch_->abort_requested) {
         const RunSpec& run = batch_->runs[batch_->foreground_index];
         return {
@@ -311,64 +238,23 @@ SessionState SessionController::state() const {
         .revision = view.revision,
         .open_entry_id = view.open_entry_id,
         .history_epoch = view.history_epoch,
-        .generation = generation_status(),
+        .generation = snapshot_generation(),
     };
 }
 
 std::optional<SessionAppendProjection> SessionController::text_append_since(
     const SessionStateCursor& cursor) const {
-    const TranscriptView transcript = transcript_.view();
-    const GenerationStatusView generation = generation_status_view();
-    if (cursor.history_epoch != transcript.history_epoch
-        || cursor.default_agent_id != default_agent_id_
-        || cursor.entry_count != transcript.entries.size()
-        || cursor.open_entry_id != transcript.open_entry_id
-        || !cursor.request_id || !generation.active
-        || generation.request_id != cursor.request_id
-        || generation.phase != cursor.phase) {
-        return std::nullopt;
-    }
-    if (generation.phase == ResponsePhase::reasoning) {
-        if (transcript.revision != cursor.revision
-            || generation.reasoning_text.size() <= cursor.reasoning_length) {
-            return std::nullopt;
-        }
-        // All of the non-text continuity fields were matched above. Updating
-        // the scalar cursor directly keeps this owner-thread hot path from
-        // materializing an owning SessionState (and copying its transcript).
-        SessionStateCursor next = cursor;
-        next.revision = transcript.revision;
-        next.reasoning_length = generation.reasoning_text.size();
-        return SessionAppendProjection{
-            .append = {ReasoningTextTarget{*generation.request_id},
-                       std::string(generation.reasoning_text.substr(cursor.reasoning_length))},
-            .cursor = std::move(next),
-        };
-    }
-    if (generation.phase != ResponsePhase::answering
-        || transcript.revision <= cursor.revision || !transcript.open_entry_id
-        || transcript.entries.empty()
-        // Reasoning may arrive after answer chunks. It cannot be hidden inside
-        // an answer append, so require that the other appendable text is also
-        // unchanged before proving this target.
-        || generation.reasoning_text.size() != cursor.reasoning_length) {
-        return std::nullopt;
-    }
-    const TranscriptEntry& entry = transcript.entries.back();
-    if (entry.id != *transcript.open_entry_id || entry.status != EntryStatus::streaming
-        || entry.request_id != cursor.request_id
-        || entry.text.size() <= cursor.answer_length) {
-        return std::nullopt;
-    }
-    // The checks above prove that the cursor differs only by answer growth
-    // and the transcript revision caused by that growth.
-    SessionStateCursor next = cursor;
-    next.revision = transcript.revision;
-    next.answer_length = entry.text.size();
-    return SessionAppendProjection{
-        .append = {EntryTextTarget{entry.id}, entry.text.substr(cursor.answer_length)},
-        .cursor = std::move(next),
-    };
+    const GenerationView generation = generation_view();
+    return session_text_append_since(
+        transcript_.view(),
+        {
+            .active = generation.active,
+            .request_id = generation.request_id,
+            .phase = generation.phase,
+            .reasoning_text = generation.reasoning_text,
+        },
+        default_agent_id_,
+        cursor);
 }
 
 bool SessionController::is_generating() const noexcept {
@@ -723,51 +609,28 @@ SessionChange SessionController::start_multicast(
         return busy_notice();
     }
 
-    std::vector<ParticipantId> ids;
-    ids.reserve(handles.size());
-    for (const std::string& handle : handles) {
-        const HandleResolution resolution = characters_.resolve_handle(handle);
-        if (resolution.match != HandleMatch::resolved) {
-            return {
-                .notice = format_handle_resolution_notice(
-                    handle, resolution, characters_),
-            };
-        }
-        ids.push_back(resolution.character->id);
-    }
-    return start_multicast_from_ids(author_id, std::move(text), std::move(ids));
-}
-
-SessionChange SessionController::start_multicast_by_ids(
-    std::string_view author_id,
-    std::string text,
-    std::vector<ParticipantId> ids) {
-    if (busy()) {
-        return busy_notice();
-    }
-
-    return start_multicast_from_ids(author_id, std::move(text), std::move(ids));
-}
-
-SessionChange SessionController::start_multicast_from_ids(
-    std::string_view author_id,
-    std::string text,
-    std::vector<ParticipantId> ids) {
     std::vector<CharacterInfo> targets;
-    if (ids.empty()) {
+    if (handles.empty()) {
         targets = characters_.all();
     } else {
         std::unordered_set<ParticipantId> distinct;
-        targets.reserve(ids.size());
-        for (const ParticipantId& id : ids) {
-            const CharacterInfo* target = characters_.find(id);
-            if (!target) {
-                return {.notice = "Unknown multicast target ID '" + id + "'"};
+        targets.reserve(handles.size());
+        for (const std::string& handle : handles) {
+            const HandleResolution resolution =
+                characters_.resolve_handle(handle);
+            if (resolution.match != HandleMatch::resolved) {
+                return {
+                    .notice = format_handle_resolution_notice(
+                        handle, resolution, characters_),
+                };
             }
-            if (!distinct.insert(id).second) {
-                return {.notice = format_duplicate_character_notice(target->name)};
+            if (!distinct.insert(resolution.character->id).second) {
+                return {
+                    .notice = format_duplicate_character_notice(
+                        resolution.character->name),
+                };
             }
-            targets.push_back(*target);
+            targets.push_back(*resolution.character);
         }
     }
     return start_resolved_multicast(author_id, std::move(text), std::move(targets));
@@ -817,7 +680,7 @@ SessionChange SessionController::session_information() {
     return {
         .input_consumed = true,
         .notice = format_session_information(
-            transcript_,
+            transcript_.size(),
             characters_,
             registry_.runtime_info(),
             default_agent_id_),
@@ -1066,11 +929,6 @@ SessionEventBatch SessionController::receive_events(std::size_t max_events) {
     };
 }
 
-SessionChange SessionController::receive() {
-    return std::move(
-        receive_events(std::numeric_limits<std::size_t>::max()).change);
-}
-
 void SessionController::shutdown() {
     if (shutdown_) {
         return;
@@ -1083,7 +941,7 @@ void SessionController::shutdown() {
     try {
         registry_.cancel_batch();
         registry_.stop();
-        (void)receive();
+        (void)receive_events(std::numeric_limits<std::size_t>::max());
         if (batch_) {
             registry_.clear_batch();
         }

@@ -36,14 +36,6 @@ public:
     // but before durable state changes.
     using ActivationHook = std::function<void(std::size_t)>;
 
-    [[nodiscard]] static std::unique_ptr<SessionController> from_definitions(
-        std::vector<AgentDefinition> definitions,
-        PersonaRoster personas,
-        ParticipantId initial_default_agent_id,
-        std::filesystem::path database_path,
-        SessionLease lease,
-        WakeNotifier& notifier,
-        SessionRestore restored = {});
     [[nodiscard]] static std::unique_ptr<SessionController> from_shared_definitions(
         std::vector<AgentDefinition> definitions,
         SharedPersonaRoster personas,
@@ -78,11 +70,8 @@ public:
     // --- Session state (read-only) --------------------------------------------
     const Transcript& transcript() const { return transcript_; }
     [[nodiscard]] bool is_generating() const noexcept;
-    GenerationStatus generation_status() const;
-    GenerationStatusView generation_status_view() const noexcept;
     // Builds an owning state value on this controller's owner thread for
-    // asynchronous presentation consumers. Borrowed views remain available
-    // for direct frontends on that same thread.
+    // asynchronous presentation consumers.
     [[nodiscard]] SessionState state() const;
     // Owner-thread-only proof of a text-only extension since a previously
     // published core cursor. Any ambiguity deliberately returns no append.
@@ -90,7 +79,6 @@ public:
         const SessionStateCursor& cursor) const;
     const ForumCharacters& characters() const { return characters_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
-    const SharedPersonaRoster& persona_roster() const noexcept { return personas_; }
 
     // --- Session commands (mutate, then report semantic changes) --------------
     [[nodiscard]] SessionChange submit_prompt(
@@ -101,18 +89,12 @@ public:
     [[nodiscard]] SessionChange open_offrecord();
     [[nodiscard]] SessionChange extend_offrecord();
     [[nodiscard]] SessionChange restore_offrecord();
-    // Text frontends submit handles; resolution and all target validation stay
-    // here with the forum's authoritative character set.
+    // The web text grammar submits handles; resolution and all target
+    // validation stay here with the forum's authoritative character set.
     [[nodiscard]] SessionChange start_multicast(
         std::string_view author_id,
         std::string text,
         std::vector<std::string> handles);
-    // Programmatic clients, including the future HTTP API, submit stable
-    // character IDs rather than persona-facing handles.
-    [[nodiscard]] SessionChange start_multicast_by_ids(
-        std::string_view author_id,
-        std::string text,
-        std::vector<ParticipantId> ids);
     [[nodiscard]] SessionChange session_information();
     [[nodiscard]] SessionChange agent_information();
     [[nodiscard]] SessionChange set_default_agent(std::string_view handle);
@@ -120,10 +102,18 @@ public:
     [[nodiscard]] SessionChange request_stop();
     [[nodiscard]] SessionChange handle_agent_event(AgentEvent event);
     [[nodiscard]] SessionEventBatch receive_events(std::size_t max_events);
-    [[nodiscard]] SessionChange receive();
     void shutdown();
 
 private:
+    struct GenerationView {
+        bool active{};
+        std::optional<RequestId> request_id;
+        std::string_view agent_id;
+        std::string_view agent_name;
+        ResponsePhase phase{ResponsePhase::waiting};
+        std::string_view reasoning_text;
+    };
+
     struct ActiveResponse {
         RequestId request_id{};
         EntryId response_entry_id{};
@@ -144,14 +134,6 @@ private:
 
     SessionController(
         std::vector<AgentDefinition> definitions,
-        PersonaRoster personas,
-        ParticipantId initial_default_agent_id,
-        std::filesystem::path database_path,
-        SessionLease lease,
-        WakeNotifier& notifier,
-        SessionRestore restored);
-    SessionController(
-        std::vector<AgentDefinition> definitions,
         SharedPersonaRoster personas,
         ParticipantId initial_default_agent_id,
         std::filesystem::path database_path,
@@ -168,6 +150,8 @@ private:
         ActivationHook before_activation);
 
     void initialize(SessionRestore restored);
+    [[nodiscard]] GenerationView generation_view() const noexcept;
+    [[nodiscard]] GenerationStatus snapshot_generation() const;
     bool busy() const noexcept;
     SessionChange busy_notice() const;
     [[nodiscard]] std::optional<EntryIdentity> resolve_author(
@@ -183,10 +167,6 @@ private:
         std::string_view author_id,
         std::string text,
         std::vector<CharacterInfo> targets);
-    [[nodiscard]] SessionChange start_multicast_from_ids(
-        std::string_view author_id,
-        std::string text,
-        std::vector<ParticipantId> ids);
     void activate_current_run(SessionChange& change);
     void start_next_batch_run(SessionChange& change);
     void finish_batch_run(SessionChange& change);

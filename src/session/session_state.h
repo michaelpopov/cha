@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -27,7 +28,7 @@ struct SessionState {
 };
 
 // A transport-neutral target for text that was proven to extend one live
-// controller value. Web maps these targets to its stable wire names.
+// controller value. The sole frontend serializes these values directly.
 struct EntryTextTarget {
     EntryId entry_id{};
     bool operator==(const EntryTextTarget&) const = default;
@@ -71,5 +72,25 @@ struct SessionAppendProjection {
 // second owning transcript copy.
 [[nodiscard]] std::optional<SessionStateCursor> session_state_cursor(
     const SessionState& state);
+
+// The generation facts an append proof reads. Agent identity is deliberately
+// absent: it cannot change without also changing the active request, which the
+// proof already compares.
+struct AppendGenerationView {
+    bool active{};
+    std::optional<RequestId> request_id;
+    ResponsePhase phase{ResponsePhase::waiting};
+    std::string_view reasoning_text;
+};
+
+// The consuming half of the cursor contract whose producing half is
+// session_state_cursor(). It is pure, so it is tested directly rather than
+// through a live controller. Any ambiguity returns no append, which obliges
+// the caller to publish a full replacement instead.
+[[nodiscard]] std::optional<SessionAppendProjection> session_text_append_since(
+    const TranscriptView& transcript,
+    const AppendGenerationView& generation,
+    const ParticipantId& default_agent_id,
+    const SessionStateCursor& cursor);
 
 } // namespace cha

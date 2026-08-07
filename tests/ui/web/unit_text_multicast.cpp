@@ -1,8 +1,8 @@
-#include "ui/text/mcast.h"
+#include "ui/web/text_multicast.h"
 
 #include <gtest/gtest.h>
 
-namespace cha {
+namespace cha::web {
 namespace {
 
 TEST(MulticastInput, ParsesAllCharacterPromptAndLiteralAtEscape) {
@@ -58,4 +58,4 @@ TEST(MulticastInput, RejectsMalformedRecipientLists) {
 }
 
 } // namespace
-} // namespace cha
+} // namespace cha::web

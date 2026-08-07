@@ -18,8 +18,9 @@ struct WebPresentationState {
     std::optional<ShutdownReason> shutdown_reason;
 };
 
-// Converts one consumed core state value into the stable web DTO. Moving the
-// strings out of state preserves the one-full-transcript-copy publication path.
+// Combines one consumed core state value with web-only identity and lifecycle
+// fields. Core transcript, generation, and append types remain unchanged at
+// the JSON boundary.
 [[nodiscard]] SessionSnapshot to_snapshot(
     const SessionDescriptor& descriptor,
     SessionState&& state,

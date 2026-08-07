@@ -5,10 +5,11 @@ configuration in `workspace.toml`; `host`, `port`, and the workspace path live i
 the application directory's `app.toml` and remain the web server's listener and
 root settings. Web discovery has its own HTTP projection, including
 Guest, Assistant, Entrance, and Welcome, but does not use terminal
-slash-navigation commands or their presentation results.
+presentation result types.
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and web
-runtime coordination. The composition root builds one immutable `WebDiscovery`
+runtime coordination, including the textual grammar accepted by the browser's
+chat box. The composition root builds one immutable `WebDiscovery`
 and one process-wide `WelcomeStorage`; the registry uses them to open the
 built-in Welcome session and gives every web-opened session the Guest-plus-
 workspace persona roster. It depends on core `SessionIdentity`, `SessionDescriptor`,
@@ -31,18 +32,36 @@ A live session still serves one browser
 connection at a time; changing personas happens between prompts on that same
 shared session.
 
+## Chat input grammar
+
+The raw-input owner path recognizes optional leading character mentions and
+the commands `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/mcast`, `/info`,
+`/agents`, `/@Name`, `/stop`, and `/exit`. Mentions and multicast recipient
+handles remain unresolved until `SessionController` applies the forum's
+authoritative character rules. While generation is active, only a bare
+`/stop` is dispatched; other input remains in the browser editor.
+
+This grammar is web policy, not a reusable core or terminal abstraction.
+`/exit` explicitly requests that `WebSessionRuntime` close the live web
+session. `handle_text_input()` returns the same `CommandResult` completed back
+to the HTTP request: it owns the controller's `SessionChange`, `clear_input`,
+and the internal `close_session` decision. JSON exposes only `clear_input` and
+the change's optional notice.
+
 `SessionRegistry` owns one permanent thread per runtime and invokes the
-threadless `WebSessionRuntime` on it. The runtime owns a condition-variable wake
-notifier and a bounded multi-producer command queue. HTTP-facing callers get
+threadless `WebSessionRuntime` on it. The runtime owns an `OwnerWakeSignal`,
+which implements core's producer-only `WakeNotifier` contract and adds the
+condition-variable wait consumed by the owner loop, plus a bounded
+multi-producer command queue. HTTP-facing callers get
 only owning command results; the owner thread alone reaches a controller and
 continues draining agent notifications without a browser connection. The
 runtime obtains an owning, transport-neutral `SessionState` from the controller
-and explicitly projects it, with the descriptor and web presentation state,
-into a protocol `SessionSnapshot`. The projection consumes state by move, so the
-SSE writer never borrows controller state or blocks the owner. Web DTOs remain
-API compatibility values, not a second transcript or generation domain model.
-Core append candidates cross that seam without a sequence number; the mailbox
-assigns sequence values only to payloads it actually stores. Its idempotent owner-thread teardown
+and combines it with the descriptor and web presentation state in a protocol
+`SessionSnapshot`. The snapshot directly owns the moved core `TranscriptEntry`
+and `GenerationStatus` values, so there is no parallel web transcript model and
+the SSE writer never borrows controller state or blocks the owner. Core
+`SessionTextAppend` targets also cross that boundary unchanged; the mailbox adds
+sequence values only to payloads it actually stores. Its idempotent owner-thread teardown
 uses registry hooks only for lifecycle notifications, drains a final snapshot
 for a bounded interval, and contains controller failures to that runtime.
 `SessionRegistry` is a web host registry and the sole process-local liveness authority.

@@ -4,6 +4,7 @@
 
 #include <initializer_list>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace cha::web {
@@ -31,38 +32,82 @@ void put_optional(
     }
 }
 
+nlohmann::json transcript_entry_json(const cha::TranscriptEntry& value) {
+    nlohmann::json json = {
+        {"id", value.id},
+        {"kind", to_string(value.kind)},
+        {"participant_id", value.participant_id},
+        {"display_name", value.display_name},
+        {"addressed_to", value.addressed_to},
+        {"addressed_to_name", value.addressed_to_name},
+        {"text", value.text},
+        {"status", to_string(value.status)},
+    };
+    put_optional(json, "request_id", value.request_id);
+    return json;
+}
+
+nlohmann::json generation_json(const GenerationStatus& value) {
+    nlohmann::json json = {
+        {"active", value.active},
+        {"agent_id", value.agent_id},
+        {"agent_name", value.agent_name},
+        {"phase", to_string(value.phase)},
+        {"reasoning_text", value.reasoning_text},
+    };
+    put_optional(json, "request_id", value.request_id);
+    return json;
+}
+
+nlohmann::json append_target_json(const SessionTextTarget& value) {
+    return std::visit([](const auto& target) {
+        using Target = std::decay_t<decltype(target)>;
+        if constexpr (std::is_same_v<Target, EntryTextTarget>) {
+            return nlohmann::json{
+                {"kind", "entry"},
+                {"entry_id", target.entry_id},
+            };
+        } else {
+            return nlohmann::json{
+                {"kind", "reasoning"},
+                {"request_id", target.request_id},
+            };
+        }
+    }, value);
+}
+
 } // namespace
 
-std::string_view to_string(TranscriptKind value) {
+std::string_view to_string(EntryKind value) {
     return enum_name(
         value,
         {
-            {TranscriptKind::human, "human"},
-            {TranscriptKind::agent, "agent"},
-            {TranscriptKind::notice, "notice"},
-            {TranscriptKind::error, "error"},
+            {EntryKind::human, "human"},
+            {EntryKind::agent, "agent"},
+            {EntryKind::notice, "notice"},
+            {EntryKind::error, "error"},
         });
 }
 
-std::string_view to_string(TranscriptStatus value) {
+std::string_view to_string(EntryStatus value) {
     return enum_name(
         value,
         {
-            {TranscriptStatus::complete, "complete"},
-            {TranscriptStatus::streaming, "streaming"},
-            {TranscriptStatus::cancelled, "cancelled"},
-            {TranscriptStatus::failed, "failed"},
+            {EntryStatus::complete, "complete"},
+            {EntryStatus::streaming, "streaming"},
+            {EntryStatus::cancelled, "cancelled"},
+            {EntryStatus::failed, "failed"},
         });
 }
 
-std::string_view to_string(GenerationPhase value) {
+std::string_view to_string(ResponsePhase value) {
     return enum_name(
         value,
         {
-            {GenerationPhase::waiting, "waiting"},
-            {GenerationPhase::reasoning, "reasoning"},
-            {GenerationPhase::answering, "answering"},
-            {GenerationPhase::stopping, "stopping"},
+            {ResponsePhase::waiting, "waiting"},
+            {ResponsePhase::reasoning, "reasoning"},
+            {ResponsePhase::answering, "answering"},
+            {ResponsePhase::stopping, "stopping"},
         });
 }
 
@@ -112,16 +157,16 @@ std::string_view to_string(ErrorCode value) {
 std::optional<SnapshotAppendSelection> snapshot_append_selection(
     const SessionSnapshot& snapshot) {
     for (std::size_t index = 0; index != snapshot.transcript.size(); ++index) {
-        const TranscriptEntry& entry = snapshot.transcript[index];
-        if (entry.status == TranscriptStatus::streaming) {
+        const cha::TranscriptEntry& entry = snapshot.transcript[index];
+        if (entry.status == EntryStatus::streaming) {
             return SnapshotAppendSelection{
-                AppendTargetEntry{entry.id}, index};
+                EntryTextTarget{entry.id}, index};
         }
     }
     if (snapshot.generation.active && snapshot.generation.request_id
-        && snapshot.generation.phase == GenerationPhase::reasoning) {
+        && snapshot.generation.phase == ResponsePhase::reasoning) {
         return SnapshotAppendSelection{
-            AppendTargetReasoning{*snapshot.generation.request_id},
+            ReasoningTextTarget{*snapshot.generation.request_id},
             std::nullopt};
     }
     return std::nullopt;
@@ -167,40 +212,19 @@ void to_json(nlohmann::json& json, const CharacterSummary& value) {
     put_optional(json, "description", value.description);
 }
 
-void to_json(nlohmann::json& json, const TranscriptEntry& value) {
-    json = {
-        {"id", value.id},
-        {"kind", to_string(value.kind)},
-        {"participant_id", value.participant_id},
-        {"display_name", value.display_name},
-        {"addressed_to", value.addressed_to},
-        {"addressed_to_name", value.addressed_to_name},
-        {"text", value.text},
-        {"status", to_string(value.status)},
-    };
-    put_optional(json, "request_id", value.request_id);
-}
-
-void to_json(nlohmann::json& json, const GenerationState& value) {
-    json = {
-        {"active", value.active},
-        {"agent_id", value.agent_id},
-        {"agent_name", value.agent_name},
-        {"phase", to_string(value.phase)},
-        {"reasoning_text", value.reasoning_text},
-    };
-    put_optional(json, "request_id", value.request_id);
-}
-
 void to_json(nlohmann::json& json, const SessionSnapshot& value) {
+    nlohmann::json transcript = nlohmann::json::array();
+    for (const cha::TranscriptEntry& entry : value.transcript) {
+        transcript.push_back(transcript_entry_json(entry));
+    }
     json = {
         {"forum", value.forum},
         {"session_id", value.session_id},
         {"session_label", value.session_label},
         {"characters", value.characters},
         {"default_character_id", value.default_character_id},
-        {"transcript", value.transcript},
-        {"generation", value.generation},
+        {"transcript", std::move(transcript)},
+        {"generation", generation_json(value.generation)},
         {"lifecycle", to_string(value.lifecycle)},
     };
     put_optional(json, "notice", value.notice);
@@ -211,7 +235,7 @@ void to_json(nlohmann::json& json, const SessionSnapshot& value) {
 
 void to_json(nlohmann::json& json, const CommandResult& value) {
     json = {{"clear_input", value.clear_input}};
-    put_optional(json, "notice", value.notice);
+    put_optional(json, "notice", value.session.notice);
 }
 
 void to_json(nlohmann::json& json, const CreateSessionSuccess& value) {
@@ -253,32 +277,13 @@ void to_json(nlohmann::json& json, const Error& value) {
     };
 }
 
-void to_json(nlohmann::json& json, const AppendTargetEntry& value) {
-    json = {
-        {"kind", "entry"},
-        {"entry_id", value.entry_id},
-    };
-}
-
-void to_json(nlohmann::json& json, const AppendTargetReasoning& value) {
-    json = {
-        {"kind", "reasoning"},
-        {"request_id", value.request_id},
-    };
-}
-
 void to_json(nlohmann::json& json, const SnapshotEvent& value) {
     json = value.snapshot;
 }
 
 void to_json(nlohmann::json& json, const AppendEvent& value) {
     json = {
-        {"target",
-         std::visit(
-             [](const auto& target) {
-                 return nlohmann::json(target);
-             },
-             value.target)},
+        {"target", append_target_json(value.target)},
         {"text", value.text},
         {"seq", value.seq},
     };

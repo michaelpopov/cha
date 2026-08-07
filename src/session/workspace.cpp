@@ -464,7 +464,7 @@ Forum Workspace::load_forum(const std::string& name) const {
     return load_forum_metadata(directory, name);
 }
 
-Forum Workspace::check_forum(const std::string& name) const {
+Forum Workspace::validate_forum(const std::string& name) const {
     Forum forum = load_forum(name);
     const PersonaRoster personas = load_personas();
     const std::vector<AgentDefinition> definitions = load_definitions(
@@ -502,7 +502,7 @@ std::filesystem::file_time_type Workspace::session_last_write_time(
     return std::filesystem::last_write_time(catalog.database_path(session_id));
 }
 
-SessionSummary Workspace::session_summary(
+SessionSummary Workspace::read_session_summary(
     const std::string& forum_name,
     const std::string& session_id) const {
     const SessionCatalog catalog = session_catalog(*this, forum_name);
@@ -512,13 +512,13 @@ SessionSummary Workspace::session_summary(
 void Workspace::check_session(
     const std::string& forum_name,
     const std::string& session_id) const {
-    (void)session_summary(forum_name, session_id);
+    (void)read_session_summary(forum_name, session_id);
 }
 
 SessionSummary Workspace::create_stored_session(
     const std::string& forum_name,
     std::string label) const {
-    const Forum forum = check_forum(forum_name);
+    const Forum forum = validate_forum(forum_name);
     const SessionCatalog catalog(forum.directory / "sessions", forum.name);
     return summarize(catalog.create(std::move(label)));
 }

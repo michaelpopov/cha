@@ -1,8 +1,8 @@
-#include "ui/text/mention.h"
+#include "ui/web/text_mention.h"
 
 #include <gtest/gtest.h>
 
-namespace cha {
+namespace cha::web {
 
 TEST(Mention, PreservesOrdinaryInputAndRecognizesAddressing) {
     EXPECT_EQ(parse_addressed_prompt("   ordinary").handle, "");
@@ -60,4 +60,4 @@ TEST(Mention, PreservesTrailingWhitespaceOfAnUnaddressedPrompt) {
     EXPECT_EQ(parse_addressed_prompt("@@").text, "@");
 }
 
-} // namespace cha
+} // namespace cha::web

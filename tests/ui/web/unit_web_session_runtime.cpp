@@ -126,7 +126,7 @@ public:
         state_->entered.notify_all();
     }
 
-    TextInputResult handle_raw_input(
+    CommandResult handle_raw_input(
         std::string_view author_id,
         std::string input) override {
         std::unique_lock lock(state_->mutex);
@@ -152,7 +152,7 @@ public:
                 .notice = std::move(notice),
             },
             .clear_input = true,
-            .exit_requested = command == "/exit",
+            .close_session = command == "/exit",
         };
     }
     SessionChange request_stop() override {
@@ -285,22 +285,22 @@ public:
         changed.notify_all();
     }
     void publish_append(
-        WebAppendCandidate candidate,
+        SessionTextAppend append,
         const SessionSnapshot&) override {
         {
             std::lock_guard lock(mutex);
             if (merge_pending_appends && !payloads.empty()) {
                 if (auto* pending =
                         std::get_if<AppendEvent>(&payloads.back());
-                    pending && pending->target == candidate.target) {
-                    pending->text.append(candidate.text);
+                    pending && pending->target == append.target) {
+                    pending->text.append(append.text);
                     changed.notify_all();
                     return;
                 }
             }
             payloads.push_back(AppendEvent{
-                std::move(candidate.target),
-                std::move(candidate.text),
+                std::move(append.target),
+                std::move(append.text),
                 next_append_seq++,
             });
         }
@@ -392,9 +392,10 @@ TestControllerFactory real_factory(const std::filesystem::path& path) {
     return [path](WakeNotifier& notifier) {
         SessionLease lease = SessionLease::acquire(path);
         SessionRestore restore = load_session_state(path);
-        return adapt_session_controller(SessionController::from_definitions(
+        return adapt_session_controller(SessionController::from_shared_definitions(
             {test_definition()},
-            PersonaRoster{{.id = "reader", .display_name = "Reader"}},
+            std::make_shared<const PersonaRoster>(
+                PersonaRoster{{.id = "reader", .display_name = "Reader"}}),
             "guide",
             path,
             std::move(lease),
@@ -479,15 +480,15 @@ private:
     std::thread owner_;
 };
 
-TEST(WakeNotifier, RemembersWakeBeforeWait) {
-    WakeNotifier notifier;
+TEST(OwnerWakeSignal, RemembersWakeBeforeWait) {
+    OwnerWakeSignal notifier;
     notifier.wake();
 
     EXPECT_TRUE(notifier.wait_until(std::chrono::steady_clock::now() + 50ms));
 }
 
-TEST(WakeNotifier, CoalescesMultipleWakes) {
-    WakeNotifier notifier;
+TEST(OwnerWakeSignal, CoalescesMultipleWakes) {
+    OwnerWakeSignal notifier;
     notifier.wake();
     notifier.wake();
 
@@ -495,20 +496,21 @@ TEST(WakeNotifier, CoalescesMultipleWakes) {
     EXPECT_FALSE(notifier.wait_until(std::chrono::steady_clock::now() + 5ms));
 }
 
-TEST(WakeNotifier, ReturnsFalseAtDeadlineWithoutWake) {
-    WakeNotifier notifier;
+TEST(OwnerWakeSignal, ReturnsFalseAtDeadlineWithoutWake) {
+    OwnerWakeSignal notifier;
 
     EXPECT_FALSE(notifier.wait_until(std::chrono::steady_clock::now() + 5ms));
 }
 
 TEST(CommandCompletion, FirstCompletionWins) {
     CommandCompletion completion;
-    EXPECT_TRUE(completion.complete(CommandResult{.notice = "first"}));
+    EXPECT_TRUE(completion.complete(CommandResult{
+        .session = {.notice = "first"}}));
     EXPECT_FALSE(completion.complete(ErrorCode::internal_error));
 
     const auto result = completion.wait_for(0ms);
     ASSERT_TRUE(result);
-    EXPECT_EQ(std::get<CommandResult>(*result).notice, "first");
+    EXPECT_EQ(std::get<CommandResult>(*result).session.notice, "first");
 }
 
 TEST(CommandCompletion, TimeoutAtomicallyAbandonsLateCompletion) {
@@ -524,16 +526,16 @@ TEST(WebSessionRuntime, RoutesRawAndTypedCommandsOnOneOwnerThread) {
 
     EXPECT_EQ(
         std::get<CommandResult>(runtime.submit(RawCommand{"reader", "/clear"}, 1s))
-            .notice,
+            .session.notice,
         "raw");
     EXPECT_EQ(
-        std::get<CommandResult>(runtime.submit(StopCommand{}, 1s)).notice,
+        std::get<CommandResult>(runtime.submit(StopCommand{}, 1s)).session.notice,
         "stopped");
     const CommandResult default_changed =
         std::get<CommandResult>(runtime.submit(
             SetDefaultAgentCommand{"stable-id"},
             1s));
-    EXPECT_FALSE(default_changed.notice);
+    EXPECT_FALSE(default_changed.session.notice);
     EXPECT_FALSE(default_changed.clear_input);
 
     std::lock_guard lock(state->mutex);
@@ -561,7 +563,7 @@ TEST(WebSessionRuntime, TimeoutLeavesAcceptedCommandAliveAndLateCompletionSafe) 
     }
     state->release.notify_all();
     EXPECT_EQ(
-        std::get<CommandResult>(runtime.submit(StopCommand{}, 1s)).notice,
+        std::get<CommandResult>(runtime.submit(StopCommand{}, 1s)).session.notice,
         "stopped");
 }
 
@@ -944,13 +946,13 @@ TEST(WebSessionRuntime, TargetChangePublishesSnapshotBeforeResetSequence) {
     std::lock_guard lock(sink->mutex);
     ASSERT_EQ(sink->payloads.size(), 4U);
     const AppendEvent& answer = std::get<AppendEvent>(sink->payloads[1]);
-    EXPECT_TRUE(std::holds_alternative<AppendTargetEntry>(answer.target));
+    EXPECT_TRUE(std::holds_alternative<EntryTextTarget>(answer.target));
     EXPECT_EQ(answer.seq, 0U);
     EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(sink->payloads[2]));
     const AppendEvent& reasoning =
         std::get<AppendEvent>(sink->payloads[3]);
     EXPECT_TRUE(
-        std::holds_alternative<AppendTargetReasoning>(reasoning.target));
+        std::holds_alternative<ReasoningTextTarget>(reasoning.target));
     EXPECT_EQ(reasoning.seq, 0U);
 }
 
@@ -1317,7 +1319,7 @@ TEST(WebSessionRuntime, PublishesStateAndPresentationChangesIndependently) {
     const CommandResult default_changed = std::get<CommandResult>(runtime.submit(
         SetDefaultAgentCommand{"other-guide"}, 1s));
     EXPECT_FALSE(default_changed.clear_input);
-    EXPECT_FALSE(default_changed.notice);
+    EXPECT_FALSE(default_changed.session.notice);
     {
         std::unique_lock lock(sink->mutex);
         ASSERT_TRUE(sink->changed.wait_for(lock, 1s, [&] { return sink->payloads.size() == 2U; }));
@@ -1352,10 +1354,10 @@ TEST(WebSessionRuntime, PublishesStateAndPresentationChangesIndependently) {
 }
 
 TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
-    for (const TranscriptStatus status : {
-             TranscriptStatus::complete,
-             TranscriptStatus::cancelled,
-             TranscriptStatus::failed,
+    for (const EntryStatus status : {
+             EntryStatus::complete,
+             EntryStatus::cancelled,
+             EntryStatus::failed,
          }) {
         auto state = std::make_shared<FakeState>();
         auto sink = std::make_shared<FakeSnapshotSink>();
@@ -1377,8 +1379,8 @@ TEST(WebSessionRuntime, GenerationTerminalLogCarriesTranscriptStatus) {
             {
                 std::lock_guard lock(state->mutex);
                 state->snapshot.generation.active = false;
-                state->snapshot.transcript[0].status = static_cast<EntryStatus>(status);
-                if (status == TranscriptStatus::failed) {
+                state->snapshot.transcript[0].status = status;
+                if (status == EntryStatus::failed) {
                     state->snapshot.transcript[0].kind = EntryKind::error;
                 }
             }
@@ -1494,7 +1496,7 @@ TEST(WebSessionRuntime, ReasoningOnlyCancellationLogsCancelledStatus) {
 
 TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     TemporaryWebSession temporary;
-    WakeNotifier notifier;
+    OwnerWakeSignal notifier;
     SessionRestore restore;
     restore.entries.push_back(make_notice_entry(1, "before"));
     restore.next_entry_id = 2;
@@ -1508,12 +1510,12 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
     ASSERT_EQ(before.transcript.size(), 1U);
     EXPECT_EQ(before.transcript.front().text, "before");
     EXPECT_TRUE(adapted->handle_raw_input("human", "/clear").session.state_changed);
-    const TextInputResult rejected = adapted->handle_raw_input(
+    const CommandResult rejected = adapted->handle_raw_input(
         "unknown-author", "retained draft");
     EXPECT_FALSE(rejected.clear_input);
-    const TextInputResult exit = adapted->handle_raw_input("human", "/exit");
+    const CommandResult exit = adapted->handle_raw_input("human", "/exit");
     EXPECT_TRUE(exit.clear_input);
-    EXPECT_TRUE(exit.exit_requested);
+    EXPECT_TRUE(exit.close_session);
     const SessionState after = adapted->state();
     EXPECT_TRUE(after.transcript.empty());
     EXPECT_EQ(before.transcript.front().text, "before");
@@ -1522,7 +1524,7 @@ TEST(WebSessionRuntime, ProductionAdapterCopiesControllerState) {
 
 TEST(WebSessionRuntime, OpenedSessionReleasesItsLeaseBeforeFinishedHook) {
     TemporaryWebSession temporary;
-    auto notifier = std::make_shared<WakeNotifier>();
+    auto notifier = std::make_shared<OwnerWakeSignal>();
     std::promise<bool> lease_released_signal;
     auto lease_released = lease_released_signal.get_future();
     WebSessionRuntime runtime(
@@ -1549,9 +1551,10 @@ TEST(WebSessionRuntime, OpenedSessionReleasesItsLeaseBeforeFinishedHook) {
             .forum_display_name = "Forum",
             .session_label = "Web runtime",
         },
-        .controller = SessionController::from_definitions(
+        .controller = SessionController::from_shared_definitions(
             {test_definition()},
-            PersonaRoster{{.id = "reader", .display_name = "Reader"}},
+            std::make_shared<const PersonaRoster>(
+                PersonaRoster{{.id = "reader", .display_name = "Reader"}}),
             "guide",
             temporary.path,
             SessionLease::acquire(temporary.path),

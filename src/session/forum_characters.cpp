@@ -3,6 +3,7 @@
 #include "util/text.h"
 
 #include <algorithm>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -206,6 +207,35 @@ std::string format_handle_resolution_notice(
 
 std::string format_duplicate_character_notice(std::string_view name) {
     return "Multicast target @" + std::string(name) + " is duplicated";
+}
+
+std::string format_characters_notice(
+    const ForumCharacters& characters,
+    const std::vector<AgentRuntimeInfo>& runtime_info,
+    const ParticipantId& default_agent_id) {
+    std::ostringstream result;
+    result << "Characters in this forum (" << characters.all().size()
+           << "), * marks the default.";
+    result << " Any unambiguous prefix works.";
+    for (const AgentRuntimeInfo& agent : runtime_info) {
+        result << " | " << (agent.character.id == default_agent_id ? "* " : "")
+               << "@" << agent.character.name << "  " << agent.model << "  "
+               << agent.api << "  "
+               << (agent.streaming ? "streaming" : "non-streaming");
+    }
+    return result.str();
+}
+
+std::string format_session_information(
+    std::size_t entry_count,
+    const ForumCharacters& characters,
+    const std::vector<AgentRuntimeInfo>& runtime_info,
+    const ParticipantId& default_agent_id) {
+    std::ostringstream text;
+    text << "Transcript entries: " << entry_count
+         << " | " << format_characters_notice(
+             characters, runtime_info, default_agent_id);
+    return text.str();
 }
 
 } // namespace cha

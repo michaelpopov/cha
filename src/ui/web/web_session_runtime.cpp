@@ -4,7 +4,7 @@
 
 #include "session/session_controller.h"
 #include "transcript/transcript.h"
-#include "ui/text/text_input.h"
+#include "ui/web/text_input.h"
 
 #include <exception>
 #include <new>
@@ -75,34 +75,21 @@ std::string_view generation_terminal_status(
     for (auto entry = snapshot.transcript.rbegin();
          entry != snapshot.transcript.rend(); ++entry) {
         if (entry->request_id != request_id) continue;
-        if (entry->kind == TranscriptKind::human) {
+        if (entry->kind == EntryKind::human) {
             has_prompt = true;
-        } else if ((entry->kind == TranscriptKind::agent
-                       || entry->kind == TranscriptKind::error)
-            && entry->status != TranscriptStatus::streaming) {
+        } else if ((entry->kind == EntryKind::agent
+                       || entry->kind == EntryKind::error)
+            && entry->status != EntryStatus::streaming) {
             return to_string(entry->status);
         }
     }
     // A cancelled response may end before producing answer text, in which
     // case the completed prompt is the request's only transcript entry.
-    if (has_prompt) return to_string(TranscriptStatus::cancelled);
+    if (has_prompt) return to_string(EntryStatus::cancelled);
     // A production terminal transition has a transcript entry for its request.
     // Keep an explicit diagnostic value for malformed controller snapshots
     // instead of reporting a made-up successful outcome.
     return "unknown";
-}
-
-WebAppendCandidate to_web_append(SessionTextAppend append) {
-    WebAppendCandidate result = std::visit([](auto target) -> WebAppendCandidate {
-        using Target = std::decay_t<decltype(target)>;
-        if constexpr (std::is_same_v<Target, EntryTextTarget>) {
-            return {AppendTargetEntry{target.entry_id}, {}};
-        } else {
-            return {AppendTargetReasoning{target.request_id}, {}};
-        }
-    }, std::move(append.target));
-    result.text = std::move(append.text);
-    return result;
 }
 
 class SessionControllerAdapter final : public WebSessionController {
@@ -112,10 +99,10 @@ public:
     explicit SessionControllerAdapter(std::unique_ptr<SessionController> controller)
         : owned_controller_(std::move(controller)), controller_(*owned_controller_) {}
 
-    TextInputResult handle_raw_input(
+    CommandResult handle_raw_input(
         std::string_view author_id,
         std::string input) override {
-        return cha::handle_text_input(controller_, author_id, std::move(input));
+        return handle_text_input(controller_, author_id, std::move(input));
     }
     SessionChange request_stop() override {
         return controller_.request_stop();
@@ -152,8 +139,10 @@ WebSessionRuntime::WebSessionRuntime(
     std::shared_ptr<SseMailbox> mailbox,
     WebRuntimeHooks hooks,
     WebRuntimeClock clock,
-    std::shared_ptr<WakeNotifier> notifier)
-    : notifier_(notifier ? std::move(notifier) : std::make_shared<WakeNotifier>()),
+    std::shared_ptr<OwnerWakeSignal> notifier)
+    : notifier_(notifier
+          ? std::move(notifier)
+          : std::make_shared<OwnerWakeSignal>()),
       settings_(validate_runtime_settings(std::move(settings))),
       commands_(settings_.command_queue_capacity),
       descriptor_(std::move(descriptor)),
@@ -170,7 +159,7 @@ WebSessionRuntime::WebSessionRuntime(
     std::shared_ptr<SseMailbox> mailbox,
     WebRuntimeHooks hooks,
     WebRuntimeClock clock,
-    std::shared_ptr<WakeNotifier> notifier)
+    std::shared_ptr<OwnerWakeSignal> notifier)
     : WebSessionRuntime(
           std::move(settings),
           std::move(descriptor),
@@ -368,26 +357,16 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
         }
         return;
     }
-    struct CommandOutcome {
-        SessionChange change;
-        bool clear_input{};
-        bool exit_requested{};
-    };
-    CommandOutcome outcome = std::visit([&controller](auto&& value) -> CommandOutcome {
+    CommandResult outcome = std::visit([&controller](auto&& value) -> CommandResult {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) {
-            TextInputResult result = controller.handle_raw_input(
+            return controller.handle_raw_input(
                 value.persona, std::move(value.text));
-            return {
-                .change = std::move(result.session),
-                .clear_input = result.clear_input,
-                .exit_requested = result.exit_requested,
-            };
         } else if constexpr (std::is_same_v<T, StopCommand>) {
-            return {.change = controller.request_stop()};
+            return {.session = controller.request_stop()};
         }
         else if constexpr (std::is_same_v<T, SetDefaultAgentCommand>) {
-            return {.change = controller.set_default_agent_id(value.character_id)};
+            return {.session = controller.set_default_agent_id(value.character_id)};
         } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
             throw std::logic_error("Snapshot command handled before dispatch");
         } else if constexpr (std::is_same_v<T, SseConnectCommand>) {
@@ -396,15 +375,14 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
             static_assert(unsupported_web_command<T>);
         }
     }, command.command);
-    const bool presentation_changed = apply_notice(outcome.change);
-    if (outcome.change.state_changed || presentation_changed) {
+    const bool presentation_changed = apply_notice(outcome.session);
+    if (outcome.session.state_changed || presentation_changed) {
         publish_change(controller, presentation_changed);
     }
-    (void)command.completion->complete(CommandResult{
-        .clear_input = outcome.clear_input,
-        .notice = outcome.change.notice,
-    });
-    if (outcome.change.controller_ended || outcome.exit_requested) {
+    const bool close_session =
+        outcome.session.controller_ended || outcome.close_session;
+    (void)command.completion->complete(std::move(outcome));
+    if (close_session) {
         (void)mark_stopping(ShutdownReason::browser_disconnected);
     }
 }
@@ -458,7 +436,7 @@ void WebSessionRuntime::publish_change(
     if (!force_snapshot && last_cursor_) {
         if (auto projection = controller.text_append_since(*last_cursor_);
             projection && publish_append(
-                to_web_append(std::move(projection->append)),
+                std::move(projection->append),
                 std::move(projection->cursor))) {
             return;
         }
@@ -494,28 +472,30 @@ void WebSessionRuntime::publish_change(
 }
 
 bool WebSessionRuntime::publish_append(
-    WebAppendCandidate candidate,
+    SessionTextAppend append,
     SessionStateCursor cursor) {
-    if (!sink_ || !last_snapshot_ || candidate.text.empty()) {
+    if (!sink_ || !last_snapshot_ || append.text.empty()) {
         return false;
     }
-    if (const auto* entry = std::get_if<AppendTargetEntry>(&candidate.target)) {
+    if (const auto* entry = std::get_if<EntryTextTarget>(&append.target)) {
         const auto found = std::find_if(
             last_snapshot_->transcript.begin(), last_snapshot_->transcript.end(),
-            [entry](const TranscriptEntry& value) { return value.id == entry->entry_id; });
+            [entry](const cha::TranscriptEntry& value) {
+                return value.id == entry->entry_id;
+            });
         if (found == last_snapshot_->transcript.end()) {
             return false;
         }
-        found->text.append(candidate.text);
+        found->text.append(append.text);
     } else {
         const auto& reasoning =
-            std::get<AppendTargetReasoning>(candidate.target);
+            std::get<ReasoningTextTarget>(append.target);
         if (last_snapshot_->generation.request_id != reasoning.request_id) {
             return false;
         }
-        last_snapshot_->generation.reasoning_text.append(candidate.text);
+        last_snapshot_->generation.reasoning_text.append(append.text);
     }
-    sink_->publish_append(std::move(candidate), *last_snapshot_);
+    sink_->publish_append(std::move(append), *last_snapshot_);
     last_cursor_ = std::move(cursor);
     return true;
 }

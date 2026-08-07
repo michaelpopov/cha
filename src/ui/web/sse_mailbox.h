@@ -33,7 +33,7 @@ public:
 
     void publish(SnapshotEvent snapshot) override;
     void publish_append(
-        WebAppendCandidate candidate,
+        SessionTextAppend append,
         const SessionSnapshot& fallback_snapshot) override;
     [[nodiscard]] bool wait_for_written(
         std::chrono::milliseconds deadline) override;
@@ -42,7 +42,7 @@ public:
 private:
     void publish_snapshot_locked(SnapshotEvent snapshot);
     void publish_append_locked(
-        WebAppendCandidate candidate,
+        SessionTextAppend append,
         const SessionSnapshot& fallback_snapshot);
 
     std::mutex mutex_;
@@ -52,7 +52,7 @@ private:
     std::uint64_t next_stream_{1};
     std::shared_ptr<const SsePayload> in_flight_;
     std::shared_ptr<const SsePayload> pending_;
-    std::optional<AppendTarget> target_;
+    std::optional<SessionTextTarget> target_;
     std::uint64_t next_sequence_{};
     std::size_t collapsed_payloads_{};
 };

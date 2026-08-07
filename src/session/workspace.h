@@ -70,16 +70,8 @@ public:
     // is missing; an existing empty directory is valid and it re-reads on every call.
     PersonaRoster load_personas() const;
     Forum load_forum(const std::string& name) const;
-    // Fully validates one forum without creating a session or initializing
-    // completion providers. Returns its resolved metadata on success.
-    Forum check_forum(const std::string& name) const;
     std::vector<SessionSummary> sessions(const std::string& forum_name) const;
     std::filesystem::file_time_type session_last_write_time(
-        const std::string& forum_name,
-        const std::string& session_id) const;
-    // Reads one stored session's validated metadata directly, without listing
-    // or reading any other session in the forum.
-    [[nodiscard]] SessionSummary session_summary(
         const std::string& forum_name,
         const std::string& session_id) const;
     // Validates a stored session identity and its on-disk metadata without
@@ -100,6 +92,12 @@ public:
         WakeNotifier& notifier,
         SharedPersonaRoster personas = {}) const;
 private:
+    // These shared validation paths back the public creation and checking
+    // operations without expanding Workspace's caller-facing contract.
+    Forum validate_forum(const std::string& name) const;
+    [[nodiscard]] SessionSummary read_session_summary(
+        const std::string& forum_name,
+        const std::string& session_id) const;
     std::filesystem::path forum_directory(const std::string& name) const;
     std::filesystem::path root_;
     WorkspaceConfig workspace_config_;

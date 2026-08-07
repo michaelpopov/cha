@@ -229,15 +229,6 @@ target_link_libraries(
 )
 cha_enable_warnings(cha_core)
 
-add_library(cha_ui_text STATIC
-    src/ui/text/command.cpp
-    src/ui/text/mcast.cpp
-    src/ui/text/mention.cpp
-    src/ui/text/text_input.cpp
-)
-target_link_libraries(cha_ui_text PUBLIC cha_core)
-cha_enable_warnings(cha_ui_text)
-
 add_library(cha_web STATIC
     src/ui/web/application_config.cpp
     src/ui/web/asset_handler.cpp
@@ -255,7 +246,11 @@ add_library(cha_web STATIC
     src/ui/web/session_registry.cpp
     src/ui/web/sse_mailbox.cpp
     src/ui/web/sse_stream.cpp
-    src/ui/web/wake_notifier.cpp
+    src/ui/web/text_command.cpp
+    src/ui/web/text_input.cpp
+    src/ui/web/text_mention.cpp
+    src/ui/web/text_multicast.cpp
+    src/ui/web/owner_wake_signal.cpp
     src/ui/web/web_session_runtime.cpp
 )
 target_compile_features(cha_web PUBLIC cxx_std_20)
@@ -264,7 +259,6 @@ target_link_libraries(
     cha_web
     PUBLIC
         cha_core
-        cha_ui_text
         httplib::httplib
         nlohmann_json::nlohmann_json)
 cha_enable_warnings(cha_web)
@@ -304,6 +298,7 @@ if(BUILD_TESTING)
         tests/session/unit_catalog_lease.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
+        tests/session/unit_session_state.cpp
         tests/session/unit_persona_loader.cpp
         tests/session/unit_workspace.cpp
         tests/application/unit_workspace_snapshot.cpp
@@ -312,10 +307,6 @@ if(BUILD_TESTING)
         tests/application/unit_effective_personas.cpp
         tests/application/unit_welcome_storage.cpp
         tests/support/test_workspace.cpp
-        tests/ui/text/unit_command.cpp
-        tests/ui/text/unit_mcast.cpp
-        tests/ui/text/unit_mention.cpp
-        tests/ui/text/unit_text_input.cpp
     )
     if(NOT WIN32)
         # The socket fixture used by these transport tests is POSIX-only.
@@ -339,7 +330,6 @@ if(BUILD_TESTING)
         cha_tests
         PRIVATE
             cha_core
-            cha_ui_text
             cha_sqlite3
             GTest::gtest_main)
     target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
@@ -364,6 +354,10 @@ if(BUILD_TESTING)
         tests/ui/web/unit_session_registry.cpp
         tests/ui/web/unit_sse_mailbox.cpp
         tests/ui/web/unit_sse_stream.cpp
+        tests/ui/web/unit_text_command.cpp
+        tests/ui/web/unit_text_input.cpp
+        tests/ui/web/unit_text_mention.cpp
+        tests/ui/web/unit_text_multicast.cpp
         tests/ui/web/unit_web_session_runtime.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
@@ -386,7 +380,7 @@ if(BUILD_TESTING)
         # sockets and fork/exec, so they are not part of the Windows build.
         add_executable(itest tests/integration/integration_test.cpp)
         target_link_libraries(
-            itest PRIVATE cha_core cha_ui_text GTest::gtest_main)
+            itest PRIVATE cha_core GTest::gtest_main)
         target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         cha_enable_warnings(itest)
         target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")

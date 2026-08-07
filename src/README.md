@@ -8,7 +8,6 @@ through HTTP and server-sent events.
 
 ```text
 chaweb_app -> cha_web
-cha_web    -> cha_ui_text -> cha_core
 cha_web    -> cha_core
 
 cha_core -> application / agents / session / transcript / util
@@ -16,18 +15,17 @@ cha_web  -> cpp-httplib / nlohmann-json
 cha_core -> curl / sqlite / libuv / threads / toml++ / spdlog
 ```
 
-`cha_core` contains no `ui/` or `apps/` sources. `cha_ui_text` contains only the
-controller-level input grammar used by the web runtime. HTTP workers never
-access a `SessionController` directly; they submit bounded commands to a
-registry-owned session thread.
+`cha_core` contains no `ui/` or `apps/` sources. The browser chat grammar is
+part of `cha_web`, including its editor-clearing and `/exit` lifecycle policy.
+HTTP workers never access a `SessionController` directly; they submit bounded
+commands to a registry-owned session thread.
 
 ## Directories
 
 | Directory | Responsibility |
 | --- | --- |
 | `apps/` | Executable wiring, process signals, startup, and top-level failures. |
-| `ui/web/` | HTTP/SSE transport, API DTOs, live-session registry, mailboxes, and lifecycle policy. |
-| `ui/text/` | Slash commands, mentions, multicast parsing, and controller input dispatch. |
+| `ui/web/` | HTTP/SSE transport, chat-input grammar, API DTOs, live-session registry, mailboxes, and lifecycle policy. |
 | `application/` | Immutable discovery, built-ins, effective personas, workspace inventory, and Welcome storage. |
 | `session/` | Workspace loading, session databases and leases, controller state, persistence, and character resolution. |
 | `agents/` | Character configuration, provider clients, completion context, execution, cancellation, and event delivery. |
@@ -36,8 +34,8 @@ registry-owned session thread.
 | `resources/webapp/` | React browser application and its browser tests. |
 
 Dependencies point downward through those responsibilities. Core layers never
-import HTTP or browser presentation types. Protocol DTOs are explicit
-projections from core state, not a second persistence model.
+import HTTP or browser presentation types. Web serialization owns the browser
+contract without introducing a second persistence model.
 
 ## Runtime ownership
 
@@ -74,11 +72,10 @@ require restarting `chaweb`.
 | Target | Purpose |
 | --- | --- |
 | `cha_core` | Domain and application-discovery implementation. |
-| `cha_ui_text` | Text input grammar used by the web runtime. |
 | `cha_web` | HTTP/SSE frontend. |
 | `chaweb_app` (`chaweb`) | Production server executable. |
-| `cha_tests` | Core, session, application, and text-grammar unit/component tests. |
-| `cha_web_tests` | Web route, protocol, registry, runtime, and SSE tests. |
+| `cha_tests` | Core, session, and application unit/component tests. |
+| `cha_web_tests` | Web input-grammar, route, protocol, registry, runtime, and SSE tests. |
 | `cha_web_stress_tests` | Concurrent live-session stress tests. |
 | `cha_web_process_tests` | Real-process HTTP, SSE, restart, and shutdown tests. |
 | `itest` | Live-provider integration tests for the retained core stack. |
@@ -93,6 +90,5 @@ The browser has Vitest checks and Playwright development/production flows under
 - [Sessions and persistence](session/README.md)
 - [Transcript model](transcript/README.md)
 - [Web frontend](ui/web/README.md)
-- [Text input grammar](ui/text/README.md)
 - [Entry point](apps/README.md)
 - [Utilities](util/README.md)

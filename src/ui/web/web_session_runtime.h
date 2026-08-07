@@ -7,9 +7,8 @@
 #include "ui/web/command_queue.h"
 #include "ui/web/protocol.h"
 #include "ui/web/session_projection.h"
-#include "ui/web/wake_notifier.h"
+#include "ui/web/owner_wake_signal.h"
 #include "ui/web/web_settings.h"
-#include "ui/text/text_input.h"
 
 #include <chrono>
 #include <cstddef>
@@ -31,20 +30,12 @@ namespace cha::web {
 
 class SseMailbox;
 
-// An owner-observed delta has no sequence number. The sink/mailbox assigns one
-// only when it stores a new append payload; merging a pending candidate must
-// consume no additional value.
-struct WebAppendCandidate {
-    AppendTarget target;
-    std::string text;
-};
-
 // Minimal controller boundary: it keeps fakes out of session/ and ensures all
 // controller work remains on the runtime's permanent owner thread.
 class WebSessionController {
 public:
     virtual ~WebSessionController() = default;
-    virtual TextInputResult handle_raw_input(
+    virtual CommandResult handle_raw_input(
         std::string_view author_id,
         std::string input) = 0;
     virtual SessionChange request_stop() = 0;
@@ -75,7 +66,7 @@ public:
     // sinks borrow the latest state and copy it only if they actually need to
     // collapse the append to a replacement snapshot.
     virtual void publish_append(
-        WebAppendCandidate candidate,
+        SessionTextAppend append,
         const SessionSnapshot& fallback_snapshot) = 0;
     virtual bool wait_for_written(std::chrono::milliseconds deadline) = 0;
     virtual void close() noexcept = 0;
@@ -106,7 +97,7 @@ public:
         std::shared_ptr<SseMailbox> mailbox,
         WebRuntimeHooks hooks = {},
         WebRuntimeClock clock = {},
-        std::shared_ptr<WakeNotifier> notifier = {});
+        std::shared_ptr<OwnerWakeSignal> notifier = {});
     ~WebSessionRuntime() = default;
     WebSessionRuntime(const WebSessionRuntime&) = delete;
     WebSessionRuntime& operator=(const WebSessionRuntime&) = delete;
@@ -123,7 +114,9 @@ public:
         std::size_t collapsed_payloads) noexcept;
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
-    [[nodiscard]] WakeNotifier& notifier_for_owner() noexcept { return *notifier_; }
+    [[nodiscard]] cha::WakeNotifier& notifier_for_owner() noexcept {
+        return *notifier_;
+    }
     void run_with_controller(std::unique_ptr<WebSessionController> controller);
     void run(OpenedSession opened);
 
@@ -137,7 +130,7 @@ protected:
         std::shared_ptr<SseMailbox> mailbox,
         WebRuntimeHooks hooks = {},
         WebRuntimeClock clock = {},
-        std::shared_ptr<WakeNotifier> notifier = {});
+        std::shared_ptr<OwnerWakeSignal> notifier = {});
 
 private:
     void owner_loop(
@@ -155,7 +148,7 @@ private:
         WebSessionController& controller,
         bool force_snapshot = false);
     [[nodiscard]] bool publish_append(
-        WebAppendCandidate candidate,
+        SessionTextAppend append,
         SessionStateCursor cursor);
     void publish_snapshot(
         SessionSnapshot snapshot,
@@ -170,7 +163,7 @@ private:
         bool mark_finished) noexcept;
     void mark_finished() noexcept;
 
-    std::shared_ptr<WakeNotifier> notifier_;
+    std::shared_ptr<OwnerWakeSignal> notifier_;
     WebSettings settings_;
     CommandQueue commands_;
     // Shared by submitters and the owner thread.

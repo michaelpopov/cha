@@ -345,10 +345,10 @@ TEST_F(ApplicationWorkspaceTest, RequiresValidLoggingConfiguration) {
     EXPECT_THROW((void)load_workspace_config(root_), std::runtime_error);
 }
 
-TEST_F(ApplicationWorkspaceTest, ChecksAForumWithoutCreatingASession) {
+TEST_F(ApplicationWorkspaceTest, LoadsForumMetadataWithoutCreatingASession) {
     Workspace workspace(root_);
 
-    const Forum forum = workspace.check_forum("lobby");
+    const Forum forum = workspace.load_forum("lobby");
 
     EXPECT_EQ(forum.name, "lobby");
     EXPECT_EQ(forum.display_name, "The Lobby");
@@ -356,7 +356,7 @@ TEST_F(ApplicationWorkspaceTest, ChecksAForumWithoutCreatingASession) {
     EXPECT_TRUE(workspace.sessions("lobby").empty());
 }
 
-TEST_F(ApplicationWorkspaceTest, ForumCheckUsesDefinitionDefaultsAndMemberOverride) {
+TEST_F(ApplicationWorkspaceTest, StoredSessionCreationUsesDefinitionDefaultsAndMemberOverride) {
     std::ofstream(root_ / "characters" / "guide" / "character.toml")
         << "display_name = \"Guide\"\nhost = \"127.0.0.1\"\n";
     std::ofstream(root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
@@ -366,19 +366,20 @@ TEST_F(ApplicationWorkspaceTest, ForumCheckUsesDefinitionDefaultsAndMemberOverri
     std::ofstream(root_ / "characters" / "guide" / "CHARACTER.md")
         << "$${voice}";
 
-    EXPECT_NO_THROW((void)Workspace(root_).check_forum("lobby"));
+    EXPECT_NO_THROW(
+        (void)Workspace(root_).create_stored_session("lobby", "Validated"));
 }
 
-TEST_F(ApplicationWorkspaceTest, ForumCheckInheritsApplicationProviderSettings) {
+TEST_F(ApplicationWorkspaceTest, StoredSessionCreationInheritsApplicationProviderSettings) {
     std::filesystem::remove(
         root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
     Workspace workspace(root_);
 
-    EXPECT_NO_THROW((void)workspace.check_forum("lobby"));
-    EXPECT_TRUE(workspace.sessions("lobby").empty());
+    EXPECT_NO_THROW(
+        (void)workspace.create_stored_session("lobby", "Validated"));
 }
 
-TEST_F(ApplicationWorkspaceTest, ForumCheckExpandsEveryPromptLink) {
+TEST_F(ApplicationWorkspaceTest, StoredSessionCreationExpandsEveryPromptLink) {
     {
         std::ofstream system_prompt(
             root_ / "characters" / "guide" / "CHARACTER.md");
@@ -387,7 +388,7 @@ TEST_F(ApplicationWorkspaceTest, ForumCheckExpandsEveryPromptLink) {
     Workspace workspace(root_);
 
     try {
-        (void)workspace.check_forum("lobby");
+        (void)workspace.create_stored_session("lobby", "Invalid");
         FAIL() << "expected a missing prompt include to fail";
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
@@ -490,16 +491,14 @@ TEST_F(ApplicationWorkspaceTest, CreatesAStoredSessionWithoutOpeningIt) {
     // during controller construction. Creation succeeded without that work.
 }
 
-TEST_F(ApplicationWorkspaceTest, ReadsOneStoredSessionSummaryDirectly) {
+TEST_F(ApplicationWorkspaceTest, ChecksOneStoredSessionDirectly) {
     Workspace workspace(root_);
     const SessionSummary created =
         workspace.create_stored_session("lobby", "Selected session");
 
-    EXPECT_EQ(
-        workspace.session_summary("lobby", created.id),
-        created);
+    EXPECT_NO_THROW(workspace.check_session("lobby", created.id));
     EXPECT_THROW(
-        (void)workspace.session_summary("lobby", "missing"),
+        workspace.check_session("lobby", "missing"),
         SessionNotFoundError);
 }
 

@@ -1,8 +1,8 @@
-#include "ui/text/mcast.h"
+#include "ui/web/text_multicast.h"
 
 #include "util/text.h"
 
-namespace cha {
+namespace cha::web {
 namespace {
 
 std::size_t skip_space(std::string_view input, std::size_t index) {
@@ -99,4 +99,4 @@ std::string_view multicast_parse_error_message(MulticastParseError error) {
     return "Malformed multicast command";
 }
 
-} // namespace cha
+} // namespace cha::web

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "agents/config.h"
+#include "session/session_change.h"
+#include "session/session_state.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,9 +19,6 @@ namespace cha::web {
 
 class SseMailbox;
 
-enum class TranscriptKind { human, agent, notice, error };
-enum class TranscriptStatus { complete, streaming, cancelled, failed };
-enum class GenerationPhase { waiting, reasoning, answering, stopping };
 enum class SessionLifecycle { starting, running, stopping };
 enum class ShutdownReason { browser_disconnected, session_failed, server_stopping };
 enum class ErrorCode {
@@ -64,37 +63,14 @@ struct ForumSummary {
     bool operator==(const ForumSummary&) const = default;
 };
 
-struct TranscriptEntry {
-    std::uint64_t id{};
-    TranscriptKind kind{TranscriptKind::notice};
-    std::string participant_id;
-    std::string display_name;
-    std::string addressed_to;
-    std::string addressed_to_name;
-    std::string text;
-    TranscriptStatus status{TranscriptStatus::complete};
-    std::optional<std::uint64_t> request_id;
-    bool operator==(const TranscriptEntry&) const = default;
-};
-
-struct GenerationState {
-    bool active{};
-    std::optional<std::uint64_t> request_id;
-    std::string agent_id;
-    std::string agent_name;
-    GenerationPhase phase{GenerationPhase::waiting};
-    std::string reasoning_text;
-    bool operator==(const GenerationState&) const = default;
-};
-
 struct SessionSnapshot {
     ForumSummary forum;
     std::string session_id;
     std::string session_label;
     std::vector<CharacterSummary> characters;
     std::string default_character_id;
-    std::vector<TranscriptEntry> transcript;
-    GenerationState generation;
+    std::vector<cha::TranscriptEntry> transcript;
+    GenerationStatus generation;
     std::optional<std::string> notice;
     SessionLifecycle lifecycle{SessionLifecycle::starting};
     std::optional<ShutdownReason> shutdown_reason;
@@ -102,7 +78,7 @@ struct SessionSnapshot {
 };
 
 struct RawCommand {
-    // Stable author ID forwarded to the shared text-input path.
+    // Stable author ID forwarded to the web text-input grammar.
     std::string persona;
     std::string text;
 };
@@ -136,8 +112,11 @@ using WebCommand = std::variant<
     SseConnectCommand>;
 
 struct CommandResult {
+    // Owner-thread effects stay in this in-process result. The JSON serializer
+    // exposes only clear_input and session.notice to the browser.
+    SessionChange session;
     bool clear_input{};
-    std::optional<std::string> notice;
+    bool close_session{};
 };
 
 struct CreateSessionSuccess {
@@ -177,20 +156,8 @@ struct Error {
     std::string message;
 };
 
-struct AppendTargetEntry {
-    std::uint64_t entry_id{};
-    bool operator==(const AppendTargetEntry&) const = default;
-};
-
-struct AppendTargetReasoning {
-    std::uint64_t request_id{};
-    bool operator==(const AppendTargetReasoning&) const = default;
-};
-
-using AppendTarget = std::variant<AppendTargetEntry, AppendTargetReasoning>;
-
 struct SnapshotAppendSelection {
-    AppendTarget target;
+    SessionTextTarget target;
     std::optional<std::size_t> transcript_index;
 };
 
@@ -207,14 +174,14 @@ struct SnapshotEvent {
 };
 
 struct AppendEvent {
-    AppendTarget target;
+    SessionTextTarget target;
     std::string text;
     std::uint64_t seq{};
 };
 
-std::string_view to_string(TranscriptKind value);
-std::string_view to_string(TranscriptStatus value);
-std::string_view to_string(GenerationPhase value);
+std::string_view to_string(EntryKind value);
+std::string_view to_string(EntryStatus value);
+std::string_view to_string(ResponsePhase value);
 std::string_view to_string(SessionLifecycle value);
 std::string_view to_string(ShutdownReason value);
 std::string_view to_string(ErrorCode value);
@@ -223,8 +190,6 @@ void to_json(nlohmann::json& json, const ForumSummary& value);
 void to_json(nlohmann::json& json, const PersonaSummary& value);
 void to_json(nlohmann::json& json, const SessionListing& value);
 void to_json(nlohmann::json& json, const CharacterSummary& value);
-void to_json(nlohmann::json& json, const TranscriptEntry& value);
-void to_json(nlohmann::json& json, const GenerationState& value);
 void to_json(nlohmann::json& json, const SessionSnapshot& value);
 void to_json(nlohmann::json& json, const CommandResult& value);
 void to_json(nlohmann::json& json, const CreateSessionSuccess& value);
@@ -233,8 +198,6 @@ void to_json(nlohmann::json& json, const RecentSession& value);
 void to_json(nlohmann::json& json, const Bootstrap& value);
 void to_json(nlohmann::json& json, const CharacterDetail& value);
 void to_json(nlohmann::json& json, const Error& value);
-void to_json(nlohmann::json& json, const AppendTargetEntry& value);
-void to_json(nlohmann::json& json, const AppendTargetReasoning& value);
 void to_json(nlohmann::json& json, const SnapshotEvent& value);
 void to_json(nlohmann::json& json, const AppendEvent& value);
 

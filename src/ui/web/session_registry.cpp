@@ -29,7 +29,7 @@ OpenedSession open_welcome_session(
     SharedPersonaRoster personas,
     std::string_view inventory,
     PreparedWelcomeSession prepared,
-    WakeNotifier& notifier) {
+    cha::WakeNotifier& notifier) {
     auto definitions = builtin_assistant_definitions(
         workspace.workspace_config().provider,
         std::string(inventory),
@@ -133,7 +133,7 @@ SessionRegistry SessionRegistry::from_workspace(
     return SessionRegistry(
         std::move(settings),
         [controller_workspace, personas, inventory, &welcome_storage](
-            const SessionIdentity& key, WakeNotifier& notifier) {
+            const SessionIdentity& key, cha::WakeNotifier& notifier) {
             if (key.forum_id == entrance_id) {
                 if (key.session_id != welcome_id) throw SessionNotFoundError("Session not found");
                 return RegistryOwnerInput{open_welcome_session(
@@ -425,7 +425,7 @@ void SessionRegistry::owner_main(SessionIdentity key, std::shared_ptr<StartupRes
         lifecycle_changed_.notify_all();
     };
     try {
-        auto notifier = std::make_shared<WakeNotifier>();
+        auto notifier = std::make_shared<OwnerWakeSignal>();
         RegistryOwnerInput owner_input = factory_(key, *notifier);
         SessionDescriptor descriptor;
         std::unique_ptr<WebSessionController> port;

@@ -1,20 +1,20 @@
-#include "ui/text/text_input.h"
+#include "ui/web/text_input.h"
 
 #include "session/session_controller.h"
-#include "ui/text/command.h"
-#include "ui/text/mcast.h"
-#include "ui/text/mention.h"
+#include "ui/web/text_command.h"
+#include "ui/web/text_mention.h"
+#include "ui/web/text_multicast.h"
 
 #include <utility>
 
-namespace cha {
+namespace cha::web {
 namespace {
 
-TextInputResult handle_multicast_input(
+CommandResult handle_multicast_input(
     SessionController& controller,
     std::string_view author_id,
     std::string_view argument) {
-    TextInputResult result{.clear_input = true};
+    CommandResult result{.clear_input = true};
     MulticastParseResult parsed = parse_multicast_input(argument);
     if (const auto* error = std::get_if<MulticastParseError>(&parsed)) {
         result.session.notice = std::string(multicast_parse_error_message(*error));
@@ -31,11 +31,11 @@ TextInputResult handle_multicast_input(
 
 } // namespace
 
-TextInputResult handle_text_input(
+CommandResult handle_text_input(
     SessionController& controller,
     std::string_view author_id,
     std::string input) {
-    TextInputResult result;
+    CommandResult result;
     if (input.empty()) {
         return result;
     }
@@ -85,7 +85,7 @@ TextInputResult handle_text_input(
         return result;
     case CommandKind::exit:
         result.clear_input = true;
-        result.exit_requested = true;
+        result.close_session = true;
         return result;
     case CommandKind::agents:
         result.session = controller.agent_information(); break;
@@ -102,4 +102,4 @@ TextInputResult handle_text_input(
     return result;
 }
 
-} // namespace cha
+} // namespace cha::web

@@ -1,10 +1,10 @@
-#include "ui/text/command.h"
+#include "ui/web/text_command.h"
 
 #include "util/text.h"
 
 #include <array>
 
-namespace cha {
+namespace cha::web {
 namespace {
 
 enum class CommandForm {
@@ -69,4 +69,4 @@ std::string command_names() {
     return result;
 }
 
-} // namespace cha
+} // namespace cha::web

@@ -9,8 +9,8 @@
 
 namespace cha::web {
 
-// A portable, coalescing wake source for one session owner loop.
-class WakeNotifier final : public cha::WakeNotifier {
+// A portable, coalescing wake source consumed by one session owner loop.
+class OwnerWakeSignal final : public cha::WakeNotifier {
 public:
     void wake() noexcept override;
 

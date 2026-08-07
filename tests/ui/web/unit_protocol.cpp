@@ -92,10 +92,13 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json({{"font", "serif"}, {"style", "italic"},
             {"weight", "bold"}, {"size", "large"}}));
     EXPECT_EQ(
-        nlohmann::json(CommandResult{true, std::nullopt}),
+        nlohmann::json(CommandResult{.clear_input = true}),
         nlohmann::json({{"clear_input", true}}));
     EXPECT_EQ(
-        nlohmann::json(CommandResult{false, std::string{}}),
+        nlohmann::json(CommandResult{
+            .session = {.notice = std::string{}},
+            .clear_input = false,
+        }),
         nlohmann::json({{"clear_input", false}, {"notice", ""}}));
     EXPECT_EQ(
         nlohmann::json(Error{ErrorCode::body_too_large, "Too large"}),
@@ -117,11 +120,11 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         .default_character_id = "guide",
         .transcript = {{
             .id = 7,
-            .kind = TranscriptKind::agent,
+            .kind = EntryKind::agent,
             .participant_id = "guide",
             .display_name = "Guide",
             .text = "<answer>",
-            .status = TranscriptStatus::streaming,
+            .status = EntryStatus::streaming,
             .request_id = 3,
         }},
         .generation = {
@@ -129,7 +132,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
             .request_id = 3,
             .agent_id = "guide",
             .agent_name = "Guide",
-            .phase = GenerationPhase::answering,
+            .phase = ResponsePhase::answering,
             .reasoning_text = "<reasoning>",
         },
         .notice = std::string{"<notice>"},
@@ -174,14 +177,14 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
     expect_no_transport_location_fields(value);
 
     EXPECT_EQ(
-        nlohmann::json(AppendEvent{AppendTargetReasoning{3}, "more", 7}),
+        nlohmann::json(AppendEvent{ReasoningTextTarget{3}, "more", 7}),
         nlohmann::json({
             {"seq", 7},
             {"target", {{"kind", "reasoning"}, {"request_id", 3}}},
             {"text", "more"},
         }));
     EXPECT_EQ(
-        nlohmann::json(AppendEvent{AppendTargetEntry{7}, "more", 8}),
+        nlohmann::json(AppendEvent{EntryTextTarget{7}, "more", 8}),
         nlohmann::json({
             {"seq", 8},
             {"target", {{"entry_id", 7}, {"kind", "entry"}}},
@@ -192,25 +195,25 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
 TEST(WebProtocol, SelectsAppendTargetAndTranscriptIndexTogether) {
     SessionSnapshot snapshot{
         .transcript = {
-            {.id = 4, .status = TranscriptStatus::complete},
-            {.id = 7, .status = TranscriptStatus::streaming},
+            {.id = 4, .status = EntryStatus::complete},
+            {.id = 7, .status = EntryStatus::streaming},
         },
         .generation = {
             .active = true,
             .request_id = 3,
-            .phase = GenerationPhase::reasoning,
+            .phase = ResponsePhase::reasoning,
         },
     };
 
     auto selection = snapshot_append_selection(snapshot);
     ASSERT_TRUE(selection);
-    EXPECT_EQ(selection->target, AppendTarget{AppendTargetEntry{7}});
+    EXPECT_EQ(selection->target, SessionTextTarget{EntryTextTarget{7}});
     EXPECT_EQ(selection->transcript_index, 1U);
 
-    snapshot.transcript[1].status = TranscriptStatus::complete;
+    snapshot.transcript[1].status = EntryStatus::complete;
     selection = snapshot_append_selection(snapshot);
     ASSERT_TRUE(selection);
-    EXPECT_EQ(selection->target, AppendTarget{AppendTargetReasoning{3}});
+    EXPECT_EQ(selection->target, SessionTextTarget{ReasoningTextTarget{3}});
     EXPECT_FALSE(selection->transcript_index);
 
     snapshot.generation.active = false;
@@ -221,13 +224,15 @@ TEST(WebProtocol, EscapesAndOwnsPresentationText) {
     std::string text = "quote \\\" newline\\n";
     TranscriptEntry entry{
         .id = 1,
-        .kind = TranscriptKind::notice,
+        .kind = EntryKind::notice,
         .participant_id = "system",
         .display_name = "System",
         .text = text,
     };
     text.assign("changed");
-    const auto value = nlohmann::json(entry);
+    SessionSnapshot entry_snapshot;
+    entry_snapshot.transcript.push_back(std::move(entry));
+    const auto value = nlohmann::json(entry_snapshot)["transcript"][0];
     EXPECT_EQ(value["text"], "quote \\\" newline\\n");
     EXPECT_EQ(
         value.dump(),
@@ -252,23 +257,23 @@ TEST(WebProtocol, EscapesAndOwnsPresentationText) {
 }
 
 TEST(WebProtocol, DefinesEveryEnumSpelling) {
-    expect_spellings<TranscriptKind>({
-        {TranscriptKind::human, "human"},
-        {TranscriptKind::agent, "agent"},
-        {TranscriptKind::notice, "notice"},
-        {TranscriptKind::error, "error"},
+    expect_spellings<EntryKind>({
+        {EntryKind::human, "human"},
+        {EntryKind::agent, "agent"},
+        {EntryKind::notice, "notice"},
+        {EntryKind::error, "error"},
     });
-    expect_spellings<TranscriptStatus>({
-        {TranscriptStatus::complete, "complete"},
-        {TranscriptStatus::streaming, "streaming"},
-        {TranscriptStatus::cancelled, "cancelled"},
-        {TranscriptStatus::failed, "failed"},
+    expect_spellings<EntryStatus>({
+        {EntryStatus::complete, "complete"},
+        {EntryStatus::streaming, "streaming"},
+        {EntryStatus::cancelled, "cancelled"},
+        {EntryStatus::failed, "failed"},
     });
-    expect_spellings<GenerationPhase>({
-        {GenerationPhase::waiting, "waiting"},
-        {GenerationPhase::reasoning, "reasoning"},
-        {GenerationPhase::answering, "answering"},
-        {GenerationPhase::stopping, "stopping"},
+    expect_spellings<ResponsePhase>({
+        {ResponsePhase::waiting, "waiting"},
+        {ResponsePhase::reasoning, "reasoning"},
+        {ResponsePhase::answering, "answering"},
+        {ResponsePhase::stopping, "stopping"},
     });
     expect_spellings<SessionLifecycle>({
         {SessionLifecycle::starting, "starting"},
@@ -301,9 +306,9 @@ TEST(WebProtocol, DefinesEveryEnumSpelling) {
 }
 
 TEST(WebProtocol, RejectsInvalidEnumValues) {
-    expect_invalid_enum_rejected<TranscriptKind>();
-    expect_invalid_enum_rejected<TranscriptStatus>();
-    expect_invalid_enum_rejected<GenerationPhase>();
+    expect_invalid_enum_rejected<EntryKind>();
+    expect_invalid_enum_rejected<EntryStatus>();
+    expect_invalid_enum_rejected<ResponsePhase>();
     expect_invalid_enum_rejected<SessionLifecycle>();
     expect_invalid_enum_rejected<ShutdownReason>();
     expect_invalid_enum_rejected<ErrorCode>();
@@ -442,7 +447,7 @@ TEST(WebSettings, RequestHeadroomIsInjectable) {
 TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
     test::TestWorkspace fixture;
     Workspace workspace(fixture.root());
-    const Forum forum = workspace.check_forum("lobby");
+    const Forum forum = workspace.load_forum("lobby");
     EXPECT_EQ(forum.display_name, "The Lobby");
     EXPECT_EQ(forum.character_names, (std::vector<std::string>{"guide"}));
     const auto config = load_config({

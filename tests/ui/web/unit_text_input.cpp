@@ -1,6 +1,6 @@
 #include "agents/completion_backend.h"
 #include "session/session_controller.h"
-#include "ui/text/text_input.h"
+#include "ui/web/text_input.h"
 #include "session/session_database.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-namespace cha {
+namespace cha::web {
 namespace {
 
 
@@ -115,27 +115,27 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
         temporary.path,
         notifier());
 
-    const TextInputResult invalid_argument =
+    const CommandResult invalid_argument =
         handle_text_input(*controller, "operator", "/clear later");
     EXPECT_TRUE(invalid_argument.clear_input);
     EXPECT_EQ(
         invalid_argument.session.notice,
         "Command does not accept arguments");
-    const TextInputResult idle_stop_with_argument =
+    const CommandResult idle_stop_with_argument =
         handle_text_input(*controller, "operator", "/stop later");
     EXPECT_TRUE(idle_stop_with_argument.clear_input);
     EXPECT_EQ(
         idle_stop_with_argument.session.notice,
         "Command does not accept arguments");
 
-    const TextInputResult unknown =
+    const CommandResult unknown =
         handle_text_input(*controller, "operator", "/unknown");
     EXPECT_TRUE(unknown.clear_input);
     ASSERT_TRUE(unknown.session.notice);
     EXPECT_NE(unknown.session.notice->find("Unknown command"), std::string::npos);
     EXPECT_NE(unknown.session.notice->find("/mcast"), std::string::npos);
 
-    const TextInputResult empty_multicast =
+    const CommandResult empty_multicast =
         handle_text_input(*controller, "operator", "/mcast");
     EXPECT_TRUE(empty_multicast.clear_input);
     EXPECT_EQ(empty_multicast.session.notice, "Multicast prompt is empty");
@@ -153,13 +153,13 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
             make_hide_marker(2),
             make_hide_off_marker(3),
         }));
-    const TextInputResult information =
+    const CommandResult information =
         handle_text_input(*controller, "operator", "/info");
     ASSERT_TRUE(information.session.notice);
     EXPECT_NE(
         information.session.notice->find("Transcript entries: 3"),
         std::string::npos);
-    const TextInputResult agents =
+    const CommandResult agents =
         handle_text_input(*controller, "operator", "/agents");
     ASSERT_TRUE(agents.session.notice);
     EXPECT_NE(agents.session.notice->find("@Guide"), std::string::npos);
@@ -167,15 +167,15 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
         handle_text_input(*controller, "operator", "/@Gui").session.notice,
         "Default agent is now Guide");
 
-    const TextInputResult idle_stop =
+    const CommandResult idle_stop =
         handle_text_input(*controller, "operator", "/stop");
     EXPECT_TRUE(idle_stop.clear_input);
     EXPECT_EQ(idle_stop.session.notice, "No generation is active");
 
-    const TextInputResult exit =
+    const CommandResult exit =
         handle_text_input(*controller, "operator", "/exit");
     EXPECT_TRUE(exit.clear_input);
-    EXPECT_TRUE(exit.exit_requested);
+    EXPECT_TRUE(exit.close_session);
 }
 
 TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
@@ -188,7 +188,7 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
         temporary.path,
         notifier());
 
-    const TextInputResult submitted =
+    const CommandResult submitted =
         handle_text_input(*controller, "operator", "  @Ism hello");
     EXPECT_TRUE(submitted.clear_input);
     const std::vector<TranscriptEntry> entries =
@@ -207,7 +207,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
         ordinary_temporary.path,
         notifier());
 
-    const TextInputResult ordinary =
+    const CommandResult ordinary =
         handle_text_input(*ordinary_controller, "engineer", "Question");
     EXPECT_TRUE(ordinary.clear_input);
     ASSERT_EQ(ordinary_controller->transcript().entries().size(), 1U);
@@ -226,7 +226,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
         multicast_temporary.path,
         notifier());
 
-    const TextInputResult multicast = handle_text_input(
+    const CommandResult multicast = handle_text_input(
         *multicast_controller, "engineer", "/mcast @Guide Question");
     EXPECT_TRUE(multicast.clear_input);
     ASSERT_EQ(multicast_controller->transcript().entries().size(), 1U);
@@ -246,13 +246,13 @@ TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
         temporary.path,
         notifier());
 
-    const TextInputResult duplicate = handle_text_input(
+    const CommandResult duplicate = handle_text_input(
         *controller, "operator", "/mcast @Guide @Gui What time is it?");
     EXPECT_TRUE(duplicate.clear_input);
     EXPECT_EQ(duplicate.session.notice, "Multicast target @Guide is duplicated");
     EXPECT_TRUE(controller->transcript().entries().empty());
 
-    const TextInputResult unknown = handle_text_input(
+    const CommandResult unknown = handle_text_input(
         *controller, "operator", "/mcast @Nobody What time is it?");
     EXPECT_TRUE(unknown.clear_input);
     ASSERT_TRUE(unknown.session.notice);
@@ -268,28 +268,28 @@ TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
         notifier());
 
     (void)handle_text_input(*controller, "operator", "Question");
-    const TextInputResult blocked =
+    const CommandResult blocked =
         handle_text_input(*controller, "operator", "Another");
     EXPECT_FALSE(blocked.clear_input);
     EXPECT_EQ(
         blocked.session.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
 
-    const TextInputResult hidden_while_active =
+    const CommandResult hidden_while_active =
         handle_text_input(*controller, "operator", "/hide");
     EXPECT_FALSE(hidden_while_active.clear_input);
     EXPECT_EQ(
         hidden_while_active.session.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
 
-    const TextInputResult stop_with_argument =
+    const CommandResult stop_with_argument =
         handle_text_input(*controller, "operator", "/stop later");
     EXPECT_FALSE(stop_with_argument.clear_input);
     EXPECT_EQ(
         stop_with_argument.session.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
 
-    const TextInputResult stopping =
+    const CommandResult stopping =
         handle_text_input(*controller, "operator", "/stop");
     EXPECT_TRUE(stopping.clear_input);
     EXPECT_EQ(stopping.session.notice, "Stopping generation...");
@@ -301,52 +301,52 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
     auto controller = test::from_definitions_for_testing(
         std::vector<AgentDefinition>{definition()}, temporary.path, notifier());
 
-    const TextInputResult unknown_author =
+    const CommandResult unknown_author =
         handle_text_input(*controller, "unknown", "Question");
     EXPECT_FALSE(unknown_author.session.input_consumed);
     EXPECT_FALSE(unknown_author.clear_input);
 
-    const TextInputResult empty_default =
+    const CommandResult empty_default =
         handle_text_input(*controller, "operator", "/@");
     EXPECT_TRUE(empty_default.session.input_consumed);
     EXPECT_TRUE(empty_default.clear_input);
 
-    const TextInputResult unresolved_default =
+    const CommandResult unresolved_default =
         handle_text_input(*controller, "operator", "/@Nobody");
     EXPECT_TRUE(unresolved_default.session.input_consumed);
     EXPECT_TRUE(unresolved_default.clear_input);
 
-    const TextInputResult parse_error =
+    const CommandResult parse_error =
         handle_text_input(*controller, "operator", "/clear later");
     EXPECT_FALSE(parse_error.session.input_consumed);
     EXPECT_TRUE(parse_error.clear_input);
 
     // A recognized command that fails its precondition still consumes the line
     // it was typed on. Only composed prompt text survives a rejection.
-    const TextInputResult no_span =
+    const CommandResult no_span =
         handle_text_input(*controller, "operator", "/hide");
     EXPECT_TRUE(no_span.session.input_consumed);
     EXPECT_TRUE(no_span.clear_input);
     EXPECT_FALSE(no_span.session.state_changed);
 
-    const TextInputResult nothing_to_restore =
+    const CommandResult nothing_to_restore =
         handle_text_input(*controller, "operator", "/hide-off");
     EXPECT_TRUE(nothing_to_restore.session.input_consumed);
     EXPECT_TRUE(nothing_to_restore.clear_input);
     EXPECT_FALSE(nothing_to_restore.session.state_changed);
 
-    const TextInputResult exit_result =
+    const CommandResult exit_result =
         handle_text_input(*controller, "operator", "/exit");
     EXPECT_TRUE(exit_result.clear_input);
-    EXPECT_TRUE(exit_result.exit_requested);
+    EXPECT_TRUE(exit_result.close_session);
     EXPECT_FALSE(exit_result.session.controller_ended);
 
     controller->shutdown();
-    const TextInputResult undispatchable =
+    const CommandResult undispatchable =
         handle_text_input(*controller, "operator", "Another question");
     EXPECT_FALSE(undispatchable.session.input_consumed);
     EXPECT_FALSE(undispatchable.clear_input);
 }
 
 } // namespace
-} // namespace cha
+} // namespace cha::web

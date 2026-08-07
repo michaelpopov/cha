@@ -5,7 +5,7 @@
 #include <variant>
 #include <vector>
 
-namespace cha {
+namespace cha::web {
 
 struct MulticastInput {
     std::vector<std::string> handles;
@@ -29,5 +29,4 @@ using MulticastParseResult =
 [[nodiscard]] std::string_view multicast_parse_error_message(
     MulticastParseError error);
 
-} // namespace cha
-
+} // namespace cha::web

@@ -3,6 +3,7 @@
 #include "session/session_controller.h"
 
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -10,6 +11,11 @@
 #include <vector>
 
 namespace cha::test {
+
+inline SessionChange receive_all_events(SessionController& controller) {
+    return std::move(
+        controller.receive_events(std::numeric_limits<std::size_t>::max()).change);
+}
 
 inline PersonaRoster operator_roster() {
     return {{.id = "operator", .display_name = "Operator"}};

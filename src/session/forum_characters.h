@@ -2,6 +2,7 @@
 
 #include "agents/agent.h"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,6 +24,18 @@ struct HandleResolution {
     const class ForumCharacters& characters);
 [[nodiscard]] std::string format_duplicate_character_notice(
     std::string_view name);
+// Runtime details come from AgentRegistry rather than the identity-only
+// character view, so both are passed in. The entry count is a plain size for
+// the same reason: this wording belongs to the session, not to a transcript.
+[[nodiscard]] std::string format_characters_notice(
+    const class ForumCharacters& characters,
+    const std::vector<AgentRuntimeInfo>& runtime_info,
+    const ParticipantId& default_agent_id);
+[[nodiscard]] std::string format_session_information(
+    std::size_t entry_count,
+    const class ForumCharacters& characters,
+    const std::vector<AgentRuntimeInfo>& runtime_info,
+    const ParticipantId& default_agent_id);
 
 // The ordered characters participating in one forum. Construction guarantees that the collection is
 // non-empty and that character IDs and case-folded names are unique.

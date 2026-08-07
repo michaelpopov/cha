@@ -1,8 +1,8 @@
-#include "ui/web/wake_notifier.h"
+#include "ui/web/owner_wake_signal.h"
 
 namespace cha::web {
 
-void WakeNotifier::wake() noexcept {
+void OwnerWakeSignal::wake() noexcept {
     {
         std::lock_guard lock(mutex_);
         ++generation_;
@@ -10,7 +10,8 @@ void WakeNotifier::wake() noexcept {
     changed_.notify_one();
 }
 
-bool WakeNotifier::wait_until(std::chrono::steady_clock::time_point deadline) {
+bool OwnerWakeSignal::wait_until(
+    std::chrono::steady_clock::time_point deadline) {
     std::unique_lock lock(mutex_);
     if (generation_ != observed_) {
         observed_ = generation_;

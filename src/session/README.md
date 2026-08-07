@@ -13,9 +13,9 @@ web frontend and tests drive the same code.
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
-| `forum_characters.*` | The ordered character identities in a forum, including validation, lookup, and handle resolution. |
+| `forum_characters.*` | The ordered character identities in a forum, including validation, lookup, handle resolution, and the wording of every session notice built from them. |
 | `session_identity.h` / `opened_session.h` | Stable `SessionIdentity`, presentation-safe `SessionDescriptor`, and the owner-thread-only `OpenedSession` result. |
-| `session_state.*` | Owning `SessionState` snapshots and transport-neutral append continuity proof. |
+| `session_state.*` | Owning `SessionState` snapshots, and the transport-neutral append continuity proof as a matched pair of pure functions: `session_state_cursor()` produces a cursor and `session_text_append_since()` consumes it. |
 | `session_change.h` | Semantic controller outcomes (`SessionChange`) and bounded event-drain results. |
 | `session_controller.*` | Own one live session: commands, the in-flight response batch, agent events, default agent, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
@@ -78,18 +78,18 @@ layer, definition, forum-default, and member override policy,
 deriving the definition containment root from the definition directory's parent
 and otherwise receiving resolved workspace paths explicitly.
 
-`Workspace::check_forum()` follows the same loading path without creating or
-opening a session. It also constructs `ForumCharacters` to validate character
-IDs, display names, and uniqueness. It does not inspect the optional
-`sessions/` directory or resolve provider credentials and models.
+`Workspace::create_stored_session()` uses the same private validation path as
+opening a forum. It constructs `ForumCharacters` to validate character IDs,
+display names, and uniqueness without resolving provider credentials or
+models.
 
-`Workspace::session_summary()` reads one selected stored session's identity,
+`Workspace::check_session()` reads one selected stored session's identity,
 label, and metadata directly, without scanning the other session databases or
-acquiring its lease. `Workspace::check_session()` is the validation-only form.
-Both distinguish an absent session from invalid or unreadable storage so front
-ends can map only absence to not-found. Web lobby routes skip this disk
-validation when their separate live-session registry can reattach directly,
-and otherwise use it before asking the registry to open a session.
+acquiring its lease. It distinguishes an absent session from invalid or
+unreadable storage so front ends can map only absence to not-found. Web lobby
+routes skip this disk validation when their separate live-session registry can
+reattach directly, and otherwise use it before asking the registry to open a
+session.
 
 ## Forum characters
 
@@ -101,12 +101,16 @@ otherwise the first lexicographic member ID. It never reorders this view.
 
 `resolve_handle()` tries an exact case-insensitive name, retries after removing
 trailing `,.;:!?`, and finally accepts a unique case-insensitive prefix. It
-returns resolved, unknown, or ambiguous; `SessionController` owns the wording
-of the corresponding persona notices.
+returns resolved, unknown, or ambiguous.
 
-Model, API, and streaming details do not belong to `ForumCharacters`.
-`AgentRegistry` exposes those separately as `AgentRuntimeInfo`, and
-`SessionController` combines the two only for `/agents` and `/info`.
+`forum_characters.*` also owns the wording of the notices built from those
+results, so all of it sits in one place: handle errors, duplicate multicast
+targets, the `/agents` character listing, and the `/info` line. Model, API, and
+streaming details are not `ForumCharacters` state — `AgentRegistry` exposes
+those separately as `AgentRuntimeInfo`, which the formatters take as a
+parameter, and `SessionController` supplies to them only for `/agents` and
+`/info`. The `/info` formatter takes an entry count rather than a `Transcript`
+for the same reason.
 
 ## Session operations
 
@@ -140,13 +144,13 @@ sequenceDiagram
     DB-->>WS: SessionRestore
     WS->>WS: load_personas, unless the caller supplies an effective roster
     WS->>AG: load_agent_definitions(definition/member pairs, forum, roster)
-    WS->>CC: from_definitions with restore and the supplied effective browser roster
+    WS->>CC: from_shared_definitions with restore and the supplied effective browser roster
     CC->>CC: repair interrupted turns, then install entries
     WS-->>UI: OpenedSession (descriptor + controller)
 ```
 
 `Workspace::create_stored_session()` is the creation primitive. It first
-performs the same complete forum validation as `check_forum()`, then delegates
+performs complete forum validation through a private shared path, then delegates
 publication to `SessionCatalog`. Publication uses `link(2)`, which fails rather
 than overwriting, so a half-written database is never visible under a real
 session name and a collision simply retries with the next numeric suffix. The
@@ -301,8 +305,8 @@ terminal outcome before making it visible.
 ## Session control
 
 `SessionController` is the owner-thread-only engine behind one live session. It
-offers borrowed views for direct frontends, `state()` for an owning
-transport-neutral `SessionState`, and commands that return `SessionChange`.
+offers `state()` as an owning transport-neutral `SessionState`, and commands
+that return `SessionChange`.
 `SessionChange` reports observable state changes, accepted input, controller
 termination, and a presentation-safe notice; it never tells a widget to clear
 itself or to navigate away.
@@ -314,37 +318,43 @@ itself or to navigate away.
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success state changes with no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
-| `start_multicast(author_id, text, handles)` / `start_multicast_by_ids(author_id, text, ids)` | Resolves the stable author ID and textual character handles or target IDs once, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Author or target validation failures start no batch; terminal notices are retained until multicast completion or abort cleanup. |
+| `start_multicast(author_id, text, handles)` | Resolves the stable author ID and textual character handles once, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Author or target validation failures start no batch; terminal notices are retained until multicast completion or abort cleanup. |
 | `session_information()` | Entry count plus the forum characters and their runtime details. | A notice and consumed submitted input; state is unchanged. |
 | `agent_information()` | Forum characters and runtime details, marking the default. | A notice and consumed submitted input; state is unchanged. |
 | `set_default_agent(handle)` | Changes the default for this run only. | A successful change is observable state; a text command may consume its submitted input. |
 | `request_stop()` | Cancels every live execution and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
-| `receive()` | Drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged semantic changes; after shutdown drains its batch, `controller_ended` is true. |
+| `receive_events(max_events)` | Boundedly drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged semantic changes; after shutdown drains its batch, `controller_ended` is true. |
 | `shutdown()` | Cancels executions, commits the retained foreground terminal state, and joins the session pool. | — |
 
-Every command except `request_stop()` and `receive()` is refused while a turn or
-multicast is active, with the shared in-progress notice. The controller and its
-forum-character helpers format session notices — handle errors, forum-character
-text, `/info` — because their wording belongs to the session, not to a UI.
+Every command except `request_stop()` and `receive_events()` is refused while a turn or
+multicast is active, with the shared in-progress notice. Session notices —
+handle errors, forum-character text, `/info` — are worded in
+`forum_characters.*` rather than by a front end, because that wording belongs
+to the session.
 For read-only activity checks, `is_generating()` avoids constructing a
 `GenerationStatus` and copying its potentially growing reasoning text.
-Frontends request the full status only when they are about to render it.
+Frontends receive the full status as part of the owning `state()` snapshot.
 
 ### Owning state and append continuity
 
 `state()` builds the owning `SessionState` used when a consumer cannot borrow
 the controller-owned transcript. A consumer may retain a compact
 `SessionStateCursor` beside its published presentation state and ask
-`text_append_since()` for a `SessionTextAppend`. The cursor stores only
+`text_append_since()` for a `SessionTextAppend`. The controller only supplies
+the live transcript view and generation facts; the proof itself is the pure
+`session_text_append_since()` beside the `session_state_cursor()` that produced
+the cursor, so the two halves of the contract are read and tested together
+rather than through a live controller. The cursor stores only
 revision, epoch, entry/open-entry identity, default agent, active request and
 phase, plus published text lengths; it never stores transcript or reasoning
 text. The proof relies on transcript revisions changing for every structural
 or answer-text mutation, a single open streaming entry, and the controller's
 owner-thread-only access. Any changed epoch, metadata, request, phase, shape,
 or non-growing text is ambiguous and returns no append, requiring a full state
-replacement. Transport sequence numbers, event names, and mailbox coalescing
-remain frontend policy. `SessionState`, its cursor, and `SessionTextAppend`
-contain no HTTP, JSON, SSE, or mailbox concepts.
+replacement. The web frontend serializes the core append target directly,
+while transport sequence numbers, event names, and mailbox coalescing remain
+frontend policy. `SessionState`, its cursor, and `SessionTextAppend` contain no
+HTTP, JSON, SSE, or mailbox concepts.
 
 The three off-record commands are the only ones that add a transcript entry
 without a journal write. Each passes the current `next_entry_id_` to the
@@ -432,6 +442,7 @@ session continues.
 | `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics. |
 | `tests/session/unit_session_controller.cpp` | Command behavior, concurrent staging, ordered foreground drain, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
 | `tests/session/unit_concurrent_controllers.cpp` | Independent owner-thread controllers, concurrent workspace/catalog access, and atomic catalog publication while listing. |
+| `tests/session/unit_session_state.cpp` | The append proof driven directly with literal transcript views and cursors: proven answer and reasoning growth, every ambiguity that must refuse, and the producer/consumer round trip. |
 | `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
 
 Those database tests link `cha_sqlite3` directly, so they can assert on the

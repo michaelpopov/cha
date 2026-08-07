@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-namespace cha {
+namespace cha::web {
 
 // A prompt split at its leading mention: the handle it addresses, empty when the prompt names no
 // agent, and the message text that remains after removing it.
@@ -14,4 +14,4 @@ struct AddressedPrompt {
 
 AddressedPrompt parse_addressed_prompt(std::string_view input);
 
-} // namespace cha
+} // namespace cha::web

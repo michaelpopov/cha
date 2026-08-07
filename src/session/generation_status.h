@@ -31,16 +31,4 @@ struct GenerationStatus {
     bool operator==(const GenerationStatus&) const = default;
 };
 
-// Owner-thread-only borrowed view used by presentation adapters to inspect
-// high-frequency generation changes without copying the accumulated text.
-// Any controller mutation invalidates its string views.
-struct GenerationStatusView {
-    bool active{};
-    std::optional<std::uint64_t> request_id;
-    std::string_view agent_id;
-    std::string_view agent_name;
-    ResponsePhase phase{ResponsePhase::waiting};
-    std::string_view reasoning_text;
-};
-
 } // namespace cha

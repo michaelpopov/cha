@@ -20,14 +20,14 @@ SessionSnapshot streaming_snapshot(std::string text = "") {
     return {
         .transcript = {{
             .id = 42,
-            .kind = TranscriptKind::agent,
+            .kind = EntryKind::agent,
             .text = std::move(text),
-            .status = TranscriptStatus::streaming,
+            .status = EntryStatus::streaming,
         }},
         .generation = {
             .active = true,
             .request_id = 7,
-            .phase = GenerationPhase::answering,
+            .phase = ResponsePhase::answering,
         },
     };
 }
@@ -38,8 +38,8 @@ TEST(SseMailbox, MergesCompatibleAppendsWithoutConsumingSequence) {
     ASSERT_TRUE(mailbox.next(stream, 1ms).payload);
     mailbox.written(stream);
 
-    mailbox.publish_append({AppendTargetEntry{42}, "\xE2\x82\xAC"}, streaming_snapshot("a\xE2\x82\xAC"));
-    mailbox.publish_append({AppendTargetEntry{42}, "!"}, streaming_snapshot("a\xE2\x82\xAC!"));
+    mailbox.publish_append({EntryTextTarget{42}, "\xE2\x82\xAC"}, streaming_snapshot("a\xE2\x82\xAC"));
+    mailbox.publish_append({EntryTextTarget{42}, "!"}, streaming_snapshot("a\xE2\x82\xAC!"));
     const SseMailbox::Next merged = mailbox.next(stream, 1ms);
     ASSERT_TRUE(merged.open);
     const auto* append = std::get_if<AppendEvent>(&*merged.payload);
@@ -48,7 +48,7 @@ TEST(SseMailbox, MergesCompatibleAppendsWithoutConsumingSequence) {
     EXPECT_EQ(append->text, "\xE2\x82\xAC!");
     mailbox.written(stream);
 
-    mailbox.publish_append({AppendTargetEntry{42}, "?"}, streaming_snapshot("a\xE2\x82\xAC!?"));
+    mailbox.publish_append({EntryTextTarget{42}, "?"}, streaming_snapshot("a\xE2\x82\xAC!?"));
     const SseMailbox::Next next = mailbox.next(stream, 1ms);
     const auto* following = std::get_if<AppendEvent>(&*next.payload);
     ASSERT_NE(following, nullptr);
@@ -64,7 +64,7 @@ TEST(SseMailbox, StructuralOrPendingSnapshotAppendCollapsesToSnapshot) {
     mailbox.written(stream);
 
     mailbox.publish_append(
-        {AppendTargetEntry{42}, "b"}, streaming_snapshot("ab"));
+        {EntryTextTarget{42}, "b"}, streaming_snapshot("ab"));
     SessionSnapshot structural_snapshot = streaming_snapshot("ab");
     structural_snapshot.notice = "structural change";
     mailbox.publish(SnapshotEvent{std::move(structural_snapshot)});
@@ -76,7 +76,7 @@ TEST(SseMailbox, StructuralOrPendingSnapshotAppendCollapsesToSnapshot) {
     EXPECT_EQ(snapshot->snapshot.notice, "structural change");
     mailbox.written(stream);
 
-    mailbox.publish_append({AppendTargetReasoning{7}, "think"}, streaming_snapshot("ab"));
+    mailbox.publish_append({ReasoningTextTarget{7}, "think"}, streaming_snapshot("ab"));
     const SseMailbox::Next incompatible = mailbox.next(stream, 1ms);
     EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(*incompatible.payload));
     mailbox.written(stream);

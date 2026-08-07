@@ -1,8 +1,8 @@
-#include "ui/text/command.h"
+#include "ui/web/text_command.h"
 
 #include <gtest/gtest.h>
 
-namespace cha {
+namespace cha::web {
 namespace {
 
 TEST(Command, TreatsAnythingWithoutALeadingSlashAsText) {
@@ -92,4 +92,4 @@ TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
 }
 
 } // namespace
-} // namespace cha
+} // namespace cha::web

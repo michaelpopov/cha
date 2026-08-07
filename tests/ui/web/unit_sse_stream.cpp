@@ -18,9 +18,9 @@ SessionSnapshot snapshot_with_text(std::string text) {
     return {
         .transcript = {{
             .id = 42,
-            .kind = TranscriptKind::error,
+            .kind = EntryKind::error,
             .text = std::move(text),
-            .status = TranscriptStatus::complete,
+            .status = EntryStatus::complete,
         }},
     };
 }

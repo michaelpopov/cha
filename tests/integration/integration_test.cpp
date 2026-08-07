@@ -2,7 +2,6 @@
 #include "agents/agent_registry.h"
 #include "session/session_controller.h"
 #include "agents/config.h"
-#include "ui/text/text_input.h"
 #include "util/environment.h"
 #include "util/thread_pool.h"
 #include "support/mock_http_server.h"
@@ -311,10 +310,10 @@ std::string answer(std::string_view text) {
 }
 
 void run_until_idle(SessionController& controller) {
-    while (controller.generation_status().active) {
+    while (controller.is_generating()) {
         const std::size_t observed = notifier().wake_count();
-        (void)controller.receive();
-        if (controller.generation_status().active
+        (void)test::receive_all_events(controller);
+        if (controller.is_generating()
             && !notifier().wait_for_wake(
                 observed,
                 std::chrono::seconds(5))) {
@@ -373,14 +372,14 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
             lobby.personas,
             session.path,
             notifier());
-        (void)handle_text_input(*controller, "reader", "First question");
+        (void)controller->submit_prompt("reader", "First question");
         run_until_idle(*controller);
         const std::vector<TranscriptEntry> live =
             copy_entries(controller->transcript());
         ASSERT_EQ(live.size(), 2U);
         EXPECT_EQ(live.back().text, "First answer");
 
-        (void)handle_text_input(*controller, "reader", "Second question");
+        (void)controller->submit_prompt("reader", "Second question");
         run_until_idle(*controller);
     }
     server.join();
@@ -417,7 +416,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
         lobby.personas,
         session.path,
         notifier());
-    (void)handle_text_input(*controller, "reader", "Question");
+    (void)controller->submit_prompt("reader", "Question");
     run_until_idle(*controller);
     server.join();
 
@@ -450,13 +449,13 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
             lobby.personas,
             session.path,
             notifier());
-        (void)handle_text_input(*controller, "reader", "Visible question");
+        (void)controller->submit_prompt("reader", "Visible question");
         run_until_idle(*controller);
-        EXPECT_TRUE(handle_text_input(*controller, "reader", "/hide-on").session.state_changed);
-        (void)handle_text_input(*controller, "reader", "Hidden question");
+        EXPECT_TRUE(controller->open_offrecord().state_changed);
+        (void)controller->submit_prompt("reader", "Hidden question");
         run_until_idle(*controller);
-        EXPECT_TRUE(handle_text_input(*controller, "reader", "/hide").session.state_changed);
-        (void)handle_text_input(*controller, "reader", "Current question");
+        EXPECT_TRUE(controller->extend_offrecord().state_changed);
+        (void)controller->submit_prompt("reader", "Current question");
         run_until_idle(*controller);
     }
     server.join();
@@ -505,13 +504,14 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
         ASSERT_EQ(controller->characters().first().id, "Cheburashka");
 
         // No mention: the first character directory in name order answers.
-        TextInputResult update = handle_text_input(*controller, "reader", "Who are you?");
-        ASSERT_TRUE(update.clear_input);
+        SessionChange update =
+            controller->submit_prompt("reader", "Who are you?");
+        ASSERT_TRUE(update.input_consumed);
         run_until_idle(*controller);
 
         // An addressed prompt reaches the mentioned agent instead.
-        update = handle_text_input(*controller, "reader", "@Ismael, and you?");
-        ASSERT_TRUE(update.clear_input);
+        update = controller->submit_prompt("reader", "and you?", "Ismael");
+        ASSERT_TRUE(update.input_consumed);
         run_until_idle(*controller);
     }
     cheburashka_server.join();
@@ -576,12 +576,12 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
         auto controller = test::from_definitions_for_testing(
             std::move(definitions), lobby.personas, session.path,
             notifier());
-        const TextInputResult multicast =
-            handle_text_input(*controller, "reader", "/mcast What time is it?");
-        ASSERT_TRUE(multicast.clear_input);
+        const SessionChange multicast = controller->start_multicast(
+            "reader", "What time is it?", {});
+        ASSERT_TRUE(multicast.input_consumed);
         run_until_idle(*controller);
 
-        (void)handle_text_input(*controller, "reader", "What did the panel say?");
+        (void)controller->submit_prompt("reader", "What did the panel say?");
         run_until_idle(*controller);
     }
     cheburashka_server.join();
@@ -634,9 +634,9 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
             lobby.personas,
             session.path,
             notifier());
-        (void)handle_text_input(*controller, "reader", "Who are you?");
+        (void)controller->submit_prompt("reader", "Who are you?");
         run_until_idle(*controller);
-        (void)handle_text_input(*controller, "reader", "@Ismael and you?");
+        (void)controller->submit_prompt("reader", "and you?", "Ismael");
         run_until_idle(*controller);
     }
     cheburashka_server.join();
@@ -654,10 +654,11 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
         std::move(restored));
     EXPECT_EQ(reopened->characters().all().size(), 1U);
     EXPECT_EQ(
-        handle_text_input(*reopened, "reader", "@Cheburashka are you there?").session.notice,
+        reopened->submit_prompt(
+            "reader", "are you there?", "Cheburashka").notice,
         "Unknown agent @Cheburashka. Characters in this forum: @Ismael");
 
-    (void)handle_text_input(*reopened, "reader", "What did he say?");
+    (void)reopened->submit_prompt("reader", "What did he say?");
     run_until_idle(*reopened);
     ismael_server.join();
 

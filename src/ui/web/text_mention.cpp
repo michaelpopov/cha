@@ -1,8 +1,8 @@
-#include "ui/text/mention.h"
+#include "ui/web/text_mention.h"
 
 #include "util/text.h"
 
-namespace cha {
+namespace cha::web {
 
 AddressedPrompt parse_addressed_prompt(std::string_view input) {
     std::size_t start = 0;
@@ -32,4 +32,4 @@ AddressedPrompt parse_addressed_prompt(std::string_view input) {
     return {std::string(trimmed.substr(1, end - 1)), std::string(trimmed.substr(body))};
 }
 
-} // namespace cha
+} // namespace cha::web

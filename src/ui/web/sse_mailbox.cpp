@@ -61,11 +61,11 @@ void SseMailbox::publish(SnapshotEvent snapshot) {
 }
 
 void SseMailbox::publish_append(
-    WebAppendCandidate candidate,
+    SessionTextAppend append,
     const SessionSnapshot& fallback_snapshot) {
     std::lock_guard lock(mutex_);
     if (!active_stream_ || closed_) return;
-    publish_append_locked(std::move(candidate), fallback_snapshot);
+    publish_append_locked(std::move(append), fallback_snapshot);
     changed_.notify_all();
 }
 
@@ -92,26 +92,26 @@ void SseMailbox::publish_snapshot_locked(SnapshotEvent snapshot) {
     if (pending_) ++collapsed_payloads_;
     const auto selection = snapshot_append_selection(snapshot.snapshot);
     target_ = selection
-        ? std::optional<AppendTarget>{selection->target}
+        ? std::optional<SessionTextTarget>{selection->target}
         : std::nullopt;
     next_sequence_ = 0;
     pending_ = std::make_shared<const SsePayload>(std::move(snapshot));
 }
 
 void SseMailbox::publish_append_locked(
-    WebAppendCandidate candidate,
+    SessionTextAppend append,
     const SessionSnapshot& fallback_snapshot) {
-    if (candidate.text.empty() || !target_ || *target_ != candidate.target) {
+    if (append.text.empty() || !target_ || *target_ != append.target) {
         publish_snapshot_locked({fallback_snapshot});
         return;
     }
     if (const auto* pending = pending_
             ? std::get_if<AppendEvent>(pending_.get())
             : nullptr) {
-        if (pending->target == candidate.target) {
+        if (pending->target == append.target) {
             ++collapsed_payloads_;
             pending_ = std::make_shared<const SsePayload>(AppendEvent{
-                pending->target, pending->text + candidate.text, pending->seq});
+                pending->target, pending->text + append.text, pending->seq});
             return;
         }
         publish_snapshot_locked({fallback_snapshot});
@@ -122,7 +122,7 @@ void SseMailbox::publish_append_locked(
         return;
     }
     pending_ = std::make_shared<const SsePayload>(AppendEvent{
-        std::move(candidate.target), std::move(candidate.text), next_sequence_++});
+        std::move(append.target), std::move(append.text), next_sequence_++});
 }
 
 } // namespace cha::web

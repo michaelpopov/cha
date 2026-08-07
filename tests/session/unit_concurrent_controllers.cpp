@@ -105,7 +105,7 @@ ControllerResult run_controller(
         (void)controller->submit_prompt("operator", std::move(prompt));
         while (controller->is_generating()) {
             const std::size_t observed = notifier.wake_count();
-            (void)controller->receive();
+            (void)test::receive_all_events(*controller);
             if (controller->is_generating()
                 && !notifier.wait_for_wake(observed)) {
                 throw std::runtime_error("Timed out waiting for deterministic backend");

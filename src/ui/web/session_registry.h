@@ -59,7 +59,7 @@ using RegistryOwnerInput = std::variant<
     OpenedSession,
     PortBackedSession>;
 using RegistrySessionFactory = std::function<RegistryOwnerInput(
-    const SessionIdentity&, WakeNotifier&)>;
+    const SessionIdentity&, cha::WakeNotifier&)>;
 
 struct RegistrySnapshot {
     std::size_t live_entry_count{};
