@@ -191,10 +191,11 @@ answered `403 forbidden_host`.
    will usually be a customer's typo rather than a developer's. Report the
    resolved path and the option that sets it, not just a file-not-found error.
 7. **Announce the address on standard output** once the listener is ready, as
-   one predictable line. The port is configurable, so the launcher in Block 7
-   cannot assume `8080`, and reading a line the server prints is simpler and
-   more reliable than parsing the configuration a second time in a shell
-   script. Keep `/health` as it is; the tests use it.
+   one predictable line. It is written for the person starting CHA, who opens
+   that address in a browser themselves: the port is configurable, so neither a
+   customer nor a developer should have to work out what to type from a
+   configuration file. Nothing consumes the line programmatically. Keep
+   `/health` as it is; the tests use it.
 8. **Update `console_main.cpp` and `tui_main.cpp` for the rename only.** They
    call `load_application_config()` with the default `"."`
    ([console_main.cpp](../src/apps/console_main.cpp#L49),
@@ -656,15 +657,16 @@ enough for the server to unload the conversation.
    port, and workspace path, and which passes them to `chaweb`. Setup is
    editing those lines. Ship `app.toml` alongside it carrying the same three
    settings, for anyone who would rather configure the application than edit a
-   script; the command line wins where both are present. The script waits for
-   the ready line on standard output, opens
-   that URL in the default browser, and keeps a visible terminal that stops the
-   process. Detect early process exit and show the startup error instead of
-   waiting indefinitely. Because the ready line carries the real address, the
-   script never assumes a port. Print the machine's LAN address next to the
-   local one so the address to give someone else needs no working out, and say
-   plainly that anyone on the network who opens it can read and continue the
-   conversations. macOS and Windows launchers follow later, in that order.
+   script; the command line wins where both are present. It keeps a visible
+   terminal that stops the process, and that is all it does: the customer opens
+   the printed address in a browser themselves, so the script neither launches
+   one nor waits for the ready line to find out where to point it. `exec`
+   therefore stays, and a failed start reports itself in the terminal without
+   any timeout logic. Print the machine's LAN address next to the local one so
+   the address to give someone else needs no working out, and say plainly that
+   anyone on the network who opens it can read and continue the conversations.
+   macOS and Windows launchers follow later, in that order; with no browser to
+   open, they differ from this one only in shell syntax.
 8. **Write the setup and upgrade instructions, and make them true.** Setup is:
    put the workspace somewhere, write its path and the port into the launcher's
    first three lines, create `.env` in the workspace with the provider key, run

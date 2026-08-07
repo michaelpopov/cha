@@ -4,9 +4,10 @@ Status: accepted, 2026-08-06.
 
 ## Purpose
 
-CHA should be easy to place on a customer's laptop, start, and use through the
-default browser at the address it prints on startup, `http://127.0.0.1:8080/`
-by default configuration.
+CHA should be easy to place on a customer's laptop, start, and use in a browser
+at the address it prints on startup, `http://127.0.0.1:8080/` by default
+configuration. The customer opens that address themselves; CHA does not open a
+browser for them.
 
 A single-file executable is not required. The intended deliverable is a pair of
 directories: an application directory holding the native executable and browser
@@ -600,18 +601,21 @@ Firefox, WebKit, and mobile viewport/device emulation; see the
 ## Customer startup and shutdown
 
 The first distributable version does not need an installer or background
-service. The Linux launcher, a shell script beside the executable, can:
+service. The Linux launcher, a shell script beside the executable, does two
+things:
 
-1. start `chaweb` with its own directory as the application root and the host,
-   port, and workspace path it carries in its first three lines;
-2. wait for the line `chaweb` prints when the listener is ready;
-3. open the address from that line in the default browser; and
-4. keep a visible terminal window through which the process can be stopped.
+1. starts `chaweb` with its own directory as the application root and the host,
+   port, and workspace path it carries in its first three lines; and
+2. keeps a visible terminal window through which the process can be stopped.
 
-Reading the printed address is deliberate. The port is configurable, so a
-launcher that assumed one would break the first time it changed, and parsing
-the configuration a second time in shell script is more work than reading a
-line. Waiting for the line also detects a failed start without a timeout.
+The application never opens a browser. It prints the address it is serving on
+and the customer opens that address themselves, in whichever browser and at
+whichever moment they choose. Launching a browser would be wrong here for the
+same reason it is wrong in a development run: CHA is restarted often, and each
+restart would steal focus and leave another tab behind.
+
+Printing the address still matters, because the port is configurable and a
+customer should never have to work out what to type from a configuration file.
 
 Closing that window or pressing Ctrl+C stops the process through its existing
 bounded shutdown path. A tray application, OS service, installer, signing, and
@@ -721,7 +725,7 @@ The proposal is complete when a clean customer-like laptop can:
 - put the workspace where it wants it and point the launcher at it;
 - add its provider API key without installing development tools;
 - start CHA using the supplied launcher;
-- have the application open at `127.0.0.1` in the default browser;
+- open the printed address in a browser and reach the application;
 - navigate the designed workspace screens;
 - create, open, and revisit sessions;
 - conduct a live streaming conversation under a selected persona;

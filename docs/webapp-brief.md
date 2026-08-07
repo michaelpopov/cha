@@ -125,11 +125,15 @@ machine has been asleep long enough for the program to have put it away.
 **7. Make it something you can hand over.** Every "what if" is given a
 sensible answer: nothing loaded yet, no conversations in this forum, request
 failed, connection dropped, too many conversations open at once. Then one
-command builds the application folder, the starting script grows up into a
-proper launcher that also opens the browser, and the result is tested on a
-clean machine that has none of the development tools on it — including a test
-that installing a newer version over an existing workspace leaves the
-conversations, characters, and key untouched.
+command builds the application folder, the starting script becomes the launcher
+that ships with it, and the result is tested on a clean machine that has none of
+the development tools on it — including a test that installing a newer version
+over an existing workspace leaves the conversations, characters, and key
+untouched.
+
+Starting CHA does not open a browser. It prints the address it is serving on,
+and whoever is using it opens that address themselves, whenever they want and
+in whichever browser they prefer.
 *Finished when:* the folder can be copied to a laptop, pointed at a workspace,
 started, used, and shut down.
 
