@@ -26,8 +26,8 @@ commands to a registry-owned session thread.
 | --- | --- |
 | `apps/` | Executable wiring, process signals, startup, and top-level failures. |
 | `ui/web/` | HTTP/SSE transport, chat-input grammar, API DTOs, live-session registry, mailboxes, and lifecycle policy. |
-| `application/` | Immutable discovery, built-ins, effective personas, workspace inventory, and Welcome storage. |
-| `session/` | Workspace loading, session databases and leases, controller state, persistence, and character resolution. |
+| `application/` | The immutable loaded workspace model, built-ins, and the one controller-opening operation. |
+| `session/` | Session storage, databases and leases, controller state, persistence, and character resolution. |
 | `agents/` | Character configuration, provider clients, completion context, execution, cancellation, and event delivery. |
 | `transcript/` | Presentation-neutral transcript records, validation, and live mutation. |
 | `util/` | Domain-neutral text, path, environment, logging, queue, and thread helpers. |
@@ -50,9 +50,10 @@ Provider work runs on those workers and publishes deltas plus exactly one final
 event. The owner thread applies events and persists turn transitions. A stored
 session lease remains owned until the controller and journal are destroyed.
 
-Welcome is the sole built-in Entrance session. `WelcomeStorage` owns its
-process-local database directory, while ordinary sessions are addressed by
-stable forum and session IDs in workspace storage.
+Welcome is the sole built-in Entrance session. `SessionRepository` creates and
+owns its process-local database directory and removes it on destruction, while
+ordinary sessions are addressed by stable forum and session IDs in workspace
+storage.
 
 ## Persistence and identity
 
@@ -62,16 +63,18 @@ are stored and used in routes; display names and labels are presentation data.
 Opening a session validates that its database metadata matches its forum,
 filename, and schema before restoring it.
 
-Workspace discovery is immutable for the server lifetime. Session listings are
-read from storage per request, so newly created sessions appear without a
-restart. Changes to personas, characters, forums, or provider configuration
-require restarting `chaweb`.
+One `WorkspaceModel` holds every static workspace value for the server lifetime,
+and both discovery and newly opened sessions read from it, so the browser and a
+controller cannot disagree. Session listings are read from storage per request,
+so newly created sessions appear without a restart. Changes to personas,
+characters, forums, prompts, or provider configuration require restarting
+`chaweb`.
 
 ## Build and test map
 
 | Target | Purpose |
 | --- | --- |
-| `cha_core` | Domain and application-discovery implementation. |
+| `cha_core` | Domain, workspace model, session storage, and session opening. |
 | `cha_web` | HTTP/SSE frontend. |
 | `chaweb_app` (`chaweb`) | Production server executable. |
 | `cha_tests` | Core, session, and application unit/component tests. |
@@ -85,7 +88,7 @@ The browser has Vitest checks and Playwright development/production flows under
 
 ## Detailed contracts
 
-- [Application discovery](application/README.md)
+- [Application layer](application/README.md)
 - [Agent execution](agents/README.md)
 - [Sessions and persistence](session/README.md)
 - [Transcript model](transcript/README.md)

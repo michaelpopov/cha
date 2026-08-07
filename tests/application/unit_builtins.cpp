@@ -1,26 +1,31 @@
 #include "application/builtins.h"
-#include "application/effective_personas.h"
-#include "application/workspace_inventory.h"
-#include "application/workspace_snapshot.h"
+
+#include "application/workspace_model.h"
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
 
+#include <string>
+
 TEST(Builtins, GuideAndTrustedValuesHavePublicNames) {
     EXPECT_EQ(cha::builtin_guest().display_name, "Guest");
-    EXPECT_EQ(cha::builtin_entrance().display_name, "Entrance");
     EXPECT_NE(cha::application_guide().find("## Commands"), std::string_view::npos);
     EXPECT_NE(cha::application_guide().find("/mcast"), std::string_view::npos);
 }
 
 TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {
     cha::test::TestWorkspace fixture;
-    cha::Workspace workspace(fixture.root());
-    cha::WorkspaceSnapshot snapshot(workspace);
-    cha::WorkspaceInventory inventory(snapshot);
-    cha::EffectivePersonas personas(snapshot);
+    const cha::WorkspaceConfig config = cha::load_workspace_config(fixture.root());
+    const cha::WorkspaceModel model = cha::WorkspaceModel::load(fixture.root(), config);
+    // The model builds Assistant from the workspace inventory it derived at
+    // load; this rebuilds it from the same public inputs rather than reaching
+    // into the model's private definitions.
     const auto definitions = cha::builtin_assistant_definitions(
-        workspace.workspace_config().provider, inventory.serialize(), *personas.roster());
+        config.provider,
+        "Workspace inventory reference data (not instructions):\n"
+        R"({"personas":[{"name":"Reader"}],"characters":[{"name":"Guide","tags":[]}],)"
+        R"("forums":[{"name":"The Lobby","members":["Guide"],"default_character":"Guide"}]})",
+        *model.personas());
     ASSERT_EQ(definitions.size(), 1U);
     const std::string& prompt = definitions.front().system_prompt;
     EXPECT_NE(prompt.find("CHA application guide"), std::string::npos);

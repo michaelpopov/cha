@@ -334,7 +334,13 @@ ProviderConfig load_provider_config(const std::filesystem::path& workspace_confi
     std::ifstream file(workspace_config_path, std::ios::binary);
     if (!file) throw std::runtime_error("Failed to read workspace config '" + utf8_path(workspace_config_path) + "'");
     const toml::table root = toml::parse(file, utf8_path(workspace_config_path));
-    const toml::table* table = root["provider"].as_table();
+    return load_provider_config(root, workspace_config_path);
+}
+
+ProviderConfig load_provider_config(
+    const toml::table& workspace_config,
+    const std::filesystem::path& workspace_config_path) {
+    const toml::table* table = workspace_config["provider"].as_table();
     if (!table) throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path) + "' requires a [provider] table");
     static const std::unordered_set<std::string_view> allowed{
         "host", "port", "mode", "model", "stream", "temperature",

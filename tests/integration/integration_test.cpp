@@ -6,7 +6,7 @@
 #include "util/thread_pool.h"
 #include "support/mock_http_server.h"
 #include "session/session_database.h"
-#include "session/workspace.h"
+#include "application/workspace_model.h"
 #include "support/test_notifier.h"
 #include "support/test_controller.h"
 #include "support/test_session_database.h"
@@ -269,24 +269,31 @@ struct LobbySetup {
 };
 
 LobbySetup lobby_setup() {
-    const Workspace workspace{std::filesystem::path{CHA_WORKSPACE_DIRECTORY}};
-    const Forum forum = workspace.load_forum("lobby");
+    const std::filesystem::path root{CHA_WORKSPACE_DIRECTORY};
+    const WorkspaceConfig config = load_workspace_config(root);
+    const WorkspaceModel model = WorkspaceModel::load(root, config);
+    const ForumInfo* const forum = model.find_forum("lobby");
+    if (forum == nullptr) throw std::runtime_error("Checked-in workspace has no lobby forum");
+    const std::filesystem::path forum_directory = root / "forums" / "lobby";
     std::vector<AgentDefinitionSource> sources;
-    for (const std::string& character_name : forum.character_names) {
+    for (const std::string& character_id : forum->member_ids) {
         sources.push_back({
-            .definition_directory = std::filesystem::path{CHA_WORKSPACE_DIRECTORY} / "characters" / character_name,
-            .member_directory = forum.directory / "members" / character_name,
+            .definition_directory = root / "characters" / character_id,
+            .member_directory = forum_directory / "members" / character_id,
         });
     }
-    PersonaRoster personas = workspace.load_personas();
+    // The mock provider needs mutable definitions, so this loads its own copy
+    // from explicit fixture paths rather than reaching into the model's
+    // private, provider-bearing values.
+    PersonaRoster personas = *model.personas();
     return {
         .definitions = load_agent_definitions(
-        sources,
-        forum.directory,
-        forum.display_name,
-        personas,
-        forum.directory / "members" / "character_defaults.toml",
-        workspace.workspace_config().provider),
+            sources,
+            forum_directory,
+            forum->display_name,
+            personas,
+            forum_directory / "members" / "character_defaults.toml",
+            config.provider),
         .personas = std::move(personas),
     };
 }

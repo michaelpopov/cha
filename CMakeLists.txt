@@ -189,14 +189,11 @@ add_library(cha_core STATIC
     src/session/session_controller.cpp
     src/session/session_database.cpp
     src/session/session_lease.cpp
+    src/session/session_repository.cpp
     src/session/session_state.cpp
-    src/session/workspace.cpp
-    src/application/workspace_snapshot.cpp
-    src/application/web_discovery.cpp
-    src/application/workspace_inventory.cpp
+    src/application/workspace_model.cpp
+    src/application/session_open.cpp
     src/application/builtins.cpp
-    src/application/effective_personas.cpp
-    src/application/welcome_storage.cpp
 )
 
 add_custom_command(
@@ -298,14 +295,11 @@ if(BUILD_TESTING)
         tests/session/unit_catalog_lease.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
+        tests/session/unit_session_repository.cpp
         tests/session/unit_session_state.cpp
-        tests/session/unit_persona_loader.cpp
-        tests/session/unit_workspace.cpp
-        tests/application/unit_workspace_snapshot.cpp
-        tests/application/unit_workspace_inventory.cpp
+        tests/application/unit_workspace_model.cpp
+        tests/application/unit_session_open.cpp
         tests/application/unit_builtins.cpp
-        tests/application/unit_effective_personas.cpp
-        tests/application/unit_welcome_storage.cpp
         tests/support/test_workspace.cpp
     )
     if(NOT WIN32)

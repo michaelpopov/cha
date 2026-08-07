@@ -3,7 +3,9 @@
 #include "session/session_catalog.h"
 #include "session/session_controller.h"
 #include "session/session_database.h"
-#include "session/workspace.h"
+#include "application/session_open.h"
+#include "application/workspace_model.h"
+#include "session/session_repository.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
 #include "support/test_notifier.h"
@@ -131,6 +133,19 @@ struct WorkspaceLayout {
     std::filesystem::path forum;
 };
 
+// The production graph over a hand-built workspace: one loaded model plus the
+// repository that owns its storage.
+struct SessionGraph {
+    explicit SessionGraph(const std::filesystem::path& root)
+        : model(WorkspaceModel::load(root, load_workspace_config(root))),
+          repository(
+              model.session_directories(),
+              TemporarySessionSeed{{"temporary-forum", "temporary-session"}, "Temporary"}) {}
+
+    WorkspaceModel model;
+    SessionRepository repository;
+};
+
 WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     const std::filesystem::path root = parent / "workspace";
     const std::filesystem::path forum = root / "forums" / "forum";
@@ -234,10 +249,10 @@ TEST(ConcurrentControllers, ConstructSessionLocalCompletionClientsConcurrently) 
     }
 }
 
-TEST(WorkspaceConcurrency, SharesWorkspaceWhileCatalogPublishesCollidingSessions) {
+TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions) {
     TemporaryDirectory directory;
     const WorkspaceLayout layout = make_workspace(directory.path());
-    Workspace workspace(layout.root);
+    const SessionGraph graph(layout.root);
     SessionCatalog catalog(
         layout.forum / "sessions",
         "forum",
@@ -257,16 +272,17 @@ TEST(WorkspaceConcurrency, SharesWorkspaceWhileCatalogPublishesCollidingSessions
     std::thread lister([&] {
         try {
             while (creating.load(std::memory_order_acquire)) {
-                if (workspace.forums()
-                    != (std::vector<std::string>{"forum"})) {
+                const ForumInfo* const forum = graph.model.find_forum("forum");
+                if (forum == nullptr
+                    || graph.model.session_directories().size() != 1U) {
                     observed_forum_list_mismatch.store(
                         true, std::memory_order_release);
                 }
-                if (workspace.load_forum("forum").name != "forum") {
+                if (forum == nullptr || forum->id != "forum") {
                     observed_forum_identity_mismatch.store(
                         true, std::memory_order_release);
                 }
-                for (const SessionSummary& session : workspace.sessions("forum")) {
+                for (const SessionEntry& session : graph.repository.list("forum")) {
                     if (!session.error.empty()) {
                         observed_invalid_session.store(
                             true, std::memory_order_release);
@@ -318,9 +334,9 @@ TEST(WorkspaceConcurrency, SharesWorkspaceWhileCatalogPublishesCollidingSessions
     }
     EXPECT_EQ(created_ids.size(), creator_count);
 
-    const std::vector<SessionSummary> sessions = workspace.sessions("forum");
+    const std::vector<SessionEntry> sessions = graph.repository.list("forum");
     ASSERT_EQ(sessions.size(), creator_count);
-    for (const SessionSummary& session : sessions) {
+    for (const SessionEntry& session : sessions) {
         EXPECT_TRUE(session.error.empty());
     }
 }
@@ -328,7 +344,7 @@ TEST(WorkspaceConcurrency, SharesWorkspaceWhileCatalogPublishesCollidingSessions
 TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     TemporaryDirectory directory;
     const WorkspaceLayout layout = make_workspace(directory.path());
-    Workspace workspace(layout.root);
+    const SessionGraph graph(layout.root);
     SessionCatalog catalog(
         layout.forum / "sessions",
         "forum",
@@ -341,8 +357,8 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     }
     ASSERT_NE(created[0].id, created[1].id);
 
-    // The web composition shares this same Workspace between lobby threads and
-    // session owner threads. Exercise listing while two owners open distinct
+    // The web composition shares this same model and repository between lobby
+    // threads and session owner threads. Exercise listing while two owners open distinct
     // stored sessions, then shut each controller down on its owning thread.
     std::mutex failure_mutex;
     std::exception_ptr failure;
@@ -352,12 +368,13 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     };
     std::barrier open_start(4);
     std::array<bool, 2> opened{};
-    std::vector<SessionSummary> listed_during_open;
+    std::vector<SessionEntry> listed_during_open;
     std::thread opening_first([&] {
         try {
             test::NoopNotifier notifier;
             open_start.arrive_and_wait();
-            auto controller = workspace.open_session({"forum", created[0].id}, notifier);
+            auto controller = open_session(
+                graph.model, graph.repository, {"forum", created[0].id}, notifier);
             opened[0] = true;
             controller.controller->shutdown();
         } catch (...) {
@@ -368,7 +385,8 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
         try {
             test::NoopNotifier notifier;
             open_start.arrive_and_wait();
-            auto controller = workspace.open_session({"forum", created[1].id}, notifier);
+            auto controller = open_session(
+                graph.model, graph.repository, {"forum", created[1].id}, notifier);
             opened[1] = true;
             controller.controller->shutdown();
         } catch (...) {
@@ -378,7 +396,7 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     std::thread listing_during_open([&] {
         try {
             open_start.arrive_and_wait();
-            listed_during_open = workspace.sessions("forum");
+            listed_during_open = graph.repository.list("forum");
         } catch (...) {
             record_failure(std::current_exception());
         }
@@ -392,7 +410,7 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     EXPECT_TRUE(opened[0]);
     EXPECT_TRUE(opened[1]);
     ASSERT_EQ(listed_during_open.size(), session_count);
-    for (const SessionSummary& session : listed_during_open) {
+    for (const SessionEntry& session : listed_during_open) {
         EXPECT_TRUE(session.error.empty());
     }
 }

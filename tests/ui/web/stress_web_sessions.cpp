@@ -1,10 +1,9 @@
 #include "ui/web/session_registry.h"
-#include "application/web_discovery.h"
-#include "application/welcome_storage.h"
 #include "ui/web/sse_mailbox.h"
 
 #include "session/session_lease.h"
-#include "session/workspace.h"
+#include "session/session_repository.h"
+#include "support/test_web_graph.h"
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
@@ -389,45 +388,42 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptGeneratingPeer) {
 
 TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndependent) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const test::WebGraph graph(fixture.root());
     constexpr std::size_t session_count = 10;
     std::atomic<bool> creating{true};
     std::atomic<std::size_t> list_calls{};
     auto listing = std::async(std::launch::async, [&] {
         do {
-            (void)workspace->sessions("lobby");
+            (void)graph.sessions->list("lobby");
             ++list_calls;
         } while (creating);
     });
 
-    std::vector<std::future<SessionSummary>> creations;
+    std::vector<std::future<SessionEntry>> creations;
     creations.reserve(session_count);
     for (std::size_t index = 0; index != session_count; ++index) {
         creations.push_back(std::async(std::launch::async, [&, index] {
-            return workspace->create_stored_session(
+            return graph.sessions->create(
                 "lobby", "Load " + std::to_string(index));
         }));
     }
-    std::vector<SessionSummary> sessions;
+    std::vector<SessionEntry> sessions;
     sessions.reserve(session_count);
     for (auto& creation : creations) sessions.push_back(creation.get());
     creating = false;
     listing.get();
     EXPECT_GT(list_calls, 0U);
-    EXPECT_EQ(workspace->sessions("lobby").size(), session_count);
+    EXPECT_EQ(graph.sessions->list("lobby").size(), session_count);
 
     WebSettings settings;
     settings.session_limit = session_count;
     settings.command_queue_capacity = 16;
-    WebDiscovery discovery(*workspace);
-    WelcomeStorage welcome_storage;
-    SessionRegistry registry = SessionRegistry::from_workspace(
-        settings, workspace, discovery, welcome_storage);
+    SessionRegistry registry(settings, graph.factory());
     std::vector<std::future<RegistryOpenResult>> opens;
     opens.reserve(session_count);
-    for (const SessionSummary& session : sessions) {
-        opens.push_back(std::async(std::launch::async, [&, id = session.id] {
-            return registry.open({"lobby", id}, 2s);
+    for (const SessionEntry& session : sessions) {
+        opens.push_back(std::async(std::launch::async, [&, key = session.identity] {
+            return registry.open(key, 2s);
         }));
     }
     for (auto& open : opens) {
@@ -440,8 +436,8 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     std::set<const SseMailbox*> mailboxes;
     handles.reserve(session_count);
     streams.reserve(session_count);
-    for (const SessionSummary& session : sessions) {
-        handles.push_back(registry.lookup({"lobby", session.id}));
+    for (const SessionEntry& session : sessions) {
+        handles.push_back(registry.lookup(session.identity));
         ASSERT_TRUE(handles.back());
         CommandSubmitResult connected = handles.back().runtime().connect_sse(1s);
         ASSERT_TRUE(std::holds_alternative<SseConnectResult>(connected));
@@ -454,10 +450,10 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     }
     EXPECT_EQ(mailboxes.size(), session_count);
 
-    for (const SessionSummary& session : sessions) {
+    for (const SessionEntry& session : sessions) {
         const std::filesystem::path database =
             fixture.root() / "forums" / "lobby" / "sessions"
-            / (session.id + ".sqlite3");
+            / (session.identity.session_id + ".sqlite3");
         EXPECT_THROW(
             (void)SessionLease::acquire(database),
             SessionBusyError);
@@ -497,10 +493,10 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
         std::this_thread::sleep_for(1ms);
     }
     EXPECT_EQ(registry.snapshot().live_entry_count, 0U);
-    for (const SessionSummary& session : sessions) {
+    for (const SessionEntry& session : sessions) {
         const std::filesystem::path database =
             fixture.root() / "forums" / "lobby" / "sessions"
-            / (session.id + ".sqlite3");
+            / (session.identity.session_id + ".sqlite3");
         SessionLease lease = SessionLease::acquire(database);
         EXPECT_TRUE(lease.active());
     }

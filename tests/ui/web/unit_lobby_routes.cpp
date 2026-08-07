@@ -2,14 +2,14 @@
 #include "ui/web/http_server.h"
 #include "ui/web/lobby_routes.h"
 #include "ui/web/session_registry.h"
+#include "support/test_web_graph.h"
 #include "support/test_workspace.h"
 
-#include "application/web_discovery.h"
-#include "application/welcome_storage.h"
+#include "application/builtins.h"
 
 #include "session/session_controller.h"
 #include "session/session_lease.h"
-#include "session/workspace.h"
+#include "session/session_repository.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -91,18 +91,21 @@ private:
     ShutdownGate& gate_;
 };
 
+using LobbyGraph = test::WebGraph;
+
 class TestServer {
 public:
     using Installer = std::function<void(httplib::Server&)>;
 
     TestServer(
-        std::shared_ptr<const Workspace> workspace,
+        const LobbyGraph& graph,
         SessionRegistry& registry,
         WebSettings settings = {.open_deadline = 500ms},
-        Installer installer = {})
-        : discovery_(std::make_unique<WebDiscovery>(*workspace)) {
-        AssetHandler(workspace->root() / "web").install(server_);
-        LobbyRoutes(workspace, *discovery_, welcome_storage_, registry, settings).install(server_);
+        Installer installer = {}) {
+        AssetHandler(graph.root() / "web").install(server_);
+        LobbyRoutes(
+            graph.model, graph.sessions, LobbyGraph::initial_selection(),
+            registry, settings).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
@@ -122,8 +125,6 @@ public:
     int port() const noexcept { return port_; }
 
 private:
-    WelcomeStorage welcome_storage_;
-    std::unique_ptr<WebDiscovery> discovery_;
     httplib::Server server_;
     int port_{};
     std::thread thread_;
@@ -185,11 +186,11 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     fixture.write_character_config(
         "display_name = \"Guide\"\n"
         "description = \"Explains the workspace\"\n");
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const auto root = server.client().Get("/");
     ASSERT_TRUE(root);
     EXPECT_EQ(root->status, 200);
@@ -257,42 +258,15 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_GT(sessions[0]["updated_at"].get<std::int64_t>(), 0);
 }
 
-TEST(LobbyRoutes, RejectsMissingPersonasAtWorkspaceConstruction) {
-    test::TestWorkspace fixture;
-    std::filesystem::remove_all(fixture.root() / "personas");
-    EXPECT_THROW((void)Workspace(fixture.root()), std::runtime_error);
-}
-
-TEST(LobbyRoutes, RejectsMalformedForumsAtWorkspaceConstruction) {
-    {
-        test::TestWorkspace fixture;
-        std::filesystem::create_directories(fixture.root() / "forums" / "broken" / "members");
-        std::ofstream(fixture.root() / "forums" / "broken" / "config.toml")
-            << "display_name = \"Broken\"\n";
-        std::filesystem::create_directories(fixture.root() / "forums" / "bad-config" / "members" / "guide");
-        std::ofstream(
-            fixture.root() / "forums" / "bad-config" / "config.toml")
-            << "display_name = [not valid TOML";
-        EXPECT_THROW((void)Workspace(fixture.root()), std::runtime_error);
-    }
-
-    {
-        test::TestWorkspace fixture;
-        std::filesystem::remove_all(fixture.root() / "forums" / "lobby");
-        Workspace workspace(fixture.root());
-        EXPECT_TRUE(workspace.forums().empty());
-    }
-}
-
 TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
     SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const auto created = server.client().Post("/api/v1/forums/lobby/sessions", R"({"label":"Notes"})", "application/json");
     ASSERT_TRUE(created);
     ASSERT_EQ(created->status, 201);
@@ -340,11 +314,11 @@ TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {
 
 TEST(LobbyRoutes, KeyBasedCreationAllowsDuplicateLabels) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
 
     const std::string first = create_session(server, "Repeated");
     const std::string second = create_session(server, "Repeated");
@@ -359,13 +333,13 @@ TEST(LobbyRoutes, KeyBasedCreationAllowsDuplicateLabels) {
 
 TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeRegistry) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
     SessionRegistry registry({.session_limit = 1}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const auto invalid = server.client().Post("/api/v1/forums/%2e%2e/sessions/nope/open", "{}", "application/json");
     expect_error(invalid, 404, "not_found");
     const auto backslash = server.client().Post(
@@ -398,11 +372,11 @@ TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeRegistry)
 
 TEST(LobbyRoutes, AcceptsConfiguredAndLoopbackAliasOrigins) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
 
     const auto loopback = server.client().Post(
         "/api/v1/forums/lobby/sessions",
@@ -429,11 +403,11 @@ TEST(LobbyRoutes, AcceptsConfiguredAndLoopbackAliasOrigins) {
 
 TEST(LobbyRoutes, RejectsDnsRebindingHostOnReadsAndMutations) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const httplib::Headers rebound{
         {"Host", "evil.example:" + std::to_string(server.port())},
         {"Origin", "http://evil.example:" + std::to_string(server.port())},
@@ -472,16 +446,16 @@ TEST(LobbyRoutes, RejectsDnsRebindingHostOnReadsAndMutations) {
             "application/json"),
         403,
         "forbidden_host");
-    EXPECT_TRUE(workspace->sessions("lobby").empty());
+    EXPECT_TRUE(graph.sessions->list("lobby").empty());
 }
 
 TEST(LobbyRoutes, ValidatesMissingIdentifiersMethodsAndOriginWithoutOrigin) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
 
     expect_error(server.client().Get("/api/v1/forums/missing/sessions"), 404, "not_found");
     expect_error(
@@ -514,11 +488,11 @@ TEST(LobbyRoutes, ReportsSessionListingStorageFailuresAsInternalErrors) {
     test::TestWorkspace fixture;
     std::ofstream(fixture.root() / "forums" / "lobby" / "sessions")
         << "not a directory";
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
 
     expect_error(
         server.client().Get("/api/v1/forums/lobby/sessions"),
@@ -532,13 +506,13 @@ TEST(LobbyRoutes, ReportsSessionListingStorageFailuresAsInternalErrors) {
 
 TEST(LobbyRoutes, ReportsCorruptSessionMetadataAsInternalError) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
     SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const std::string id = create_session(server, "Corrupt");
     std::ofstream(
         fixture.root() / "forums" / "lobby" / "sessions"
@@ -558,13 +532,13 @@ TEST(LobbyRoutes, ReportsCorruptSessionMetadataAsInternalError) {
 
 TEST(LobbyRoutes, ReattachesFromRegistryWithoutReadingStorageAgain) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
     SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const std::string id = create_session(server, "Live");
     const std::string route =
         "/api/v1/forums/lobby/sessions/" + id + "/open";
@@ -589,31 +563,30 @@ TEST(LobbyRoutes, ReattachesFromRegistryWithoutReadingStorageAgain) {
 
 TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleasesCapacity) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
-    const SessionSummary deleted =
-        workspace->create_stored_session("lobby", "Deleted");
-    const SessionSummary survivor =
-        workspace->create_stored_session("lobby", "Survivor");
+    const LobbyGraph graph(fixture.root());
+    const SessionEntry deleted = graph.sessions->create("lobby", "Deleted");
+    const SessionEntry survivor = graph.sessions->create("lobby", "Survivor");
     const std::filesystem::path deleted_database =
         fixture.root() / "forums" / "lobby" / "sessions"
-        / (deleted.id + ".sqlite3");
+        / (deleted.identity.session_id + ".sqlite3");
     const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
+    const RegistrySessionFactory open_real = graph.factory();
     SessionRegistry registry(
         settings,
-        [workspace, deleted, deleted_database](
+        [open_real, deleted, deleted_database](
             const SessionIdentity& key,
             WakeNotifier& notifier) {
-            if (key.session_id == deleted.id
+            if (key.session_id == deleted.identity.session_id
                 && !std::filesystem::remove(deleted_database)) {
                 throw std::runtime_error("Test session was not deleted");
             }
-            return RegistryOwnerInput{workspace->open_session(key, notifier)};
+            return open_real(key, notifier);
         });
-    TestServer server(workspace, registry, settings);
+    TestServer server(graph, registry, settings);
 
     expect_error(
         server.client().Post(
-            "/api/v1/forums/lobby/sessions/" + deleted.id + "/open",
+            "/api/v1/forums/lobby/sessions/" + deleted.identity.session_id + "/open",
             "{}",
             "application/json"),
         404,
@@ -621,7 +594,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
     EXPECT_EQ(registry.snapshot().live_entry_count, 0U);
 
     const auto opened = server.client().Post(
-        "/api/v1/forums/lobby/sessions/" + survivor.id + "/open",
+        "/api/v1/forums/lobby/sessions/" + survivor.identity.session_id + "/open",
         "{}",
         "application/json");
     ASSERT_TRUE(opened);
@@ -631,27 +604,27 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
 
 TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
-    const SessionSummary stored =
-        workspace->create_stored_session("lobby", "Deleted forum");
+    const LobbyGraph graph(fixture.root());
+    const SessionEntry stored = graph.sessions->create("lobby", "Deleted forum");
     const std::filesystem::path forum_directory =
         fixture.root() / "forums" / "lobby";
     const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
+    const RegistrySessionFactory open_real = graph.factory();
     SessionRegistry registry(
         settings,
-        [workspace, forum_directory](
+        [open_real, forum_directory](
             const SessionIdentity& key,
             WakeNotifier& notifier) {
             if (std::filesystem::remove_all(forum_directory) == 0) {
                 throw std::runtime_error("Test forum was not deleted");
             }
-            return RegistryOwnerInput{workspace->open_session(key, notifier)};
+            return open_real(key, notifier);
         });
-    TestServer server(workspace, registry, settings);
+    TestServer server(graph, registry, settings);
 
     expect_error(
         server.client().Post(
-            "/api/v1/forums/lobby/sessions/" + stored.id + "/open",
+            "/api/v1/forums/lobby/sessions/" + stored.identity.session_id + "/open",
             "{}",
             "application/json"),
         404,
@@ -661,14 +634,14 @@ TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
 
 TEST(LobbyRoutes, ValidatesOpenBodyAndAppliesTheRequestLimit) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
     SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
         return fake_session(key, std::make_unique<IdleController>());
     });
     WebSettings settings{.open_deadline = 500ms, .request_body_limit = 64};
-    TestServer server(workspace, registry, settings);
+    TestServer server(graph, registry, settings);
     const std::string id = create_session(server, "Body validation");
     const std::string route =
         "/api/v1/forums/lobby/sessions/" + id + "/open";
@@ -703,12 +676,12 @@ TEST(LobbyRoutes, ValidatesOpenBodyAndAppliesTheRequestLimit) {
 
 TEST(LobbyRoutes, WrapsGeneratedAndUnhandledErrorsInTheCommonEnvelope) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
     });
     TestServer server(
-        workspace,
+        graph,
         registry,
         {.open_deadline = 500ms},
         [](httplib::Server& http) {
@@ -752,13 +725,13 @@ TEST(LobbyRoutes, WrapsGeneratedAndUnhandledErrorsInTheCommonEnvelope) {
 
 TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     std::atomic<bool> busy{true};
     SessionRegistry registry({.session_limit = 2}, [&busy](const SessionIdentity& key, WakeNotifier&) {
         if (busy) throw SessionBusyError("held by test");
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const std::string id = create_session(server);
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
@@ -779,13 +752,10 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
 
 TEST(LobbyRoutes, CreateSucceedsWhileAnotherStoredSessionLeaseIsHeld) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
-    WebDiscovery discovery(*workspace);
-    WelcomeStorage welcome_storage;
-    SessionRegistry registry =
-        SessionRegistry::from_workspace(settings, workspace, discovery, welcome_storage);
-    TestServer server(workspace, registry, settings);
+    SessionRegistry registry(settings, graph.factory());
+    TestServer server(graph, registry, settings);
     const std::string leased_id = create_session(server, "Externally held");
     SessionLease held = SessionLease::acquire(
         fixture.root() / "forums" / "lobby" / "sessions"
@@ -813,13 +783,13 @@ TEST(LobbyRoutes, CreateSucceedsWhileAnotherStoredSessionLeaseIsHeld) {
 
 TEST(LobbyRoutes, NewStoredSessionSurvivesInitializationFailureAndCanBeRetried) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     std::atomic<bool> fail{true};
     SessionRegistry registry({.session_limit = 2}, [&fail](const SessionIdentity& key, WakeNotifier&) {
         if (fail) throw std::runtime_error("initialization failed");
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const std::string id = create_session(server);
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
@@ -839,11 +809,11 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesInitializationFailureAndCanBeRetried) 
 
 TEST(LobbyRoutes, NewStoredSessionSurvivesLimitOpenAndCanBeRetried) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     SessionRegistry registry({.session_limit = 1}, [](const SessionIdentity& key, WakeNotifier&) {
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const std::string occupied = create_session(server, "Occupied");
     const std::string occupied_route = "/api/v1/forums/lobby/sessions/" + occupied + "/open";
     const auto occupied_open =
@@ -879,12 +849,12 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesLimitOpenAndCanBeRetried) {
 
 TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
         std::this_thread::sleep_for(30ms);
         return fake_session(key, std::make_unique<IdleController>());
     });
-    TestServer server(workspace, registry, {.open_deadline = 1ms});
+    TestServer server(graph, registry, {.open_deadline = 1ms});
     const std::string id = create_session(server);
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
@@ -904,14 +874,14 @@ TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
 
 TEST(LobbyRoutes, MapsStoppingAndRegistryShutdownOpenFailuresToExistingEnvelopes) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
+    const LobbyGraph graph(fixture.root());
     ShutdownGate gate;
     std::atomic<int> starts{};
     SessionRegistry registry({.session_limit = 1}, [&gate, &starts](const SessionIdentity& key, WakeNotifier&) {
         ++starts;
         return fake_session(key, std::make_unique<GatedShutdownController>(gate));
     });
-    TestServer server(workspace, registry);
+    TestServer server(graph, registry);
     const std::string id = create_session(server, "Stopping");
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 

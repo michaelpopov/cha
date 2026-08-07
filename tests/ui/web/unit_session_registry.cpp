@@ -1,10 +1,9 @@
 #include "ui/web/session_registry.h"
 
 #include "application/builtins.h"
-#include "application/web_discovery.h"
-#include "application/welcome_storage.h"
 #include "session/session_lease.h"
-#include "session/workspace.h"
+#include "session/session_repository.h"
+#include "support/test_web_graph.h"
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
@@ -180,11 +179,8 @@ TEST(SessionRegistry, ReusesRunningSessionAndReturnsHandle) {
 
 TEST(SessionRegistry, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSessions) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
-    WebDiscovery discovery(*workspace);
-    WelcomeStorage welcome_storage;
-    SessionRegistry registry = SessionRegistry::from_workspace(
-        {.session_limit = 2}, workspace, discovery, welcome_storage);
+    const test::WebGraph graph(fixture.root());
+    SessionRegistry registry({.session_limit = 2}, graph.factory());
 
     ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         registry.open({std::string(entrance_id), std::string(welcome_id)}, 1s)));
@@ -210,10 +206,10 @@ TEST(SessionRegistry, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSession
     EXPECT_EQ(attributed_welcome->transcript.front().participant_id, guest_id);
     EXPECT_EQ(attributed_welcome->transcript.front().display_name, guest_name);
 
-    const SessionSummary stored = workspace->create_stored_session("lobby", "Guest session");
+    const SessionEntry stored = graph.sessions->create("lobby", "Guest session");
     ASSERT_TRUE(std::holds_alternative<RegistryReady>(
-        registry.open({"lobby", stored.id}, 1s)));
-    SessionHandle ordinary = registry.lookup({"lobby", stored.id});
+        registry.open(stored.identity, 1s)));
+    SessionHandle ordinary = registry.lookup(stored.identity);
     ASSERT_TRUE(ordinary);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
         ordinary.runtime().submit(RawCommand{std::string(guest_id), "Ordinary"}, 1s)));
@@ -230,15 +226,11 @@ TEST(SessionRegistry, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSession
 
 TEST(SessionRegistry, WelcomeReopensOnlyFromTheSameStorageWithTheEffectiveRoster) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
-    WebDiscovery discovery(*workspace);
-    WelcomeStorage storage;
-    const SessionIdentity welcome_key{
-        std::string(entrance_id), std::string(welcome_id)};
+    const test::WebGraph graph(fixture.root());
+    const SessionIdentity welcome_key = test::WebGraph::welcome();
 
     {
-        SessionRegistry registry = SessionRegistry::from_workspace(
-            {.session_limit = 1}, workspace, discovery, storage);
+        SessionRegistry registry({.session_limit = 1}, graph.factory());
         ASSERT_TRUE(std::holds_alternative<RegistryReady>(
             registry.open(welcome_key, 1s)));
         SessionHandle welcome = registry.lookup(welcome_key);
@@ -264,8 +256,7 @@ TEST(SessionRegistry, WelcomeReopensOnlyFromTheSameStorageWithTheEffectiveRoster
     }
 
     {
-        SessionRegistry registry = SessionRegistry::from_workspace(
-            {.session_limit = 1}, workspace, discovery, storage);
+        SessionRegistry registry({.session_limit = 1}, graph.factory());
         ASSERT_TRUE(std::holds_alternative<RegistryReady>(
             registry.open(welcome_key, 1s)));
         SessionHandle welcome = registry.lookup(welcome_key);
@@ -277,9 +268,9 @@ TEST(SessionRegistry, WelcomeReopensOnlyFromTheSameStorageWithTheEffectiveRoster
         registry.begin_shutdown();
     }
 
-    WelcomeStorage other_storage;
-    SessionRegistry other = SessionRegistry::from_workspace(
-        {.session_limit = 1}, workspace, discovery, other_storage);
+    // A second repository owns a different temporary database and starts empty.
+    const test::WebGraph other_graph(fixture.root());
+    SessionRegistry other({.session_limit = 1}, other_graph.factory());
     ASSERT_TRUE(std::holds_alternative<RegistryReady>(
         other.open(welcome_key, 1s)));
     SessionHandle fresh = other.lookup(welcome_key);

@@ -1,6 +1,7 @@
-#include "application/web_discovery.h"
-#include "application/welcome_storage.h"
-#include "session/workspace.h"
+#include "application/builtins.h"
+#include "application/session_open.h"
+#include "application/workspace_model.h"
+#include "session/session_repository.h"
 #include "ui/web/application_config.h"
 #include "ui/web/asset_handler.h"
 #include "ui/web/http_server.h"
@@ -40,17 +41,19 @@ int main(int argc, const char* const* argv) {
             cha::load_workspace_config(application.workspace);
         cha::initialize_diagnostic_logging(
             workspace_config.log_file, workspace_config.log_level);
-        // Section 19.1 step 7 destroys the registry and Workspace before the
-        // logging resources, so their teardown records still reach the sink.
-        // The inner scope is what orders those destructors ahead of the
-        // shutdown call below; returning from inside it would invert them.
+        // Section 19.1 step 7 destroys the registry, repository, and model
+        // before the logging resources, so their teardown records still reach
+        // the sink. The inner scope is what orders those destructors ahead of
+        // the shutdown call below; returning from inside it would invert them.
         int status = 0;
         {
-            auto workspace =
-                std::make_shared<const cha::Workspace>(
-                    application.workspace, workspace_config);
-            cha::WebDiscovery discovery(*workspace);
-            cha::WelcomeStorage welcome_storage;
+            const auto model = std::make_shared<const cha::WorkspaceModel>(
+                cha::WorkspaceModel::load(application.workspace, workspace_config));
+            const auto sessions = std::make_shared<const cha::SessionRepository>(
+                model->session_directories(),
+                cha::TemporarySessionSeed{
+                    {std::string(cha::entrance_id), std::string(cha::welcome_id)},
+                    std::string(cha::welcome_name)});
             cha::web::WebSettings settings;
             if (application.test_idle_grace_ms) {
                 settings.idle_grace = std::chrono::milliseconds(
@@ -63,15 +66,24 @@ int main(int argc, const char* const* argv) {
                         std::chrono::milliseconds{1},
                         settings.idle_grace / 2));
             }
-            cha::web::SessionRegistry registry =
-                cha::web::SessionRegistry::from_workspace(
-                    settings, workspace, discovery, welcome_storage);
+            cha::web::SessionRegistry registry(
+                settings,
+                [model, sessions](
+                    const cha::SessionIdentity& identity,
+                    cha::WakeNotifier& notifier) {
+                    return cha::web::RegistryOwnerInput{
+                        cha::open_session(*model, *sessions, identity, notifier)};
+                });
             httplib::Server server;
             cha::web::configure_http_server(
                 server, settings, application.host, application.port);
             const cha::web::AssetHandler assets(application.root / "web");
             assets.install(server);
-            cha::web::LobbyRoutes(workspace, discovery, welcome_storage, registry, settings).install(server);
+            const cha::web::InitialSelection initial{
+                std::string(cha::guest_id),
+                {std::string(cha::entrance_id), std::string(cha::welcome_id)}};
+            cha::web::LobbyRoutes(model, sessions, initial, registry, settings)
+                .install(server);
             cha::web::SessionRoutes(registry, settings, assets).install(server);
             cha::web::ProcessShutdownSignal signals;
             cha::web::ServerShutdownCoordinator shutdown(registry, server);

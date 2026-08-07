@@ -1,9 +1,7 @@
 #include "support/mock_http_server.h"
+#include "support/test_web_graph.h"
 #include "support/test_workspace.h"
 #include "support/web_server_process.h"
-#include "application/web_discovery.h"
-#include "application/welcome_storage.h"
-#include "session/workspace.h"
 #include "ui/web/http_server.h"
 #include "ui/web/asset_handler.h"
 #include "ui/web/lobby_routes.h"
@@ -916,9 +914,8 @@ TEST(ServerShutdownCoordinatorProcess, BlockedOwnerForcesExitAndLogsIdentity) {
 
 TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerCommits) {
     test::TestWorkspace fixture;
-    auto workspace = std::make_shared<const Workspace>(fixture.root());
-    const SessionSummary stored =
-        workspace->create_stored_session("lobby", "Opening");
+    const test::WebGraph graph(fixture.root());
+    const SessionEntry stored = graph.sessions->create("lobby", "Opening");
     OpeningGate gate;
     WebSettings settings;
     settings.open_deadline = 5s;
@@ -930,9 +927,9 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
         });
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;
-    WebDiscovery discovery(*workspace);
-    WelcomeStorage welcome_storage;
-    LobbyRoutes(workspace, discovery, welcome_storage, registry, settings).install(server);
+    LobbyRoutes(
+        graph.model, graph.sessions, test::WebGraph::initial_selection(),
+        registry, settings).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
     configure_http_server(server, settings, "127.0.0.1", port);
@@ -940,7 +937,7 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     server.wait_until_ready();
     ServerShutdownCoordinator coordinator(registry, server);
 
-    auto opening = std::async(std::launch::async, [port, id = stored.id] {
+    auto opening = std::async(std::launch::async, [port, id = stored.identity.session_id] {
         httplib::Client client = web_client(port);
         return client.Post(
             "/api/v1/forums/lobby/sessions/" + id + "/open",

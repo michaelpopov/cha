@@ -9,9 +9,10 @@ presentation result types.
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and web
 runtime coordination, including the textual grammar accepted by the browser's
-chat box. The composition root builds one immutable `WebDiscovery`
-and one process-wide `WelcomeStorage`; the registry uses them to open the
-built-in Welcome session and gives every web-opened session the Guest-plus-
+chat box. The composition root builds one immutable `WorkspaceModel` and one
+`SessionRepository`; routes read discovery from the model and storage from the
+repository, and the registry callback opens every session — including the
+built-in Welcome — through `open_session()` with the model's Guest-plus-
 workspace persona roster. It depends on core `SessionIdentity`, `SessionDescriptor`,
 `OpenedSession`, `SessionState`, append proof, and `SessionChange`, but puts no
 HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
@@ -88,10 +89,10 @@ absolute `orphan_limit` from that same disconnection timestamp while generation
 is active.
 `LobbyRoutes` is the HTTP boundary for bootstrap discovery, character detail, stored-session discovery, create-only,
 and registry-backed open/reattach. It validates route identifiers before either
-the registry or session storage is consulted; creation reaches only the shared,
-immutable `Workspace`, while opening first asks the registry for a disk-free
-reattach and directly reads only the selected session's stored metadata before
-a new open. `AssetHandler` separately owns the HTML/asset boundary and serves
+the registry or session storage is consulted; creation reaches only
+`SessionRepository`, while opening first asks the registry for a disk-free
+reattach and otherwise strictly validates only the selected session's stored
+metadata before a new open. `AssetHandler` separately owns the HTML/asset boundary and serves
 the same client-routed shell at the root and session deep links.
 `configure_http_server()` owns the
 server-global allowed-host check, request pool, read/write timeouts, payload
@@ -116,7 +117,7 @@ testable and prevents a stuck HTTP worker from suppressing it.
 `ProcessShutdownSignal` is the portable signal bridge; its handler only records
 `sig_atomic_t` state and normal code performs the shutdown work.
 `web_main.cpp` is only the composition root for the one server listener. It
-destroys the registry and `Workspace` in an inner scope so their teardown
+destroys the registry, repository, and model in an inner scope so their teardown
 records still reach the sink, and shuts logging down only afterwards, which is
 the order Section 19.1 step 7 requires.
 Server-scoped log records use `web server`, while session-scoped records always

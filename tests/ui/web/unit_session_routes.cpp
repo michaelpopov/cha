@@ -1,12 +1,11 @@
 #include "ui/web/asset_handler.h"
 #include "ui/web/http_server.h"
 #include "ui/web/session_registry.h"
-#include "application/web_discovery.h"
-#include "application/welcome_storage.h"
 #include "ui/web/session_routes.h"
 #include "support/test_workspace.h"
 
-#include "session/workspace.h"
+#include "session/session_repository.h"
+#include "support/test_web_graph.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -438,19 +437,14 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     fixture.write_character_config(
         "display_name = \"Guide\"\n"
         "description = \"Explains the workspace\"\n");
-    auto mutable_workspace = std::make_shared<Workspace>(fixture.root());
-    const SessionSummary stored =
-        mutable_workspace->create_stored_session("lobby", "Named session");
-    const std::shared_ptr<const Workspace> workspace = mutable_workspace;
+    const test::WebGraph graph(fixture.root());
+    const SessionEntry stored = graph.sessions->create("lobby", "Named session");
     const WebSettings settings{
         .session_limit = 1,
         .open_deadline = 1s,
         .command_deadline = 1s,
     };
-    WebDiscovery discovery(*workspace);
-    WelcomeStorage welcome_storage;
-    SessionRegistry registry =
-        SessionRegistry::from_workspace(settings, workspace, discovery, welcome_storage);
+    SessionRegistry registry(settings, graph.factory());
 
     const RegistryOpenResult unavailable =
         registry.open({"lobby", "missing"}, 1s);
@@ -458,10 +452,10 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     EXPECT_EQ(std::get<RegistryOpenFailure>(unavailable), RegistryOpenFailure::not_found);
 
     ASSERT_TRUE(std::holds_alternative<RegistryReady>(
-        registry.open({"lobby", stored.id}, 1s)));
+        registry.open(stored.identity, 1s)));
     RouteServer server(registry, settings);
     const auto snapshot = server.client().Get(
-        "/s/lobby/" + stored.id + "/api/v1/session");
+        "/s/lobby/" + stored.identity.session_id + "/api/v1/session");
     ASSERT_TRUE(snapshot);
     ASSERT_EQ(snapshot->status, 200);
     const nlohmann::json body = json_body(snapshot);
@@ -476,7 +470,7 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
             {"weight", "normal"}, {"size", "normal"}}},
     }}));
     EXPECT_EQ(body["characters"], body["forum"].at("members"));
-    EXPECT_EQ(body["session_id"], stored.id);
+    EXPECT_EQ(body["session_id"], stored.identity.session_id);
     EXPECT_EQ(body["session_label"], "Named session");
     registry.begin_shutdown();
 }

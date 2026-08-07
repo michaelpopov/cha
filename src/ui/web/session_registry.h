@@ -14,12 +14,6 @@
 #include <variant>
 #include <vector>
 
-namespace cha {
-class Workspace;
-class WebDiscovery;
-class WelcomeStorage;
-}
-
 namespace cha::web {
 
 class SessionHandle {
@@ -50,7 +44,7 @@ enum class RegistryOpenFailure {
 
 using RegistryOpenResult = std::variant<RegistryReady, RegistryOpenFailure>;
 // The port-backed alternative is limited to injected web tests. Production
-// workspace startup always returns the OpenedSession alternative.
+// startup always returns the OpenedSession alternative.
 struct PortBackedSession {
     SessionDescriptor descriptor;
     std::unique_ptr<WebSessionController> controller;
@@ -66,20 +60,15 @@ struct RegistrySnapshot {
     std::vector<SessionIdentity> running_sessions;
 };
 
-// The registry is the sole authority for in-process session liveness.  The
-// supplied factory is deliberately the small test seam; production may use
-// from_workspace(), which keeps stored-session validation and leasing in
-// Workspace. Routes validate URL components before entering this registry.
+// The registry is the sole authority for in-process session liveness. It owns
+// no storage or workspace knowledge: the supplied factory constructs one
+// session, and production passes a lambda calling open_session(). Routes
+// validate URL components before entering this registry.
 class SessionRegistry {
 public:
     SessionRegistry(
         WebSettings settings,
         RegistrySessionFactory factory);
-    static SessionRegistry from_workspace(
-        WebSettings settings,
-        std::shared_ptr<const Workspace> workspace,
-        const WebDiscovery& discovery,
-        WelcomeStorage& welcome_storage);
     ~SessionRegistry();
     SessionRegistry(const SessionRegistry&) = delete;
     SessionRegistry& operator=(const SessionRegistry&) = delete;

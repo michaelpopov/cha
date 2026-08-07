@@ -9,7 +9,7 @@ web frontend and tests drive the same code.
 
 | Source | Responsibility |
 | --- | --- |
-| `workspace.*` | Resolve the workspace layout, load persona context for agent definitions, list and validate forums and sessions, create stored sessions, load agent definitions, and build controllers. Persona selection and author resolution remain outside live sessions. |
+| `session_repository.*` | Own every session-storage operation: list, strictly validate, create, and prepare the persistent per-forum databases, plus the one process-local temporary session it creates and removes. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
@@ -38,9 +38,9 @@ flowchart TD
     forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
 ```
 
-`Workspace` refuses to construct unless `forums/`, `characters/`, and a valid
-`personas/` directory exist. The directory may contain no custom personas;
-`WebDiscovery` adds the built-in Guest to the effective browser roster.
+`WorkspaceModel` refuses to load unless `forums/`, `characters/`, and a valid
+`personas/` directory exist. The directory may contain no custom personas; the
+model adds the built-in Guest to the effective browser roster.
 The `forums/` directory may be temporarily empty; its valid forum names are
 sorted before presentation. Forum IDs and session database stems may contain
 only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and
@@ -59,10 +59,12 @@ overrides. Tags are trimmed, non-empty, control-free, and unique under ASCII
 case folding; they are metadata only and never determine membership. Definitions
 with no member directory in any forum are valid.
 
-Workspace construction validates the whole directory graph before it serves a
-forum: every member resolves to one definition, each configured `default_agent`
-names a member, and character/persona IDs and case-folded display names do not
-collide. An invalid workspace fails as a whole. `default_agent` leaves member
+Model loading validates the whole directory graph before it serves a forum:
+every member resolves to one definition, each configured `default_agent` names a
+member, and character/persona IDs and case-folded display names do not collide.
+It also resolves every configured forum's prompts and definitions, so an invalid
+unused forum fails startup rather than one later open. An invalid workspace
+fails as a whole. `default_agent` leaves member
 and agent-definition ordering unchanged; when it is absent, the first
 lexicographic member ID is used.
 
@@ -70,7 +72,7 @@ Template containment follows the file's layer: a definition `CHARACTER.md` is
 contained to workspace `characters/`; a member `CHARACTER.md` and `FORUM.md`
 are contained to their forum directory.
 
-`Workspace` supplies validated storage-facing metadata and forum definitions.
+`WorkspaceModel` supplies validated metadata and forum definitions.
 Each controller receives the effective application-wide persona roster and
 resolves submitted stable author IDs against it. The roster also contributes
 static model context, but it is not forum or session membership. The agent layer applies the shared provider
@@ -78,18 +80,19 @@ layer, definition, forum-default, and member override policy,
 deriving the definition containment root from the definition directory's parent
 and otherwise receiving resolved workspace paths explicitly.
 
-`Workspace::create_stored_session()` uses the same private validation path as
-opening a forum. It constructs `ForumCharacters` to validate character IDs,
-display names, and uniqueness without resolving provider credentials or
-models.
-
-`Workspace::check_session()` reads one selected stored session's identity,
+`SessionRepository::validate()` reads one selected stored session's identity,
 label, and metadata directly, without scanning the other session databases or
 acquiring its lease. It distinguishes an absent session from invalid or
 unreadable storage so front ends can map only absence to not-found. Web lobby
 routes skip this disk validation when their separate live-session registry can
 reattach directly, and otherwise use it before asking the registry to open a
 session.
+
+The repository receives plain forum IDs and `sessions/` paths, never a
+`WorkspaceModel`, so the session layer never depends on application types. It
+keeps only that immutable map plus the temporary session it owns, and builds a
+short-lived `SessionCatalog` per operation, so one constructed repository serves
+concurrent const calls; exclusion comes from `CatalogLease` and `SessionLease`.
 
 ## Forum characters
 
@@ -118,43 +121,43 @@ for the same reason.
 sequenceDiagram
     autonumber
     participant UI as Caller
-    participant WS as Workspace
-    participant AG as agents/
+    participant WM as open_session
+    participant WS as SessionRepository
     participant SC as SessionCatalog
     participant SL as SessionLease
     participant DB as Session database
     participant CC as SessionController
 
     Note over UI,DB: Creating a stored session
-    UI->>WS: create_stored_session forum, label
-    WS->>WS: load_forum, enumerate members/ directories
-    WS->>WS: load_personas
-    WS->>AG: load_agent_definitions(definition/member pairs, forum, roster)
+    UI->>WS: create forum, label
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
     SC->>DB: build hidden temporary sibling, then link into place
-    WS-->>UI: SessionSummary with assigned ID and effective label
+    WS-->>UI: SessionEntry with assigned ID, effective label, and timestamp
 
     Note over UI,CC: Opening a session
-    UI->>WS: open_session forum, id
+    UI->>WM: open_session(model, repository, identity)
+    WM->>WM: find forum, copy its preloaded definitions
+    WM->>WS: prepare identity
     WS->>SC: open_database_path id
     SC->>DB: read metadata, check id and forum match
     WS->>SL: acquire `<database>.cha-lock` without waiting
+    WS->>SC: session id, for the stored label
     WS->>DB: load_session_state
     DB-->>WS: SessionRestore
-    WS->>WS: load_personas, unless the caller supplies an effective roster
-    WS->>AG: load_agent_definitions(definition/member pairs, forum, roster)
-    WS->>CC: from_shared_definitions with restore and the supplied effective browser roster
+    WS-->>WM: PreparedSession (path, label, lease, restore)
+    WM->>CC: from_shared_definitions with restore and the model's shared roster
     CC->>CC: repair interrupted turns, then install entries
-    WS-->>UI: OpenedSession (descriptor + controller)
+    WM-->>UI: OpenedSession (descriptor + controller)
 ```
 
-`Workspace::create_stored_session()` is the creation primitive. It first
-performs complete forum validation through a private shared path, then delegates
-publication to `SessionCatalog`. Publication uses `link(2)`, which fails rather
+`SessionRepository::create()` is the creation primitive; it delegates
+publication to `SessionCatalog`. Forum definitions were already validated when
+`WorkspaceModel` loaded, so creation performs no prompt or provider work.
+Publication uses `link(2)`, which fails rather
 than overwriting, so a half-written database is never visible under a real
 session name and a collision simply retries with the next numeric suffix. The
-operation returns only a `SessionSummary`: it neither acquires a session lease
+operation returns only a `SessionEntry`: it neither acquires a session lease
 nor constructs a controller or provider. Web callers create and open in
 separate operations, so an open failure leaves the successfully stored session
 available for a later ordinary open.
@@ -170,8 +173,9 @@ that directory.
 
 Every live controller holds a `SessionLease` on `<database>.cha-lock`. The
 companion file may remain after a run; only its non-blocking exclusive operating
-system lock means the session is active. `Workspace` acquires the lease after
-resolving a database but before restore, then moves it into `SessionController`.
+system lock means the session is active. `SessionRepository::prepare()` acquires
+the lease after resolving a database but before restore, and `open_session()`
+moves it into `SessionController`.
 The controller keeps it through explicit shutdown and journal destruction, so
 `chaweb` fails immediately with `SessionBusyError` when another process owns
 that stored session. Test-only controller factories

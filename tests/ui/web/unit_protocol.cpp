@@ -6,7 +6,7 @@
 #include "support/test_workspace.h"
 
 #include "agents/config.h"
-#include "session/workspace.h"
+#include "application/workspace_model.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -446,10 +446,12 @@ TEST(WebSettings, RequestHeadroomIsInjectable) {
 
 TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
     test::TestWorkspace fixture;
-    Workspace workspace(fixture.root());
-    const Forum forum = workspace.load_forum("lobby");
-    EXPECT_EQ(forum.display_name, "The Lobby");
-    EXPECT_EQ(forum.character_names, (std::vector<std::string>{"guide"}));
+    const WorkspaceModel model = WorkspaceModel::load(
+        fixture.root(), load_workspace_config(fixture.root()));
+    const ForumInfo* const forum = model.find_forum("lobby");
+    ASSERT_NE(forum, nullptr);
+    EXPECT_EQ(forum->display_name, "The Lobby");
+    EXPECT_EQ(forum->member_ids, (std::vector<std::string>{"guide"}));
     const auto config = load_config({
         .definition = fixture.root()
             / "characters/guide/character.toml",

@@ -109,6 +109,11 @@ struct CharacterConfigPaths {
 
 // Parses the required [provider] table in workspace.toml without creating a client.
 ProviderConfig load_provider_config(const std::filesystem::path& workspace_config_path);
+// The same parse against an already-read document, so a caller that needs more
+// than one table out of workspace.toml reads the file only once.
+ProviderConfig load_provider_config(
+    const toml::table& workspace_config,
+    const std::filesystem::path& workspace_config_path);
 
 // The typed connection configuration and initial template scope after all layers.
 struct LoadedConfig {

@@ -2,7 +2,6 @@
 
 #include "agents/agent.h"
 #include "agents/persona.h"
-#include "session/workspace.h"
 
 #include <string_view>
 #include <vector>
@@ -19,7 +18,6 @@ inline constexpr std::string_view entrance_id = "builtin-entrance";
 inline constexpr std::string_view welcome_id = "builtin-welcome";
 
 const Persona& builtin_guest();
-const Forum& builtin_entrance();
 std::string_view application_guide();
 std::vector<AgentDefinition> builtin_assistant_definitions(
     const ProviderConfig& provider,

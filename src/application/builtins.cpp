@@ -11,13 +11,6 @@ const Persona& builtin_guest() {
     return guest;
 }
 
-const Forum& builtin_entrance() {
-    static const Forum entrance{.name = std::string(entrance_id), .display_name = std::string(entrance_name),
-                                .character_names = {std::string(assistant_id)},
-                                .default_agent_id = std::string(assistant_id)};
-    return entrance;
-}
-
 std::string_view application_guide() { return embedded_application_guide(); }
 
 std::vector<AgentDefinition> builtin_assistant_definitions(

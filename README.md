@@ -66,6 +66,15 @@ the application directory. `chaweb` reads listener and workspace settings from
 `app.toml` beside the executable; `--host`, `--port`, `--workspace`, and
 `--root` override them.
 
+`chaweb` reads the static workspace once, at startup. Edits to `workspace.toml`,
+personas, characters, forums, member overrides, or prompts take effect only
+after the server is restarted; stored sessions remain dynamic and appear in the
+lobby without a restart.
+
+Startup validates every configured forum, not only the ones in use. A forum with
+an invalid default character, member override, or prompt therefore prevents the
+server from starting; the reported error names that forum and its source.
+
 ## Build and test
 
 ```sh

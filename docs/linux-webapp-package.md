@@ -54,6 +54,16 @@ workspace values. To configure that file instead, edit it and run `./chaweb`
 directly; launcher command-line values take precedence when the launcher is
 used.
 
+CHA reads the workspace once, when it starts. After editing `workspace.toml`,
+personas, characters, forums, or prompts, stop CHA with Ctrl+C and start it
+again for the change to take effect. Conversations are unaffected: new stored
+sessions appear in the lobby without a restart.
+
+Startup also checks every forum in the workspace, not only the ones in use. If
+any forum has an invalid default character, member override, or prompt, CHA
+refuses to start and prints which forum and file to fix. An upgrade can surface
+a problem in a forum that older versions never reported.
+
 `HOST='0.0.0.0'` deliberately exposes CHA to the local network. There is no
 authentication or transport security: anyone who can reach the printed network
 address can read and continue conversations. Use it only on a trusted home or

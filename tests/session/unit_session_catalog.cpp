@@ -4,7 +4,6 @@
 #include "session/catalog_lease.h"
 #include "session/session_lease.h"
 #include "support/lease_test_process.h"
-#include "session/workspace.h"
 #include "support/test_session_database.h"
 #include "support/test_transcript.h"
 #include "util/utf8_path.h"
@@ -21,8 +20,8 @@
 namespace cha {
 namespace {
 
-// Builds and cleans up a minimal workspace fixture for forum and session tests.
-class WorkspaceTest : public testing::Test {
+// Builds and cleans up a minimal workspace fixture for session storage tests.
+class SessionStorageTest : public testing::Test {
 protected:
     void SetUp() override {
         root = std::filesystem::temp_directory_path()
@@ -88,6 +87,12 @@ protected:
         return path;
     }
 
+    // Session tests address storage by explicit fixture path; resolving the
+    // workspace layout is WorkspaceModel's job, not this catalog's.
+    std::filesystem::path sessions_directory(std::string_view forum = "lobby") const {
+        return root / "forums" / std::string(forum) / "sessions";
+    }
+
     std::filesystem::path root;
 };
 
@@ -96,50 +101,7 @@ TranscriptEntry human(EntryId id, std::string text, RequestId request_id) {
         id, {"human", "You"}, {"guide-id", "Guide"}, std::move(text), request_id);
 }
 
-TEST_F(WorkspaceTest, LoadsForumsAndTheirCharacterDirectories) {
-    Workspace workspace(root);
-
-    EXPECT_EQ(workspace.forums(), (std::vector<std::string>{"lobby"}));
-    const Forum forum = workspace.load_forum("lobby");
-
-    EXPECT_EQ(forum.name, "lobby");
-    EXPECT_EQ(forum.display_name, "The Lobby");
-    EXPECT_EQ(forum.character_names, (std::vector<std::string>{"guide"}));
-}
-
-TEST_F(WorkspaceTest, EnumeratesForumSubdirectoriesInNameOrder) {
-    const std::filesystem::path alpha = root / "forums" / "alpha";
-    std::filesystem::create_directories(alpha / "members" / "guide");
-    std::ofstream(alpha / "config.toml") << "display_name = \"Alpha\"\n";
-    std::ofstream(alpha / "FORUM.md") << "Alpha";
-    std::ofstream(root / "forums" / "README.md") << "not a forum";
-
-    Workspace workspace(root);
-
-    EXPECT_EQ(
-        workspace.forums(),
-        (std::vector<std::string>{"alpha", "lobby"}));
-}
-
-TEST_F(WorkspaceTest, RejectsForumDirectoryNamesThatAreNotUrlSafe) {
-    std::filesystem::create_directories(root / "forums" / "bad#fragment");
-    std::filesystem::create_directories(root / "forums" / "bad%escape");
-    std::filesystem::create_directories(root / "forums" / "bad space");
-    Workspace workspace(root);
-
-    EXPECT_EQ(workspace.forums(), (std::vector<std::string>{"lobby"}));
-    EXPECT_THROW((void)workspace.load_forum("bad#fragment"), std::runtime_error);
-    EXPECT_THROW((void)workspace.load_forum("bad%escape"), std::runtime_error);
-    EXPECT_THROW((void)workspace.load_forum("bad space"), std::runtime_error);
-}
-
-TEST_F(WorkspaceTest, AllowsTheForumDirectoryToBeTemporarilyEmpty) {
-    std::filesystem::remove_all(root / "forums" / "lobby");
-    Workspace workspace(root);
-    EXPECT_TRUE(workspace.forums().empty());
-}
-
-TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
+TEST_F(SessionStorageTest, ListsSessionDatabasesAndReturnsTheirPaths) {
     const std::filesystem::path saved =
         create_database("saved", "Saved session");
     const TranscriptEntry prompt = human(1, "Hello", 1);
@@ -152,9 +114,7 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
         unrelated << "not a session database";
     }
 
-    Workspace workspace(root);
-    const Forum forum = workspace.load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+    SessionCatalog sessions(sessions_directory(), "lobby");
     EXPECT_EQ(
         sessions.list(),
         (std::vector<Session>{{"saved", "Saved session"}}));
@@ -165,12 +125,10 @@ TEST_F(WorkspaceTest, ListsSessionDatabasesAndReturnsTheirPaths) {
         (std::vector<TranscriptEntry>{prompt}));
 }
 
-TEST_F(WorkspaceTest, RejectsSessionAndForumIdsThatAreNotUrlSafe) {
+TEST_F(SessionStorageTest, RejectsSessionAndForumIdsThatAreNotUrlSafe) {
     (void)create_database("unsafe#fragment", "Unsafe session");
     const std::filesystem::path saved = create_database("saved", "Saved session");
-    Workspace workspace(root);
-    const Forum forum = workspace.load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+    SessionCatalog sessions(sessions_directory(), "lobby");
 
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{"saved", "Saved session"}}));
     EXPECT_EQ(sessions.database_path("saved"), saved);
@@ -178,18 +136,16 @@ TEST_F(WorkspaceTest, RejectsSessionAndForumIdsThatAreNotUrlSafe) {
         (void)sessions.database_path("unsafe#fragment"),
         std::runtime_error);
     EXPECT_THROW(
-        (void)SessionCatalog(forum.directory / "sessions", "bad?forum"),
+        (void)SessionCatalog(sessions_directory(), "bad?forum"),
         std::runtime_error);
 }
 
-TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
-    Workspace workspace(root);
-    const Forum forum = workspace.load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+TEST_F(SessionStorageTest, CreatesASelectableSelfContainedDatabaseImmediately) {
+    SessionCatalog sessions(sessions_directory(), "lobby");
 
     const Session session = sessions.create("A named session");
     EXPECT_TRUE(std::filesystem::is_regular_file(
-        forum.directory / "sessions" / (session.id + ".sqlite3")));
+        sessions_directory() / (session.id + ".sqlite3")));
     EXPECT_EQ(sessions.list(), (std::vector<Session>{{session.id, "A named session"}}));
 
     const TranscriptEntry prompt = human(1, "Persist me", 1);
@@ -204,18 +160,17 @@ TEST_F(WorkspaceTest, CreatesASelectableSelfContainedDatabaseImmediately) {
         (std::vector<TranscriptEntry>{prompt}));
 }
 
-TEST_F(WorkspaceTest, ListingNeverIncludesLockFiles) {
-    const Forum forum = Workspace(root).load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name);
-    CatalogLease catalog_lease = CatalogLease::acquire(forum.directory / "sessions");
+TEST_F(SessionStorageTest, ListingNeverIncludesLockFiles) {
+    SessionCatalog sessions(sessions_directory(), "lobby");
+    CatalogLease catalog_lease = CatalogLease::acquire(sessions_directory());
     SessionLease session_lease = SessionLease::acquire(sessions.database_path("unpublished"));
 
     EXPECT_TRUE(sessions.list().empty());
 }
 
-TEST_F(WorkspaceTest, DefaultCreatesUseDistinctStemsUnderAFixedClock) {
-    const Forum forum = Workspace(root).load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name, [] { return std::time_t{1234567890}; });
+TEST_F(SessionStorageTest, DefaultCreatesUseDistinctStemsUnderAFixedClock) {
+    SessionCatalog sessions(
+        sessions_directory(), "lobby", [] { return std::time_t{1234567890}; });
     const Session first = sessions.create("");
     const Session second = sessions.create("");
 
@@ -224,10 +179,9 @@ TEST_F(WorkspaceTest, DefaultCreatesUseDistinctStemsUnderAFixedClock) {
     EXPECT_NE(first.id, second.id);
 }
 
-TEST_F(WorkspaceTest, CreateSkipsABusyUnpublishedStem) {
-    const Forum forum = Workspace(root).load_forum("lobby");
+TEST_F(SessionStorageTest, CreateSkipsABusyUnpublishedStem) {
     SessionCatalog sessions(
-        forum.directory / "sessions", forum.name,
+        sessions_directory(), "lobby",
         [] { return std::time_t{1234567890}; });
     const Session candidate = sessions.create("Temporary candidate");
     const std::filesystem::path candidate_path =
@@ -243,34 +197,30 @@ TEST_F(WorkspaceTest, CreateSkipsABusyUnpublishedStem) {
         sessions.database_path(created.id)));
 }
 
-TEST_F(WorkspaceTest, ProcessCatalogContentionIsBoundedAndCreatorDeathReleasesIt) {
-    const Forum forum = Workspace(root).load_forum("lobby");
-    const std::filesystem::path directory = forum.directory / "sessions";
+TEST_F(SessionStorageTest, ProcessCatalogContentionIsBoundedAndCreatorDeathReleasesIt) {
+    const std::filesystem::path directory = sessions_directory();
     test::CatalogHolderProcess holder(directory);
 
-    EXPECT_EQ(test::create_catalog_session(directory, forum.name, "Morning"), test::CatalogCreateResult::busy);
+    EXPECT_EQ(test::create_catalog_session(directory, "lobby", "Morning"), test::CatalogCreateResult::busy);
     holder.terminate();
-    EXPECT_EQ(test::create_catalog_session(directory, forum.name, "Morning"), test::CatalogCreateResult::succeeded);
+    EXPECT_EQ(test::create_catalog_session(directory, "lobby", "Morning"), test::CatalogCreateResult::succeeded);
 }
 
-TEST_F(WorkspaceTest, SameLabelIsAllowedInDifferentForums) {
+TEST_F(SessionStorageTest, SameLabelIsAllowedInDifferentForums) {
     const std::filesystem::path alpha = root / "forums" / "alpha";
     std::filesystem::create_directories(alpha / "members" / "guide");
     std::ofstream(alpha / "config.toml") << "display_name = \"Alpha\"\n";
     std::ofstream(alpha / "FORUM.md") << "Alpha";
-    Workspace workspace(root);
-    const Forum lobby = workspace.load_forum("lobby");
-    const Forum other = workspace.load_forum("alpha");
     const Session lobby_session =
-        SessionCatalog(lobby.directory / "sessions", lobby.name).create("Shared");
+        SessionCatalog(sessions_directory(), "lobby").create("Shared");
     const Session other_session =
-        SessionCatalog(other.directory / "sessions", other.name).create("Shared");
+        SessionCatalog(sessions_directory("alpha"), "alpha").create("Shared");
     EXPECT_EQ(lobby_session.label, "Shared");
     EXPECT_EQ(other_session.label, "Shared");
     EXPECT_TRUE(std::filesystem::is_regular_file(
-        lobby.directory / "sessions" / (lobby_session.id + ".sqlite3")));
+        sessions_directory() / (lobby_session.id + ".sqlite3")));
     EXPECT_TRUE(std::filesystem::is_regular_file(
-        other.directory / "sessions" / (other_session.id + ".sqlite3")));
+        sessions_directory("alpha") / (other_session.id + ".sqlite3")));
 }
 
 TEST(SessionDatabase, CreatesAndReadsFromANonAsciiPath) {
@@ -300,24 +250,20 @@ TEST(SessionDatabase, CreatesAndReadsFromANonAsciiPath) {
     std::filesystem::remove_all(directory);
 }
 
-TEST_F(WorkspaceTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) {
-    Workspace workspace(root);
-    const Forum forum = workspace.load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+TEST_F(SessionStorageTest, UsesALocalTimestampAsTheDefaultSessionLabelAndIdentifier) {
+    SessionCatalog sessions(sessions_directory(), "lobby");
     const Session session = sessions.create("");
 
     EXPECT_EQ(session.label, session.id);
     EXPECT_TRUE(std::regex_match(session.id, std::regex("[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-session")));
 }
 
-TEST_F(WorkspaceTest, ReportsInvalidDatabasesButOmitsInvalidSessionIds) {
-    Workspace workspace(root);
-    const Forum forum = workspace.load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+TEST_F(SessionStorageTest, ReportsInvalidDatabasesButOmitsInvalidSessionIds) {
+    SessionCatalog sessions(sessions_directory(), "lobby");
     const Session healthy = sessions.create("Healthy");
     const Session broken = sessions.create("Broken database");
     const std::filesystem::path malformed_name =
-        forum.directory / "sessions" / "..sqlite3";
+        sessions_directory() / "..sqlite3";
     {
         std::ofstream database(
             sessions.database_path(broken.id),
@@ -343,10 +289,8 @@ TEST_F(WorkspaceTest, ReportsInvalidDatabasesButOmitsInvalidSessionIds) {
     EXPECT_TRUE(valid->error.empty());
 }
 
-TEST_F(WorkspaceTest, RejectsMismatchedSessionMetadataWhenOpening) {
-    Workspace workspace(root);
-    const Forum forum = workspace.load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+TEST_F(SessionStorageTest, RejectsMismatchedSessionMetadataWhenOpening) {
+    SessionCatalog sessions(sessions_directory(), "lobby");
     create_database("wrong-forum", "Wrong forum", "hall");
 
     const std::vector<Session> listed = sessions.list();
@@ -357,20 +301,16 @@ TEST_F(WorkspaceTest, RejectsMismatchedSessionMetadataWhenOpening) {
         std::runtime_error);
 }
 
-TEST_F(WorkspaceTest, DistinguishesAMissingSessionFromInvalidStorage) {
-    Workspace workspace(root);
-    const Forum forum = workspace.load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+TEST_F(SessionStorageTest, DistinguishesAMissingSessionFromInvalidStorage) {
+    SessionCatalog sessions(sessions_directory(), "lobby");
 
     EXPECT_THROW(
         (void)sessions.open_database_path("missing"),
         SessionNotFoundError);
 }
 
-TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
-    Workspace workspace(root);
-    const Forum forum = workspace.load_forum("lobby");
-    SessionCatalog sessions(forum.directory / "sessions", forum.name);
+TEST_F(SessionStorageTest, EnforcesEverySessionMetadataIdentityField) {
+    SessionCatalog sessions(sessions_directory(), "lobby");
 
     create_database("wrong-filename", "Wrong filename");
     std::filesystem::rename(
@@ -392,12 +332,10 @@ TEST_F(WorkspaceTest, EnforcesEverySessionMetadataIdentityField) {
     }
 }
 
-TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
-    Workspace workspace(root);
-    const Forum forum = workspace.load_forum("lobby");
+TEST_F(SessionStorageTest, CreatesDistinctDatabasesOnTimestampCollision) {
     SessionCatalog sessions(
-        forum.directory / "sessions",
-        forum.name,
+        sessions_directory(),
+        "lobby",
         [] { return std::time_t{1'700'000'000}; });
     const Session first = sessions.create("First");
     const Session second = sessions.create("Second");
@@ -414,42 +352,13 @@ TEST_F(WorkspaceTest, CreatesDistinctDatabasesOnTimestampCollision) {
         read_session_database_metadata(sessions.database_path(second.id)).label,
         "Second");
     for (const auto& entry :
-         std::filesystem::directory_iterator(forum.directory / "sessions")) {
+         std::filesystem::directory_iterator(sessions_directory())) {
         EXPECT_FALSE(utf8_path(entry.path().filename()).starts_with("."));
     }
 }
 
-TEST_F(WorkspaceTest, LoadsForumCharactersFromSubdirectoriesInNameOrder) {
-    const std::filesystem::path other = root / "characters" / "other";
-    std::filesystem::create_directories(other);
-    std::filesystem::create_directories(root / "forums" / "lobby" / "members" / "other");
-    std::ofstream(other / "character.toml") << "display_name = \"Other\"\n";
-    std::ofstream(other / "CHARACTER.md") << "Other";
-    Workspace workspace(root);
-    EXPECT_EQ(
-        workspace.load_forum("lobby").character_names,
-        (std::vector<std::string>{"guide", "other"}));
-}
-
-TEST_F(WorkspaceTest, IgnoresFilesWhenEnumeratingForumCharacters) {
-    std::ofstream(root / "forums" / "lobby" / "members" / "README.md")
-        << "not a character";
-    Workspace workspace(root);
-    EXPECT_EQ(
-        workspace.load_forum("lobby").character_names,
-        (std::vector<std::string>{"guide"}));
-}
-
-TEST_F(WorkspaceTest, RejectsAnEmptyOrAbsentForumCharactersDirectory) {
-    std::filesystem::remove_all(root / "forums" / "lobby" / "members");
-    std::filesystem::create_directories(root / "forums" / "lobby" / "members");
-    EXPECT_THROW((void)Workspace(root), std::runtime_error);
-}
-
-TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumCharactersAre) {
-    Workspace workspace(root);
-    SessionCatalog sessions(
-        workspace.load_forum("lobby").directory / "sessions", "lobby");
+TEST_F(SessionStorageTest, OpensAStoredSessionWhateverTheCurrentForumCharactersAre) {
+    SessionCatalog sessions(sessions_directory(), "lobby");
     const Session session = sessions.create("Two agents");
     {
         SessionJournal journal(sessions.database_path(session.id));
@@ -471,8 +380,7 @@ TEST_F(WorkspaceTest, OpensAStoredSessionWhateverTheCurrentForumCharactersAre) {
     // The forum now contains completely different characters; the session is unaffected.
     std::filesystem::remove_all(root / "forums" / "lobby" / "members");
     std::filesystem::create_directories(root / "forums" / "lobby" / "members" / "guide");
-    const Forum reduced = workspace.load_forum("lobby");
-    SessionCatalog reopened(reduced.directory / "sessions", reduced.name);
+    SessionCatalog reopened(sessions_directory(), "lobby");
 
     ASSERT_EQ(reopened.list().size(), 1U);
     EXPECT_TRUE(reopened.list().front().error.empty());
