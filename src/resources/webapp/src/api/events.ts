@@ -1,5 +1,5 @@
 import type { components } from './schema';
-import { sessionEventsUrl, type SessionSnapshot } from './client';
+import { isSessionSnapshot, sessionEventsUrl, type SessionSnapshot } from './client';
 
 export type AppendEvent = components['schemas']['AppendEvent'];
 
@@ -29,18 +29,6 @@ const streamFailure: SessionStreamFailure = Object.freeze({ kind: 'stream_failur
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isSnapshot(value: unknown): value is SessionSnapshot {
-  return isRecord(value)
-    && isRecord(value.forum)
-    && typeof value.session_id === 'string'
-    && typeof value.session_label === 'string'
-    && Array.isArray(value.characters)
-    && typeof value.default_character_id === 'string'
-    && Array.isArray(value.transcript)
-    && isRecord(value.generation)
-    && typeof value.lifecycle === 'string';
 }
 
 function isAppend(value: unknown): value is AppendEvent {
@@ -76,7 +64,7 @@ export function openSessionEvents(
   source.addEventListener('snapshot', (event) => {
     if (closed) return;
     try {
-      handlers.onSnapshot(parseEvent(event.data, isSnapshot));
+      handlers.onSnapshot(parseEvent(event.data, isSessionSnapshot));
     } catch {
       reportFailure();
     }

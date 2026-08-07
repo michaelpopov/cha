@@ -113,6 +113,15 @@ function SessionOperationState({
   );
 }
 
+// Every navigation supersedes an open still in flight, so a slow one cannot
+// land afterwards and pull the user into a conversation they have left. These
+// are the actions that change no view and must therefore supersede nothing.
+const inPlaceActions = new Set<AppAction['type']>([
+  'toggle-sidebar',
+  'select-persona',
+  'set-default-character',
+]);
+
 export type SessionEventsConnector = (
   forumId: string,
   sessionId: string,
@@ -187,6 +196,13 @@ export function App({
     }
   }, [client]);
 
+  // The dispatch every view receives. App's own bookkeeping uses the raw one,
+  // because reporting an operation is not a navigation away from it.
+  const navigate = useCallback((action: AppAction) => {
+    if (!inPlaceActions.has(action.type)) navigation.current += 1;
+    dispatch(action);
+  }, []);
+
   const closeStream = useCallback(() => {
     connection.current?.events.close();
     connection.current = null;
@@ -206,6 +222,12 @@ export function App({
     updateHistory: boolean,
   ) => {
     closeStream();
+    // Opening is what makes a session live, and the contract has no operation
+    // that releases one, so an abandoned open holds a slot until the server's
+    // idle grace expires. Checking here cannot close that window — the epoch
+    // can move while the request is in flight — but it does keep a navigation
+    // that already happened from starting one more.
+    if (navigation.current !== epoch) return false;
     await client.openSession(forumId, sessionId);
     const snapshot = await client.getSessionSnapshot(forumId, sessionId);
     if (navigation.current !== epoch) return false;
@@ -219,7 +241,12 @@ export function App({
         // the live stream so an opened browser session remains attached.
       },
       onError: () => {
-        if (events) detachStream(events);
+        if (!events) return;
+        // Only the attached stream's failure is the user's problem; a stream
+        // already replaced by a later navigation is not.
+        const attached = connection.current?.events === events;
+        detachStream(events);
+        if (attached) dispatch({ type: 'stream-lost' });
       },
     });
     connection.current = { key, events };
@@ -298,11 +325,10 @@ export function App({
   }, [client, performOpen]);
 
   const returnToWelcome = useCallback(() => {
-    navigation.current += 1;
     closeStream();
-    dispatch({ type: 'show-initial-conversation' });
+    navigate({ type: 'show-initial-conversation' });
     window.history.pushState(null, '', '/');
-  }, [closeStream]);
+  }, [closeStream, navigate]);
 
   useEffect(() => {
     if (state.bootstrapStatus !== 'ready' || initialRouteHandled.current) return;
@@ -322,14 +348,12 @@ export function App({
     const visitHistoryRoute = () => {
       const route = parseAppRoute(window.location.pathname);
       if (route.kind === 'root') {
-        navigation.current += 1;
         closeStream();
-        dispatch({ type: 'show-initial-conversation' });
+        navigate({ type: 'show-initial-conversation' });
       } else if (route.kind === 'session') {
         void openConversation(route.forumId, route.sessionId, false);
       } else {
-        navigation.current += 1;
-        dispatch({
+        navigate({
           type: 'session-operation-failed',
           message: 'This address does not identify a CHA session.',
         });
@@ -337,7 +361,7 @@ export function App({
     };
     window.addEventListener('popstate', visitHistoryRoute);
     return () => window.removeEventListener('popstate', visitHistoryRoute);
-  }, [closeStream, openConversation]);
+  }, [closeStream, navigate, openConversation]);
 
   useEffect(() => () => closeStream(), [closeStream]);
 
@@ -352,7 +376,7 @@ export function App({
       className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}`}
       data-sidebar={state.sidebarOpen ? 'open' : 'closed'}
     >
-      <Sidebar dispatch={dispatch} onOpenSession={openConversation} state={state} />
+      <Sidebar dispatch={navigate} onOpenSession={openConversation} state={state} />
       <main className="cha-main">
         <header className="cha-topbar">
           <button
@@ -374,7 +398,7 @@ export function App({
         {ready && !wholeApplication && (
           <Screen
             client={client}
-            dispatch={dispatch}
+            dispatch={navigate}
             onCreateSession={createConversation}
             onOpenSession={openConversation}
             state={state}

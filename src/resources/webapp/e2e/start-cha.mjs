@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,17 +12,23 @@ const application = resolve(temporary, 'application');
 const workspace = resolve(temporary, 'workspace');
 
 await cp(resolve(project, 'e2e/fixtures/workspace'), workspace, { recursive: true });
-await mkdir(resolve(application, 'web/assets'), { recursive: true });
-await writeFile(
-  resolve(application, 'web/index.html'),
-  '<!doctype html><html><body>e2e shell</body></html>\n',
-);
+
+// The real bundle, not a placeholder: the served suite loads the application
+// from this server with no development server anywhere in the path.
+const bundle = resolve(project, 'dist');
+try {
+  await stat(resolve(bundle, 'index.html'));
+} catch {
+  throw new Error(`No browser build at ${bundle}; run 'npm run build' first.`);
+}
+await mkdir(application, { recursive: true });
+await cp(bundle, resolve(application, 'web'), { recursive: true });
 
 const child = spawn(executable, [
   '--root', application,
   '--workspace', workspace,
   '--host', '127.0.0.1',
-  '--port', '8080',
+  '--port', process.env.CHA_E2E_PORT ?? '8080',
 ], { stdio: 'inherit' });
 
 let stopping = false;

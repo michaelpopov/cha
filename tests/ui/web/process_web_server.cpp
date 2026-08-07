@@ -552,6 +552,52 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     _exit(3);
 }
 
+// The whole point of the two-root split is that an upgrade can replace the
+// application directory without touching the customer's files. Every other
+// process test hands the same path to both flags, which would pass just as
+// happily if the two were secretly one root.
+TEST(WebServerProcess, RunsWithAnApplicationRootThatHoldsNoWorkspace) {
+    test::TestWorkspace workspace;
+    workspace.write_workspace_config();
+
+    const std::filesystem::path application =
+        std::filesystem::temp_directory_path()
+        / ("cha_application_root_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(application / "web" / "assets");
+    std::ofstream(application / "web" / "index.html")
+        << "<!doctype html><html><body>split shell</body></html>\n";
+    std::ofstream(application / "web" / "assets" / "app.js")
+        << "console.log('split asset');\n";
+
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(application, workspace.root(), port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    httplib::Client client = web_client(port);
+    // The shell comes from the application root...
+    const auto shell = client.Get("/");
+    ASSERT_TRUE(shell);
+    EXPECT_EQ(shell->status, 200);
+    EXPECT_NE(shell->body.find("split shell"), std::string::npos);
+
+    // ...while the conversations come from the workspace somewhere else.
+    const auto bootstrap = client.Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    EXPECT_EQ(bootstrap->status, 200);
+    EXPECT_NE(bootstrap->body.find("The Lobby"), std::string::npos);
+
+    // Neither directory has grown the other's files.
+    EXPECT_FALSE(std::filesystem::exists(application / "workspace.toml"));
+    EXPECT_FALSE(std::filesystem::exists(workspace.root() / "app.toml"));
+
+    EXPECT_EQ(server.stop(SIGTERM).exit_code, 0);
+    std::error_code removal;
+    std::filesystem::remove_all(application, removal);
+}
+
 TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();

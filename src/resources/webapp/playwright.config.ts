@@ -1,5 +1,22 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Both ports are chosen here rather than written into the suite, because a
+// fixed port makes the whole suite fail whenever anything else on the machine
+// happens to hold it — a staged server, a colleague's container, a previous run
+// that has not exited yet. The default derives from the process, so concurrent
+// runs do not collide either; set CHA_E2E_PORT to pin one deliberately.
+// Chosen once and published to the environment: this file is re-evaluated in
+// every worker, and a port derived per process would differ between the worker
+// and the server the runner started. Workers inherit what the runner set.
+process.env.CHA_E2E_PORT ??= String(20000 + (process.pid % 20000));
+
+const apiPort = Number(process.env.CHA_E2E_PORT);
+const devPort = apiPort + 1;
+const api = `http://127.0.0.1:${apiPort}`;
+const dev = `http://127.0.0.1:${devPort}`;
+
+process.env.CHA_API_TARGET ??= api;
+
 export default defineConfig({
   testDir: './e2e',
   outputDir: './test-results',
@@ -7,25 +24,35 @@ export default defineConfig({
   retries: 0,
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: dev,
     trace: 'retain-on-failure',
   },
   projects: [
+    // Through the development server, which proxies the API to chaweb.
     {
       name: 'chromium',
+      testIgnore: /served\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
+    },
+    // Straight from chaweb, serving the production build it was given.
+    {
+      name: 'served',
+      testMatch: /served\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], baseURL: api },
     },
   ],
   webServer: [
     {
       command: 'node e2e/start-cha.mjs',
-      url: 'http://127.0.0.1:8080/health',
+      url: `${api}/health`,
       reuseExistingServer: false,
       timeout: 30_000,
     },
     {
-      command: 'npm run dev -- --port 4173',
-      url: 'http://127.0.0.1:4173/',
+      // The proxy target has to be the server started above, not the port a
+      // developer's own `npm run dev` would assume.
+      command: `npm run dev -- --port ${devPort}`,
+      url: `${dev}/`,
       reuseExistingServer: false,
       timeout: 30_000,
     },

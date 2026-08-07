@@ -1,6 +1,6 @@
 import type { Dispatch } from 'react';
 
-import { sessionOperationState, type AppAction, type AppState, type MainView } from '../state/view';
+import type { AppAction, AppState, MainView } from '../state/view';
 import { CharacterIcon, ForumsIcon, PersonasIcon } from './Icons';
 
 interface SidebarProps {
@@ -29,7 +29,6 @@ export function Sidebar({ state, dispatch, onOpenSession }: SidebarProps) {
   const forums = new Map(state.bootstrap?.forums.map((forum) => [forum.id, forum]));
   // The server returns Recent newest first across every forum.
   const recents = state.bootstrap?.recent_sessions;
-  const { pending: sessionPending } = sessionOperationState(state);
 
   return (
     <aside className="cha-sidebar" aria-label="Sidebar">
@@ -38,7 +37,7 @@ export function Sidebar({ state, dispatch, onOpenSession }: SidebarProps) {
         {navigation.map(({ action, views, label, icon: NavigationIcon }) => (
           <button
             className={`cha-side-action ${views.includes(state.mainView) ? 'is-current' : ''}`}
-            disabled={state.bootstrapStatus !== 'ready' || sessionPending}
+            disabled={state.bootstrapStatus !== 'ready'}
             key={action}
             onClick={() => dispatch({ type: action })}
             type="button"
@@ -66,7 +65,6 @@ export function Sidebar({ state, dispatch, onOpenSession }: SidebarProps) {
             <button
               aria-current={current ? 'page' : undefined}
               className={`cha-recent-row ${current ? 'is-current' : ''}`}
-              disabled={sessionPending}
               key={`${session.forum_id}/${session.session_id}`}
               onClick={() => void onOpenSession(session.forum_id, session.session_id)}
               type="button"

@@ -29,6 +29,8 @@ export interface AppState {
   currentDefaultCharacterId: string | null;
   sessionOperation: 'idle' | 'pending' | 'failed';
   sessionOperationMessage: string | null;
+  activeConversationLabel: string | null;
+  streamLost: boolean;
 }
 
 export const initialAppState: AppState = {
@@ -44,6 +46,8 @@ export const initialAppState: AppState = {
   currentDefaultCharacterId: null,
   sessionOperation: 'idle',
   sessionOperationMessage: null,
+  activeConversationLabel: null,
+  streamLost: false,
 };
 
 export type AppAction =
@@ -65,6 +69,7 @@ export type AppAction =
   | { type: 'conversation-opened'; snapshot: SessionSnapshot }
   | { type: 'session-snapshot'; snapshot: SessionSnapshot }
   | { type: 'show-initial-conversation' }
+  | { type: 'stream-lost' }
   | { type: 'set-default-character'; characterId: string };
 
 function idleSessionOperation() {
@@ -75,6 +80,10 @@ function idleSessionOperation() {
 // initial session named by bootstrap, in the forum that owns it.
 function showInitialConversation(state: AppState, bootstrap: Bootstrap): AppState {
   const initialForum = bootstrap.forums.find(({ id }) => id === bootstrap.initial_forum_id);
+  const initialRecent = bootstrap.recent_sessions.find(
+    ({ forum_id, session_id }) => forum_id === bootstrap.initial_forum_id
+      && session_id === bootstrap.initial_session_id,
+  );
   return {
     ...state,
     mainView: 'chat',
@@ -83,7 +92,9 @@ function showInitialConversation(state: AppState, bootstrap: Bootstrap): AppStat
       forumId: bootstrap.initial_forum_id,
       sessionId: bootstrap.initial_session_id,
     },
+    activeConversationLabel: initialRecent?.session_label ?? null,
     currentDefaultCharacterId: initialForum?.default_character_id ?? null,
+    streamLost: false,
     ...idleSessionOperation(),
   };
 }
@@ -161,7 +172,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           forumId: action.snapshot.forum.id,
           sessionId: action.snapshot.session_id,
         },
+        activeConversationLabel: action.snapshot.session_label,
         currentDefaultCharacterId: action.snapshot.default_character_id,
+        streamLost: false,
         ...idleSessionOperation(),
       };
     case 'session-snapshot':
@@ -171,10 +184,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
       return {
         ...state,
+        activeConversationLabel: action.snapshot.session_label,
         currentDefaultCharacterId: action.snapshot.default_character_id,
       };
     case 'show-initial-conversation':
       return state.bootstrap ? showInitialConversation(state, state.bootstrap) : state;
+    case 'stream-lost':
+      return { ...state, streamLost: true };
     case 'set-default-character':
       return { ...state, currentDefaultCharacterId: action.characterId };
   }

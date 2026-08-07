@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ChaError, createChaClient, sessionEventsUrl } from './client';
+import { snapshotFixture } from '../test/fixtures';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -14,7 +15,11 @@ describe('CHA API client', () => {
     const fetcher = vi.fn<(
       input: RequestInfo | URL,
       init?: RequestInit,
-    ) => Promise<Response>>(async () => jsonResponse({}));
+    ) => Promise<Response>>(async (input) => (
+      String(input).endsWith('/api/v1/session')
+        ? jsonResponse(snapshotFixture)
+        : jsonResponse({})
+    ));
     const client = createChaClient(fetcher);
 
     await client.getBootstrap();
@@ -70,5 +75,10 @@ describe('CHA API client', () => {
       }),
     );
     await expect(client.getSessionSnapshot('forum', 'session')).rejects.toBeInstanceOf(ChaError);
+  });
+
+  it('rejects a session snapshot whose shape the contract does not describe', async () => {
+    const client = createChaClient(async () => jsonResponse({ session_id: 'one' }));
+    await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);
   });
 });

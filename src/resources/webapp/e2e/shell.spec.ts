@@ -20,7 +20,7 @@ test('creates a session and restores its conversation after a deep-link reload',
     .toHaveAttribute('aria-current', 'page');
 
   await page.goBack();
-  await expect(page).toHaveURL(/:4173\/$/);
+  await expect(page).toHaveURL(/^http:\/\/[^/]+\/$/);
   await expect(page.getByLabel('Current chat context')).toContainText('Entrance');
 
   await page.goForward();

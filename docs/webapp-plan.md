@@ -95,7 +95,7 @@ always run from `src/resources/webapp/`:
 | `npm run dev` | Start the editable frontend through the Vite development server. |
 | `npm run build` | Type-check and produce production files in `src/resources/webapp/dist/`. |
 | `npm run check` | Regenerate/check API types and run type, unit, and component tests. |
-| `npm run e2e` | Run the browser tests against a deterministic local test server. |
+| `npm run e2e` | Build, then run the browser tests against a deterministic local test server: once through the development server, once against the production build served by `chaweb` itself. |
 | `npm run stage` | Build, then replace `bin/web/` with the result. Takes `--root <dir>` to stage somewhere else. |
 
 Frontend dependencies are installed under `src/resources/webapp/node_modules/`,
@@ -126,10 +126,11 @@ accepts a path ([environment.h](../src/util/environment.h#L20)). Only the
 entry point hardcodes `"."`.
 
 **Two roots, not one.** The application directory holds what ships with a
-release and is replaced wholesale by the next one: the executable, `web/`, and
-the launcher. The workspace holds everything belonging to the customer:
-`app.toml`, `.env`, `characters/`, `personas/`, `forums/` — which contain the
-stored conversations as `forums/<forum>/sessions/*.sqlite3` — and `logs/`.
+release and is replaced wholesale by the next one: the executable, `web/`,
+`app.toml`, and the launcher. The workspace holds everything belonging to the
+customer: `workspace.toml`, `.env`, `characters/`, `personas/`, `forums/` —
+which contain the stored conversations as `forums/<forum>/sessions/*.sqlite3` —
+and `logs/`.
 Keeping them apart is what makes an upgrade safe; a single root would put the
 customer's characters, conversations, and provider key inside the directory an
 upgrade overwrites. The workspace path is chosen once during setup and can be
@@ -551,6 +552,16 @@ interruption.
    transcript, generation state, and the context line
    `<Forum>   From: <Persona>   To: <default character>` from
    [web-ui/README.md](web-ui/README.md).
+
+   **Including the two paths that reach a conversation without opening it.**
+   Block 5 opens, snapshots, and streams whenever a session is *chosen* — a
+   stored-session row, a Recent entry, a deep link, a restored history entry.
+   Two paths instead adopt the initial conversation from bootstrap and set it
+   active without any request: the plain `/` boot, and Return to Welcome. That
+   is invisible while the transcript is a placeholder and will not be once it
+   is real, so becoming active must drive the open, not the click that caused
+   it. A conversation that is active with no stream attached is the state to
+   look for.
 2. **Apply events**: a `snapshot` event replaces state wholesale; an `append`
    event appends to the entry or reasoning target it names.
 3. **Submit input** as `{"persona": "<id>", "text": "<text>"}` with the selected
@@ -595,6 +606,8 @@ interruption.
 
 - Reducer tests for snapshot replacement and for appends against both target
   kinds.
+- A plain `/` boot and Return to Welcome each attach a stream to the initial
+  conversation, rather than leaving it active but unattached.
 - A fake event source driving snapshot and append sequences.
 - Recovery tests in which a stream error is followed by a successful snapshot,
   by `session_not_live`, by temporary server unavailability, and by exhausting
@@ -677,7 +690,10 @@ enough for the server to unload the conversation.
 9. **Complete and run the existing Playwright suite** against the assembled
    package, covering the minimum flows in
    [webapp.md](webapp.md#testing-strategy), including interruption and rapid
-   Recent navigation.
+   Recent navigation. The suite's `served` project already loads the production
+   build from `chaweb` with no development server in the path, which is what
+   keeps the Stage 1 criteria proved rather than remembered; extend it here
+   rather than starting a separate package suite.
 10. **Test on a clean Linux machine** representative of the customer's laptop,
     including placing the workspace somewhere the application directory does
     not contain, and running on a port other than 8080.

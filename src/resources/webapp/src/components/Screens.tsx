@@ -31,10 +31,18 @@ export function ChatScreen({ state }: { state: AppState }) {
     <section className="cha-screen cha-chat" aria-label="Chat area">
       <div className="cha-transcript">
         <div className="cha-chat-welcome">
-          <span className="cha-chat-kicker">Welcome</span>
+          <span className="cha-chat-kicker">{state.activeConversationLabel ?? 'Chat'}</span>
           <p>Your conversation will appear here.</p>
         </div>
       </div>
+      {state.streamLost && (
+        // Stage 4 replaces this with the recovery ladder. Until then, say that
+        // the view has stopped following the session rather than let it look
+        // live while it silently is not.
+        <p className="cha-state-message cha-error-message" role="alert">
+          Live updates have stopped. Reload the page to reconnect.
+        </p>
+      )}
       <form className="cha-composer" onSubmit={(event) => event.preventDefault()}>
         <button
           aria-label="Choose target character"
@@ -255,6 +263,10 @@ export function SessionsScreen({
   const [requestVersion, setRequestVersion] = useState(0);
   const forumId = state.currentForumId;
   const { pending: sessionPending, failure: sessionFailure } = sessionOperationState(state);
+  // The forum bootstrap starts in is the built-in one, whose single session the
+  // server synthesizes; it stores no forum of its own, so a create there fails
+  // as not-found. Offering the action would only produce that error.
+  const canCreateSessions = forumId !== state.bootstrap?.initial_forum_id;
 
   useEffect(() => {
     if (!forumId) return;
@@ -302,19 +314,20 @@ export function SessionsScreen({
       )}
       {forumId && sessions && (
         <div className="cha-list">
-          <button
-            className="cha-list-action"
-            disabled={sessionPending}
-            onClick={() => dispatch({ type: 'show-new-session' })}
-            type="button"
-          >
-            <span className="cha-list-icon"><PlusIcon /></span>
-            <span className="cha-list-copy">
-              <span className="cha-primary-line">New session</span>
-              <span className="cha-secondary-line">Enter a name to begin</span>
-            </span>
-            <ChevronRightIcon className="cha-chevron" />
-          </button>
+          {canCreateSessions && (
+            <button
+              className="cha-list-action"
+              onClick={() => dispatch({ type: 'show-new-session' })}
+              type="button"
+            >
+              <span className="cha-list-icon"><PlusIcon /></span>
+              <span className="cha-list-copy">
+                <span className="cha-primary-line">New session</span>
+                <span className="cha-secondary-line">Enter a name to begin</span>
+              </span>
+              <ChevronRightIcon className="cha-chevron" />
+            </button>
+          )}
           {sessions.map((session) => {
             const active = state.activeConversation?.forumId === forumId
               && state.activeConversation.sessionId === session.id;
@@ -322,7 +335,6 @@ export function SessionsScreen({
               <button
                 aria-current={active ? 'page' : undefined}
                 className={`cha-list-action ${active ? 'is-current' : ''}`}
-                disabled={sessionPending}
                 key={session.id}
                 onClick={() => void onOpenSession(forumId, session.id)}
                 type="button"
@@ -366,7 +378,6 @@ export function NewSessionScreen({
     <section className="cha-screen cha-navigation" aria-label="New session navigation">
       <button
         className="cha-back-row"
-        disabled={sessionPending}
         onClick={() => dispatch({ type: 'show-sessions' })}
         type="button"
       >
@@ -390,7 +401,6 @@ export function NewSessionScreen({
         <div className="cha-new-session-actions">
           <button
             className="cha-button cha-button-ghost"
-            disabled={sessionPending}
             onClick={() => dispatch({ type: 'show-sessions' })}
             type="button"
           >

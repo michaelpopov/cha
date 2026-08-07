@@ -96,7 +96,14 @@ int reserve_loopback_port() {
 WebServerProcess::WebServerProcess(
     const std::filesystem::path& workspace,
     int port)
+    : WebServerProcess(workspace, workspace, port) {}
+
+WebServerProcess::WebServerProcess(
+    const std::filesystem::path& application_root,
+    const std::filesystem::path& workspace,
+    int port)
     : port_(port) {
+    const std::string root_text = application_root.string();
     const std::string workspace_text = workspace.string();
     const std::string port_text = std::to_string(port);
     int output_pipe[2]{-1, -1};
@@ -140,7 +147,7 @@ WebServerProcess::WebServerProcess(
             CHA_WEB_BINARY,
             CHA_WEB_BINARY,
             "--root",
-            workspace_text.c_str(),
+            root_text.c_str(),
             "--workspace",
             workspace_text.c_str(),
             "--host",

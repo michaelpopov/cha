@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Bootstrap } from '../api/client';
+import type { SessionEventHandlers } from '../api/events';
 import {
   bootstrapFixture,
   fixtureClient,
@@ -23,6 +24,18 @@ function lobbySnapshot(sessionId = 'planning', sessionLabel = 'Planning') {
 
 function inertSessionEvents() {
   return { close: vi.fn() };
+}
+
+// Hands back the handlers so a test can drive the stream the application owns.
+function drivableSessionEvents() {
+  const handlers: SessionEventHandlers[] = [];
+  return {
+    handlers,
+    connect(_forumId: string, _sessionId: string, given: SessionEventHandlers) {
+      handlers.push(given);
+      return { close: vi.fn() };
+    },
+  };
 }
 
 function recordingSessionEvents() {
@@ -384,6 +397,34 @@ it('leaves the successor stream attached when a superseded open finishes late', 
   expect(events.connections[1].close).not.toHaveBeenCalled();
 });
 
+it('lets the sidebar navigate during an open, and that open never pulls the user back', async () => {
+  const held = deferred();
+  const events = recordingSessionEvents();
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => {
+    await held.promise;
+    return { forum_id: forumId, session_id: sessionId };
+  });
+  render(
+    <App client={storedPlanningClient({ openSession })} connectSessionEvents={events.connect} />,
+  );
+  await openPlanningFromTheLobby();
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Opening session'));
+
+  const personas = screen.getByRole('button', { name: 'Personas' });
+  expect(personas).toBeEnabled();
+  fireEvent.click(personas);
+  expect(screen.getByRole('heading', { name: 'Personas' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('radio', { name: /Reader/ }));
+
+  held.settle();
+  await waitFor(() => expect(openSession).toHaveResolved());
+
+  expect(screen.getByRole('heading', { name: 'Personas' })).toBeInTheDocument();
+  expect(screen.queryByLabelText('Current chat context')).not.toBeInTheDocument();
+  expect(events.connections).toHaveLength(0);
+  expect(window.location.pathname).toBe('/');
+});
+
 it('reports a failed create on the New session screen and keeps the typed name', async () => {
   const user = userEvent.setup();
   const client = fixtureClient({
@@ -413,6 +454,46 @@ it('reports a failed open on the sessions list without discarding it', async () 
   expect(await screen.findByRole('alert')).toHaveTextContent('already open elsewhere');
   expect(sessionRow(/^Planning/)).toBeEnabled();
   expect(window.location.pathname).toBe('/');
+});
+
+it('offers New session for a stored forum but not for the built-in one', async () => {
+  render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  expect(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }))
+    .toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'EntranceAssistant' }));
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument());
+  expect(screen.queryByRole('button', { name: /New session/ })).not.toBeInTheDocument();
+});
+
+it('says the view has stopped following the session when its stream fails', async () => {
+  const events = drivableSessionEvents();
+  render(<App client={storedPlanningClient()} connectSessionEvents={events.connect} />);
+  await openPlanningFromTheLobby();
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('The Lobby'));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+  act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+
+  expect(screen.getByRole('alert')).toHaveTextContent('Live updates have stopped');
+  // The transcript it already has stays on screen rather than going blank.
+  expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
+});
+
+it('names the open session in the transcript placeholder', async () => {
+  render(<App client={storedPlanningClient()} connectSessionEvents={inertSessionEvents} />);
+  const chat = await screen.findByLabelText('Chat area');
+  expect(within(chat).getByText('Welcome')).toBeInTheDocument();
+
+  await openPlanningFromTheLobby();
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('The Lobby'));
+  expect(within(screen.getByLabelText('Chat area')).getByText('Planning')).toBeInTheDocument();
 });
 
 it('shows a clear incompatible-response state instead of a blank screen', async () => {

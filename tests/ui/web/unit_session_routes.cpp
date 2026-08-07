@@ -491,6 +491,14 @@ TEST(SessionRoutes, ServesTheShellForANonLiveSessionAndRejectsInvalidBodiesBefor
     ASSERT_TRUE(page);
     EXPECT_EQ(page->status, 200);
     EXPECT_NE(page->body.find("test shell"), std::string::npos);
+    // The deep link is the same shell as '/', so it must carry the same policy
+    // and caching. Asserting it here is what keeps the two from drifting.
+    EXPECT_EQ(page->get_header_value("Cache-Control"), "no-cache");
+    EXPECT_EQ(
+        page->get_header_value("Content-Security-Policy"),
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
     expect_error(server.client().Get("/s/lobby/missing/api/v1/session"), 409, "session_not_live");
     expect_error(server.client().Get("/s/%2e%2e/missing/api/v1/session"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing%23fragment/api/v1/session"), 404, "not_found");

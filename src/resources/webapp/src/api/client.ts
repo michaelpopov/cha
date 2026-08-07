@@ -43,6 +43,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// A snapshot arrives two ways, over this request and over the event stream, and
+// both are parsed JSON that the generated types only describe at compile time.
+// The check lives here so neither route trusts a shape the other would reject.
+export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
+  return isRecord(value)
+    && isRecord(value.forum)
+    && typeof value.session_id === 'string'
+    && typeof value.session_label === 'string'
+    && Array.isArray(value.characters)
+    && typeof value.default_character_id === 'string'
+    && Array.isArray(value.transcript)
+    && isRecord(value.generation)
+    && typeof value.lifecycle === 'string';
+}
+
 function errorFrom(status: number, payload: unknown): ChaError {
   if (isRecord(payload) && isRecord(payload.error)) {
     const { code, message } = payload.error;
@@ -130,10 +145,16 @@ export function createChaClient(
       jsonMutation({}),
     ),
 
-    getSessionSnapshot: (forumId, sessionId) => requestJson<SessionSnapshot>(
-      fetcher,
-      sessionApiUrl(forumId, sessionId, 'session'),
-    ),
+    getSessionSnapshot: async (forumId, sessionId) => {
+      const snapshot = await requestJson<unknown>(
+        fetcher,
+        sessionApiUrl(forumId, sessionId, 'session'),
+      );
+      if (!isSessionSnapshot(snapshot)) {
+        throw new TypeError('CHA returned an incompatible session snapshot.');
+      }
+      return snapshot;
+    },
 
     submitInput: (forumId, sessionId, input) => requestJson<CommandResult>(
       fetcher,

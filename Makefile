@@ -1,4 +1,4 @@
-.PHONY: build build-web web-check web-stage web-e2e test itest run run-console run-web clean-san
+.PHONY: build build-web web-check web-stage web-e2e test itest run run-console run-web run-web-dev clean-san
 
 build:
 	cmake --preset ninja
@@ -31,6 +31,14 @@ run-console: build
 
 run-web: build-web web-stage
 	./bin/start-cha.sh
+
+# The API server behind 'npm run dev'. It listens on the port the Vite proxy
+# targets, which is not the port the staged loop above uses; see
+# src/resources/webapp/README.md. Browse the shell at 127.0.0.1:5173, not here.
+# It stages only because chaweb refuses to start without a web/index.html; the
+# editable loop serves its shell from Vite and never reads the staged one.
+run-web-dev: build-web web-stage
+	./build/ninja/chaweb --root bin --workspace workspace --host 127.0.0.1 --port 8080
 
 clean-san:
 	rm -rf build/console-asan-ubsan build/console-tsan
