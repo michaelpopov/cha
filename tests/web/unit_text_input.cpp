@@ -1,4 +1,4 @@
-#include "agents/completion_backend.h"
+#include "agents/model_backend.h"
 #include "session/session_controller.h"
 #include "web/text_input.h"
 #include "session/session_database.h"
@@ -65,7 +65,7 @@ CharacterDefinition definition(
             .id = std::move(id),
             .display_name = std::move(name),
         },
-        .completion = {
+        .backend = {
             .host = "127.0.0.1",
             .port = 8080,
         },
@@ -78,23 +78,23 @@ std::vector<TranscriptEntry> copy_entries(TranscriptView transcript) {
     return {entries.begin(), entries.end()};
 }
 
-class BlockingBackend final : public CompletionBackend {
+class BlockingBackend final : public ModelBackend {
 public:
-    RequestPayload prepare(const CompletionInput& input) override {
+    RequestPayload prepare(const GenerationRequest& input) override {
         return {.bytes = input.run.prompt_text};
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink&,
+        const GenerationDeltaSink&,
         const std::atomic_bool& cancellation) override {
         while (!cancellation.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
-        return {CompletionOutcome::cancelled, {}};
+        return {GenerationOutcome::cancelled, {}};
     }
 
-    CompletionBackendInfo info() const override {
+    ModelBackendInfo info() const override {
         return {
             .character = {
                 .id = id_,

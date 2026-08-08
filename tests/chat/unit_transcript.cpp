@@ -1,4 +1,4 @@
-#include "agents/completion_context.h"
+#include "agents/model_context.h"
 #include "chat/transcript.h"
 #include "session/session_database.h"
 #include "support/test_session_database.h"
@@ -218,7 +218,7 @@ TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
         3, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1));
     EXPECT_TRUE(transcript.extend_offrecord(4));
 
-    const OffrecordSpan closed_span = transcript.completion_history().offrecord_span;
+    const OffrecordSpan closed_span = transcript.model_history().offrecord_span;
     EXPECT_EQ(closed_span, (OffrecordSpan{.begin = 1, .end = 4}));
     EXPECT_TRUE(closed_span.contains(1));
     EXPECT_TRUE(closed_span.contains(3));
@@ -234,10 +234,10 @@ TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
         }));
 
     EXPECT_TRUE(transcript.restore_offrecord(5));
-    EXPECT_EQ(transcript.completion_history().offrecord_span, OffrecordSpan{});
+    EXPECT_EQ(transcript.model_history().offrecord_span, OffrecordSpan{});
     EXPECT_EQ(transcript.view().entries.back(), make_hide_off_marker(5));
     transcript.clear();
-    EXPECT_EQ(transcript.completion_history().offrecord_span, OffrecordSpan{});
+    EXPECT_EQ(transcript.model_history().offrecord_span, OffrecordSpan{});
 }
 
 TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) {
@@ -250,7 +250,7 @@ TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) 
     EXPECT_EQ(opened.revision, before.revision + 1);
     EXPECT_EQ(opened.history_epoch, before.history_epoch);
     EXPECT_EQ(
-        transcript.completion_history().offrecord_span,
+        transcript.model_history().offrecord_span,
         (OffrecordSpan{.begin = 3, .end = std::nullopt}));
 
     transcript.add_entry(human(6, "Hidden", 2));
@@ -260,7 +260,7 @@ TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) 
     EXPECT_EQ(closed.revision, before_extend.revision + 1);
     EXPECT_EQ(closed.history_epoch, before_extend.history_epoch);
     EXPECT_EQ(
-        transcript.completion_history().offrecord_span,
+        transcript.model_history().offrecord_span,
         (OffrecordSpan{.begin = 3, .end = 7}));
 
     EXPECT_TRUE(transcript.restore_offrecord(12));
@@ -274,22 +274,22 @@ TEST(Transcript, ReplacingEntriesDropsTheOffrecordSpan) {
     EXPECT_TRUE(transcript.open_offrecord(1));
     transcript.add_entry(human(2, "Hidden", 1));
     EXPECT_TRUE(transcript.extend_offrecord(3));
-    ASSERT_NE(transcript.completion_history().offrecord_span, OffrecordSpan{});
+    ASSERT_NE(transcript.model_history().offrecord_span, OffrecordSpan{});
 
     transcript.replace_entries({human(20, "Restored", 2)});
 
-    EXPECT_EQ(transcript.completion_history().offrecord_span, OffrecordSpan{});
+    EXPECT_EQ(transcript.model_history().offrecord_span, OffrecordSpan{});
     expect_entries(
         transcript.view().entries,
         (std::vector<TranscriptEntry>{human(20, "Restored", 2)}));
 }
 
-TEST(Transcript, CompletionHistoryOwnsOneAtomicModelContextSnapshot) {
+TEST(Transcript, ModelHistoryOwnsOneAtomicModelContextSnapshot) {
     Transcript transcript;
     transcript.add_entry(human(1, "Question", 1));
     transcript.begin_entry(make_character_entry(
         2, "reviewer-id", "Reviewer", {}, EntryStatus::streaming, 1));
-    const CompletionHistory history = transcript.completion_history();
+    const ModelHistory history = transcript.model_history();
 
     transcript.append_answer(2, "Live mutation");
 
@@ -299,13 +299,13 @@ TEST(Transcript, CompletionHistoryOwnsOneAtomicModelContextSnapshot) {
     EXPECT_EQ(history.offrecord_span, OffrecordSpan{});
 }
 
-TEST(Transcript, CompletionHistoryIncludesOffrecordProjectionState) {
+TEST(Transcript, ModelHistoryIncludesOffrecordProjectionState) {
     Transcript transcript;
     EXPECT_TRUE(transcript.open_offrecord(1));
     transcript.add_entry(human(2, "Hidden", 2));
     EXPECT_TRUE(transcript.extend_offrecord(3));
 
-    const CompletionHistory history = transcript.completion_history();
+    const ModelHistory history = transcript.model_history();
 
     EXPECT_EQ(
         history.offrecord_span,
@@ -345,12 +345,12 @@ TEST(TranscriptValidation, IsEnforcedByMemoryAndDatabase) {
     journal->start_turn(1, prompt);
     EXPECT_THROW(journal->fail_turn(1, invalid), std::invalid_argument);
 
-    const TranscriptEntry empty_completion = make_character_entry(
+    const TranscriptEntry empty_response = make_character_entry(
         2, "reviewer-id", "Reviewer", std::string{}, EntryStatus::complete, 1);
-    EXPECT_THROW(validate_transcript_entry(empty_completion), std::invalid_argument);
-    EXPECT_THROW(transcript.add_entry(empty_completion), std::invalid_argument);
+    EXPECT_THROW(validate_transcript_entry(empty_response), std::invalid_argument);
+    EXPECT_THROW(transcript.add_entry(empty_response), std::invalid_argument);
     EXPECT_THROW(
-        journal->complete_turn(1, empty_completion),
+        journal->complete_turn(1, empty_response),
         std::runtime_error);
     EXPECT_EQ(
         load_transcript_entries(path),
@@ -798,21 +798,21 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostACharacter) {
     EXPECT_EQ(restored.entries[1].display_name, "Cheburashka");
 
     EXPECT_EQ(
-        project_completion_context(
+        project_model_context(
             restored.entries,
             std::nullopt,
             {},
             "Ismael system",
             "ismael"),
-        (std::vector<CompletionMessage>{
-            {CompletionRole::system, "Ismael system"},
-            {CompletionRole::persona,
+        (std::vector<ModelMessage>{
+            {ModelRole::system, "Ismael system"},
+            {ModelRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"Who are you?"})"
              "\n"
              R"({"kind":"character","speaker":"Cheburashka","text":"I am Cheburashka."})"},
-            {CompletionRole::persona, "from You:\nAnd you?"},
-            {CompletionRole::assistant, "Call me Ismael."},
+            {ModelRole::persona, "from You:\nAnd you?"},
+            {ModelRole::assistant, "Call me Ismael."},
         }));
     std::filesystem::remove(path);
 }

@@ -1,4 +1,4 @@
-#include "agents/completion_context.h"
+#include "agents/model_context.h"
 
 #include "util/json_serialization.h"
 
@@ -24,7 +24,7 @@ std::string encode_shared_entry(const TranscriptEntry& entry) {
         encoded["speaker"] = entry.display_name;
         encoded["text"] = entry.text;
     }
-    return dump_json(encoded, "Completion request");
+    return dump_json(encoded, "Model request");
 }
 
 std::string prefixed_human_message(
@@ -35,15 +35,15 @@ std::string prefixed_human_message(
 
 } // namespace
 
-std::vector<CompletionMessage> project_completion_context(
+std::vector<ModelMessage> project_model_context(
     std::span<const TranscriptEntry> entries,
     std::optional<EntryId> open_entry_id,
     OffrecordSpan offrecord_span,
     std::string_view system_prompt,
     std::string_view character_id) {
-    std::vector<CompletionMessage> messages;
+    std::vector<ModelMessage> messages;
     if (!system_prompt.empty()) {
-        messages.push_back({CompletionRole::system, std::string(system_prompt)});
+        messages.push_back({ModelRole::system, std::string(system_prompt)});
     }
 
     std::unordered_set<RequestId> failed_requests;
@@ -74,7 +74,7 @@ std::vector<CompletionMessage> project_completion_context(
         if (shared) {
             if (!shared_history_open) {
                 messages.push_back({
-                    CompletionRole::persona,
+                    ModelRole::persona,
                     std::string(shared_history_heading) + "\n",
                 });
                 shared_history_open = true;
@@ -88,30 +88,30 @@ std::vector<CompletionMessage> project_completion_context(
         shared_history_open = false;
         if (entry.kind == EntryKind::human) {
             messages.push_back({
-                CompletionRole::persona,
+                ModelRole::persona,
                 prefixed_human_message(entry.display_name, entry.text),
             });
         } else {
-            messages.push_back({CompletionRole::assistant, entry.text});
+            messages.push_back({ModelRole::assistant, entry.text});
         }
     }
     return messages;
 }
 
-std::vector<CompletionMessage> project_completion_context(
-    const CompletionInput& input,
+std::vector<ModelMessage> project_model_context(
+    const GenerationRequest& input,
     std::string_view system_prompt) {
     if (!input.history) {
-        throw std::invalid_argument("Completion input requires history");
+        throw std::invalid_argument("Generation request requires history");
     }
-    std::vector<CompletionMessage> messages = project_completion_context(
+    std::vector<ModelMessage> messages = project_model_context(
         input.history->entries,
         input.history->open_entry_id,
         input.history->offrecord_span,
         system_prompt,
         input.run.target.id);
     messages.push_back({
-        CompletionRole::persona,
+        ModelRole::persona,
         prefixed_human_message(input.run.author.display_name, input.run.prompt_text),
     });
     return messages;

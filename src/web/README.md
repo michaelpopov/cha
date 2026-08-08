@@ -66,7 +66,7 @@ resulting `OpenedSession` into owner-thread-only state; that opener exists
 because session construction combines application-owned model and repository
 data, and it always returns the production-shaped result with a concrete
 controller. HTTP-facing callers get only owning command results; the owner
-thread alone reaches a controller and continues draining completion notifications
+thread alone reaches a controller and continues draining generation notifications
 without a browser connection. It builds every full snapshot on demand: it
 borrows a `ControllerView` and passes it straight to `to_snapshot()`, which
 copies the descriptor, the view, and web presentation state into an owning
@@ -95,7 +95,7 @@ commit race: `Running` is never published and teardown proceeds straight to
 manager only sets the stop-request flag and wakes waiters, so an open timeout
 is a waiter outcome that never cancels a shared startup. `Finished` is
 published last, after the final drain, mailbox close, queued-command
-completion, controller shutdown, controller destruction, and lease release —
+replies, controller shutdown, controller destruction, and lease release —
 which is what lets a same-identity actor start immediately afterwards.
 
 For each update the owner thread applies the notice, then publishes a full
@@ -185,7 +185,7 @@ on expiry, then joins cpp-httplib's listener/request pool. A wedged owner is
 never joined: `std::thread` and explicit join points are retained precisely
 because a `std::jthread` destructor could hide an unbounded join after that
 grace period, and a stop token cannot interrupt SQLite, filesystem calls, or a
-completion backend. Keeping that ordering in the coordinator makes the forced
+model backend. Keeping that ordering in the coordinator makes the forced
 path directly testable and prevents a stuck HTTP worker from suppressing it.
 `ProcessShutdownSignal` is the portable signal bridge; its handler only records
 `sig_atomic_t` state and normal code performs the shutdown work.

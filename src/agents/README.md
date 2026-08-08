@@ -1,27 +1,27 @@
-# Completion runtime
+# Generation runtime
 
-`agents/` owns completion execution for configured characters: loading a character,
-projecting the transcript into model context, running completions as
+`agents/` owns generation execution for configured characters: loading a character,
+projecting the transcript into model context, running generations as
 batch-owned pool tasks, and speaking the provider's HTTP protocol. The ordered
 characters in a forum and `@handle` resolution belong to `session/`.
 
 It is the only layer that talks to a model server, and the only one that owns
-completion pool tasks.
+generation pool tasks.
 
 ## Contents
 
 | Source | Responsibility |
 | --- | --- |
-| `character_config.*` | Private `CompletionConfig` and `LoadedCharacterConfig` values assembled from TOML overlays with field validation. |
+| `character_config.*` | Private `ModelBackendConfig` and `LoadedCharacterConfig` values assembled from TOML overlays with field validation. |
 | `character.*` | Effective `CharacterDefinition` loading, identity validation, template expansion, and standard prompt assembly. |
-| `completion_context.*` | Immutable run input and projection from transcript entries to model-visible messages. |
-| `completion_event.h` | Semantic output deltas and request-correlated progress and terminal events. |
-| `completion_executor.*` | Backend ownership, runtime metadata validation, target resolution, and failure-atomic staging of a new batch. |
-| `completion_batch.*` | One in-flight operation: its execution slots, shared start gate, foreground position, cancellation, event queues, and wait state. |
-| `completion_backend.h` | The `CompletionBackend` seam, discovery-safe runtime diagnostics, and prepared-request/result types. |
-| `completion_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
+| `model_context.*` | Immutable run input and projection from transcript entries to model-visible messages. |
+| `generation_event.h` | Semantic output deltas and request-correlated progress and terminal events. |
+| `generation_executor.*` | Backend ownership, runtime metadata validation, target resolution, and failure-atomic staging of a new batch. |
+| `generation_batch.*` | One in-flight operation: its execution slots, shared start gate, foreground position, cancellation, event queues, and wait state. |
+| `model_backend.h` | The `ModelBackend` seam, discovery-safe runtime diagnostics, and prepared-request/result types. |
+| `provider_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
 
-## From character directory to running completion backend
+## From character directory to running model backend
 
 ```mermaid
 flowchart LR
@@ -41,18 +41,18 @@ flowchart LR
     definition_cfg --> load
     base --> load
     member_cfg --> load
-    load --> conf["CharacterMetadata + CompletionConfig + TemplateScope"]
+    load --> conf["CharacterMetadata + ModelBackendConfig + TemplateScope"]
     conf --> expand["expand_template_file<br/>CHARACTER.md and FORUM.md"]
     definition_prompt --> expand
     member_prompt --> expand
     usr --> expand
     shared --> expand
-    expand --> def["CharacterDefinition<br/>metadata + completion config + effective system prompt"]
+    expand --> def["CharacterDefinition<br/>metadata + backend config + effective system prompt"]
     conf --> def
     roster --> def
-    def -->|"one per character"| client["CompletionClient"]
-    client --> executor["CompletionExecutor"]
-    client -->|"info"| runtime["CompletionBackendInfo"]
+    def -->|"one per character"| client["ProviderClient"]
+    client --> executor["GenerationExecutor"]
+    client -->|"info"| runtime["ModelBackendInfo"]
     runtime --> executor
     runtime -->|"identity only"| characters["session/ForumCharacters"]
 ```
@@ -103,7 +103,7 @@ Workspace construction rejects persona/character ID collisions and
 case-insensitive display-name collisions across all definitions. Tags organize
 definitions only; they never imply membership in a forum.
 
-`CompletionExecutor` validates these rules when it accepts backend metadata.
+`GenerationExecutor` validates these rules when it accepts backend metadata.
 `ForumCharacters` in `session/` separately owns the ordered identity-only view used
 for lookup and handle resolution.
 
@@ -116,13 +116,13 @@ field and unprefixed text.
 ## Execution: staged pool tasks and foreground routing
 
 This split exists so slow providers never block the UI, and so that two
-different lifetimes stay in two different types. `CompletionExecutor` lives as
+different lifetimes stay in two different types. `GenerationExecutor` lives as
 long as the session: it owns one backend per forum character and borrows the
-session's fixed-size `ThreadPool`. `CompletionBatch` lives as long as one
+session's fixed-size `ThreadPool`. `GenerationBatch` lives as long as one
 submitted operation: it owns that operation's ordered execution slots, their
 shared start gate, the foreground position, and cancellation state.
 
-Each slot owns the one `CompletionInput` its backend uses — including its
+Each slot owns the one `GenerationRequest` its backend uses — including its
 `RunSpec` — plus its own cancellation flag and event queue. The queue buffers
 deltas and reserves separate storage for one final event supplied when it closes.
 
@@ -130,15 +130,15 @@ deltas and reserves separate storage for one final event supplied when it closes
 sequenceDiagram
     autonumber
     participant M as Session owner thread
-    participant X as CompletionExecutor
-    participant C as CompletionBatch
+    participant X as GenerationExecutor
+    participant C as GenerationBatch
     participant P as ThreadPool
     participant W as Pool workers
     participant B as Backends
 
-    M->>X: stage_batch(CompletionInput[])
+    M->>X: stage_batch(GenerationRequest[])
     X->>P: submit one gated task per child
-    X-->>M: CompletionBatch by value; slots follow input order
+    X-->>M: GenerationBatch by value; slots follow input order
     M->>C: open after the foreground turn is durable
     par available workers
         P->>W: run child 0
@@ -158,7 +158,7 @@ Rules that fall out of this design:
   operation, while a multicast may target several distinct backends at once.
 - **One batch object.** The batch *is* the operation; there is no registry of
   batches, no batch ID, and no current-batch record in the executor. The
-  controller's `optional<CompletionBatch>` is what makes at most one live.
+  controller's `optional<GenerationBatch>` is what makes at most one live.
 - **Backend exclusivity.** One live batch and distinct validated targets ensure
   a backend is never called concurrently with itself.
 - **Failure-atomic staging.** Target resolution, slot construction, and task
@@ -167,7 +167,7 @@ Rules that fall out of this design:
   returns no batch.
 - **One start decision.** Opening or cancelling the shared gate is idempotent;
   the first transition wins. Queued tasks observe an already-open or cancelled
-  gate when they receive a worker; cancellation produces `CompletionCancelled`
+  gate when they receive a worker; cancellation produces `GenerationCancelled`
   without calling the backend.
 - **Foreground-only consumption.** `foreground_run()` and
   `try_receive_foreground()` read the same slot, so no caller passes an index
@@ -195,7 +195,7 @@ Rules that fall out of this design:
   result-spooling machinery; simplicity is preferred over crash durability for
   this in-flight work.
 - **Exceptions become events.** Anything thrown on the worker is converted to
-  `CompletionFailed`, so an accepted request always has an observable outcome.
+  `GenerationFailed`, so an accepted request always has an observable outcome.
 - **Shutdown is ordered.** The controller cancels the batch and waits until no
   execution can reach a backend, drains the foreground terminal event while the
   queues are still alive, releases the batch, and only then stops and joins the
@@ -206,33 +206,33 @@ Rules that fall out of this design:
 
 ## The backend seam
 
-`CompletionBackend` is deliberately two-phase:
+`ModelBackend` is deliberately two-phase:
 
 | Step | Runs | Purpose |
 | --- | --- | --- |
-| `prepare(input)` | Completion worker | Project owned `CompletionHistory`, append the run prompt once, and build a `RequestPayload`. Must be fast and local. |
-| `perform(payload, sink, cancellation)` | Completion worker | One synchronous completion, streaming fragments to the sink. |
+| `prepare(input)` | Generation worker | Project owned `ModelHistory`, append the run prompt once, and build a `RequestPayload`. Must be fast and local. |
+| `perform(payload, sink, cancellation)` | Generation worker | One synchronous generation, streaming fragments to the sink. |
 | `info()` | Any time | Character identity and public runtime details for the executor. |
 
-The controller captures immutable completion history before activating a turn,
-so neither the completion runtime nor a backend reads the live transcript. Splitting
+The controller captures immutable model history before activating a turn,
+so neither the generation runtime nor a backend reads the live transcript. Splitting
 preparation from performance keeps request construction separate from slow
 provider I/O. Tests supply their own backend and never touch the network;
 `tests/support/test_backends.h` has the helpers.
 
 ## HTTP transport
 
-`CompletionClient` implements the seam for OpenAI-compatible servers.
+`ProviderClient` implements the seam for OpenAI-compatible servers.
 
 ```mermaid
 flowchart TD
-    prep["prepare"] --> proj["project_completion_context"]
+    prep["prepare"] --> proj["project_model_context"]
     proj --> body["JSON body: model, stream, messages,<br/>temperature and optional reasoning_effort"]
     body --> post["POST to /v1/chat/completions"]
     post --> mode{"streaming?"}
     mode -->|"yes"| sse["parse text/event-stream data lines"]
     mode -->|"no"| json["parse choices 0 message"]
-    sse --> frag["CompletionDelta:<br/>reasoning or answer"]
+    sse --> frag["GenerationDelta:<br/>reasoning or answer"]
     json --> frag
     sse --> done{"DONE marker seen?"}
     done -->|"no"| perr["protocol_error"]
@@ -266,7 +266,7 @@ Details worth knowing before changing this file:
 
 ## Context projection
 
-`project_completion_context()` decides what one character's backend sees of a shared chat transcript.
+`project_model_context()` decides what one character's backend sees of a shared chat transcript.
 It is pure, and it is tested directly.
 
 ```mermaid
@@ -296,7 +296,7 @@ never included.
 
 The predicate is a conjunction, so the off-record rule needs no ordering against
 the others. The span is passed in as one `OffrecordSpan` value taken from the
-same owned `CompletionHistory` as the entries, and it is global: every character
+same owned `ModelHistory` as the entries, and it is global: every character
 in the forum sees the same exclusion, so the shared history they quote stays
 consistent between them. Excluded turns are spliced out silently — no
 placeholder marks the gap, since a note saying material was withheld is itself
@@ -307,7 +307,7 @@ from its answer.
 
 ## Dependencies
 
-- **Depends on:** `chat/` for stable IDs, entries, and completion histories; `util/` for
+- **Depends on:** `chat/` for stable IDs, entries, and model histories; `util/` for
   text helpers, `ConcurrentQueue`, and `WakeNotifier`; nlohmann/json for shared-history and HTTP
   JSON; libcurl in the HTTP client; toml++ in the config loader.
 - **Must not depend on:** `session/` or `web/`. Workspace discovery
@@ -321,7 +321,7 @@ from its answer.
 | `tests/agents/unit_config_loader.cpp` | TOML fields, defaults, and rejection of malformed values. |
 | `tests/agents/unit_character_definition_loader.cpp` | Character and forum prompt expansion, composition, scopes, and load errors. |
 | `tests/session/unit_forum_characters.cpp` | Forum-character validation and every handle-resolution branch. |
-| `tests/agents/unit_completion_executor.cpp` | Backend construction and metadata validation, pool-width validation, target resolution, input validation, and failure-atomic submission. |
-| `tests/agents/unit_completion_batch.cpp` | Gate behavior, full-width fan-out, foreground routing and advancement rules, event buffering, cancellation, exactly-one terminal delivery, explicit waiting, and destructor cleanup. |
-| `tests/agents/unit_completion_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
-| `tests/agents/unit_completion_client.cpp` | Request bodies, SSE and JSON parsing, reasoning formats, and the error taxonomy, driven by `tests/support/mock_http_server.h`. |
+| `tests/agents/unit_generation_executor.cpp` | Backend construction and metadata validation, pool-width validation, target resolution, input validation, and failure-atomic submission. |
+| `tests/agents/unit_generation_batch.cpp` | Gate behavior, full-width fan-out, foreground routing and advancement rules, event buffering, cancellation, exactly-one terminal delivery, explicit waiting, and destructor cleanup. |
+| `tests/agents/unit_model_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
+| `tests/agents/unit_provider_client.cpp` | Request bodies, SSE and JSON parsing, reasoning formats, and the error taxonomy, driven by `tests/support/mock_http_server.h`. |

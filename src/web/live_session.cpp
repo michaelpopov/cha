@@ -126,7 +126,7 @@ LiveSession::~LiveSession() {
 CommandSubmitResult LiveSession::submit(
     WebCommand command,
     std::chrono::milliseconds deadline) {
-    auto completion = std::make_shared<CommandCompletion>();
+    auto reply = std::make_shared<CommandReply>();
     bool wake_owner = false;
     std::optional<ErrorCode> rejection;
     {
@@ -137,7 +137,7 @@ CommandSubmitResult LiveSession::submit(
                 : ErrorCode::session_not_live;
         } else {
             const CommandEnqueueResult enqueued =
-                commands_.try_push({std::move(command), completion});
+                commands_.try_push({std::move(command), reply});
             if (!enqueued.accepted) {
                 rejection = ErrorCode::command_queue_full;
             } else {
@@ -147,7 +147,7 @@ CommandSubmitResult LiveSession::submit(
     }
     if (rejection) return *rejection;
     if (wake_owner) notifier_->wake();
-    if (auto result = completion->wait_for(deadline)) return std::move(*result);
+    if (auto result = reply->wait_for(deadline)) return std::move(*result);
     log_event("command_deadline_expired");
     return ErrorCode::command_timeout;
 }
@@ -393,14 +393,14 @@ void LiveSession::owner_loop() {
 
 void LiveSession::execute(OwnerCommand command) {
     if (std::holds_alternative<SnapshotCommand>(command.command)) {
-        (void)command.completion->complete(make_snapshot());
+        (void)command.reply->complete(make_snapshot());
         return;
     }
     if (std::holds_alternative<SseConnectCommand>(command.command)) {
         const auto connection_id = browser_connection_.accept();
         if (!connection_id) {
             log_event("sse_conflict");
-            (void)command.completion->complete(ErrorCode::browser_stream_in_use);
+            (void)command.reply->complete(ErrorCode::browser_stream_in_use);
             return;
         }
         // The snapshot sent on connect establishes the mailbox's append base
@@ -408,7 +408,7 @@ void LiveSession::execute(OwnerCommand command) {
         // relative to what this browser actually received.
         const SseMailbox::Stream stream =
             mailbox_->begin_stream({make_snapshot()});
-        if (!command.completion->complete(SseConnectResult{
+        if (!command.reply->complete(SseConnectResult{
                 mailbox_, stream, *connection_id})) {
             // Mutations retain their unknown outcome after a timeout, but an
             // unclaimed connect must not retain its exclusive slot.
@@ -444,7 +444,7 @@ void LiveSession::execute(OwnerCommand command) {
     publish_update(std::move(outcome.session.state), presentation_changed);
     const bool close_session =
         outcome.session.session_ended || outcome.close_session;
-    (void)command.completion->complete(std::move(outcome));
+    (void)command.reply->complete(std::move(outcome));
     if (close_session) {
         (void)mark_stopping(ShutdownReason::browser_disconnected);
     }
@@ -602,13 +602,13 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
     // End presentation output immediately after its bounded final drain. Later
     // teardown work must not keep an SSE request alive.
     mailbox_->close();
-    // A queue/completion mutex failure may strand later waiters, but it must
+    // A queue/reply mutex failure may strand later waiters, but it must
     // not strand the controller, journal, workers, or session lease.
     (void)run_guarded([&] {
         while (auto work = commands_.try_pop()) {
             auto* command = std::get_if<OwnerCommand>(&*work);
             if (!command) continue;
-            (void)command->completion->complete(
+            (void)command->reply->complete(
                 reason == ShutdownReason::server_stopping
                     ? ErrorCode::server_stopping
                     : ErrorCode::session_not_live);

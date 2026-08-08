@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/completion_backend.h"
+#include "agents/model_backend.h"
 #include "chat/transcript.h"
 
 #include <atomic>
@@ -14,49 +14,49 @@
 namespace cha::test {
 
 // Records what reached the backend and answers with one scripted delta.
-class RecordingBackend final : public CompletionBackend {
+class RecordingBackend final : public ModelBackend {
 public:
     RecordingBackend(
         std::string id,
         std::string name,
         std::string answer,
-        CompletionResult result = {})
+        GenerationResult result = {})
         : id_(std::move(id)),
           name_(std::move(name)),
           answer_(std::move(answer)),
           result_(std::move(result)) {
     }
 
-    RequestPayload prepare(const CompletionInput& input) override {
+    RequestPayload prepare(const GenerationRequest& input) override {
         prepared.store(true, std::memory_order_release);
         received = input;
         return {.bytes = input.run.prompt_text};
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink& on_delta,
+        const GenerationDeltaSink& on_delta,
         const std::atomic_bool&) override {
         performed.store(true, std::memory_order_release);
         if (!answer_.empty()) {
-            on_delta({CompletionDeltaKind::answer, answer_});
+            on_delta({GenerationDeltaKind::answer, answer_});
         }
         return result_;
     }
 
-    CompletionBackendInfo info() const override {
-        return {{id_, name_}, "model", "test://completion", true};
+    ModelBackendInfo info() const override {
+        return {{id_, name_}, "model", "test://model", true};
     }
 
     std::atomic_bool prepared{};
     std::atomic_bool performed{};
-    CompletionInput received;
+    GenerationRequest received;
 
 private:
     std::string id_;
     std::string name_;
     std::string answer_;
-    CompletionResult result_;
+    GenerationResult result_;
 };
 
 // Counts how many executions are inside perform() at once, so a test can prove
@@ -66,20 +66,20 @@ struct BarrierState {
     std::atomic_bool release{};
 };
 
-class BarrierBackend final : public CompletionBackend {
+class BarrierBackend final : public ModelBackend {
 public:
     BarrierBackend(std::string id, std::string name, BarrierState& state)
         : id_(std::move(id)), name_(std::move(name)), state_(state) {
     }
 
-    RequestPayload prepare(const CompletionInput& input) override {
+    RequestPayload prepare(const GenerationRequest& input) override {
         prepared.store(true, std::memory_order_release);
         return {.bytes = input.run.prompt_text};
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink&,
+        const GenerationDeltaSink&,
         const std::atomic_bool& cancellation) override {
         state_.entered.fetch_add(1, std::memory_order_acq_rel);
         while (!state_.release.load(std::memory_order_acquire)
@@ -87,12 +87,12 @@ public:
             std::this_thread::yield();
         }
         return cancellation.load(std::memory_order_acquire)
-            ? CompletionResult{CompletionOutcome::cancelled, {}}
-            : CompletionResult{};
+            ? GenerationResult{GenerationOutcome::cancelled, {}}
+            : GenerationResult{};
     }
 
-    CompletionBackendInfo info() const override {
-        return {{id_, name_}, "model", "test://completion", true};
+    ModelBackendInfo info() const override {
+        return {{id_, name_}, "model", "test://model", true};
     }
 
     std::atomic_bool prepared{};
@@ -103,33 +103,33 @@ private:
     BarrierState& state_;
 };
 
-class ThrowingBackend final : public CompletionBackend {
+class ThrowingBackend final : public ModelBackend {
 public:
-    RequestPayload prepare(const CompletionInput&) override {
+    RequestPayload prepare(const GenerationRequest&) override {
         throw std::runtime_error("preparation failed");
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink&,
+        const GenerationDeltaSink&,
         const std::atomic_bool&) override {
         return {};
     }
 
-    CompletionBackendInfo info() const override {
-        return {{"one-id", "One"}, "model", "test://completion", true};
+    ModelBackendInfo info() const override {
+        return {{"one-id", "One"}, "model", "test://model", true};
     }
 };
 
-inline CompletionInput completion_request(
+inline GenerationRequest generation_request(
     const Transcript& transcript,
     RequestId id,
     std::string target,
     std::string name,
     std::string text = "Question") {
     return {
-        .history = std::make_shared<const CompletionHistory>(
-            transcript.completion_history()),
+        .history = std::make_shared<const ModelHistory>(
+            transcript.model_history()),
         .run = {
             .request_id = id,
             .target = {std::move(target), std::move(name)},

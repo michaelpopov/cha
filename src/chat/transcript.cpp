@@ -275,7 +275,7 @@ TranscriptView Transcript::view() const noexcept {
     return {entries_, revision_, open_entry_id_, history_epoch_};
 }
 
-CompletionHistory Transcript::completion_history() const {
+ModelHistory Transcript::model_history() const {
     return {
         .entries = entries_,
         .open_entry_id = open_entry_id_,

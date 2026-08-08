@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agents/character.h"
-#include "agents/completion_backend.h"
+#include "agents/model_backend.h"
 
 #include <atomic>
 
@@ -10,26 +10,26 @@
 
 namespace cha {
 
-// The CompletionBackend for OpenAI-compatible HTTP endpoints, configured from
+// The ModelBackend for OpenAI-compatible HTTP endpoints, configured from
 // one CharacterDefinition.
 // It projects the transcript into provider messages, performs the request over libcurl as either a
 // streaming or a single-response call, parses reasoning and answer content out of the provider
 // format, and discovers a model when the configuration names none. It owns one connection handle,
 // so a single client serves one request at a time.
-class CompletionClient final : public CompletionBackend {
+class ProviderClient final : public ModelBackend {
 public:
-    explicit CompletionClient(CharacterDefinition definition);
-    ~CompletionClient() override;
+    explicit ProviderClient(CharacterDefinition definition);
+    ~ProviderClient() override;
 
-    CompletionClient(const CompletionClient&) = delete;
-    CompletionClient& operator=(const CompletionClient&) = delete;
+    ProviderClient(const ProviderClient&) = delete;
+    ProviderClient& operator=(const ProviderClient&) = delete;
 
-    RequestPayload prepare(const CompletionInput& input) override;
-    CompletionResult perform(
+    RequestPayload prepare(const GenerationRequest& input) override;
+    GenerationResult perform(
         RequestPayload payload,
-        const CompletionDeltaSink& on_delta,
+        const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override;
-    CompletionBackendInfo info() const override;
+    ModelBackendInfo info() const override;
 
 private:
     class CurlEasyHandle;
@@ -40,7 +40,7 @@ private:
     std::string models_endpoint() const;
 
     CharacterMetadata character_;
-    CompletionConfig config_;
+    ModelBackendConfig config_;
     std::string api_key_;
     std::unique_ptr<CurlEasyHandle> curl_;
     std::string system_prompt_;

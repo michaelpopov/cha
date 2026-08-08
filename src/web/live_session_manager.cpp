@@ -296,7 +296,7 @@ LiveSessionManager::RetiredSessions LiveSessionManager::sweep_locked() {
 void LiveSessionManager::reap(RetiredSessions retired) {
     for (const LiveSessionHandle& session : retired) {
         session->join_finished();
-        // Completion is recorded after join so a wedged owner can never look
+        // Success is recorded after join so a wedged owner can never look
         // like a successfully reaped session. An external route handle may
         // still retain this actor; that is safe because its thread is joined
         // and every call now returns the not-live/stopping result.

@@ -39,7 +39,7 @@ model, and diagnostic logging remains available until their teardown finishes.
 | `web/` | HTTP/SSE transport, chat-input grammar, API DTOs, live-session registry, mailboxes, and lifecycle policy. |
 | `application/` | The immutable loaded workspace model, built-ins, and the one controller-opening operation. |
 | `session/` | Session storage, databases and leases, controller state, persistence, and character resolution. |
-| `agents/` | Character configuration, provider clients, completion context, execution, cancellation, and event delivery. |
+| `agents/` | Character configuration, provider clients, model context, generation execution, cancellation, and event delivery. |
 | `chat/` | Stable domain IDs plus presentation-neutral transcript records, validation, and live mutation. |
 | `util/` | Domain-neutral text, path, environment, logging, queue, and thread helpers. |
 | `../webapp/` | React browser application and its browser tests. |
@@ -56,7 +56,7 @@ provider event draining. HTTP threads communicate through `CommandQueue`; owner-
 is copied into protocol snapshots or append events and delivered through an
 `SseMailbox`.
 
-Each `SessionController` owns a fixed-width worker pool and a `CompletionExecutor`.
+Each `SessionController` owns a fixed-width worker pool and a `GenerationExecutor`.
 Provider work runs on those workers and publishes deltas plus exactly one final
 event. The owner thread applies events and persists turn transitions. A stored
 session lease remains owned until the controller and journal are destroyed.
@@ -100,7 +100,7 @@ The browser has Vitest checks and Playwright development/production flows under
 ## Detailed contracts
 
 - [Application layer](application/README.md)
-- [Completion execution](agents/README.md)
+- [Generation execution](agents/README.md)
 - [Sessions and persistence](session/README.md)
 - [Shared chat model](chat/README.md)
 - [Web frontend](web/README.md)

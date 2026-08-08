@@ -1,7 +1,7 @@
-#include "agents/completion_batch.h"
-#include "agents/completion_executor.h"
+#include "agents/generation_batch.h"
+#include "agents/generation_executor.h"
 #include "support/test_backends.h"
-#include "support/test_completions.h"
+#include "support/test_generations.h"
 #include "support/test_notifier.h"
 
 #include <gtest/gtest.h>
@@ -19,7 +19,7 @@ namespace cha {
 namespace {
 
 using namespace std::chrono_literals;
-using test::completion_request;
+using test::generation_request;
 using test::RecordingBackend;
 
 test::TestNotifier& notifier() {
@@ -27,63 +27,63 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
-CompletionEvent next_foreground_event(CompletionBatch& batch) {
+GenerationEvent next_foreground_event(GenerationBatch& batch) {
     const auto deadline = std::chrono::steady_clock::now() + 1s;
     while (std::chrono::steady_clock::now() < deadline) {
-        CompletionEvent event = CompletionCompleted{};
+        GenerationEvent event = GenerationCompleted{};
         if (batch.try_receive_foreground(event) == ChannelReadStatus::value) {
             return event;
         }
         std::this_thread::yield();
     }
-    throw std::runtime_error("Timed out waiting for completion event");
+    throw std::runtime_error("Timed out waiting for generation event");
 }
 
 // Stages, opens, and drains one single-target batch through the executor.
 void expect_one_completed_run(
-    CompletionExecutor& executor,
+    GenerationExecutor& executor,
     const Transcript& transcript,
     RequestId id,
     const std::string& target,
     const std::string& name) {
-    CompletionBatch batch =
-        executor.stage_batch({completion_request(transcript, id, target, name)});
+    GenerationBatch batch =
+        executor.stage_batch({generation_request(transcript, id, target, name)});
     batch.open();
     EXPECT_TRUE(
-        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<GenerationCompleted>(next_foreground_event(batch)));
 }
 
-TEST(CompletionExecutor, RejectsBorrowedPoolWhoseWidthDiffersFromBackendCount) {
+TEST(GenerationExecutor, RejectsBorrowedPoolWhoseWidthDiffersFromBackendCount) {
     ThreadPool pool(1);
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::make_unique<RecordingBackend>(
         "one-id", "One", "one"));
     backends.push_back(std::make_unique<RecordingBackend>(
         "two-id", "Two", "two"));
 
     EXPECT_THROW(
-        (void)CompletionExecutor(std::move(backends), notifier(), pool),
+        (void)GenerationExecutor(std::move(backends), notifier(), pool),
         std::invalid_argument);
 }
 
-TEST(CompletionExecutor, RejectsEmptyAndNullBackendConstruction) {
+TEST(GenerationExecutor, RejectsEmptyAndNullBackendConstruction) {
     ThreadPool pool(1);
     EXPECT_THROW(
-        (void)CompletionExecutor(
-            std::vector<std::unique_ptr<CompletionBackend>>{}, notifier(), pool),
+        (void)GenerationExecutor(
+            std::vector<std::unique_ptr<ModelBackend>>{}, notifier(), pool),
         std::invalid_argument);
 
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(nullptr);
     EXPECT_THROW(
-        (void)CompletionExecutor(std::move(backends), notifier(), pool),
+        (void)GenerationExecutor(std::move(backends), notifier(), pool),
         std::invalid_argument);
 }
 
-TEST(CompletionExecutor, RejectsInvalidBackendMetadataAtConstruction) {
+TEST(GenerationExecutor, RejectsInvalidBackendMetadataAtConstruction) {
     ThreadPool pool(1);
     EXPECT_THROW(
-        (void)CompletionExecutor(
+        (void)GenerationExecutor(
             test::one_backend(std::make_unique<RecordingBackend>(
                 "valid-id", " Invalid name", "answer")),
             notifier(),
@@ -91,57 +91,57 @@ TEST(CompletionExecutor, RejectsInvalidBackendMetadataAtConstruction) {
         std::invalid_argument);
 }
 
-TEST(CompletionExecutor, RejectsDuplicateBackendMetadataAtConstruction) {
+TEST(GenerationExecutor, RejectsDuplicateBackendMetadataAtConstruction) {
     ThreadPool pool(2);
-    std::vector<std::unique_ptr<CompletionBackend>> duplicate_ids;
+    std::vector<std::unique_ptr<ModelBackend>> duplicate_ids;
     duplicate_ids.push_back(
         std::make_unique<RecordingBackend>("one-id", "One", ""));
     duplicate_ids.push_back(
         std::make_unique<RecordingBackend>("one-id", "Two", ""));
     EXPECT_THROW(
-        (void)CompletionExecutor(std::move(duplicate_ids), notifier(), pool),
+        (void)GenerationExecutor(std::move(duplicate_ids), notifier(), pool),
         std::invalid_argument);
 
-    std::vector<std::unique_ptr<CompletionBackend>> duplicate_names;
+    std::vector<std::unique_ptr<ModelBackend>> duplicate_names;
     duplicate_names.push_back(
         std::make_unique<RecordingBackend>("one-id", "One", ""));
     duplicate_names.push_back(
         std::make_unique<RecordingBackend>("two-id", "ONE", ""));
     EXPECT_THROW(
-        (void)CompletionExecutor(std::move(duplicate_names), notifier(), pool),
+        (void)GenerationExecutor(std::move(duplicate_names), notifier(), pool),
         std::invalid_argument);
 }
 
-TEST(CompletionExecutor, ExposesPublicRuntimeInfoInBackendOrder) {
+TEST(GenerationExecutor, ExposesPublicRuntimeInfoInBackendOrder) {
     ThreadPool pool(2);
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::make_unique<RecordingBackend>("one-id", "One", ""));
     backends.push_back(std::make_unique<RecordingBackend>("two-id", "Two", ""));
-    CompletionExecutor executor(std::move(backends), notifier(), pool);
+    GenerationExecutor executor(std::move(backends), notifier(), pool);
 
-    const std::vector<CompletionBackendInfo>& info = executor.runtime_info();
+    const std::vector<ModelBackendInfo>& info = executor.runtime_info();
     ASSERT_EQ(info.size(), 2U);
     EXPECT_EQ(info[0].character.id, "one-id");
     EXPECT_EQ(info[1].character.id, "two-id");
-    EXPECT_EQ(info[0].api, "test://completion");
+    EXPECT_EQ(info[0].api, "test://model");
     pool.stop();
 }
 
-TEST(CompletionExecutor, IdentifiesCharacterWhoseDefinitionStartupFails) {
+TEST(GenerationExecutor, IdentifiesCharacterWhoseDefinitionStartupFails) {
     ThreadPool pool(1);
     CharacterDefinition definition{
         .character = {
             .id = "alpha-id",
             .display_name = "Alpha",
         },
-        .completion = {
+        .backend = {
             .api_key_env = "__CHA_TEST_MISSING_AGENT_KEY__",
         },
         .system_prompt = "Prompt",
     };
 
     try {
-        (void)CompletionExecutor(
+        (void)GenerationExecutor(
             std::vector<CharacterDefinition>{std::move(definition)},
             notifier(),
             pool);
@@ -153,10 +153,10 @@ TEST(CompletionExecutor, IdentifiesCharacterWhoseDefinitionStartupFails) {
     }
 }
 
-TEST(CompletionExecutor, RejectsEmptyBatchAndMissingHistory) {
+TEST(GenerationExecutor, RejectsEmptyBatchAndMissingHistory) {
     Transcript transcript;
     ThreadPool pool(1);
-    CompletionExecutor executor(
+    GenerationExecutor executor(
         test::one_backend(std::make_unique<RecordingBackend>(
             "one-id", "One", "")),
         notifier(),
@@ -166,7 +166,7 @@ TEST(CompletionExecutor, RejectsEmptyBatchAndMissingHistory) {
         (void)executor.stage_batch({}),
         std::invalid_argument);
 
-    CompletionInput invalid = completion_request(transcript, 1, "one-id", "One");
+    GenerationRequest invalid = generation_request(transcript, 1, "one-id", "One");
     invalid.history.reset();
     EXPECT_THROW(
         (void)executor.stage_batch({std::move(invalid)}),
@@ -176,10 +176,10 @@ TEST(CompletionExecutor, RejectsEmptyBatchAndMissingHistory) {
     pool.stop();
 }
 
-TEST(CompletionExecutor, RejectsUnknownAndDuplicateTargets) {
+TEST(GenerationExecutor, RejectsUnknownAndDuplicateTargets) {
     Transcript transcript;
     ThreadPool pool(1);
-    CompletionExecutor executor(
+    GenerationExecutor executor(
         test::one_backend(std::make_unique<RecordingBackend>(
             "one-id", "One", "")),
         notifier(),
@@ -187,12 +187,12 @@ TEST(CompletionExecutor, RejectsUnknownAndDuplicateTargets) {
 
     EXPECT_THROW(
         (void)executor.stage_batch(
-            {completion_request(transcript, 1, "missing-id", "Missing")}),
+            {generation_request(transcript, 1, "missing-id", "Missing")}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)executor.stage_batch({
-            completion_request(transcript, 2, "one-id", "One"),
-            completion_request(transcript, 3, "one-id", "One"),
+            generation_request(transcript, 2, "one-id", "One"),
+            generation_request(transcript, 3, "one-id", "One"),
         }),
         std::invalid_argument);
 
@@ -200,18 +200,18 @@ TEST(CompletionExecutor, RejectsUnknownAndDuplicateTargets) {
     pool.stop();
 }
 
-TEST(CompletionExecutor, RejectsStagingIntoAStoppedPoolWithoutCallingABackend) {
+TEST(GenerationExecutor, RejectsStagingIntoAStoppedPoolWithoutCallingABackend) {
     Transcript transcript;
     ThreadPool pool(1);
     auto backend = std::make_unique<RecordingBackend>("one-id", "One", "");
     RecordingBackend* view = backend.get();
-    CompletionExecutor executor(
+    GenerationExecutor executor(
         test::one_backend(std::move(backend)), notifier(), pool);
     pool.stop();
 
     EXPECT_THROW(
         (void)executor.stage_batch(
-            {completion_request(transcript, 1, "one-id", "One")}),
+            {generation_request(transcript, 1, "one-id", "One")}),
         std::runtime_error);
     EXPECT_FALSE(view->prepared.load(std::memory_order_acquire));
     EXPECT_FALSE(view->performed.load(std::memory_order_acquire));
@@ -219,11 +219,11 @@ TEST(CompletionExecutor, RejectsStagingIntoAStoppedPoolWithoutCallingABackend) {
     // attempt fails.
     EXPECT_THROW(
         (void)executor.stage_batch(
-            {completion_request(transcript, 2, "one-id", "One")}),
+            {generation_request(transcript, 2, "one-id", "One")}),
         std::runtime_error);
 }
 
-TEST(CompletionExecutor, RollsBackPartialSubmissionAndFreesEveryAcceptedWorker) {
+TEST(GenerationExecutor, RollsBackPartialSubmissionAndFreesEveryAcceptedWorker) {
     Transcript transcript;
     test::BarrierState state;
     ThreadPool pool(2);
@@ -231,11 +231,11 @@ TEST(CompletionExecutor, RollsBackPartialSubmissionAndFreesEveryAcceptedWorker) 
     auto two = std::make_unique<test::BarrierBackend>("two-id", "Two", state);
     test::BarrierBackend* one_view = one.get();
     test::BarrierBackend* two_view = two.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(one));
     backends.push_back(std::move(two));
     bool inject_failure = true;
-    CompletionExecutor executor(
+    GenerationExecutor executor(
         std::move(backends),
         notifier(),
         pool,
@@ -248,8 +248,8 @@ TEST(CompletionExecutor, RollsBackPartialSubmissionAndFreesEveryAcceptedWorker) 
 
     EXPECT_THROW(
         (void)executor.stage_batch({
-            completion_request(transcript, 1, "one-id", "One"),
-            completion_request(transcript, 2, "two-id", "Two"),
+            generation_request(transcript, 1, "one-id", "One"),
+            generation_request(transcript, 2, "two-id", "Two"),
         }),
         std::runtime_error);
     EXPECT_FALSE(one_view->prepared.load(std::memory_order_acquire));
@@ -257,19 +257,19 @@ TEST(CompletionExecutor, RollsBackPartialSubmissionAndFreesEveryAcceptedWorker) 
 
     // Both workers can be inside perform() at once again, which is possible
     // only because the one accepted gated task finished during the rollback.
-    CompletionBatch batch = executor.stage_batch({
-        completion_request(transcript, 3, "one-id", "One"),
-        completion_request(transcript, 4, "two-id", "Two"),
+    GenerationBatch batch = executor.stage_batch({
+        generation_request(transcript, 3, "one-id", "One"),
+        generation_request(transcript, 4, "two-id", "Two"),
     });
     batch.open();
     const bool both_entered = test::wait_until_entered(state, 2);
     state.release.store(true, std::memory_order_release);
     EXPECT_TRUE(both_entered);
     EXPECT_TRUE(
-        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<GenerationCompleted>(next_foreground_event(batch)));
     batch.advance_foreground();
     EXPECT_TRUE(
-        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<GenerationCompleted>(next_foreground_event(batch)));
 }
 
 } // namespace

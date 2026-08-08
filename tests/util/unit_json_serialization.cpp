@@ -26,10 +26,10 @@ TEST(JsonSerialization, IdentifiesInvalidCharacterDefinitionText) {
         "Character definition contains invalid UTF-8");
 }
 
-TEST(JsonSerialization, IdentifiesInvalidCompletionRequestText) {
+TEST(JsonSerialization, IdentifiesInvalidModelRequestText) {
     EXPECT_EQ(
-        invalid_utf8_error<nlohmann::json>("Completion request"),
-        "Completion request contains invalid UTF-8");
+        invalid_utf8_error<nlohmann::json>("Model request"),
+        "Model request contains invalid UTF-8");
 }
 
 } // namespace

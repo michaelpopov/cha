@@ -18,7 +18,7 @@ web frontend and tests drive the same code.
 | `session_identity.h` / `opened_session.h` | Stable `SessionIdentity`, presentation-safe `SessionDescriptor`, and the owner-thread-only `OpenedSession` result. |
 | `controller_update.h/.cpp` | The transport-neutral outcome of one controller operation: the `ControllerStateUpdate` variant, its text targets and owning append, `ControllerUpdate`, the bounded event-drain result, and the one merge rule. |
 | `controller_view.h` | The borrowed, owner-thread-only read model used to build a full frontend snapshot. |
-| `session_controller.*` | Own one live session: commands, the one in-flight `CompletionBatch`, completion events, default character, notices, and shutdown. |
+| `session_controller.*` | Own one live session: commands, the one in-flight `GenerationBatch`, generation events, default character, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
 ## Workspace layout
@@ -78,7 +78,7 @@ are contained to their forum directory.
 `WorkspaceModel` supplies validated metadata and forum definitions.
 Each controller receives the effective application-wide persona roster and
 resolves submitted stable author IDs against it. The roster also contributes
-static model context, but it is not forum or session membership. The completion layer applies the shared provider
+static model context, but it is not forum or session membership. The generation layer applies the shared provider
 layer, definition, forum-default, and member override policy,
 deriving the definition containment root from the definition directory's parent
 and otherwise receiving resolved workspace paths explicitly.
@@ -120,8 +120,8 @@ returns resolved, unknown, or ambiguous.
 `forum_characters.*` also owns the wording of the notices built from those
 results, so all of it sits in one place: handle errors, duplicate multicast
 targets, the `/characters` character listing, and the `/info` line. Model, API, and
-streaming details are not `ForumCharacters` state — `CompletionExecutor` exposes
-those separately as `CompletionBackendInfo`, which the formatters take as a
+streaming details are not `ForumCharacters` state — `GenerationExecutor` exposes
+those separately as `ModelBackendInfo`, which the formatters take as a
 parameter, and `SessionController` supplies to them only for `/characters` and
 `/info`. The `/info` formatter takes an entry count rather than a `Transcript`
 for the same reason.
@@ -356,11 +356,11 @@ never tells a widget to clear itself or to navigate away.
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success state changes with no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
-| `start_multicast(author_id, text, handles)` | Resolves the stable author ID and textual character handles once, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Author or target validation failures start no batch; terminal notices are retained until multicast completion or abort cleanup. |
+| `start_multicast(author_id, text, handles)` | Resolves the stable author ID and textual character handles once, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Author or target validation failures start no batch; terminal notices are retained until multicast finalization or abort cleanup. |
 | `session_information()` | Entry count plus the forum characters and their runtime details. | A notice and consumed submitted input; state is unchanged. |
 | `character_information()` | Forum characters and runtime details, marking the default. | A notice and consumed submitted input; state is unchanged. |
 | `set_default_character(handle)` | Changes the default for this run only. | A successful change is observable state; a text command may consume its submitted input. |
-| `request_stop()` | Calls `CompletionBatch::cancel()` and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. It never waits for an execution. | Immediate stopping notice, followed by the final stop notice after cleanup. |
+| `request_stop()` | Calls `GenerationBatch::cancel()` and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. It never waits for an execution. | Immediate stopping notice, followed by the final stop notice after cleanup. |
 | `receive_events(max_events)` | Boundedly drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged semantic changes; after shutdown drains its batch, `session_ended` is true. |
 | `shutdown()` | Cancels the batch and waits until no execution can reach a backend, commits the retained foreground terminal state, releases the batch, then joins the session pool — including on the persistence-exception path. | — |
 
@@ -387,7 +387,7 @@ Classification is conservative: an operation reports `TextAppend` only when no
 other snapshot-visible value changed in the same operation. Starting a
 generation, inserting a transcript entry, changing the default character, the
 first reasoning chunk that establishes visible request state, the first answer
-chunk that opens the response entry, and every completion, cancellation,
+chunk that opens the response entry, and every successful finish, cancellation,
 failure, and session end all request a snapshot even when they also grow text.
 Only a later chunk extending the same open value is a pure append.
 
@@ -405,7 +405,7 @@ directly in controller tests.
 identity, `SnapshotRequired` dominates, two appends to one target concatenate in
 event order, appends to different targets become `SnapshotRequired`, lifecycle
 flags combine with logical OR, and the last supplied notice wins including an
-empty clearing one. Completion events never manufacture input consumption. The
+empty clearing one. Generation events never manufacture input consumption. The
 drain's `full` flag stays outside `ControllerUpdate` because it is queue
 scheduling information, not an observable session effect.
 
@@ -436,18 +436,18 @@ Front ends translate those into these calls.
 
 ## The in-flight turn
 
-`SessionController` owns at most one `optional<CompletionBatch>`, and that
+`SessionController` owns at most one `optional<GenerationBatch>`, and that
 batch is the single authority for the operation's runs, foreground selection,
-cancellation, and execution completion. The completion layer owns the execution
+cancellation, and execution finalization. The generation layer owns the execution
 mechanics; the controller owns durability and presentation. An ordinary prompt
 is represented as a one-child batch.
 
 Starting a batch, in order:
 
 1. Resolve and deduplicate every target, then capture one immutable pre-batch
-   history and build every complete `CompletionInput`, including its run
+   history and build every complete `GenerationRequest`, including its run
    specification. There is no separate controller-owned run vector.
-2. `CompletionExecutor::stage_batch()` returns the batch with all pool tasks
+2. `GenerationExecutor::stage_batch()` returns the batch with all pool tasks
    accepted behind a closed gate. A staging failure opens no gate, calls no
    backend, waits for any already-submitted task, and creates no durable turn.
    Expected runtime refusals are reported as
@@ -475,14 +475,14 @@ Applying events:
 
 | Event | Effect |
 | --- | --- |
-| Reasoning `CompletionEventDelta` | Appends to ephemeral active-response state; the first sets phase to `reasoning`. |
-| Answer `CompletionEventDelta`, first one | Opens the streaming transcript entry, appends the answer, and sets phase to `answering`. |
-| Answer `CompletionEventDelta`, later | Appends answer text to the open transcript entry. |
-| `CompletionCompleted` while answering | `complete_turn()`, then finish the entry as `complete`. |
-| `CompletionCompleted` before any answer | Treated as failure: "completed without answer content". |
-| `CompletionCancelled` while answering | `cancel_turn()` with the partial answer, entry finished as `cancelled`. |
-| `CompletionCancelled` earlier | `cancel_turn()` with no response; ephemeral reasoning is cleared. |
-| `CompletionFailed` | `fail_turn()` with an error entry, the open streaming entry is discarded, the error is added to the transcript. |
+| Reasoning `GenerationEventDelta` | Appends to ephemeral active-response state; the first sets phase to `reasoning`. |
+| Answer `GenerationEventDelta`, first one | Opens the streaming transcript entry, appends the answer, and sets phase to `answering`. |
+| Answer `GenerationEventDelta`, later | Appends answer text to the open transcript entry. |
+| `GenerationCompleted` while answering | `complete_turn()`, then finish the entry as `complete`. |
+| `GenerationCompleted` before any answer | Treated as failure: "completed without answer content". |
+| `GenerationCancelled` while answering | `cancel_turn()` with the partial answer, entry finished as `cancelled`. |
+| `GenerationCancelled` earlier | `cancel_turn()` with no response; ephemeral reasoning is cleared. |
+| `GenerationFailed` | `fail_turn()` with an error entry, the open streaming entry is discarded, the error is added to the transcript. |
 
 Events whose request ID does not match the active turn are ignored, which is
 what makes a cancelled turn's late fragments harmless.
@@ -491,13 +491,13 @@ what makes a cancelled turn's late fragments harmless.
 `waiting` → `reasoning` → `answering`. The separate `stopping` phase is an
 abort-cleanup overlay. It keeps the foreground character display name visible while the
 controller commits that child's terminal event and the batch's remaining
-executions finish. A foreground completion already queued when `/stop` is processed wins
+executions finish. A foreground terminal event already queued when `/stop` is processed wins
 the race and is committed normally.
 
 ## Failure policy
 
 Persistence failures are not recoverable at this level. Every journal call is
-wrapped with the operation it was attempting — "Failed to persist completion of
+wrapped with the operation it was attempting — "Failed to persist generation result for
 request 7 for @Name" — and rethrown. The session ends rather than continuing
 with a transcript the database does not agree with. Provider failures, by
 contrast, are ordinary events: they become error entries and notices, and the
@@ -517,7 +517,7 @@ session continues.
 | `tests/session/unit_workspace.cpp` | Layout resolution, forum loading and checking, session create/open. |
 | `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics, and the cross-process creation race in which every creator derives the same base ID. |
 | `tests/session/unit_session_repository.cpp` | Forum routing, tolerant listing against strict validation, the temporary session, and the lease boundary in `prepare()`. |
-| `tests/session/unit_session_controller.cpp` | Command behavior, exact update classification for every important transition, borrowed views, concurrent staging, ordered foreground drain, per-slot pairing under reversed completion, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
+| `tests/session/unit_session_controller.cpp` | Command behavior, exact update classification for every important transition, borrowed views, concurrent staging, ordered foreground drain, per-slot pairing under reversed generation order, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
 | `tests/session/unit_concurrent_controllers.cpp` | Independent owner-thread controllers, concurrent workspace/catalog access, and atomic catalog publication while listing. |
 | `tests/session/unit_controller_update.cpp` | The merge contract driven directly: every pair of state effects, append concatenation and target promotion, lifecycle OR, and notice ordering. |
 | `tests/chat/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |

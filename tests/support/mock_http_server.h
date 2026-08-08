@@ -20,7 +20,7 @@
 namespace cha {
 
 // A loopback server that replays scripted HTTP responses and records the requests it received, so
-// the completion transport can be tested over a real socket instead of a stubbed backend. It binds
+// the provider transport can be tested over a real socket instead of a stubbed backend. It binds
 // an ephemeral port reported by port(), serves one connection per scripted response on its own
 // thread, and rethrows any failure from that thread in join().
 class MockHttpServer {

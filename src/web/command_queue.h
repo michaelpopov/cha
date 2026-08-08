@@ -17,10 +17,10 @@ namespace cha::web {
 using CommandSubmitResult = std::variant<
     CommandResult, SessionSnapshot, SseConnectResult, ErrorCode>;
 
-class CommandCompletion {
+class CommandReply {
 public:
     // Returns false when the sole waiter has already timed out or another
-    // result won the completion race.
+    // result won the reply race.
     [[nodiscard]] bool complete(CommandSubmitResult result);
     [[nodiscard]] std::optional<CommandSubmitResult> wait_for(
         std::chrono::milliseconds timeout) const;
@@ -40,7 +40,7 @@ using OwnerNotification = SseDisconnectNotification;
 
 struct OwnerCommand {
     WebCommand command;
-    std::shared_ptr<CommandCompletion> completion;
+    std::shared_ptr<CommandReply> reply;
 };
 using OwnerWork = std::variant<OwnerCommand, OwnerNotification>;
 

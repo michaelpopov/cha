@@ -1,6 +1,6 @@
-#include "agents/completion_executor.h"
+#include "agents/generation_executor.h"
 
-#include "agents/completion_client.h"
+#include "agents/provider_client.h"
 #include "util/logging.h"
 #include "util/text.h"
 
@@ -13,32 +13,32 @@
 namespace cha {
 namespace {
 
-std::vector<CompletionBackendInfo> build_runtime_info(
-    const std::vector<std::unique_ptr<CompletionBackend>>& backends) {
+std::vector<ModelBackendInfo> build_runtime_info(
+    const std::vector<std::unique_ptr<ModelBackend>>& backends) {
     if (backends.empty()) {
         throw std::invalid_argument(
-            "Completion executor requires at least one character");
+            "Generation executor requires at least one character");
     }
-    std::vector<CompletionBackendInfo> infos;
+    std::vector<ModelBackendInfo> infos;
     infos.reserve(backends.size());
     std::unordered_set<std::string> ids;
     std::unordered_set<std::string> names;
     for (const auto& backend : backends) {
         if (!backend) {
             throw std::invalid_argument(
-                "Completion executor requires completion backends");
+                "Generation executor requires model backends");
         }
-        CompletionBackendInfo info = backend->info();
+        ModelBackendInfo info = backend->info();
         validate_character_id(info.character.id);
         validate_character_display_name_syntax(info.character.display_name);
         if (!ids.insert(info.character.id).second) {
             throw std::invalid_argument(
-                "Completion executor has duplicate character ID '"
+                "Generation executor has duplicate character ID '"
                 + info.character.id + "'");
         }
         if (!names.insert(fold_ascii(info.character.display_name)).second) {
             throw std::invalid_argument(
-                "Completion executor has duplicate character name '"
+                "Generation executor has duplicate character name '"
                 + info.character.display_name + "'");
         }
         infos.push_back(std::move(info));
@@ -46,18 +46,18 @@ std::vector<CompletionBackendInfo> build_runtime_info(
     return infos;
 }
 
-std::vector<std::unique_ptr<CompletionBackend>> build_backends(
+std::vector<std::unique_ptr<ModelBackend>> build_backends(
     std::vector<CharacterDefinition> definitions) {
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.reserve(definitions.size());
     for (CharacterDefinition& definition : definitions) {
         const std::string id = definition.character.id;
         const std::string display_name = definition.character.display_name;
         try {
             backends.push_back(
-                std::make_unique<CompletionClient>(std::move(definition)));
+                std::make_unique<ProviderClient>(std::move(definition)));
         } catch (const std::exception& error) {
-            log_error("Completion backend initialization failed: character_id=" + id
+            log_error("Model backend initialization failed: character_id=" + id
                 + " reason=" + error.what());
             throw std::runtime_error(
                 "Character '" + display_name + "' failed to initialize: "
@@ -69,16 +69,16 @@ std::vector<std::unique_ptr<CompletionBackend>> build_backends(
 
 } // namespace
 
-CompletionExecutor::CompletionExecutor(
+GenerationExecutor::GenerationExecutor(
     std::vector<CharacterDefinition> definitions,
     WakeNotifier& notifier,
     ThreadPool& worker_pool)
-    : CompletionExecutor(
+    : GenerationExecutor(
           build_backends(std::move(definitions)), notifier, worker_pool) {
 }
 
-CompletionExecutor::CompletionExecutor(
-    std::vector<std::unique_ptr<CompletionBackend>> backends,
+GenerationExecutor::GenerationExecutor(
+    std::vector<std::unique_ptr<ModelBackend>> backends,
     WakeNotifier& notifier,
     ThreadPool& worker_pool,
     BeforeSubmitHook before_submit)
@@ -87,20 +87,20 @@ CompletionExecutor::CompletionExecutor(
       notifier_(notifier),
       worker_pool_(worker_pool),
       before_submit_(std::move(before_submit)) {
-    // Exact equality is deliberate: this pool runs only completion work, and one
+    // Exact equality is deliberate: this pool runs only generation work, and one
     // worker per backend guarantees full-width fan-out.
     if (worker_pool_.worker_count() != backends_.size()) {
         throw std::invalid_argument(
-            "Completion executor requires one pool worker per backend");
+            "Generation executor requires one pool worker per backend");
     }
 }
 
-const std::vector<CompletionBackendInfo>& CompletionExecutor::runtime_info()
+const std::vector<ModelBackendInfo>& GenerationExecutor::runtime_info()
     const noexcept {
     return runtime_info_;
 }
 
-std::size_t CompletionExecutor::backend_index(std::string_view id) const {
+std::size_t GenerationExecutor::backend_index(std::string_view id) const {
     for (std::size_t index = 0; index < runtime_info_.size(); ++index) {
         if (runtime_info_[index].character.id == id) {
             return index;
@@ -109,24 +109,24 @@ std::size_t CompletionExecutor::backend_index(std::string_view id) const {
     return runtime_info_.size();
 }
 
-CompletionBatch CompletionExecutor::stage_batch(
-    std::vector<CompletionInput> inputs) {
+GenerationBatch GenerationExecutor::stage_batch(
+    std::vector<GenerationRequest> inputs) {
     if (inputs.empty()) {
         throw std::invalid_argument(
-            "Staged batch requires at least one completion input");
+            "Staged batch requires at least one generation request");
     }
 
     // Resolve every target before any slot is constructed or submitted.
-    std::vector<CompletionBackend*> targets;
+    std::vector<ModelBackend*> targets;
     targets.reserve(inputs.size());
     std::unordered_set<std::size_t> distinct;
-    for (const CompletionInput& input : inputs) {
+    for (const GenerationRequest& input : inputs) {
         if (!input.history) {
-            throw std::invalid_argument("Completion input requires history");
+            throw std::invalid_argument("Generation request requires history");
         }
         const std::size_t index = backend_index(input.run.target.id);
         if (index == runtime_info_.size()) {
-            throw std::invalid_argument("Completion input has unknown target");
+            throw std::invalid_argument("Generation request has unknown target");
         }
         if (!distinct.insert(index).second) {
             throw std::invalid_argument("Staged batch has duplicate targets");
@@ -134,7 +134,7 @@ CompletionBatch CompletionExecutor::stage_batch(
         targets.push_back(backends_[index].get());
     }
 
-    return CompletionBatch::stage(
+    return GenerationBatch::stage(
         std::move(inputs), targets, notifier_, worker_pool_, before_submit_);
 }
 

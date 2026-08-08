@@ -83,7 +83,7 @@ bool wait_for_finished(
 }
 
 // Holds one actor's owner thread inside SessionController::shutdown() by
-// keeping a completion in flight that deliberately ignores cancellation. This
+// keeping a generation in flight that deliberately ignores cancellation. This
 // is the exact lifecycle point a wedged owner occupies; nothing else about the
 // session is replaced.
 class WedgedOwners {

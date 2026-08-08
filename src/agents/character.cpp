@@ -1,6 +1,6 @@
 #include "agents/character.h"
 
-#include "agents/completion_context.h"
+#include "agents/model_context.h"
 #include "agents/character_config.h"
 #include "util/logging.h"
 #include "util/json_serialization.h"
@@ -22,7 +22,7 @@ std::string_view mode_name(Mode mode) noexcept {
     return mode == Mode::net ? "net" : "test";
 }
 
-std::string_view authentication_source(const CompletionConfig& config) noexcept {
+std::string_view authentication_source(const ModelBackendConfig& config) noexcept {
     if (!config.api_key_env.empty()) {
         return "environment";
     }
@@ -31,15 +31,15 @@ std::string_view authentication_source(const CompletionConfig& config) noexcept 
 
 void log_character_config(
     const CharacterMetadata& character,
-    const CompletionConfig& completion,
+    const ModelBackendConfig& backend_config,
     const std::filesystem::path& forum_directory) {
     log_info(
         "Character configuration resolved: forum_id="
         + utf8_path(forum_directory.filename())
         + " character_id=" + character.id
-        + " mode=" + std::string(mode_name(completion.mode))
-        + " model=" + (completion.model.empty() ? "discovery" : completion.model)
-        + " authentication=" + std::string(authentication_source(completion)));
+        + " mode=" + std::string(mode_name(backend_config.mode))
+        + " model=" + (backend_config.model.empty() ? "discovery" : backend_config.model)
+        + " authentication=" + std::string(authentication_source(backend_config)));
 }
 
 CharacterDefinition load_definition_files(
@@ -73,8 +73,8 @@ CharacterDefinition load_definition_files(
             + "' has invalid configuration: " + error.what());
     }
     CharacterMetadata character = std::move(loaded.character);
-    CompletionConfig completion = std::move(loaded.completion);
-    log_character_config(character, completion, forum_directory);
+    ModelBackendConfig backend_config = std::move(loaded.backend);
+    log_character_config(character, backend_config, forum_directory);
 
     std::optional<std::filesystem::path> selected_member_prompt;
     try {
@@ -127,7 +127,7 @@ CharacterDefinition load_definition_files(
     }
     return {
         .character = std::move(character),
-        .completion = std::move(completion),
+        .backend = std::move(backend_config),
         .system_prompt = std::move(character_prompt)
             + "\n\n" + std::move(forum_prompt),
     };

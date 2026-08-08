@@ -31,7 +31,7 @@ std::string_view to_string(CharacterWeight value);
 std::string_view to_string(CharacterScale value);
 
 // Public, discovery-safe character data. It contains no endpoint, credential,
-// model, or other completion-provider detail.
+// model, or other model-provider detail.
 struct CharacterMetadata {
     CharacterId id;
     std::string display_name;

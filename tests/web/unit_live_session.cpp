@@ -167,7 +167,7 @@ SessionOpener two_agent_opener(
     std::shared_ptr<test::BackendControls> scribe) {
     return [path, guide, scribe](
                const SessionIdentity& identity, WakeNotifier& notifier) {
-        std::vector<std::unique_ptr<CompletionBackend>> backends;
+        std::vector<std::unique_ptr<ModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
         return test::open_scripted_session(
@@ -248,22 +248,22 @@ TEST(OwnerWakeSignal, ReturnsFalseAtDeadlineWithoutWake) {
     EXPECT_FALSE(notifier.wait_until(std::chrono::steady_clock::now() + 5ms));
 }
 
-TEST(CommandCompletion, FirstCompletionWins) {
-    CommandCompletion completion;
-    EXPECT_TRUE(completion.complete(CommandResult{
+TEST(CommandReply, FirstReplyWins) {
+    CommandReply reply;
+    EXPECT_TRUE(reply.complete(CommandResult{
         .session = {.notice = "first"}}));
-    EXPECT_FALSE(completion.complete(ErrorCode::internal_error));
+    EXPECT_FALSE(reply.complete(ErrorCode::internal_error));
 
-    const auto result = completion.wait_for(0ms);
+    const auto result = reply.wait_for(0ms);
     ASSERT_TRUE(result);
     EXPECT_EQ(std::get<CommandResult>(*result).session.notice, "first");
 }
 
-TEST(CommandCompletion, TimeoutAtomicallyAbandonsLateCompletion) {
-    CommandCompletion completion;
+TEST(CommandReply, TimeoutAtomicallyAbandonsLateReply) {
+    CommandReply reply;
 
-    EXPECT_FALSE(completion.wait_for(0ms));
-    EXPECT_FALSE(completion.complete(CommandResult{}));
+    EXPECT_FALSE(reply.wait_for(0ms));
+    EXPECT_FALSE(reply.complete(CommandResult{}));
 }
 
 TEST(LiveSession, RejectsZeroQueueAndBatchSizesBeforeStarting) {
@@ -358,7 +358,7 @@ TEST(LiveSession, FullAndStoppingCommandsDoNotExecute) {
     EXPECT_TRUE(wait_for_finished(host.handle()));
 }
 
-TEST(LiveSession, TimeoutLeavesAcceptedCommandAliveAndLateCompletionSafe) {
+TEST(LiveSession, TimeoutLeavesAcceptedCommandAliveAndLateReplySafe) {
     test::TemporarySessionFile file("live_session_timeout");
     auto controls = std::make_shared<test::BackendControls>();
     OwnerGate gate;
@@ -374,7 +374,7 @@ TEST(LiveSession, TimeoutLeavesAcceptedCommandAliveAndLateCompletionSafe) {
     ASSERT_TRUE(gate.wait_until_entered());
     gate.release();
 
-    // The abandoned completion is discarded, and the actor keeps serving.
+    // The abandoned reply is discarded, and the actor keeps serving.
     ASSERT_TRUE(controls->wait_until_running());
     controls->finish();
     const auto later = host->submit(StopCommand{}, 2s);
@@ -695,7 +695,7 @@ TEST(LiveSession, GeneratingDisconnectUsesOrphanLimitFromDisconnection) {
     EXPECT_TRUE(wait_for_finished(host.handle()));
 }
 
-TEST(LiveSession, GenerationCompletionReevaluatesDisconnectDeadline) {
+TEST(LiveSession, GenerationFinalizationReevaluatesDisconnectDeadline) {
     test::TemporarySessionFile file("live_session_idle_after_generation");
     auto controls = std::make_shared<test::BackendControls>();
     auto clock = std::make_shared<FakeSessionClock>();

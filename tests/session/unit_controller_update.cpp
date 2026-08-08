@@ -85,7 +85,7 @@ TEST(ControllerUpdate, LifecycleFlagsCombineWithLogicalOr) {
     EXPECT_TRUE(ended.session_ended);
 }
 
-TEST(ControllerUpdate, CompletionEventsDoNotManufactureInputConsumption) {
+TEST(ControllerUpdate, GenerationEventsDoNotManufactureInputConsumption) {
     ControllerUpdate all;
     merge(all, {.state = SnapshotRequired{}});
 
@@ -105,7 +105,7 @@ TEST(ControllerUpdate, TheLastSuppliedNoticeWinsIncludingAClearingOne) {
     EXPECT_TRUE(all.notice->empty());
 }
 
-TEST(ControllerUpdate, AnAppendFollowedByCompletionRequestsASnapshot) {
+TEST(ControllerUpdate, AnAppendFollowedByGenerationFinalizationRequestsASnapshot) {
     ControllerUpdate all{.state = entry_append(7, "answer")};
     merge(all, {.state = SnapshotRequired{}, .notice = ""});
 

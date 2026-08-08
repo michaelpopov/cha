@@ -181,10 +181,10 @@ add_library(cha_core STATIC
     src/chat/character.cpp
     src/chat/transcript.cpp
     src/agents/character.cpp
-    src/agents/completion_context.cpp
-    src/agents/completion_batch.cpp
-    src/agents/completion_executor.cpp
-    src/agents/completion_client.cpp
+    src/agents/model_context.cpp
+    src/agents/generation_batch.cpp
+    src/agents/generation_executor.cpp
+    src/agents/provider_client.cpp
     src/agents/character_config.cpp
     src/session/controller_update.cpp
     src/session/forum_characters.cpp
@@ -287,10 +287,10 @@ if(BUILD_TESTING)
         tests/util/unit_utf8_path.cpp
         tests/util/unit_json_serialization.cpp
         tests/chat/unit_transcript.cpp
-        tests/agents/unit_completion_context.cpp
+        tests/agents/unit_model_context.cpp
         tests/agents/unit_character_definition_loader.cpp
-        tests/agents/unit_completion_batch.cpp
-        tests/agents/unit_completion_executor.cpp
+        tests/agents/unit_generation_batch.cpp
+        tests/agents/unit_generation_executor.cpp
         tests/agents/unit_config_loader.cpp
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_forum_characters.cpp
@@ -307,7 +307,7 @@ if(BUILD_TESTING)
     if(NOT WIN32)
         # The socket fixture used by these transport tests is POSIX-only.
         list(APPEND CHA_TEST_SOURCES
-            tests/agents/unit_completion_client.cpp)
+            tests/agents/unit_provider_client.cpp)
 
         # Lease tests use a fresh executable rather than running C++ code in a
         # forked copy of the potentially threaded GoogleTest process.

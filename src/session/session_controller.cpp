@@ -45,10 +45,10 @@ std::string request_action(
 }
 
 ForumCharacters make_forum_characters(
-    const std::vector<CompletionBackendInfo>& runtime_info) {
+    const std::vector<ModelBackendInfo>& runtime_info) {
     std::vector<CharacterMetadata> characters;
     characters.reserve(runtime_info.size());
-    for (const CompletionBackendInfo& backend : runtime_info) {
+    for (const ModelBackendInfo& backend : runtime_info) {
         characters.push_back(backend.character);
     }
     // Definitions reached the controller through either the validated
@@ -59,7 +59,7 @@ ForumCharacters make_forum_characters(
 void require_character_count(std::size_t count) {
     if (count == 0) {
         throw std::invalid_argument(
-            "Completion executor requires at least one character");
+            "Generation executor requires at least one character");
     }
 }
 
@@ -100,7 +100,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
 }
 
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
-    std::vector<std::unique_ptr<CompletionBackend>> backends,
+    std::vector<std::unique_ptr<ModelBackend>> backends,
     PersonaRoster personas,
     ParticipantId initial_default_character_id,
     std::filesystem::path database_path,
@@ -129,15 +129,15 @@ SessionController::SessionController(
     : lease_(std::move(lease)),
       journal_(std::move(path)),
       worker_pool_(definitions.size()),
-      completion_executor_(std::move(definitions), notifier, worker_pool_),
-      characters_(make_forum_characters(completion_executor_.runtime_info())),
+      generation_executor_(std::move(definitions), notifier, worker_pool_),
+      characters_(make_forum_characters(generation_executor_.runtime_info())),
       personas_(std::move(personas)),
       default_character_id_(std::move(initial_default_character_id)) {
     initialize(std::move(restored));
 }
 
 SessionController::SessionController(
-    std::vector<std::unique_ptr<CompletionBackend>> backends,
+    std::vector<std::unique_ptr<ModelBackend>> backends,
     PersonaRoster personas,
     ParticipantId initial_default_character_id,
     std::filesystem::path path,
@@ -147,8 +147,8 @@ SessionController::SessionController(
     : lease_(SessionLease::inactive_for_testing()),
       journal_(std::move(path)),
       worker_pool_(backends.size()),
-      completion_executor_(std::move(backends), notifier, worker_pool_),
-      characters_(make_forum_characters(completion_executor_.runtime_info())),
+      generation_executor_(std::move(backends), notifier, worker_pool_),
+      characters_(make_forum_characters(generation_executor_.runtime_info())),
       personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
       default_character_id_(std::move(initial_default_character_id)),
       before_activation_(std::move(before_activation)) {
@@ -279,9 +279,9 @@ ControllerUpdate SessionController::submit_prompt(
     std::optional<EntryIdentity> author = resolve_author(author_id, update);
     if (!author) return update;
 
-    SharedCompletionHistory history =
-        std::make_shared<const CompletionHistory>(
-            transcript_.completion_history());
+    SharedModelHistory history =
+        std::make_shared<const ModelHistory>(
+            transcript_.model_history());
     update.input_consumed = true;
     start_batch(
         std::move(*author),
@@ -296,15 +296,15 @@ void SessionController::start_batch(
     EntryIdentity author,
     std::string text,
     std::vector<CharacterMetadata> targets,
-    SharedCompletionHistory history,
+    SharedModelHistory history,
     ControllerUpdate& update) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
-            "Completion batch requires history and at least one target");
+            "Generation batch requires history and at least one target");
     }
     // Each input owns its own run, so there is no second run vector to keep in
     // step with the batch's execution slots.
-    std::vector<CompletionInput> inputs;
+    std::vector<GenerationRequest> inputs;
     inputs.reserve(targets.size());
     for (CharacterMetadata& target : targets) {
         inputs.push_back({
@@ -319,7 +319,7 @@ void SessionController::start_batch(
     }
 
     try {
-        batch_.emplace(completion_executor_.stage_batch(std::move(inputs)));
+        batch_.emplace(generation_executor_.stage_batch(std::move(inputs)));
     } catch (const std::runtime_error&) {
         update.input_consumed = false;
         update.notice = "Request could not be dispatched";
@@ -615,10 +615,10 @@ ControllerUpdate SessionController::start_resolved_multicast(
     if (!author) return update;
 
     // Capture once so the off-record precondition and every child use the
-    // same completion history.
-    SharedCompletionHistory history =
-        std::make_shared<const CompletionHistory>(
-            transcript_.completion_history());
+    // same model history.
+    SharedModelHistory history =
+        std::make_shared<const ModelHistory>(
+            transcript_.model_history());
     if (history->offrecord_span.begin) {
         return {
             .notice =
@@ -645,7 +645,7 @@ ControllerUpdate SessionController::session_information() {
         .notice = format_session_information(
             transcript_.view().size(),
             characters_,
-            completion_executor_.runtime_info(),
+            generation_executor_.runtime_info(),
             default_character_id_),
     };
 }
@@ -657,7 +657,7 @@ ControllerUpdate SessionController::character_information() {
     return {
         .input_consumed = true,
         .notice = format_characters_notice(
-            characters_, completion_executor_.runtime_info(), default_character_id_),
+            characters_, generation_executor_.runtime_info(), default_character_id_),
     };
 }
 
@@ -723,7 +723,7 @@ ControllerUpdate SessionController::request_stop() {
     return update;
 }
 
-ControllerUpdate SessionController::handle_completion_event(CompletionEvent event) {
+ControllerUpdate SessionController::handle_generation_event(GenerationEvent event) {
     ControllerUpdate update;
     std::visit(
         [this, &update](const auto& value) { apply(value, update); },
@@ -731,11 +731,11 @@ ControllerUpdate SessionController::handle_completion_event(CompletionEvent even
     return update;
 }
 
-void SessionController::apply(const CompletionEventDelta& event, ControllerUpdate& update) {
+void SessionController::apply(const GenerationEventDelta& event, ControllerUpdate& update) {
     if (!matches(event.request_id) || event.text.empty()) {
         return;
     }
-    if (event.kind == CompletionDeltaKind::answer) {
+    if (event.kind == GenerationDeltaKind::answer) {
         // Opening the response entry also changes the phase, so only growth of
         // an already-answering entry is a pure append.
         const bool structural = active_->phase != ResponsePhase::answering;
@@ -767,13 +767,13 @@ void SessionController::apply(const CompletionEventDelta& event, ControllerUpdat
     merge(update, {.state = TextAppend{ReasoningTextTarget{request_id}, event.text}});
 }
 
-void SessionController::apply(const CompletionCompleted& event, ControllerUpdate& update) {
+void SessionController::apply(const GenerationCompleted& event, ControllerUpdate& update) {
     if (!matches(event.request_id)) {
         return;
     }
     if (active_->phase != ResponsePhase::answering) {
         fail_active_response(
-            "Completion finished without answer content", active_->character_id, update);
+            "Generation finished without answer content", active_->character_id, update);
         finish_batch_run(update);
         return;
     }
@@ -781,7 +781,7 @@ void SessionController::apply(const CompletionCompleted& event, ControllerUpdate
         response_entry(EntryStatus::complete);
     persist(
         request_action(
-            "persist completion of",
+            "persist generation result for",
             event.request_id,
             active_->character_display_name),
         [this, &event, &response] {
@@ -794,7 +794,7 @@ void SessionController::apply(const CompletionCompleted& event, ControllerUpdate
     finish_batch_run(update);
 }
 
-void SessionController::apply(const CompletionCancelled& event, ControllerUpdate& update) {
+void SessionController::apply(const GenerationCancelled& event, ControllerUpdate& update) {
     if (!matches(event.request_id)) {
         return;
     }
@@ -827,7 +827,7 @@ void SessionController::apply(const CompletionCancelled& event, ControllerUpdate
     finish_batch_run(update);
 }
 
-void SessionController::apply(const CompletionFailed& event, ControllerUpdate& update) {
+void SessionController::apply(const GenerationFailed& event, ControllerUpdate& update) {
     if (matches(event.request_id)) {
         fail_active_response(event.message, active_->character_id, update);
         finish_batch_run(update);
@@ -885,21 +885,21 @@ bool SessionController::matches(RequestId request_id) const {
 
 ControllerEventBatch SessionController::receive_events(std::size_t max_events) {
     if (max_events == 0) {
-        throw std::invalid_argument("Completion event batch size must be positive");
+        throw std::invalid_argument("Generation event batch size must be positive");
     }
     ControllerUpdate update;
     if (shutdown_ && !batch_) {
         update.session_ended = true;
         return {.update = std::move(update)};
     }
-    CompletionEvent event = CompletionCompleted{};
+    GenerationEvent event = GenerationCompleted{};
     std::size_t processed = 0;
     while (batch_ && active_ && processed < max_events) {
         const ChannelReadStatus status = batch_->try_receive_foreground(event);
         if (status != ChannelReadStatus::value) {
             break;
         }
-        merge(update, handle_completion_event(std::move(event)));
+        merge(update, handle_generation_event(std::move(event)));
         ++processed;
     }
     poll_abort_cleanup(update);

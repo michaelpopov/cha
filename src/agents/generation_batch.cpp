@@ -1,4 +1,4 @@
-#include "agents/completion_batch.h"
+#include "agents/generation_batch.h"
 
 #include "util/logging.h"
 
@@ -50,71 +50,71 @@ private:
     GateState state{GateState::closed};
 };
 
-// One execution slot: it owns its CompletionInput, borrows exactly one backend
+// One execution slot: it owns its GenerationRequest, borrows exactly one backend
 // and the notifier, shares the batch's gate, and owns its cancellation flag and
 // event queue. It publishes any number of deltas followed by exactly one
 // terminal event, including when it is cancelled before start or throws.
 struct Execution {
     Execution(
-        CompletionInput owned_input,
-        CompletionBackend& owned_backend,
+        GenerationRequest owned_input,
+        ModelBackend& owned_backend,
         std::shared_ptr<StartGate> start_gate,
         WakeNotifier& wake_notifier)
         : input(std::move(owned_input)),
           backend(owned_backend),
           gate(std::move(start_gate)),
           notifier(wake_notifier),
-          fallback_terminal(CompletionFailed{
+          fallback_terminal(GenerationFailed{
               input.run.request_id,
-              "Completion execution failed before details could be reported",
+              "Generation execution failed before details could be reported",
           }) {
-        static_assert(std::is_nothrow_move_constructible_v<CompletionEvent>);
-        static_assert(std::is_nothrow_move_assignable_v<CompletionEvent>);
+        static_assert(std::is_nothrow_move_constructible_v<GenerationEvent>);
+        static_assert(std::is_nothrow_move_assignable_v<GenerationEvent>);
     }
 
     void execute() noexcept {
         const RequestId request_id = input.run.request_id;
         if (!gate->wait()) {
-            log_info("Completion execution cancelled before start");
-            publish_terminal(CompletionCancelled{request_id});
+            log_info("Generation execution cancelled before start");
+            publish_terminal(GenerationCancelled{request_id});
             finish();
             return;
         }
 
         try {
             if (cancellation.load(std::memory_order_acquire)) {
-                log_info("Completion execution cancelled before preparation");
-                publish_terminal(CompletionCancelled{request_id});
+                log_info("Generation execution cancelled before preparation");
+                publish_terminal(GenerationCancelled{request_id});
             } else {
-                log_info("Completion execution started");
+                log_info("Generation execution started");
                 RequestPayload payload = backend.prepare(input);
-                const CompletionResult result = backend.perform(
+                const GenerationResult result = backend.perform(
                     std::move(payload),
-                    [this, request_id](CompletionDelta delta) {
-                        publish_delta(CompletionEventDelta{
+                    [this, request_id](GenerationDelta delta) {
+                        publish_delta(GenerationEventDelta{
                             request_id,
                             delta.kind,
                             std::move(delta.text),
                         });
                     },
                     cancellation);
-                if (result.outcome == CompletionOutcome::completed) {
-                    log_info("Completion execution completed");
-                    publish_terminal(CompletionCompleted{request_id});
-                } else if (result.outcome == CompletionOutcome::cancelled) {
-                    log_info("Completion execution cancelled");
-                    publish_terminal(CompletionCancelled{request_id});
+                if (result.outcome == GenerationOutcome::completed) {
+                    log_info("Generation execution completed");
+                    publish_terminal(GenerationCompleted{request_id});
+                } else if (result.outcome == GenerationOutcome::cancelled) {
+                    log_info("Generation execution cancelled");
+                    publish_terminal(GenerationCancelled{request_id});
                 } else {
-                    log_error("Completion execution failed");
+                    log_error("Generation execution failed");
                     publish_failure(request_id, result.message);
                 }
             }
         } catch (const std::exception& error) {
-            log_error("Completion execution raised an exception");
+            log_error("Generation execution raised an exception");
             publish_failure(request_id, error.what());
         } catch (...) {
-            log_error("Completion execution raised an unknown exception");
-            publish_failure(request_id, "Unknown completion execution failure");
+            log_error("Generation execution raised an unknown exception");
+            publish_failure(request_id, "Unknown generation execution failure");
         }
         finish();
     }
@@ -135,20 +135,20 @@ struct Execution {
         return execution_finished;
     }
 
-    ChannelReadStatus try_receive(CompletionEvent& event) {
+    ChannelReadStatus try_receive(GenerationEvent& event) {
         return events.try_get(event);
     }
 
 private:
-    void publish_delta(CompletionEvent event) {
+    void publish_delta(GenerationEvent event) {
         if (!events.push(std::move(event))) {
             throw std::logic_error(
-                "Completion event queue closed before execution stopped");
+                "Generation event queue closed before execution stopped");
         }
         notifier.wake();
     }
 
-    void publish_terminal(CompletionEvent event) noexcept {
+    void publish_terminal(GenerationEvent event) noexcept {
         events.close_with(std::move(event));
         notifier.wake();
     }
@@ -156,13 +156,13 @@ private:
     void publish_failure(
         RequestId request_id,
         std::string_view message) noexcept {
-        CompletionEvent failure = std::move(fallback_terminal);
+        GenerationEvent failure = std::move(fallback_terminal);
         try {
-            failure = CompletionFailed{request_id, std::string(message)};
+            failure = GenerationFailed{request_id, std::string(message)};
         } catch (...) {
             // Keep the preallocated fallback if copying details allocates.
             log_critical(
-                "Completion failure details could not be preserved; using fallback");
+                "Generation failure details could not be preserved; using fallback");
         }
         publish_terminal(std::move(failure));
     }
@@ -179,25 +179,25 @@ private:
         notifier.wake();
     }
 
-    CompletionInput input;
-    CompletionBackend& backend;
+    GenerationRequest input;
+    ModelBackend& backend;
     std::shared_ptr<StartGate> gate;
     WakeNotifier& notifier;
-    ConcurrentQueue<CompletionEvent> events;
-    CompletionEvent fallback_terminal;
+    ConcurrentQueue<GenerationEvent> events;
+    GenerationEvent fallback_terminal;
     std::atomic_bool cancellation{false};
     mutable std::mutex finished_mutex;
     std::condition_variable finished_changed;
     bool execution_finished{};
 };
 
-bool is_terminal(const CompletionEvent& event) noexcept {
-    return !std::holds_alternative<CompletionEventDelta>(event);
+bool is_terminal(const GenerationEvent& event) noexcept {
+    return !std::holds_alternative<GenerationEventDelta>(event);
 }
 
 } // namespace
 
-struct CompletionBatch::Impl {
+struct GenerationBatch::Impl {
     std::shared_ptr<StartGate> gate;
     // Fixed for the batch's whole lifetime, so slot positions never drift.
     std::vector<std::shared_ptr<Execution>> executions;
@@ -206,9 +206,9 @@ struct CompletionBatch::Impl {
     bool cancelled{};
 };
 
-CompletionBatch CompletionBatch::stage(
-    std::vector<CompletionInput> inputs,
-    const std::vector<CompletionBackend*>& backends,
+GenerationBatch GenerationBatch::stage(
+    std::vector<GenerationRequest> inputs,
+    const std::vector<ModelBackend*>& backends,
     WakeNotifier& notifier,
     ThreadPool& worker_pool,
     const std::function<void(std::size_t)>& before_submit) {
@@ -227,7 +227,7 @@ CompletionBatch CompletionBatch::stage(
                 before_submit(submitted);
             }
             if (!worker_pool.submit([execution] { execution->execute(); })) {
-                throw std::runtime_error("Completion worker pool is unavailable");
+                throw std::runtime_error("Generation worker pool is unavailable");
             }
             ++submitted;
         }
@@ -240,16 +240,16 @@ CompletionBatch CompletionBatch::stage(
         }
         throw;
     }
-    return CompletionBatch(std::move(impl));
+    return GenerationBatch(std::move(impl));
 }
 
-CompletionBatch::CompletionBatch(std::unique_ptr<Impl> impl) noexcept
+GenerationBatch::GenerationBatch(std::unique_ptr<Impl> impl) noexcept
     : impl_(std::move(impl)) {
 }
 
-CompletionBatch::CompletionBatch(CompletionBatch&&) noexcept = default;
+GenerationBatch::GenerationBatch(GenerationBatch&&) noexcept = default;
 
-CompletionBatch::~CompletionBatch() noexcept {
+GenerationBatch::~GenerationBatch() noexcept {
     if (!impl_) {
         return;
     }
@@ -257,28 +257,28 @@ CompletionBatch::~CompletionBatch() noexcept {
     wait_until_finished();
 }
 
-const RunSpec& CompletionBatch::foreground_run() const {
+const RunSpec& GenerationBatch::foreground_run() const {
     if (impl_->foreground >= impl_->executions.size()) {
-        throw std::logic_error("Completion batch has no foreground run");
+        throw std::logic_error("Generation batch has no foreground run");
     }
     return impl_->executions[impl_->foreground]->run();
 }
 
-std::size_t CompletionBatch::foreground_index() const noexcept {
+std::size_t GenerationBatch::foreground_index() const noexcept {
     return impl_->foreground;
 }
 
-bool CompletionBatch::has_next_foreground() const noexcept {
+bool GenerationBatch::has_next_foreground() const noexcept {
     return impl_->foreground + 1 < impl_->executions.size();
 }
 
-void CompletionBatch::open() noexcept {
+void GenerationBatch::open() noexcept {
     impl_->gate->open();
 }
 
-ChannelReadStatus CompletionBatch::try_receive_foreground(CompletionEvent& event) {
+ChannelReadStatus GenerationBatch::try_receive_foreground(GenerationEvent& event) {
     if (impl_->foreground >= impl_->executions.size()) {
-        throw std::logic_error("Completion batch has no foreground run");
+        throw std::logic_error("Generation batch has no foreground run");
     }
     const ChannelReadStatus status =
         impl_->executions[impl_->foreground]->try_receive(event);
@@ -288,22 +288,22 @@ ChannelReadStatus CompletionBatch::try_receive_foreground(CompletionEvent& event
     return status;
 }
 
-void CompletionBatch::advance_foreground() {
+void GenerationBatch::advance_foreground() {
     if (impl_->foreground >= impl_->executions.size()) {
-        throw std::logic_error("Completion batch has no foreground run");
+        throw std::logic_error("Generation batch has no foreground run");
     }
     if (!impl_->foreground_terminal_delivered) {
         throw std::logic_error(
-            "Completion batch foreground has no delivered terminal event");
+            "Generation batch foreground has no delivered terminal event");
     }
     if (!has_next_foreground()) {
-        throw std::logic_error("Completion batch has no next foreground run");
+        throw std::logic_error("Generation batch has no next foreground run");
     }
     ++impl_->foreground;
     impl_->foreground_terminal_delivered = false;
 }
 
-void CompletionBatch::cancel() noexcept {
+void GenerationBatch::cancel() noexcept {
     impl_->cancelled = true;
     for (const std::shared_ptr<Execution>& execution : impl_->executions) {
         execution->request_cancel();
@@ -313,11 +313,11 @@ void CompletionBatch::cancel() noexcept {
     impl_->gate->cancel();
 }
 
-bool CompletionBatch::cancellation_requested() const noexcept {
+bool GenerationBatch::cancellation_requested() const noexcept {
     return impl_->cancelled;
 }
 
-bool CompletionBatch::executions_finished() const noexcept {
+bool GenerationBatch::executions_finished() const noexcept {
     for (const std::shared_ptr<Execution>& execution : impl_->executions) {
         if (!execution->is_finished()) {
             return false;
@@ -326,7 +326,7 @@ bool CompletionBatch::executions_finished() const noexcept {
     return true;
 }
 
-void CompletionBatch::wait_until_finished() noexcept {
+void GenerationBatch::wait_until_finished() noexcept {
     for (const std::shared_ptr<Execution>& execution : impl_->executions) {
         execution->wait_until_finished();
     }

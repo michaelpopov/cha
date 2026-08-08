@@ -501,7 +501,7 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     (void)::alarm(2);
     shutdown_diagnostic_logging();
     initialize_diagnostic_logging(log_path, "critical");
-    // A completion that ignores cancellation wedges this owner inside
+    // A generation that ignores cancellation wedges this owner inside
     // SessionController::shutdown(), which is the exact state the coordinator
     // must report rather than joining.
     test::TemporarySessionFile database("blocked_shutdown");

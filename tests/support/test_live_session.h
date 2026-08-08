@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/completion_backend.h"
+#include "agents/model_backend.h"
 #include "agents/character_config.h"
 #include "chat/persona.h"
 #include "session/opened_session.h"
@@ -66,7 +66,7 @@ private:
     std::filesystem::path path_;
 };
 
-// Cross-thread controls for one scripted completion backend. Tests hold it
+// Cross-thread controls for one scripted model backend. Tests hold it
 // through a shared pointer because the backend runs inside the controller's
 // worker pool and outlives any single call.
 class BackendControls {
@@ -85,12 +85,12 @@ public:
     }
 
     void emit_answer(std::string text) {
-        emit({CompletionDeltaKind::answer, std::move(text)});
+        emit({GenerationDeltaKind::answer, std::move(text)});
     }
     void emit_reasoning(std::string text) {
-        emit({CompletionDeltaKind::reasoning, std::move(text)});
+        emit({GenerationDeltaKind::reasoning, std::move(text)});
     }
-    void emit(CompletionDelta delta) {
+    void emit(GenerationDelta delta) {
         {
             std::lock_guard lock(mutex_);
             queued_.push_back(std::move(delta));
@@ -98,8 +98,8 @@ public:
         changed_.notify_all();
     }
 
-    // Ends the running completion normally, or with a transport failure.
-    void finish(CompletionResult result = {}) {
+    // Ends the running generation normally, or with a transport failure.
+    void finish(GenerationResult result = {}) {
         {
             std::lock_guard lock(mutex_);
             ending_ = std::move(result);
@@ -107,11 +107,11 @@ public:
         changed_.notify_all();
     }
     void fail(std::string message) {
-        finish({CompletionOutcome::transport_error, std::move(message)});
+        finish({GenerationOutcome::transport_error, std::move(message)});
     }
 
     // Makes the backend ignore the controller's cancellation flag. An
-    // in-flight completion then blocks SessionController::shutdown() until
+    // in-flight generation then blocks SessionController::shutdown() until
     // finish() is called, which is how a wedged owner is produced without any
     // controller or lifecycle fake.
     void ignore_cancellation() {
@@ -128,24 +128,24 @@ public:
     }
 
 private:
-    friend class ScriptedCompletionBackend;
+    friend class ScriptedModelBackend;
 
     mutable std::mutex mutex_;
     std::condition_variable changed_;
-    std::vector<CompletionDelta> queued_;
-    std::optional<CompletionResult> ending_;
+    std::vector<GenerationDelta> queued_;
+    std::optional<GenerationResult> ending_;
     bool running_{};
     bool ignore_cancellation_{};
     bool cancellation_observed_{};
     std::size_t runs_{};
 };
 
-// A completion backend whose whole behavior is decided by the test through
+// A model backend whose whole behavior is decided by the test through
 // BackendControls. It is a provider fake, not a controller or output fake: the
 // controller, journal, worker pool, and web actor around it are all real.
-class ScriptedCompletionBackend final : public CompletionBackend {
+class ScriptedModelBackend final : public ModelBackend {
 public:
-    ScriptedCompletionBackend(
+    ScriptedModelBackend(
         std::shared_ptr<BackendControls> controls,
         std::string id,
         std::string name)
@@ -153,13 +153,13 @@ public:
           id_(std::move(id)),
           name_(std::move(name)) {}
 
-    RequestPayload prepare(const CompletionInput& input) override {
+    RequestPayload prepare(const GenerationRequest& input) override {
         return {.bytes = input.run.prompt_text};
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink& on_delta,
+        const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
         {
             std::lock_guard lock(controls_->mutex_);
@@ -168,8 +168,8 @@ public:
         }
         controls_->changed_.notify_all();
         while (true) {
-            std::vector<CompletionDelta> batch;
-            std::optional<CompletionResult> ending;
+            std::vector<GenerationDelta> batch;
+            std::optional<GenerationResult> ending;
             {
                 std::unique_lock lock(controls_->mutex_);
                 // The cancellation flag is not a condition variable, so this
@@ -186,12 +186,12 @@ public:
                     controls_->ending_.reset();
                     lock.unlock();
                     controls_->changed_.notify_all();
-                    return {CompletionOutcome::cancelled, {}};
+                    return {GenerationOutcome::cancelled, {}};
                 }
                 batch.swap(controls_->queued_);
                 ending = controls_->ending_;
             }
-            for (const CompletionDelta& delta : batch) on_delta(delta);
+            for (const GenerationDelta& delta : batch) on_delta(delta);
             if (!ending) continue;
             {
                 std::lock_guard lock(controls_->mutex_);
@@ -203,11 +203,11 @@ public:
         }
     }
 
-    CompletionBackendInfo info() const override {
+    ModelBackendInfo info() const override {
         return {
             .character = {.id = id_, .display_name = name_},
             .model = "test-model",
-            .api = "test://completion",
+            .api = "test://model",
             .streaming = true,
         };
     }
@@ -218,11 +218,11 @@ private:
     std::string name_;
 };
 
-inline std::unique_ptr<CompletionBackend> scripted_backend(
+inline std::unique_ptr<ModelBackend> scripted_backend(
     std::shared_ptr<BackendControls> controls,
     std::string id = "guide",
     std::string name = "Guide") {
-    return std::make_unique<ScriptedCompletionBackend>(
+    return std::make_unique<ScriptedModelBackend>(
         std::move(controls), std::move(id), std::move(name));
 }
 
@@ -238,14 +238,14 @@ inline SessionDescriptor test_descriptor(const SessionIdentity& identity) {
     };
 }
 
-// A real controller driven by controlled completion backends. The controller's
+// A real controller driven by controlled model backends. The controller's
 // backend seam does not take a session lease, so lease behavior belongs to
 // open_leased_session() below rather than to a second controller abstraction.
 inline OpenedSession open_scripted_session(
     const SessionIdentity& identity,
     const std::filesystem::path& database_path,
     WakeNotifier& notifier,
-    std::vector<std::unique_ptr<CompletionBackend>> backends,
+    std::vector<std::unique_ptr<ModelBackend>> backends,
     SessionController::ActivationHook before_activation = {}) {
     return {
         .descriptor = test_descriptor(identity),
@@ -303,7 +303,7 @@ inline CharacterDefinition unreachable_definition(
             .id = std::move(id),
             .display_name = std::move(name),
         },
-        .completion = {
+        .backend = {
             .host = "127.0.0.1",
             .port = 1,
         },

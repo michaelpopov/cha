@@ -44,7 +44,7 @@ TEST(CharacterDefinitions, UsesDefinitionPromptAndThreeLayerConfiguration) {
         files.forum / "members" / "character_defaults.toml");
 
     ASSERT_EQ(definitions.size(), 1U);
-    EXPECT_EQ(definitions.front().completion.port, 9);
+    EXPECT_EQ(definitions.front().backend.port, 9);
     EXPECT_TRUE(definitions.front().system_prompt.starts_with("Definition member\n\nForum Guide"));
 }
 

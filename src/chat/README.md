@@ -12,10 +12,10 @@ project.
 
 | Source | Responsibility |
 | --- | --- |
-| `ids.h` | `ForumId`, `CharacterId`, and `SessionId` aliases used across workspace, completion, session, and web boundaries. |
+| `ids.h` | `ForumId`, `CharacterId`, and `SessionId` aliases used across workspace, generation, session, and web boundaries. |
 | `character.*` | Discovery-safe `CharacterMetadata`, including the closed appearance vocabulary used by frontends. |
 | `persona.h` | `Persona` and the immutable/shared roster forms used for human authorship and prompt context. |
-| `transcript.h` | Entry and request IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, the non-owning `TranscriptView`, `CompletionHistory`, and the `Transcript` container. |
+| `transcript.h` | Entry and request IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, the non-owning `TranscriptView`, `ModelHistory`, and the `Transcript` container. |
 | `transcript.cpp` | Factory construction, validation rules, and live-state mutation and read operations. |
 
 ## The entry model
@@ -83,8 +83,8 @@ terminal transcript entry is currently storable.
 single-thread-owned design: the registry-owned session thread exclusively reads
 and mutates it. The class is not thread-safe, and callers must not share a live
 instance across threads.
-Completion runners never read it; the controller captures an immutable
-`CompletionHistory` before staging a batch.
+Generation workers never read it; the controller captures an immutable
+`ModelHistory` before staging a batch.
 
 | Operation | Rule |
 | --- | --- |
@@ -111,7 +111,7 @@ drawn becomes invalid.
 `OffrecordSpan` is a half-open range of entry IDs excluded from model context
 while remaining fully visible on screen. It lives in `Transcript` because that
 is the one place that owns both the bounds and the entries they describe.
-`completion_history()` copies both together in one operation for immutable
+`model_history()` copies both together in one operation for immutable
 backend input. `TranscriptView` has no span field—renderers never need the
 bounds, only the marker entries already in `entries`.
 
@@ -154,23 +154,23 @@ stateDiagram-v2
 flowchart TD
     C["Transcript<br/>entries + revision + epoch"]
     V["TranscriptView<br/>borrowed span + scalar state"]
-    H["CompletionHistory<br/>owned entries + projection state"]
+    H["ModelHistory<br/>owned entries + projection state"]
     O["open_entry_text<br/>owned tail text"]
     R["Renderers and status"]
     B["Immutable backend input"]
-    S["Session completion"]
+    S["Session generation"]
 
     C -->|"view"| V --> R
-    C -->|"completion_history"| H --> B
+    C -->|"model_history"| H --> B
     C -->|"read open tail"| O --> S
 ```
 
-Use a **view** for synchronous presentation and a **completion history** for
+Use a **view** for synchronous presentation and a **model history** for
 model-context projection. A `TranscriptView` is call-scoped: it borrows the
 entry vector through `std::span`, and any transcript mutation may invalidate
 the span, its entries, and their strings. Renderers therefore consume it before
 returning and retain only scalar positions such as an entry ID, entry count, or
-text length. `CompletionHistory` is the sole owning point-in-time copy because
+text length. `ModelHistory` is the sole owning point-in-time copy because
 workers genuinely need immutable state after the session owner thread
 continues.
 
@@ -192,7 +192,7 @@ protocol, or terminal concepts.
 
 `tests/chat/unit_transcript.cpp` covers the factories, every
 validation rule, the streaming lifecycle, ID ordering, the off-record bound
-states and their markers, immutable completion-history capture, and
+states and their markers, immutable model-history capture, and
 view borrowing and open-entry reads.
 
 The same file also tests `SessionJournal` and the session database, on

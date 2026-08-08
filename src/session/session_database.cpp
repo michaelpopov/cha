@@ -701,7 +701,7 @@ SessionRestore build_restore(Database& database) {
             unsigned_id(interrupted.integer(0), "interrupted request ID");
         TranscriptEntry error = make_error_entry(
             result.next_entry_id++,
-            "Response interrupted before completion",
+            "Response interrupted before it finished",
             request_id,
             interrupted.text(1));
         result.interrupted_turns.push_back({request_id, std::move(error)});

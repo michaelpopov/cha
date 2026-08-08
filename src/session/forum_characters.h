@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/completion_backend.h"
+#include "agents/model_backend.h"
 #include "chat/character.h"
 
 #include <cstddef>
@@ -25,17 +25,17 @@ struct HandleResolution {
     const class ForumCharacters& characters);
 [[nodiscard]] std::string format_duplicate_character_notice(
     std::string_view display_name);
-// Runtime details come from CompletionExecutor rather than the identity-only
+// Runtime details come from GenerationExecutor rather than the identity-only
 // character view, so both are passed in. The entry count is a plain size for
 // the same reason: this wording belongs to the session, not to a transcript.
 [[nodiscard]] std::string format_characters_notice(
     const class ForumCharacters& characters,
-    const std::vector<CompletionBackendInfo>& runtime_info,
+    const std::vector<ModelBackendInfo>& runtime_info,
     const CharacterId& default_character_id);
 [[nodiscard]] std::string format_session_information(
     std::size_t entry_count,
     const class ForumCharacters& characters,
-    const std::vector<CompletionBackendInfo>& runtime_info,
+    const std::vector<ModelBackendInfo>& runtime_info,
     const CharacterId& default_character_id);
 
 // The ordered characters participating in one forum. Construction guarantees that the collection is

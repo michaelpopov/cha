@@ -415,39 +415,39 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
         .tags = definition.tags,
         .appearance = definition.appearance,
     };
-    CompletionConfig completion;
-    completion.host = *effective.host;
-    completion.port = *effective.port;
+    ModelBackendConfig backend_config;
+    backend_config.host = *effective.host;
+    backend_config.port = *effective.port;
     if (effective.mode) {
-        completion.mode = *effective.mode;
+        backend_config.mode = *effective.mode;
     }
     if (effective.model) {
-        completion.model = *effective.model;
+        backend_config.model = *effective.model;
     }
     if (effective.stream) {
-        completion.stream = *effective.stream;
+        backend_config.stream = *effective.stream;
     }
     if (effective.temperature) {
-        completion.temperature = *effective.temperature;
+        backend_config.temperature = *effective.temperature;
     }
     if (effective.api_key) {
-        completion.api_key = *effective.api_key;
+        backend_config.api_key = *effective.api_key;
     }
     if (effective.api_key_env) {
-        completion.api_key_env = *effective.api_key_env;
+        backend_config.api_key_env = *effective.api_key_env;
     }
     if (effective.reasoning_effort) {
-        completion.reasoning_effort = *effective.reasoning_effort;
+        backend_config.reasoning_effort = *effective.reasoning_effort;
     }
     if (effective.reasoning_format) {
-        completion.reasoning_format = *effective.reasoning_format;
+        backend_config.reasoning_format = *effective.reasoning_format;
     }
     if (effective.https) {
-        completion.https = *effective.https;
+        backend_config.https = *effective.https;
     }
     return {
         .character = std::move(character),
-        .completion = std::move(completion),
+        .backend = std::move(backend_config),
         .prompt_variables = std::move(prompt_variables),
     };
 }

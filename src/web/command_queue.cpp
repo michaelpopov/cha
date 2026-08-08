@@ -4,7 +4,7 @@
 
 namespace cha::web {
 
-bool CommandCompletion::complete(CommandSubmitResult result) {
+bool CommandReply::complete(CommandSubmitResult result) {
     {
         std::lock_guard lock(mutex_);
         if (result_ || abandoned_) return false;
@@ -14,7 +14,7 @@ bool CommandCompletion::complete(CommandSubmitResult result) {
     return true;
 }
 
-std::optional<CommandSubmitResult> CommandCompletion::wait_for(
+std::optional<CommandSubmitResult> CommandReply::wait_for(
     std::chrono::milliseconds timeout) const {
     std::unique_lock lock(mutex_);
     if (!ready_.wait_for(lock, timeout, [this] { return result_.has_value(); })) {

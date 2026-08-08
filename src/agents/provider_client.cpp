@@ -1,4 +1,4 @@
-#include "agents/completion_client.h"
+#include "agents/provider_client.h"
 
 #include "agents/character.h"
 #include "util/logging.h"
@@ -21,7 +21,7 @@
 namespace cha {
 
 // Owns one reusable easy handle and keeps libcurl's variadic API behind typed calls.
-class CompletionClient::CurlEasyHandle {
+class ProviderClient::CurlEasyHandle {
 public:
     CurlEasyHandle()
         : handle_(curl_easy_init(), &curl_easy_cleanup) {
@@ -91,7 +91,7 @@ namespace {
 
 using Json = nlohmann::json;
 
-// Initializes libcurl once per process while any completion client may use it.
+// Initializes libcurl once per process while any provider client may use it.
 class CurlGlobal {
 public:
     CurlGlobal() {
@@ -122,7 +122,7 @@ constexpr std::size_t max_streaming_error_body_size = 64 * 1024;
 // Accumulates one HTTP response and forwards recognized text to a transport-neutral sink.
 struct ResponseContext {
     // Required when streaming is true; model discovery leaves both fields inactive.
-    const CompletionDeltaSink* on_delta{};
+    const GenerationDeltaSink* on_delta{};
     bool streaming{};
     bool done{};
     bool received_reasoning{};
@@ -158,17 +158,17 @@ void normalize_newlines(std::string& text) {
 
 void emit_delta(
     ResponseContext& context,
-    CompletionDeltaKind kind,
+    GenerationDeltaKind kind,
     std::string text) {
     if (text.empty()) {
         return;
     }
-    if (kind == CompletionDeltaKind::reasoning) {
+    if (kind == GenerationDeltaKind::reasoning) {
         context.received_reasoning = true;
     } else {
         context.received_answer = true;
     }
-    (*context.on_delta)(CompletionDelta{kind, std::move(text)});
+    (*context.on_delta)(GenerationDelta{kind, std::move(text)});
 }
 
 void process_response_object(
@@ -194,7 +194,7 @@ void process_response_object(
         if (text.empty()) {
             return false;
         }
-        emit_delta(context, CompletionDeltaKind::reasoning, std::move(text));
+        emit_delta(context, GenerationDeltaKind::reasoning, std::move(text));
         return true;
     };
 
@@ -218,7 +218,7 @@ void process_response_object(
     if (content != object.end() && content->is_string()) {
         emit_delta(
             context,
-            CompletionDeltaKind::answer,
+            GenerationDeltaKind::answer,
             content->get<std::string>());
     }
 }
@@ -395,22 +395,22 @@ std::string response_error(const std::string& body) {
     return body.empty() ? "unknown server error" : body;
 }
 
-std::string_view role_name(CompletionRole role) {
+std::string_view role_name(ModelRole role) {
     switch (role) {
-    case CompletionRole::system: return "system";
-    case CompletionRole::persona: return "user";
-    case CompletionRole::assistant: return "assistant";
+    case ModelRole::system: return "system";
+    case ModelRole::persona: return "user";
+    case ModelRole::assistant: return "assistant";
     }
-    throw std::logic_error("Unknown completion context role");
+    throw std::logic_error("Unknown model context role");
 }
 
 std::string build_request_body(
-    const CompletionInput& input,
-    const CompletionConfig& config,
+    const GenerationRequest& input,
+    const ModelBackendConfig& config,
     std::string_view system_prompt) {
     Json messages = Json::array();
-    for (const CompletionMessage& message :
-         project_completion_context(input, system_prompt)) {
+    for (const ModelMessage& message :
+         project_model_context(input, system_prompt)) {
         messages.push_back({
             {"role", role_name(message.role)},
             {"content", message.content},
@@ -427,18 +427,18 @@ std::string build_request_body(
         body["reasoning_effort"] = config.reasoning_effort;
     }
 
-    return dump_json(body, "Completion request");
+    return dump_json(body, "Model request");
 }
 
 } // namespace
 
-CompletionClient::CompletionClient(CharacterDefinition definition)
+ProviderClient::ProviderClient(CharacterDefinition definition)
     : character_(std::move(definition.character)),
-      config_(std::move(definition.completion)),
+      config_(std::move(definition.backend)),
       system_prompt_(std::move(definition.system_prompt)) {
     if (character_.id.empty() || character_.display_name.empty()) {
         throw std::runtime_error(
-            "Completion client character ID and display name cannot be empty");
+            "Provider client character ID and display name cannot be empty");
     }
     api_key_ = config_.api_key;
 
@@ -461,9 +461,9 @@ CompletionClient::CompletionClient(CharacterDefinition definition)
     }
 }
 
-CompletionClient::~CompletionClient() = default;
+ProviderClient::~ProviderClient() = default;
 
-void CompletionClient::discover_model() {
+void ProviderClient::discover_model() {
     ResponseContext response{.streaming = false};
     const std::string url = models_endpoint();
     const auto started_at = std::chrono::steady_clock::now();
@@ -541,7 +541,7 @@ void CompletionClient::discover_model() {
     }
 }
 
-RequestPayload CompletionClient::prepare(const CompletionInput& input) {
+RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
     if (config_.mode == Mode::test) {
         return {.bytes = input.run.prompt_text};
     }
@@ -553,20 +553,20 @@ RequestPayload CompletionClient::prepare(const CompletionInput& input) {
     };
 }
 
-CompletionResult CompletionClient::perform(
+GenerationResult ProviderClient::perform(
     RequestPayload payload,
-    const CompletionDeltaSink& on_delta,
+    const GenerationDeltaSink& on_delta,
     const std::atomic_bool& cancellation) {
     if (cancellation.load(std::memory_order_acquire)) {
-        log_info("HTTP completion skipped because cancellation was already requested");
-        return {CompletionOutcome::cancelled, {}};
+        log_info("HTTP generation skipped because cancellation was already requested");
+        return {GenerationOutcome::cancelled, {}};
     }
     if (config_.mode == Mode::test) {
         on_delta({
-            CompletionDeltaKind::answer,
+            GenerationDeltaKind::answer,
             std::move(payload.bytes),
         });
-        return {CompletionOutcome::completed, {}};
+        return {GenerationOutcome::completed, {}};
     }
 
     const std::string& request_body = payload.bytes;
@@ -583,13 +583,13 @@ CompletionResult CompletionClient::perform(
         "HTTP request started: endpoint=" + url
         + " request_bytes=" + std::to_string(request_body.size()));
     const auto complete = [&response, &url, &request_body, started_at](
-                              CompletionResult result,
+                              GenerationResult result,
                               long status,
                               std::string_view content_type) {
         const std::string message = http_event(
-            result.outcome == CompletionOutcome::completed
+            result.outcome == GenerationOutcome::completed
                 ? "request completed"
-                : result.outcome == CompletionOutcome::cancelled
+                : result.outcome == GenerationOutcome::cancelled
                 ? "request cancelled"
                 : "request failed",
             url,
@@ -598,9 +598,9 @@ CompletionResult CompletionClient::perform(
             request_body.size(),
             response.received_bytes,
             elapsed_milliseconds(started_at));
-        if (result.outcome == CompletionOutcome::completed) {
+        if (result.outcome == GenerationOutcome::completed) {
             log_info(message);
-        } else if (result.outcome == CompletionOutcome::cancelled) {
+        } else if (result.outcome == GenerationOutcome::cancelled) {
             log_info(message);
         } else {
             log_error(message);
@@ -658,11 +658,11 @@ CompletionResult CompletionClient::perform(
     }
     if (perform_result == CURLE_ABORTED_BY_CALLBACK
         && cancellation.load(std::memory_order_acquire)) {
-        return complete({CompletionOutcome::cancelled, {}}, 0, "unknown");
+        return complete({GenerationOutcome::cancelled, {}}, 0, "unknown");
     }
     if (perform_result != CURLE_OK) {
         return complete({
-            CompletionOutcome::transport_error,
+            GenerationOutcome::transport_error,
             "HTTP request failed: "
                 + std::string(curl_easy_strerror(perform_result)),
         }, 0, "unknown");
@@ -674,7 +674,7 @@ CompletionResult CompletionClient::perform(
         "Failed to read HTTP content type");
     if (status < 200 || status >= 300) {
         return complete({
-            CompletionOutcome::protocol_error,
+            GenerationOutcome::protocol_error,
             "Inference server returned HTTP " + std::to_string(status)
                 + ": " + response_error(response.body),
         }, status, content_type);
@@ -687,7 +687,7 @@ CompletionResult CompletionClient::perform(
         }
         if (!response.protocol_error.empty()) {
             return complete({
-                CompletionOutcome::protocol_error,
+                GenerationOutcome::protocol_error,
                 response.protocol_error
                     + streaming_metadata(
                         status,
@@ -697,7 +697,7 @@ CompletionResult CompletionClient::perform(
         }
         if (!response.done) {
             return complete({
-                CompletionOutcome::protocol_error,
+                GenerationOutcome::protocol_error,
                 (response.received_output()
                     ? "Streaming response ended before [DONE]"
                     : "Streaming response was not valid SSE")
@@ -709,11 +709,11 @@ CompletionResult CompletionClient::perform(
         }
         if (!response.received_answer) {
             return complete({
-                CompletionOutcome::protocol_error,
+                GenerationOutcome::protocol_error,
                 "Streaming response completed without answer content",
             }, status, content_type);
         }
-        return complete({CompletionOutcome::completed, {}}, status, content_type);
+        return complete({GenerationOutcome::completed, {}}, status, content_type);
     }
 
     Json value;
@@ -721,7 +721,7 @@ CompletionResult CompletionClient::perform(
         value = Json::parse(response.body);
     } catch (const Json::exception& error) {
         return complete({
-            CompletionOutcome::protocol_error,
+            GenerationOutcome::protocol_error,
             "Inference server returned invalid JSON: "
                 + std::string(error.what()),
         }, status, content_type);
@@ -731,7 +731,7 @@ CompletionResult CompletionClient::perform(
     if (!value.contains(message_pointer)
         || !value.at(message_pointer).is_object()) {
         return complete({
-            CompletionOutcome::protocol_error,
+            GenerationOutcome::protocol_error,
             "Response did not contain choices[0].message",
         }, status, content_type);
     }
@@ -741,20 +741,20 @@ CompletionResult CompletionClient::perform(
         response);
     if (!response.protocol_error.empty()) {
         return complete({
-            CompletionOutcome::protocol_error,
+            GenerationOutcome::protocol_error,
             response.protocol_error,
         }, status, content_type);
     }
     if (!response.received_answer) {
         return complete({
-            CompletionOutcome::protocol_error,
+            GenerationOutcome::protocol_error,
             "Response completed without answer content",
         }, status, content_type);
     }
-    return complete({CompletionOutcome::completed, {}}, status, content_type);
+    return complete({GenerationOutcome::completed, {}}, status, content_type);
 }
 
-CompletionBackendInfo CompletionClient::info() const {
+ModelBackendInfo ProviderClient::info() const {
     return {
         .character = character_,
         .model = config_.model,
@@ -763,7 +763,7 @@ CompletionBackendInfo CompletionClient::info() const {
     };
 }
 
-std::string CompletionClient::base_url() const {
+std::string ProviderClient::base_url() const {
     std::string host = config_.host;
     if (host.find(':') != std::string::npos && !host.starts_with('[')) {
         host = '[' + host + ']';
@@ -772,11 +772,11 @@ std::string CompletionClient::base_url() const {
         + host + ':' + std::to_string(config_.port);
 }
 
-std::string CompletionClient::endpoint() const {
+std::string ProviderClient::endpoint() const {
     return base_url() + "/v1/chat/completions";
 }
 
-std::string CompletionClient::models_endpoint() const {
+std::string ProviderClient::models_endpoint() const {
     return base_url() + "/v1/models";
 }
 

@@ -1,6 +1,6 @@
 #include "agents/character.h"
-#include "agents/completion_batch.h"
-#include "agents/completion_executor.h"
+#include "agents/generation_batch.h"
+#include "agents/generation_executor.h"
 #include "session/session_controller.h"
 #include "agents/character_config.h"
 #include "util/environment.h"
@@ -85,33 +85,33 @@ CharacterDefinition integration_definition(bool stream) {
         .definition = workspace_directory / "characters" / "Ismael" / "character.toml",
         .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
     });
-    loaded.completion.stream = stream;
+    loaded.backend.stream = stream;
     return {
         .character = std::move(loaded.character),
-        .completion = std::move(loaded.completion),
+        .backend = std::move(loaded.backend),
     };
 }
 
-CompletionEvent wait_for_completion_event(
-    CompletionBatch& batch,
+GenerationEvent wait_for_generation_event(
+    GenerationBatch& batch,
     IntegrationDeadline deadline) {
     while (true) {
         const std::size_t observed = notifier().wake_count();
-        CompletionEvent event = CompletionCompleted{};
+        GenerationEvent event = GenerationCompleted{};
         const ChannelReadStatus status = batch.try_receive_foreground(event);
         if (status == ChannelReadStatus::value) {
             return event;
         }
         if (status == ChannelReadStatus::closed) {
             throw std::runtime_error(
-                "Integration completion event queue closed unexpectedly");
+                "Integration generation event queue closed unexpectedly");
         }
 
         const auto now = IntegrationClock::now();
         if (now >= deadline) {
             batch.cancel();
             throw std::runtime_error(
-                "Timed out after 60 seconds waiting for an integration completion "
+                "Timed out after 60 seconds waiting for an integration generation "
                 "event; cancelled the live request");
         }
         auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -124,17 +124,17 @@ CompletionEvent wait_for_completion_event(
                 remaining)) {
             batch.cancel();
             throw std::runtime_error(
-                "Timed out after 60 seconds waiting for an integration completion "
+                "Timed out after 60 seconds waiting for an integration generation "
                 "event; cancelled the live request");
         }
     }
 }
 
-CompletionBatch start_completion_run(
-    CompletionExecutor& executor,
-    CompletionInput input) {
-    CompletionBatch batch =
-        executor.stage_batch(std::vector<CompletionInput>{std::move(input)});
+GenerationBatch start_generation_run(
+    GenerationExecutor& executor,
+    GenerationRequest input) {
+    GenerationBatch batch =
+        executor.stage_batch(std::vector<GenerationRequest>{std::move(input)});
     batch.open();
     return batch;
 }
@@ -146,34 +146,34 @@ ChatResult run_chat(bool stream) {
     std::vector<CharacterDefinition> definitions;
     definitions.push_back(std::move(definition));
     ThreadPool pool(1);
-    CompletionExecutor executor(
+    GenerationExecutor executor(
         std::move(definitions),
         notifier(),
         pool);
     const PoolCleanup cleanup(pool);
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
-    CompletionInput request{
-        .history = std::make_shared<const CompletionHistory>(
-            transcript.completion_history()),
+    GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(
+            transcript.model_history()),
         .run = {
             .request_id = 1,
             .target = target,
             .prompt_text = input,
         },
     };
-    CompletionBatch batch = start_completion_run(executor, std::move(request));
+    GenerationBatch batch = start_generation_run(executor, std::move(request));
 
     ChatResult result;
     const IntegrationDeadline deadline =
         IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const CompletionEvent event = wait_for_completion_event(batch, deadline);
-        if (const auto* delta = std::get_if<CompletionEventDelta>(&event)) {
+        const GenerationEvent event = wait_for_generation_event(batch, deadline);
+        if (const auto* delta = std::get_if<GenerationEventDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
         } else {
-            EXPECT_TRUE(std::holds_alternative<CompletionCompleted>(event));
+            EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(event));
             break;
         }
     }
@@ -188,35 +188,35 @@ ChatResult run_cancelled_chat() {
     std::vector<CharacterDefinition> definitions;
     definitions.push_back(std::move(definition));
     ThreadPool pool(1);
-    CompletionExecutor executor(
+    GenerationExecutor executor(
         std::move(definitions),
         notifier(),
         pool);
     const PoolCleanup cleanup(pool);
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
-    CompletionInput request{
-        .history = std::make_shared<const CompletionHistory>(
-            transcript.completion_history()),
+    GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(
+            transcript.model_history()),
         .run = {
             .request_id = 2,
             .target = target,
             .prompt_text = input,
         },
     };
-    CompletionBatch batch = start_completion_run(executor, std::move(request));
+    GenerationBatch batch = start_generation_run(executor, std::move(request));
 
     ChatResult result;
     const IntegrationDeadline deadline =
         IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const CompletionEvent event = wait_for_completion_event(batch, deadline);
-        if (const auto* delta = std::get_if<CompletionEventDelta>(&event)) {
+        const GenerationEvent event = wait_for_generation_event(batch, deadline);
+        if (const auto* delta = std::get_if<GenerationEventDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
             batch.cancel();
         } else {
-            EXPECT_TRUE(std::holds_alternative<CompletionCancelled>(event));
+            EXPECT_TRUE(std::holds_alternative<GenerationCancelled>(event));
             break;
         }
     }
@@ -306,13 +306,13 @@ LobbySetup lobby_setup() {
 
 // Redirects one character's backend at a local mock server without touching its prompt.
 void point_at(CharacterDefinition& definition, int port) {
-    definition.completion.host = "127.0.0.1";
-    definition.completion.port = port;
-    definition.completion.https = false;
-    definition.completion.mode = Mode::net;
-    definition.completion.stream = false;
-    definition.completion.api_key = "integration-key";
-    definition.completion.api_key_env.clear();
+    definition.backend.host = "127.0.0.1";
+    definition.backend.port = port;
+    definition.backend.https = false;
+    definition.backend.mode = Mode::net;
+    definition.backend.stream = false;
+    definition.backend.api_key = "integration-key";
+    definition.backend.api_key_env.clear();
 }
 
 std::string answer(std::string_view text) {
@@ -374,8 +374,8 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
     });
     server.start();
     point_at(definitions.front(), server.port());
-    definitions.front().completion.stream = true;
-    definitions.front().completion.reasoning_format =
+    definitions.front().backend.stream = true;
+    definitions.front().backend.reasoning_format =
         ReasoningFormat::automatic;
 
     TemporarySession session;
@@ -420,7 +420,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
         R"({"choices":[{"message":{"reasoning":"Non-stream thought","content":"Non-stream answer"}}]})")});
     server.start();
     point_at(definitions.front(), server.port());
-    definitions.front().completion.reasoning_format =
+    definitions.front().backend.reasoning_format =
         ReasoningFormat::reasoning;
 
     TemporarySession session;

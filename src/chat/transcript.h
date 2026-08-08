@@ -101,7 +101,7 @@ struct TranscriptView {
 
 // The sole owning point-in-time copy of a Transcript. Worker threads share it
 // immutably for model-context projection; presentation uses TranscriptView.
-struct CompletionHistory {
+struct ModelHistory {
     std::vector<TranscriptEntry> entries;
     std::optional<EntryId> open_entry_id;
     OffrecordSpan offrecord_span;
@@ -137,7 +137,7 @@ void require_storable_transcript_entry(const TranscriptEntry& entry);
 // The owner-thread-confined live transcript of one session. It is not
 // thread-safe: all reads and mutations must happen on its owning thread. It
 // allows at most one open streaming entry. Presentation borrows call-scoped
-// views; completion workers receive owning immutable histories. It depends on
+// views; generation workers receive owning immutable histories. It depends on
 // nothing beyond the entry model declared above.
 class Transcript {
 public:
@@ -162,7 +162,7 @@ public:
     [[nodiscard]] bool restore_offrecord(EntryId marker_id);
 
     [[nodiscard]] TranscriptView view() const noexcept;
-    CompletionHistory completion_history() const;
+    ModelHistory model_history() const;
     std::string open_entry_text(EntryId entry_id) const;
 
 private:

@@ -1,4 +1,4 @@
-#include "agents/completion_backend.h"
+#include "agents/model_backend.h"
 #include "agents/character_config.h"
 #include "session/session_catalog.h"
 #include "session/session_controller.h"
@@ -53,7 +53,7 @@ private:
     std::filesystem::path path_;
 };
 
-class DeterministicBackend final : public CompletionBackend {
+class DeterministicBackend final : public ModelBackend {
 public:
     DeterministicBackend(std::string id, std::string name, std::string answer)
         : info_{
@@ -65,22 +65,22 @@ public:
           answer_(std::move(answer)) {
     }
 
-    RequestPayload prepare(const CompletionInput& input) override {
+    RequestPayload prepare(const GenerationRequest& input) override {
         return {.bytes = input.run.prompt_text};
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink& on_delta,
+        const GenerationDeltaSink& on_delta,
         const std::atomic_bool&) override {
-        on_delta({CompletionDeltaKind::answer, answer_});
+        on_delta({GenerationDeltaKind::answer, answer_});
         return {};
     }
 
-    CompletionBackendInfo info() const override { return info_; }
+    ModelBackendInfo info() const override { return info_; }
 
 private:
-    CompletionBackendInfo info_;
+    ModelBackendInfo info_;
     std::string answer_;
 };
 
@@ -207,7 +207,7 @@ TEST(ConcurrentControllers, KeepTranscriptsJournalsAndRequestIdsIndependent) {
     EXPECT_EQ(second.restored.entries[1].request_id, 1);
 }
 
-TEST(ConcurrentControllers, ConstructSessionLocalCompletionClientsConcurrently) {
+TEST(ConcurrentControllers, ConstructSessionLocalProviderClientsConcurrently) {
     // This cross-platform test supplies the portability coverage. Its
     // concurrent first touch of curl_global() is only order-dependent smoke
     // coverage because an earlier test may have initialized the magic static;
@@ -226,10 +226,10 @@ TEST(ConcurrentControllers, ConstructSessionLocalCompletionClientsConcurrently) 
             CharacterDefinition definition;
             definition.character.id = "character-" + std::to_string(index);
             definition.character.display_name = "Character " + std::to_string(index);
-            definition.completion.host = "127.0.0.1";
-            definition.completion.port = 9;
-            definition.completion.mode = Mode::net;
-            definition.completion.model = "configured-model";
+            definition.backend.host = "127.0.0.1";
+            definition.backend.port = 9;
+            definition.backend.mode = Mode::net;
+            definition.backend.model = "configured-model";
             start.arrive_and_wait();
             auto controller = test::from_definitions_for_testing(
                 {std::move(definition)}, path, notifier);

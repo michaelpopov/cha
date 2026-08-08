@@ -209,13 +209,13 @@ std::string format_duplicate_character_notice(std::string_view display_name) {
 
 std::string format_characters_notice(
     const ForumCharacters& characters,
-    const std::vector<CompletionBackendInfo>& runtime_info,
+    const std::vector<ModelBackendInfo>& runtime_info,
     const CharacterId& default_character_id) {
     std::ostringstream result;
     result << "Characters in this forum (" << characters.all().size()
            << "), * marks the default.";
     result << " Any unambiguous prefix works.";
-    for (const CompletionBackendInfo& backend : runtime_info) {
+    for (const ModelBackendInfo& backend : runtime_info) {
         result << " | " << (backend.character.id == default_character_id ? "* " : "")
                << "@" << backend.character.display_name << "  " << backend.model << "  "
                << backend.api << "  "
@@ -227,7 +227,7 @@ std::string format_characters_notice(
 std::string format_session_information(
     std::size_t entry_count,
     const ForumCharacters& characters,
-    const std::vector<CompletionBackendInfo>& runtime_info,
+    const std::vector<ModelBackendInfo>& runtime_info,
     const CharacterId& default_character_id) {
     std::ostringstream text;
     text << "Transcript entries: " << entry_count

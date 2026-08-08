@@ -821,7 +821,7 @@ TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
 TEST(LobbyRoutes, MapsStoppingAndManagerShutdownOpenFailuresToExistingEnvelopes) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    // A completion that ignores cancellation keeps this actor's owner inside
+    // A generation that ignores cancellation keeps this actor's owner inside
     // SessionController::shutdown(), which is exactly the stopping state the
     // lobby must report.
     auto controls = std::make_shared<test::BackendControls>();

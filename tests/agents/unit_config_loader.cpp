@@ -65,7 +65,7 @@ void expect_error_containing(const std::function<void()>& operation,
 }
 
 void expect_definition_values(const LoadedCharacterConfig& loaded) {
-    const CompletionConfig& config = loaded.completion;
+    const ModelBackendConfig& config = loaded.backend;
     EXPECT_EQ(config.host, "definition");
     EXPECT_EQ(config.port, 80);
     EXPECT_EQ(config.mode, Mode::test);
@@ -86,7 +86,7 @@ constexpr std::string_view complete_definition =
     "api_key_env = \"ONE\"\nreasoning_effort = \"low\"\nreasoning_format = \"none\"\n"
     "https = false\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n";
 
-TEST(Config, SeparatesDefinitionMetadataFromCompletionConfiguration) {
+TEST(Config, SeparatesDefinitionMetadataFromModelBackendConfiguration) {
     ConfigFiles files;
     files.write(files.definition(),
         std::string(required_definition) + "description = \"Useful character\"\n");
@@ -94,8 +94,8 @@ TEST(Config, SeparatesDefinitionMetadataFromCompletionConfiguration) {
     EXPECT_EQ(loaded.character.id, "definition");
     EXPECT_EQ(loaded.character.display_name, "Example");
     EXPECT_EQ(loaded.character.description, "Useful character");
-    EXPECT_EQ(loaded.completion.host, "definition.example");
-    EXPECT_EQ(loaded.completion.port, 8080);
+    EXPECT_EQ(loaded.backend.host, "definition.example");
+    EXPECT_EQ(loaded.backend.port, 8080);
 }
 
 TEST(Config, OverlaysEveryRuntimeAndPromptFieldAcrossThreeLayers) {
@@ -107,7 +107,7 @@ TEST(Config, OverlaysEveryRuntimeAndPromptFieldAcrossThreeLayers) {
     files.write(files.member(),
         "host = \"member\"\nport = 8443\nmode = \"net\"\nmodel = \"three\"\nstream = true\ntemperature = 0.3\napi_key = \"three\"\napi_key_env = \"THREE\"\nreasoning_effort = \"high\"\nreasoning_format = \"reasoning_content\"\nhttps = true\n[prompt]\nvalue = \"member\"\nmember = \"member\"\n");
     const LoadedCharacterConfig loaded = load_character_config(files.paths(true, true));
-    const CompletionConfig& effective = loaded.completion;
+    const ModelBackendConfig& effective = loaded.backend;
     EXPECT_EQ(loaded.character.id, "definition");
     EXPECT_EQ(loaded.character.display_name, "Example");
     EXPECT_EQ(effective.host, "member");
@@ -132,12 +132,12 @@ TEST(Config, ForumDefaultsOverlayDefinitionWhenMemberIsAbsent) {
     files.write(files.definition(), complete_definition);
     files.write(files.defaults(), "host = \"defaults\"\nmode = \"net\"\nstream = true\nhttps = true\n[prompt]\nvalue = \"defaults\"\n");
     const LoadedCharacterConfig loaded = load_character_config(files.paths(true));
-    EXPECT_EQ(loaded.completion.host, "defaults");
-    EXPECT_EQ(loaded.completion.mode, Mode::net);
-    EXPECT_TRUE(loaded.completion.stream);
-    EXPECT_TRUE(loaded.completion.https);
+    EXPECT_EQ(loaded.backend.host, "defaults");
+    EXPECT_EQ(loaded.backend.mode, Mode::net);
+    EXPECT_TRUE(loaded.backend.stream);
+    EXPECT_TRUE(loaded.backend.https);
     EXPECT_EQ(loaded.prompt_variables.at("value"), "defaults");
-    EXPECT_EQ(loaded.completion.model, "one");
+    EXPECT_EQ(loaded.backend.model, "one");
     EXPECT_EQ(loaded.prompt_variables.at("base"), "base");
 }
 
@@ -208,12 +208,12 @@ TEST(Config, AttributesEffectiveValidationToHighestPrecedenceSource) {
 TEST(Config, InheritsApplicationProviderAndTracksAllFourLayers) {
     ConfigFiles files;
     files.write(files.definition(), "display_name = \"Example\"\n");
-    EXPECT_EQ(load_character_config(files.paths(false, false, true)).completion.host, "application");
-    EXPECT_EQ(load_character_config(files.paths(false, false, true)).completion.port, 81);
+    EXPECT_EQ(load_character_config(files.paths(false, false, true)).backend.host, "application");
+    EXPECT_EQ(load_character_config(files.paths(false, false, true)).backend.port, 81);
     files.write(files.definition(), "display_name = \"Example\"\nhost = \"definition\"\n");
     files.write(files.defaults(), "host = \"defaults\"\n");
     files.write(files.member(), "host = \"member\"\n");
-    EXPECT_EQ(load_character_config(files.paths(true, true, true)).completion.host, "member");
+    EXPECT_EQ(load_character_config(files.paths(true, true, true)).backend.host, "member");
 }
 
 TEST(Config, ValidatesCharacterDescriptionsAndRejectsThemOutsideDefinitions) {
@@ -303,7 +303,7 @@ TEST(Config, RequiresDefinitionDisplayName) {
 TEST(Config, PreservesExistingDefaultsAndValidation) {
     ConfigFiles files;
     files.write(files.definition(), required_definition);
-    const CompletionConfig config = load_character_config(files.paths()).completion;
+    const ModelBackendConfig config = load_character_config(files.paths()).backend;
     EXPECT_TRUE(config.model.empty());
     EXPECT_DOUBLE_EQ(config.temperature, 1.0);
     EXPECT_EQ(config.reasoning_format, ReasoningFormat::automatic);

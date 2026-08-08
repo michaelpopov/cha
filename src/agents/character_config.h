@@ -27,9 +27,9 @@ enum class ReasoningFormat {
     reasoning,
 };
 
-// Effective private configuration for one completion backend after workspace,
+// Effective private configuration for one model backend after workspace,
 // character, forum-default, and member-override layers have been applied.
-struct CompletionConfig {
+struct ModelBackendConfig {
     std::string host;
     int port{};
     Mode mode{Mode::test};
@@ -78,7 +78,7 @@ ProviderConfig load_provider_config(
 // The typed connection configuration and initial template scope after all layers.
 struct LoadedCharacterConfig {
     CharacterMetadata character;
-    CompletionConfig completion;
+    ModelBackendConfig backend;
     TemplateScope prompt_variables;
 };
 

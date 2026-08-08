@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/completion_backend.h"
+#include "agents/model_backend.h"
 
 #include <memory>
 #include <utility>
@@ -8,9 +8,9 @@
 
 namespace cha::test {
 
-inline std::vector<std::unique_ptr<CompletionBackend>> one_backend(
-    std::unique_ptr<CompletionBackend> backend) {
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+inline std::vector<std::unique_ptr<ModelBackend>> one_backend(
+    std::unique_ptr<ModelBackend> backend) {
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(backend));
     return backends;
 }

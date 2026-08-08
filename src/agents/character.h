@@ -17,10 +17,10 @@ inline constexpr std::string_view reserved_participant_names[] = {
 };
 
 // A character loaded and ready to run. Public identity remains separate from
-// the private completion-provider configuration used to execute it.
+// the private model-backend configuration used to execute it.
 struct CharacterDefinition {
     CharacterMetadata character;
-    CompletionConfig completion;
+    ModelBackendConfig backend;
     std::string system_prompt;
 };
 

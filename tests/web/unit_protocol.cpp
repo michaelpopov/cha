@@ -457,7 +457,7 @@ TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
             / "characters/guide/character.toml",
         .forum_defaults = fixture.root()
             / "forums/lobby/members/character_defaults.toml",
-    }).completion;
+    }).backend;
     EXPECT_EQ(config.mode, Mode::test);
     EXPECT_EQ(config.model, "fake");
 }

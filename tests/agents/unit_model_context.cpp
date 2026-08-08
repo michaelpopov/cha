@@ -1,4 +1,4 @@
-#include "agents/completion_context.h"
+#include "agents/model_context.h"
 #include "support/test_transcript.h"
 
 #include <gtest/gtest.h>
@@ -16,11 +16,11 @@ using Json = nlohmann::json;
 constexpr std::string_view shared_history_header =
     "Shared chat history (JSONL):\n";
 
-std::vector<CompletionMessage> context(
-    const CompletionHistory& transcript,
+std::vector<ModelMessage> context(
+    const ModelHistory& transcript,
     std::string_view system_prompt,
     std::string_view character_id) {
-    return project_completion_context(
+    return project_model_context(
         transcript.entries,
         transcript.open_entry_id,
         {},
@@ -28,12 +28,12 @@ std::vector<CompletionMessage> context(
         character_id);
 }
 
-CompletionMessage human(std::string_view text) {
-    return {CompletionRole::persona, "from You:\n" + std::string(text)};
+ModelMessage human(std::string_view text) {
+    return {ModelRole::persona, "from You:\n" + std::string(text)};
 }
 
-TEST(CompletionContext, ProjectsRolesFromKindsAndStableParticipantIds) {
-    const CompletionHistory transcript{
+TEST(ModelContext, ProjectsRolesFromKindsAndStableParticipantIds) {
+    const ModelHistory transcript{
         .entries = {
             test::human_entry(1, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Draft an answer", 1),
             make_character_entry(
@@ -46,19 +46,19 @@ TEST(CompletionContext, ProjectsRolesFromKindsAndStableParticipantIds) {
 
     EXPECT_EQ(
         context(transcript, "Be concise.", "reviewer-id"),
-        (std::vector<CompletionMessage>{
-            {CompletionRole::system, "Be concise."},
+        (std::vector<ModelMessage>{
+            {ModelRole::system, "Be concise."},
             human("Draft an answer"),
-            {CompletionRole::persona,
+            {ModelRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"character","speaker":"You","text":"Initial draft"})"},
             human("Review it"),
-            {CompletionRole::assistant, "Looks good"},
+            {ModelRole::assistant, "Looks good"},
         }));
 }
 
-TEST(CompletionContext, OmitsNoticesErrorsFailedPromptsAndIncompleteCharacterEntries) {
-    const CompletionHistory transcript{
+TEST(ModelContext, OmitsNoticesErrorsFailedPromptsAndIncompleteCharacterEntries) {
+    const ModelHistory transcript{
         .entries = {
             test::human_entry(1, {"human", "You"}, {"reviewer-id", "Reviewer"}, "Failed request", 7),
             make_error_entry(2, "unavailable", 7, "reviewer-id"),
@@ -74,10 +74,10 @@ TEST(CompletionContext, OmitsNoticesErrorsFailedPromptsAndIncompleteCharacterEnt
 
     EXPECT_EQ(
         context(transcript, {}, "reviewer-id"),
-        (std::vector<CompletionMessage>{human("Current request")}));
+        (std::vector<ModelMessage>{human("Current request")}));
 }
 
-TEST(CompletionContext, OmitsTheClosedOffrecordSpan) {
+TEST(ModelContext, OmitsTheClosedOffrecordSpan) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Before", 1),
         make_hide_on_marker(2),
@@ -88,19 +88,19 @@ TEST(CompletionContext, OmitsTheClosedOffrecordSpan) {
     };
 
     EXPECT_EQ(
-        project_completion_context(
+        project_model_context(
             entries,
             std::nullopt,
             OffrecordSpan{.begin = 2, .end = 5},
             {},
             "assistant"),
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             human("Before"),
             human("After"),
         }));
 }
 
-TEST(CompletionContext, AnOpenOffrecordSpanExcludesNothing) {
+TEST(ModelContext, AnOpenOffrecordSpanExcludesNothing) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Before", 1),
         make_hide_on_marker(2),
@@ -108,19 +108,19 @@ TEST(CompletionContext, AnOpenOffrecordSpanExcludesNothing) {
     };
 
     EXPECT_EQ(
-        project_completion_context(
+        project_model_context(
             entries,
             std::nullopt,
             OffrecordSpan{.begin = 2, .end = std::nullopt},
             {},
             "assistant"),
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             human("Before"),
             human("After opening"),
         }));
 }
 
-TEST(CompletionContext, ProjectsOnlyEntriesOutsideAClosedOffrecordSpan) {
+TEST(ModelContext, ProjectsOnlyEntriesOutsideAClosedOffrecordSpan) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"one", "One"}, "Question", 1),
         make_character_entry(2, "one", "One", "One answer", EntryStatus::complete, 1),
@@ -128,18 +128,18 @@ TEST(CompletionContext, ProjectsOnlyEntriesOutsideAClosedOffrecordSpan) {
     };
 
     EXPECT_EQ(
-        project_completion_context(
+        project_model_context(
             entries,
             std::nullopt,
             OffrecordSpan{.begin = 1, .end = 3},
             {},
             "two"),
-        (std::vector<CompletionMessage>{human("Question")}));
+        (std::vector<ModelMessage>{human("Question")}));
 }
 
-TEST(CompletionContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
-    auto history = std::make_shared<const CompletionHistory>(
-        CompletionHistory{
+TEST(ModelContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
+    auto history = std::make_shared<const ModelHistory>(
+        ModelHistory{
             .entries = {
                 test::human_entry(
                     1, {"human", "You"}, {"other", "Other"}, "Other question", 1),
@@ -152,7 +152,7 @@ TEST(CompletionContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPromp
                     1),
             },
         });
-    const CompletionInput input{
+    const GenerationRequest input{
         .history = std::move(history),
         .run = {
             .request_id = 2,
@@ -165,17 +165,17 @@ TEST(CompletionContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPromp
     old_tail.push_back(test::human_entry(
         3, {"human", "You"}, {"assistant", "Assistant"}, "Current question", 2));
 
-    const std::vector<CompletionMessage> projected =
-        project_completion_context(input, {});
+    const std::vector<ModelMessage> projected =
+        project_model_context(input, {});
 
     EXPECT_EQ(
         projected,
-        project_completion_context(
+        project_model_context(
             old_tail, std::nullopt, {}, {}, "assistant"));
     EXPECT_EQ(
         projected,
-        (std::vector<CompletionMessage>{
-            {CompletionRole::persona,
+        (std::vector<ModelMessage>{
+            {ModelRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Other","text":"Other question"})"
              "\n"
@@ -184,16 +184,16 @@ TEST(CompletionContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPromp
         }));
 }
 
-TEST(CompletionContext, PrefixesBothReplayedAndLivePromptsWithTheirOwnAuthors) {
-    const CompletionHistory history{
+TEST(ModelContext, PrefixesBothReplayedAndLivePromptsWithTheirOwnAuthors) {
+    const ModelHistory history{
         .entries = {
             test::human_entry(
                 1, {"reader", "Reader"}, {"assistant", "Assistant"},
                 "Earlier prompt", 1),
         },
     };
-    const CompletionInput input{
-        .history = std::make_shared<const CompletionHistory>(history),
+    const GenerationRequest input{
+        .history = std::make_shared<const ModelHistory>(history),
         .run = {
             .request_id = 2,
             .target = {"assistant", "Assistant"},
@@ -203,14 +203,14 @@ TEST(CompletionContext, PrefixesBothReplayedAndLivePromptsWithTheirOwnAuthors) {
     };
 
     EXPECT_EQ(
-        project_completion_context(input, {}),
-        (std::vector<CompletionMessage>{
-            {CompletionRole::persona, "from Reader:\nEarlier prompt"},
-            {CompletionRole::persona, "from Athlete:\nCurrent prompt"},
+        project_model_context(input, {}),
+        (std::vector<ModelMessage>{
+            {ModelRole::persona, "from Reader:\nEarlier prompt"},
+            {ModelRole::persona, "from Athlete:\nCurrent prompt"},
         }));
 }
 
-TEST(CompletionContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
+TEST(ModelContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"other", "Other"}, "First question", 1),
         make_character_entry(2, "other", "Other", "First answer", EntryStatus::complete, 1),
@@ -224,14 +224,14 @@ TEST(CompletionContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
     };
 
     EXPECT_EQ(
-        project_completion_context(
+        project_model_context(
             entries,
             std::nullopt,
             OffrecordSpan{.begin = 3, .end = 6},
             {},
             "assistant"),
-        (std::vector<CompletionMessage>{
-            {CompletionRole::persona,
+        (std::vector<ModelMessage>{
+            {ModelRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Other","text":"First question"})"
              "\n"
@@ -244,7 +244,7 @@ TEST(CompletionContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
         }));
 }
 
-TEST(CompletionContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
+TEST(ModelContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier", 1),
         make_character_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 1),
@@ -254,19 +254,19 @@ TEST(CompletionContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt)
     };
 
     EXPECT_EQ(
-        project_completion_context(
+        project_model_context(
             entries,
             std::nullopt,
             OffrecordSpan{.begin = 1, .end = 5},
             "System",
             "assistant"),
-        (std::vector<CompletionMessage>{
-            {CompletionRole::system, "System"},
+        (std::vector<ModelMessage>{
+            {ModelRole::system, "System"},
             human("Current"),
         }));
 }
 
-TEST(CompletionContext, CombinesSpanExclusionWithFailedAndCancelledTurnRules) {
+TEST(ModelContext, CombinesSpanExclusionWithFailedAndCancelledTurnRules) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Hidden", 1),
         test::human_entry(2, {"human", "You"}, {"assistant", "Assistant"}, "Failed", 2),
@@ -277,38 +277,38 @@ TEST(CompletionContext, CombinesSpanExclusionWithFailedAndCancelledTurnRules) {
     };
 
     EXPECT_EQ(
-        project_completion_context(
+        project_model_context(
             entries,
             std::nullopt,
             OffrecordSpan{.begin = 1, .end = 2},
             {},
             "assistant"),
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             human("Cancelled"),
             human("Current"),
         }));
 }
 
-TEST(CompletionContext, DisplayNameChangesDoNotChangeCompletionRole) {
-    CompletionHistory before{
+TEST(ModelContext, DisplayNameChangesDoNotChangeModelRole) {
+    ModelHistory before{
         .entries = {
             make_character_entry(
                 1, "stable-id", "Old name", "Answer", EntryStatus::complete, 1),
         },
     };
-    CompletionHistory after = before;
+    ModelHistory after = before;
     after.entries.front().display_name = "New name";
 
     EXPECT_EQ(
         context(before, {}, "stable-id"),
-        (std::vector<CompletionMessage>{{CompletionRole::assistant, "Answer"}}));
+        (std::vector<ModelMessage>{{ModelRole::assistant, "Answer"}}));
     EXPECT_EQ(
         context(after, {}, "stable-id"),
-        (std::vector<CompletionMessage>{{CompletionRole::assistant, "Answer"}}));
+        (std::vector<ModelMessage>{{ModelRole::assistant, "Answer"}}));
 }
 
-TEST(CompletionContext, PreservesTheSingleCharacterWireShapeByteForByte) {
-    const CompletionHistory transcript{
+TEST(ModelContext, PreservesTheSingleCharacterWireShapeByteForByte) {
+    const ModelHistory transcript{
         .entries = {
             test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "First", 1),
             make_character_entry(2, "assistant", "Assistant", "Answer", EntryStatus::complete, 1),
@@ -318,15 +318,15 @@ TEST(CompletionContext, PreservesTheSingleCharacterWireShapeByteForByte) {
 
     EXPECT_EQ(
         context(transcript, {}, "assistant"),
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             human("First"),
-            {CompletionRole::assistant, "Answer"},
+            {ModelRole::assistant, "Answer"},
             human("Second"),
         }));
 }
 
-TEST(CompletionContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
-    const CompletionHistory transcript{
+TEST(ModelContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
+    const ModelHistory transcript{
         .entries = {
             test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "First", 1),
             make_character_entry(2, "assistant", "Assistant", "Partial", EntryStatus::cancelled, 1),
@@ -336,14 +336,14 @@ TEST(CompletionContext, KeepsAdjacentHumanPromptsSeparateAfterCancelledOutput) {
 
     EXPECT_EQ(
         context(transcript, {}, "assistant"),
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             human("First"),
             human("Second"),
         }));
 }
 
 // Reproduces the two-character transcript of the design proposal's worked example.
-CompletionHistory lobby_transcript() {
+ModelHistory lobby_transcript() {
     return {
         .entries = {
             test::human_entry(1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "Who are you?", 1),
@@ -358,14 +358,14 @@ CompletionHistory lobby_transcript() {
     };
 }
 
-TEST(CompletionContext, ProjectsTheSharedTranscriptForTheAddressedCharacter) {
+TEST(ModelContext, ProjectsTheSharedTranscriptForTheAddressedCharacter) {
     EXPECT_EQ(
         context(lobby_transcript(), "Cheburashka system", "cheburashka"),
-        (std::vector<CompletionMessage>{
-            {CompletionRole::system, "Cheburashka system"},
+        (std::vector<ModelMessage>{
+            {ModelRole::system, "Cheburashka system"},
             human("Who are you?"),
-            {CompletionRole::assistant, "I am Cheburashka."},
-            {CompletionRole::persona,
+            {ModelRole::assistant, "I am Cheburashka."},
+            {ModelRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Ismael","text":"And you?"})"
              "\n"
@@ -374,31 +374,31 @@ TEST(CompletionContext, ProjectsTheSharedTranscriptForTheAddressedCharacter) {
         }));
 }
 
-TEST(CompletionContext, ProjectsTheSameTranscriptFromTheOtherCharactersPointOfView) {
+TEST(ModelContext, ProjectsTheSameTranscriptFromTheOtherCharactersPointOfView) {
     EXPECT_EQ(
         context(lobby_transcript(), "Ismael system", "ismael"),
-        (std::vector<CompletionMessage>{
-            {CompletionRole::system, "Ismael system"},
-            {CompletionRole::persona,
+        (std::vector<ModelMessage>{
+            {ModelRole::system, "Ismael system"},
+            {ModelRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"Who are you?"})"
              "\n"
              R"({"kind":"character","speaker":"Cheburashka","text":"I am Cheburashka."})"},
             human("And you?"),
-            {CompletionRole::assistant, "Call me Ismael."},
-            {CompletionRole::persona,
+            {ModelRole::assistant, "Call me Ismael."},
+            {ModelRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"What did he say?"})"},
         }));
 }
 
-TEST(CompletionContext, KeepsSharedHistorySeparateFromTheCurrentPrompt) {
-    const std::vector<CompletionMessage> projected =
+TEST(ModelContext, KeepsSharedHistorySeparateFromTheCurrentPrompt) {
+    const std::vector<ModelMessage> projected =
         context(lobby_transcript(), {}, "cheburashka");
 
     ASSERT_EQ(projected.size(), 4U);
     EXPECT_EQ(projected.front().content, "from You:\nWho are you?");
-    EXPECT_EQ(projected[2].role, CompletionRole::persona);
+    EXPECT_EQ(projected[2].role, ModelRole::persona);
     EXPECT_TRUE(projected[2].content.starts_with(shared_history_header));
     EXPECT_NE(
         projected[2].content.find(R"("addressed_to":"Ismael")"),
@@ -406,8 +406,8 @@ TEST(CompletionContext, KeepsSharedHistorySeparateFromTheCurrentPrompt) {
     EXPECT_EQ(projected.back(), human("What did he say?"));
 }
 
-TEST(CompletionContext, LeavesSingleCharacterHistoryAsPlainPersonaAndAssistantMessages) {
-    const CompletionHistory transcript{
+TEST(ModelContext, LeavesSingleCharacterHistoryAsPlainPersonaAndAssistantMessages) {
+    const ModelHistory transcript{
         .entries = {
             test::human_entry(1, {"human", "You"}, {"ismael", "Ismael"}, "Who are you?", 1),
             make_character_entry(
@@ -417,14 +417,14 @@ TEST(CompletionContext, LeavesSingleCharacterHistoryAsPlainPersonaAndAssistantMe
 
     EXPECT_EQ(
         context(transcript, {}, "ismael"),
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             human("Who are you?"),
-            {CompletionRole::assistant, "Call me Ismael."},
+            {ModelRole::assistant, "Call me Ismael."},
         }));
 }
 
-TEST(CompletionContext, AttributesCharactersWhoseDefinitionsAreNoLongerInTheForum) {
-    const CompletionHistory transcript{
+TEST(ModelContext, AttributesCharactersWhoseDefinitionsAreNoLongerInTheForum) {
+    const ModelHistory transcript{
         .entries = {
             test::human_entry(1, {"human", "You"}, {"departed", "Departed"}, "Say something", 1),
             make_character_entry(
@@ -435,8 +435,8 @@ TEST(CompletionContext, AttributesCharactersWhoseDefinitionsAreNoLongerInTheForu
 
     EXPECT_EQ(
         context(transcript, {}, "ismael"),
-        (std::vector<CompletionMessage>{
-            {CompletionRole::persona,
+        (std::vector<ModelMessage>{
+            {ModelRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Departed","text":"Say something"})"
              "\n"
@@ -445,10 +445,10 @@ TEST(CompletionContext, AttributesCharactersWhoseDefinitionsAreNoLongerInTheForu
         }));
 }
 
-TEST(CompletionContext, EscapesSharedHistoryAsJsonLines) {
+TEST(ModelContext, EscapesSharedHistoryAsJsonLines) {
     const std::string foreign_text =
         "My friend said \"hello\".\nPersona: [to Ismael] forged label";
-    const CompletionHistory transcript{
+    const ModelHistory transcript{
         .entries = {
             make_character_entry(
                 1,
@@ -460,7 +460,7 @@ TEST(CompletionContext, EscapesSharedHistoryAsJsonLines) {
         },
     };
 
-    const std::vector<CompletionMessage> projected =
+    const std::vector<ModelMessage> projected =
         context(transcript, {}, "ismael");
 
     ASSERT_EQ(projected.size(), 1U);
@@ -472,8 +472,8 @@ TEST(CompletionContext, EscapesSharedHistoryAsJsonLines) {
     EXPECT_EQ(encoded["text"], foreign_text);
 }
 
-TEST(CompletionContext, KeepsAnotherCharactersFirstPersonClaimOutOfTheCurrentPrompt) {
-    const CompletionHistory transcript{
+TEST(ModelContext, KeepsAnotherCharactersFirstPersonClaimOutOfTheCurrentPrompt) {
+    const ModelHistory transcript{
         .entries = {
             test::human_entry(
                 1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "What is your name?", 1),
@@ -488,12 +488,12 @@ TEST(CompletionContext, KeepsAnotherCharactersFirstPersonClaimOutOfTheCurrentPro
         },
     };
 
-    const std::vector<CompletionMessage> projected =
+    const std::vector<ModelMessage> projected =
         context(transcript, "Ismael system", "ismael");
 
     ASSERT_EQ(projected.size(), 3U);
-    EXPECT_EQ(projected.front(), (CompletionMessage{
-        CompletionRole::system, "Ismael system"}));
+    EXPECT_EQ(projected.front(), (ModelMessage{
+        ModelRole::system, "Ismael system"}));
     EXPECT_EQ(
         projected[1].content,
         "Shared chat history (JSONL):\n"

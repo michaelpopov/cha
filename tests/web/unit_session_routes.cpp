@@ -700,7 +700,7 @@ TEST(SessionRoutes, TimeoutAndClientDisconnectLeaveAcceptedCommandRunning) {
     manager.begin_shutdown();
 
     // A request whose client gives up after enqueue still leaves its owning
-    // completion with the actor. The handler may finish after the client is
+    // reply with the actor. The handler may finish after the client is
     // gone without touching request-owned state.
     SessionFiles disconnect_files;
     auto disconnect_controls = std::make_shared<test::BackendControls>();

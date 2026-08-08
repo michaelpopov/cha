@@ -1,8 +1,8 @@
 #pragma once
 
 #include "agents/character.h"
-#include "agents/completion_batch.h"
-#include "agents/completion_executor.h"
+#include "agents/generation_batch.h"
+#include "agents/generation_executor.h"
 #include "chat/persona.h"
 #include "session/controller_update.h"
 #include "session/controller_view.h"
@@ -28,9 +28,9 @@ namespace cha {
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, forum characters, default character, generation
 // status) and commands (submit a prompt, clear, stop, switch the default character, drain
-// completion events),
+// generation events),
 // each returning a ControllerUpdate instead of touching a frontend. It owns the Transcript,
-// SessionJournal, CompletionExecutor, and the one in-flight CompletionBatch. Command syntax,
+// SessionJournal, GenerationExecutor, and the one in-flight GenerationBatch. Command syntax,
 // mentions, and transport formats belong to front ends, not here.
 class SessionController {
 public:
@@ -58,7 +58,7 @@ public:
     // Test-only construction and activation fault injection. These seams live
     // here because the otherwise private controller owns both dependencies.
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
-        std::vector<std::unique_ptr<CompletionBackend>> backends,
+        std::vector<std::unique_ptr<ModelBackend>> backends,
         PersonaRoster personas,
         CharacterId initial_default_character_id,
         std::filesystem::path database_path,
@@ -96,7 +96,7 @@ public:
     [[nodiscard]] ControllerUpdate set_default_character(std::string_view handle);
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
     [[nodiscard]] ControllerUpdate request_stop();
-    [[nodiscard]] ControllerUpdate handle_completion_event(CompletionEvent event);
+    [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
     [[nodiscard]] ControllerEventBatch receive_events(std::size_t max_events);
     void shutdown();
 
@@ -119,7 +119,7 @@ private:
         WakeNotifier& notifier,
         SessionRestore restored);
     SessionController(
-        std::vector<std::unique_ptr<CompletionBackend>> backends,
+        std::vector<std::unique_ptr<ModelBackend>> backends,
         PersonaRoster personas,
         CharacterId initial_default_character_id,
         std::filesystem::path database_path,
@@ -138,7 +138,7 @@ private:
         EntryIdentity author,
         std::string text,
         std::vector<CharacterMetadata> targets,
-        SharedCompletionHistory history,
+        SharedModelHistory history,
         ControllerUpdate& update);
     [[nodiscard]] ControllerUpdate start_resolved_multicast(
         std::string_view author_id,
@@ -155,10 +155,10 @@ private:
     // destroys the batch, and clears the controller's notice accumulation so it
     // cannot leak into a later operation.
     void release_batch() noexcept;
-    void apply(const CompletionEventDelta& event, ControllerUpdate& update);
-    void apply(const CompletionCompleted& event, ControllerUpdate& update);
-    void apply(const CompletionCancelled& event, ControllerUpdate& update);
-    void apply(const CompletionFailed& event, ControllerUpdate& update);
+    void apply(const GenerationEventDelta& event, ControllerUpdate& update);
+    void apply(const GenerationCompleted& event, ControllerUpdate& update);
+    void apply(const GenerationCancelled& event, ControllerUpdate& update);
+    void apply(const GenerationFailed& event, ControllerUpdate& update);
     void fail_active_response(
         std::string message,
         ParticipantId participant_id,
@@ -172,21 +172,21 @@ private:
     SessionLease lease_;
     Transcript transcript_;
     SessionJournal journal_;
-    // Explicit shutdown joins this pool while completion_executor_ is still
+    // Explicit shutdown joins this pool while generation_executor_ is still
     // alive. One worker per backend intentionally admits full-width multicast
     // work. Declaration order — pool, then executor, then batch — is the
     // fallback only for construction failures.
     ThreadPool worker_pool_;
-    CompletionExecutor completion_executor_;
+    GenerationExecutor generation_executor_;
     ForumCharacters characters_;
     SharedPersonaRoster personas_;
     CharacterId default_character_id_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;
-    std::optional<CompletionBatch> batch_;
+    std::optional<GenerationBatch> batch_;
     // Presentation state only: the batch owns runs, foreground selection,
-    // cancellation, and completion.
+    // cancellation, and generation finalization.
     std::string terminal_notices_;
     bool stop_notice_recorded_{};
     ActivationHook before_activation_;

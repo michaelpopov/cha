@@ -1,6 +1,6 @@
 #include "session/session_controller.h"
 #include "agents/character.h"
-#include "agents/completion_backend.h"
+#include "agents/model_backend.h"
 #include "session/session_database.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
@@ -35,8 +35,8 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
-CompletionMessage operator_prompt(std::string_view text) {
-    return {CompletionRole::persona, "from Operator:\n" + std::string(text)};
+ModelMessage operator_prompt(std::string_view text) {
+    return {ModelRole::persona, "from Operator:\n" + std::string(text)};
 }
 
 // Blocks the execution's final wake. This makes `execution_finished` true
@@ -120,11 +120,11 @@ public:
     std::filesystem::path path;
 };
 
-// Returns scripted completion output while retaining immutable inputs for assertions.
-class ScriptedBackend final : public CompletionBackend {
+// Returns scripted generation output while retaining immutable inputs for assertions.
+class ScriptedBackend final : public ModelBackend {
 public:
     ScriptedBackend(
-        CompletionResult result = {},
+        GenerationResult result = {},
         std::vector<std::string> deltas = {},
         bool wait_for_cancellation = false,
         std::string id = "guide-id",
@@ -135,15 +135,15 @@ public:
         wait_for_cancellation_(wait_for_cancellation) {
         for (std::string& delta : deltas) {
             deltas_.push_back({
-                CompletionDeltaKind::answer,
+                GenerationDeltaKind::answer,
                 std::move(delta),
             });
         }
     }
 
     ScriptedBackend(
-        std::vector<CompletionDelta> deltas,
-        CompletionResult result = {},
+        std::vector<GenerationDelta> deltas,
+        GenerationResult result = {},
         bool wait_for_cancellation = false,
         std::string id = "guide-id",
         std::string name = "Guide")
@@ -154,53 +154,53 @@ public:
         wait_for_cancellation_(wait_for_cancellation) {
     }
 
-    RequestPayload prepare(const CompletionInput& input) override {
+    RequestPayload prepare(const GenerationRequest& input) override {
         inputs.push_back(input);
-        model_contexts.push_back(project_completion_context(input, system_prompt));
+        model_contexts.push_back(project_model_context(input, system_prompt));
         return {.bytes = input.run.prompt_text};
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink& on_delta,
+        const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
-        for (const CompletionDelta& delta : deltas_) {
+        for (const GenerationDelta& delta : deltas_) {
             on_delta(delta);
         }
         if (wait_for_cancellation_) {
             while (!cancellation.load(std::memory_order_acquire)) {
                 std::this_thread::yield();
             }
-            return {CompletionOutcome::cancelled, {}};
+            return {GenerationOutcome::cancelled, {}};
         }
         return result_;
     }
 
-    CompletionBackendInfo info() const override {
+    ModelBackendInfo info() const override {
         return {
             .character = {
                 .id = id_,
                 .display_name = name_,
             },
             .model = "test-model",
-            .api = "test://completion",
+            .api = "test://model",
             .streaming = true,
         };
     }
 
-    std::vector<CompletionInput> inputs;
-    std::vector<std::vector<CompletionMessage>> model_contexts;
+    std::vector<GenerationRequest> inputs;
+    std::vector<std::vector<ModelMessage>> model_contexts;
     std::string system_prompt;
 
 private:
     std::string id_{"guide-id"};
     std::string name_{"Guide"};
-    CompletionResult result_;
-    std::vector<CompletionDelta> deltas_;
+    GenerationResult result_;
+    std::vector<GenerationDelta> deltas_;
     bool wait_for_cancellation_{};
 };
 
-class ConcurrentBackend final : public CompletionBackend {
+class ConcurrentBackend final : public ModelBackend {
 public:
     ConcurrentBackend(
         std::string id,
@@ -215,14 +215,14 @@ public:
           delta_count_(delta_count) {
     }
 
-    RequestPayload prepare(const CompletionInput& input) override {
+    RequestPayload prepare(const GenerationRequest& input) override {
         inputs.push_back(input);
         return {.bytes = input.run.prompt_text};
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink& on_delta,
+        const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
         entered.store(true, std::memory_order_release);
         while (release_ && !release_->load(std::memory_order_acquire)
@@ -231,25 +231,25 @@ public:
         }
         if (cancellation.load(std::memory_order_acquire)) {
             finished.store(true, std::memory_order_release);
-            return {CompletionOutcome::cancelled, {}};
+            return {GenerationOutcome::cancelled, {}};
         }
         for (std::size_t index = 0; index < delta_count_; ++index) {
-            on_delta({CompletionDeltaKind::answer, answer_});
+            on_delta({GenerationDeltaKind::answer, answer_});
         }
         finished.store(true, std::memory_order_release);
         return {};
     }
 
-    CompletionBackendInfo info() const override {
+    ModelBackendInfo info() const override {
         return {
             .character = {.id = id_, .display_name = name_},
             .model = "test-model",
-            .api = "test://completion",
+            .api = "test://model",
             .streaming = true,
         };
     }
 
-    std::vector<CompletionInput> inputs;
+    std::vector<GenerationRequest> inputs;
     std::atomic_bool entered{false};
     std::atomic_bool finished{false};
 
@@ -261,7 +261,7 @@ private:
     std::size_t delta_count_{1};
 };
 
-class CancellationBlockingBackend final : public CompletionBackend {
+class CancellationBlockingBackend final : public ModelBackend {
 public:
     CancellationBlockingBackend(
         std::string id,
@@ -270,13 +270,13 @@ public:
         : id_(std::move(id)), name_(std::move(name)), release_(release) {
     }
 
-    RequestPayload prepare(const CompletionInput& input) override {
+    RequestPayload prepare(const GenerationRequest& input) override {
         return {.bytes = input.run.prompt_text};
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink&,
+        const GenerationDeltaSink&,
         const std::atomic_bool& cancellation) override {
         entered.store(true, std::memory_order_release);
         while (!cancellation.load(std::memory_order_acquire)) {
@@ -285,14 +285,14 @@ public:
         while (!release_.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
-        return {CompletionOutcome::cancelled, {}};
+        return {GenerationOutcome::cancelled, {}};
     }
 
-    CompletionBackendInfo info() const override {
+    ModelBackendInfo info() const override {
         return {
             .character = {.id = id_, .display_name = name_},
             .model = "test-model",
-            .api = "test://completion",
+            .api = "test://model",
             .streaming = true,
         };
     }
@@ -305,28 +305,28 @@ private:
     std::atomic_bool& release_;
 };
 
-class ThrowingPrepareBackend final : public CompletionBackend {
+class ThrowingPrepareBackend final : public ModelBackend {
 public:
-    RequestPayload prepare(const CompletionInput&) override {
+    RequestPayload prepare(const GenerationRequest&) override {
         throw std::runtime_error("preparation failed");
     }
 
-    CompletionResult perform(
+    GenerationResult perform(
         RequestPayload,
-        const CompletionDeltaSink&,
+        const GenerationDeltaSink&,
         const std::atomic_bool&) override {
         performed = true;
         return {};
     }
 
-    CompletionBackendInfo info() const override {
+    ModelBackendInfo info() const override {
         return {
             .character = {
                 .id = "guide-id",
                 .display_name = "Guide",
             },
             .model = "test-model",
-            .api = "test://completion",
+            .api = "test://model",
             .streaming = true,
         };
     }
@@ -383,7 +383,7 @@ TEST(SessionController, RejectsEmptyCharacterConfigurationWithExecutorMessage) {
     } catch (const std::invalid_argument& error) {
         EXPECT_EQ(
             error.what(),
-            std::string("Completion executor requires at least one character"));
+            std::string("Generation executor requires at least one character"));
     }
 }
 
@@ -415,7 +415,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
         journal.cancel_turn(16, std::nullopt);
     }
     auto backend = std::make_unique<ScriptedBackend>(
-        CompletionResult{},
+        GenerationResult{},
         std::vector<std::string>{"Hello", " there"});
     ScriptedBackend* backend_view = backend.get();
     auto controller = test::from_backends_for_testing(
@@ -432,7 +432,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_FALSE(completed.session_ended);
 
     ASSERT_EQ(backend_view->inputs.size(), 1U);
-    const CompletionInput& request =
+    const GenerationRequest& request =
         backend_view->inputs.front();
     EXPECT_EQ(request.run.request_id, 17U);
     EXPECT_EQ(request.run.target.id, "guide-id");
@@ -441,8 +441,8 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(request.history->entries.front(), earlier);
     EXPECT_EQ(
         backend_view->model_contexts.front(),
-        (std::vector<CompletionMessage>{
-            {CompletionRole::persona, "from You:\nEarlier"},
+        (std::vector<ModelMessage>{
+            {ModelRole::persona, "from You:\nEarlier"},
             operator_prompt("Current"),
         }));
     EXPECT_TRUE(has_state_update(completed));
@@ -461,14 +461,14 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
 TEST(SessionController, ResolvesAndStampsTheAuthorForEveryBatchRun) {
     TemporaryJournal temporary;
     auto first = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"First"}, false,
+        GenerationResult{}, std::vector<std::string>{"First"}, false,
         "one-id", "One");
     auto second = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Second"}, false,
+        GenerationResult{}, std::vector<std::string>{"Second"}, false,
         "two-id", "Two");
     ScriptedBackend* const first_view = first.get();
     ScriptedBackend* const second_view = second.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     auto controller = test::from_backends_for_testing(
@@ -499,7 +499,7 @@ TEST(SessionController, ResolvesAndStampsTheAuthorForEveryBatchRun) {
 TEST(SessionController, KeepsTheStaticSystemPromptAcrossDifferentAuthors) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"First", "Second"});
+        GenerationResult{}, std::vector<std::string>{"First", "Second"});
     ScriptedBackend* const backend_view = backend.get();
     backend_view->system_prompt = "Static system prompt";
     auto controller = test::from_backends_for_testing(
@@ -522,13 +522,13 @@ TEST(SessionController, KeepsTheStaticSystemPromptAcrossDifferentAuthors) {
     EXPECT_EQ(backend_view->model_contexts[0].front(),
               backend_view->model_contexts[1].front());
     EXPECT_EQ(backend_view->model_contexts[0].front(),
-              (CompletionMessage{CompletionRole::system, "Static system prompt"}));
+              (ModelMessage{ModelRole::system, "Static system prompt"}));
     EXPECT_NE(backend_view->model_contexts[0].back(),
               backend_view->model_contexts[1].back());
     EXPECT_EQ(backend_view->model_contexts[0].back(),
-              (CompletionMessage{CompletionRole::persona, "from Reader:\nFirst question"}));
+              (ModelMessage{ModelRole::persona, "from Reader:\nFirst question"}));
     EXPECT_EQ(backend_view->model_contexts[1].back(),
-              (CompletionMessage{CompletionRole::persona, "from Athlete:\nSecond question"}));
+              (ModelMessage{ModelRole::persona, "from Athlete:\nSecond question"}));
 }
 
 TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
@@ -553,10 +553,10 @@ TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
     EXPECT_TRUE(backend_view->inputs.empty());
 }
 
-TEST(SessionController, BoundsCompletionEventDrains) {
+TEST(SessionController, BoundsGenerationEventDrains) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
-        CompletionResult{},
+        GenerationResult{},
         std::vector<std::string>{"one", "two", "three"});
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::move(backend)),
@@ -589,7 +589,7 @@ TEST(SessionController, BoundsCompletionEventDrains) {
 TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedTranscript) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Answer"});
+        GenerationResult{}, std::vector<std::string>{"Answer"});
     ScriptedBackend* backend_view = backend.get();
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::move(backend)),
@@ -604,9 +604,9 @@ TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedTranscript) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             operator_prompt("First"),
-            {CompletionRole::assistant, "Answer"},
+            {ModelRole::assistant, "Answer"},
             operator_prompt("Second"),
         }));
 }
@@ -614,7 +614,7 @@ TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedTranscript) {
 TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Answer"});
+        GenerationResult{}, std::vector<std::string>{"Answer"});
     ScriptedBackend* backend_view = backend.get();
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::move(backend)),
@@ -630,13 +630,13 @@ TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<CompletionMessage>{operator_prompt("Second")}));
+        (std::vector<ModelMessage>{operator_prompt("Second")}));
 }
 
 TEST(SessionController, ExcludesFailedTurnsFromTheFollowingModelContext) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
-        CompletionResult{CompletionOutcome::transport_error, "unavailable"});
+        GenerationResult{GenerationOutcome::transport_error, "unavailable"});
     ScriptedBackend* backend_view = backend.get();
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::move(backend)),
@@ -651,13 +651,13 @@ TEST(SessionController, ExcludesFailedTurnsFromTheFollowingModelContext) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<CompletionMessage>{operator_prompt("Second")}));
+        (std::vector<ModelMessage>{operator_prompt("Second")}));
 }
 
 TEST(SessionController, ExcludesCancelledPartialOutputFromFollowingModelContext) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
-        CompletionResult{CompletionOutcome::cancelled, {}},
+        GenerationResult{GenerationOutcome::cancelled, {}},
         std::vector<std::string>{"Partial"});
     ScriptedBackend* backend_view = backend.get();
     auto controller = test::from_backends_for_testing(
@@ -673,7 +673,7 @@ TEST(SessionController, ExcludesCancelledPartialOutputFromFollowingModelContext)
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             operator_prompt("First"),
             operator_prompt("Second"),
         }));
@@ -683,7 +683,7 @@ TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{CompletionOutcome::cancelled, {}},
+            GenerationResult{GenerationOutcome::cancelled, {}},
             std::vector<std::string>{"Partial"})),
         temporary.path,
         notifier());
@@ -708,7 +708,7 @@ TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{CompletionOutcome::cancelled, {}})),
+            GenerationResult{GenerationOutcome::cancelled, {}})),
         temporary.path,
         notifier());
 
@@ -725,7 +725,7 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{},
+            GenerationResult{},
             std::vector<std::string>{},
             true)),
         temporary.path,
@@ -736,9 +736,9 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
         controller->view().generation.phase,
         ResponsePhase::waiting);
 
-    (void)controller->handle_completion_event(CompletionEventDelta{
+    (void)controller->handle_generation_event(GenerationEventDelta{
         1,
-        CompletionDeltaKind::reasoning,
+        GenerationDeltaKind::reasoning,
         "PRIVATE_REASONING",
     });
     EXPECT_EQ(
@@ -749,9 +749,9 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
         "PRIVATE_REASONING");
     ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
 
-    (void)controller->handle_completion_event(CompletionEventDelta{
+    (void)controller->handle_generation_event(GenerationEventDelta{
         1,
-        CompletionDeltaKind::answer,
+        GenerationDeltaKind::answer,
         "Answer",
     });
     EXPECT_EQ(
@@ -759,9 +759,9 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
         ResponsePhase::answering);
     ASSERT_EQ(controller->view().transcript.entries.size(), 2U);
     EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer");
-    (void)controller->handle_completion_event(CompletionEventDelta{
+    (void)controller->handle_generation_event(GenerationEventDelta{
         1,
-        CompletionDeltaKind::reasoning,
+        GenerationDeltaKind::reasoning,
         " late",
     });
     EXPECT_EQ(
@@ -771,7 +771,7 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
         controller->view().generation.reasoning_text,
         "PRIVATE_REASONING late");
 
-    (void)controller->handle_completion_event(CompletionCompleted{1});
+    (void)controller->handle_generation_event(GenerationCompleted{1});
     EXPECT_FALSE(controller->is_generating());
     EXPECT_TRUE(controller->view().generation.reasoning_text.empty());
     const std::vector<TranscriptEntry> live =
@@ -789,16 +789,16 @@ TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{},
+            GenerationResult{},
             std::vector<std::string>{},
             true)),
         temporary.path,
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    (void)controller->handle_completion_event(CompletionEventDelta{
+    (void)controller->handle_generation_event(GenerationEventDelta{
         1,
-        CompletionDeltaKind::reasoning,
+        GenerationDeltaKind::reasoning,
         "EPHEMERAL_REASONING_ONLY",
     });
     EXPECT_EQ(
@@ -819,7 +819,7 @@ TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
     EXPECT_EQ(restored, live);
 }
 
-TEST(SessionController, RejectsCompletionWithoutResponseContent) {
+TEST(SessionController, RejectsGenerationWithoutResponseContent) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>()),
@@ -837,7 +837,7 @@ TEST(SessionController, RejectsCompletionWithoutResponseContent) {
     EXPECT_EQ(entries.back().kind, EntryKind::error);
     EXPECT_EQ(
         entries.back().text,
-        "Completion finished without answer content");
+        "Generation finished without answer content");
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
@@ -868,8 +868,8 @@ TEST(SessionController, ReplacesPartialOutputWithATypedError) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{
-                CompletionOutcome::transport_error,
+            GenerationResult{
+                GenerationOutcome::transport_error,
                 "network unavailable",
             },
             std::vector<std::string>{"Discard me"})),
@@ -916,7 +916,7 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
         info.notice->find("Transcript entries: 0"),
         std::string::npos);
     EXPECT_NE(
-        info.notice->find("* @Guide  test-model  test://completion  streaming"),
+        info.notice->find("* @Guide  test-model  test://model  streaming"),
         std::string::npos);
     EXPECT_EQ(info.notice->find("Model:"), std::string::npos);
     EXPECT_TRUE(controller->view().transcript.entries.empty());
@@ -961,7 +961,7 @@ TEST(SessionController, KeepsOffrecordMarkersOutOfTheSessionDatabase) {
 TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Answer"});
+        GenerationResult{}, std::vector<std::string>{"Answer"});
     ScriptedBackend* backend_view = backend.get();
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::move(backend)),
@@ -980,9 +980,9 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
     ASSERT_EQ(backend_view->model_contexts.size(), 3U);
     EXPECT_EQ(
         backend_view->model_contexts[2],
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             operator_prompt("Visible"),
-            {CompletionRole::assistant, "Answer"},
+            {ModelRole::assistant, "Answer"},
             operator_prompt("Current"),
         }));
 
@@ -993,13 +993,13 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
     ASSERT_EQ(backend_view->model_contexts.size(), 4U);
     EXPECT_EQ(
         backend_view->model_contexts[3],
-        (std::vector<CompletionMessage>{
+        (std::vector<ModelMessage>{
             operator_prompt("Visible"),
-            {CompletionRole::assistant, "Answer"},
+            {ModelRole::assistant, "Answer"},
             operator_prompt("Hidden"),
-            {CompletionRole::assistant, "Answer"},
+            {ModelRole::assistant, "Answer"},
             operator_prompt("Current"),
-            {CompletionRole::assistant, "Answer"},
+            {ModelRole::assistant, "Answer"},
             operator_prompt("Restored"),
         }));
 }
@@ -1008,7 +1008,7 @@ TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan
     TemporaryJournal busy_temporary;
     auto busy_controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{}, std::vector<std::string>{}, true)),
+            GenerationResult{}, std::vector<std::string>{}, true)),
         busy_temporary.path,
         notifier());
     (void)busy_controller->submit_prompt("operator", "Question");
@@ -1032,14 +1032,14 @@ TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan
 TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     TemporaryJournal temporary;
     auto one = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"One answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"One answer"}, false,
         "one-id", "One");
     auto two = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"Two answer"}, false,
         "two-id", "Two");
     ScriptedBackend* one_view = one.get();
     ScriptedBackend* two_view = two.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(one));
     backends.push_back(std::move(two));
     auto controller = test::from_backends_for_testing(
@@ -1063,10 +1063,10 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     EXPECT_EQ(one_view->inputs.front().history, two_view->inputs.front().history);
     EXPECT_EQ(
         one_view->model_contexts.front(),
-        (std::vector<CompletionMessage>{operator_prompt("What time is it?")}));
+        (std::vector<ModelMessage>{operator_prompt("What time is it?")}));
     EXPECT_EQ(
         two_view->model_contexts.front(),
-        (std::vector<CompletionMessage>{operator_prompt("What time is it?")}));
+        (std::vector<ModelMessage>{operator_prompt("What time is it?")}));
 
     const std::vector<TranscriptEntry> multicast_entries =
         copy_entries(controller->view().transcript);
@@ -1094,14 +1094,14 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
 TEST(SessionController, ResolvesMulticastHandlesAndTreatsAnEmptyListAsAllCharacters) {
     TemporaryJournal temporary;
     auto one = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"One answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"One answer"}, false,
         "one-id", "One");
     auto two = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"Two answer"}, false,
         "two-id", "Two");
     ScriptedBackend* const one_view = one.get();
     ScriptedBackend* const two_view = two.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(one));
     backends.push_back(std::move(two));
     auto controller = test::from_backends_for_testing(
@@ -1136,12 +1136,12 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
 
     TemporaryJournal stop_temporary;
     auto first = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{}, true, "one-id", "One");
+        GenerationResult{}, std::vector<std::string>{}, true, "one-id", "One");
     auto second = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"Two answer"}, false,
         "two-id", "Two");
     ScriptedBackend* second_view = second.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     auto stop_controller = test::from_backends_for_testing(
@@ -1189,7 +1189,7 @@ TEST(SessionController, CompletedForegroundWinsTheStopRace) {
     auto second = std::make_unique<ConcurrentBackend>(
         "two-id", "Two", "Two answer");
     ConcurrentBackend* const first_view = first.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     auto controller = test::from_backends_for_testing(
@@ -1226,7 +1226,7 @@ TEST(SessionController, StopDoesNotWaitForCancelledBackgroundExecution) {
         "two-id", "Two", release_background);
     ConcurrentBackend* foreground_view = foreground.get();
     CancellationBlockingBackend* background_view = background.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(foreground));
     backends.push_back(std::move(background));
     auto controller = test::from_backends_for_testing(
@@ -1258,18 +1258,18 @@ TEST(SessionController, StopDoesNotWaitForCancelledBackgroundExecution) {
 TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     TemporaryJournal temporary;
     auto failed = std::make_unique<ScriptedBackend>(
-        CompletionResult{CompletionOutcome::transport_error, "Unavailable"},
+        GenerationResult{GenerationOutcome::transport_error, "Unavailable"},
         std::vector<std::string>{}, false, "one-id", "One");
     auto cancelled = std::make_unique<ScriptedBackend>(
-        CompletionResult{CompletionOutcome::cancelled, {}},
+        GenerationResult{GenerationOutcome::cancelled, {}},
         std::vector<std::string>{"Partial"}, false, "two-id", "Two");
     auto complete = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Three answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"Three answer"}, false,
         "three-id", "Three");
     ScriptedBackend* failed_view = failed.get();
     ScriptedBackend* cancelled_view = cancelled.get();
     ScriptedBackend* complete_view = complete.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(failed));
     backends.push_back(std::move(cancelled));
     backends.push_back(std::move(complete));
@@ -1286,7 +1286,7 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     ASSERT_EQ(complete_view->inputs.size(), 1U);
     EXPECT_EQ(
         complete_view->model_contexts.front(),
-        (std::vector<CompletionMessage>{operator_prompt("Question")}));
+        (std::vector<ModelMessage>{operator_prompt("Question")}));
     EXPECT_FALSE(controller->is_generating());
 }
 
@@ -1299,7 +1299,7 @@ TEST(SessionController, StartsAllChildrenAndBuffersLaterOutputUntilForeground) {
         "two-id", "Two", "Two answer");
     ConcurrentBackend* first_view = first.get();
     ConcurrentBackend* second_view = second.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     auto controller = test::from_backends_for_testing(
@@ -1337,7 +1337,7 @@ TEST(SessionController, StartsAllChildrenAndBuffersLaterOutputUntilForeground) {
 
 // The batch owns both the run and the queue for each slot, so a child that
 // finishes early cannot have its output paired with another child's prompt.
-TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedCompletion) {
+TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedGenerationOrder) {
     TemporaryJournal temporary;
     std::atomic_bool release_first{false};
     std::atomic_bool release_second{false};
@@ -1350,7 +1350,7 @@ TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedCompletion) 
     ConcurrentBackend* const first_view = first.get();
     ConcurrentBackend* const second_view = second.get();
     ConcurrentBackend* const third_view = third.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     backends.push_back(std::move(third));
@@ -1360,7 +1360,7 @@ TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedCompletion) 
     (void)controller->start_multicast(
         "operator", "Question", {"One", "Two", "Three"});
 
-    // Completion order is the exact reverse of the selected foreground order.
+    // Generation order is the exact reverse of the selected foreground order.
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(1);
     const auto wait_for_finish = [&deadline](const ConcurrentBackend& backend) {
@@ -1420,7 +1420,7 @@ TEST(SessionController, DrainsLargeCompletedBackgroundBacklogInOrder) {
     auto second = std::make_unique<ConcurrentBackend>(
         "two-id", "Two", "x", nullptr, backlog_size);
     ConcurrentBackend* const second_view = second.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     auto controller = test::from_backends_for_testing(
@@ -1496,14 +1496,14 @@ TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndCharacter) {
 TEST(SessionController, FirstActivationFailureTearsDownEveryGatedExecution) {
     TemporaryJournal temporary;
     auto first = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"One answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"One answer"}, false,
         "one-id", "One");
     auto second = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"Two answer"}, false,
         "two-id", "Two");
     ScriptedBackend* const first_view = first.get();
     ScriptedBackend* const second_view = second.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     bool fail_first_activation = true;
@@ -1539,14 +1539,14 @@ TEST(SessionController, FirstActivationFailureTearsDownEveryGatedExecution) {
 TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryExecution) {
     TemporaryJournal temporary;
     auto first = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"One answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"One answer"}, false,
         "one-id", "One");
     auto second = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Two answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"Two answer"}, false,
         "two-id", "Two");
     ScriptedBackend* const first_view = first.get();
     ScriptedBackend* const second_view = second.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     bool fail_second_activation = true;
@@ -1585,7 +1585,7 @@ TEST(SessionController, RejectsNewOperationsDuringGeneration) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{},
+            GenerationResult{},
             std::vector<std::string>{},
             true)),
         temporary.path,
@@ -1609,7 +1609,7 @@ TEST(SessionController, IgnoresEventsForAnotherRequest) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{},
+            GenerationResult{},
             std::vector<std::string>{},
             true)),
         temporary.path,
@@ -1617,15 +1617,15 @@ TEST(SessionController, IgnoresEventsForAnotherRequest) {
 
     (void)controller->submit_prompt("operator", "Question");
     const ControllerUpdate delta =
-        controller->handle_completion_event(
-            CompletionEventDelta{
+        controller->handle_generation_event(
+            GenerationEventDelta{
                 999,
-                CompletionDeltaKind::answer,
+                GenerationDeltaKind::answer,
                 "Wrong response",
             });
     const ControllerUpdate completed =
-        controller->handle_completion_event(
-            CompletionCompleted{999});
+        controller->handle_generation_event(
+            GenerationCompleted{999});
 
     EXPECT_FALSE(has_state_update(delta));
     EXPECT_FALSE(has_state_update(completed));
@@ -1688,13 +1688,13 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
 TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharacters) {
     TemporaryJournal temporary;
     auto guide = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Guide answer"});
+        GenerationResult{}, std::vector<std::string>{"Guide answer"});
     auto ismael = std::make_unique<ScriptedBackend>(
-        CompletionResult{}, std::vector<std::string>{"Ismael answer"}, false,
+        GenerationResult{}, std::vector<std::string>{"Ismael answer"}, false,
         "ismael-id", "Ismael");
     ScriptedBackend* guide_view = guide.get();
     ScriptedBackend* ismael_view = ismael.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(guide));
     backends.push_back(std::move(ismael));
     auto controller = test::from_backends_for_testing(
@@ -1795,7 +1795,7 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{},
+            GenerationResult{},
             std::vector<std::string>{"Partial"},
             true)),
         temporary.path,
@@ -1850,16 +1850,16 @@ TEST(SessionController, ViewBorrowsActiveGenerationAndOpenEntry) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
         test::one_backend(std::make_unique<ScriptedBackend>(
-            CompletionResult{}, std::vector<std::string>{}, true)),
+            GenerationResult{}, std::vector<std::string>{}, true)),
         temporary.path,
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    (void)controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::reasoning, "Thinking",
+    (void)controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::reasoning, "Thinking",
     });
-    (void)controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::answer, "Answer",
+    (void)controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::answer, "Answer",
     });
     const ControllerView view = controller->view();
     const TranscriptView transcript = controller->view().transcript;
@@ -1879,7 +1879,7 @@ TEST(SessionController, ViewBorrowsActiveGenerationAndOpenEntry) {
         view.transcript.entries.back().id, *view.transcript.open_entry_id);
     EXPECT_EQ(view.transcript.entries.back().text, "Answer");
 
-    (void)controller->handle_completion_event(CompletionCompleted{1});
+    (void)controller->handle_generation_event(GenerationCompleted{1});
     const ControllerView after = controller->view();
     EXPECT_FALSE(after.generation.active);
     EXPECT_TRUE(after.generation.reasoning_text.empty());
@@ -1899,12 +1899,12 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
         controller->submit_prompt("operator", "Question")));
 
     // The first reasoning chunk establishes visible request state.
-    EXPECT_TRUE(requires_snapshot(controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::reasoning, "Think",
+    EXPECT_TRUE(requires_snapshot(controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::reasoning, "Think",
     })));
     const ControllerUpdate more_reasoning =
-        controller->handle_completion_event(CompletionEventDelta{
-            1, CompletionDeltaKind::reasoning, " more",
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::reasoning, " more",
         });
     ASSERT_NE(text_append(more_reasoning), nullptr);
     EXPECT_EQ(
@@ -1912,19 +1912,19 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
         (TextAppend{ReasoningTextTarget{1}, " more"}));
 
     const ControllerUpdate careful_reasoning =
-        controller->handle_completion_event(CompletionEventDelta{
-            1, CompletionDeltaKind::reasoning, " carefully",
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::reasoning, " carefully",
         });
     ASSERT_NE(text_append(careful_reasoning), nullptr);
     EXPECT_EQ(text_append(careful_reasoning)->text, " carefully");
 
     // The first answer chunk changes phase and opens the response entry.
-    EXPECT_TRUE(requires_snapshot(controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::answer, "Answer",
+    EXPECT_TRUE(requires_snapshot(controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::answer, "Answer",
     })));
     const ControllerUpdate more_answer =
-        controller->handle_completion_event(CompletionEventDelta{
-            1, CompletionDeltaKind::answer, " again",
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, " again",
         });
     ASSERT_NE(text_append(more_answer), nullptr);
     EXPECT_EQ(
@@ -1934,17 +1934,17 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
     // Reasoning arriving after the answer began is still a pure append; the
     // transport decides whether that target switch needs a snapshot.
     const ControllerUpdate late_reasoning =
-        controller->handle_completion_event(CompletionEventDelta{
-            1, CompletionDeltaKind::reasoning, " late",
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::reasoning, " late",
         });
     ASSERT_NE(text_append(late_reasoning), nullptr);
     EXPECT_EQ(
         *text_append(late_reasoning),
         (TextAppend{ReasoningTextTarget{1}, " late"}));
 
-    // Completion finalizes the entry even though it also carries text.
+    // Generation finalization closes the entry even though it also carries text.
     EXPECT_TRUE(
-        requires_snapshot(controller->handle_completion_event(CompletionCompleted{1})));
+        requires_snapshot(controller->handle_generation_event(GenerationCompleted{1})));
 }
 
 TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
@@ -1955,29 +1955,29 @@ TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
         notifier());
 
     // No request is active, so nothing is applied.
-    EXPECT_FALSE(has_state_update(controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::answer, "Orphan",
+    EXPECT_FALSE(has_state_update(controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::answer, "Orphan",
     })));
 
     (void)controller->submit_prompt("operator", "Question");
     // A mismatched request and an empty delta both leave state untouched.
-    EXPECT_FALSE(has_state_update(controller->handle_completion_event(CompletionEventDelta{
-        99, CompletionDeltaKind::answer, "Other request",
+    EXPECT_FALSE(has_state_update(controller->handle_generation_event(GenerationEventDelta{
+        99, GenerationDeltaKind::answer, "Other request",
     })));
-    EXPECT_FALSE(has_state_update(controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::answer, "",
+    EXPECT_FALSE(has_state_update(controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::answer, "",
     })));
 
     // Cancellation and failure are terminal regardless of accumulated text.
-    (void)controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::answer, "Partial",
+    (void)controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::answer, "Partial",
     });
     EXPECT_TRUE(
-        requires_snapshot(controller->handle_completion_event(CompletionCancelled{1})));
+        requires_snapshot(controller->handle_generation_event(GenerationCancelled{1})));
 
     (void)controller->submit_prompt("operator", "Another question");
     EXPECT_TRUE(requires_snapshot(
-        controller->handle_completion_event(CompletionFailed{2, "boom"})));
+        controller->handle_generation_event(GenerationFailed{2, "boom"})));
 }
 
 TEST(SessionController, EventDrainMergesAppendsAndPromotesMixedBatches) {
@@ -1987,17 +1987,17 @@ TEST(SessionController, EventDrainMergesAppendsAndPromotesMixedBatches) {
         temporary.path,
         notifier());
     (void)controller->submit_prompt("operator", "Question");
-    (void)controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::answer, "Answer",
+    (void)controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::answer, "Answer",
     });
 
     // Two same-target deltas applied in one operation concatenate exactly.
     ControllerUpdate batch;
-    merge(batch, controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::answer, " in",
+    merge(batch, controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::answer, " in",
     }));
-    merge(batch, controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::answer, " one query",
+    merge(batch, controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::answer, " one query",
     }));
     ASSERT_NE(text_append(batch), nullptr);
     EXPECT_EQ(
@@ -2005,15 +2005,15 @@ TEST(SessionController, EventDrainMergesAppendsAndPromotesMixedBatches) {
         (TextAppend{EntryTextTarget{2}, " in one query"}));
 
     // Mixing targets in one drain forces a snapshot.
-    merge(batch, controller->handle_completion_event(CompletionEventDelta{
-        1, CompletionDeltaKind::reasoning, "aside",
+    merge(batch, controller->handle_generation_event(GenerationEventDelta{
+        1, GenerationDeltaKind::reasoning, "aside",
     }));
     EXPECT_TRUE(requires_snapshot(batch));
 
     // An append followed by a terminal event is a snapshot as well.
     ControllerUpdate terminal{
         .state = TextAppend{EntryTextTarget{2}, " end"}};
-    merge(terminal, controller->handle_completion_event(CompletionCompleted{1}));
+    merge(terminal, controller->handle_generation_event(GenerationCompleted{1}));
     EXPECT_TRUE(requires_snapshot(terminal));
     ASSERT_TRUE(terminal.notice);
     EXPECT_TRUE(terminal.notice->empty());
@@ -2055,12 +2055,12 @@ TEST(SessionController, ShutdownJoinsPoolBeforeExecutorCanBeDestroyed) {
     // The backend stays inside perform() until shutdown cancels it, so the
     // notifier is still silent when the test arms the block below. The
     // execution's two wakes are then exactly its terminal event and its
-    // completion, and the blocked one is the completion wake.
+    // generation finalization, and the blocked one is the generation wake.
     const std::atomic_bool never_released{false};
     auto backend = std::make_unique<ConcurrentBackend>(
         "guide-id", "Guide", "unused", &never_released);
     ConcurrentBackend* backend_view = backend.get();
-    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(backend));
     auto controller = test::from_backends_for_testing(
         std::move(backends), temporary.path, shutdown_notifier);

@@ -1,7 +1,7 @@
 # CHA
 
 CHA is a C++20 browser application for chatting with OpenAI-compatible
-chat-completions servers. The `chaweb` process serves the browser client and its
+OpenAI-compatible model servers. The `chaweb` process serves the browser client and its
 HTTP/SSE API.
 
 ## Start chatting

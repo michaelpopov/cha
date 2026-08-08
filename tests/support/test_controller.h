@@ -55,7 +55,7 @@ inline std::unique_ptr<SessionController> from_definitions_for_testing(
 }
 
 inline std::unique_ptr<SessionController> from_backends_for_testing(
-    std::vector<std::unique_ptr<CompletionBackend>> backends,
+    std::vector<std::unique_ptr<ModelBackend>> backends,
     PersonaRoster personas,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
@@ -75,7 +75,7 @@ inline std::unique_ptr<SessionController> from_backends_for_testing(
 }
 
 inline std::unique_ptr<SessionController> from_backends_for_testing(
-    std::vector<std::unique_ptr<CompletionBackend>> backends,
+    std::vector<std::unique_ptr<ModelBackend>> backends,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored = {},
