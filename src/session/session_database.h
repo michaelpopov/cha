@@ -1,7 +1,7 @@
 #pragma once
 
 #include "session/session_identity.h"
-#include "transcript/transcript.h"
+#include "chat/transcript.h"
 
 #include <filesystem>
 #include <memory>

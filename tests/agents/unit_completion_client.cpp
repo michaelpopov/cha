@@ -1,5 +1,5 @@
 #include "agents/completion_client.h"
-#include "transcript/transcript.h"
+#include "chat/transcript.h"
 #include "support/mock_http_server.h"
 #include "support/test_transcript.h"
 #include "util/logging.h"

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "transcript/transcript.h"
+#include "chat/transcript.h"
 
 #include <optional>
 #include <string>

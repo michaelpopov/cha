@@ -1,8 +1,8 @@
 #include "agents/completion_client.h"
 
 #include "agents/character.h"
-#include "agents/json_serialization.h"
 #include "util/logging.h"
+#include "util/json_serialization.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -427,7 +427,7 @@ std::string build_request_body(
         body["reasoning_effort"] = config.reasoning_effort;
     }
 
-    return dump_json(body, JsonPurpose::completion_request);
+    return dump_json(body, "Completion request");
 }
 
 } // namespace

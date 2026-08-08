@@ -13,13 +13,13 @@ package-linux:
 	./scripts/package-linux.sh "$(VERSION)"
 
 web-check:
-	cd src/resources/webapp && npm run check
+	cd webapp && npm run check
 
 web-stage:
-	cd src/resources/webapp && npm run stage
+	cd webapp && npm run stage
 
 web-e2e:
-	cd src/resources/webapp && npm run e2e
+	cd webapp && npm run e2e
 
 test: build
 	ctest --test-dir build/ninja --output-on-failure
@@ -32,7 +32,7 @@ run: build-web web-stage
 
 # The API server behind 'npm run dev'. It listens on the port the Vite proxy
 # targets, which is not the port the staged loop above uses; see
-# src/resources/webapp/README.md. Browse the shell at 127.0.0.1:5173, not here.
+# webapp/README.md. Browse the shell at 127.0.0.1:5173, not here.
 # It stages only because chaweb refuses to start without a web/index.html; the
 # editable loop serves its shell from Vite and never reads the staged one.
 run-web-dev: build-web web-stage

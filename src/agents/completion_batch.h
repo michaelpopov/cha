@@ -1,6 +1,5 @@
 #pragma once
 
-#include "agents/character.h"
 #include "agents/completion_backend.h"
 #include "util/concurrent_queue.h"
 #include "util/thread_pool.h"

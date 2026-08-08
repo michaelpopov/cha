@@ -9,6 +9,7 @@ agents, sessions, or UI policy.
 | `text_template.*` | Prompt includes, variables, scopes, containment, and resource limits. |
 | `path_name.*` | Safe path-component and URL-identifier validation. |
 | `utf8_path.*` | UTF-8 application text and native filesystem path conversion. |
+| `json_serialization.h` | JSON dumping with caller-supplied invalid-UTF-8 diagnostic context. |
 | `environment.*` | Optional `.env` loading without overriding the process environment. |
 | `logging.*` | Synchronous rotating diagnostic-file logging. |
 | `concurrent_queue.h` | Portable typed thread-safe queue with reserved final delivery. |
@@ -35,5 +36,5 @@ accepted tasks, and joins workers. Domain callers own cancellation and convert
 task failures at their own boundaries.
 
 The utility layer depends only on the standard library, process environment,
-spdlog, and toml++ where required. Libuv remains a core dependency because the
+nlohmann-json, spdlog, and toml++ where required. Libuv remains a core dependency because the
 session database uses it for portable exclusive temporary-file creation.

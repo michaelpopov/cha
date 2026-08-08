@@ -1,8 +1,8 @@
 #pragma once
 
 #include "agents/character.h"
-#include "agents/config.h"
-#include "agents/persona.h"
+#include "agents/character_config.h"
+#include "chat/persona.h"
 #include "session/opened_session.h"
 #include "session/session_identity.h"
 #include "session/session_repository.h"

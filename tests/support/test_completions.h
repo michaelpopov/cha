@@ -1,8 +1,7 @@
 #pragma once
 
-#include "agents/character.h"
 #include "agents/completion_backend.h"
-#include "transcript/transcript.h"
+#include "chat/transcript.h"
 
 #include <atomic>
 #include <chrono>

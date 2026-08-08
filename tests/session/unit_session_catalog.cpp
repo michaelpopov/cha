@@ -1,4 +1,4 @@
-#include "transcript/transcript.h"
+#include "chat/transcript.h"
 #include "session/session_database.h"
 #include "session/session_catalog.h"
 #include "session/session_lease.h"

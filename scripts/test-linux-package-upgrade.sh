@@ -56,8 +56,8 @@ start_server() {
     return 1
 }
 
-cp -R "$repository/src/resources/webapp/e2e/fixtures/workspace" "$workspace"
-cp "$repository/src/resources/webapp/e2e/fixtures/provider.env" "$workspace/.env"
+cp -R "$repository/webapp/e2e/fixtures/workspace" "$workspace"
+cp "$repository/webapp/e2e/fixtures/provider.env" "$workspace/.env"
 cp -R "$source_application" "$application"
 
 start_server

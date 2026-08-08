@@ -36,5 +36,5 @@ definitions, ask `SessionRepository` to prepare storage, build the
 persona roster. Entrance and Welcome need no branch — Entrance is an ordinary
 forum in the model and Welcome an ordinary prepared session in the repository.
 
-This directory may depend on `session/`, `agents/`, `transcript/`, and `util/`.
-It must not depend on `ui/`, `apps/`, or HTTP types.
+This directory may depend on `session/`, `agents/`, `chat/`, and `util/`.
+It must not depend on `web/`, executable wiring, or HTTP types.

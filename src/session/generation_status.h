@@ -1,6 +1,6 @@
 #pragma once
 
-#include "domain/ids.h"
+#include "chat/ids.h"
 
 #include <cstdint>
 #include <optional>

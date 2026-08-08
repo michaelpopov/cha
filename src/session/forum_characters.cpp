@@ -1,5 +1,7 @@
 #include "session/forum_characters.h"
 
+#include "agents/character.h"
+
 #include "util/text.h"
 
 #include <algorithm>

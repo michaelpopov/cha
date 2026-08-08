@@ -33,7 +33,7 @@ fi
 destination="$output_parent/cha-linux-$version"
 temporary="$output_parent/.cha-linux-$version.tmp.$$"
 native_build="$repository/build/package-linux"
-webapp="$repository/src/resources/webapp"
+webapp="$repository/webapp"
 
 cleanup() {
     if [ -d "$temporary" ]; then

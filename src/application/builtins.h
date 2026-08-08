@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agents/character.h"
-#include "agents/persona.h"
+#include "chat/persona.h"
 
 #include <string_view>
 #include <vector>

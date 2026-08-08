@@ -1,12 +1,23 @@
 #pragma once
 
-#include "agents/character.h"
+#include "agents/completion_context.h"
+#include "agents/completion_event.h"
+#include "chat/character.h"
 
 #include <atomic>
 #include <functional>
 #include <string>
 
 namespace cha {
+
+// Public operational information about one initialized completion backend. It
+// is safe to show in diagnostics and never carries connection secrets.
+struct CompletionBackendInfo {
+    CharacterMetadata character;
+    std::string model;
+    std::string api;
+    bool streaming{};
+};
 
 // Classifies the terminal transport result of one completion request.
 enum class CompletionOutcome {

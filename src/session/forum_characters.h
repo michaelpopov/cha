@@ -1,6 +1,7 @@
 #pragma once
 
-#include "agents/character.h"
+#include "agents/completion_backend.h"
+#include "chat/character.h"
 
 #include <cstddef>
 #include <string>

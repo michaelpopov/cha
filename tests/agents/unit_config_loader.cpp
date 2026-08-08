@@ -1,4 +1,4 @@
-#include "agents/config.h"
+#include "agents/character_config.h"
 #include "util/utf8_path.h"
 
 #include <gtest/gtest.h>

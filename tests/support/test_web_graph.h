@@ -4,8 +4,8 @@
 #include "application/session_open.h"
 #include "application/workspace_model.h"
 #include "session/session_repository.h"
-#include "ui/web/live_session.h"
-#include "ui/web/lobby_routes.h"
+#include "web/live_session.h"
+#include "web/lobby_routes.h"
 
 #include <filesystem>
 #include <memory>

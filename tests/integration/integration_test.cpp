@@ -2,7 +2,7 @@
 #include "agents/completion_batch.h"
 #include "agents/completion_executor.h"
 #include "session/session_controller.h"
-#include "agents/config.h"
+#include "agents/character_config.h"
 #include "util/environment.h"
 #include "util/thread_pool.h"
 #include "support/mock_http_server.h"

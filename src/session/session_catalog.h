@@ -1,6 +1,6 @@
 #pragma once
 
-#include "domain/ids.h"
+#include "chat/ids.h"
 #include "session/not_found_error.h"
 #include "session/stored_session.h"
 

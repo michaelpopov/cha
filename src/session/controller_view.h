@@ -1,8 +1,8 @@
 #pragma once
 
-#include "agents/character.h"
+#include "chat/character.h"
 #include "session/generation_status.h"
-#include "transcript/transcript.h"
+#include "chat/transcript.h"
 
 #include <optional>
 #include <span>

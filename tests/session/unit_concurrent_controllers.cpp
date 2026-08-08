@@ -1,5 +1,5 @@
 #include "agents/completion_backend.h"
-#include "agents/config.h"
+#include "agents/character_config.h"
 #include "session/session_catalog.h"
 #include "session/session_controller.h"
 #include "session/session_database.h"

@@ -12,13 +12,13 @@ completion pool tasks.
 
 | Source | Responsibility |
 | --- | --- |
-| `config.*` | Separate discovery-safe `CharacterMetadata`, private `CompletionConfig`, and `LoadedCharacterConfig` values assembled from TOML overlays with field validation. |
-| `persona.h` | `Persona` and the ordered `PersonaRoster` values passed down from workspace discovery. |
-| `character.*` | `CharacterDefinition`, `CompletionBackendInfo`, identity validation, definition loading with template expansion, completion request/event types, and `project_completion_context()`. |
-| `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
+| `character_config.*` | Private `CompletionConfig` and `LoadedCharacterConfig` values assembled from TOML overlays with field validation. |
+| `character.*` | Effective `CharacterDefinition` loading, identity validation, template expansion, and standard prompt assembly. |
+| `completion_context.*` | Immutable run input and projection from transcript entries to model-visible messages. |
+| `completion_event.h` | Semantic output deltas and request-correlated progress and terminal events. |
 | `completion_executor.*` | Backend ownership, runtime metadata validation, target resolution, and failure-atomic staging of a new batch. |
 | `completion_batch.*` | One in-flight operation: its execution slots, shared start gate, foreground position, cancellation, event queues, and wait state. |
-| `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
+| `completion_backend.h` | The `CompletionBackend` seam, discovery-safe runtime diagnostics, and prepared-request/result types. |
 | `completion_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
 
 ## From character directory to running completion backend
@@ -307,10 +307,10 @@ from its answer.
 
 ## Dependencies
 
-- **Depends on:** `transcript/` for entries, completion histories, and IDs; `util/` for
+- **Depends on:** `chat/` for stable IDs, entries, and completion histories; `util/` for
   text helpers, `ConcurrentQueue`, and `WakeNotifier`; nlohmann/json for shared-history and HTTP
   JSON; libcurl in the HTTP client; toml++ in the config loader.
-- **Must not depend on:** `session/` or `ui/`. Workspace discovery
+- **Must not depend on:** `session/` or `web/`. Workspace discovery
   stays above; once the character and forum directories are known, this layer owns
   the loading.
 
@@ -324,5 +324,4 @@ from its answer.
 | `tests/agents/unit_completion_executor.cpp` | Backend construction and metadata validation, pool-width validation, target resolution, input validation, and failure-atomic submission. |
 | `tests/agents/unit_completion_batch.cpp` | Gate behavior, full-width fan-out, foreground routing and advancement rules, event buffering, cancellation, exactly-one terminal delivery, explicit waiting, and destructor cleanup. |
 | `tests/agents/unit_completion_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
-| `tests/agents/unit_json_serialization.cpp` | Context-specific invalid-UTF-8 diagnostics for JSON serialization. |
 | `tests/agents/unit_completion_client.cpp` | Request bodies, SSE and JSON parsing, reasoning formats, and the error taxonomy, driven by `tests/support/mock_http_server.h`. |

@@ -178,12 +178,14 @@ add_library(cha_core STATIC
     src/util/text_template.cpp
     src/util/thread_pool.cpp
     src/util/utf8_path.cpp
-    src/transcript/transcript.cpp
+    src/chat/character.cpp
+    src/chat/transcript.cpp
     src/agents/character.cpp
+    src/agents/completion_context.cpp
     src/agents/completion_batch.cpp
     src/agents/completion_executor.cpp
     src/agents/completion_client.cpp
-    src/agents/config.cpp
+    src/agents/character_config.cpp
     src/session/controller_update.cpp
     src/session/forum_characters.cpp
     src/session/session_catalog.cpp
@@ -227,28 +229,28 @@ target_link_libraries(
 cha_enable_warnings(cha_core)
 
 add_library(cha_web STATIC
-    src/ui/web/application_config.cpp
-    src/ui/web/asset_handler.cpp
-    src/ui/web/browser_connection_state.cpp
-    src/ui/web/command_queue.cpp
-    src/ui/web/http_response.cpp
-    src/ui/web/http_server.cpp
-    src/ui/web/json.cpp
-    src/ui/web/lobby_routes.cpp
-    src/ui/web/protocol.cpp
-    src/ui/web/route_support.cpp
-    src/ui/web/session_projection.cpp
-    src/ui/web/server_shutdown.cpp
-    src/ui/web/session_routes.cpp
-    src/ui/web/live_session.cpp
-    src/ui/web/live_session_manager.cpp
-    src/ui/web/sse_mailbox.cpp
-    src/ui/web/sse_stream.cpp
-    src/ui/web/text_command.cpp
-    src/ui/web/text_input.cpp
-    src/ui/web/text_mention.cpp
-    src/ui/web/text_multicast.cpp
-    src/ui/web/owner_wake_signal.cpp
+    src/web/application_config.cpp
+    src/web/asset_handler.cpp
+    src/web/browser_connection_state.cpp
+    src/web/command_queue.cpp
+    src/web/http_response.cpp
+    src/web/http_server.cpp
+    src/web/json.cpp
+    src/web/lobby_routes.cpp
+    src/web/protocol.cpp
+    src/web/route_support.cpp
+    src/web/session_projection.cpp
+    src/web/server_shutdown.cpp
+    src/web/session_routes.cpp
+    src/web/live_session.cpp
+    src/web/live_session_manager.cpp
+    src/web/sse_mailbox.cpp
+    src/web/sse_stream.cpp
+    src/web/text_command.cpp
+    src/web/text_input.cpp
+    src/web/text_mention.cpp
+    src/web/text_multicast.cpp
+    src/web/owner_wake_signal.cpp
 )
 target_compile_features(cha_web PUBLIC cxx_std_20)
 target_include_directories(cha_web PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -283,13 +285,13 @@ if(BUILD_TESTING)
         tests/util/unit_text_template.cpp
         tests/util/unit_public_name.cpp
         tests/util/unit_utf8_path.cpp
-        tests/transcript/unit_transcript.cpp
+        tests/util/unit_json_serialization.cpp
+        tests/chat/unit_transcript.cpp
         tests/agents/unit_completion_context.cpp
         tests/agents/unit_character_definition_loader.cpp
         tests/agents/unit_completion_batch.cpp
         tests/agents/unit_completion_executor.cpp
         tests/agents/unit_config_loader.cpp
-        tests/agents/unit_json_serialization.cpp
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_forum_characters.cpp
         tests/session/unit_session_catalog.cpp
@@ -338,21 +340,21 @@ if(BUILD_TESTING)
 
     add_executable(
         cha_web_tests
-        tests/ui/web/unit_application_config.cpp
-        tests/ui/web/unit_asset_handler.cpp
-        tests/ui/web/unit_protocol.cpp
-        tests/ui/web/unit_session_projection.cpp
-        tests/ui/web/unit_browser_connection_state.cpp
-        tests/ui/web/unit_lobby_routes.cpp
-        tests/ui/web/unit_session_routes.cpp
-        tests/ui/web/unit_live_session_manager.cpp
-        tests/ui/web/unit_sse_mailbox.cpp
-        tests/ui/web/unit_sse_stream.cpp
-        tests/ui/web/unit_text_command.cpp
-        tests/ui/web/unit_text_input.cpp
-        tests/ui/web/unit_text_mention.cpp
-        tests/ui/web/unit_text_multicast.cpp
-        tests/ui/web/unit_live_session.cpp
+        tests/web/unit_application_config.cpp
+        tests/web/unit_asset_handler.cpp
+        tests/web/unit_protocol.cpp
+        tests/web/unit_session_projection.cpp
+        tests/web/unit_browser_connection_state.cpp
+        tests/web/unit_lobby_routes.cpp
+        tests/web/unit_session_routes.cpp
+        tests/web/unit_live_session_manager.cpp
+        tests/web/unit_sse_mailbox.cpp
+        tests/web/unit_sse_stream.cpp
+        tests/web/unit_text_command.cpp
+        tests/web/unit_text_input.cpp
+        tests/web/unit_text_mention.cpp
+        tests/web/unit_text_multicast.cpp
+        tests/web/unit_live_session.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
         cha_web_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
@@ -361,7 +363,7 @@ if(BUILD_TESTING)
 
     add_executable(
         cha_web_stress_tests
-        tests/ui/web/stress_web_sessions.cpp
+        tests/web/stress_web_sessions.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
         cha_web_stress_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
@@ -381,7 +383,7 @@ if(BUILD_TESTING)
 
         add_executable(
             cha_web_process_tests
-            tests/ui/web/process_web_server.cpp
+            tests/web/process_web_server.cpp
             tests/support/test_workspace.cpp
             tests/support/web_server_process.cpp)
         target_link_libraries(cha_web_process_tests PRIVATE cha_web GTest::gtest_main)
@@ -420,7 +422,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-add_executable(chaweb_app src/apps/web_main.cpp)
+add_executable(chaweb_app src/web_main.cpp)
 target_link_libraries(chaweb_app PRIVATE cha_web)
 set_target_properties(chaweb_app PROPERTIES OUTPUT_NAME chaweb)
 cha_enable_warnings(chaweb_app)
@@ -431,7 +433,7 @@ add_custom_command(
         ${CMAKE_COMMAND}
         -DEXECUTABLE=$<TARGET_FILE:chaweb_app>
         -DOUTPUT_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/bin
-        -DWEBAPP_DIST=${CMAKE_CURRENT_SOURCE_DIR}/src/resources/webapp/dist
+        -DWEBAPP_DIST=${CMAKE_CURRENT_SOURCE_DIR}/webapp/dist
         -DWORKSPACE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/workspace
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/stage_local_deployment.cmake
     VERBATIM)

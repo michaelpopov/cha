@@ -88,7 +88,7 @@ make itest
 ```
 
 Browser development is documented in
-[src/resources/webapp/README.md](src/resources/webapp/README.md). Packaging and
+[webapp/README.md](webapp/README.md). Packaging and
 upgrade instructions are in
 [docs/linux-webapp-package.md](docs/linux-webapp-package.md). See
 [src/README.md](src/README.md) for the native architecture.

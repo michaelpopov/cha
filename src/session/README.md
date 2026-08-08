@@ -505,10 +505,10 @@ session continues.
 
 ## Dependencies
 
-- **Depends on:** `transcript/` for transcript values, `agents/` for
+- **Depends on:** `chat/` for stable IDs and transcript values, `agents/` for
   definitions, runtime information, execution, and events, `util/` for path and text
   helpers, and SQLite for storage.
-- **Must not depend on:** `ui/` or `apps/`.
+- **Must not depend on:** `web/` or executable wiring.
 
 ## Tests
 
@@ -520,7 +520,7 @@ session continues.
 | `tests/session/unit_session_controller.cpp` | Command behavior, exact update classification for every important transition, borrowed views, concurrent staging, ordered foreground drain, per-slot pairing under reversed completion, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
 | `tests/session/unit_concurrent_controllers.cpp` | Independent owner-thread controllers, concurrent workspace/catalog access, and atomic catalog publication while listing. |
 | `tests/session/unit_controller_update.cpp` | The merge contract driven directly: every pair of state effects, append concatenation and target promotion, lifecycle OR, and notice ordering. |
-| `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
+| `tests/chat/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
 
 Those database tests link `cha_sqlite3` directly, so they can assert on the
 stored schema and rows rather than only on what the C++ API reports.

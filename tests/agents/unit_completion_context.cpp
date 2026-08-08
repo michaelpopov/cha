@@ -1,4 +1,4 @@
-#include "agents/character.h"
+#include "agents/completion_context.h"
 #include "support/test_transcript.h"
 
 #include <gtest/gtest.h>
