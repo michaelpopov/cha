@@ -43,8 +43,12 @@ struct ModelBackendConfig {
     bool https{};
 };
 
-// Provider/runtime settings supplied by workspace.toml. Identity and prompt fields
-// are intentionally absent: they belong to character definitions only.
+// Provider/runtime settings supplied by one configuration layer: workspace
+// [provider], a character definition, forum defaults, or a member override.
+// Which keys a particular file may set is decided by that file's parser, not by
+// this type; workspace [provider] still prohibits api_key. Identity and prompt
+// fields are intentionally absent: they belong to character definitions only.
+// 'source' is the file this layer was read from, for diagnostics.
 struct ProviderConfig {
     std::filesystem::path source;
     std::optional<std::string> host;
@@ -53,11 +57,17 @@ struct ProviderConfig {
     std::optional<std::string> model;
     std::optional<bool> stream;
     std::optional<double> temperature;
+    std::optional<std::string> api_key;
     std::optional<std::string> api_key_env;
     std::optional<std::string> reasoning_effort;
     std::optional<ReasoningFormat> reasoning_format;
     std::optional<bool> https;
 };
+
+// Materializes the effective provider values, leaving ModelBackendConfig's own
+// defaults in place wherever a value is absent. Throws when required host or
+// port values are missing; callers may validate first to provide richer context.
+ModelBackendConfig make_backend_config(const ProviderConfig& effective);
 
 // Named configuration inputs prevent callers from confusing the four overlay roles.
 struct CharacterConfigPaths {

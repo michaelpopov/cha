@@ -86,6 +86,15 @@ constexpr std::string_view complete_definition =
     "api_key_env = \"ONE\"\nreasoning_effort = \"low\"\nreasoning_format = \"none\"\n"
     "https = false\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n";
 
+TEST(Config, BackendMaterializationRequiresHostAndPort) {
+    EXPECT_THROW(
+        (void)make_backend_config(ProviderConfig{.port = 80}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)make_backend_config(ProviderConfig{.host = "provider.example"}),
+        std::invalid_argument);
+}
+
 TEST(Config, SeparatesDefinitionMetadataFromModelBackendConfiguration) {
     ConfigFiles files;
     files.write(files.definition(),
@@ -139,6 +148,21 @@ TEST(Config, ForumDefaultsOverlayDefinitionWhenMemberIsAbsent) {
     EXPECT_EQ(loaded.prompt_variables.at("value"), "defaults");
     EXPECT_EQ(loaded.backend.model, "one");
     EXPECT_EQ(loaded.prompt_variables.at("base"), "base");
+}
+
+// A present false is a value, not an absent one, so it must replace a true
+// lower value instead of being skipped as if the layer had said nothing.
+TEST(Config, ExplicitFalseInAHigherLayerOverridesATrueLowerValue) {
+    ConfigFiles files;
+    files.write(files.definition(), complete_definition);
+    files.write(files.defaults(), "stream = false\nhttps = true\n");
+    const LoadedCharacterConfig defaults_applied = load_character_config(files.paths(true));
+    EXPECT_FALSE(defaults_applied.backend.stream);
+    EXPECT_TRUE(defaults_applied.backend.https);
+    files.write(files.member(), "https = false\n");
+    const LoadedCharacterConfig member_applied = load_character_config(files.paths(true, true));
+    EXPECT_FALSE(member_applied.backend.stream);
+    EXPECT_FALSE(member_applied.backend.https);
 }
 
 TEST(Config, EmptyAndCommentOnlyOptionalLayersAreNoopOverlays) {

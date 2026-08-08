@@ -24,23 +24,9 @@ namespace {
 
 enum class ConfigLayer { application, definition, forum_defaults, member_override };
 
-struct ConfigPatch {
-    std::optional<std::string> display_name;
-    std::optional<std::string> host;
-    std::optional<int> port;
-    std::optional<Mode> mode;
-    std::optional<std::string> model;
-    std::optional<bool> stream;
-    std::optional<double> temperature;
-    std::optional<std::string> api_key;
-    std::optional<std::string> api_key_env;
-    std::optional<std::string> reasoning_effort;
-    std::optional<ReasoningFormat> reasoning_format;
-    std::optional<bool> https;
-};
-
 struct ParsedConfig {
-    ConfigPatch patch;
+    std::optional<std::string> display_name;
+    ProviderConfig provider;
     TemplateScope prompt_variables;
     std::vector<std::string> tags;
     std::optional<std::string> description;
@@ -237,8 +223,9 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
     const auto description = read_optional<std::string>(table, path, "description", "string");
     if (description) validate_description(*description, "Character", path);
     return {
-        .patch = {
-            .display_name = display_name,
+        .display_name = display_name,
+        .provider = {
+            .source = path,
             .host = read_optional<std::string>(table, path, "host", "string"),
             .port = read_optional<int>(table, path, "port", "integer"),
             .mode = read_mode(table, path),
@@ -258,16 +245,6 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
     };
 }
 
-ConfigPatch provider_patch(const ProviderConfig& provider) {
-    return {
-        .host = provider.host, .port = provider.port, .mode = provider.mode,
-        .model = provider.model, .stream = provider.stream,
-        .temperature = provider.temperature,
-        .api_key_env = provider.api_key_env, .reasoning_effort = provider.reasoning_effort,
-        .reasoning_format = provider.reasoning_format, .https = provider.https,
-    };
-}
-
 template<typename Value>
 void override_with(std::optional<Value>& effective, const std::optional<Value>& upper) {
     if (upper) {
@@ -275,7 +252,10 @@ void override_with(std::optional<Value>& effective, const std::optional<Value>& 
     }
 }
 
-void overlay(ConfigPatch& effective, const ConfigPatch& upper) {
+// A present upper value replaces the lower one, field by field. 'source' is
+// deliberately not overlaid: no single path describes a mixed configuration, so
+// per-value attribution is tracked by the caller where it is needed.
+void overlay_provider(ProviderConfig& effective, const ProviderConfig& upper) {
     override_with(effective.host, upper.host);
     override_with(effective.port, upper.port);
     override_with(effective.mode, upper.mode);
@@ -296,7 +276,7 @@ void overlay(TemplateScope& effective, TemplateScope upper) {
 }
 
 void validate_effective(
-    const ConfigPatch& effective,
+    const ProviderConfig& effective,
     const std::filesystem::path& definition,
     const std::filesystem::path& port_source,
     const std::filesystem::path& temperature_source) {
@@ -324,11 +304,31 @@ CharacterMetadata load_character_metadata(
     const ParsedConfig definition = parse_config(definition_path, ConfigLayer::definition);
     return {
         .id = utf8_path(definition_path.parent_path().filename()),
-        .display_name = *definition.patch.display_name,
+        .display_name = *definition.display_name,
         .description = definition.description,
         .tags = definition.tags,
         .appearance = definition.appearance,
     };
+}
+
+ModelBackendConfig make_backend_config(const ProviderConfig& effective) {
+    if (!effective.host || !effective.port) {
+        throw std::invalid_argument(
+            "Provider configuration requires host and port before materialization");
+    }
+    ModelBackendConfig backend;
+    backend.host = *effective.host;
+    backend.port = *effective.port;
+    if (effective.mode) backend.mode = *effective.mode;
+    if (effective.model) backend.model = *effective.model;
+    if (effective.stream) backend.stream = *effective.stream;
+    if (effective.temperature) backend.temperature = *effective.temperature;
+    if (effective.api_key) backend.api_key = *effective.api_key;
+    if (effective.api_key_env) backend.api_key_env = *effective.api_key_env;
+    if (effective.reasoning_effort) backend.reasoning_effort = *effective.reasoning_effort;
+    if (effective.reasoning_format) backend.reasoning_format = *effective.reasoning_format;
+    if (effective.https) backend.https = *effective.https;
+    return backend;
 }
 
 ProviderConfig load_provider_config(const std::filesystem::path& workspace_config_path) {
@@ -383,26 +383,26 @@ ProviderConfig load_provider_config(
 
 LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     const ParsedConfig definition = parse_config(paths.definition, ConfigLayer::definition);
-    ConfigPatch effective;
+    ProviderConfig effective;
     TemplateScope prompt_variables = definition.prompt_variables;
     std::filesystem::path port_source = paths.definition;
     std::filesystem::path temperature_source = paths.definition;
     if (paths.application_provider) {
-        effective = provider_patch(*paths.application_provider);
+        overlay_provider(effective, *paths.application_provider);
         if (effective.port) port_source = paths.application_provider->source;
         if (effective.temperature) temperature_source = paths.application_provider->source;
     }
-    if (definition.patch.port) port_source = paths.definition;
-    if (definition.patch.temperature) temperature_source = paths.definition;
-    overlay(effective, definition.patch);
+    if (definition.provider.port) port_source = paths.definition;
+    if (definition.provider.temperature) temperature_source = paths.definition;
+    overlay_provider(effective, definition.provider);
     const auto apply = [&](const std::optional<std::filesystem::path>& path, ConfigLayer layer) {
         if (!path) {
             return;
         }
         const ParsedConfig parsed = parse_config(*path, layer);
-        if (parsed.patch.port) port_source = *path;
-        if (parsed.patch.temperature) temperature_source = *path;
-        overlay(effective, parsed.patch);
+        if (parsed.provider.port) port_source = *path;
+        if (parsed.provider.temperature) temperature_source = *path;
+        overlay_provider(effective, parsed.provider);
         overlay(prompt_variables, parsed.prompt_variables);
     };
     apply(paths.forum_defaults, ConfigLayer::forum_defaults);
@@ -410,44 +410,14 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     validate_effective(effective, paths.definition, port_source, temperature_source);
     CharacterMetadata character{
         .id = utf8_path(paths.definition.parent_path().filename()),
-        .display_name = *definition.patch.display_name,
+        .display_name = *definition.display_name,
         .description = definition.description,
         .tags = definition.tags,
         .appearance = definition.appearance,
     };
-    ModelBackendConfig backend_config;
-    backend_config.host = *effective.host;
-    backend_config.port = *effective.port;
-    if (effective.mode) {
-        backend_config.mode = *effective.mode;
-    }
-    if (effective.model) {
-        backend_config.model = *effective.model;
-    }
-    if (effective.stream) {
-        backend_config.stream = *effective.stream;
-    }
-    if (effective.temperature) {
-        backend_config.temperature = *effective.temperature;
-    }
-    if (effective.api_key) {
-        backend_config.api_key = *effective.api_key;
-    }
-    if (effective.api_key_env) {
-        backend_config.api_key_env = *effective.api_key_env;
-    }
-    if (effective.reasoning_effort) {
-        backend_config.reasoning_effort = *effective.reasoning_effort;
-    }
-    if (effective.reasoning_format) {
-        backend_config.reasoning_format = *effective.reasoning_format;
-    }
-    if (effective.https) {
-        backend_config.https = *effective.https;
-    }
     return {
         .character = std::move(character),
-        .backend = std::move(backend_config),
+        .backend = make_backend_config(effective),
         .prompt_variables = std::move(prompt_variables),
     };
 }
