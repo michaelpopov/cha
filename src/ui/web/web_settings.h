@@ -11,7 +11,7 @@ struct WebSettings {
     // bounded by cpp-httplib's compile-time limits (8192, 8192, and 100).
     std::size_t session_limit{8};
     // Reserve request workers beyond one long-lived SSE writer per allowed
-    // registry entry.  Pool and pending-request values are validated together
+    // live session.  Pool and pending-request values are validated together
     // when the listener is configured. This remains a setting so tests and
     // deliberately small deployments can exercise the coupled bound.
     std::size_t http_request_headroom{4};

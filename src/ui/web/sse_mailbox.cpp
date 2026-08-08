@@ -72,12 +72,22 @@ AppendPublishResult SseMailbox::publish_append(TextAppend append) {
 
 bool SseMailbox::wait_for_written(std::chrono::milliseconds deadline) {
     std::unique_lock lock(mutex_);
-    return changed_.wait_for(lock, deadline, [&] {
+    const auto written = [&] {
         // The owner calls this only after publishing its final state.  Pending
         // payloads may have replaced one another, so publish/write counters do
         // not describe whether the final state has reached the writer.
         return closed_ || !active_stream_ || (!in_flight_ && !pending_);
+    };
+    (void)changed_.wait_for(lock, deadline, [&] {
+        return final_drain_interrupted_ || written();
     });
+    return written();
+}
+
+void SseMailbox::interrupt_final_drain() noexcept {
+    std::lock_guard lock(mutex_);
+    final_drain_interrupted_ = true;
+    changed_.notify_all();
 }
 
 void SseMailbox::close() noexcept {

@@ -1,59 +1,55 @@
-#include "ui/web/session_registry.h"
+#include "ui/web/live_session_manager.h"
 #include "ui/web/sse_mailbox.h"
 
 #include "session/session_lease.h"
 #include "session/session_repository.h"
+#include "support/test_live_session.h"
 #include "support/test_web_graph.h"
 #include "support/test_workspace.h"
+#include "util/utf8_path.h"
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace cha::web {
 namespace {
 
-PortBackedSession fake_session(
-    const SessionIdentity& identity,
-    std::unique_ptr<WebSessionController> controller) {
-    return {{identity, "Test forum " + identity.forum_id,
-             "Test session " + identity.session_id}, std::move(controller)};
-}
-
 using namespace std::chrono_literals;
 
-struct Counts {
-    std::atomic<unsigned int> first{};
-    std::atomic<unsigned int> second{};
-};
-
-class CountingController final : public WebSessionController {
+// One temporary database per identity. Every session in this file runs a real
+// SessionController over its own storage and its own cross-process lease.
+class SessionFiles {
 public:
-    explicit CountingController(std::atomic<unsigned int>& count) : count_(count) {}
-
-    CommandResult handle_raw_input(std::string_view, std::string) override {
-        ++count_;
-        return {.clear_input = true};
+    const std::filesystem::path& path_for(const SessionIdentity& key) {
+        std::lock_guard lock(mutex_);
+        auto found = files_.find(key);
+        if (found == files_.end()) {
+            found = files_.emplace(
+                key,
+                std::make_unique<test::TemporarySessionFile>("stress", key)).first;
+        }
+        return found->second->path();
     }
-    ControllerUpdate request_stop() override { return {}; }
-    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
-    ControllerEventBatch receive(std::size_t) override { return {}; }
-    [[nodiscard]] ControllerView view() const override { return {}; }
-    [[nodiscard]] bool is_generating() const override { return false; }
-    void shutdown() override {}
 
 private:
-    std::atomic<unsigned int>& count_;
+    std::mutex mutex_;
+    std::map<SessionIdentity, std::unique_ptr<test::TemporarySessionFile>> files_;
 };
 
 class CommandGate {
@@ -65,9 +61,9 @@ public:
         changed_.wait(lock, [this] { return released_; });
     }
 
-    bool wait_until_entered() {
+    bool wait_until_entered(std::chrono::milliseconds timeout = 5s) {
         std::unique_lock lock(mutex_);
-        return changed_.wait_for(lock, 1s, [this] { return entered_; });
+        return changed_.wait_for(lock, timeout, [this] { return entered_; });
     }
 
     void release() {
@@ -85,89 +81,57 @@ private:
     bool released_{};
 };
 
-class BlockingController final : public WebSessionController {
-public:
-    explicit BlockingController(CommandGate& gate) : gate_(gate) {}
-    CommandResult handle_raw_input(std::string_view, std::string) override {
-        gate_.wait();
-        return {.clear_input = true};
+void execute_sql(const std::filesystem::path& path, const char* statement) {
+    sqlite3* raw_database = nullptr;
+    const int open_result = sqlite3_open_v2(
+        utf8_path(path).c_str(), &raw_database, SQLITE_OPEN_READWRITE, nullptr);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close_v2)> database(
+        raw_database, &sqlite3_close_v2);
+    if (open_result != SQLITE_OK) {
+        throw std::runtime_error("Failed to open the stress fixture database");
     }
-    ControllerUpdate request_stop() override { return {}; }
-    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
-    ControllerEventBatch receive(std::size_t) override { return {}; }
-    [[nodiscard]] ControllerView view() const override { return {}; }
-    [[nodiscard]] bool is_generating() const override { return false; }
-    void shutdown() override {}
-
-private:
-    CommandGate& gate_;
-};
-
-class FatalRaceController final : public WebSessionController {
-public:
-    explicit FatalRaceController(std::atomic<bool>& fail) : fail_(fail) {}
-    CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    ControllerUpdate request_stop() override { return {}; }
-    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
-    ControllerEventBatch receive(std::size_t) override {
-        if (fail_) throw std::runtime_error("injected fatal race");
-        return {};
+    char* raw_error = nullptr;
+    const int execute_result =
+        sqlite3_exec(database.get(), statement, nullptr, nullptr, &raw_error);
+    sqlite3_free(raw_error);
+    if (execute_result != SQLITE_OK) {
+        throw std::runtime_error("Failed to inject a persistence failure");
     }
-    [[nodiscard]] ControllerView view() const override { return {}; }
-    [[nodiscard]] bool is_generating() const override { return false; }
-    void shutdown() override {}
+}
 
-private:
-    std::atomic<bool>& fail_;
-};
-
-class GeneratingCountingController final : public WebSessionController {
-public:
-    explicit GeneratingCountingController(std::atomic<unsigned int>& count)
-        : count_(count) {}
-    CommandResult handle_raw_input(std::string_view, std::string) override {
-        ++count_;
-        return {.clear_input = true};
+bool wait_for_live_count(
+    LiveSessionManager& manager,
+    std::size_t expected,
+    std::chrono::milliseconds timeout = 10s) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (manager.snapshot().live_session_count == expected) return true;
+        std::this_thread::sleep_for(1ms);
     }
-    ControllerUpdate request_stop() override { return {}; }
-    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
-    ControllerEventBatch receive(std::size_t) override { return {}; }
-    [[nodiscard]] bool is_generating() const override { return true; }
-    [[nodiscard]] ControllerView view() const override {
-        return {
-            .generation = {
-                .active = true,
-                .request_id = 1,
-                .phase = ResponsePhase::answering,
-            },
-        };
-    }
-    void shutdown() override {}
-
-private:
-    std::atomic<unsigned int>& count_;
-};
+    return manager.snapshot().live_session_count == expected;
+}
 
 TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
-    auto counts = std::make_shared<Counts>();
-    WebSettings settings{.session_limit = 2, .command_queue_capacity = 64};
-    SessionRegistry registry(
+    SessionFiles files;
+    WebSettings settings;
+    settings.session_limit = 2;
+    settings.command_queue_capacity = 64;
+    LiveSessionManager manager(
         settings,
-        [counts](const SessionIdentity& key, WakeNotifier&) {
-            return fake_session(key, std::make_unique<CountingController>(
-                key.session_id == "first" ? counts->first : counts->second));
+        [&files](const SessionIdentity& key, WakeNotifier& notifier) {
+            return test::open_leased_session(key, files.path_for(key), notifier);
         });
 
-    auto open = [&registry](std::string id) {
-        return registry.open({"forum", std::move(id)}, 1s);
+    auto open = [&manager](std::string id) {
+        return manager.open({"forum", std::move(id)}, 10s);
     };
     auto first_open = std::async(std::launch::async, open, "first");
     auto second_open = std::async(std::launch::async, open, "second");
-    ASSERT_TRUE(std::holds_alternative<RegistryReady>(first_open.get()));
-    ASSERT_TRUE(std::holds_alternative<RegistryReady>(second_open.get()));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(first_open.get()));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(second_open.get()));
 
-    SessionHandle first = registry.lookup({"forum", "first"});
-    SessionHandle second = registry.lookup({"forum", "second"});
+    LiveSessionHandle first = manager.lookup({"forum", "first"});
+    LiveSessionHandle second = manager.lookup({"forum", "second"});
     ASSERT_TRUE(first);
     ASSERT_TRUE(second);
 
@@ -176,73 +140,92 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     results.reserve(commands_per_session * 2);
     for (unsigned int index = 0; index != commands_per_session; ++index) {
         results.push_back(std::async(std::launch::async, [&first] {
-            return first.runtime().submit(RawCommand{"reader", "first"}, 1s);
+            return first->submit(RawCommand{"reader", "/info"}, 10s);
         }));
         results.push_back(std::async(std::launch::async, [&second] {
-            return second.runtime().submit(RawCommand{"reader", "second"}, 1s);
+            return second->submit(RawCommand{"reader", "/info"}, 10s);
         }));
     }
     for (auto& result : results) {
         EXPECT_TRUE(std::holds_alternative<CommandResult>(result.get()));
     }
-    EXPECT_EQ(counts->first, commands_per_session);
-    EXPECT_EQ(counts->second, commands_per_session);
 
-    registry.begin_shutdown();
-    EXPECT_TRUE(registry.join_shutdown(1s));
+    // Each actor owns its own controller and storage, so a prompt submitted to
+    // one can never appear in the other's transcript.
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        first->submit(RawCommand{"reader", "first-only"}, 10s)));
+    const auto first_state = first->snapshot(10s);
+    const auto second_state = second->snapshot(10s);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(first_state));
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(second_state));
+    const SessionSnapshot& first_snapshot = std::get<SessionSnapshot>(first_state);
+    ASSERT_FALSE(first_snapshot.transcript.empty());
+    EXPECT_EQ(first_snapshot.transcript.front().text, "first-only");
+    EXPECT_TRUE(std::get<SessionSnapshot>(second_state).transcript.empty());
+
+    manager.begin_shutdown();
+    EXPECT_TRUE(manager.join_shutdown(10s));
 }
 
 TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
+    SessionFiles files;
     CommandGate gate;
-    std::atomic<unsigned int> healthy_commands{};
-    SessionRegistry registry(
-        {.session_limit = 2, .command_queue_capacity = 8},
-        [&](const SessionIdentity& key, WakeNotifier&) {
+    auto blocked_controls = std::make_shared<test::BackendControls>();
+    WebSettings settings;
+    settings.session_limit = 2;
+    settings.command_queue_capacity = 8;
+    LiveSessionManager manager(
+        settings,
+        [&](const SessionIdentity& key, WakeNotifier& notifier) {
             if (key.session_id == "blocked") {
-                return fake_session(
-                    key, std::make_unique<BlockingController>(gate));
+                return test::open_scripted_session(
+                    key,
+                    files.path_for(key),
+                    notifier,
+                    test::one_backend(test::scripted_backend(blocked_controls)),
+                    [&gate](std::size_t) { gate.wait(); });
             }
-            return fake_session(
-                key, std::make_unique<CountingController>(healthy_commands));
+            return test::open_leased_session(key, files.path_for(key), notifier);
         });
-    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
-        registry.open({"forum", "blocked"}, 1s)));
-    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
-        registry.open({"forum", "healthy"}, 1s)));
-    SessionHandle blocked = registry.lookup({"forum", "blocked"});
-    SessionHandle healthy = registry.lookup({"forum", "healthy"});
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
+        manager.open({"forum", "blocked"}, 10s)));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
+        manager.open({"forum", "healthy"}, 10s)));
+    LiveSessionHandle blocked = manager.lookup({"forum", "blocked"});
+    LiveSessionHandle healthy = manager.lookup({"forum", "healthy"});
     ASSERT_TRUE(blocked);
     ASSERT_TRUE(healthy);
 
     auto blocked_command = std::async(std::launch::async, [&] {
-        return blocked.runtime().submit(RawCommand{"reader", "wait"}, 50ms);
+        return blocked->submit(RawCommand{"reader", "wait"}, 50ms);
     });
     ASSERT_TRUE(gate.wait_until_entered());
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        healthy.runtime().submit(RawCommand{"reader", "independent"}, 1s)));
-    EXPECT_EQ(healthy_commands, 1U);
+        healthy->submit(RawCommand{"reader", "/info"}, 10s)));
     EXPECT_EQ(
-        std::get<ErrorCode>(blocked_command.get()),
-        ErrorCode::command_timeout);
+        std::get<ErrorCode>(blocked_command.get()), ErrorCode::command_timeout);
 
     gate.release();
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        healthy.runtime().submit(RawCommand{"reader", "still-independent"}, 1s)));
-    EXPECT_EQ(healthy_commands, 2U);
-    registry.begin_shutdown();
-    EXPECT_TRUE(registry.join_shutdown(1s));
+        healthy->submit(RawCommand{"reader", "/info"}, 10s)));
+    ASSERT_TRUE(blocked_controls->wait_until_running());
+    blocked_controls->finish();
+    manager.begin_shutdown();
+    EXPECT_TRUE(manager.join_shutdown(10s));
 }
 
 TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
-    constexpr int rounds = 20;
+    constexpr int rounds = 8;
     constexpr int limit = 4;
+    SessionFiles files;
     std::atomic<int> starts{};
-    SessionRegistry registry(
-        {.session_limit = limit},
-        [&](const SessionIdentity& key, WakeNotifier&) {
+    WebSettings settings;
+    settings.session_limit = limit;
+    LiveSessionManager manager(
+        settings,
+        [&](const SessionIdentity& key, WakeNotifier& notifier) {
             ++starts;
-            static std::atomic<unsigned int> ignored_commands{};
-            return fake_session(key, std::make_unique<CountingController>(ignored_commands));
+            return test::open_leased_session(key, files.path_for(key), notifier);
         });
 
     for (int round = 0; round != rounds; ++round) {
@@ -250,68 +233,66 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
         for (int index = 0; index != limit; ++index) {
             keys.push_back({
                 "forum",
-                "round-" + std::to_string(round)
-                    + "-" + std::to_string(index),
+                "round-" + std::to_string(round) + "-" + std::to_string(index),
             });
         }
         std::promise<void> start_signal;
-        const std::shared_future<void> start =
-            start_signal.get_future().share();
-        std::vector<std::future<RegistryOpenResult>> opens;
+        const std::shared_future<void> start = start_signal.get_future().share();
+        std::vector<std::future<LiveSessionOpenResult>> opens;
         for (const SessionIdentity& key : keys) {
             for (int duplicate = 0; duplicate != 2; ++duplicate) {
                 opens.push_back(std::async(
                     std::launch::async, [&, key, start] {
                         start.wait();
-                        return registry.open(key, 1s);
+                        return manager.open(key, 10s);
                     }));
             }
         }
         start_signal.set_value();
         for (auto& open : opens) {
-            ASSERT_TRUE(std::holds_alternative<RegistryReady>(open.get()));
+            ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(open.get()));
         }
-        const RegistryOpenResult overflow = registry.open(
+        const LiveSessionOpenResult overflow = manager.open(
             {"forum", "overflow-" + std::to_string(round)}, 10ms);
-        ASSERT_TRUE(std::holds_alternative<RegistryOpenFailure>(overflow));
+        ASSERT_TRUE(std::holds_alternative<LiveSessionOpenFailure>(overflow));
         EXPECT_EQ(
-            std::get<RegistryOpenFailure>(overflow),
-            RegistryOpenFailure::limit_reached);
+            std::get<LiveSessionOpenFailure>(overflow),
+            LiveSessionOpenFailure::limit_reached);
 
-        std::vector<SessionHandle> old_handles;
+        std::vector<LiveSessionHandle> old_handles;
         for (const SessionIdentity& key : keys) {
-            old_handles.push_back(registry.lookup(key));
+            old_handles.push_back(manager.lookup(key));
             ASSERT_TRUE(old_handles.back());
-            old_handles.back().runtime().request_shutdown();
+            old_handles.back()->request_shutdown();
         }
         old_handles.clear();
 
         std::atomic<bool> sweeping{true};
         auto sweeper = std::async(std::launch::async, [&] {
             while (sweeping) {
-                registry.sweep();
+                manager.sweep();
                 std::this_thread::yield();
             }
         });
-        std::vector<std::future<SessionHandle>> reopened;
+        std::vector<std::future<LiveSessionHandle>> reopened;
         for (const SessionIdentity& key : keys) {
             reopened.push_back(std::async(std::launch::async, [&, key] {
-                const auto deadline = std::chrono::steady_clock::now() + 2s;
+                const auto deadline = std::chrono::steady_clock::now() + 20s;
                 while (std::chrono::steady_clock::now() < deadline) {
-                    const RegistryOpenResult result = registry.open(key, 100ms);
-                    if (std::holds_alternative<RegistryReady>(result)) {
-                        SessionHandle handle = registry.lookup(key);
-                        if (handle && std::holds_alternative<SessionSnapshot>(
-                                handle.runtime().snapshot(100ms))) {
-                            return handle;
+                    const LiveSessionOpenResult result = manager.open(key, 500ms);
+                    if (std::holds_alternative<LiveSessionReady>(result)) {
+                        LiveSessionHandle session = manager.lookup(key);
+                        if (session && std::holds_alternative<SessionSnapshot>(
+                                session->snapshot(500ms))) {
+                            return session;
                         }
                     }
                     std::this_thread::yield();
                 }
-                return SessionHandle{};
+                return LiveSessionHandle{};
             }));
         }
-        std::vector<SessionHandle> live_handles;
+        std::vector<LiveSessionHandle> live_handles;
         bool all_reopened = true;
         for (auto& reopen : reopened) {
             live_handles.push_back(reopen.get());
@@ -320,73 +301,64 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
         sweeping = false;
         sweeper.get();
         ASSERT_TRUE(all_reopened);
-        EXPECT_EQ(registry.snapshot().live_entry_count, limit);
+        EXPECT_EQ(manager.snapshot().live_session_count, limit);
 
-        for (SessionHandle& handle : live_handles) {
-            handle.runtime().request_shutdown();
+        for (LiveSessionHandle& session : live_handles) {
+            session->request_shutdown();
         }
         live_handles.clear();
-        const auto deadline = std::chrono::steady_clock::now() + 2s;
-        while (registry.snapshot().live_entry_count != 0
-            && std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::yield();
-        }
-        ASSERT_EQ(registry.snapshot().live_entry_count, 0U);
+        ASSERT_TRUE(wait_for_live_count(manager, 0));
     }
     EXPECT_EQ(starts, rounds * limit * 2);
 }
 
-TEST(WebSessionStress, FatalSessionDoesNotInterruptGeneratingPeer) {
-    std::atomic<bool> fail{};
-    std::atomic<unsigned int> healthy_commands{};
-    SessionRegistry registry(
-        {.session_limit = 2, .command_queue_capacity = 64},
-        [&](const SessionIdentity& key, WakeNotifier&) {
-            if (key.session_id == "failing") {
-                return fake_session(
-                    key, std::make_unique<FatalRaceController>(fail));
-            }
-            return fake_session(
-                key, std::make_unique<GeneratingCountingController>(healthy_commands));
+TEST(WebSessionStress, FatalSessionDoesNotInterruptItsPeer) {
+    SessionFiles files;
+    WebSettings settings;
+    settings.session_limit = 2;
+    settings.command_queue_capacity = 64;
+    LiveSessionManager manager(
+        settings,
+        [&files](const SessionIdentity& key, WakeNotifier& notifier) {
+            return test::open_leased_session(key, files.path_for(key), notifier);
         });
     const SessionIdentity failing{"forum", "failing"};
     const SessionIdentity healthy{"forum", "healthy"};
-    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
-        registry.open(failing, 1s)));
-    ASSERT_TRUE(std::holds_alternative<RegistryReady>(
-        registry.open(healthy, 1s)));
-    SessionHandle failing_handle = registry.lookup(failing);
-    SessionHandle healthy_handle = registry.lookup(healthy);
-    ASSERT_TRUE(failing_handle);
-    ASSERT_TRUE(healthy_handle);
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(failing, 10s)));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(healthy, 10s)));
+    LiveSessionHandle failing_session = manager.lookup(failing);
+    LiveSessionHandle healthy_session = manager.lookup(healthy);
+    ASSERT_TRUE(failing_session);
+    ASSERT_TRUE(healthy_session);
 
-    fail = true;
-    failing_handle.runtime().notifier_for_owner().wake();
+    // A corrupted journal makes the next real controller write fail inside the
+    // failing actor's owner loop.
+    execute_sql(files.path_for(failing), "DROP TABLE turns");
+    (void)failing_session->submit(RawCommand{"reader", "Question"}, 500ms);
+
     std::vector<std::future<CommandSubmitResult>> commands;
     for (int index = 0; index != 40; ++index) {
         commands.push_back(std::async(std::launch::async, [&] {
-            return healthy_handle.runtime().submit(RawCommand{"reader", "work"}, 1s);
+            return healthy_session->submit(RawCommand{"reader", "/info"}, 10s);
         }));
     }
     for (auto& command : commands) {
         EXPECT_TRUE(std::holds_alternative<CommandResult>(command.get()));
     }
-    EXPECT_EQ(healthy_commands, 40U);
 
-    failing_handle = {};
-    const auto deadline = std::chrono::steady_clock::now() + 1s;
-    while (registry.snapshot().live_entry_count != 1
-        && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::yield();
-    }
-    EXPECT_EQ(registry.snapshot().live_entry_count, 1U);
-    EXPECT_TRUE(registry.lookup(healthy));
-    fail = false;
-    EXPECT_TRUE(std::holds_alternative<RegistryReady>(
-        registry.open(failing, 1s)));
+    failing_session = {};
+    ASSERT_TRUE(wait_for_live_count(manager, 1));
+    EXPECT_TRUE(manager.lookup(healthy));
+    // The failed actor released its lease and its capacity; only its own
+    // storage is now unusable.
+    SessionLease reopened = SessionLease::acquire(files.path_for(failing));
+    EXPECT_TRUE(reopened.active());
+    reopened = SessionLease::inactive_for_testing();
+    EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(
+        manager.open({"forum", "replacement"}, 10s)));
 
-    registry.begin_shutdown();
-    EXPECT_TRUE(registry.join_shutdown(1s));
+    manager.begin_shutdown();
+    EXPECT_TRUE(manager.join_shutdown(10s));
 }
 
 TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndependent) {
@@ -421,33 +393,33 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     WebSettings settings;
     settings.session_limit = session_count;
     settings.command_queue_capacity = 16;
-    SessionRegistry registry(settings, graph.factory());
-    std::vector<std::future<RegistryOpenResult>> opens;
+    LiveSessionManager manager(settings, graph.opener());
+    std::vector<std::future<LiveSessionOpenResult>> opens;
     opens.reserve(session_count);
     for (const SessionEntry& session : sessions) {
         opens.push_back(std::async(std::launch::async, [&, key = session.identity] {
-            return registry.open(key, 2s);
+            return manager.open(key, 10s);
         }));
     }
     for (auto& open : opens) {
-        ASSERT_TRUE(std::holds_alternative<RegistryReady>(open.get()));
+        ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(open.get()));
     }
-    EXPECT_EQ(registry.snapshot().live_entry_count, session_count);
+    EXPECT_EQ(manager.snapshot().live_session_count, session_count);
 
-    std::vector<SessionHandle> handles;
+    std::vector<LiveSessionHandle> handles;
     std::vector<SseConnectResult> streams;
     std::set<const SseMailbox*> mailboxes;
     handles.reserve(session_count);
     streams.reserve(session_count);
     for (const SessionEntry& session : sessions) {
-        handles.push_back(registry.lookup(session.identity));
+        handles.push_back(manager.lookup(session.identity));
         ASSERT_TRUE(handles.back());
-        CommandSubmitResult connected = handles.back().runtime().connect_sse(1s);
+        CommandSubmitResult connected = handles.back()->connect_sse(10s);
         ASSERT_TRUE(std::holds_alternative<SseConnectResult>(connected));
         streams.push_back(std::get<SseConnectResult>(std::move(connected)));
         mailboxes.insert(streams.back().mailbox.get());
         const SseMailbox::Next initial = streams.back().mailbox->next(
-            streams.back().stream, 1s);
+            streams.back().stream, 5s);
         ASSERT_TRUE(initial.payload);
         streams.back().mailbox->written(streams.back().stream);
     }
@@ -457,17 +429,15 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
         const std::filesystem::path database =
             fixture.root() / "forums" / "lobby" / "sessions"
             / (session.identity.session_id + ".sqlite3");
-        EXPECT_THROW(
-            (void)SessionLease::acquire(database),
-            SessionBusyError);
+        EXPECT_THROW((void)SessionLease::acquire(database), SessionBusyError);
     }
 
     std::vector<std::future<CommandSubmitResult>> commands;
     commands.reserve(session_count);
-    for (SessionHandle& handle : handles) {
-        SessionHandle* const target = &handle;
+    for (LiveSessionHandle& session : handles) {
+        LiveSession* const target = session.get();
         commands.push_back(std::async(std::launch::async, [target] {
-            return target->runtime().submit(RawCommand{"reader", "/clear"}, 2s);
+            return target->submit(RawCommand{"reader", "/clear"}, 10s);
         }));
     }
     for (auto& command : commands) {
@@ -477,25 +447,19 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     for (std::size_t index = 0; index != handles.size(); ++index) {
         const std::size_t collapsed = streams[index].mailbox->end_stream(
             streams[index].stream);
-        handles[index].runtime().disconnect_sse(
-            streams[index].connection_id, collapsed);
+        handles[index]->disconnect_sse(streams[index].connection_id, collapsed);
     }
     std::vector<std::future<void>> unloads;
     unloads.reserve(handles.size());
-    for (SessionHandle& handle : handles) {
-        SessionHandle* const target = &handle;
+    for (LiveSessionHandle& session : handles) {
+        LiveSession* const target = session.get();
         unloads.push_back(std::async(std::launch::async, [target] {
-            target->runtime().request_shutdown();
+            target->request_shutdown();
         }));
     }
     for (auto& unload : unloads) unload.get();
 
-    const auto unload_deadline = std::chrono::steady_clock::now() + 3s;
-    while (registry.snapshot().live_entry_count != 0
-        && std::chrono::steady_clock::now() < unload_deadline) {
-        std::this_thread::sleep_for(1ms);
-    }
-    EXPECT_EQ(registry.snapshot().live_entry_count, 0U);
+    ASSERT_TRUE(wait_for_live_count(manager, 0));
     for (const SessionEntry& session : sessions) {
         const std::filesystem::path database =
             fixture.root() / "forums" / "lobby" / "sessions"

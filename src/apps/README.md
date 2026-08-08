@@ -8,10 +8,12 @@ top-level error handling, never reusable application policy.
 `chaweb` resolves its application directory, loads `app.toml` plus command-line
 overrides, and loads provider and logging settings from the selected workspace.
 It then assembles one immutable `WorkspaceModel`, one `SessionRepository`, a
-`SessionRegistry` whose callback captures both and calls `open_session()`, the
-static browser asset handler, route set, and HTTP listener.
+`LiveSessionManager` whose session opener captures both and calls
+`open_session()`, the static browser asset handler, route set, and HTTP
+listener.
 
-Live `SessionController` instances are created only on registry owner threads.
+Live `SessionController` instances are created only on live-session owner
+threads.
 The entry point bridges process signals into bounded shutdown: it stops HTTP
 acceptance, wakes pending opens, asks every live owner to stop, and waits for one
 configured grace period. If an owner remains stuck, the process logs its

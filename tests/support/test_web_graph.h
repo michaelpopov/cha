@@ -4,8 +4,8 @@
 #include "application/session_open.h"
 #include "application/workspace_model.h"
 #include "session/session_repository.h"
+#include "ui/web/live_session.h"
 #include "ui/web/lobby_routes.h"
-#include "ui/web/session_registry.h"
 
 #include <filesystem>
 #include <memory>
@@ -15,7 +15,7 @@
 namespace cha::test {
 
 // The production web graph over one fixture workspace: one loaded model, one
-// repository owning its temporary Welcome database, and the registry callback
+// repository owning its temporary Welcome database, and the session opener
 // chaweb installs. Web tests construct this instead of restating the three
 // startup steps.
 class WebGraph {
@@ -32,11 +32,10 @@ public:
 
     const std::filesystem::path& root() const noexcept { return root_; }
 
-    web::RegistrySessionFactory factory() const {
+    web::SessionOpener opener() const {
         return [model = model, sessions = sessions](
                    const SessionIdentity& identity, WakeNotifier& notifier) {
-            return web::RegistryOwnerInput{
-                open_session(*model, *sessions, identity, notifier)};
+            return open_session(*model, *sessions, identity, notifier);
         };
     }
 

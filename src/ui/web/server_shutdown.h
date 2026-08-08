@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ui/web/session_registry.h"
+#include "ui/web/live_session_manager.h"
 
 #include <chrono>
 #include <csignal>
@@ -32,7 +32,9 @@ private:
 // Owns the bounded process-wide shutdown protocol, leaving web_main as wiring.
 class ServerShutdownCoordinator {
 public:
-    ServerShutdownCoordinator(SessionRegistry& registry, httplib::Server& server);
+    ServerShutdownCoordinator(
+        LiveSessionManager& live_sessions,
+        httplib::Server& server);
 
     // Waits through the signal-safe bridge, then owns the complete bounded
     // shutdown policy. shutdown_now() is the directly testable half: it
@@ -48,7 +50,7 @@ public:
         std::chrono::milliseconds grace);
 
 private:
-    SessionRegistry& registry_;
+    LiveSessionManager& live_sessions_;
     httplib::Server& server_;
 };
 

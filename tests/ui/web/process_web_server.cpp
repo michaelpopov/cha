@@ -1,9 +1,11 @@
 #include "support/mock_http_server.h"
+#include "support/test_live_session.h"
 #include "support/test_web_graph.h"
 #include "support/test_workspace.h"
 #include "support/web_server_process.h"
 #include "ui/web/http_server.h"
 #include "ui/web/asset_handler.h"
+#include "ui/web/live_session_manager.h"
 #include "ui/web/lobby_routes.h"
 #include "ui/web/server_shutdown.h"
 #include "ui/web/session_routes.h"
@@ -41,13 +43,6 @@
 
 namespace cha::web {
 namespace {
-
-PortBackedSession fake_session(
-    const SessionIdentity& identity,
-    std::unique_ptr<WebSessionController> controller) {
-    return {{identity, "Test forum " + identity.forum_id,
-             "Test session " + identity.session_id}, std::move(controller)};
-}
 
 using namespace std::chrono_literals;
 
@@ -166,25 +161,6 @@ private:
     std::future<httplib::Result> request_;
 };
 
-class PermanentlyBlockedShutdownController final
-    : public WebSessionController {
-public:
-    CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    ControllerUpdate request_stop() override { return {}; }
-    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
-    ControllerEventBatch receive(std::size_t) override { return {}; }
-    [[nodiscard]] ControllerView view() const override { return {}; }
-    [[nodiscard]] bool is_generating() const override { return false; }
-    void shutdown() override {
-        std::unique_lock lock(mutex_);
-        changed_.wait(lock, [] { return false; });
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable changed_;
-};
-
 class OpeningGate {
 public:
     void wait() {
@@ -222,17 +198,6 @@ public:
 
 private:
     OpeningGate& gate_;
-};
-
-class IdleController final : public WebSessionController {
-public:
-    CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    ControllerUpdate request_stop() override { return {}; }
-    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
-    ControllerEventBatch receive(std::size_t) override { return {}; }
-    [[nodiscard]] ControllerView view() const override { return {}; }
-    [[nodiscard]] bool is_generating() const override { return false; }
-    void shutdown() override {}
 };
 
 class RawHttpSocket {
@@ -338,31 +303,21 @@ private:
     int port_{};
 };
 
-class LargeSnapshotController final : public WebSessionController {
-public:
-    explicit LargeSnapshotController(std::size_t text_size)
-        : entries_({{
-              .id = 1,
-              .kind = EntryKind::agent,
-              .text = std::string(text_size, 'x'),
-              .status = EntryStatus::complete,
-          }}) {}
-
-    CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    ControllerUpdate request_stop() override { return {}; }
-    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
-    ControllerEventBatch receive(std::size_t) override { return {}; }
-    [[nodiscard]] bool is_generating() const override { return false; }
-    // The entry is owner-thread state built once, so every borrowed view stays
-    // valid for the synchronous projection that consumes it.
-    [[nodiscard]] ControllerView view() const override {
-        return {.transcript = {.entries = entries_}};
-    }
-    void shutdown() override {}
-
-private:
-    std::vector<cha::TranscriptEntry> entries_;
-};
+// A real controller whose restored transcript is large enough that one
+// snapshot cannot fit in a socket buffer.
+SessionRestore large_transcript(std::size_t text_size) {
+    SessionRestore restored;
+    restored.entries.push_back({
+        .id = 1,
+        .kind = EntryKind::agent,
+        .participant_id = "guide",
+        .display_name = "Guide",
+        .text = std::string(text_size, 'x'),
+        .status = EntryStatus::complete,
+    });
+    restored.next_entry_id = 2;
+    return restored;
+}
 
 // Instrumented builds run the server several times slower, which starves the
 // absolute socket timings these fixtures depend on. Scaling one constant keeps
@@ -397,9 +352,16 @@ public:
 
     RealSocketSseServer()
         : settings_(make_settings()),
-          registry_(settings_, [](const SessionIdentity& key, WakeNotifier&) {
-              return fake_session(key, std::make_unique<LargeSnapshotController>(8U * 1024U * 1024U));
-          }) {
+          live_sessions_(
+              settings_,
+              [this](const SessionIdentity& key, WakeNotifier& notifier) {
+                  return test::open_restored_session(
+                      key,
+                      database_.path(),
+                      notifier,
+                      large_transcript(8U * 1024U * 1024U),
+                      controls_);
+              }) {
         server_.set_socket_options([](int socket) {
             const int send_buffer = 16 * 1024;
             (void)::setsockopt(
@@ -407,10 +369,10 @@ public:
                 &send_buffer, sizeof(send_buffer));
         });
         SessionRoutes(
-            registry_, settings_, AssetHandler(fixture_.root() / "web"))
+            live_sessions_, settings_, AssetHandler(fixture_.root() / "web"))
             .install(server_);
-        if (!std::holds_alternative<RegistryReady>(
-                registry_.open({"forum", "session"}, 1s))) {
+        if (!std::holds_alternative<LiveSessionReady>(
+                live_sessions_.open({"forum", "session"}, 5s))) {
             throw std::runtime_error("Could not open real-socket SSE fixture session");
         }
         port_ = server_.bind_to_any_port("127.0.0.1");
@@ -423,8 +385,8 @@ public:
     }
 
     ~RealSocketSseServer() {
-        ServerShutdownCoordinator(registry_, server_)
-            .shutdown_now(listener_, 2s);
+        ServerShutdownCoordinator(live_sessions_, server_)
+            .shutdown_now(listener_, 5s);
     }
 
     [[nodiscard]] int port() const noexcept { return port_; }
@@ -444,8 +406,11 @@ private:
     }
 
     test::TestWorkspace fixture_;
+    test::TemporarySessionFile database_{"real_socket_sse"};
+    std::shared_ptr<test::BackendControls> controls_ =
+        std::make_shared<test::BackendControls>();
     WebSettings settings_;
-    SessionRegistry registry_;
+    LiveSessionManager live_sessions_;
     httplib::Server server_;
     int port_{};
     std::thread listener_;
@@ -536,17 +501,34 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     (void)::alarm(2);
     shutdown_diagnostic_logging();
     initialize_diagnostic_logging(log_path, "critical");
-    SessionRegistry registry(
-        {.session_limit = 1},
-        [](const SessionIdentity& key, WakeNotifier&) {
-            return fake_session(key, std::make_unique<PermanentlyBlockedShutdownController>());
+    // A completion that ignores cancellation wedges this owner inside
+    // SessionController::shutdown(), which is the exact state the coordinator
+    // must report rather than joining.
+    test::TemporarySessionFile database("blocked_shutdown");
+    auto controls = std::make_shared<test::BackendControls>();
+    controls->ignore_cancellation();
+    WebSettings settings;
+    settings.session_limit = 1;
+    LiveSessionManager live_sessions(
+        settings,
+        [&](const SessionIdentity& key, WakeNotifier& notifier) {
+            return test::open_scripted_session(
+                key, database.path(), notifier, controls);
         });
-    if (!std::holds_alternative<RegistryReady>(
-            registry.open({"blocked-forum", "blocked-session"}, 500ms))) {
+    const SessionIdentity key{"blocked-forum", "blocked-session"};
+    if (!std::holds_alternative<LiveSessionReady>(
+            live_sessions.open(key, 5s))) {
         _exit(2);
     }
+    LiveSessionHandle session = live_sessions.lookup(key);
+    if (!session
+        || !std::holds_alternative<CommandResult>(
+            session->submit(RawCommand{"reader", "Question"}, 5s))
+        || !controls->wait_until_running()) {
+        _exit(4);
+    }
     httplib::Server server;
-    ServerShutdownCoordinator coordinator(registry, server);
+    ServerShutdownCoordinator coordinator(live_sessions, server);
     std::thread listener;
     coordinator.shutdown_now(listener, 20ms);
     _exit(3);
@@ -921,23 +903,24 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     OpeningGate gate;
     WebSettings settings;
     settings.open_deadline = 5s;
-    SessionRegistry registry(
+    test::TemporarySessionFile database("opening_gate");
+    LiveSessionManager live_sessions(
         settings,
-        [&gate](const SessionIdentity& key, WakeNotifier&) {
+        [&gate, &database](const SessionIdentity& key, WakeNotifier& notifier) {
             gate.wait();
-            return fake_session(key, std::make_unique<IdleController>());
+            return test::open_leased_session(key, database.path(), notifier);
         });
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;
     LobbyRoutes(
         graph.model, graph.sessions, test::WebGraph::initial_selection(),
-        registry, settings).install(server);
+        live_sessions, settings).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
     configure_http_server(server, settings, "127.0.0.1", port);
     std::thread listener([&server] { server.listen_after_bind(); });
     server.wait_until_ready();
-    ServerShutdownCoordinator coordinator(registry, server);
+    ServerShutdownCoordinator coordinator(live_sessions, server);
 
     auto opening = std::async(std::launch::async, [port, id = stored.identity.session_id] {
         httplib::Client client = web_client(port);

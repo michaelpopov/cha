@@ -39,9 +39,9 @@ contract without introducing a second persistence model.
 
 ## Runtime ownership
 
-`SessionRegistry` owns one thread per live session. That thread exclusively
-owns its controller, live transcript, journal mutation, and provider event
-draining. HTTP threads communicate through `CommandQueue`; owner-produced state
+One `LiveSession` actor owns one thread per live session. That thread
+exclusively owns its controller, live transcript, journal mutation, and
+provider event draining. HTTP threads communicate through `CommandQueue`; owner-produced state
 is copied into protocol snapshots or append events and delivered through an
 `SseMailbox`.
 

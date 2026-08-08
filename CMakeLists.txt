@@ -240,7 +240,8 @@ add_library(cha_web STATIC
     src/ui/web/session_projection.cpp
     src/ui/web/server_shutdown.cpp
     src/ui/web/session_routes.cpp
-    src/ui/web/session_registry.cpp
+    src/ui/web/live_session.cpp
+    src/ui/web/live_session_manager.cpp
     src/ui/web/sse_mailbox.cpp
     src/ui/web/sse_stream.cpp
     src/ui/web/text_command.cpp
@@ -248,7 +249,6 @@ add_library(cha_web STATIC
     src/ui/web/text_mention.cpp
     src/ui/web/text_multicast.cpp
     src/ui/web/owner_wake_signal.cpp
-    src/ui/web/web_session_runtime.cpp
 )
 target_compile_features(cha_web PUBLIC cxx_std_20)
 target_include_directories(cha_web PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -345,14 +345,14 @@ if(BUILD_TESTING)
         tests/ui/web/unit_browser_connection_state.cpp
         tests/ui/web/unit_lobby_routes.cpp
         tests/ui/web/unit_session_routes.cpp
-        tests/ui/web/unit_session_registry.cpp
+        tests/ui/web/unit_live_session_manager.cpp
         tests/ui/web/unit_sse_mailbox.cpp
         tests/ui/web/unit_sse_stream.cpp
         tests/ui/web/unit_text_command.cpp
         tests/ui/web/unit_text_input.cpp
         tests/ui/web/unit_text_mention.cpp
         tests/ui/web/unit_text_multicast.cpp
-        tests/ui/web/unit_web_session_runtime.cpp
+        tests/ui/web/unit_live_session.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
         cha_web_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)

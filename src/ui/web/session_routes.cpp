@@ -4,7 +4,7 @@
 #include "ui/web/http_response.h"
 #include "ui/web/json.h"
 #include "ui/web/route_support.h"
-#include "ui/web/session_registry.h"
+#include "ui/web/live_session_manager.h"
 #include "ui/web/sse_stream.h"
 
 #include <httplib.h>
@@ -57,15 +57,15 @@ std::optional<SessionIdentity> validate_key(
     return key;
 }
 
-SessionHandle resolve(
+LiveSessionHandle resolve(
     const httplib::Request& request,
     httplib::Response& response,
-    SessionRegistry& registry) {
+    LiveSessionManager& live_sessions) {
     const std::optional<SessionIdentity> key = validate_key(request, response);
     if (!key) return {};
-    SessionHandle handle = registry.lookup(*key);
-    if (!handle) set_not_live(response);
-    return handle;
+    LiveSessionHandle session = live_sessions.lookup(*key);
+    if (!session) set_not_live(response);
+    return session;
 }
 
 void set_command_result(httplib::Response& response, CommandSubmitResult result) {
@@ -81,15 +81,15 @@ void set_command_result(httplib::Response& response, CommandSubmitResult result)
 } // namespace
 
 SessionRoutes::SessionRoutes(
-    SessionRegistry& registry,
+    LiveSessionManager& live_sessions,
     WebSettings settings,
     AssetHandler assets)
-    : registry_(registry),
+    : live_sessions_(live_sessions),
       settings_(std::move(settings)),
       assets_(std::move(assets)) {}
 
 void SessionRoutes::install(httplib::Server& server) const {
-    SessionRegistry* const registry = &registry_;
+    LiveSessionManager* const live_sessions = &live_sessions_;
     const WebSettings settings = settings_;
     const AssetHandler assets = assets_;
     constexpr auto base = R"(/s/([^/]+)/([^/]+))";
@@ -97,10 +97,10 @@ void SessionRoutes::install(httplib::Server& server) const {
     server.Get(std::string(base) + R"(/)", [assets](const httplib::Request&, httplib::Response& response) {
         assets.set_shell(response);
     });
-    server.Get(std::string(base) + R"(/api/v1/session)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
-        SessionHandle handle = resolve(request, response, *registry);
-        if (!handle) return;
-        CommandSubmitResult result = handle.runtime().snapshot(settings.command_deadline);
+    server.Get(std::string(base) + R"(/api/v1/session)", [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
+        LiveSessionHandle session = resolve(request, response, *live_sessions);
+        if (!session) return;
+        CommandSubmitResult result = session->snapshot(settings.command_deadline);
         if (const auto* snapshot = std::get_if<SessionSnapshot>(&result)) {
             set_json_response(response, 200, nlohmann::json(*snapshot));
         } else if (const auto* error = std::get_if<ErrorCode>(&result)) {
@@ -109,10 +109,10 @@ void SessionRoutes::install(httplib::Server& server) const {
             set_error_response(response, 500, {ErrorCode::internal_error, "The request could not be completed."});
         }
     });
-    server.Get(std::string(base) + R"(/api/v1/events)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
-        SessionHandle handle = resolve(request, response, *registry);
-        if (!handle) return;
-        CommandSubmitResult result = handle.runtime().connect_sse(settings.command_deadline);
+    server.Get(std::string(base) + R"(/api/v1/events)", [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
+        LiveSessionHandle session = resolve(request, response, *live_sessions);
+        if (!session) return;
+        CommandSubmitResult result = session->connect_sse(settings.command_deadline);
         const auto* connection = std::get_if<SseConnectResult>(&result);
         if (!connection) {
             if (const auto* error = std::get_if<ErrorCode>(&result)) {
@@ -132,13 +132,16 @@ void SessionRoutes::install(httplib::Server& server) const {
                 httplib::DataSink& sink) {
                 return SseStreamWriter(mailbox, stream, interval).write(sink);
             },
-            [handle, mailbox = connection->mailbox, stream = connection->stream,
+            // Retaining the actor keeps this callback's target alive even
+            // after the manager has removed and joined it; a call on a
+            // finished actor is a safe no-op.
+            [session, mailbox = connection->mailbox, stream = connection->stream,
              connection_id = connection->connection_id](bool) {
-                handle.runtime().disconnect_sse(
+                session->disconnect_sse(
                     connection_id, mailbox->end_stream(stream));
             });
     });
-    server.Post(std::string(base) + R"(/api/v1/input)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
+    server.Post(std::string(base) + R"(/api/v1/input)", [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
         const std::optional<SessionIdentity> key = validate_key(request, response);
         if (!key) return;
         if (!validate_json_mutation(request, response)) return;
@@ -152,20 +155,20 @@ void SessionRoutes::install(httplib::Server& server) const {
                 413,
                 {ErrorCode::prompt_too_large, "Prompt is too large."});
         }
-        SessionHandle handle = registry->lookup(*key);
-        if (!handle) return set_not_live(response);
-        set_command_result(response, handle.runtime().submit(std::move(command), settings.command_deadline));
+        LiveSessionHandle session = live_sessions->lookup(*key);
+        if (!session) return set_not_live(response);
+        set_command_result(response, session->submit(std::move(command), settings.command_deadline));
     });
-    server.Post(std::string(base) + R"(/api/v1/actions/stop)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
+    server.Post(std::string(base) + R"(/api/v1/actions/stop)", [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
         const std::optional<SessionIdentity> key = validate_key(request, response);
         if (!key) return;
         if (!validate_json_mutation(request, response)) return;
         if (!parse_route_json_body(request, response, settings.request_body_limit, [](const nlohmann::json& json) { parse_empty_object(json); })) return;
-        SessionHandle handle = registry->lookup(*key);
-        if (!handle) return set_not_live(response);
-        set_command_result(response, handle.runtime().submit(StopCommand{}, settings.command_deadline));
+        LiveSessionHandle session = live_sessions->lookup(*key);
+        if (!session) return set_not_live(response);
+        set_command_result(response, session->submit(StopCommand{}, settings.command_deadline));
     });
-    server.Post(std::string(base) + R"(/api/v1/actions/default-agent)", [registry, settings](const httplib::Request& request, httplib::Response& response) {
+    server.Post(std::string(base) + R"(/api/v1/actions/default-agent)", [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
         const std::optional<SessionIdentity> key = validate_key(request, response);
         if (!key) return;
         if (!validate_json_mutation(request, response)) return;
@@ -174,9 +177,9 @@ void SessionRoutes::install(httplib::Server& server) const {
                 command = parse_default_agent_command(json);
                 if (command.character_id.empty()) throw std::invalid_argument("Character ID is empty");
             })) return;
-        SessionHandle handle = registry->lookup(*key);
-        if (!handle) return set_not_live(response);
-        set_command_result(response, handle.runtime().submit(std::move(command), settings.command_deadline));
+        LiveSessionHandle session = live_sessions->lookup(*key);
+        if (!session) return set_not_live(response);
+        set_command_result(response, session->submit(std::move(command), settings.command_deadline));
     });
 }
 

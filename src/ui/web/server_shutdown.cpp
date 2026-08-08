@@ -35,9 +35,9 @@ bool ProcessShutdownSignal::requested() const noexcept {
 }
 
 ServerShutdownCoordinator::ServerShutdownCoordinator(
-    SessionRegistry& registry,
+    LiveSessionManager& live_sessions,
     httplib::Server& server)
-    : registry_(registry), server_(server) {}
+    : live_sessions_(live_sessions), server_(server) {}
 
 void ServerShutdownCoordinator::wait_and_shutdown(
     const ProcessShutdownSignal& signals,
@@ -52,9 +52,9 @@ void ServerShutdownCoordinator::wait_and_shutdown(
 void ServerShutdownCoordinator::shutdown_now(
     std::thread& listener,
     std::chrono::milliseconds grace) {
-    registry_.begin_shutdown([this] { server_.stop(); });
-    if (!registry_.join_shutdown(grace)) {
-        for (const SessionIdentity& key : registry_.unfinished_owners()) {
+    live_sessions_.begin_shutdown([this] { server_.stop(); });
+    if (!live_sessions_.join_shutdown(grace)) {
+        for (const SessionIdentity& key : live_sessions_.unfinished_owners()) {
             log_critical(
                 "Web shutdown grace expired: forum_id=" + key.forum_id
                 + " session_id=" + key.session_id);

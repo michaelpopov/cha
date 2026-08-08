@@ -17,7 +17,7 @@ class SessionRepository;
 
 namespace cha::web {
 
-class SessionRegistry;
+class LiveSessionManager;
 
 // What the browser starts on. These are startup facts rather than model state,
 // so the application decides them and the route layer only reports them.
@@ -32,7 +32,7 @@ public:
         std::shared_ptr<const WorkspaceModel> model,
         std::shared_ptr<const SessionRepository> sessions,
         InitialSelection initial,
-        SessionRegistry& registry,
+        LiveSessionManager& live_sessions,
         WebSettings settings);
 
     void install(httplib::Server& server) const;
@@ -41,7 +41,7 @@ private:
     std::shared_ptr<const WorkspaceModel> model_;
     std::shared_ptr<const SessionRepository> sessions_;
     InitialSelection initial_;
-    SessionRegistry& registry_;
+    LiveSessionManager& live_sessions_;
     WebSettings settings_;
 };
 

@@ -162,8 +162,8 @@ struct SnapshotAppendSelection {
 };
 
 // The snapshot is the authoritative base for later append events. Keep target
-// selection shared by the runtime cache and transport mailbox so they cannot
-// establish different delta bases.
+// selection shared by the session actor and its transport mailbox so they
+// cannot establish different delta bases.
 [[nodiscard]] std::optional<SnapshotAppendSelection> snapshot_append_selection(
     const SessionSnapshot& snapshot);
 

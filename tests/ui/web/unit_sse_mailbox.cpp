@@ -174,6 +174,22 @@ TEST(SseMailbox, FinalDrainCompletesWhenStreamEnds) {
     EXPECT_TRUE(drained.get());
 }
 
+TEST(SseMailbox, HigherPriorityShutdownInterruptsFinalDrain) {
+    SseMailbox mailbox;
+    const SseMailbox::Stream stream =
+        mailbox.begin_stream({streaming_snapshot()});
+    ASSERT_TRUE(mailbox.next(stream, 1ms).payload);
+
+    auto drained = std::async(std::launch::async, [&] {
+        return mailbox.wait_for_written(5s);
+    });
+    EXPECT_EQ(drained.wait_for(10ms), std::future_status::timeout);
+
+    mailbox.interrupt_final_drain();
+    ASSERT_EQ(drained.wait_for(1s), std::future_status::ready);
+    EXPECT_FALSE(drained.get());
+}
+
 TEST(SseMailbox, NewStreamStartsCollapseCountAfterItsInitialSnapshot) {
     SseMailbox mailbox;
     const SseMailbox::Stream replaced =

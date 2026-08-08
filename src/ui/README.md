@@ -5,11 +5,11 @@ it reuses.
 
 | Directory | Responsibility |
 | --- | --- |
-| `web/` | HTTP routes, JSON protocol, SSE projection, session registry, owner-thread runtime, and browser lifecycle. |
+| `web/` | HTTP routes, JSON protocol, SSE projection, live-session actors and their process-wide manager, and browser lifecycle. |
 | `text/` | Controller commands, `@mention` addressing, and multicast parsing. |
 
 HTTP request threads never call live controllers. Routes validate protocol
-input and enqueue commands to `WebSessionRuntime`; the session owner thread
+input and enqueue commands to a `LiveSession`; its owner thread
 executes those commands and projects state into immutable snapshots or proven
 append events. `SseMailbox` provides the bounded handoff to the browser.
 

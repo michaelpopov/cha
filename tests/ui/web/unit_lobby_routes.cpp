@@ -1,7 +1,8 @@
 #include "ui/web/asset_handler.h"
 #include "ui/web/http_server.h"
 #include "ui/web/lobby_routes.h"
-#include "ui/web/session_registry.h"
+#include "ui/web/live_session_manager.h"
+#include "support/test_live_session.h"
 #include "support/test_web_graph.h"
 #include "support/test_workspace.h"
 
@@ -29,71 +30,28 @@
 namespace cha::web {
 namespace {
 
-PortBackedSession fake_session(
-    const SessionIdentity& identity,
-    std::unique_ptr<WebSessionController> controller) {
-    return {{identity, "Test forum " + identity.forum_id,
-             "Test session " + identity.session_id}, std::move(controller)};
-}
-
 using namespace std::chrono_literals;
 
-class IdleController final : public WebSessionController {
-public:
-    CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    ControllerUpdate request_stop() override { return {}; }
-    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
-    ControllerEventBatch receive(std::size_t) override { return {}; }
-    [[nodiscard]] ControllerView view() const override { return {}; }
-    [[nodiscard]] bool is_generating() const override { return false; }
-    void shutdown() override {}
-};
-
-class ShutdownGate {
-public:
-    void wait() {
-        std::unique_lock lock(mutex_);
-        entered_ = true;
-        changed_.notify_all();
-        changed_.wait(lock, [this] { return released_; });
-    }
-
-    bool wait_until_entered() {
-        std::unique_lock lock(mutex_);
-        return changed_.wait_for(lock, 500ms, [this] { return entered_; });
-    }
-
-    void release() {
-        {
-            std::lock_guard lock(mutex_);
-            released_ = true;
-        }
-        changed_.notify_all();
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable changed_;
-    bool entered_{};
-    bool released_{};
-};
-
-class GatedShutdownController final : public WebSessionController {
-public:
-    explicit GatedShutdownController(ShutdownGate& gate) : gate_(gate) {}
-    CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    ControllerUpdate request_stop() override { return {}; }
-    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
-    ControllerEventBatch receive(std::size_t) override { return {}; }
-    [[nodiscard]] ControllerView view() const override { return {}; }
-    [[nodiscard]] bool is_generating() const override { return false; }
-    void shutdown() override { gate_.wait(); }
-
-private:
-    ShutdownGate& gate_;
-};
-
 using LobbyGraph = test::WebGraph;
+
+// Lobby routes only need one real opener; every session behind them is a real
+// SessionController over the fixture workspace's own storage.
+SessionOpener counting_opener(
+    const LobbyGraph& graph,
+    std::atomic<int>* starts = nullptr) {
+    return [open = graph.opener(), starts](
+               const SessionIdentity& key, WakeNotifier& notifier) {
+        if (starts) ++*starts;
+        return open(key, notifier);
+    };
+}
+
+WebSettings lobby_settings(std::size_t session_limit = 2) {
+    WebSettings settings;
+    settings.session_limit = session_limit;
+    settings.open_deadline = 5s;
+    return settings;
+}
 
 class TestServer {
 public:
@@ -101,13 +59,13 @@ public:
 
     TestServer(
         const LobbyGraph& graph,
-        SessionRegistry& registry,
-        WebSettings settings = {.open_deadline = 500ms},
+        LiveSessionManager& live_sessions,
+        WebSettings settings = lobby_settings(),
         Installer installer = {}) {
         AssetHandler(graph.root() / "web").install(server_);
         LobbyRoutes(
             graph.model, graph.sessions, LobbyGraph::initial_selection(),
-            registry, settings).install(server_);
+            live_sessions, settings).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
@@ -189,10 +147,8 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
         "display_name = \"Guide\"\n"
         "description = \"Explains the workspace\"\n");
     const LobbyGraph graph(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
     const auto root = server.client().Get("/");
     ASSERT_TRUE(root);
     EXPECT_EQ(root->status, 200);
@@ -264,11 +220,8 @@ TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
-        ++starts;
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph, &starts));
+    TestServer server(graph, manager);
     const auto created = server.client().Post("/api/v1/forums/lobby/sessions", R"({"label":"Notes"})", "application/json");
     ASSERT_TRUE(created);
     ASSERT_EQ(created->status, 201);
@@ -277,7 +230,7 @@ TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {
     EXPECT_EQ(created_body["label"], "Notes");
     const std::string id = created_body["id"];
     EXPECT_EQ(starts, 0);
-    EXPECT_EQ(registry.snapshot().live_entry_count, 0);
+    EXPECT_EQ(manager.snapshot().live_session_count, 0);
 
     const auto listed = server.client().Get("/api/v1/forums/lobby/sessions");
     ASSERT_TRUE(listed);
@@ -311,16 +264,14 @@ TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {
     const auto live_listed = server.client().Get("/api/v1/forums/lobby/sessions");
     ASSERT_TRUE(live_listed);
     EXPECT_TRUE(body(live_listed)[0]["live"]);
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, KeyBasedCreationAllowsDuplicateLabels) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
 
     const std::string first = create_session(server, "Repeated");
     const std::string second = create_session(server, "Repeated");
@@ -333,15 +284,12 @@ TEST(LobbyRoutes, KeyBasedCreationAllowsDuplicateLabels) {
     EXPECT_EQ(body(listed)[1]["label"], "Repeated");
 }
 
-TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeRegistry) {
+TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeOpening) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 1}, [&starts](const SessionIdentity& key, WakeNotifier&) {
-        ++starts;
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(1), counting_opener(graph, &starts));
+    TestServer server(graph, manager);
     const auto invalid = server.client().Post("/api/v1/forums/%2e%2e/sessions/nope/open", "{}", "application/json");
     expect_error(invalid, 404, "not_found");
     const auto backslash = server.client().Post(
@@ -375,10 +323,8 @@ TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeRegistry)
 TEST(LobbyRoutes, AcceptsConfiguredAndLoopbackAliasOrigins) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
 
     const auto loopback = server.client().Post(
         "/api/v1/forums/lobby/sessions",
@@ -406,10 +352,8 @@ TEST(LobbyRoutes, AcceptsConfiguredAndLoopbackAliasOrigins) {
 TEST(LobbyRoutes, RejectsDnsRebindingHostOnReadsAndMutations) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
     const httplib::Headers rebound{
         {"Host", "evil.example:" + std::to_string(server.port())},
         {"Origin", "http://evil.example:" + std::to_string(server.port())},
@@ -454,10 +398,8 @@ TEST(LobbyRoutes, RejectsDnsRebindingHostOnReadsAndMutations) {
 TEST(LobbyRoutes, ValidatesMissingIdentifiersMethodsAndOriginWithoutOrigin) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
 
     expect_error(server.client().Get("/api/v1/forums/missing/sessions"), 404, "not_found");
     expect_error(
@@ -483,7 +425,7 @@ TEST(LobbyRoutes, ValidatesMissingIdentifiersMethodsAndOriginWithoutOrigin) {
 
     const std::string id = create_session(server, "No origin");
     EXPECT_TRUE(listed_not_live(server, id));
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, ReportsSessionListingStorageFailuresAsInternalErrors) {
@@ -491,10 +433,8 @@ TEST(LobbyRoutes, ReportsSessionListingStorageFailuresAsInternalErrors) {
     std::ofstream(fixture.root() / "forums" / "lobby" / "sessions")
         << "not a directory";
     const LobbyGraph graph(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
 
     expect_error(
         server.client().Get("/api/v1/forums/lobby/sessions"),
@@ -510,11 +450,8 @@ TEST(LobbyRoutes, ReportsCorruptSessionMetadataAsInternalError) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
-        ++starts;
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph, &starts));
+    TestServer server(graph, manager);
     const std::string id = create_session(server, "Corrupt");
     std::ofstream(
         fixture.root() / "forums" / "lobby" / "sessions"
@@ -532,15 +469,12 @@ TEST(LobbyRoutes, ReportsCorruptSessionMetadataAsInternalError) {
     EXPECT_EQ(starts, 0);
 }
 
-TEST(LobbyRoutes, ReattachesFromRegistryWithoutReadingStorageAgain) {
+TEST(LobbyRoutes, ReattachesFromTheLiveSessionMapWithoutReadingStorageAgain) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
-        ++starts;
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph, &starts));
+    TestServer server(graph, manager);
     const std::string id = create_session(server, "Live");
     const std::string route =
         "/api/v1/forums/lobby/sessions/" + id + "/open";
@@ -560,7 +494,7 @@ TEST(LobbyRoutes, ReattachesFromRegistryWithoutReadingStorageAgain) {
         body(reattached),
         nlohmann::json({{"forum_id", "lobby"}, {"session_id", id}}));
     EXPECT_EQ(starts, 1);
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleasesCapacity) {
@@ -571,9 +505,9 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
     const std::filesystem::path deleted_database =
         fixture.root() / "forums" / "lobby" / "sessions"
         / (deleted.identity.session_id + ".sqlite3");
-    const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
-    const RegistrySessionFactory open_real = graph.factory();
-    SessionRegistry registry(
+    const WebSettings settings = lobby_settings(1);
+    const SessionOpener open_real = graph.opener();
+    LiveSessionManager manager(
         settings,
         [open_real, deleted, deleted_database](
             const SessionIdentity& key,
@@ -584,7 +518,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
             }
             return open_real(key, notifier);
         });
-    TestServer server(graph, registry, settings);
+    TestServer server(graph, manager, settings);
 
     expect_error(
         server.client().Post(
@@ -593,7 +527,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
             "application/json"),
         404,
         "not_found");
-    EXPECT_EQ(registry.snapshot().live_entry_count, 0U);
+    EXPECT_EQ(manager.snapshot().live_session_count, 0U);
 
     const auto opened = server.client().Post(
         "/api/v1/forums/lobby/sessions/" + survivor.identity.session_id + "/open",
@@ -601,7 +535,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
         "application/json");
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 200);
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
@@ -610,9 +544,9 @@ TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
     const SessionEntry stored = graph.sessions->create("lobby", "Deleted forum");
     const std::filesystem::path forum_directory =
         fixture.root() / "forums" / "lobby";
-    const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
-    const RegistrySessionFactory open_real = graph.factory();
-    SessionRegistry registry(
+    const WebSettings settings = lobby_settings(1);
+    const SessionOpener open_real = graph.opener();
+    LiveSessionManager manager(
         settings,
         [open_real, forum_directory](
             const SessionIdentity& key,
@@ -622,7 +556,7 @@ TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
             }
             return open_real(key, notifier);
         });
-    TestServer server(graph, registry, settings);
+    TestServer server(graph, manager, settings);
 
     expect_error(
         server.client().Post(
@@ -631,19 +565,16 @@ TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
             "application/json"),
         404,
         "not_found");
-    EXPECT_EQ(registry.snapshot().live_entry_count, 0U);
+    EXPECT_EQ(manager.snapshot().live_session_count, 0U);
 }
 
 TEST(LobbyRoutes, ValidatesOpenBodyAndAppliesTheRequestLimit) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 2}, [&starts](const SessionIdentity& key, WakeNotifier&) {
-        ++starts;
-        return fake_session(key, std::make_unique<IdleController>());
-    });
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph, &starts));
     WebSettings settings{.open_deadline = 500ms, .request_body_limit = 64};
-    TestServer server(graph, registry, settings);
+    TestServer server(graph, manager, settings);
     const std::string id = create_session(server, "Body validation");
     const std::string route =
         "/api/v1/forums/lobby/sessions/" + id + "/open";
@@ -673,19 +604,17 @@ TEST(LobbyRoutes, ValidatesOpenBodyAndAppliesTheRequestLimit) {
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 200);
     EXPECT_EQ(starts, 1);
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, WrapsGeneratedAndUnhandledErrorsInTheCommonEnvelope) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
-        return fake_session(key, std::make_unique<IdleController>());
-    });
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
     TestServer server(
         graph,
-        registry,
-        {.open_deadline = 500ms},
+        manager,
+        lobby_settings(),
         [](httplib::Server& http) {
             http.Get(
                 "/throws",
@@ -729,11 +658,14 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     std::atomic<bool> busy{true};
-    SessionRegistry registry({.session_limit = 2}, [&busy](const SessionIdentity& key, WakeNotifier&) {
-        if (busy) throw SessionBusyError("held by test");
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(
+        lobby_settings(),
+        [&busy, open = graph.opener()](
+            const SessionIdentity& key, WakeNotifier& notifier) {
+            if (busy) throw SessionBusyError("held by test");
+            return open(key, notifier);
+        });
+    TestServer server(graph, manager);
     const std::string id = create_session(server);
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
@@ -749,15 +681,15 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 200);
     EXPECT_EQ(body(opened), nlohmann::json({{"forum_id", "lobby"}, {"session_id", id}}));
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, CreateSucceedsWhileAnotherStoredSessionLeaseIsHeld) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    const WebSettings settings{.session_limit = 1, .open_deadline = 500ms};
-    SessionRegistry registry(settings, graph.factory());
-    TestServer server(graph, registry, settings);
+    const WebSettings settings = lobby_settings(1);
+    LiveSessionManager manager(settings, graph.opener());
+    TestServer server(graph, manager, settings);
     const std::string leased_id = create_session(server, "Externally held");
     SessionLease held = SessionLease::acquire(
         fixture.root() / "forums" / "lobby" / "sessions"
@@ -780,18 +712,21 @@ TEST(LobbyRoutes, CreateSucceedsWhileAnotherStoredSessionLeaseIsHeld) {
         409,
         "session_busy",
         "Session is busy.");
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, NewStoredSessionSurvivesInitializationFailureAndCanBeRetried) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     std::atomic<bool> fail{true};
-    SessionRegistry registry({.session_limit = 2}, [&fail](const SessionIdentity& key, WakeNotifier&) {
-        if (fail) throw std::runtime_error("initialization failed");
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(
+        lobby_settings(),
+        [&fail, open = graph.opener()](
+            const SessionIdentity& key, WakeNotifier& notifier) {
+            if (fail) throw std::runtime_error("initialization failed");
+            return open(key, notifier);
+        });
+    TestServer server(graph, manager);
     const std::string id = create_session(server);
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
@@ -806,16 +741,14 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesInitializationFailureAndCanBeRetried) 
     const auto opened = server.client().Post(route, "{}", "application/json");
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 200);
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, NewStoredSessionSurvivesLimitOpenAndCanBeRetried) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    SessionRegistry registry({.session_limit = 1}, [](const SessionIdentity& key, WakeNotifier&) {
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(lobby_settings(1), counting_opener(graph));
+    TestServer server(graph, manager);
     const std::string occupied = create_session(server, "Occupied");
     const std::string occupied_route = "/api/v1/forums/lobby/sessions/" + occupied + "/open";
     const auto occupied_open =
@@ -823,7 +756,7 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesLimitOpenAndCanBeRetried) {
     ASSERT_TRUE(occupied_open);
     ASSERT_EQ(occupied_open->status, 200);
 
-    // Creation does not consult the full registry and therefore cannot return
+    // Creation does not consult the live-session map and therefore cannot return
     // an open-lifecycle error even while the live-session limit is consumed.
     const std::string id = create_session(server, "Retry later");
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
@@ -835,9 +768,9 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesLimitOpenAndCanBeRetried) {
         "Session limit reached.");
     EXPECT_TRUE(listed_not_live(server, id));
 
-    SessionHandle occupied_handle = registry.lookup({"lobby", occupied});
-    ASSERT_TRUE(occupied_handle);
-    occupied_handle.runtime().request_shutdown();
+    LiveSessionHandle occupied_session = manager.lookup({"lobby", occupied});
+    ASSERT_TRUE(occupied_session);
+    occupied_session->request_shutdown();
     httplib::Result opened;
     for (int attempt = 0; attempt != 50; ++attempt) {
         opened = server.client().Post(route, "{}", "application/json");
@@ -846,17 +779,22 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesLimitOpenAndCanBeRetried) {
     }
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 200);
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    SessionRegistry registry({.session_limit = 2}, [](const SessionIdentity& key, WakeNotifier&) {
-        std::this_thread::sleep_for(30ms);
-        return fake_session(key, std::make_unique<IdleController>());
-    });
-    TestServer server(graph, registry, {.open_deadline = 1ms});
+    LiveSessionManager manager(
+        lobby_settings(),
+        [open = graph.opener()](
+            const SessionIdentity& key, WakeNotifier& notifier) {
+            std::this_thread::sleep_for(100ms);
+            return open(key, notifier);
+        });
+    WebSettings timeout_settings = lobby_settings();
+    timeout_settings.open_deadline = 1ms;
+    TestServer server(graph, manager, timeout_settings);
     const std::string id = create_session(server);
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
@@ -867,33 +805,59 @@ TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
         "Session is still opening.");
     EXPECT_TRUE(listed_not_live(server, id));
 
-    std::this_thread::sleep_for(40ms);
-    const auto opened = server.client().Post(route, "{}", "application/json");
+    // The abandoned open was never cancelled, so a later request observes the
+    // same actor as ready.
+    httplib::Result opened;
+    for (int attempt = 0; attempt != 100; ++attempt) {
+        opened = server.client().Post(route, "{}", "application/json");
+        if (opened && opened->status == 200) break;
+        std::this_thread::sleep_for(10ms);
+    }
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 200);
-    registry.begin_shutdown();
+    manager.begin_shutdown();
 }
 
-TEST(LobbyRoutes, MapsStoppingAndRegistryShutdownOpenFailuresToExistingEnvelopes) {
+TEST(LobbyRoutes, MapsStoppingAndManagerShutdownOpenFailuresToExistingEnvelopes) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    ShutdownGate gate;
+    // A completion that ignores cancellation keeps this actor's owner inside
+    // SessionController::shutdown(), which is exactly the stopping state the
+    // lobby must report.
+    auto controls = std::make_shared<test::BackendControls>();
     std::atomic<int> starts{};
-    SessionRegistry registry({.session_limit = 1}, [&gate, &starts](const SessionIdentity& key, WakeNotifier&) {
-        ++starts;
-        return fake_session(key, std::make_unique<GatedShutdownController>(gate));
-    });
-    TestServer server(graph, registry);
+    LiveSessionManager manager(
+        lobby_settings(1),
+        [&starts, controls, root = graph.root()](
+            const SessionIdentity& key, WakeNotifier& notifier) {
+            ++starts;
+            return test::open_scripted_session(
+                key,
+                root / "forums" / key.forum_id / "sessions"
+                    / (key.session_id + ".sqlite3"),
+                notifier,
+                controls);
+        });
+    TestServer server(graph, manager);
     const std::string id = create_session(server, "Stopping");
     const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
 
     const auto opened = server.client().Post(route, "{}", "application/json");
     ASSERT_TRUE(opened);
     ASSERT_EQ(opened->status, 200);
-    SessionHandle handle = registry.lookup({"lobby", id});
-    ASSERT_TRUE(handle);
-    handle.runtime().request_shutdown();
-    ASSERT_TRUE(gate.wait_until_entered());
+    LiveSessionHandle session = manager.lookup({"lobby", id});
+    ASSERT_TRUE(session);
+    controls->ignore_cancellation();
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        session->submit(RawCommand{"reader", "Question"}, 5s)));
+    ASSERT_TRUE(controls->wait_until_running());
+    session->request_shutdown();
+    const auto stopping_deadline = std::chrono::steady_clock::now() + 5s;
+    while (session->lifecycle() != LiveSessionState::stopping
+        && std::chrono::steady_clock::now() < stopping_deadline) {
+        std::this_thread::sleep_for(1ms);
+    }
+    ASSERT_EQ(session->lifecycle(), LiveSessionState::stopping);
 
     expect_error(
         server.client().Post(route, "{}", "application/json"),
@@ -902,9 +866,14 @@ TEST(LobbyRoutes, MapsStoppingAndRegistryShutdownOpenFailuresToExistingEnvelopes
         "Session is stopping.");
     EXPECT_EQ(starts, 1);
 
-    gate.release();
-    registry.sweep();
-    registry.begin_shutdown();
+    controls->finish();
+    const auto finished_deadline = std::chrono::steady_clock::now() + 5s;
+    while (session->lifecycle() != LiveSessionState::finished
+        && std::chrono::steady_clock::now() < finished_deadline) {
+        std::this_thread::sleep_for(1ms);
+    }
+    manager.sweep();
+    manager.begin_shutdown();
     expect_error(
         server.client().Post(route, "{}", "application/json"),
         503,
