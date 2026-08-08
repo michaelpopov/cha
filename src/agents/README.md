@@ -19,7 +19,8 @@ generation pool tasks.
 | `generation_executor.*` | Backend ownership, runtime metadata validation, target resolution, and failure-atomic staging of a new batch. |
 | `generation_batch.*` | One in-flight operation: its execution slots, shared start gate, foreground position, cancellation, event queues, and wait state. |
 | `model_backend.h` | The `ModelBackend` seam, discovery-safe runtime diagnostics, and prepared-request/result types. |
-| `provider_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
+| `provider_client.*` | The HTTP backend: request bodies, curl execution, cancellation, model discovery, HTTP outcome mapping, and transport diagnostics. |
+| `provider_response.*` | Provider response interpretation: incremental SSE framing, streaming/non-streaming JSON decoding, reasoning fields, and answer validation. |
 
 ## From character directory to running model backend
 
@@ -220,18 +221,23 @@ preparation from performance keeps request construction separate from slow
 provider I/O. Tests supply their own backend and never touch the network;
 `tests/support/test_backends.h` has the helpers.
 
-## HTTP transport
+## HTTP transport and response decoding
 
-`ProviderClient` implements the seam for OpenAI-compatible servers.
+`ProviderClient` implements the backend seam for OpenAI-compatible servers. It
+owns curl and HTTP behavior. The call-scoped `ProviderStreamDecoder` and
+`decode_provider_response()` interpret successful provider response bytes
+without knowing about curl, HTTP status, content type, cancellation, or logging.
 
 ```mermaid
 flowchart TD
     prep["prepare"] --> proj["project_model_context"]
     proj --> body["JSON body: model, stream, messages,<br/>temperature and optional reasoning_effort"]
     body --> post["POST to /v1/chat/completions"]
-    post --> mode{"streaming?"}
-    mode -->|"yes"| sse["parse text/event-stream data lines"]
-    mode -->|"no"| json["parse choices 0 message"]
+    post --> transfer{"curl and HTTP success?"}
+    transfer -->|"no"| transport["ProviderClient maps cancellation,<br/>transport, or HTTP error"]
+    transfer -->|"yes"| mode{"streaming?"}
+    mode -->|"yes"| sse["ProviderStreamDecoder:<br/>frame SSE and parse delta objects"]
+    mode -->|"no"| json["decode_provider_response:<br/>parse choices 0 message"]
     sse --> frag["GenerationDelta:<br/>reasoning or answer"]
     json --> frag
     sse --> done{"DONE marker seen?"}
@@ -242,7 +248,13 @@ flowchart TD
     ans -->|"yes"| ok["completed"]
 ```
 
-Details worth knowing before changing this file:
+The boundary is deliberately narrow: the curl callback counts and retains
+response bytes, forwards streaming bytes to the decoder, and captures exceptions
+without unwinding through C. `ProviderClient::perform()` remains authoritative
+for curl results, cancellation, HTTP status, logging, and attaching sanitized
+HTTP metadata to streaming decoder errors.
+
+Details worth knowing before changing these files:
 
 - **Model discovery.** When `model` is unset, the constructor GETs `/v1/models`
   and takes `data[0].id`. That request has a 10-second timeout; the chat request
@@ -324,4 +336,5 @@ from its answer.
 | `tests/agents/unit_generation_executor.cpp` | Backend construction and metadata validation, pool-width validation, target resolution, input validation, and failure-atomic submission. |
 | `tests/agents/unit_generation_batch.cpp` | Gate behavior, full-width fan-out, foreground routing and advancement rules, event buffering, cancellation, exactly-one terminal delivery, explicit waiting, and destructor cleanup. |
 | `tests/agents/unit_model_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
-| `tests/agents/unit_provider_client.cpp` | Request bodies, SSE and JSON parsing, reasoning formats, and the error taxonomy, driven by `tests/support/mock_http_server.h`. |
+| `tests/agents/unit_provider_response.cpp` | Socket-free SSE chunking and completion rules, streaming/non-streaming JSON interpretation, reasoning formats, delta order, and answer requirements. |
+| `tests/agents/unit_provider_client.cpp` | Request bodies and headers, successful response integration, HTTP/transport errors, cancellation, logging, and model discovery, driven by `tests/support/mock_http_server.h`. |

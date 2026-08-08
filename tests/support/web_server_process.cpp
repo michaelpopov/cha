@@ -20,6 +20,9 @@
 namespace cha::test {
 namespace {
 
+// The address every child binds, connects back on, and announces on stdout.
+constexpr const char* loopback_host = "127.0.0.1";
+
 void close_descriptor(int& descriptor) noexcept {
     if (descriptor == -1) return;
     (void)::close(descriptor);
@@ -151,7 +154,7 @@ WebServerProcess::WebServerProcess(
             "--workspace",
             workspace_text.c_str(),
             "--host",
-            "127.0.0.1",
+            loopback_host,
             "--port",
             port_text.c_str(),
             static_cast<char*>(nullptr));
@@ -173,10 +176,18 @@ WebServerProcess::~WebServerProcess() {
 }
 
 bool WebServerProcess::wait_until_ready(std::chrono::milliseconds timeout) {
-    httplib::Client client("127.0.0.1", port_);
+    // The child answers /health from its listener thread before main announces
+    // the address, and that announcement then has to reach this process through
+    // the stdout pipe. Serving alone would let a caller read output() before
+    // either happened, so readiness means both.
+    const std::string announcement =
+        "CHA ready at http://" + std::string(loopback_host) + ':'
+        + std::to_string(port_) + '/';
+    httplib::Client client(loopback_host, port_);
     client.set_connection_timeout(0, 100000);
     client.set_read_timeout(0, 100000);
     const auto deadline = std::chrono::steady_clock::now() + timeout;
+    bool serving = false;
     while (std::chrono::steady_clock::now() < deadline) {
         drain_output();
         int status{};
@@ -190,8 +201,13 @@ bool WebServerProcess::wait_until_ready(std::chrono::milliseconds timeout) {
             pid_ = -1;
             return false;
         }
-        const httplib::Result health = client.Get("/health");
-        if (health && health->status == 200) return true;
+        if (!serving) {
+            const httplib::Result health = client.Get("/health");
+            serving = health && health->status == 200;
+        }
+        if (serving && output_.find(announcement) != std::string::npos) {
+            return true;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return false;

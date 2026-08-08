@@ -1,6 +1,7 @@
 #include "agents/provider_client.h"
 
 #include "agents/character.h"
+#include "agents/provider_response.h"
 #include "util/logging.h"
 #include "util/json_serialization.h"
 
@@ -13,6 +14,7 @@
 #include <exception>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -119,24 +121,14 @@ using CurlHeaders = std::unique_ptr<curl_slist, CurlHeadersDeleter>;
 
 constexpr std::size_t max_streaming_error_body_size = 64 * 1024;
 
-// Accumulates one HTTP response and forwards recognized text to a transport-neutral sink.
+// Accumulates one HTTP response and hands streaming bytes to its decoder.
 struct ResponseContext {
-    // Required when streaming is true; model discovery leaves both fields inactive.
-    const GenerationDeltaSink* on_delta{};
-    bool streaming{};
-    bool done{};
-    bool received_reasoning{};
-    bool received_answer{};
+    // Set for streaming generation only; discovery and single-response calls
+    // keep the whole body instead.
+    ProviderStreamDecoder* decoder{};
     std::size_t received_bytes{};
-    ReasoningFormat reasoning_format{ReasoningFormat::automatic};
     std::string body;
-    std::string pending;
-    std::string protocol_error;
     std::exception_ptr error;
-
-    bool received_output() const noexcept {
-        return received_reasoning || received_answer;
-    }
 };
 
 int transfer_progress(void* persona_data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
@@ -147,155 +139,6 @@ int transfer_progress(void* persona_data, curl_off_t, curl_off_t, curl_off_t, cu
 CurlGlobal& curl_global() {
     static CurlGlobal global;
     return global;
-}
-
-void normalize_newlines(std::string& text) {
-    std::size_t index = 0;
-    while ((index = text.find("\r\n", index)) != std::string::npos) {
-        text.erase(index, 1);
-    }
-}
-
-void emit_delta(
-    ResponseContext& context,
-    GenerationDeltaKind kind,
-    std::string text) {
-    if (text.empty()) {
-        return;
-    }
-    if (kind == GenerationDeltaKind::reasoning) {
-        context.received_reasoning = true;
-    } else {
-        context.received_answer = true;
-    }
-    (*context.on_delta)(GenerationDelta{kind, std::move(text)});
-}
-
-void process_response_object(
-    const Json& object,
-    ReasoningFormat format,
-    ResponseContext& context) {
-    const auto emit_field = [&object, &context](
-                                std::string_view field,
-                                bool strict) -> bool {
-        const auto iterator = object.find(field);
-        if (iterator == object.end() || iterator->is_null()) {
-            return false;
-        }
-        if (!iterator->is_string()) {
-            if (strict && context.protocol_error.empty()) {
-                context.protocol_error =
-                    "Reasoning field '" + std::string(field)
-                    + "' was not a string or null";
-            }
-            return false;
-        }
-        std::string text = iterator->get<std::string>();
-        if (text.empty()) {
-            return false;
-        }
-        emit_delta(context, GenerationDeltaKind::reasoning, std::move(text));
-        return true;
-    };
-
-    switch (format) {
-    case ReasoningFormat::automatic:
-        if (!emit_field("reasoning_content", false)) {
-            (void)emit_field("reasoning", false);
-        }
-        break;
-    case ReasoningFormat::none:
-        break;
-    case ReasoningFormat::reasoning_content:
-        (void)emit_field("reasoning_content", true);
-        break;
-    case ReasoningFormat::reasoning:
-        (void)emit_field("reasoning", true);
-        break;
-    }
-
-    const auto content = object.find("content");
-    if (content != object.end() && content->is_string()) {
-        emit_delta(
-            context,
-            GenerationDeltaKind::answer,
-            content->get<std::string>());
-    }
-}
-
-void process_stream_event(std::string_view event, ResponseContext& context) {
-    if (context.done) {
-        return;
-    }
-
-    std::size_t line_start = 0;
-
-    while (line_start <= event.size()) {
-        const std::size_t line_end = event.find('\n', line_start);
-        const std::string_view line = event.substr(
-            line_start,
-            line_end == std::string_view::npos
-                ? event.size() - line_start
-                : line_end - line_start);
-
-        if (line.starts_with("data:")) {
-            std::string_view data = line.substr(5);
-            while (!data.empty() && data.front() == ' ') {
-                data.remove_prefix(1);
-            }
-
-            if (data == "[DONE]") {
-                context.done = true;
-                return;
-            }
-            if (!data.empty()) {
-                try {
-                    const Json value = Json::parse(data);
-                    const Json::json_pointer choices_pointer("/choices");
-                    const Json::json_pointer delta_pointer(
-                        "/choices/0/delta");
-                    if (!value.contains(choices_pointer)
-                        || !value.at(choices_pointer).is_array()) {
-                        if (context.protocol_error.empty()) {
-                            context.protocol_error =
-                                "Streaming event did not contain a choices array";
-                        }
-                    } else if (value.contains(delta_pointer)
-                        && value.at(delta_pointer).is_object()) {
-                        process_response_object(
-                            value.at(delta_pointer),
-                            context.reasoning_format,
-                            context);
-                    }
-                } catch (const Json::parse_error&) {
-                    if (context.protocol_error.empty()) {
-                        context.protocol_error =
-                            "Streaming event contained malformed JSON";
-                    }
-                }
-            }
-        }
-
-        if (line_end == std::string_view::npos) {
-            break;
-        }
-        line_start = line_end + 1;
-    }
-}
-
-void process_pending_events(ResponseContext& context) {
-    normalize_newlines(context.pending);
-
-    std::size_t event_end = 0;
-    while ((event_end = context.pending.find("\n\n")) != std::string::npos) {
-        const std::string event = context.pending.substr(0, event_end);
-        context.pending.erase(0, event_end + 2);
-        process_stream_event(event, context);
-        if (context.done) {
-            context.pending.clear();
-            return;
-        }
-    }
 }
 
 std::size_t receive_response(
@@ -315,17 +158,16 @@ std::size_t receive_response(
         } else {
             context.received_bytes += bytes;
         }
-        if (!context.streaming) {
+        if (!context.decoder) {
             context.body.append(data, bytes);
-        } else if (context.body.size() < max_streaming_error_body_size) {
-            const std::size_t retained = std::min(
-                bytes,
-                max_streaming_error_body_size - context.body.size());
-            context.body.append(data, retained);
-        }
-        if (context.streaming && !context.done) {
-            context.pending.append(data, bytes);
-            process_pending_events(context);
+        } else {
+            if (context.body.size() < max_streaming_error_body_size) {
+                const std::size_t retained = std::min(
+                    bytes,
+                    max_streaming_error_body_size - context.body.size());
+                context.body.append(data, retained);
+            }
+            context.decoder->consume({data, bytes});
         }
     } catch (...) {
         context.error = std::current_exception();
@@ -464,7 +306,7 @@ ProviderClient::ProviderClient(CharacterDefinition definition)
 ProviderClient::~ProviderClient() = default;
 
 void ProviderClient::discover_model() {
-    ResponseContext response{.streaming = false};
+    ResponseContext response;
     const std::string url = models_endpoint();
     const auto started_at = std::chrono::steady_clock::now();
     log_info("Model discovery started: endpoint=" + url);
@@ -570,10 +412,12 @@ GenerationResult ProviderClient::perform(
     }
 
     const std::string& request_body = payload.bytes;
+    std::optional<ProviderStreamDecoder> decoder;
+    if (config_.stream) {
+        decoder.emplace(config_.reasoning_format, on_delta);
+    }
     ResponseContext response{
-        .on_delta = &on_delta,
-        .streaming = config_.stream,
-        .reasoning_format = config_.reasoning_format,
+        .decoder = decoder ? &*decoder : nullptr,
     };
 
     curl_->reset();
@@ -680,78 +524,24 @@ GenerationResult ProviderClient::perform(
         }, status, content_type);
     }
 
-    if (config_.stream) {
-        if (!response.pending.empty()) {
-            process_stream_event(response.pending, response);
-            response.pending.clear();
+    if (decoder) {
+        StreamDecodeResult decoded = decoder->finish();
+        if (decoded.describe_response) {
+            decoded.result.message += streaming_metadata(
+                status,
+                content_type,
+                response.received_bytes);
         }
-        if (!response.protocol_error.empty()) {
-            return complete({
-                GenerationOutcome::protocol_error,
-                response.protocol_error
-                    + streaming_metadata(
-                        status,
-                        content_type,
-                        response.received_bytes),
-            }, status, content_type);
-        }
-        if (!response.done) {
-            return complete({
-                GenerationOutcome::protocol_error,
-                (response.received_output()
-                    ? "Streaming response ended before [DONE]"
-                    : "Streaming response was not valid SSE")
-                    + streaming_metadata(
-                        status,
-                        content_type,
-                        response.received_bytes),
-            }, status, content_type);
-        }
-        if (!response.received_answer) {
-            return complete({
-                GenerationOutcome::protocol_error,
-                "Streaming response completed without answer content",
-            }, status, content_type);
-        }
-        return complete({GenerationOutcome::completed, {}}, status, content_type);
+        return complete(std::move(decoded.result), status, content_type);
     }
 
-    Json value;
-    try {
-        value = Json::parse(response.body);
-    } catch (const Json::exception& error) {
-        return complete({
-            GenerationOutcome::protocol_error,
-            "Inference server returned invalid JSON: "
-                + std::string(error.what()),
-        }, status, content_type);
-    }
-    const Json::json_pointer message_pointer(
-        "/choices/0/message");
-    if (!value.contains(message_pointer)
-        || !value.at(message_pointer).is_object()) {
-        return complete({
-            GenerationOutcome::protocol_error,
-            "Response did not contain choices[0].message",
-        }, status, content_type);
-    }
-    process_response_object(
-        value.at(message_pointer),
-        config_.reasoning_format,
-        response);
-    if (!response.protocol_error.empty()) {
-        return complete({
-            GenerationOutcome::protocol_error,
-            response.protocol_error,
-        }, status, content_type);
-    }
-    if (!response.received_answer) {
-        return complete({
-            GenerationOutcome::protocol_error,
-            "Response completed without answer content",
-        }, status, content_type);
-    }
-    return complete({GenerationOutcome::completed, {}}, status, content_type);
+    return complete(
+        decode_provider_response(
+            response.body,
+            config_.reasoning_format,
+            on_delta),
+        status,
+        content_type);
 }
 
 ModelBackendInfo ProviderClient::info() const {

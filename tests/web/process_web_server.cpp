@@ -27,6 +27,7 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <fstream>
 #include <future>
 #include <iterator>
@@ -51,6 +52,27 @@ httplib::Client web_client(int port) {
     client.set_connection_timeout(1s);
     client.set_read_timeout(2s);
     return client;
+}
+
+std::string log_contents(const std::filesystem::path& path) {
+    std::ifstream log(path);
+    return {
+        std::istreambuf_iterator<char>(log),
+        std::istreambuf_iterator<char>()};
+}
+
+// Diagnostic logging flushes every record as it is written, so the log is what
+// a test waits on for work the server performs on its own threads.
+[[nodiscard]] bool wait_for_log_record(
+    const std::filesystem::path& path,
+    std::string_view record,
+    std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (log_contents(path).find(record) == std::string::npos) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(10ms);
+    }
+    return true;
 }
 
 void expect_same_origin_payload(const nlohmann::json& value) {
@@ -770,8 +792,8 @@ TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
         StreamingRequest stream(port, path + "api/v1/events");
         ASSERT_TRUE(stream.wait_for_snapshot());
     }
-    // The stream destructor waits for its close callback. Queueing a snapshot
-    // afterwards makes the owner observe that disconnect before shutdown.
+    // The stream destructor waits only for the client's own request to end; the
+    // server learns of the close on a later write attempt.
     ASSERT_TRUE(client.Get(path + "api/v1/session"));
     constexpr std::string_view prompt = "very-secret-prompt-body";
     constexpr std::string_view other_prompt = "another-secret-prompt-body";
@@ -793,12 +815,23 @@ TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
     ASSERT_EQ(submitted->status, 200) << submitted->body;
     ASSERT_EQ(other_submitted->status, 200) << other_submitted->body;
 
+    // cpp-httplib releases a closed stream on a worker thread, and the owner
+    // logs that disconnect only when it drains the resulting notification.
+    // Shutdown cannot order either step: HTTP workers are joined after every
+    // owner has finished, so a release that lands late is a documented no-op on
+    // a finished session. Wait for the record instead of signalling into that
+    // race. The bound covers one heartbeat interval, the longest a released
+    // stream can go unnoticed; the submissions above normally wake it at once.
+    const std::filesystem::path log_path =
+        workspace.root() / "logs" / "cha.log";
+    ASSERT_TRUE(wait_for_log_record(
+        log_path, "event=sse_disconnected collapsed_payloads=", 20s))
+        << log_contents(log_path);
+
     const test::ProcessExit stopped = server.stop(SIGINT);
     ASSERT_FALSE(stopped.timed_out) << server.errors();
     ASSERT_EQ(stopped.exit_code, 0) << server.errors();
-    std::ifstream log(workspace.root() / "logs" / "cha.log");
-    const std::string contents{
-        std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
+    const std::string contents = log_contents(log_path);
     EXPECT_NE(contents.find("web server event=startup"), std::string::npos);
     EXPECT_NE(contents.find("web server event=bound"), std::string::npos);
     EXPECT_NE(contents.find("web server event=shutdown"), std::string::npos);
