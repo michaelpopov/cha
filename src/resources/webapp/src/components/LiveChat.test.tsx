@@ -36,7 +36,7 @@ function transcriptSnapshot(): SessionSnapshot {
     ...snapshotFixture,
     transcript: [{
       id: 4,
-      kind: 'agent',
+      kind: 'character',
       participant_id: 'assistant',
       display_name: 'Assistant',
       addressed_to: 'guest',
@@ -48,8 +48,8 @@ function transcriptSnapshot(): SessionSnapshot {
     generation: {
       active: true,
       request_id: 7,
-      agent_id: 'assistant',
-      agent_name: 'Assistant',
+      character_id: 'assistant',
+      character_display_name: 'Assistant',
       phase: 'reasoning',
       reasoning_text: 'Checking',
     },
@@ -232,7 +232,7 @@ describe('live chat', () => {
   // The workspace decides how a character is set; the browser only maps the
   // words it is given onto classes, and says nothing for a character that asked
   // for nothing.
-  it('sets each agent in the voice its character was given and leaves the reader alone', async () => {
+  it('sets each character in its configured voice and leaves the reader alone', async () => {
     const events = drivableEvents();
     render(
       <App client={fixtureClient()} connectSessionEvents={events.connect} />,
@@ -254,12 +254,12 @@ describe('live chat', () => {
           text: 'A question', status: 'complete',
         },
         {
-          id: 2, kind: 'agent', participant_id: 'seneca', display_name: 'Seneca',
+          id: 2, kind: 'character', participant_id: 'seneca', display_name: 'Seneca',
           addressed_to: 'guest', addressed_to_name: 'Guest',
           text: 'A considered answer', status: 'complete',
         },
         {
-          id: 3, kind: 'agent', participant_id: 'assistant', display_name: 'Assistant',
+          id: 3, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
           addressed_to: 'guest', addressed_to_name: 'Guest',
           text: 'A plain answer', status: 'complete',
         },

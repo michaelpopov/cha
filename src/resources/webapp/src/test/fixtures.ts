@@ -70,8 +70,8 @@ export const snapshotFixture: SessionSnapshot = {
   transcript: [],
   generation: {
     active: false,
-    agent_id: '',
-    agent_name: '',
+    character_id: '',
+    character_display_name: '',
     phase: 'waiting',
     reasoning_text: '',
   },

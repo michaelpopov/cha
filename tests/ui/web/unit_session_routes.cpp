@@ -208,12 +208,18 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     EXPECT_EQ(stop->status, 200);
     EXPECT_EQ(json_body(stop)["clear_input"], false);
 
-    const auto agent = server.client().Post(
+    const auto character = server.client().Post(
+        base + "/api/v1/actions/default-character",
+        R"({"character_id":"guide"})",
+        "application/json");
+    ASSERT_TRUE(character);
+    EXPECT_EQ(character->status, 200);
+    const auto legacy_alias = server.client().Post(
         base + "/api/v1/actions/default-agent",
         R"({"character_id":"guide"})",
         "application/json");
-    ASSERT_TRUE(agent);
-    EXPECT_EQ(agent->status, 200);
+    ASSERT_TRUE(legacy_alias);
+    EXPECT_EQ(legacy_alias->status, 200);
     const auto after = server.client().Get(base + "/api/v1/session");
     EXPECT_EQ(json_body(after)["default_character_id"], "guide");
     manager.begin_shutdown();
@@ -486,7 +492,7 @@ TEST(SessionRoutes, ServesTheShellForANonLiveSessionAndRejectsInvalidBodiesBefor
     expect_error(server.client().Post("/s/lobby/missing/api/v1/input", "{}", "text/plain"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/input", R"({"persona":"u","text":"123456789"})", "application/json"), 413, "prompt_too_large");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/stop", R"({"extra":true})", "application/json"), 400, "bad_request");
-    expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/default-agent", R"({"character_id":""})", "application/json"), 400, "bad_request");
+    expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/default-character", R"({"character_id":""})", "application/json"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/close", "{}", "application/json"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing/api/v1/status"), 404, "not_found");
     EXPECT_EQ(starts, 0);

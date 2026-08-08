@@ -8,7 +8,7 @@
 namespace cha {
 
 enum class JsonPurpose {
-    agent_definition,
+    character_definition,
     completion_request,
 };
 
@@ -18,9 +18,9 @@ std::string dump_json(const Json& value, JsonPurpose purpose) {
         return value.dump();
     } catch (const nlohmann::json::type_error& error) {
         if (error.id == 316) {
-            if (purpose == JsonPurpose::agent_definition) {
+            if (purpose == JsonPurpose::character_definition) {
                 throw std::runtime_error(
-                    "Agent definition contains invalid UTF-8");
+                    "Character definition contains invalid UTF-8");
             }
             throw std::runtime_error(
                 "Completion request contains invalid UTF-8");

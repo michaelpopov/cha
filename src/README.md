@@ -89,7 +89,7 @@ The browser has Vitest checks and Playwright development/production flows under
 ## Detailed contracts
 
 - [Application layer](application/README.md)
-- [Agent execution](agents/README.md)
+- [Completion execution](agents/README.md)
 - [Sessions and persistence](session/README.md)
 - [Transcript model](transcript/README.md)
 - [Web frontend](ui/web/README.md)

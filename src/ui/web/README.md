@@ -37,7 +37,7 @@ shared session.
 
 The raw-input owner path recognizes optional leading character mentions and
 the commands `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/mcast`, `/info`,
-`/agents`, `/@Name`, `/stop`, and `/exit`. Mentions and multicast recipient
+`/characters` (`/agents` is a legacy alias), `/@Name`, `/stop`, and `/exit`. Mentions and multicast recipient
 handles remain unresolved until `SessionController` applies the forum's
 authoritative character rules. While generation is active, only a bare
 `/stop` is dispatched; other input remains in the browser editor.
@@ -66,7 +66,7 @@ resulting `OpenedSession` into owner-thread-only state; that opener exists
 because session construction combines application-owned model and repository
 data, and it always returns the production-shaped result with a concrete
 controller. HTTP-facing callers get only owning command results; the owner
-thread alone reaches a controller and continues draining agent notifications
+thread alone reaches a controller and continues draining completion notifications
 without a browser connection. It builds every full snapshot on demand: it
 borrows a `ControllerView` and passes it straight to `to_snapshot()`, which
 copies the descriptor, the view, and web presentation state into an owning

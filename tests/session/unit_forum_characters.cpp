@@ -4,7 +4,7 @@
 
 namespace cha {
 namespace {
-CharacterInfo character(std::string id, std::string name) {
+CharacterMetadata character(std::string id, std::string name) {
     return {std::move(id), std::move(name)};
 }
 }
@@ -49,7 +49,7 @@ TEST(ForumCharacters, RejectsAmbiguousPrefixAndUnusableNames) {
 }
 
 TEST(ForumCharacters, RejectsDuplicateAndInvalidCharacterIdentity) {
-    EXPECT_THROW(ForumCharacters(std::vector<CharacterInfo>{}), std::invalid_argument);
+    EXPECT_THROW(ForumCharacters(std::vector<CharacterMetadata>{}), std::invalid_argument);
     EXPECT_THROW(
         ForumCharacters({character("same", "Ada"), character("same", "Grace")}),
         std::invalid_argument);
@@ -83,12 +83,12 @@ TEST(ForumCharacters, ExposesTheFirstCharacterAndLooksUpImmutableIds) {
         character("grace", "Grace"),
     });
 
-    EXPECT_EQ(characters.first().id, "ada");
-    EXPECT_EQ(characters.first().name, "Ada");
+    EXPECT_EQ(characters.all().front().id, "ada");
+    EXPECT_EQ(characters.all().front().display_name, "Ada");
     EXPECT_EQ(characters.all().size(), 2U);
 
     ASSERT_NE(characters.find("grace"), nullptr);
-    EXPECT_EQ(characters.find("grace")->name, "Grace");
+    EXPECT_EQ(characters.find("grace")->display_name, "Grace");
     EXPECT_EQ(characters.find("Grace"), nullptr)
         << "ids are matched exactly, not folded";
     EXPECT_EQ(characters.find("nobody"), nullptr);

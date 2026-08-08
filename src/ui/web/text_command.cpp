@@ -25,7 +25,9 @@ constexpr std::array descriptors{
     CommandDescriptor{"/hide-off", CommandKind::hide_off},
     CommandDescriptor{"/mcast", CommandKind::mcast},
     CommandDescriptor{"/info", CommandKind::info},
-    CommandDescriptor{"/agents", CommandKind::agents},
+    CommandDescriptor{"/characters", CommandKind::characters},
+    // Compatibility alias retained for existing scripts and muscle memory.
+    CommandDescriptor{"/agents", CommandKind::characters},
     CommandDescriptor{"/@", CommandKind::set_default, CommandForm::handle_suffix},
     CommandDescriptor{"/stop", CommandKind::stop},
     CommandDescriptor{"/exit", CommandKind::exit},

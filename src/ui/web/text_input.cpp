@@ -87,10 +87,10 @@ CommandResult handle_text_input(
         result.clear_input = true;
         result.close_session = true;
         return result;
-    case CommandKind::agents:
-        result.session = controller.agent_information(); break;
+    case CommandKind::characters:
+        result.session = controller.character_information(); break;
     case CommandKind::set_default:
-        result.session = controller.set_default_agent(command.handle); break;
+        result.session = controller.set_default_character(command.handle); break;
     case CommandKind::unknown:
         result.clear_input = true;
         result.session.notice = "Unknown command. Commands: " + command_names();

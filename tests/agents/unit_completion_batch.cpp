@@ -35,16 +35,16 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
-AgentEvent next_foreground_event(CompletionBatch& batch) {
+CompletionEvent next_foreground_event(CompletionBatch& batch) {
     const auto deadline = std::chrono::steady_clock::now() + 1s;
     while (std::chrono::steady_clock::now() < deadline) {
-        AgentEvent event = AgentCompleted{};
+        CompletionEvent event = CompletionCompleted{};
         if (batch.try_receive_foreground(event) == ChannelReadStatus::value) {
             return event;
         }
         std::this_thread::yield();
     }
-    throw std::runtime_error("Timed out waiting for agent event");
+    throw std::runtime_error("Timed out waiting for completion event");
 }
 
 // Every test below declares the pool, then the executor, then the batch, which
@@ -73,16 +73,16 @@ TEST(CompletionBatch, ClosedGateHoldsEveryExecutionUntilOpened) {
 
     // Staging accepted the task, but nothing may reach a backend until the
     // controller has durably activated the foreground run.
-    AgentEvent event = AgentCompleted{};
+    CompletionEvent event = CompletionCompleted{};
     EXPECT_EQ(batch.try_receive_foreground(event), ChannelReadStatus::empty);
     EXPECT_FALSE(view->prepared.load(std::memory_order_acquire));
     EXPECT_FALSE(view->performed.load(std::memory_order_acquire));
     EXPECT_FALSE(batch.cancellation_requested());
 
     batch.open();
-    EXPECT_TRUE(std::holds_alternative<AgentDelta>(next_foreground_event(batch)));
+    EXPECT_TRUE(std::holds_alternative<CompletionEventDelta>(next_foreground_event(batch)));
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
     EXPECT_TRUE(view->prepared.load(std::memory_order_acquire));
 }
 
@@ -100,7 +100,7 @@ TEST(CompletionBatch, CancellationBeforeOpeningSkipsPreparationAndPerformance) {
     EXPECT_TRUE(batch.cancellation_requested());
 
     EXPECT_EQ(
-        std::get<AgentCancelled>(next_foreground_event(batch)).request_id, 1U);
+        std::get<CompletionCancelled>(next_foreground_event(batch)).request_id, 1U);
     EXPECT_FALSE(view->prepared.load(std::memory_order_acquire));
     EXPECT_FALSE(view->performed.load(std::memory_order_acquire));
 }
@@ -130,7 +130,7 @@ TEST(CompletionBatch, CancellationAfterOpeningStillSkipsAQueuedExecution) {
     release_blocker.store(true, std::memory_order_release);
 
     EXPECT_EQ(
-        std::get<AgentCancelled>(next_foreground_event(batch)).request_id, 14U);
+        std::get<CompletionCancelled>(next_foreground_event(batch)).request_id, 14U);
     EXPECT_FALSE(view->prepared.load(std::memory_order_acquire));
     EXPECT_FALSE(view->performed.load(std::memory_order_acquire));
 }
@@ -157,7 +157,7 @@ TEST(CompletionBatch, OpeningStartsEverySelectedBackendAtFullPoolWidth) {
     EXPECT_TRUE(all_entered);
 
     for (std::size_t index = 0; index < 3; ++index) {
-        EXPECT_TRUE(std::holds_alternative<AgentCompleted>(
+        EXPECT_TRUE(std::holds_alternative<CompletionCompleted>(
             next_foreground_event(batch)));
         if (batch.has_next_foreground()) {
             batch.advance_foreground();
@@ -187,18 +187,18 @@ TEST(CompletionBatch, ForegroundRunAndEventsComeFromTheSameSlot) {
     EXPECT_TRUE(batch.has_next_foreground());
     batch.open();
 
-    EXPECT_EQ(std::get<AgentDelta>(next_foreground_event(batch)).text, "first");
+    EXPECT_EQ(std::get<CompletionEventDelta>(next_foreground_event(batch)).text, "first");
     EXPECT_EQ(
-        std::get<AgentCompleted>(next_foreground_event(batch)).request_id, 1U);
+        std::get<CompletionCompleted>(next_foreground_event(batch)).request_id, 1U);
 
     batch.advance_foreground();
     EXPECT_EQ(batch.foreground_index(), 1U);
     EXPECT_EQ(batch.foreground_run().request_id, 2U);
     EXPECT_EQ(batch.foreground_run().target.id, "two-id");
     EXPECT_FALSE(batch.has_next_foreground());
-    EXPECT_EQ(std::get<AgentDelta>(next_foreground_event(batch)).text, "second");
+    EXPECT_EQ(std::get<CompletionEventDelta>(next_foreground_event(batch)).text, "second");
     EXPECT_EQ(
-        std::get<AgentCompleted>(next_foreground_event(batch)).request_id, 2U);
+        std::get<CompletionCompleted>(next_foreground_event(batch)).request_id, 2U);
 
     EXPECT_EQ(one_view->received.run.prompt_text, "One question");
     EXPECT_EQ(two_view->received.run.prompt_text, "Two question");
@@ -232,17 +232,17 @@ TEST(CompletionBatch, LaterSlotsBufferEventsUntilForegroundAdvancement) {
 
     // The second slot has already produced its whole output while the first is
     // still running; none of it is reachable through the foreground channel.
-    AgentEvent event = AgentCompleted{};
+    CompletionEvent event = CompletionCompleted{};
     EXPECT_EQ(batch.try_receive_foreground(event), ChannelReadStatus::empty);
     EXPECT_THROW(batch.advance_foreground(), std::logic_error);
 
     first_state.release.store(true, std::memory_order_release);
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
     batch.advance_foreground();
-    EXPECT_EQ(std::get<AgentDelta>(next_foreground_event(batch)).text, "second");
+    EXPECT_EQ(std::get<CompletionEventDelta>(next_foreground_event(batch)).text, "second");
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
 }
 
 TEST(CompletionBatch, AdvancementRequiresAConsumedTerminalAndANextSlot) {
@@ -262,16 +262,16 @@ TEST(CompletionBatch, AdvancementRequiresAConsumedTerminalAndANextSlot) {
     batch.open();
 
     EXPECT_THROW(batch.advance_foreground(), std::logic_error);
-    EXPECT_EQ(std::get<AgentDelta>(next_foreground_event(batch)).text, "first");
+    EXPECT_EQ(std::get<CompletionEventDelta>(next_foreground_event(batch)).text, "first");
     // A delta is not a terminal event.
     EXPECT_THROW(batch.advance_foreground(), std::logic_error);
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
 
     batch.advance_foreground();
-    EXPECT_TRUE(std::holds_alternative<AgentDelta>(next_foreground_event(batch)));
+    EXPECT_TRUE(std::holds_alternative<CompletionEventDelta>(next_foreground_event(batch)));
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
     // The last slot's terminal was consumed, but there is nowhere to advance.
     EXPECT_THROW(batch.advance_foreground(), std::logic_error);
 }
@@ -296,10 +296,10 @@ TEST(CompletionBatch, PreservesCapturedHistoryForEveryExecution) {
     batch.open();
 
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
     batch.advance_foreground();
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
     ASSERT_EQ(one_view->received.history->entries.size(), 1U);
     ASSERT_EQ(two_view->received.history->entries.size(), 1U);
     EXPECT_EQ(
@@ -308,7 +308,7 @@ TEST(CompletionBatch, PreservesCapturedHistoryForEveryExecution) {
         two_view->received.history->entries.front().text, "Earlier question");
 }
 
-TEST(CompletionBatch, MapsCompletionFailureAndExceptionsToAgentFailed) {
+TEST(CompletionBatch, MapsCompletionFailureAndExceptionsToCompletionFailed) {
     Transcript transcript;
     ThreadPool failure_pool(1);
     CompletionExecutor failure_executor(
@@ -323,8 +323,8 @@ TEST(CompletionBatch, MapsCompletionFailureAndExceptionsToAgentFailed) {
     CompletionBatch failure_batch = failure_executor.stage_batch(
         {completion_request(transcript, 12, "one-id", "One")});
     failure_batch.open();
-    const AgentFailed failed =
-        std::get<AgentFailed>(next_foreground_event(failure_batch));
+    const CompletionFailed failed =
+        std::get<CompletionFailed>(next_foreground_event(failure_batch));
     EXPECT_EQ(failed.request_id, 12U);
     EXPECT_EQ(failed.message, "malformed response");
 
@@ -336,8 +336,8 @@ TEST(CompletionBatch, MapsCompletionFailureAndExceptionsToAgentFailed) {
     CompletionBatch throwing_batch = throwing_executor.stage_batch(
         {completion_request(transcript, 1, "one-id", "One")});
     throwing_batch.open();
-    const AgentFailed thrown =
-        std::get<AgentFailed>(next_foreground_event(throwing_batch));
+    const CompletionFailed thrown =
+        std::get<CompletionFailed>(next_foreground_event(throwing_batch));
     EXPECT_EQ(thrown.request_id, 1U);
     EXPECT_NE(thrown.message.find("preparation failed"), std::string::npos);
 }
@@ -355,10 +355,10 @@ TEST(CompletionBatch, DeliversExactlyOneTerminalThenReportsClosed) {
         {completion_request(transcript, 1, "one-id", "One")});
     batch.open();
 
-    EXPECT_TRUE(std::holds_alternative<AgentDelta>(next_foreground_event(batch)));
+    EXPECT_TRUE(std::holds_alternative<CompletionEventDelta>(next_foreground_event(batch)));
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
-    AgentEvent event = AgentCompleted{};
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
+    CompletionEvent event = CompletionCompleted{};
     EXPECT_EQ(batch.try_receive_foreground(event), ChannelReadStatus::closed);
     EXPECT_EQ(batch.try_receive_foreground(event), ChannelReadStatus::closed);
 }
@@ -385,10 +385,10 @@ TEST(CompletionBatch, CancellationReachesEveryOpenedExecution) {
     batch.cancel();
 
     EXPECT_TRUE(
-        std::holds_alternative<AgentCancelled>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCancelled>(next_foreground_event(batch)));
     batch.advance_foreground();
     EXPECT_TRUE(
-        std::holds_alternative<AgentCancelled>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCancelled>(next_foreground_event(batch)));
 }
 
 TEST(CompletionBatch, ExplicitWaitingLeavesTerminalEventsDrainable) {
@@ -409,9 +409,9 @@ TEST(CompletionBatch, ExplicitWaitingLeavesTerminalEventsDrainable) {
     batch.wait_until_finished();
 
     EXPECT_TRUE(batch.executions_finished());
-    AgentEvent event = AgentCompleted{};
+    CompletionEvent event = CompletionCompleted{};
     ASSERT_EQ(batch.try_receive_foreground(event), ChannelReadStatus::value);
-    EXPECT_TRUE(std::holds_alternative<AgentCancelled>(event));
+    EXPECT_TRUE(std::holds_alternative<CompletionCancelled>(event));
     EXPECT_EQ(batch.try_receive_foreground(event), ChannelReadStatus::closed);
 }
 
@@ -450,7 +450,7 @@ TEST(CompletionBatch, DestructionCancelsAndWaitsForEveryExecution) {
     state.release.store(true, std::memory_order_release);
     EXPECT_TRUE(both_entered);
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(later)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(later)));
 }
 
 TEST(CompletionBatch, CompletedAndCancelledBatchesPermitLaterBatches) {
@@ -469,7 +469,7 @@ TEST(CompletionBatch, CompletedAndCancelledBatchesPermitLaterBatches) {
         completed.open();
         ASSERT_TRUE(wait_until_entered(state, 1));
         state.release.store(true, std::memory_order_release);
-        EXPECT_TRUE(std::holds_alternative<AgentCompleted>(
+        EXPECT_TRUE(std::holds_alternative<CompletionCompleted>(
             next_foreground_event(completed)));
     }
 
@@ -480,7 +480,7 @@ TEST(CompletionBatch, CompletedAndCancelledBatchesPermitLaterBatches) {
         cancelled.open();
         ASSERT_TRUE(wait_until_entered(state, 2));
         cancelled.cancel();
-        EXPECT_TRUE(std::holds_alternative<AgentCancelled>(
+        EXPECT_TRUE(std::holds_alternative<CompletionCancelled>(
             next_foreground_event(cancelled)));
     }
 
@@ -489,7 +489,7 @@ TEST(CompletionBatch, CompletedAndCancelledBatchesPermitLaterBatches) {
         {completion_request(transcript, 3, "one-id", "One")});
     third.open();
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(third)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(third)));
 }
 
 TEST(CompletionBatch, MoveTransfersOwnershipWithoutDisturbingExecutions) {
@@ -507,9 +507,9 @@ TEST(CompletionBatch, MoveTransfersOwnershipWithoutDisturbingExecutions) {
     EXPECT_EQ(owner->foreground_run().request_id, 7U);
     owner->open();
 
-    EXPECT_EQ(std::get<AgentDelta>(next_foreground_event(*owner)).text, "answer");
+    EXPECT_EQ(std::get<CompletionEventDelta>(next_foreground_event(*owner)).text, "answer");
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(*owner)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(*owner)));
     owner.reset();
 }
 

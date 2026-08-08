@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "agents/completion_backend.h"
 #include "transcript/transcript.h"
 
@@ -45,7 +45,7 @@ public:
         return result_;
     }
 
-    AgentRuntimeInfo info() const override {
+    CompletionBackendInfo info() const override {
         return {{id_, name_}, "model", "test://completion", true};
     }
 
@@ -92,7 +92,7 @@ public:
             : CompletionResult{};
     }
 
-    AgentRuntimeInfo info() const override {
+    CompletionBackendInfo info() const override {
         return {{id_, name_}, "model", "test://completion", true};
     }
 
@@ -117,7 +117,7 @@ public:
         return {};
     }
 
-    AgentRuntimeInfo info() const override {
+    CompletionBackendInfo info() const override {
         return {{"one-id", "One"}, "model", "test://completion", true};
     }
 };

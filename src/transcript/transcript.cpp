@@ -19,7 +19,7 @@ TranscriptEntry make_human_entry(HumanEntrySpec spec) {
     };
 }
 
-TranscriptEntry make_agent_entry(
+TranscriptEntry make_character_entry(
     EntryId id,
     ParticipantId participant_id,
     std::string display_name,
@@ -28,7 +28,7 @@ TranscriptEntry make_agent_entry(
     std::optional<RequestId> request_id) {
     return {
         .id = id,
-        .kind = EntryKind::agent,
+        .kind = EntryKind::character,
         .participant_id = std::move(participant_id),
         .display_name = std::move(display_name),
         .text = std::move(text),
@@ -93,17 +93,17 @@ void validate_transcript_entry(const TranscriptEntry& entry) {
     if (entry.display_name.empty()) {
         throw std::invalid_argument("Transcript entry display name cannot be empty");
     }
-    if ((entry.kind == EntryKind::human || entry.kind == EntryKind::agent)
+    if ((entry.kind == EntryKind::human || entry.kind == EntryKind::character)
         && entry.participant_id.empty()) {
         throw std::invalid_argument("Participant transcript entries require a participant ID");
     }
     if (entry.kind == EntryKind::human
         && (entry.addressed_to.empty() || entry.addressed_to_name.empty())) {
-        throw std::invalid_argument("Human transcript entries require an addressed agent");
+        throw std::invalid_argument("Human transcript entries require an addressed character");
     }
     if (entry.kind != EntryKind::human
         && (!entry.addressed_to.empty() || !entry.addressed_to_name.empty())) {
-        throw std::invalid_argument("Only human transcript entries may address an agent");
+        throw std::invalid_argument("Only human transcript entries may address a character");
     }
     if (entry.kind == EntryKind::error && entry.status != EntryStatus::failed) {
         throw std::invalid_argument("Error entries require failed status");
@@ -112,18 +112,18 @@ void validate_transcript_entry(const TranscriptEntry& entry) {
         && entry.status != EntryStatus::complete) {
         throw std::invalid_argument("Human and notice entries require complete status");
     }
-    if (entry.kind == EntryKind::agent && entry.status == EntryStatus::failed) {
-        throw std::invalid_argument("Agent entries cannot have failed status");
+    if (entry.kind == EntryKind::character && entry.status == EntryStatus::failed) {
+        throw std::invalid_argument("Character entries cannot have failed status");
     }
-    if (entry.kind == EntryKind::agent
+    if (entry.kind == EntryKind::character
         && entry.status == EntryStatus::complete
         && entry.text.empty()) {
-        throw std::invalid_argument("A completed agent entry requires text content");
+        throw std::invalid_argument("A completed character entry requires text content");
     }
-    if (entry.kind == EntryKind::agent
+    if (entry.kind == EntryKind::character
         && entry.status == EntryStatus::cancelled
         && entry.text.empty()) {
-        throw std::invalid_argument("A cancelled agent entry requires answer content");
+        throw std::invalid_argument("A cancelled character entry requires answer content");
     }
 }
 
@@ -154,8 +154,8 @@ void Transcript::begin_entry(TranscriptEntry entry) {
         throw std::logic_error("A transcript entry is already streaming");
     }
     validate_transcript_entry(entry);
-    if (entry.kind != EntryKind::agent || entry.status != EntryStatus::streaming) {
-        throw std::invalid_argument("Only an agent entry with streaming status can be opened");
+    if (entry.kind != EntryKind::character || entry.status != EntryStatus::streaming) {
+        throw std::invalid_argument("Only a character entry with streaming status can be opened");
     }
     require_next_id(entry.id);
 
@@ -178,14 +178,14 @@ void Transcript::finish_entry(EntryId entry_id, EntryStatus status) {
         throw std::logic_error("The requested transcript entry is not streaming");
     }
     if (status != EntryStatus::complete && status != EntryStatus::cancelled) {
-        throw std::invalid_argument("A finished agent entry requires complete or cancelled status");
+        throw std::invalid_argument("A finished character entry requires complete or cancelled status");
     }
     if (status == EntryStatus::complete && entries_.back().text.empty()) {
-        throw std::invalid_argument("A completed agent entry requires text content");
+        throw std::invalid_argument("A completed character entry requires text content");
     }
     if (status == EntryStatus::cancelled
         && entries_.back().text.empty()) {
-        throw std::invalid_argument("A cancelled agent entry requires answer content");
+        throw std::invalid_argument("A cancelled character entry requires answer content");
     }
 
     entries_.back().status = status;
@@ -275,10 +275,6 @@ TranscriptView Transcript::view() const noexcept {
     return {entries_, revision_, open_entry_id_, history_epoch_};
 }
 
-std::size_t Transcript::size() const noexcept {
-    return entries_.size();
-}
-
 CompletionHistory Transcript::completion_history() const {
     return {
         .entries = entries_,
@@ -287,27 +283,15 @@ CompletionHistory Transcript::completion_history() const {
     };
 }
 
-std::span<const TranscriptEntry> Transcript::entries() const noexcept {
-    return entries_;
-}
-
-std::optional<EntryId> Transcript::open_entry_id() const {
-    return open_entry_id_;
-}
-
 std::string Transcript::open_entry_text(EntryId entry_id) const {
     if (!open_entry_id_ || *open_entry_id_ != entry_id
         || entries_.empty() || entries_.back().id != entry_id
-        || entries_.back().kind != EntryKind::agent
+        || entries_.back().kind != EntryKind::character
         || entries_.back().status != EntryStatus::streaming) {
         throw std::logic_error(
             "The requested transcript entry is not the open tail entry");
     }
     return entries_.back().text;
-}
-
-OffrecordSpan Transcript::offrecord_span() const {
-    return offrecord_;
 }
 
 void Transcript::require_next_id(EntryId entry_id) const {

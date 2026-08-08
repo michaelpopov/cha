@@ -13,13 +13,13 @@
 namespace cha {
 namespace {
 
-std::vector<AgentRuntimeInfo> build_runtime_info(
+std::vector<CompletionBackendInfo> build_runtime_info(
     const std::vector<std::unique_ptr<CompletionBackend>>& backends) {
     if (backends.empty()) {
         throw std::invalid_argument(
-            "Completion executor requires at least one agent");
+            "Completion executor requires at least one character");
     }
-    std::vector<AgentRuntimeInfo> infos;
+    std::vector<CompletionBackendInfo> infos;
     infos.reserve(backends.size());
     std::unordered_set<std::string> ids;
     std::unordered_set<std::string> names;
@@ -28,18 +28,18 @@ std::vector<AgentRuntimeInfo> build_runtime_info(
             throw std::invalid_argument(
                 "Completion executor requires completion backends");
         }
-        AgentRuntimeInfo info = backend->info();
+        CompletionBackendInfo info = backend->info();
         validate_character_id(info.character.id);
-        validate_character_name_syntax(info.character.name);
+        validate_character_display_name_syntax(info.character.display_name);
         if (!ids.insert(info.character.id).second) {
             throw std::invalid_argument(
                 "Completion executor has duplicate character ID '"
                 + info.character.id + "'");
         }
-        if (!names.insert(fold_ascii(info.character.name)).second) {
+        if (!names.insert(fold_ascii(info.character.display_name)).second) {
             throw std::invalid_argument(
                 "Completion executor has duplicate character name '"
-                + info.character.name + "'");
+                + info.character.display_name + "'");
         }
         infos.push_back(std::move(info));
     }
@@ -47,20 +47,20 @@ std::vector<AgentRuntimeInfo> build_runtime_info(
 }
 
 std::vector<std::unique_ptr<CompletionBackend>> build_backends(
-    std::vector<AgentDefinition> definitions) {
+    std::vector<CharacterDefinition> definitions) {
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.reserve(definitions.size());
-    for (AgentDefinition& definition : definitions) {
-        const std::string id = definition.config.id;
-        const std::string name = definition.config.display_name;
+    for (CharacterDefinition& definition : definitions) {
+        const std::string id = definition.character.id;
+        const std::string display_name = definition.character.display_name;
         try {
             backends.push_back(
                 std::make_unique<CompletionClient>(std::move(definition)));
         } catch (const std::exception& error) {
-            log_error("Character initialization failed: agent_id=" + id
+            log_error("Completion backend initialization failed: character_id=" + id
                 + " reason=" + error.what());
             throw std::runtime_error(
-                "Character '" + name + "' failed to initialize: "
+                "Character '" + display_name + "' failed to initialize: "
                 + error.what());
         }
     }
@@ -70,7 +70,7 @@ std::vector<std::unique_ptr<CompletionBackend>> build_backends(
 } // namespace
 
 CompletionExecutor::CompletionExecutor(
-    std::vector<AgentDefinition> definitions,
+    std::vector<CharacterDefinition> definitions,
     WakeNotifier& notifier,
     ThreadPool& worker_pool)
     : CompletionExecutor(
@@ -87,7 +87,7 @@ CompletionExecutor::CompletionExecutor(
       notifier_(notifier),
       worker_pool_(worker_pool),
       before_submit_(std::move(before_submit)) {
-    // Exact equality is deliberate: this pool runs only agent work, and one
+    // Exact equality is deliberate: this pool runs only completion work, and one
     // worker per backend guarantees full-width fan-out.
     if (worker_pool_.worker_count() != backends_.size()) {
         throw std::invalid_argument(
@@ -95,7 +95,7 @@ CompletionExecutor::CompletionExecutor(
     }
 }
 
-const std::vector<AgentRuntimeInfo>& CompletionExecutor::runtime_info()
+const std::vector<CompletionBackendInfo>& CompletionExecutor::runtime_info()
     const noexcept {
     return runtime_info_;
 }

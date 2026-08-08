@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "session/generation_status.h"
 #include "transcript/transcript.h"
 
@@ -15,8 +15,8 @@ namespace cha {
 struct ControllerGenerationView {
     bool active{};
     std::optional<RequestId> request_id;
-    std::string_view agent_id;
-    std::string_view agent_name;
+    std::string_view character_id;
+    std::string_view character_display_name;
     ResponsePhase phase{ResponsePhase::waiting};
     std::string_view reasoning_text;
 };
@@ -29,8 +29,8 @@ struct ControllerGenerationView {
 // never be stored in a runtime field, moved into a mailbox, or captured by
 // work that can outlive the call that produced it.
 struct ControllerView {
-    std::span<const CharacterInfo> characters;
-    std::string_view default_agent_id;
+    std::span<const CharacterMetadata> characters;
+    std::string_view default_character_id;
     TranscriptView transcript;
     ControllerGenerationView generation;
 };

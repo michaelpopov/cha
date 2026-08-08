@@ -268,7 +268,7 @@ TEST_F(SessionRepositoryTest, RestoresTranscriptStateAndInterruptedTurnsInOneRea
     const StoredSession created = repository.create("lobby", "Resumed");
     const TranscriptEntry answered = test::human_entry(
         1, {"human", "You"}, {"guide-id", "Guide"}, "Answered", 1);
-    const TranscriptEntry response = make_agent_entry(
+    const TranscriptEntry response = make_character_entry(
         2, "guide-id", "Guide", "An answer", EntryStatus::complete, 1);
     const TranscriptEntry pending = test::human_entry(
         3, {"human", "You"}, {"guide-id", "Guide"}, "Interrupted", 2);

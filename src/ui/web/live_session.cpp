@@ -67,7 +67,7 @@ std::string_view generation_terminal_status(
         if (entry->request_id != request_id) continue;
         if (entry->kind == EntryKind::human) {
             has_prompt = true;
-        } else if ((entry->kind == EntryKind::agent
+        } else if ((entry->kind == EntryKind::character
                        || entry->kind == EntryKind::error)
             && entry->status != EntryStatus::streaming) {
             return to_string(entry->status);
@@ -428,8 +428,8 @@ void LiveSession::execute(OwnerCommand command) {
                 controller, value.persona, std::move(value.text));
         } else if constexpr (std::is_same_v<T, StopCommand>) {
             return {.session = controller.request_stop()};
-        } else if constexpr (std::is_same_v<T, SetDefaultAgentCommand>) {
-            return {.session = controller.set_default_agent_by_id(value.character_id)};
+        } else if constexpr (std::is_same_v<T, SetDefaultCharacterCommand>) {
+            return {.session = controller.set_default_character_by_id(value.character_id)};
         } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
             throw std::logic_error("Snapshot command handled before dispatch");
         } else if constexpr (std::is_same_v<T, SseConnectCommand>) {

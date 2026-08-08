@@ -13,7 +13,7 @@ live-session switching policy.
 `WorkspaceModel::load()` performs one all-or-nothing startup pass: it validates
 the workspace layout, loads personas, character metadata and Markdown, and forum
 membership, builds the Guest-inclusive persona roster and Assistant's inventory,
-resolves every configured forum's effective `AgentDefinition` values, and adds
+resolves every configured forum's effective `CharacterDefinition` values, and adds
 Assistant and Entrance to the public catalogs. After construction it performs no
 filesystem reads, so discovery responses and newly opened sessions can never
 disagree.
@@ -22,7 +22,8 @@ Because every configured forum is resolved at startup, an invalid member
 override or prompt fails the server's startup rather than waiting for someone to
 open that forum. The error names the forum and its source directory.
 
-Full `AgentDefinition` values may carry provider configuration, including inline
+Full `CharacterDefinition` values contain separate public `CharacterMetadata`
+and private `CompletionConfig` members. Completion configuration may carry inline
 keys, so they are not on the public model API. `open_session()` is a friend of
 `WorkspaceModel` and the one production caller allowed to copy them; the public
 API exposes only personas, character metadata and Markdown, forum information,

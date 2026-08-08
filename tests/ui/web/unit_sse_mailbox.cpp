@@ -20,7 +20,7 @@ SessionSnapshot streaming_snapshot(std::string text = "") {
     return {
         .transcript = {{
             .id = 42,
-            .kind = EntryKind::agent,
+            .kind = EntryKind::character,
             .text = std::move(text),
             .status = EntryStatus::streaming,
         }},

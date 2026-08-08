@@ -26,27 +26,27 @@ separates four things that are easy to conflate:
 | `kind`, `status` | What the entry *is* and how its content ended. |
 | `participant_id`, `display_name` | Who produced it — stable identity versus the label shown. |
 | `addressed_to`, `addressed_to_name` | Who a human prompt was sent to. Only human entries carry this. |
-| `text` | Persona text, agent answer text, or system/error text. |
+| `text` | Persona text, character answer text, or system/error text. |
 
 Four kinds and four statuses combine only in these ways:
 
 | Kind | Allowed status | Notes |
 | --- | --- | --- |
-| `human` | `complete` | Must name the agent it addresses. |
-| `agent` | `streaming`, `complete`, `cancelled` | Never `failed` — a failed turn produces an `error` entry instead. Terminal agent entries require non-empty answer `text`. |
+| `human` | `complete` | Must name the character it addresses. |
+| `character` | `streaming`, `complete`, `cancelled` | Never `failed` — a failed turn produces an `error` entry instead. Terminal character entries require non-empty answer `text`. |
 | `notice` | `complete` | Session messages; no participant identity. Ordinary notices are labelled `"System"`; the off-record markers are the only notices with another display name. |
 | `error` | `failed` | May carry the participant it concerns and the request it ends. |
 
 Provider reasoning is not transcript content. The session layer holds it only
 while a response is active and clears it when the turn ends.
 
-Entries are built through factories — `make_human_entry`, `make_agent_entry`,
+Entries are built through factories — `make_human_entry`, `make_character_entry`,
 `make_notice_entry`, `make_error_entry`. `make_notice_entry` and
 `make_error_entry` keep their fixed `"System"` and `"Error"` display names
 out of callers.
 `make_human_entry` takes one `HumanEntrySpec`; designated `author` and
 `addressed_to` fields preserve the human's stored identity separately from the
-agent they addressed without relying on positional arguments of the same type.
+character they addressed without relying on positional arguments of the same type.
 The author is a workspace persona ID and trusted display name resolved before
 the entry reaches the session/transcript layer; the clean `text` is stored and
 rendered unchanged. The transcript performs no session-membership lookup.
@@ -86,7 +86,7 @@ Completion runners never read it; the controller captures an immutable
 | Operation | Rule |
 | --- | --- |
 | `add_entry` | Terminal entries only; refused while an entry is streaming. |
-| `begin_entry` | Opens the one streaming entry; must be an agent entry with `streaming` status. |
+| `begin_entry` | Opens the one streaming entry; must be an character entry with `streaming` status. |
 | `append_answer` | Appends answer text to the open entry only. |
 | `finish_entry` | Closes it as `complete` or `cancelled`, re-checking the content rules. |
 | `discard_entry` | Drops the open entry entirely — used when a turn fails mid-stream. |
@@ -135,7 +135,7 @@ Neither the bounds nor the markers are persisted, and `clear()` and
 ```mermaid
 stateDiagram-v2
     [*] --> Closed
-    Closed --> Open: begin_entry, agent + streaming
+    Closed --> Open: begin_entry, character + streaming
     Open --> Open: append_answer
     Open --> Closed: finish_entry, complete or cancelled
     Open --> Closed: discard_entry, entry removed

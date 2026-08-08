@@ -27,16 +27,16 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
-AgentEvent next_foreground_event(CompletionBatch& batch) {
+CompletionEvent next_foreground_event(CompletionBatch& batch) {
     const auto deadline = std::chrono::steady_clock::now() + 1s;
     while (std::chrono::steady_clock::now() < deadline) {
-        AgentEvent event = AgentCompleted{};
+        CompletionEvent event = CompletionCompleted{};
         if (batch.try_receive_foreground(event) == ChannelReadStatus::value) {
             return event;
         }
         std::this_thread::yield();
     }
-    throw std::runtime_error("Timed out waiting for agent event");
+    throw std::runtime_error("Timed out waiting for completion event");
 }
 
 // Stages, opens, and drains one single-target batch through the executor.
@@ -50,7 +50,7 @@ void expect_one_completed_run(
         executor.stage_batch({completion_request(transcript, id, target, name)});
     batch.open();
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
 }
 
 TEST(CompletionExecutor, RejectsBorrowedPoolWhoseWidthDiffersFromBackendCount) {
@@ -119,7 +119,7 @@ TEST(CompletionExecutor, ExposesPublicRuntimeInfoInBackendOrder) {
     backends.push_back(std::make_unique<RecordingBackend>("two-id", "Two", ""));
     CompletionExecutor executor(std::move(backends), notifier(), pool);
 
-    const std::vector<AgentRuntimeInfo>& info = executor.runtime_info();
+    const std::vector<CompletionBackendInfo>& info = executor.runtime_info();
     ASSERT_EQ(info.size(), 2U);
     EXPECT_EQ(info[0].character.id, "one-id");
     EXPECT_EQ(info[1].character.id, "two-id");
@@ -129,10 +129,12 @@ TEST(CompletionExecutor, ExposesPublicRuntimeInfoInBackendOrder) {
 
 TEST(CompletionExecutor, IdentifiesCharacterWhoseDefinitionStartupFails) {
     ThreadPool pool(1);
-    AgentDefinition definition{
-        .config = {
+    CharacterDefinition definition{
+        .character = {
             .id = "alpha-id",
             .display_name = "Alpha",
+        },
+        .completion = {
             .api_key_env = "__CHA_TEST_MISSING_AGENT_KEY__",
         },
         .system_prompt = "Prompt",
@@ -140,7 +142,7 @@ TEST(CompletionExecutor, IdentifiesCharacterWhoseDefinitionStartupFails) {
 
     try {
         (void)CompletionExecutor(
-            std::vector<AgentDefinition>{std::move(definition)},
+            std::vector<CharacterDefinition>{std::move(definition)},
             notifier(),
             pool);
         FAIL() << "Expected startup failure";
@@ -264,10 +266,10 @@ TEST(CompletionExecutor, RollsBackPartialSubmissionAndFreesEveryAcceptedWorker) 
     state.release.store(true, std::memory_order_release);
     EXPECT_TRUE(both_entered);
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
     batch.advance_foreground();
     EXPECT_TRUE(
-        std::holds_alternative<AgentCompleted>(next_foreground_event(batch)));
+        std::holds_alternative<CompletionCompleted>(next_foreground_event(batch)));
 }
 
 } // namespace

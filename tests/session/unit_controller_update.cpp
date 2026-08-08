@@ -85,7 +85,7 @@ TEST(ControllerUpdate, LifecycleFlagsCombineWithLogicalOr) {
     EXPECT_TRUE(ended.session_ended);
 }
 
-TEST(ControllerUpdate, AgentEventsDoNotManufactureInputConsumption) {
+TEST(ControllerUpdate, CompletionEventsDoNotManufactureInputConsumption) {
     ControllerUpdate all;
     merge(all, {.state = SnapshotRequired{}});
 

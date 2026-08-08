@@ -1,6 +1,6 @@
 #include "agents/completion_client.h"
 
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "agents/json_serialization.h"
 #include "util/logging.h"
 
@@ -395,22 +395,22 @@ std::string response_error(const std::string& body) {
     return body.empty() ? "unknown server error" : body;
 }
 
-std::string_view role_name(AgentRole role) {
+std::string_view role_name(CompletionRole role) {
     switch (role) {
-    case AgentRole::system: return "system";
-    case AgentRole::persona: return "user";
-    case AgentRole::assistant: return "assistant";
+    case CompletionRole::system: return "system";
+    case CompletionRole::persona: return "user";
+    case CompletionRole::assistant: return "assistant";
     }
-    throw std::logic_error("Unknown agent context role");
+    throw std::logic_error("Unknown completion context role");
 }
 
 std::string build_request_body(
     const CompletionInput& input,
-    const Config& config,
+    const CompletionConfig& config,
     std::string_view system_prompt) {
     Json messages = Json::array();
-    for (const AgentMessage& message :
-         project_agent_context(input, system_prompt)) {
+    for (const CompletionMessage& message :
+         project_completion_context(input, system_prompt)) {
         messages.push_back({
             {"role", role_name(message.role)},
             {"content", message.content},
@@ -432,12 +432,13 @@ std::string build_request_body(
 
 } // namespace
 
-CompletionClient::CompletionClient(AgentDefinition definition)
-    : config_(std::move(definition.config)),
+CompletionClient::CompletionClient(CharacterDefinition definition)
+    : character_(std::move(definition.character)),
+      config_(std::move(definition.completion)),
       system_prompt_(std::move(definition.system_prompt)) {
-    if (config_.id.empty() || config_.display_name.empty()) {
+    if (character_.id.empty() || character_.display_name.empty()) {
         throw std::runtime_error(
-            "Completion client agent ID and display name cannot be empty");
+            "Completion client character ID and display name cannot be empty");
     }
     api_key_ = config_.api_key;
 
@@ -753,14 +754,9 @@ CompletionResult CompletionClient::perform(
     return complete({CompletionOutcome::completed, {}}, status, content_type);
 }
 
-AgentRuntimeInfo CompletionClient::info() const {
+CompletionBackendInfo CompletionClient::info() const {
     return {
-        .character = {
-            .id = config_.id,
-            .name = config_.display_name,
-            .description = config_.description,
-            .appearance = config_.appearance,
-        },
+        .character = character_,
         .model = config_.model,
         .api = endpoint(),
         .streaming = config_.stream,

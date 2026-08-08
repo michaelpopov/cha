@@ -1,7 +1,7 @@
 #include "application/workspace_model.h"
 
 #include "application/builtins.h"
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "session/forum_characters.h"
 #include "session/not_found_error.h"
 #include "util/logging.h"
@@ -125,16 +125,25 @@ LoadedForum load_forum_metadata(
         throw std::runtime_error("Members directory '" + utf8_path(members_directory)
             + "' does not contain an entry");
     }
-    std::string default_character_id;
-    if (table.contains("default_agent")) {
-        const std::optional<std::string> configured = table["default_agent"].value<std::string>();
+    CharacterId default_character_id;
+    const bool has_default_character = table.contains("default_character");
+    const bool has_legacy_default_agent = table.contains("default_agent");
+    if (has_default_character && has_legacy_default_agent) {
+        throw std::runtime_error("Forum config '" + utf8_path(path)
+            + "' cannot define both 'default_character' and legacy 'default_agent'");
+    }
+    if (has_default_character || has_legacy_default_agent) {
+        const std::string_view key = has_default_character
+            ? "default_character" : "default_agent";
+        const std::optional<std::string> configured = table[key].value<std::string>();
         if (!configured || configured->empty()) {
             throw std::runtime_error("Forum config '" + utf8_path(path)
-                + "' requires a non-empty string 'default_agent'");
+                + "' requires a non-empty string '" + std::string(key) + "'");
         }
         if (!std::ranges::binary_search(member_ids, *configured)) {
             throw std::runtime_error("Forum config '" + utf8_path(path)
-                + "' default_agent '" + *configured + "' is not a forum member");
+                + "' " + std::string(key) + " '" + *configured
+                + "' is not a forum member");
         }
         default_character_id = *configured;
     } else {
@@ -152,13 +161,13 @@ LoadedForum load_forum_metadata(
     };
 }
 
-std::vector<CharacterDefinitionMetadata> load_definition_metadata(
+std::vector<CharacterMetadata> load_definition_metadata(
     const std::filesystem::path& definitions_directory) {
     if (!std::filesystem::is_directory(definitions_directory)) {
         throw std::runtime_error("Workspace '" + utf8_path(definitions_directory.parent_path())
             + "' requires a characters/ directory");
     }
-    std::vector<CharacterDefinitionMetadata> definitions;
+    std::vector<CharacterMetadata> definitions;
     for (const std::string& id : subdirectory_names(
              definitions_directory, SubdirectoryNameKind::path_component)) {
         try {
@@ -169,15 +178,15 @@ std::vector<CharacterDefinitionMetadata> load_definition_metadata(
                 throw std::runtime_error("Character '" + id
                     + "' requires regular definition CHARACTER.md");
             }
-            definitions.push_back(load_character_definition_metadata(directory / "character.toml"));
+            definitions.push_back(load_character_metadata(directory / "character.toml"));
         } catch (const std::exception& error) {
             throw std::runtime_error("Character '" + id + "' has invalid definition: " + error.what());
         }
     }
     std::unordered_map<std::string, std::string> display_names;
-    for (const CharacterDefinitionMetadata& definition : definitions) {
+    for (const CharacterMetadata& definition : definitions) {
         try {
-            validate_character_name(definition.display_name);
+            validate_character_display_name(definition.display_name);
         } catch (const std::exception& error) {
             throw std::runtime_error("Character '" + definition.id + "' has invalid definition: " + error.what());
         }
@@ -317,7 +326,7 @@ void sort_by_name(std::vector<Value>& values, Name name) {
     });
 }
 
-const std::string& character_display_name(const CharacterDefinitionMetadata& value) {
+const std::string& character_display_name(const CharacterMetadata& value) {
     return value.display_name;
 }
 
@@ -325,7 +334,7 @@ const std::string& forum_display_name(const ForumInfo& value) {
     return value.display_name;
 }
 
-std::vector<AgentDefinition> load_forum_definitions(
+std::vector<CharacterDefinition> load_forum_definitions(
     const LoadedForum& forum,
     const PersonaRoster& personas,
     const std::filesystem::path& definitions_directory,
@@ -333,7 +342,7 @@ std::vector<AgentDefinition> load_forum_definitions(
     log_info(
         "Loading forum character definitions: forum_id=" + forum.info.id
         + " characters=" + std::to_string(forum.info.member_ids.size()));
-    std::vector<AgentDefinitionSource> sources;
+    std::vector<CharacterDefinitionSource> sources;
     sources.reserve(forum.info.member_ids.size());
     for (const std::string& member_id : forum.info.member_ids) {
         sources.push_back({
@@ -347,20 +356,17 @@ std::vector<AgentDefinition> load_forum_definitions(
         std::filesystem::exists(defaults_candidate)
         ? std::optional<std::filesystem::path>(defaults_candidate)
         : std::nullopt;
-    std::vector<AgentDefinition> definitions = load_agent_definitions(
+    std::vector<CharacterDefinition> definitions = load_character_definitions(
         sources,
         forum.directory,
         forum.info.display_name,
         personas,
         base_config,
         application_provider);
-    std::vector<CharacterInfo> characters;
+    std::vector<CharacterMetadata> characters;
     characters.reserve(definitions.size());
-    for (const AgentDefinition& definition : definitions) {
-        characters.push_back({
-            .id = definition.config.id,
-            .name = definition.config.display_name,
-        });
+    for (const CharacterDefinition& definition : definitions) {
+        characters.push_back(definition.character);
     }
     (void)ForumCharacters(std::move(characters));
     return definitions;
@@ -378,10 +384,10 @@ Json inventory_entity(
 // Built-ins are deliberately absent: they are described by the guide instead.
 std::string build_inventory(
     std::span<const Persona> personas,
-    std::span<const CharacterDefinitionMetadata> characters,
+    std::span<const CharacterMetadata> characters,
     std::span<const LoadedForum> forums) {
     std::unordered_map<std::string, std::string> character_names;
-    for (const CharacterDefinitionMetadata& value : characters) {
+    for (const CharacterMetadata& value : characters) {
         character_names.emplace(value.id, value.display_name);
     }
     Json root;
@@ -390,7 +396,7 @@ std::string build_inventory(
         root["personas"].push_back(inventory_entity(value.display_name, value.description));
     }
     root["characters"] = Json::array();
-    for (const CharacterDefinitionMetadata& value : characters) {
+    for (const CharacterMetadata& value : characters) {
         Json encoded = inventory_entity(value.display_name, value.description);
         encoded["tags"] = value.tags;
         root["characters"].push_back(std::move(encoded));
@@ -477,13 +483,13 @@ WorkspaceModel WorkspaceModel::load(
             + "' requires a forums/ directory");
     }
     const std::filesystem::path definitions_directory = root / "characters";
-    std::vector<CharacterDefinitionMetadata> characters =
+    std::vector<CharacterMetadata> characters =
         load_definition_metadata(definitions_directory);
     const PersonaRoster custom_personas = load_personas(root);
     validate_persona_character_collisions(custom_personas, characters);
 
     std::unordered_set<std::string> character_ids;
-    for (const CharacterDefinitionMetadata& character : characters) {
+    for (const CharacterMetadata& character : characters) {
         if (is_builtin_id(character.id)) {
             throw std::runtime_error("Character ID '" + character.id + "' is reserved");
         }
@@ -584,7 +590,7 @@ WorkspaceModel WorkspaceModel::load(
     return model;
 }
 
-const CharacterDefinitionMetadata* WorkspaceModel::find_character(
+const CharacterMetadata* WorkspaceModel::find_character(
     std::string_view id) const noexcept {
     const auto found = character_index_.find(std::string(id));
     return found == character_index_.end() ? nullptr : &characters_[found->second];
@@ -607,7 +613,7 @@ std::vector<ForumSessionDirectory> WorkspaceModel::session_directories() const {
     return session_directories_;
 }
 
-std::vector<AgentDefinition> WorkspaceModel::copy_definitions_for(
+std::vector<CharacterDefinition> WorkspaceModel::copy_definitions_for(
     std::string_view forum_id) const {
     const auto found = definitions_.find(std::string(forum_id));
     if (found == definitions_.end()) {

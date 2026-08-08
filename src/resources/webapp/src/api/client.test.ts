@@ -46,7 +46,7 @@ describe('CHA API client', () => {
       '/s/forum/session/api/v1/session',
       '/s/forum/session/api/v1/input',
       '/s/forum/session/api/v1/actions/stop',
-      '/s/forum/session/api/v1/actions/default-agent',
+      '/s/forum/session/api/v1/actions/default-character',
     ]);
 
     expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();

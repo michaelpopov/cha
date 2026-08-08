@@ -12,17 +12,17 @@ namespace {
 // Backing storage a borrowed ControllerView points into. Tests mutate or
 // destroy it after projection to prove the snapshot retained no borrow.
 struct BackingState {
-    std::vector<CharacterInfo> characters;
-    std::string default_agent_id;
+    std::vector<CharacterMetadata> characters;
+    std::string default_character_id;
     std::vector<cha::TranscriptEntry> transcript;
-    std::string agent_id;
-    std::string agent_name;
+    std::string character_id;
+    std::string character_display_name;
     std::string reasoning_text;
 
     [[nodiscard]] ControllerView view() const {
         return {
             .characters = characters,
-            .default_agent_id = default_agent_id,
+            .default_character_id = default_character_id,
             .transcript = {
                 .entries = transcript,
                 .revision = 42,
@@ -32,8 +32,8 @@ struct BackingState {
             .generation = {
                 .active = true,
                 .request_id = 7,
-                .agent_id = agent_id,
-                .agent_name = agent_name,
+                .character_id = character_id,
+                .character_display_name = character_display_name,
                 .phase = ResponsePhase::reasoning,
                 .reasoning_text = reasoning_text,
             },
@@ -47,15 +47,15 @@ BackingState populated_state() {
             {"reviewer", "Reviewer", "Checks details"},
             {"guide", "guide", "Explains things"},
         },
-        .default_agent_id = "reviewer",
+        .default_character_id = "reviewer",
         .transcript = {
             {1, EntryKind::human, "persona", "Persona", "guide", "Guide", "Question", EntryStatus::complete, 7},
-            {2, EntryKind::agent, "guide", "Guide", {}, {}, "Partial", EntryStatus::streaming, 7},
+            {2, EntryKind::character, "guide", "Guide", {}, {}, "Partial", EntryStatus::streaming, 7},
             {3, EntryKind::notice, {}, "System", {}, {}, "Notice", EntryStatus::cancelled, std::nullopt},
             {4, EntryKind::error, "reviewer", "Error", {}, {}, "Failure", EntryStatus::failed, 8},
         },
-        .agent_id = "guide",
-        .agent_name = "Guide",
+        .character_id = "guide",
+        .character_display_name = "Guide",
         .reasoning_text = "Thinking",
     };
 }
@@ -94,7 +94,7 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
         .default_character_id = "reviewer",
         .transcript = {
             {1, EntryKind::human, "persona", "Persona", "guide", "Guide", "Question", EntryStatus::complete, 7},
-            {2, EntryKind::agent, "guide", "Guide", {}, {}, "Partial", EntryStatus::streaming, 7},
+            {2, EntryKind::character, "guide", "Guide", {}, {}, "Partial", EntryStatus::streaming, 7},
             {3, EntryKind::notice, {}, "System", {}, {}, "Notice", EntryStatus::cancelled, std::nullopt},
             {4, EntryKind::error, "reviewer", "Error", {}, {}, "Failure", EntryStatus::failed, 8},
         },
@@ -114,9 +114,9 @@ TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
         // Mutating the backing values before they are destroyed catches a
         // retained span as well as a retained string view.
         state.characters.clear();
-        state.default_agent_id = "gone";
+        state.default_character_id = "gone";
         state.transcript.clear();
-        state.agent_name = "gone";
+        state.character_display_name = "gone";
         state.reasoning_text = "gone";
     }
 
@@ -126,7 +126,7 @@ TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
     EXPECT_EQ(snapshot.default_character_id, "reviewer");
     ASSERT_EQ(snapshot.transcript.size(), 4U);
     EXPECT_EQ(snapshot.transcript.back().text, "Failure");
-    EXPECT_EQ(snapshot.generation.agent_name, "Guide");
+    EXPECT_EQ(snapshot.generation.character_display_name, "Guide");
     EXPECT_EQ(snapshot.generation.reasoning_text, "Thinking");
 }
 

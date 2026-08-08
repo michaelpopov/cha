@@ -168,19 +168,27 @@ void SessionRoutes::install(httplib::Server& server) const {
         if (!session) return set_not_live(response);
         set_command_result(response, session->submit(StopCommand{}, settings.command_deadline));
     });
-    server.Post(std::string(base) + R"(/api/v1/actions/default-agent)", [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
+    const auto set_default_character_handler =
+        [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
         const std::optional<SessionIdentity> key = validate_key(request, response);
         if (!key) return;
         if (!validate_json_mutation(request, response)) return;
-        SetDefaultAgentCommand command;
+        SetDefaultCharacterCommand command;
         if (!parse_route_json_body(request, response, settings.request_body_limit, [&command](const nlohmann::json& json) {
-                command = parse_default_agent_command(json);
+                command = parse_default_character_command(json);
                 if (command.character_id.empty()) throw std::invalid_argument("Character ID is empty");
             })) return;
         LiveSessionHandle session = live_sessions->lookup(*key);
         if (!session) return set_not_live(response);
         set_command_result(response, session->submit(std::move(command), settings.command_deadline));
-    });
+    };
+    server.Post(
+        std::string(base) + R"(/api/v1/actions/default-character)",
+        set_default_character_handler);
+    // Compatibility alias for clients built before the vocabulary migration.
+    server.Post(
+        std::string(base) + R"(/api/v1/actions/default-agent)",
+        set_default_character_handler);
 }
 
 } // namespace cha::web

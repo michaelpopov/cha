@@ -13,7 +13,7 @@ persist; Welcome is private to this server run and is removed on shutdown.
 - `/clear` clears the transcript.
 - `/hide-on`, `/hide`, and `/hide-off` begin, extend, and end an off-record span.
 - `/mcast <targets> <text>` sends one prompt to multiple characters.
-- `/info` shows session information; `/agents` lists the forum's characters.
+- `/info` shows session information; `/characters` lists the forum's characters (`/agents` is a legacy alias).
 - `/@Name` changes the default character.
 - `/stop` stops generation; `/exit` closes the live session.
 

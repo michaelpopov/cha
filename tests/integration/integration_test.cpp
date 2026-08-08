@@ -1,4 +1,4 @@
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "agents/completion_batch.h"
 #include "agents/completion_executor.h"
 #include "session/session_controller.h"
@@ -37,8 +37,8 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
-std::vector<TranscriptEntry> copy_entries(const Transcript& transcript) {
-    const auto entries = transcript.entries();
+std::vector<TranscriptEntry> copy_entries(TranscriptView transcript) {
+    const auto entries = transcript.entries;
     return {entries.begin(), entries.end()};
 }
 
@@ -77,38 +77,41 @@ private:
     ThreadPool& pool_;
 };
 
-Config integration_config(bool stream) {
+CharacterDefinition integration_definition(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
-    Config config = load_config({
+    LoadedCharacterConfig loaded = load_character_config({
         .application_provider = load_provider_config(workspace_directory / "workspace.toml"),
         .definition = workspace_directory / "characters" / "Ismael" / "character.toml",
         .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
-    }).config;
-    config.stream = stream;
-    return config;
+    });
+    loaded.completion.stream = stream;
+    return {
+        .character = std::move(loaded.character),
+        .completion = std::move(loaded.completion),
+    };
 }
 
-AgentEvent wait_for_agent_event(
+CompletionEvent wait_for_completion_event(
     CompletionBatch& batch,
     IntegrationDeadline deadline) {
     while (true) {
         const std::size_t observed = notifier().wake_count();
-        AgentEvent event = AgentCompleted{};
+        CompletionEvent event = CompletionCompleted{};
         const ChannelReadStatus status = batch.try_receive_foreground(event);
         if (status == ChannelReadStatus::value) {
             return event;
         }
         if (status == ChannelReadStatus::closed) {
             throw std::runtime_error(
-                "Integration agent event queue closed unexpectedly");
+                "Integration completion event queue closed unexpectedly");
         }
 
         const auto now = IntegrationClock::now();
         if (now >= deadline) {
             batch.cancel();
             throw std::runtime_error(
-                "Timed out after 60 seconds waiting for an integration agent "
+                "Timed out after 60 seconds waiting for an integration completion "
                 "event; cancelled the live request");
         }
         auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -121,13 +124,13 @@ AgentEvent wait_for_agent_event(
                 remaining)) {
             batch.cancel();
             throw std::runtime_error(
-                "Timed out after 60 seconds waiting for an integration agent "
+                "Timed out after 60 seconds waiting for an integration completion "
                 "event; cancelled the live request");
         }
     }
 }
 
-CompletionBatch start_agent_run(
+CompletionBatch start_completion_run(
     CompletionExecutor& executor,
     CompletionInput input) {
     CompletionBatch batch =
@@ -137,10 +140,11 @@ CompletionBatch start_agent_run(
 }
 
 ChatResult run_chat(bool stream) {
-    const Config config = integration_config(stream);
+    CharacterDefinition definition = integration_definition(stream);
+    const CharacterMetadata target = definition.character;
     Transcript transcript;
-    std::vector<AgentDefinition> definitions;
-    definitions.push_back({.config = config});
+    std::vector<CharacterDefinition> definitions;
+    definitions.push_back(std::move(definition));
     ThreadPool pool(1);
     CompletionExecutor executor(
         std::move(definitions),
@@ -154,22 +158,22 @@ ChatResult run_chat(bool stream) {
             transcript.completion_history()),
         .run = {
             .request_id = 1,
-            .target = {config.id, config.display_name},
+            .target = target,
             .prompt_text = input,
         },
     };
-    CompletionBatch batch = start_agent_run(executor, std::move(request));
+    CompletionBatch batch = start_completion_run(executor, std::move(request));
 
     ChatResult result;
     const IntegrationDeadline deadline =
         IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(batch, deadline);
-        if (const auto* delta = std::get_if<AgentDelta>(&event)) {
+        const CompletionEvent event = wait_for_completion_event(batch, deadline);
+        if (const auto* delta = std::get_if<CompletionEventDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
         } else {
-            EXPECT_TRUE(std::holds_alternative<AgentCompleted>(event));
+            EXPECT_TRUE(std::holds_alternative<CompletionCompleted>(event));
             break;
         }
     }
@@ -178,10 +182,11 @@ ChatResult run_chat(bool stream) {
 }
 
 ChatResult run_cancelled_chat() {
-    const Config config = integration_config(true);
+    CharacterDefinition definition = integration_definition(true);
+    const CharacterMetadata target = definition.character;
     Transcript transcript;
-    std::vector<AgentDefinition> definitions;
-    definitions.push_back({.config = config});
+    std::vector<CharacterDefinition> definitions;
+    definitions.push_back(std::move(definition));
     ThreadPool pool(1);
     CompletionExecutor executor(
         std::move(definitions),
@@ -195,23 +200,23 @@ ChatResult run_cancelled_chat() {
             transcript.completion_history()),
         .run = {
             .request_id = 2,
-            .target = {config.id, config.display_name},
+            .target = target,
             .prompt_text = input,
         },
     };
-    CompletionBatch batch = start_agent_run(executor, std::move(request));
+    CompletionBatch batch = start_completion_run(executor, std::move(request));
 
     ChatResult result;
     const IntegrationDeadline deadline =
         IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(batch, deadline);
-        if (const auto* delta = std::get_if<AgentDelta>(&event)) {
+        const CompletionEvent event = wait_for_completion_event(batch, deadline);
+        if (const auto* delta = std::get_if<CompletionEventDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
             batch.cancel();
         } else {
-            EXPECT_TRUE(std::holds_alternative<AgentCancelled>(event));
+            EXPECT_TRUE(std::holds_alternative<CompletionCancelled>(event));
             break;
         }
     }
@@ -239,7 +244,7 @@ TEST(Integration, StreamingChatCanBeCancelled) {
     EXPECT_FALSE(result.response.starts_with("Error:")) << result.response;
 }
 
-// Removes one temporary session database when a multi-agent test leaves scope.
+// Removes one temporary session database when a multi-character test leaves scope.
 class TemporarySession {
 public:
     TemporarySession()
@@ -250,7 +255,7 @@ public:
                 + ".sqlite3")) {
         if (!create_session_database(
                 path,
-                {.id = "multi-agent", .forum = "lobby", .label = "Multi-agent"})) {
+                {.id = "multi-character", .forum = "lobby", .label = "Multi-character"})) {
             throw std::runtime_error("Failed to create the integration session database");
         }
     }
@@ -265,7 +270,7 @@ public:
 
 // Loads the checked-in two-character lobby forum exactly as main() does.
 struct LobbySetup {
-    std::vector<AgentDefinition> definitions;
+    std::vector<CharacterDefinition> definitions;
     PersonaRoster personas;
 };
 
@@ -276,7 +281,7 @@ LobbySetup lobby_setup() {
     const ForumInfo* const forum = model.find_forum("lobby");
     if (forum == nullptr) throw std::runtime_error("Checked-in workspace has no lobby forum");
     const std::filesystem::path forum_directory = root / "forums" / "lobby";
-    std::vector<AgentDefinitionSource> sources;
+    std::vector<CharacterDefinitionSource> sources;
     for (const std::string& character_id : forum->member_ids) {
         sources.push_back({
             .definition_directory = root / "characters" / character_id,
@@ -288,7 +293,7 @@ LobbySetup lobby_setup() {
     // private, provider-bearing values.
     PersonaRoster personas = *model.personas();
     return {
-        .definitions = load_agent_definitions(
+        .definitions = load_character_definitions(
             sources,
             forum_directory,
             forum->display_name,
@@ -299,15 +304,15 @@ LobbySetup lobby_setup() {
     };
 }
 
-// Redirects one agent's backend at a local mock server without touching its prompt.
-void point_at(AgentDefinition& definition, int port) {
-    definition.config.host = "127.0.0.1";
-    definition.config.port = port;
-    definition.config.https = false;
-    definition.config.mode = Mode::net;
-    definition.config.stream = false;
-    definition.config.api_key = "integration-key";
-    definition.config.api_key_env.clear();
+// Redirects one character's backend at a local mock server without touching its prompt.
+void point_at(CharacterDefinition& definition, int port) {
+    definition.completion.host = "127.0.0.1";
+    definition.completion.port = port;
+    definition.completion.https = false;
+    definition.completion.mode = Mode::net;
+    definition.completion.stream = false;
+    definition.completion.api_key = "integration-key";
+    definition.completion.api_key_env.clear();
 }
 
 std::string answer(std::string_view text) {
@@ -359,7 +364,7 @@ std::string streamed_answer(
 
 TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContext) {
     LobbySetup lobby = lobby_setup();
-    std::vector<AgentDefinition>& definitions = lobby.definitions;
+    std::vector<CharacterDefinition>& definitions = lobby.definitions;
     definitions.resize(1);
     constexpr std::string_view reasoning_marker =
         "INTEGRATION_PRIVATE_REASONING_731";
@@ -369,8 +374,8 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
     });
     server.start();
     point_at(definitions.front(), server.port());
-    definitions.front().config.stream = true;
-    definitions.front().config.reasoning_format =
+    definitions.front().completion.stream = true;
+    definitions.front().completion.reasoning_format =
         ReasoningFormat::automatic;
 
     TemporarySession session;
@@ -383,7 +388,7 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
         (void)controller->submit_prompt("reader", "First question");
         run_until_idle(*controller);
         const std::vector<TranscriptEntry> live =
-            copy_entries(controller->transcript());
+            copy_entries(controller->view().transcript);
         ASSERT_EQ(live.size(), 2U);
         EXPECT_EQ(live.back().text, "First answer");
 
@@ -408,14 +413,14 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
 
 TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
     LobbySetup lobby = lobby_setup();
-    std::vector<AgentDefinition>& definitions = lobby.definitions;
+    std::vector<CharacterDefinition>& definitions = lobby.definitions;
     definitions.resize(1);
     MockHttpServer server({http_response(
         "application/json",
         R"({"choices":[{"message":{"reasoning":"Non-stream thought","content":"Non-stream answer"}}]})")});
     server.start();
     point_at(definitions.front(), server.port());
-    definitions.front().config.reasoning_format =
+    definitions.front().completion.reasoning_format =
         ReasoningFormat::reasoning;
 
     TemporarySession session;
@@ -429,7 +434,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
     server.join();
 
     const std::vector<TranscriptEntry> live =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(live.size(), 2U);
     EXPECT_EQ(live.back().text, "Non-stream answer");
     const std::vector<TranscriptEntry> restored =
@@ -439,7 +444,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
 
 TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
     LobbySetup lobby = lobby_setup();
-    std::vector<AgentDefinition>& definitions = lobby.definitions;
+    std::vector<CharacterDefinition>& definitions = lobby.definitions;
     definitions.resize(1);
     const std::string system_prompt = definitions.front().system_prompt;
     MockHttpServer server({
@@ -485,12 +490,12 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
     EXPECT_EQ(restored[3].text, "Hidden answer");
 }
 
-TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
+TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTransport) {
     LobbySetup lobby = lobby_setup();
-    std::vector<AgentDefinition>& definitions = lobby.definitions;
+    std::vector<CharacterDefinition>& definitions = lobby.definitions;
     ASSERT_EQ(definitions.size(), 2U);
-    ASSERT_EQ(definitions.front().config.display_name, "Cheburashka");
-    ASSERT_EQ(definitions.back().config.display_name, "Ismael");
+    ASSERT_EQ(definitions.front().character.display_name, "Cheburashka");
+    ASSERT_EQ(definitions.back().character.display_name, "Ismael");
     const std::string cheburashka_prompt = definitions.front().system_prompt;
     const std::string ismael_prompt = definitions.back().system_prompt;
     ASSERT_NE(cheburashka_prompt, ismael_prompt);
@@ -509,7 +514,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
             lobby.personas,
             session.path,
             notifier());
-        ASSERT_EQ(controller->characters().first().id, "Cheburashka");
+        ASSERT_EQ(controller->view().characters.front().id, "Cheburashka");
 
         // No mention: the first character directory in name order answers.
         ControllerUpdate update =
@@ -517,7 +522,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
         ASSERT_TRUE(update.input_consumed);
         run_until_idle(*controller);
 
-        // An addressed prompt reaches the mentioned agent instead.
+        // An addressed prompt reaches the mentioned character instead.
         update = controller->submit_prompt("reader", "and you?", "Ismael");
         ASSERT_TRUE(update.input_consumed);
         run_until_idle(*controller);
@@ -526,7 +531,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     ismael_server.join();
 
     ASSERT_EQ(cheburashka_server.requests().size(), 1U)
-        << "the mentioned turn must not reach the default agent";
+        << "the mentioned turn must not reach the default character";
     ASSERT_EQ(ismael_server.requests().size(), 1U);
 
     const Json first = body_of(cheburashka_server);
@@ -544,7 +549,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
               "Shared chat history (JSONL):\n"
               R"({"kind":"human","speaker":"Reader","addressed_to":"Cheburashka","text":"Who are you?"})"
               "\n"
-              R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
+              R"({"kind":"character","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
         Json{{"role", "user"}, {"content", "from Reader:\nand you?"}},
     }));
 
@@ -563,9 +568,9 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
     EXPECT_EQ(restored[3].display_name, "Ismael");
 }
 
-TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
+TEST(MultiCharacterIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
     LobbySetup lobby = lobby_setup();
-    std::vector<AgentDefinition>& definitions = lobby.definitions;
+    std::vector<CharacterDefinition>& definitions = lobby.definitions;
     ASSERT_EQ(definitions.size(), 2U);
     const std::string cheburashka_prompt = definitions.front().system_prompt;
     const std::string ismael_prompt = definitions.back().system_prompt;
@@ -622,9 +627,9 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
     EXPECT_EQ(restored[4].text, "What did the panel say?");
 }
 
-TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
+TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharacter) {
     LobbySetup lobby = lobby_setup();
-    std::vector<AgentDefinition>& definitions = lobby.definitions;
+    std::vector<CharacterDefinition>& definitions = lobby.definitions;
     const std::string ismael_prompt = definitions.back().system_prompt;
 
     MockHttpServer cheburashka_server({answer("I am Cheburashka.")});
@@ -633,7 +638,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
     ismael_server.start();
     point_at(definitions.front(), cheburashka_server.port());
     point_at(definitions.back(), ismael_server.port());
-    AgentDefinition ismael_only = definitions.back();
+    CharacterDefinition ismael_only = definitions.back();
 
     TemporarySession session;
     {
@@ -655,16 +660,16 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
     ASSERT_TRUE(restored.interrupted_turns.empty());
 
     auto reopened = test::from_definitions_for_testing(
-        std::vector<AgentDefinition>{std::move(ismael_only)},
+        std::vector<CharacterDefinition>{std::move(ismael_only)},
         lobby.personas,
         session.path,
         notifier(),
         std::move(restored));
-    EXPECT_EQ(reopened->characters().all().size(), 1U);
+    EXPECT_EQ(reopened->view().characters.size(), 1U);
     EXPECT_EQ(
         reopened->submit_prompt(
             "reader", "are you there?", "Cheburashka").notice,
-        "Unknown agent @Cheburashka. Characters in this forum: @Ismael");
+        "Unknown character @Cheburashka. Characters in this forum: @Ismael");
 
     (void)reopened->submit_prompt("reader", "What did he say?");
     run_until_idle(*reopened);
@@ -679,7 +684,7 @@ TEST(MultiAgentIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneAgent) {
               "Shared chat history (JSONL):\n"
               R"({"kind":"human","speaker":"Reader","addressed_to":"Cheburashka","text":"Who are you?"})"
               "\n"
-              R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
+              R"({"kind":"character","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
         Json{{"role", "user"}, {"content", "from Reader:\nand you?"}},
         Json{{"role", "assistant"}, {"content", "Call me Ismael."}},
         Json{{"role", "user"}, {"content", "from Reader:\nWhat did he say?"}},

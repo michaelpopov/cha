@@ -57,7 +57,7 @@ class DeterministicBackend final : public CompletionBackend {
 public:
     DeterministicBackend(std::string id, std::string name, std::string answer)
         : info_{
-              .character = {.id = std::move(id), .name = std::move(name)},
+              .character = {.id = std::move(id), .display_name = std::move(name)},
               .model = "deterministic",
               .api = "test://deterministic",
               .streaming = true,
@@ -77,10 +77,10 @@ public:
         return {};
     }
 
-    AgentRuntimeInfo info() const override { return info_; }
+    CompletionBackendInfo info() const override { return info_; }
 
 private:
-    AgentRuntimeInfo info_;
+    CompletionBackendInfo info_;
     std::string answer_;
 };
 
@@ -149,8 +149,8 @@ struct SessionGraph {
 WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     const std::filesystem::path root = parent / "workspace";
     const std::filesystem::path forum = root / "forums" / "forum";
-    std::filesystem::create_directories(root / "characters" / "agent");
-    std::filesystem::create_directories(forum / "members" / "agent");
+    std::filesystem::create_directories(root / "characters" / "character");
+    std::filesystem::create_directories(forum / "members" / "character");
     std::filesystem::create_directories(root / "personas" / "operator");
     {
         std::ofstream file(root / "workspace.toml");
@@ -160,10 +160,10 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     }
     std::ofstream(forum / "config.toml") << "display_name = \"Forum\"\n";
     std::ofstream(forum / "FORUM.md") << "Forum prompt";
-    std::ofstream(root / "characters" / "agent" / "character.toml")
+    std::ofstream(root / "characters" / "character" / "character.toml")
         << "display_name = \"Worker\"\nhost = \"127.0.0.1\"\nport = 9\n"
         << "model = \"configured-model\"\n";
-    std::ofstream(root / "characters" / "agent" / "CHARACTER.md")
+    std::ofstream(root / "characters" / "character" / "CHARACTER.md")
         << "System prompt";
     std::ofstream(root / "personas" / "operator" / "persona.toml")
         << "display_name = \"Reader\"\n";
@@ -223,13 +223,13 @@ TEST(ConcurrentControllers, ConstructSessionLocalCompletionClientsConcurrently) 
     const auto construct = [&](std::size_t index, const std::filesystem::path& path) {
         try {
             test::NoopNotifier notifier;
-            AgentDefinition definition;
-            definition.config.id = "agent-" + std::to_string(index);
-            definition.config.display_name = "Agent " + std::to_string(index);
-            definition.config.host = "127.0.0.1";
-            definition.config.port = 9;
-            definition.config.mode = Mode::net;
-            definition.config.model = "configured-model";
+            CharacterDefinition definition;
+            definition.character.id = "character-" + std::to_string(index);
+            definition.character.display_name = "Character " + std::to_string(index);
+            definition.completion.host = "127.0.0.1";
+            definition.completion.port = 9;
+            definition.completion.mode = Mode::net;
+            definition.completion.model = "configured-model";
             start.arrive_and_wait();
             auto controller = test::from_definitions_for_testing(
                 {std::move(definition)}, path, notifier);

@@ -285,7 +285,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/s/{forum_id}/{session_id}/api/v1/actions/default-agent": {
+    "/s/{forum_id}/{session_id}/api/v1/actions/default-character": {
         parameters: {
             query?: never;
             header?: never;
@@ -409,7 +409,7 @@ export interface components {
         TranscriptEntry: {
             id: components["schemas"]["UnsignedInteger"];
             /** @enum {string} */
-            kind: "human" | "agent" | "notice" | "error";
+            kind: "human" | "character" | "notice" | "error";
             participant_id: string;
             display_name: string;
             addressed_to: string;
@@ -422,8 +422,8 @@ export interface components {
         GenerationState: {
             active: boolean;
             request_id?: components["schemas"]["UnsignedInteger"];
-            agent_id: string;
-            agent_name: string;
+            character_id: string;
+            character_display_name: string;
             /** @enum {string} */
             phase: "waiting" | "reasoning" | "answering" | "stopping";
             reasoning_text: string;

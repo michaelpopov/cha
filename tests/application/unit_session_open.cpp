@@ -58,11 +58,11 @@ TEST_F(SessionOpenTest, OpensAStoredSessionWithTheLoadedForumDefinitions) {
     EXPECT_EQ(opened.descriptor.forum_display_name, "The Lobby");
     EXPECT_EQ(opened.descriptor.session_label, "Stored");
     EXPECT_EQ(opened.descriptor.forum_default_character_id, "guide");
-    ASSERT_EQ(opened.controller->characters().all().size(), 1U);
-    EXPECT_EQ(opened.controller->characters().all().front().id, "guide");
-    EXPECT_EQ(opened.controller->characters().all().front().name, "Guide");
-    EXPECT_EQ(opened.controller->default_agent_id(), "guide");
-    EXPECT_TRUE(opened.controller->transcript().entries().empty());
+    ASSERT_EQ(opened.controller->view().characters.size(), 1U);
+    EXPECT_EQ(opened.controller->view().characters.front().id, "guide");
+    EXPECT_EQ(opened.controller->view().characters.front().display_name, "Guide");
+    EXPECT_EQ(opened.controller->view().default_character_id, "guide");
+    EXPECT_TRUE(opened.controller->view().transcript.entries.empty());
     opened.controller->shutdown();
 }
 
@@ -76,9 +76,9 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePathWithTheAssistantRoster) {
     EXPECT_EQ(opened.descriptor.forum_display_name, entrance_name);
     EXPECT_EQ(opened.descriptor.session_label, welcome_name);
     EXPECT_EQ(opened.descriptor.forum_default_character_id, assistant_id);
-    ASSERT_EQ(opened.controller->characters().all().size(), 1U);
-    EXPECT_EQ(opened.controller->characters().all().front().id, assistant_id);
-    EXPECT_EQ(opened.controller->default_agent_id(), assistant_id);
+    ASSERT_EQ(opened.controller->view().characters.size(), 1U);
+    EXPECT_EQ(opened.controller->view().characters.front().id, assistant_id);
+    EXPECT_EQ(opened.controller->view().default_character_id, assistant_id);
     opened.controller->shutdown();
 }
 
@@ -155,7 +155,7 @@ TEST_F(SessionOpenTest, OpensWithTheLoadedModelAfterTheWorkspaceChangesOnDisk) {
     {
         OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
         EXPECT_EQ(opened.descriptor.forum_display_name, "The Lobby");
-        EXPECT_EQ(opened.controller->characters().all().front().name, "Guide");
+        EXPECT_EQ(opened.controller->view().characters.front().display_name, "Guide");
         opened.controller->shutdown();
     }
 
@@ -164,7 +164,7 @@ TEST_F(SessionOpenTest, OpensWithTheLoadedModelAfterTheWorkspaceChangesOnDisk) {
     OpenedSession fresh =
         open_session(reloaded, *reloaded_sessions, created.identity, notifier_);
     EXPECT_EQ(fresh.descriptor.forum_display_name, "Renamed Lobby");
-    EXPECT_EQ(fresh.controller->characters().all().front().name, "Renamed");
+    EXPECT_EQ(fresh.controller->view().characters.front().display_name, "Renamed");
     fresh.controller->shutdown();
 }
 
@@ -194,7 +194,7 @@ TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {
 
     OpenedSession reopened = open_session(model, *sessions, created.identity, notifier_);
     EXPECT_EQ(reopened.descriptor, first);
-    EXPECT_TRUE(reopened.controller->transcript().entries().empty());
+    EXPECT_TRUE(reopened.controller->view().transcript.entries.empty());
     reopened.controller->shutdown();
 }
 

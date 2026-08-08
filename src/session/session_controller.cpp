@@ -39,60 +39,60 @@ void persist(std::string action, Operation&& operation) {
 std::string request_action(
     std::string_view action,
     RequestId request_id,
-    std::string_view agent_name) {
+    std::string_view character_display_name) {
     return std::string(action) + " request " + std::to_string(request_id)
-        + " for @" + std::string(agent_name);
+        + " for @" + std::string(character_display_name);
 }
 
 ForumCharacters make_forum_characters(
-    const std::vector<AgentRuntimeInfo>& runtime_info) {
-    std::vector<CharacterInfo> characters;
+    const std::vector<CompletionBackendInfo>& runtime_info) {
+    std::vector<CharacterMetadata> characters;
     characters.reserve(runtime_info.size());
-    for (const AgentRuntimeInfo& agent : runtime_info) {
-        characters.push_back(agent.character);
+    for (const CompletionBackendInfo& backend : runtime_info) {
+        characters.push_back(backend.character);
     }
     // Definitions reached the controller through either the validated
     // workspace boundary or a trusted application built-in factory.
     return ForumCharacters(std::move(characters), true);
 }
 
-void require_agent_count(std::size_t count) {
+void require_character_count(std::size_t count) {
     if (count == 0) {
         throw std::invalid_argument(
-            "Completion executor requires at least one agent");
+            "Completion executor requires at least one character");
     }
 }
 
 } // namespace
 
 std::unique_ptr<SessionController> SessionController::from_shared_definitions(
-    std::vector<AgentDefinition> definitions,
+    std::vector<CharacterDefinition> definitions,
     SharedPersonaRoster personas,
-    ParticipantId initial_default_agent_id,
+    ParticipantId initial_default_character_id,
     std::filesystem::path database_path,
     SessionLease lease,
     WakeNotifier& notifier,
     SessionRestore restored) {
-    require_agent_count(definitions.size());
+    require_character_count(definitions.size());
     if (!personas) throw std::invalid_argument("Session controller requires a persona roster");
     if (!lease.active()) throw std::invalid_argument("Production session controllers require an active session lease");
     return std::unique_ptr<SessionController>(new SessionController(
-        std::move(definitions), std::move(personas), std::move(initial_default_agent_id),
+        std::move(definitions), std::move(personas), std::move(initial_default_character_id),
         std::move(database_path), std::move(lease), notifier, std::move(restored)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
-    std::vector<AgentDefinition> definitions,
+    std::vector<CharacterDefinition> definitions,
     PersonaRoster personas,
-    ParticipantId initial_default_agent_id,
+    ParticipantId initial_default_character_id,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored) {
-    require_agent_count(definitions.size());
+    require_character_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
         std::make_shared<const PersonaRoster>(std::move(personas)),
-        std::move(initial_default_agent_id),
+        std::move(initial_default_character_id),
         std::move(database_path),
         SessionLease::inactive_for_testing(),
         notifier,
@@ -102,16 +102,16 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     PersonaRoster personas,
-    ParticipantId initial_default_agent_id,
+    ParticipantId initial_default_character_id,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored,
     ActivationHook before_activation) {
-    require_agent_count(backends.size());
+    require_character_count(backends.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(backends),
         std::move(personas),
-        std::move(initial_default_agent_id),
+        std::move(initial_default_character_id),
         std::move(database_path),
         notifier,
         std::move(restored),
@@ -119,9 +119,9 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
 }
 
 SessionController::SessionController(
-    std::vector<AgentDefinition> definitions,
+    std::vector<CharacterDefinition> definitions,
     SharedPersonaRoster personas,
-    ParticipantId initial_default_agent_id,
+    ParticipantId initial_default_character_id,
     std::filesystem::path path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -132,14 +132,14 @@ SessionController::SessionController(
       completion_executor_(std::move(definitions), notifier, worker_pool_),
       characters_(make_forum_characters(completion_executor_.runtime_info())),
       personas_(std::move(personas)),
-      default_agent_id_(std::move(initial_default_agent_id)) {
+      default_character_id_(std::move(initial_default_character_id)) {
     initialize(std::move(restored));
 }
 
 SessionController::SessionController(
     std::vector<std::unique_ptr<CompletionBackend>> backends,
     PersonaRoster personas,
-    ParticipantId initial_default_agent_id,
+    ParticipantId initial_default_character_id,
     std::filesystem::path path,
     WakeNotifier& notifier,
     SessionRestore restored,
@@ -150,7 +150,7 @@ SessionController::SessionController(
       completion_executor_(std::move(backends), notifier, worker_pool_),
       characters_(make_forum_characters(completion_executor_.runtime_info())),
       personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
-      default_agent_id_(std::move(initial_default_agent_id)),
+      default_character_id_(std::move(initial_default_character_id)),
       before_activation_(std::move(before_activation)) {
     initialize(std::move(restored));
 }
@@ -163,9 +163,9 @@ SessionController::~SessionController() {
 }
 
 void SessionController::initialize(SessionRestore restored) {
-    if (!characters_.find(default_agent_id_)) {
+    if (!characters_.find(default_character_id_)) {
         throw std::invalid_argument(
-            "Initial default agent ID is not in the forum roster");
+            "Initial default character ID is not in the forum roster");
     }
     transcript_.replace_entries(std::move(restored.entries));
     next_request_id_ = restored.next_request_id;
@@ -189,8 +189,8 @@ ControllerGenerationView SessionController::generation_view() const noexcept {
         return {
             .active = true,
             .request_id = run.request_id,
-            .agent_id = run.target.id,
-            .agent_name = run.target.name,
+            .character_id = run.target.id,
+            .character_display_name = run.target.display_name,
             .phase = ResponsePhase::stopping,
         };
     }
@@ -198,9 +198,9 @@ ControllerGenerationView SessionController::generation_view() const noexcept {
         .active = busy(),
         .request_id = active_ ? std::optional<RequestId>(active_->request_id)
                               : std::nullopt,
-        .agent_id = active_ ? std::string_view(active_->agent_id)
+        .character_id = active_ ? std::string_view(active_->character_id)
                             : std::string_view{},
-        .agent_name = active_ ? std::string_view(active_->agent_name)
+        .character_display_name = active_ ? std::string_view(active_->character_display_name)
                               : std::string_view{},
         .phase = active_ ? active_->phase : ResponsePhase::waiting,
         .reasoning_text = active_ ? std::string_view(active_->reasoning_text)
@@ -213,7 +213,7 @@ ControllerView SessionController::view() const noexcept {
     // before the next mutation on this thread; nothing here allocates.
     return {
         .characters = characters_.all(),
-        .default_agent_id = default_agent_id_,
+        .default_character_id = default_character_id_,
         .transcript = transcript_.view(),
         .generation = generation_view(),
     };
@@ -256,9 +256,9 @@ ControllerUpdate SessionController::submit_prompt(
     }
 
     ControllerUpdate update;
-    const CharacterInfo* target = nullptr;
+    const CharacterMetadata* target = nullptr;
     if (handle.empty()) {
-        target = characters_.find(default_agent_id_);
+        target = characters_.find(default_character_id_);
     } else {
         const HandleResolution resolution = characters_.resolve_handle(handle);
         if (resolution.match != HandleMatch::resolved) {
@@ -269,10 +269,10 @@ ControllerUpdate SessionController::submit_prompt(
         target = resolution.character;
     }
     if (!target) {
-        throw std::logic_error("Default agent is not among the forum characters");
+        throw std::logic_error("Default character is not among the forum characters");
     }
     if (text.empty()) {
-        update.notice = "Prompt for @" + target->name + " is empty";
+        update.notice = "Prompt for @" + target->display_name + " is empty";
         return update;
     }
 
@@ -286,7 +286,7 @@ ControllerUpdate SessionController::submit_prompt(
     start_batch(
         std::move(*author),
         std::move(text),
-        std::vector<CharacterInfo>{*target},
+        std::vector<CharacterMetadata>{*target},
         std::move(history),
         update);
     return update;
@@ -295,7 +295,7 @@ ControllerUpdate SessionController::submit_prompt(
 void SessionController::start_batch(
     EntryIdentity author,
     std::string text,
-    std::vector<CharacterInfo> targets,
+    std::vector<CharacterMetadata> targets,
     SharedCompletionHistory history,
     ControllerUpdate& update) {
     if (!history || targets.empty()) {
@@ -306,7 +306,7 @@ void SessionController::start_batch(
     // step with the batch's execution slots.
     std::vector<CompletionInput> inputs;
     inputs.reserve(targets.size());
-    for (CharacterInfo& target : targets) {
+    for (CharacterMetadata& target : targets) {
         inputs.push_back({
             .history = history,
             .run = {
@@ -345,15 +345,15 @@ void SessionController::activate_current_run(ControllerUpdate& update) {
     TranscriptEntry prompt = make_human_entry({
         .id = next_entry_id_++,
         .author = run.author,
-        .addressed_to = {run.target.id, run.target.name},
+        .addressed_to = {run.target.id, run.target.display_name},
         .text = run.prompt_text,
         .request_id = run.request_id,
     });
     ActiveResponse response{
         .request_id = run.request_id,
         .response_entry_id = next_entry_id_++,
-        .agent_id = run.target.id,
-        .agent_name = run.target.name,
+        .character_id = run.target.id,
+        .character_display_name = run.target.display_name,
         .phase = ResponsePhase::waiting,
     };
 
@@ -364,7 +364,7 @@ void SessionController::activate_current_run(ControllerUpdate& update) {
         request_action(
             "persist start of",
             run.request_id,
-            run.target.name),
+            run.target.display_name),
         [this, &run, &prompt] {
             journal_.start_turn(run.request_id, prompt);
         });
@@ -380,7 +380,7 @@ void SessionController::activate_current_run(ControllerUpdate& update) {
             request_action(
                 "persist failure of",
                 run.request_id,
-                run.target.name),
+                run.target.display_name),
             [this, &run, &error] {
                 journal_.fail_turn(run.request_id, error);
             });
@@ -572,7 +572,7 @@ ControllerUpdate SessionController::start_multicast(
         return busy_notice();
     }
 
-    std::vector<CharacterInfo> targets;
+    std::vector<CharacterMetadata> targets;
     if (handles.empty()) {
         targets = characters_.all();
     } else {
@@ -590,7 +590,7 @@ ControllerUpdate SessionController::start_multicast(
             if (!distinct.insert(resolution.character->id).second) {
                 return {
                     .notice = format_duplicate_character_notice(
-                        resolution.character->name),
+                        resolution.character->display_name),
                 };
             }
             targets.push_back(*resolution.character);
@@ -602,7 +602,7 @@ ControllerUpdate SessionController::start_multicast(
 ControllerUpdate SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
-    std::vector<CharacterInfo> targets) {
+    std::vector<CharacterMetadata> targets) {
     if (text.empty()) {
         return {.notice = "Multicast prompt is empty"};
     }
@@ -643,31 +643,31 @@ ControllerUpdate SessionController::session_information() {
     return {
         .input_consumed = true,
         .notice = format_session_information(
-            transcript_.size(),
+            transcript_.view().size(),
             characters_,
             completion_executor_.runtime_info(),
-            default_agent_id_),
+            default_character_id_),
     };
 }
 
-ControllerUpdate SessionController::agent_information() {
+ControllerUpdate SessionController::character_information() {
     if (busy()) {
         return busy_notice();
     }
     return {
         .input_consumed = true,
         .notice = format_characters_notice(
-            characters_, completion_executor_.runtime_info(), default_agent_id_),
+            characters_, completion_executor_.runtime_info(), default_character_id_),
     };
 }
 
-ControllerUpdate SessionController::set_default_agent(std::string_view handle) {
+ControllerUpdate SessionController::set_default_character(std::string_view handle) {
     if (busy()) {
         return busy_notice();
     }
     ControllerUpdate update{.input_consumed = true};
     if (handle.empty()) {
-        update.notice = "Usage: /@AgentName";
+        update.notice = "Usage: /@CharacterName";
         return update;
     }
     const HandleResolution result = characters_.resolve_handle(handle);
@@ -675,26 +675,26 @@ ControllerUpdate SessionController::set_default_agent(std::string_view handle) {
         update.notice = format_handle_resolution_notice(handle, result, characters_);
         return update;
     }
-    default_agent_id_ = result.character->id;
+    default_character_id_ = result.character->id;
     require_snapshot(update);
-    update.notice = "Default agent is now " + result.character->name;
+    update.notice = "Default character is now " + result.character->display_name;
     return update;
 }
 
-ControllerUpdate SessionController::set_default_agent_by_id(std::string_view id) {
+ControllerUpdate SessionController::set_default_character_by_id(std::string_view id) {
     if (busy()) {
         return busy_notice();
     }
     // This typed action submits no editor text, so it never clears a draft.
     ControllerUpdate update;
-    const CharacterInfo* character = characters_.find(id);
+    const CharacterMetadata* character = characters_.find(id);
     if (!character) {
-        update.notice = "Unknown agent";
+        update.notice = "Unknown character";
         return update;
     }
-    default_agent_id_ = character->id;
+    default_character_id_ = character->id;
     require_snapshot(update);
-    update.notice = "Default agent is now " + character->name;
+    update.notice = "Default character is now " + character->display_name;
     return update;
 }
 
@@ -723,7 +723,7 @@ ControllerUpdate SessionController::request_stop() {
     return update;
 }
 
-ControllerUpdate SessionController::handle_agent_event(AgentEvent event) {
+ControllerUpdate SessionController::handle_completion_event(CompletionEvent event) {
     ControllerUpdate update;
     std::visit(
         [this, &update](const auto& value) { apply(value, update); },
@@ -731,7 +731,7 @@ ControllerUpdate SessionController::handle_agent_event(AgentEvent event) {
     return update;
 }
 
-void SessionController::apply(const AgentDelta& event, ControllerUpdate& update) {
+void SessionController::apply(const CompletionEventDelta& event, ControllerUpdate& update) {
     if (!matches(event.request_id) || event.text.empty()) {
         return;
     }
@@ -767,13 +767,13 @@ void SessionController::apply(const AgentDelta& event, ControllerUpdate& update)
     merge(update, {.state = TextAppend{ReasoningTextTarget{request_id}, event.text}});
 }
 
-void SessionController::apply(const AgentCompleted& event, ControllerUpdate& update) {
+void SessionController::apply(const CompletionCompleted& event, ControllerUpdate& update) {
     if (!matches(event.request_id)) {
         return;
     }
     if (active_->phase != ResponsePhase::answering) {
         fail_active_response(
-            "Agent completed without answer content", active_->agent_id, update);
+            "Completion finished without answer content", active_->character_id, update);
         finish_batch_run(update);
         return;
     }
@@ -783,7 +783,7 @@ void SessionController::apply(const AgentCompleted& event, ControllerUpdate& upd
         request_action(
             "persist completion of",
             event.request_id,
-            active_->agent_name),
+            active_->character_display_name),
         [this, &event, &response] {
             journal_.complete_turn(event.request_id, response);
         });
@@ -794,7 +794,7 @@ void SessionController::apply(const AgentCompleted& event, ControllerUpdate& upd
     finish_batch_run(update);
 }
 
-void SessionController::apply(const AgentCancelled& event, ControllerUpdate& update) {
+void SessionController::apply(const CompletionCancelled& event, ControllerUpdate& update) {
     if (!matches(event.request_id)) {
         return;
     }
@@ -805,7 +805,7 @@ void SessionController::apply(const AgentCancelled& event, ControllerUpdate& upd
             request_action(
                 "persist cancellation of",
                 event.request_id,
-                active_->agent_name),
+                active_->character_display_name),
             [this, &event, &response] {
                 journal_.cancel_turn(event.request_id, response);
             });
@@ -815,7 +815,7 @@ void SessionController::apply(const AgentCancelled& event, ControllerUpdate& upd
             request_action(
                 "persist cancellation of",
                 event.request_id,
-                active_->agent_name),
+                active_->character_display_name),
             [this, &event] {
                 journal_.cancel_turn(event.request_id, std::nullopt);
             });
@@ -827,9 +827,9 @@ void SessionController::apply(const AgentCancelled& event, ControllerUpdate& upd
     finish_batch_run(update);
 }
 
-void SessionController::apply(const AgentFailed& event, ControllerUpdate& update) {
+void SessionController::apply(const CompletionFailed& event, ControllerUpdate& update) {
     if (matches(event.request_id)) {
-        fail_active_response(event.message, active_->agent_id, update);
+        fail_active_response(event.message, active_->character_id, update);
         finish_batch_run(update);
     }
 }
@@ -848,7 +848,7 @@ void SessionController::fail_active_response(
         request_action(
             "persist failure of",
             active_->request_id,
-            active_->agent_name),
+            active_->character_display_name),
         [this, &error] {
             journal_.fail_turn(active_->request_id, error);
         });
@@ -870,10 +870,10 @@ TranscriptEntry SessionController::response_entry(EntryStatus status) const {
     if (active_->phase == ResponsePhase::answering) {
         text = transcript_.open_entry_text(active_->response_entry_id);
     }
-    return make_agent_entry(
+    return make_character_entry(
         active_->response_entry_id,
-        active_->agent_id,
-        active_->agent_name,
+        active_->character_id,
+        active_->character_display_name,
         std::move(text),
         status,
         active_->request_id);
@@ -885,21 +885,21 @@ bool SessionController::matches(RequestId request_id) const {
 
 ControllerEventBatch SessionController::receive_events(std::size_t max_events) {
     if (max_events == 0) {
-        throw std::invalid_argument("Agent event batch size must be positive");
+        throw std::invalid_argument("Completion event batch size must be positive");
     }
     ControllerUpdate update;
     if (shutdown_ && !batch_) {
         update.session_ended = true;
         return {.update = std::move(update)};
     }
-    AgentEvent event = AgentCompleted{};
+    CompletionEvent event = CompletionCompleted{};
     std::size_t processed = 0;
     while (batch_ && active_ && processed < max_events) {
         const ChannelReadStatus status = batch_->try_receive_foreground(event);
         if (status != ChannelReadStatus::value) {
             break;
         }
-        merge(update, handle_agent_event(std::move(event)));
+        merge(update, handle_completion_event(std::move(event)));
         ++processed;
     }
     poll_abort_cleanup(update);

@@ -64,34 +64,34 @@ struct Execution {
           backend(owned_backend),
           gate(std::move(start_gate)),
           notifier(wake_notifier),
-          fallback_terminal(AgentFailed{
+          fallback_terminal(CompletionFailed{
               input.run.request_id,
-              "Agent execution failed before details could be reported",
+              "Completion execution failed before details could be reported",
           }) {
-        static_assert(std::is_nothrow_move_constructible_v<AgentEvent>);
-        static_assert(std::is_nothrow_move_assignable_v<AgentEvent>);
+        static_assert(std::is_nothrow_move_constructible_v<CompletionEvent>);
+        static_assert(std::is_nothrow_move_assignable_v<CompletionEvent>);
     }
 
     void execute() noexcept {
         const RequestId request_id = input.run.request_id;
         if (!gate->wait()) {
-            log_info("Agent execution cancelled before start");
-            publish_terminal(AgentCancelled{request_id});
+            log_info("Completion execution cancelled before start");
+            publish_terminal(CompletionCancelled{request_id});
             finish();
             return;
         }
 
         try {
             if (cancellation.load(std::memory_order_acquire)) {
-                log_info("Agent execution cancelled before preparation");
-                publish_terminal(AgentCancelled{request_id});
+                log_info("Completion execution cancelled before preparation");
+                publish_terminal(CompletionCancelled{request_id});
             } else {
-                log_info("Agent execution started");
+                log_info("Completion execution started");
                 RequestPayload payload = backend.prepare(input);
                 const CompletionResult result = backend.perform(
                     std::move(payload),
                     [this, request_id](CompletionDelta delta) {
-                        publish_delta(AgentDelta{
+                        publish_delta(CompletionEventDelta{
                             request_id,
                             delta.kind,
                             std::move(delta.text),
@@ -99,22 +99,22 @@ struct Execution {
                     },
                     cancellation);
                 if (result.outcome == CompletionOutcome::completed) {
-                    log_info("Agent execution completed");
-                    publish_terminal(AgentCompleted{request_id});
+                    log_info("Completion execution completed");
+                    publish_terminal(CompletionCompleted{request_id});
                 } else if (result.outcome == CompletionOutcome::cancelled) {
-                    log_info("Agent execution cancelled");
-                    publish_terminal(AgentCancelled{request_id});
+                    log_info("Completion execution cancelled");
+                    publish_terminal(CompletionCancelled{request_id});
                 } else {
-                    log_error("Agent execution failed");
+                    log_error("Completion execution failed");
                     publish_failure(request_id, result.message);
                 }
             }
         } catch (const std::exception& error) {
-            log_error("Agent execution raised an exception");
+            log_error("Completion execution raised an exception");
             publish_failure(request_id, error.what());
         } catch (...) {
-            log_error("Agent execution raised an unknown exception");
-            publish_failure(request_id, "Unknown agent execution failure");
+            log_error("Completion execution raised an unknown exception");
+            publish_failure(request_id, "Unknown completion execution failure");
         }
         finish();
     }
@@ -135,20 +135,20 @@ struct Execution {
         return execution_finished;
     }
 
-    ChannelReadStatus try_receive(AgentEvent& event) {
+    ChannelReadStatus try_receive(CompletionEvent& event) {
         return events.try_get(event);
     }
 
 private:
-    void publish_delta(AgentEvent event) {
+    void publish_delta(CompletionEvent event) {
         if (!events.push(std::move(event))) {
             throw std::logic_error(
-                "Agent event queue closed before execution stopped");
+                "Completion event queue closed before execution stopped");
         }
         notifier.wake();
     }
 
-    void publish_terminal(AgentEvent event) noexcept {
+    void publish_terminal(CompletionEvent event) noexcept {
         events.close_with(std::move(event));
         notifier.wake();
     }
@@ -156,13 +156,13 @@ private:
     void publish_failure(
         RequestId request_id,
         std::string_view message) noexcept {
-        AgentEvent failure = std::move(fallback_terminal);
+        CompletionEvent failure = std::move(fallback_terminal);
         try {
-            failure = AgentFailed{request_id, std::string(message)};
+            failure = CompletionFailed{request_id, std::string(message)};
         } catch (...) {
             // Keep the preallocated fallback if copying details allocates.
             log_critical(
-                "Agent failure details could not be preserved; using fallback");
+                "Completion failure details could not be preserved; using fallback");
         }
         publish_terminal(std::move(failure));
     }
@@ -183,16 +183,16 @@ private:
     CompletionBackend& backend;
     std::shared_ptr<StartGate> gate;
     WakeNotifier& notifier;
-    ConcurrentQueue<AgentEvent> events;
-    AgentEvent fallback_terminal;
+    ConcurrentQueue<CompletionEvent> events;
+    CompletionEvent fallback_terminal;
     std::atomic_bool cancellation{false};
     mutable std::mutex finished_mutex;
     std::condition_variable finished_changed;
     bool execution_finished{};
 };
 
-bool is_terminal(const AgentEvent& event) noexcept {
-    return !std::holds_alternative<AgentDelta>(event);
+bool is_terminal(const CompletionEvent& event) noexcept {
+    return !std::holds_alternative<CompletionEventDelta>(event);
 }
 
 } // namespace
@@ -227,7 +227,7 @@ CompletionBatch CompletionBatch::stage(
                 before_submit(submitted);
             }
             if (!worker_pool.submit([execution] { execution->execute(); })) {
-                throw std::runtime_error("Agent worker pool is unavailable");
+                throw std::runtime_error("Completion worker pool is unavailable");
             }
             ++submitted;
         }
@@ -276,7 +276,7 @@ void CompletionBatch::open() noexcept {
     impl_->gate->open();
 }
 
-ChannelReadStatus CompletionBatch::try_receive_foreground(AgentEvent& event) {
+ChannelReadStatus CompletionBatch::try_receive_foreground(CompletionEvent& event) {
     if (impl_->foreground >= impl_->executions.size()) {
         throw std::logic_error("Completion batch has no foreground run");
     }

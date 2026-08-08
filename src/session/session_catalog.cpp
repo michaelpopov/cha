@@ -47,12 +47,12 @@ std::string timestamp_name(std::time_t now) {
 
 SessionCatalog::SessionCatalog(
     std::filesystem::path directory,
-    std::string forum_name,
+    std::string forum_id,
     Clock clock)
     : directory_(std::move(directory)),
-      forum_name_(std::move(forum_name)),
+      forum_id_(std::move(forum_id)),
       clock_(std::move(clock)) {
-    require_url_safe_identifier(forum_name_, directory_.parent_path());
+    require_url_safe_identifier(forum_id_, directory_.parent_path());
     if (!clock_) {
         clock_ = [] { return std::time(nullptr); };
     }
@@ -62,7 +62,7 @@ std::string SessionCatalog::validated_label(
     const std::filesystem::path& path,
     const std::string& session_id) const {
     const SessionDatabaseMetadata metadata = read_session_database_metadata(path);
-    validate_session_database_identity(path, {forum_name_, session_id}, metadata);
+    validate_session_database_identity(path, {forum_id_, session_id}, metadata);
     return metadata.label;
 }
 
@@ -84,7 +84,7 @@ std::vector<StoredSession> SessionCatalog::list() const {
         // has to rebuild them; a timestamp that cannot be read fails the whole
         // listing rather than becoming one row's metadata error.
         StoredSession stored{
-            .identity = {forum_name_, id},
+            .identity = {forum_id_, id},
             .label = id,
             .database_path = entry.path(),
             .updated_at = entry.last_write_time(),
@@ -112,7 +112,7 @@ StoredSession SessionCatalog::inspect(const std::string& session_id) const {
         throw missing_session_error(session_id);
     }
     return {
-        .identity = {forum_name_, session_id},
+        .identity = {forum_id_, session_id},
         .label = validated_label(path, session_id),
         .database_path = path,
         .updated_at = std::filesystem::last_write_time(path),
@@ -132,11 +132,11 @@ StoredSession SessionCatalog::create(std::string label) const {
         try {
             SessionLease lease = SessionLease::acquire(path);
             std::string effective_label = label.empty() ? id : label;
-            if (create_session_database(path, {.id = id, .forum = forum_name_, .label = effective_label})) {
+            if (create_session_database(path, {.id = id, .forum = forum_id_, .label = effective_label})) {
                 // Publication has already committed, so a timestamp that cannot
                 // be read is reported rather than rolled back.
                 return {
-                    .identity = {forum_name_, id},
+                    .identity = {forum_id_, id},
                     .label = std::move(effective_label),
                     .database_path = path,
                     .updated_at = std::filesystem::last_write_time(path),

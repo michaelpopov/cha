@@ -1,5 +1,7 @@
 #pragma once
 
+#include "domain/ids.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -23,8 +25,8 @@ enum class ResponsePhase {
 struct GenerationStatus {
     bool active{};
     std::optional<std::uint64_t> request_id;
-    std::string agent_id;
-    std::string agent_name;
+    CharacterId character_id;
+    std::string character_display_name;
     ResponsePhase phase{ResponsePhase::waiting};
     std::string reasoning_text;
 

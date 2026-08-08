@@ -61,16 +61,25 @@ CompletionResult complete(
     return client.perform(std::move(payload), on_delta, cancellation);
 }
 
-Config network_config(int port, bool stream = true) {
-    Config config;
-    config.id = "assistant";
-    config.display_name = "Assistant";
-    config.host = "127.0.0.1";
-    config.port = port;
-    config.mode = Mode::net;
-    config.model = "configured-model";
-    config.stream = stream;
-    return config;
+CharacterDefinition test_definition(
+    std::optional<std::string> description = std::nullopt) {
+    return {
+        .character = {
+            .id = "assistant",
+            .display_name = "Assistant",
+            .description = std::move(description),
+        },
+    };
+}
+
+CharacterDefinition network_definition(int port, bool stream = true) {
+    CharacterDefinition definition = test_definition();
+    definition.completion.host = "127.0.0.1";
+    definition.completion.port = port;
+    definition.completion.mode = Mode::net;
+    definition.completion.model = "configured-model";
+    definition.completion.stream = stream;
+    return definition;
 }
 
 std::string status_response(
@@ -114,12 +123,8 @@ private:
 };
 
 TEST(CompletionClient, EchoesOnePromptInTestMode) {
-    Config config;
-    config.id = "assistant";
-    config.display_name = "Assistant";
-    config.description = "Helpful character";
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = config});
+    CompletionClient client(test_definition("Helpful character"));
     Transcript transcript;
     CompletionInput request = client_request(transcript, 1, "hello");
     std::vector<std::string> deltas;
@@ -143,18 +148,18 @@ TEST(CompletionClient, ConstructsSessionLocalNetworkClientsConcurrently) {
     // smoke coverage because an earlier curl persona may already have initialized
     // curl_global()'s magic static. C++ guarantees thread-safe initialization.
     std::barrier start(3);
-    std::array<AgentRuntimeInfo, 2> infos;
+    std::array<CompletionBackendInfo, 2> infos;
     std::array<std::exception_ptr, 2> failures;
     std::array<std::thread, 2> threads;
 
     for (std::size_t index = 0; index < threads.size(); ++index) {
         threads[index] = std::thread([&, index] {
             try {
-                Config config = network_config(9);
-                config.id = "assistant-" + std::to_string(index);
-                config.display_name = "Assistant " + std::to_string(index);
+                CharacterDefinition definition = network_definition(9);
+                definition.character.id = "assistant-" + std::to_string(index);
+                definition.character.display_name = "Assistant " + std::to_string(index);
                 start.arrive_and_wait();
-                CompletionClient client({.config = std::move(config)});
+                CompletionClient client(std::move(definition));
                 infos[index] = client.info();
             } catch (...) {
                 failures[index] = std::current_exception();
@@ -176,11 +181,8 @@ TEST(CompletionClient, ConstructsSessionLocalNetworkClientsConcurrently) {
 }
 
 TEST(CompletionClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
-    Config config;
-    config.id = "assistant";
-    config.display_name = "Assistant";
     std::atomic_bool cancellation{true};
-    CompletionClient client({.config = config});
+    CompletionClient client(test_definition());
     Transcript transcript;
     CompletionInput request = client_request(transcript, 2, "do not dispatch");
     bool received_delta = false;
@@ -202,19 +204,20 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
 
-    Config config = network_config(mock.port());
-    config.temperature = 0.25;
-    config.reasoning_effort = "medium";
-    config.api_key = "test-key";
+    CharacterDefinition definition = network_definition(mock.port());
+    definition.completion.temperature = 0.25;
+    definition.completion.reasoning_effort = "medium";
+    definition.completion.api_key = "test-key";
+    definition.system_prompt = "Be concise.";
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = config, .system_prompt = "Be concise."});
+    CompletionClient client(std::move(definition));
     Transcript transcript;
     const CompletionInput request = client_request(
         transcript, 7, "Question", {
             test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier question", 6),
-            make_agent_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 6),
+            make_character_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 6),
             make_notice_entry(3, "hidden"),
-            make_agent_entry(4, "other", "Other", "Other answer", EntryStatus::complete, 6),
+            make_character_entry(4, "other", "Other", "Other answer", EntryStatus::complete, 6),
         });
     std::vector<std::string> deltas;
 
@@ -242,7 +245,7 @@ TEST(CompletionClient, StreamsDeltasAndBuildsTheProviderRequest) {
         {{"role", "user"},
          {"content",
           "Shared chat history (JSONL):\n"
-          R"({"kind":"agent","speaker":"Other","text":"Other answer"})"}},
+          R"({"kind":"character","speaker":"Other","text":"Other answer"})"}},
         {{"role", "user"}, {"content", "from You:\nQuestion"}},
     }));
 }
@@ -252,7 +255,7 @@ TEST(CompletionClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
         "application/json", R"({"choices":[{"message":{"content":"Answer"}}]})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port(), false)});
+    CompletionClient client(network_definition(mock.port(), false));
     Transcript transcript;
     const std::string prompt = "quote \" and newline\n and backslash \\";
     const CompletionInput request = client_request(transcript, 19, prompt);
@@ -270,7 +273,7 @@ TEST(CompletionClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
 }
 
 TEST(CompletionClient, RejectsInvalidUtf8WhenPreparingRequest) {
-    CompletionClient client({.config = network_config(1, false)});
+    CompletionClient client(network_definition(1, false));
     Transcript transcript;
     const CompletionInput request = client_request(
         transcript,
@@ -292,7 +295,7 @@ TEST(CompletionClient, HandlesNonStreamingProviderResponse) {
         "application/json", R"({"choices":[{"message":{"content":"Answer"}}]})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port(), false)});
+    CompletionClient client(network_definition(mock.port(), false));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 8, "Question");
     std::string output;
@@ -313,7 +316,7 @@ TEST(CompletionClient, LogsTransportMetadataWithoutPayloads) {
     mock.start();
     DiagnosticLogFile log;
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port(), false)});
+    CompletionClient client(network_definition(mock.port(), false));
     Transcript transcript;
     const CompletionInput request =
         client_request(transcript, 77, "private prompt");
@@ -346,7 +349,7 @@ TEST(CompletionClient, ReportsProviderHttpFailure) {
         R"({"error":{"message":"request rejected"}})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 9, "Question");
 
@@ -367,7 +370,7 @@ TEST(CompletionClient, ReportsMalformedStreamingProtocolDirectly) {
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 10, "Question");
     std::string output;
@@ -387,7 +390,7 @@ TEST(CompletionClient, RejectsAStreamWithoutTheCompletionMarker) {
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 11, "Question");
     std::string output;
@@ -410,7 +413,7 @@ TEST(CompletionClient, ReportsATruncatedResponseAsATransportError) {
     MockHttpServer mock({response});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 12, "Question");
     std::string output;
@@ -433,7 +436,7 @@ TEST(CompletionClient, CancelsAnActiveStreamingTransfer) {
     MockHttpServer mock({response}, true);
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 13, "Question");
     std::string output;
@@ -455,7 +458,7 @@ TEST(CompletionClient, ReportsAJsonErrorReturnedInsteadOfAStream) {
         "application/json", R"({"error":{"message":"model unavailable"}})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 14, "Question");
 
@@ -476,7 +479,7 @@ TEST(CompletionClient, RejectsACompletedStreamWithoutText) {
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 15, "Question");
 
@@ -497,7 +500,7 @@ TEST(CompletionClient, IgnoresDataAfterTheCompletionMarker) {
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 16, "Question");
     std::string output;
@@ -516,7 +519,7 @@ TEST(CompletionClient, RejectsANonStreamingResponseWithoutText) {
         "application/json", R"({"choices":[{"message":{"content":""}}]})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = network_config(mock.port(), false)});
+    CompletionClient client(network_definition(mock.port(), false));
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 17, "Question");
 
@@ -534,10 +537,10 @@ TEST(CompletionClient, DiscoversItsModelBeforeTheFirstCompletion) {
         http_response("application/json", R"({"choices":[{"message":{"content":"Answer"}}]})"),
     });
     mock.start();
-    Config config = network_config(mock.port(), false);
-    config.model.clear();
+    CharacterDefinition definition = network_definition(mock.port(), false);
+    definition.completion.model.clear();
     std::atomic_bool cancellation{false};
-    CompletionClient client({.config = config});
+    CompletionClient client(std::move(definition));
     EXPECT_EQ(client.info().model, "discovered-model");
     Transcript transcript;
     const CompletionInput request = client_request(transcript, 18, "Question");
@@ -562,7 +565,7 @@ TEST(CompletionClient, StreamsStructuredReasoningBeforeAnswerWithAutoPrecedence)
         "data: [DONE]\n\n";
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request =
         client_request(transcript, 21, "Question");
@@ -597,9 +600,9 @@ TEST(CompletionClient, AppliesExplicitReasoningFormatStrictly) {
         "data: [DONE]\n\n";
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
-    Config config = network_config(mock.port());
-    config.reasoning_format = ReasoningFormat::reasoning_content;
-    CompletionClient client({.config = config});
+    CharacterDefinition definition = network_definition(mock.port());
+    definition.completion.reasoning_format = ReasoningFormat::reasoning_content;
+    CompletionClient client(std::move(definition));
     Transcript transcript;
     const CompletionInput request =
         client_request(transcript, 22, "Question");
@@ -635,9 +638,9 @@ TEST(CompletionClient, ParsesNonStreamingReasoningAndRequiresAnAnswer) {
             R"({"choices":[{"message":{"reasoning":"Only","content":""}}]})"),
     });
     mock.start();
-    Config config = network_config(mock.port(), false);
-    config.reasoning_format = ReasoningFormat::reasoning;
-    CompletionClient client({.config = config});
+    CharacterDefinition definition = network_definition(mock.port(), false);
+    definition.completion.reasoning_format = ReasoningFormat::reasoning;
+    CompletionClient client(std::move(definition));
     std::atomic_bool cancellation{false};
 
     Transcript first_transcript;
@@ -680,7 +683,7 @@ TEST(CompletionClient, ReasoningOnlyStreamIsNotACompletedAnswer) {
         "data: [DONE]\n\n";
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
-    CompletionClient client({.config = network_config(mock.port())});
+    CompletionClient client(network_definition(mock.port()));
     Transcript transcript;
     const CompletionInput request =
         client_request(transcript, 25, "Question");

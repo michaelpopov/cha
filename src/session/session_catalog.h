@@ -1,5 +1,6 @@
 #pragma once
 
+#include "domain/ids.h"
 #include "session/not_found_error.h"
 #include "session/stored_session.h"
 
@@ -26,7 +27,7 @@ public:
 
     SessionCatalog(
         std::filesystem::path directory,
-        std::string forum_name,
+        ForumId forum_id,
         Clock clock = {});
 
     // Tolerant: an identifiable database that fails its metadata check stays
@@ -48,7 +49,7 @@ private:
         const std::filesystem::path& path,
         const std::string& session_id) const;
     std::filesystem::path directory_;
-    std::string forum_name_;
+    ForumId forum_id_;
     Clock clock_;
 };
 

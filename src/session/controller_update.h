@@ -46,7 +46,7 @@ struct TextAppend {
 using ControllerStateUpdate =
     std::variant<NoStateUpdate, SnapshotRequired, TextAppend>;
 
-// The observable effect of one command or applied agent event, classified by
+// The observable effect of one command or applied completion event, classified by
 // the controller at the moment it mutates its own state.
 struct ControllerUpdate {
     ControllerStateUpdate state{NoStateUpdate{}};
@@ -59,7 +59,7 @@ struct ControllerUpdate {
     bool operator==(const ControllerUpdate&) const = default;
 };
 
-// A bounded agent-event drain. A full batch is deliberately conservative: it
+// A bounded completion-event drain. A full batch is deliberately conservative: it
 // tells an owner loop to try another drain before sleeping, even when the last
 // event happened to empty the channel. `full` is queue scheduling information
 // and is deliberately kept out of ControllerUpdate.

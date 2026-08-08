@@ -24,7 +24,7 @@ constexpr int session_application_id = 0x43484131; // "CHA1"
 constexpr int session_database_version = 2;
 
 static_assert(static_cast<std::int64_t>(EntryKind::human) == 0);
-static_assert(static_cast<std::int64_t>(EntryKind::agent) == 1);
+static_assert(static_cast<std::int64_t>(EntryKind::character) == 1);
 static_assert(static_cast<std::int64_t>(EntryKind::notice) == 2);
 static_assert(static_cast<std::int64_t>(EntryKind::error) == 3);
 static_assert(static_cast<std::int64_t>(EntryStatus::complete) == 0);
@@ -497,10 +497,10 @@ void validate_turn_entry(
     case TurnRecordKind::started:
         break;
     case TurnRecordKind::completed:
-        expected_kind = EntryKind::agent;
+        expected_kind = EntryKind::character;
         break;
     case TurnRecordKind::cancelled:
-        expected_kind = EntryKind::agent;
+        expected_kind = EntryKind::character;
         expected_status = EntryStatus::cancelled;
         break;
     case TurnRecordKind::failed:

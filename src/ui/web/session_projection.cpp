@@ -18,7 +18,7 @@ SessionSnapshot to_snapshot(
         },
         .session_id = descriptor.identity.session_id,
         .session_label = descriptor.session_label,
-        .default_character_id = std::string(controller.default_agent_id),
+        .default_character_id = std::string(controller.default_character_id),
         .transcript = {
             controller.transcript.entries.begin(),
             controller.transcript.entries.end(),
@@ -26,8 +26,8 @@ SessionSnapshot to_snapshot(
         .generation = {
             .active = controller.generation.active,
             .request_id = controller.generation.request_id,
-            .agent_id = std::string(controller.generation.agent_id),
-            .agent_name = std::string(controller.generation.agent_name),
+            .character_id = std::string(controller.generation.character_id),
+            .character_display_name = std::string(controller.generation.character_display_name),
             .phase = controller.generation.phase,
             .reasoning_text = std::string(controller.generation.reasoning_text),
         },
@@ -36,10 +36,10 @@ SessionSnapshot to_snapshot(
         .shutdown_reason = presentation.shutdown_reason,
     };
     snapshot.characters.reserve(controller.characters.size());
-    for (const CharacterInfo& character : controller.characters) {
+    for (const CharacterMetadata& character : controller.characters) {
         snapshot.characters.push_back({
             .id = character.id,
-            .display_name = character.name,
+            .display_name = character.display_name,
             .description = character.description,
             .appearance = character.appearance,
         });

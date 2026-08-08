@@ -20,9 +20,9 @@ WorkspaceModel load_model(const std::filesystem::path& root) {
     return WorkspaceModel::load(root, load_workspace_config(root));
 }
 
-std::vector<std::string> display_names(std::span<const CharacterDefinitionMetadata> values) {
+std::vector<std::string> display_names(std::span<const CharacterMetadata> values) {
     std::vector<std::string> names;
-    for (const CharacterDefinitionMetadata& value : values) names.push_back(value.display_name);
+    for (const CharacterMetadata& value : values) names.push_back(value.display_name);
     return names;
 }
 
@@ -469,14 +469,14 @@ TEST_F(WorkspaceModelLayoutTest, EnumeratesForumsInNameOrderAndIgnoresUnsafeDire
     EXPECT_EQ(model.find_forum("bad#fragment"), nullptr);
 }
 
-TEST_F(WorkspaceModelLayoutTest, ResolvesDefaultAgentWithoutReorderingMembers) {
+TEST_F(WorkspaceModelLayoutTest, ResolvesDefaultCharacterWithoutReorderingMembers) {
     std::filesystem::create_directories(root_ / "characters" / "alpha");
     std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "alpha");
     std::ofstream(root_ / "characters" / "alpha" / "character.toml")
         << "display_name = \"Alpha\"\n";
     std::ofstream(root_ / "characters" / "alpha" / "CHARACTER.md") << "Alpha";
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
-        << "display_name = \"The Lobby\"\ndefault_agent = \"guide\"\n";
+        << "display_name = \"The Lobby\"\ndefault_character = \"guide\"\n";
 
     const WorkspaceModel model = load();
     const ForumInfo* const forum = model.find_forum("lobby");
@@ -498,13 +498,24 @@ TEST_F(WorkspaceModelLayoutTest, DefaultsToFirstLexicographicMember) {
     EXPECT_EQ(forum->default_character_id, "alpha");
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsUnknownAndMalformedDefaultAgent) {
+TEST_F(WorkspaceModelLayoutTest, RejectsUnknownAndMalformedDefaultCharacter) {
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
-        << "display_name = \"The Lobby\"\ndefault_agent = \"missing\"\n";
+        << "display_name = \"The Lobby\"\ndefault_character = \"missing\"\n";
     EXPECT_THROW((void)load(), std::runtime_error);
 
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
-        << "display_name = \"The Lobby\"\ndefault_agent = [\"guide\"]\n";
+        << "display_name = \"The Lobby\"\ndefault_character = [\"guide\"]\n";
+    EXPECT_THROW((void)load(), std::runtime_error);
+}
+
+TEST_F(WorkspaceModelLayoutTest, AcceptsLegacyDefaultAgentButRejectsBothKeys) {
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_agent = \"guide\"\n";
+    EXPECT_EQ(load().find_forum("lobby")->default_character_id, "guide");
+
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_character = \"guide\"\n"
+           "default_agent = \"guide\"\n";
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 

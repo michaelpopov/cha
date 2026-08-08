@@ -20,7 +20,7 @@ class SessionCatalog;
 // never learns the workspace layout and the session layer never depends on an
 // application type.
 struct ForumSessionDirectory {
-    std::string forum_id;
+    ForumId forum_id;
     std::filesystem::path directory;
 };
 
@@ -72,7 +72,7 @@ public:
 private:
     [[nodiscard]] SessionCatalog catalog_for(std::string_view forum_id) const;
 
-    std::unordered_map<std::string, std::filesystem::path> persistent_;
+    std::unordered_map<ForumId, std::filesystem::path> persistent_;
     SessionIdentity temporary_identity_;
     std::string temporary_label_;
     std::filesystem::path temporary_directory_;

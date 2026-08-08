@@ -230,12 +230,12 @@ test('submits as the selected persona and renders the streamed transcript', asyn
   await page.getByRole('button', { name: 'Send message' }).click();
 
   await expect(page.locator('.cha-message.is-human').last()).toContainText(prompt);
-  await expect(page.locator('.cha-message.is-agent').last()).toContainText(prompt);
+  await expect(page.locator('.cha-message.is-character').last()).toContainText(prompt);
   await expect(page.getByLabel('Current chat context')).toContainText('From: Reader');
 
   // Guide's character.toml asks for a serif italic voice, so the whole path is
   // exercised here: the workspace file, the snapshot, and the rendered class.
-  const spoken = page.locator('.cha-message.is-agent .cha-message-text').last();
+  const spoken = page.locator('.cha-message.is-character .cha-message-text').last();
   await expect(spoken).toHaveClass(/cha-font-serif/);
   await expect(spoken).toHaveClass(/cha-slant-italic/);
   await expect(spoken).toHaveCSS('font-style', 'italic');
@@ -311,7 +311,7 @@ test('recovers a dropped stream and keeps the conversation on screen', async ({ 
   await expect(viewer.getByRole('combobox', { name: 'Choose target character' }))
     .toBeEnabled({ timeout: 15_000 });
   await expect(viewer.locator('.cha-message.is-human').last()).toContainText(prompt);
-  await expect(viewer.locator('.cha-message.is-agent').last()).toContainText(prompt);
+  await expect(viewer.locator('.cha-message.is-character').last()).toContainText(prompt);
   await expect(viewer.getByRole('button', { name: 'Send message' })).toBeVisible();
 });
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "agents/persona.h"
 
 #include <string_view>
@@ -19,7 +19,7 @@ inline constexpr std::string_view welcome_id = "builtin-welcome";
 
 const Persona& builtin_guest();
 std::string_view application_guide();
-std::vector<AgentDefinition> builtin_assistant_definitions(
+std::vector<CharacterDefinition> builtin_assistant_definitions(
     const ProviderConfig& provider,
     const std::string& inventory,
     const PersonaRoster& personas);

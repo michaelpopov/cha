@@ -18,7 +18,8 @@ TEST(Command, RecognizesEveryArgumentlessCommand) {
     EXPECT_EQ(parse_command("/info").kind, CommandKind::info);
     EXPECT_EQ(parse_command("/stop").kind, CommandKind::stop);
     EXPECT_EQ(parse_command("/exit").kind, CommandKind::exit);
-    EXPECT_EQ(parse_command("/agents").kind, CommandKind::agents);
+    EXPECT_EQ(parse_command("/agents").kind, CommandKind::characters);
+    EXPECT_EQ(parse_command("/characters").kind, CommandKind::characters);
     EXPECT_EQ(parse_command("/hide-on").kind, CommandKind::hide_on);
     EXPECT_EQ(parse_command("/hide").kind, CommandKind::hide);
     EXPECT_EQ(parse_command("/hide-off").kind, CommandKind::hide_off);
@@ -37,9 +38,9 @@ TEST(Command, CapturesTrailingTextAsTheRejectableArgument) {
     EXPECT_EQ(clear.kind, CommandKind::clear);
     EXPECT_EQ(clear.argument, "everything");
 
-    const Command agents = parse_command("/agents   please  ");
-    EXPECT_EQ(agents.kind, CommandKind::agents);
-    EXPECT_EQ(agents.argument, "please");
+    const Command characters = parse_command("/characters   please  ");
+    EXPECT_EQ(characters.kind, CommandKind::characters);
+    EXPECT_EQ(characters.argument, "please");
 
     const Command hide = parse_command("/hide later");
     EXPECT_EQ(hide.kind, CommandKind::hide);
@@ -50,7 +51,7 @@ TEST(Command, CapturesTrailingTextAsTheRejectableArgument) {
     EXPECT_EQ(multicast.argument, "@One, @Two. Question");
 }
 
-TEST(Command, ParsesTheDefaultAgentCommandHandle) {
+TEST(Command, ParsesTheDefaultCharacterCommandHandle) {
     const Command named = parse_command("/@Ismael");
     EXPECT_EQ(named.kind, CommandKind::set_default);
     EXPECT_EQ(named.handle, "Ismael");
@@ -77,7 +78,7 @@ TEST(Command, ReportsABareSlashAtAsSetDefaultWithoutAHandle) {
     EXPECT_EQ(spaced.argument, "Ismael");
 }
 
-TEST(Command, SeparatesTheDefaultAgentHandleFromAnArgument) {
+TEST(Command, SeparatesTheDefaultCharacterHandleFromAnArgument) {
     const Command extra = parse_command("/@Ismael hi");
     EXPECT_EQ(extra.kind, CommandKind::set_default);
     EXPECT_EQ(extra.handle, "Ismael");
@@ -88,7 +89,7 @@ TEST(Command, SeparatesTheDefaultAgentHandleFromAnArgument) {
 TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
     EXPECT_EQ(
         command_names(),
-        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /agents, /@Name, /stop, /exit");
+        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /characters, /agents, /@Name, /stop, /exit");
 }
 
 } // namespace

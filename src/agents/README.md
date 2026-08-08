@@ -1,6 +1,6 @@
-# Agent runtime
+# Completion runtime
 
-`agents/` owns everything about configured chat agents: loading a character,
+`agents/` owns completion execution for configured characters: loading a character,
 projecting the transcript into model context, running completions as
 batch-owned pool tasks, and speaking the provider's HTTP protocol. The ordered
 characters in a forum and `@handle` resolution belong to `session/`.
@@ -12,16 +12,16 @@ completion pool tasks.
 
 | Source | Responsibility |
 | --- | --- |
-| `config.*` | `LoadedConfig` — typed character metadata, connection settings, and prompt variables from one TOML overlay, with field validation. |
+| `config.*` | Separate discovery-safe `CharacterMetadata`, private `CompletionConfig`, and `LoadedCharacterConfig` values assembled from TOML overlays with field validation. |
 | `persona.h` | `Persona` and the ordered `PersonaRoster` values passed down from workspace discovery. |
-| `agent.*` | `AgentDefinition`, `CharacterInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
+| `character.*` | `CharacterDefinition`, `CompletionBackendInfo`, identity validation, definition loading with template expansion, completion request/event types, and `project_completion_context()`. |
 | `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
 | `completion_executor.*` | Backend ownership, runtime metadata validation, target resolution, and failure-atomic staging of a new batch. |
 | `completion_batch.*` | One in-flight operation: its execution slots, shared start gate, foreground position, cancellation, event queues, and wait state. |
 | `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
 | `completion_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
 
-## From character directory to running agent
+## From character directory to running completion backend
 
 ```mermaid
 flowchart LR
@@ -37,22 +37,22 @@ flowchart LR
         shared["definition includes under characters/;<br/>member/forum includes under the forum"]
     end
 
-    app_cfg --> load["load_config<br/>one parsed overlay"]
+    app_cfg --> load["load_character_config<br/>one parsed overlay"]
     definition_cfg --> load
     base --> load
     member_cfg --> load
-    load --> conf["Config + TemplateScope"]
+    load --> conf["CharacterMetadata + CompletionConfig + TemplateScope"]
     conf --> expand["expand_template_file<br/>CHARACTER.md and FORUM.md"]
     definition_prompt --> expand
     member_prompt --> expand
     usr --> expand
     shared --> expand
-    expand --> def["AgentDefinition<br/>config + effective system prompt"]
+    expand --> def["CharacterDefinition<br/>metadata + completion config + effective system prompt"]
     conf --> def
     roster --> def
     def -->|"one per character"| client["CompletionClient"]
     client --> executor["CompletionExecutor"]
-    client -->|"info"| runtime["AgentRuntimeInfo"]
+    client -->|"info"| runtime["CompletionBackendInfo"]
     runtime --> executor
     runtime -->|"identity only"| characters["session/ForumCharacters"]
 ```
@@ -70,9 +70,9 @@ member prompt and `FORUM.md` are contained to the forum directory. It also
 supplies reserved `character.*` / `forum.*` names and the three-layer `[prompt]`
 initial scope. An adjacent template `config.toml` overlays
 that inherited scope for its template directory and descendants; reserved
-loader values always win. The generated section names the current agent, lists
+loader values always win. The generated section names the current character, lists
 the other current characters, and defines how quoted shared history is encoded.
-It is added even for a single-agent forum, because restored history can still
+It is added even for a single-character forum, because restored history can still
 mention a character that has left. During session construction, loading happens
 on the session's owner thread; a forum check loads synchronously on its
 calling thread. `session/` decides
@@ -90,7 +90,7 @@ folding while retaining authored casing. The removed `id` and `name` fields are
 rejected. Parsing and validation errors identify the file that supplied the
 invalid value.
 
-Identity rules, enforced by `validate_character_id` and `validate_character_name`:
+Identity rules, enforced by `validate_character_id` and `validate_character_display_name`:
 
 - an **ID** is ASCII letters, digits, underscores, and hyphens. It is stable and
   is what transcript entries record — never change it when renaming a character.
@@ -167,7 +167,7 @@ Rules that fall out of this design:
   returns no batch.
 - **One start decision.** Opening or cancelling the shared gate is idempotent;
   the first transition wins. Queued tasks observe an already-open or cancelled
-  gate when they receive a worker; cancellation produces `AgentCancelled`
+  gate when they receive a worker; cancellation produces `CompletionCancelled`
   without calling the backend.
 - **Foreground-only consumption.** `foreground_run()` and
   `try_receive_foreground()` read the same slot, so no caller passes an index
@@ -195,7 +195,7 @@ Rules that fall out of this design:
   result-spooling machinery; simplicity is preferred over crash durability for
   this in-flight work.
 - **Exceptions become events.** Anything thrown on the worker is converted to
-  `AgentFailed`, so an accepted request always has an observable outcome.
+  `CompletionFailed`, so an accepted request always has an observable outcome.
 - **Shutdown is ordered.** The controller cancels the batch and waits until no
   execution can reach a backend, drains the foreground terminal event while the
   queues are still alive, releases the batch, and only then stops and joins the
@@ -210,12 +210,12 @@ Rules that fall out of this design:
 
 | Step | Runs | Purpose |
 | --- | --- | --- |
-| `prepare(input)` | Agent worker | Project owned `CompletionHistory`, append the run prompt once, and build a `RequestPayload`. Must be fast and local. |
-| `perform(payload, sink, cancellation)` | Agent worker | One synchronous completion, streaming fragments to the sink. |
+| `prepare(input)` | Completion worker | Project owned `CompletionHistory`, append the run prompt once, and build a `RequestPayload`. Must be fast and local. |
+| `perform(payload, sink, cancellation)` | Completion worker | One synchronous completion, streaming fragments to the sink. |
 | `info()` | Any time | Character identity and public runtime details for the executor. |
 
 The controller captures immutable completion history before activating a turn,
-so neither the agent runtime nor a backend reads the live transcript. Splitting
+so neither the completion runtime nor a backend reads the live transcript. Splitting
 preparation from performance keeps request construction separate from slow
 provider I/O. Tests supply their own backend and never touch the network;
 `tests/support/test_backends.h` has the helpers.
@@ -226,7 +226,7 @@ provider I/O. Tests supply their own backend and never touch the network;
 
 ```mermaid
 flowchart TD
-    prep["prepare"] --> proj["project_agent_context"]
+    prep["prepare"] --> proj["project_completion_context"]
     proj --> body["JSON body: model, stream, messages,<br/>temperature and optional reasoning_effort"]
     body --> post["POST to /v1/chat/completions"]
     post --> mode{"streaming?"}
@@ -266,7 +266,7 @@ Details worth knowing before changing this file:
 
 ## Context projection
 
-`project_agent_context()` decides what one agent sees of a shared chat transcript.
+`project_completion_context()` decides what one character's backend sees of a shared chat transcript.
 It is pure, and it is tested directly.
 
 ```mermaid
@@ -276,21 +276,21 @@ flowchart TD
     F -->|"inside the off-record span"| D
     F -->|"notice or error"| D
     F -->|"human turn of a failed request"| D
-    F -->|"agent entry not complete, or empty"| D
+    F -->|"character entry not complete, or empty"| D
     F -->|"otherwise"| K["keep"]
     K --> W{"whose entry?"}
-    W -->|"this agent"| A["assistant message"]
-    W -->|"human to this agent"| U["ordinary persona message"]
-    W -->|"human to another agent"| J["shared-history JSON object"]
-    W -->|"another agent"| J
+    W -->|"this character"| A["assistant message"]
+    W -->|"human to this character"| U["ordinary persona message"]
+    W -->|"human to another character"| J["shared-history JSON object"]
+    W -->|"another character"| J
     J --> B["contiguous JSON Lines block<br/>in a separate persona message"]
 ```
 
 The generated system section explains that shared-history objects are quoted
 statements whose first-person claims belong to their named speakers. JSON
 escaping prevents embedded newlines, quotes, or label-like text from creating
-false entry boundaries. A human prompt addressed to the requesting agent is
-always emitted outside the preceding shared-history block. Plain single-agent
+false entry boundaries. A human prompt addressed to the requesting character is
+always emitted outside the preceding shared-history block. Plain single-character
 history retains its ordinary persona/assistant wire shape, and reasoning text is
 never included.
 
@@ -319,10 +319,10 @@ from its answer.
 | Test | Covers |
 | --- | --- |
 | `tests/agents/unit_config_loader.cpp` | TOML fields, defaults, and rejection of malformed values. |
-| `tests/agents/unit_agent_definition_loader.cpp` | Character and forum prompt expansion, composition, scopes, and load errors. |
+| `tests/agents/unit_character_definition_loader.cpp` | Character and forum prompt expansion, composition, scopes, and load errors. |
 | `tests/session/unit_forum_characters.cpp` | Forum-character validation and every handle-resolution branch. |
 | `tests/agents/unit_completion_executor.cpp` | Backend construction and metadata validation, pool-width validation, target resolution, input validation, and failure-atomic submission. |
 | `tests/agents/unit_completion_batch.cpp` | Gate behavior, full-width fan-out, foreground routing and advancement rules, event buffering, cancellation, exactly-one terminal delivery, explicit waiting, and destructor cleanup. |
-| `tests/agents/unit_agent_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
+| `tests/agents/unit_completion_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
 | `tests/agents/unit_json_serialization.cpp` | Context-specific invalid-UTF-8 diagnostics for JSON serialization. |
 | `tests/agents/unit_completion_client.cpp` | Request bodies, SSE and JSON parsing, reasoning formats, and the error taxonomy, driven by `tests/support/mock_http_server.h`. |

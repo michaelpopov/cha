@@ -309,7 +309,7 @@ SessionRestore large_transcript(std::size_t text_size) {
     SessionRestore restored;
     restored.entries.push_back({
         .id = 1,
-        .kind = EntryKind::agent,
+        .kind = EntryKind::character,
         .participant_id = "guide",
         .display_name = "Guide",
         .text = std::string(text_size, 'x'),

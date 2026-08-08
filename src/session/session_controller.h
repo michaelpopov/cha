@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "agents/completion_batch.h"
 #include "agents/completion_executor.h"
 #include "agents/persona.h"
@@ -26,8 +26,9 @@
 namespace cha {
 
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
-// halves: read-only session state (transcript, forum characters, default agent, generation status) and
-// commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
+// halves: read-only session state (transcript, forum characters, default character, generation
+// status) and commands (submit a prompt, clear, stop, switch the default character, drain
+// completion events),
 // each returning a ControllerUpdate instead of touching a frontend. It owns the Transcript,
 // SessionJournal, CompletionExecutor, and the one in-flight CompletionBatch. Command syntax,
 // mentions, and transport formats belong to front ends, not here.
@@ -38,9 +39,9 @@ public:
     using ActivationHook = std::function<void(std::size_t)>;
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_shared_definitions(
-        std::vector<AgentDefinition> definitions,
+        std::vector<CharacterDefinition> definitions,
         SharedPersonaRoster personas,
-        ParticipantId initial_default_agent_id,
+        CharacterId initial_default_character_id,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
@@ -48,9 +49,9 @@ public:
     // Test-only counterpart for controller tests that intentionally do not
     // claim a fixture database's production lease.
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
-        std::vector<AgentDefinition> definitions,
+        std::vector<CharacterDefinition> definitions,
         PersonaRoster personas,
-        ParticipantId initial_default_agent_id,
+        CharacterId initial_default_character_id,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {});
@@ -59,7 +60,7 @@ public:
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         PersonaRoster personas,
-        ParticipantId initial_default_agent_id,
+        CharacterId initial_default_character_id,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {},
@@ -69,14 +70,11 @@ public:
     SessionController& operator=(const SessionController&) = delete;
 
     // --- Session state (read-only) --------------------------------------------
-    const Transcript& transcript() const { return transcript_; }
     [[nodiscard]] bool is_generating() const noexcept;
     // A borrowed read model for full projection. It is valid only on this
     // controller's owner thread and only until the next mutation, so callers
     // must consume it synchronously.
     [[nodiscard]] ControllerView view() const noexcept;
-    const ForumCharacters& characters() const { return characters_; }
-    const ParticipantId& default_agent_id() const { return default_agent_id_; }
 
     // --- Session commands (mutate, then report semantic changes) --------------
     [[nodiscard]] ControllerUpdate submit_prompt(
@@ -94,11 +92,11 @@ public:
         std::string text,
         std::vector<std::string> handles);
     [[nodiscard]] ControllerUpdate session_information();
-    [[nodiscard]] ControllerUpdate agent_information();
-    [[nodiscard]] ControllerUpdate set_default_agent(std::string_view handle);
-    [[nodiscard]] ControllerUpdate set_default_agent_by_id(std::string_view id);
+    [[nodiscard]] ControllerUpdate character_information();
+    [[nodiscard]] ControllerUpdate set_default_character(std::string_view handle);
+    [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
     [[nodiscard]] ControllerUpdate request_stop();
-    [[nodiscard]] ControllerUpdate handle_agent_event(AgentEvent event);
+    [[nodiscard]] ControllerUpdate handle_completion_event(CompletionEvent event);
     [[nodiscard]] ControllerEventBatch receive_events(std::size_t max_events);
     void shutdown();
 
@@ -106,16 +104,16 @@ private:
     struct ActiveResponse {
         RequestId request_id{};
         EntryId response_entry_id{};
-        ParticipantId agent_id;
-        std::string agent_name;
+        CharacterId character_id;
+        std::string character_display_name;
         ResponsePhase phase{ResponsePhase::waiting};
         std::string reasoning_text;
     };
 
     SessionController(
-        std::vector<AgentDefinition> definitions,
+        std::vector<CharacterDefinition> definitions,
         SharedPersonaRoster personas,
-        ParticipantId initial_default_agent_id,
+        CharacterId initial_default_character_id,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
@@ -123,7 +121,7 @@ private:
     SessionController(
         std::vector<std::unique_ptr<CompletionBackend>> backends,
         PersonaRoster personas,
-        ParticipantId initial_default_agent_id,
+        CharacterId initial_default_character_id,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored,
@@ -139,13 +137,13 @@ private:
     void start_batch(
         EntryIdentity author,
         std::string text,
-        std::vector<CharacterInfo> targets,
+        std::vector<CharacterMetadata> targets,
         SharedCompletionHistory history,
         ControllerUpdate& update);
     [[nodiscard]] ControllerUpdate start_resolved_multicast(
         std::string_view author_id,
         std::string text,
-        std::vector<CharacterInfo> targets);
+        std::vector<CharacterMetadata> targets);
     void activate_current_run(ControllerUpdate& update);
     void start_next_batch_run(ControllerUpdate& update);
     void finish_batch_run(ControllerUpdate& update);
@@ -157,10 +155,10 @@ private:
     // destroys the batch, and clears the controller's notice accumulation so it
     // cannot leak into a later operation.
     void release_batch() noexcept;
-    void apply(const AgentDelta& event, ControllerUpdate& update);
-    void apply(const AgentCompleted& event, ControllerUpdate& update);
-    void apply(const AgentCancelled& event, ControllerUpdate& update);
-    void apply(const AgentFailed& event, ControllerUpdate& update);
+    void apply(const CompletionEventDelta& event, ControllerUpdate& update);
+    void apply(const CompletionCompleted& event, ControllerUpdate& update);
+    void apply(const CompletionCancelled& event, ControllerUpdate& update);
+    void apply(const CompletionFailed& event, ControllerUpdate& update);
     void fail_active_response(
         std::string message,
         ParticipantId participant_id,
@@ -182,7 +180,7 @@ private:
     CompletionExecutor completion_executor_;
     ForumCharacters characters_;
     SharedPersonaRoster personas_;
-    ParticipantId default_agent_id_;
+    CharacterId default_character_id_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;

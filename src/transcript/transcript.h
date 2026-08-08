@@ -37,7 +37,7 @@ struct HumanEntrySpec {
 // Classifies transcript semantics independently of the label rendered to the persona.
 enum class EntryKind : std::int64_t {
     human = 0,
-    agent = 1,
+    character = 1,
     notice = 2,
     error = 3,
 };
@@ -108,7 +108,7 @@ struct CompletionHistory {
 };
 
 TranscriptEntry make_human_entry(HumanEntrySpec spec);
-TranscriptEntry make_agent_entry(
+TranscriptEntry make_character_entry(
     EntryId id,
     ParticipantId participant_id,
     std::string display_name,
@@ -162,12 +162,8 @@ public:
     [[nodiscard]] bool restore_offrecord(EntryId marker_id);
 
     [[nodiscard]] TranscriptView view() const noexcept;
-    [[nodiscard]] std::size_t size() const noexcept;
     CompletionHistory completion_history() const;
-    [[nodiscard]] std::span<const TranscriptEntry> entries() const noexcept;
-    std::optional<EntryId> open_entry_id() const;
     std::string open_entry_text(EntryId entry_id) const;
-    OffrecordSpan offrecord_span() const;
 
 private:
     void require_next_id(EntryId entry_id) const;

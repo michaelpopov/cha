@@ -18,7 +18,7 @@ web frontend and tests drive the same code.
 | `session_identity.h` / `opened_session.h` | Stable `SessionIdentity`, presentation-safe `SessionDescriptor`, and the owner-thread-only `OpenedSession` result. |
 | `controller_update.h/.cpp` | The transport-neutral outcome of one controller operation: the `ControllerStateUpdate` variant, its text targets and owning append, `ControllerUpdate`, the bounded event-drain result, and the one merge rule. |
 | `controller_view.h` | The borrowed, owner-thread-only read model used to build a full frontend snapshot. |
-| `session_controller.*` | Own one live session: commands, the one in-flight `CompletionBatch`, agent events, default agent, notices, and shutdown. |
+| `session_controller.*` | Own one live session: commands, the one in-flight `CompletionBatch`, completion events, default character, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
 ## Workspace layout
@@ -31,7 +31,7 @@ flowchart TD
     root --> characters["characters/<id>/"]
     characters --> character["character.toml + CHARACTER.md<br/>definition + includes"]
     forums --> forum["forum-name/"]
-    forum --> config["config.toml — required display_name + optional description/default_agent"]
+    forum --> config["config.toml — required display_name + optional description/default_character"]
     forum --> members["members/"]
     members --> base["character_defaults.toml<br/>optional forum defaults + [prompt]"]
     members --> member["<id>/character.toml + CHARACTER.md<br/>optional overrides"]
@@ -61,13 +61,15 @@ case folding; they are metadata only and never determine membership. Definitions
 with no member directory in any forum are valid.
 
 Model loading validates the whole directory graph before it serves a forum:
-every member resolves to one definition, each configured `default_agent` names a
+every member resolves to one definition, each configured `default_character` names a
 member, and character/persona IDs and case-folded display names do not collide.
 It also resolves every configured forum's prompts and definitions, so an invalid
 unused forum fails startup rather than one later open. An invalid workspace
-fails as a whole. `default_agent` leaves member
-and agent-definition ordering unchanged; when it is absent, the first
+fails as a whole. `default_character` leaves member
+and character-definition ordering unchanged; when it is absent, the first
 lexicographic member ID is used.
+The legacy `default_agent` key remains accepted for compatibility, but a forum
+must not define both spellings.
 
 Template containment follows the file's layer: a definition `CHARACTER.md` is
 contained to workspace `characters/`; a member `CHARACTER.md` and `FORUM.md`
@@ -76,7 +78,7 @@ are contained to their forum directory.
 `WorkspaceModel` supplies validated metadata and forum definitions.
 Each controller receives the effective application-wide persona roster and
 resolves submitted stable author IDs against it. The roster also contributes
-static model context, but it is not forum or session membership. The agent layer applies the shared provider
+static model context, but it is not forum or session membership. The completion layer applies the shared provider
 layer, definition, forum-default, and member override policy,
 deriving the definition containment root from the definition directory's parent
 and otherwise receiving resolved workspace paths explicitly.
@@ -108,7 +110,7 @@ never handed to a live controller as evidence.
 `ForumCharacters` is the identity-only view of the characters participating in one
 forum. It is ordered, non-empty, and rejects duplicate IDs and
 ASCII-case-insensitive names. The workspace passes the validated initial default
-character ID separately: it is `config.toml`'s `default_agent` when supplied,
+character ID separately: it is `config.toml`'s `default_character` when supplied,
 otherwise the first lexicographic member ID. It never reorders this view.
 
 `resolve_handle()` tries an exact case-insensitive name, retries after removing
@@ -117,10 +119,10 @@ returns resolved, unknown, or ambiguous.
 
 `forum_characters.*` also owns the wording of the notices built from those
 results, so all of it sits in one place: handle errors, duplicate multicast
-targets, the `/agents` character listing, and the `/info` line. Model, API, and
+targets, the `/characters` character listing, and the `/info` line. Model, API, and
 streaming details are not `ForumCharacters` state — `CompletionExecutor` exposes
-those separately as `AgentRuntimeInfo`, which the formatters take as a
-parameter, and `SessionController` supplies to them only for `/agents` and
+those separately as `CompletionBackendInfo`, which the formatters take as a
+parameter, and `SessionController` supplies to them only for `/characters` and
 `/info`. The `/info` formatter takes an entry count rather than a `Transcript`
 for the same reason.
 
@@ -249,7 +251,7 @@ erDiagram
         int entry_id PK
         int epoch
         int request_id FK
-        int kind "0 human, 1 agent, 2 notice, 3 error"
+        int kind "0 human, 1 character, 2 notice, 3 error"
         text participant_id
         text display_name
         text addressed_to
@@ -269,7 +271,7 @@ What the schema enforces on its own, independently of the C++ code:
 - `CHECK` constraints restate the entry model: participant identity where it is
   required, addressing only on human entries, `failed` status only for error
   entries, `complete` status only for human and notice entries, non-empty text
-  for completed agent entries, and `streaming` status excluded entirely.
+  for completed character entries, and `streaming` status excluded entirely.
 - `entries.request_id` references `turns.request_id`, with foreign keys on.
 
 ### Epochs
@@ -311,7 +313,7 @@ as part of its contract.
 Streaming status never reaches SQL: `require_storable_transcript_entry()` and
 the schema constraints reject it. Reasoning is even further outside
 persistence—it lives only in the active response and never enters a
-`TranscriptEntry`. A cancelled agent response is stored only if it has answer
+`TranscriptEntry`. A cancelled character response is stored only if it has answer
 text. The off-record span and its marker entries are also run-time only:
 reopening a session presents the complete durable conversation with no span and
 no markers.
@@ -349,15 +351,15 @@ never tells a widget to clear itself or to navigate away.
 
 | Command | Behavior | Semantic result |
 | --- | --- | --- |
-| `submit_prompt(author_id, text, handle)` | Resolves the stable author ID against the controller's application-wide roster, then resolves the character handle or falls back to the default agent and starts a turn. | On success, state changes and submitted input is consumed. Unknown authors or character handles and an empty prompt retain the draft; the roster is not forum membership. |
+| `submit_prompt(author_id, text, handle)` | Resolves the stable author ID against the controller's application-wide roster, then resolves the character handle or falls back to the default character and starts a turn. | On success, state changes and submitted input is consumed. Unknown authors or character handles and an empty prompt retain the draft; the roster is not forum membership. |
 | `clear_transcript()` | Bumps the durable epoch, then clears the live transcript. | State changes; the text layer decides how a submitted command affects an editor. |
 | `open_offrecord()` | Opens an off-record span at the current turn boundary. | On success state changes with no notice — the appended marker is the acknowledgement; on a precondition failure only a notice. |
 | `extend_offrecord()` | Sets or moves the span's end to the current turn boundary. | As above. |
 | `restore_offrecord()` | Cancels the span, returning its entries to model context. | As above. |
 | `start_multicast(author_id, text, handles)` | Resolves the stable author ID and textual character handles once, then captures one immutable pre-multicast history, stages every distinct target concurrently, and commits foreground turns in target order. | Author or target validation failures start no batch; terminal notices are retained until multicast completion or abort cleanup. |
 | `session_information()` | Entry count plus the forum characters and their runtime details. | A notice and consumed submitted input; state is unchanged. |
-| `agent_information()` | Forum characters and runtime details, marking the default. | A notice and consumed submitted input; state is unchanged. |
-| `set_default_agent(handle)` | Changes the default for this run only. | A successful change is observable state; a text command may consume its submitted input. |
+| `character_information()` | Forum characters and runtime details, marking the default. | A notice and consumed submitted input; state is unchanged. |
+| `set_default_character(handle)` | Changes the default for this run only. | A successful change is observable state; a text command may consume its submitted input. |
 | `request_stop()` | Calls `CompletionBatch::cancel()` and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. It never waits for an execution. | Immediate stopping notice, followed by the final stop notice after cleanup. |
 | `receive_events(max_events)` | Boundedly drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged semantic changes; after shutdown drains its batch, `session_ended` is true. |
 | `shutdown()` | Cancels the batch and waits until no execution can reach a backend, commits the retained foreground terminal state, releases the batch, then joins the session pool — including on the persistence-exception path. | — |
@@ -403,7 +405,7 @@ directly in controller tests.
 identity, `SnapshotRequired` dominates, two appends to one target concatenate in
 event order, appends to different targets become `SnapshotRequired`, lifecycle
 flags combine with logical OR, and the last supplied notice wins including an
-empty clearing one. Agent events never manufacture input consumption. The
+empty clearing one. Completion events never manufacture input consumption. The
 drain's `full` flag stays outside `ControllerUpdate` because it is queue
 scheduling information, not an observable session effect.
 
@@ -436,7 +438,7 @@ Front ends translate those into these calls.
 
 `SessionController` owns at most one `optional<CompletionBatch>`, and that
 batch is the single authority for the operation's runs, foreground selection,
-cancellation, and execution completion. The agent layer owns the execution
+cancellation, and execution completion. The completion layer owns the execution
 mechanics; the controller owns durability and presentation. An ordinary prompt
 is represented as a one-child batch.
 
@@ -473,21 +475,21 @@ Applying events:
 
 | Event | Effect |
 | --- | --- |
-| Reasoning `AgentDelta` | Appends to ephemeral active-response state; the first sets phase to `reasoning`. |
-| Answer `AgentDelta`, first one | Opens the streaming transcript entry, appends the answer, and sets phase to `answering`. |
-| Answer `AgentDelta`, later | Appends answer text to the open transcript entry. |
-| `AgentCompleted` while answering | `complete_turn()`, then finish the entry as `complete`. |
-| `AgentCompleted` before any answer | Treated as failure: "completed without answer content". |
-| `AgentCancelled` while answering | `cancel_turn()` with the partial answer, entry finished as `cancelled`. |
-| `AgentCancelled` earlier | `cancel_turn()` with no response; ephemeral reasoning is cleared. |
-| `AgentFailed` | `fail_turn()` with an error entry, the open streaming entry is discarded, the error is added to the transcript. |
+| Reasoning `CompletionEventDelta` | Appends to ephemeral active-response state; the first sets phase to `reasoning`. |
+| Answer `CompletionEventDelta`, first one | Opens the streaming transcript entry, appends the answer, and sets phase to `answering`. |
+| Answer `CompletionEventDelta`, later | Appends answer text to the open transcript entry. |
+| `CompletionCompleted` while answering | `complete_turn()`, then finish the entry as `complete`. |
+| `CompletionCompleted` before any answer | Treated as failure: "completed without answer content". |
+| `CompletionCancelled` while answering | `cancel_turn()` with the partial answer, entry finished as `cancelled`. |
+| `CompletionCancelled` earlier | `cancel_turn()` with no response; ephemeral reasoning is cleared. |
+| `CompletionFailed` | `fail_turn()` with an error entry, the open streaming entry is discarded, the error is added to the transcript. |
 
 Events whose request ID does not match the active turn are ignored, which is
 what makes a cancelled turn's late fragments harmless.
 
 `ResponsePhase` is monotonic during normal generation:
 `waiting` → `reasoning` → `answering`. The separate `stopping` phase is an
-abort-cleanup overlay. It keeps the foreground agent name visible while the
+abort-cleanup overlay. It keeps the foreground character display name visible while the
 controller commits that child's terminal event and the batch's remaining
 executions finish. A foreground completion already queued when `/stop` is processed wins
 the race and is committed normally.

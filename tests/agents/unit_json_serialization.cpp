@@ -20,11 +20,11 @@ std::string invalid_utf8_error(JsonPurpose purpose) {
     return {};
 }
 
-TEST(JsonSerialization, IdentifiesInvalidAgentDefinitionText) {
+TEST(JsonSerialization, IdentifiesInvalidCharacterDefinitionText) {
     EXPECT_EQ(
         invalid_utf8_error<nlohmann::ordered_json>(
-            JsonPurpose::agent_definition),
-        "Agent definition contains invalid UTF-8");
+            JsonPurpose::character_definition),
+        "Character definition contains invalid UTF-8");
 }
 
 TEST(JsonSerialization, IdentifiesInvalidCompletionRequestText) {

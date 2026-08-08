@@ -87,7 +87,7 @@ RawCommand parse_input_command(const nlohmann::json& json) {
     return {persona, required_string(json, "text")};
 }
 
-SetDefaultAgentCommand parse_default_agent_command(
+SetDefaultCharacterCommand parse_default_character_command(
     const nlohmann::json& json) {
     exact_keys(json, {"character_id"});
     return {required_string(json, "character_id")};

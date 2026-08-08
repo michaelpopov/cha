@@ -57,13 +57,15 @@ public:
     std::filesystem::path path;
 };
 
-AgentDefinition definition(
+CharacterDefinition definition(
     std::string id = "guide-id",
     std::string name = "Guide") {
     return {
-        .config = {
+        .character = {
             .id = std::move(id),
             .display_name = std::move(name),
+        },
+        .completion = {
             .host = "127.0.0.1",
             .port = 8080,
         },
@@ -71,8 +73,8 @@ AgentDefinition definition(
     };
 }
 
-std::vector<TranscriptEntry> copy_entries(const Transcript& transcript) {
-    const auto entries = transcript.entries();
+std::vector<TranscriptEntry> copy_entries(TranscriptView transcript) {
+    const auto entries = transcript.entries;
     return {entries.begin(), entries.end()};
 }
 
@@ -92,11 +94,11 @@ public:
         return {CompletionOutcome::cancelled, {}};
     }
 
-    AgentRuntimeInfo info() const override {
+    CompletionBackendInfo info() const override {
         return {
             .character = {
                 .id = id_,
-                .name = "Guide",
+                .display_name = "Guide",
             },
             .model = "test-model",
             .api = "test://blocking",
@@ -111,7 +113,7 @@ private:
 TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     TemporaryTextSession temporary;
     auto controller = test::from_definitions_for_testing(
-        std::vector<AgentDefinition>{definition()},
+        std::vector<CharacterDefinition>{definition()},
         temporary.path,
         notifier());
 
@@ -147,7 +149,7 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/hide").session));
     EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/hide-off").session));
     EXPECT_EQ(
-        copy_entries(controller->transcript()),
+        copy_entries(controller->view().transcript),
         (std::vector<TranscriptEntry>{
             make_hide_on_marker(1),
             make_hide_marker(2),
@@ -159,13 +161,13 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_NE(
         information.session.notice->find("Transcript entries: 3"),
         std::string::npos);
-    const CommandResult agents =
-        handle_text_input(*controller, "operator", "/agents");
-    ASSERT_TRUE(agents.session.notice);
-    EXPECT_NE(agents.session.notice->find("@Guide"), std::string::npos);
+    const CommandResult characters =
+        handle_text_input(*controller, "operator", "/characters");
+    ASSERT_TRUE(characters.session.notice);
+    EXPECT_NE(characters.session.notice->find("@Guide"), std::string::npos);
     EXPECT_EQ(
         handle_text_input(*controller, "operator", "/@Gui").session.notice,
-        "Default agent is now Guide");
+        "Default character is now Guide");
 
     const CommandResult idle_stop =
         handle_text_input(*controller, "operator", "/stop");
@@ -181,7 +183,7 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
 TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
     TemporaryTextSession temporary;
     auto controller = test::from_definitions_for_testing(
-        std::vector<AgentDefinition>{
+        std::vector<CharacterDefinition>{
             definition(),
             definition("ismael-id", "Ismael"),
         },
@@ -192,7 +194,7 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
         handle_text_input(*controller, "operator", "  @Ism hello");
     EXPECT_TRUE(submitted.clear_input);
     const std::vector<TranscriptEntry> entries =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().addressed_to, "ismael-id");
     EXPECT_EQ(entries.front().text, "hello");
@@ -210,12 +212,12 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
     const CommandResult ordinary =
         handle_text_input(*ordinary_controller, "engineer", "Question");
     EXPECT_TRUE(ordinary.clear_input);
-    ASSERT_EQ(ordinary_controller->transcript().entries().size(), 1U);
+    ASSERT_EQ(ordinary_controller->view().transcript.entries.size(), 1U);
     EXPECT_EQ(
-        ordinary_controller->transcript().entries().front().participant_id,
+        ordinary_controller->view().transcript.entries.front().participant_id,
         "engineer");
     EXPECT_EQ(
-        ordinary_controller->transcript().entries().front().display_name,
+        ordinary_controller->view().transcript.entries.front().display_name,
         "Engineer");
     ordinary_controller->shutdown();
 
@@ -229,12 +231,12 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
     const CommandResult multicast = handle_text_input(
         *multicast_controller, "engineer", "/mcast @Guide Question");
     EXPECT_TRUE(multicast.clear_input);
-    ASSERT_EQ(multicast_controller->transcript().entries().size(), 1U);
+    ASSERT_EQ(multicast_controller->view().transcript.entries.size(), 1U);
     EXPECT_EQ(
-        multicast_controller->transcript().entries().front().participant_id,
+        multicast_controller->view().transcript.entries.front().participant_id,
         "engineer");
     EXPECT_EQ(
-        multicast_controller->transcript().entries().front().display_name,
+        multicast_controller->view().transcript.entries.front().display_name,
         "Engineer");
     multicast_controller->shutdown();
 }
@@ -242,7 +244,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
 TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
     TemporaryTextSession temporary;
     auto controller = test::from_definitions_for_testing(
-        std::vector<AgentDefinition>{definition()},
+        std::vector<CharacterDefinition>{definition()},
         temporary.path,
         notifier());
 
@@ -250,14 +252,14 @@ TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
         *controller, "operator", "/mcast @Guide @Gui What time is it?");
     EXPECT_TRUE(duplicate.clear_input);
     EXPECT_EQ(duplicate.session.notice, "Multicast target @Guide is duplicated");
-    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
 
     const CommandResult unknown = handle_text_input(
         *controller, "operator", "/mcast @Nobody What time is it?");
     EXPECT_TRUE(unknown.clear_input);
     ASSERT_TRUE(unknown.session.notice);
-    EXPECT_NE(unknown.session.notice->find("Unknown agent @Nobody"), std::string::npos);
-    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_NE(unknown.session.notice->find("Unknown character @Nobody"), std::string::npos);
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
 }
 
 TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
@@ -299,7 +301,7 @@ TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
 TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
     TemporaryTextSession temporary;
     auto controller = test::from_definitions_for_testing(
-        std::vector<AgentDefinition>{definition()}, temporary.path, notifier());
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
 
     const CommandResult unknown_author =
         handle_text_input(*controller, "unknown", "Question");

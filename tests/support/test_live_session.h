@@ -203,9 +203,9 @@ public:
         }
     }
 
-    AgentRuntimeInfo info() const override {
+    CompletionBackendInfo info() const override {
         return {
-            .character = {.id = id_, .name = name_},
+            .character = {.id = id_, .display_name = name_},
             .model = "test-model",
             .api = "test://completion",
             .streaming = true,
@@ -295,13 +295,15 @@ inline OpenedSession open_restored_session(
 // One character configured for a port nothing listens on. A session opened
 // this way is quiescent: it never generates on its own, which is what
 // liveness, capacity, and lease tests want.
-inline AgentDefinition unreachable_definition(
+inline CharacterDefinition unreachable_definition(
     std::string id = "guide",
     std::string name = "Guide") {
     return {
-        .config = {
+        .character = {
             .id = std::move(id),
             .display_name = std::move(name),
+        },
+        .completion = {
             .host = "127.0.0.1",
             .port = 1,
         },

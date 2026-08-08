@@ -1,4 +1,4 @@
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "transcript/transcript.h"
 #include "session/session_database.h"
 #include "support/test_session_database.h"
@@ -126,41 +126,41 @@ TEST(Transcript, HumanEntryKeepsAuthorAndAddresseeIdentitiesSeparate) {
 TEST(Transcript, StoresTypedCompleteAndStreamingEntries) {
     Transcript transcript;
     transcript.add_entry(human(1, "Review this code", 10));
-    transcript.begin_entry(make_agent_entry(
+    transcript.begin_entry(make_character_entry(
         2, "reviewer-id", "Reviewer", std::string{}, EntryStatus::streaming, 10));
     transcript.append_answer(2, "Two ");
     transcript.append_answer(2, "issues found");
 
-    EXPECT_EQ(transcript.open_entry_id(), 2U);
+    EXPECT_EQ(transcript.view().open_entry_id, 2U);
     EXPECT_EQ(transcript.open_entry_text(2), "Two issues found");
     EXPECT_THROW(transcript.open_entry_text(3), std::logic_error);
     transcript.finish_entry(2, EntryStatus::complete);
-    EXPECT_FALSE(transcript.open_entry_id());
+    EXPECT_FALSE(transcript.view().open_entry_id);
     EXPECT_THROW(transcript.open_entry_text(2), std::logic_error);
     expect_entries(
-        transcript.entries(),
+        transcript.view().entries,
         (std::vector<TranscriptEntry>{
             human(1, "Review this code", 10),
-            make_agent_entry(
+            make_character_entry(
                 2, "reviewer-id", "Reviewer", "Two issues found", EntryStatus::complete, 10),
         }));
 }
 
 TEST(Transcript, RequiresTheStreamingEntryHandleForMutation) {
     Transcript transcript;
-    transcript.begin_entry(make_agent_entry(
+    transcript.begin_entry(make_character_entry(
         4, "reviewer-id", "Reviewer", std::string{}, EntryStatus::streaming, 2));
 
     EXPECT_THROW(
         transcript.append_answer(5, "wrong"),
         std::logic_error);
     EXPECT_THROW(transcript.discard_entry(5), std::logic_error);
-    EXPECT_EQ(transcript.open_entry_id(), 4U);
+    EXPECT_EQ(transcript.view().open_entry_id, 4U);
 }
 
-TEST(Transcript, RequiresAnswerTextForTerminalAgentEntries) {
+TEST(Transcript, RequiresAnswerTextForTerminalCharacterEntries) {
     Transcript transcript;
-    transcript.begin_entry(make_agent_entry(
+    transcript.begin_entry(make_character_entry(
         1,
         "reviewer-id",
         "Reviewer",
@@ -176,7 +176,7 @@ TEST(Transcript, RequiresAnswerTextForTerminalAgentEntries) {
     transcript.append_answer(1, "Partial answer");
     EXPECT_NO_THROW(transcript.finish_entry(1, EntryStatus::cancelled));
     EXPECT_NO_THROW(
-        require_storable_transcript_entry(transcript.entries().back()));
+        require_storable_transcript_entry(transcript.view().entries.back()));
 }
 
 TEST(Transcript, ExposesACallScopedConstViewWithoutCopyingEntries) {
@@ -184,10 +184,8 @@ TEST(Transcript, ExposesACallScopedConstViewWithoutCopyingEntries) {
     transcript.add_entry(make_notice_entry(1, "Original"));
 
     const TranscriptView view = transcript.view();
-    EXPECT_EQ(view.entries.data(), transcript.entries().data());
     EXPECT_EQ(view.entries.front().text, "Original");
     EXPECT_EQ(view.size(), 1U);
-    EXPECT_EQ(transcript.size(), 1U);
 }
 
 TEST(Transcript, ReplacesAndClearsEntries) {
@@ -196,13 +194,13 @@ TEST(Transcript, ReplacesAndClearsEntries) {
     const std::size_t initial_epoch = transcript.view().history_epoch;
     transcript.replace_entries({
         human(2, "Restored"),
-        make_agent_entry(3, "guide-id", "Guide", "Welcome", EntryStatus::complete),
+        make_character_entry(3, "guide-id", "Guide", "Welcome", EntryStatus::complete),
     });
 
-    EXPECT_EQ(transcript.entries().size(), 2U);
+    EXPECT_EQ(transcript.view().entries.size(), 2U);
     EXPECT_EQ(transcript.view().history_epoch, initial_epoch + 1);
     transcript.clear();
-    EXPECT_TRUE(transcript.entries().empty());
+    EXPECT_TRUE(transcript.view().entries.empty());
     EXPECT_EQ(transcript.view().history_epoch, initial_epoch + 2);
 }
 
@@ -210,36 +208,36 @@ TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
     Transcript transcript;
 
     EXPECT_THROW((void)transcript.open_offrecord(0), std::invalid_argument);
-    EXPECT_TRUE(transcript.entries().empty());
+    EXPECT_TRUE(transcript.view().entries.empty());
     EXPECT_FALSE(transcript.extend_offrecord(1));
     EXPECT_FALSE(transcript.restore_offrecord(1));
     EXPECT_TRUE(transcript.open_offrecord(1));
     EXPECT_FALSE(transcript.open_offrecord(2));
     transcript.add_entry(human(2, "Hidden prompt", 1));
-    transcript.add_entry(make_agent_entry(
+    transcript.add_entry(make_character_entry(
         3, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1));
     EXPECT_TRUE(transcript.extend_offrecord(4));
 
-    const OffrecordSpan closed_span = transcript.offrecord_span();
+    const OffrecordSpan closed_span = transcript.completion_history().offrecord_span;
     EXPECT_EQ(closed_span, (OffrecordSpan{.begin = 1, .end = 4}));
     EXPECT_TRUE(closed_span.contains(1));
     EXPECT_TRUE(closed_span.contains(3));
     EXPECT_FALSE(closed_span.contains(4));
     expect_entries(
-        transcript.entries(),
+        transcript.view().entries,
         (std::vector<TranscriptEntry>{
             make_hide_on_marker(1),
             human(2, "Hidden prompt", 1),
-            make_agent_entry(
+            make_character_entry(
                 3, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1),
             make_hide_marker(4),
         }));
 
     EXPECT_TRUE(transcript.restore_offrecord(5));
-    EXPECT_EQ(transcript.offrecord_span(), OffrecordSpan{});
-    EXPECT_EQ(transcript.entries().back(), make_hide_off_marker(5));
+    EXPECT_EQ(transcript.completion_history().offrecord_span, OffrecordSpan{});
+    EXPECT_EQ(transcript.view().entries.back(), make_hide_off_marker(5));
     transcript.clear();
-    EXPECT_EQ(transcript.offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(transcript.completion_history().offrecord_span, OffrecordSpan{});
 }
 
 TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) {
@@ -252,7 +250,7 @@ TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) 
     EXPECT_EQ(opened.revision, before.revision + 1);
     EXPECT_EQ(opened.history_epoch, before.history_epoch);
     EXPECT_EQ(
-        transcript.offrecord_span(),
+        transcript.completion_history().offrecord_span,
         (OffrecordSpan{.begin = 3, .end = std::nullopt}));
 
     transcript.add_entry(human(6, "Hidden", 2));
@@ -262,7 +260,7 @@ TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) 
     EXPECT_EQ(closed.revision, before_extend.revision + 1);
     EXPECT_EQ(closed.history_epoch, before_extend.history_epoch);
     EXPECT_EQ(
-        transcript.offrecord_span(),
+        transcript.completion_history().offrecord_span,
         (OffrecordSpan{.begin = 3, .end = 7}));
 
     EXPECT_TRUE(transcript.restore_offrecord(12));
@@ -276,20 +274,20 @@ TEST(Transcript, ReplacingEntriesDropsTheOffrecordSpan) {
     EXPECT_TRUE(transcript.open_offrecord(1));
     transcript.add_entry(human(2, "Hidden", 1));
     EXPECT_TRUE(transcript.extend_offrecord(3));
-    ASSERT_NE(transcript.offrecord_span(), OffrecordSpan{});
+    ASSERT_NE(transcript.completion_history().offrecord_span, OffrecordSpan{});
 
     transcript.replace_entries({human(20, "Restored", 2)});
 
-    EXPECT_EQ(transcript.offrecord_span(), OffrecordSpan{});
+    EXPECT_EQ(transcript.completion_history().offrecord_span, OffrecordSpan{});
     expect_entries(
-        transcript.entries(),
+        transcript.view().entries,
         (std::vector<TranscriptEntry>{human(20, "Restored", 2)}));
 }
 
 TEST(Transcript, CompletionHistoryOwnsOneAtomicModelContextSnapshot) {
     Transcript transcript;
     transcript.add_entry(human(1, "Question", 1));
-    transcript.begin_entry(make_agent_entry(
+    transcript.begin_entry(make_character_entry(
         2, "reviewer-id", "Reviewer", {}, EntryStatus::streaming, 1));
     const CompletionHistory history = transcript.completion_history();
 
@@ -312,7 +310,7 @@ TEST(Transcript, CompletionHistoryIncludesOffrecordProjectionState) {
     EXPECT_EQ(
         history.offrecord_span,
         (OffrecordSpan{.begin = 1, .end = 3}));
-    expect_entries(transcript.entries(), history.entries);
+    expect_entries(transcript.view().entries, history.entries);
 }
 
 TEST(Transcript, RequiresStrictlyIncreasingEntryIds) {
@@ -347,7 +345,7 @@ TEST(TranscriptValidation, IsEnforcedByMemoryAndDatabase) {
     journal->start_turn(1, prompt);
     EXPECT_THROW(journal->fail_turn(1, invalid), std::invalid_argument);
 
-    const TranscriptEntry empty_completion = make_agent_entry(
+    const TranscriptEntry empty_completion = make_character_entry(
         2, "reviewer-id", "Reviewer", std::string{}, EntryStatus::complete, 1);
     EXPECT_THROW(validate_transcript_entry(empty_completion), std::invalid_argument);
     EXPECT_THROW(transcript.add_entry(empty_completion), std::invalid_argument);
@@ -359,7 +357,7 @@ TEST(TranscriptValidation, IsEnforcedByMemoryAndDatabase) {
         (std::vector<TranscriptEntry>{prompt}));
 
     Transcript streaming;
-    streaming.begin_entry(make_agent_entry(
+    streaming.begin_entry(make_character_entry(
         1, "reviewer-id", "Reviewer", std::string{}, EntryStatus::streaming, 1));
     EXPECT_THROW(
         streaming.finish_entry(1, EntryStatus::complete),
@@ -373,14 +371,14 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
     journal->start_turn(1, human(1, "Hello", 1));
-    journal->complete_turn(1, make_agent_entry(
+    journal->complete_turn(1, make_character_entry(
         2, "reviewer-id", "Reviewer", "Hello back", EntryStatus::complete, 1));
 
     EXPECT_EQ(
         load_transcript_entries(path),
         (std::vector<TranscriptEntry>{
             human(1, "Hello", 1),
-            make_agent_entry(
+            make_character_entry(
                 2,
                 "reviewer-id",
                 "Reviewer",
@@ -403,7 +401,7 @@ TEST(SessionDatabase, RejectsAStreamingTerminalResponse) {
     const TranscriptEntry prompt = human(1, "Question", 1);
     journal->start_turn(1, prompt);
     EXPECT_THROW(
-        journal->complete_turn(1, make_agent_entry(
+        journal->complete_turn(1, make_character_entry(
             2,
             "reviewer-id",
             "Reviewer",
@@ -423,7 +421,7 @@ TEST(SessionJournal, ReplaysOnlyTheCurrentEpochAfterClear) {
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
     journal->start_turn(1, human(1, "Old question", 1));
-    journal->complete_turn(1, make_agent_entry(
+    journal->complete_turn(1, make_character_entry(
         2,
         "reviewer-id",
         "Reviewer",
@@ -432,7 +430,7 @@ TEST(SessionJournal, ReplaysOnlyTheCurrentEpochAfterClear) {
         1));
     journal->clear();
     const TranscriptEntry current_prompt = human(3, "Current question", 2);
-    const TranscriptEntry current_response = make_agent_entry(
+    const TranscriptEntry current_response = make_character_entry(
         4,
         "reviewer-id",
         "Reviewer",
@@ -475,7 +473,7 @@ TEST(SessionJournal, RollsBackAnInvalidTerminalTransition) {
     EXPECT_THROW(
         journal->complete_turn(
             1,
-            make_agent_entry(
+            make_character_entry(
                 1,
                 "guide-id",
                 "Guide",
@@ -496,7 +494,7 @@ TEST(SessionJournal, ReplaysIdentifiedTypedTurnOutcomes) {
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
     journal->start_turn(7, human(1, "First", 7));
-    journal->complete_turn(7, make_agent_entry(
+    journal->complete_turn(7, make_character_entry(
         2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7));
     journal->start_turn(8, human(3, "Second", 8));
     journal->fail_turn(8, make_error_entry(4, "Unavailable", 8, "guide-id"));
@@ -509,7 +507,7 @@ TEST(SessionJournal, ReplaysIdentifiedTypedTurnOutcomes) {
         restored.entries,
         (std::vector<TranscriptEntry>{
             human(1, "First", 7),
-            make_agent_entry(2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7),
+            make_character_entry(2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7),
             human(3, "Second", 8),
             make_error_entry(4, "Unavailable", 8, "guide-id"),
         }));
@@ -526,11 +524,11 @@ TEST(SessionJournal, RejectsEntriesThatDoNotMatchTheirTurnRecords) {
         journal->start_turn(7, human(1, "Prompt", 8)),
         std::invalid_argument);
     EXPECT_THROW(
-        journal->complete_turn(7, make_agent_entry(
+        journal->complete_turn(7, make_character_entry(
             2, "guide-id", "Guide", "Answer", EntryStatus::cancelled, 7)),
         std::invalid_argument);
     EXPECT_THROW(
-        journal->cancel_turn(7, make_agent_entry(
+        journal->cancel_turn(7, make_character_entry(
             2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7)),
         std::invalid_argument);
     EXPECT_THROW(
@@ -594,11 +592,11 @@ TEST(TranscriptValidation, RequiresATargetOnHumanEntriesAndForbidsItElsewhere) {
     unnamed.addressed_to_name.clear();
     EXPECT_THROW(validate_transcript_entry(unnamed), std::invalid_argument);
 
-    TranscriptEntry addressed_agent = make_agent_entry(
+    TranscriptEntry addressed_character = make_character_entry(
         2, "guide-id", "Guide", "Answer", EntryStatus::complete);
-    addressed_agent.addressed_to = "reviewer-id";
-    addressed_agent.addressed_to_name = "Reviewer";
-    EXPECT_THROW(validate_transcript_entry(addressed_agent), std::invalid_argument);
+    addressed_character.addressed_to = "reviewer-id";
+    addressed_character.addressed_to_name = "Reviewer";
+    EXPECT_THROW(validate_transcript_entry(addressed_character), std::invalid_argument);
 
     TranscriptEntry addressed_notice = make_notice_entry(3, "Notice");
     addressed_notice.addressed_to_name = "Reviewer";
@@ -633,7 +631,7 @@ TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
     journal->start_turn(1, test::human_entry(1, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 1));
-    journal->complete_turn(1, make_agent_entry(
+    journal->complete_turn(1, make_character_entry(
         2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1));
 
     const std::vector<TranscriptEntry> restored = load_transcript_entries(path);
@@ -759,7 +757,7 @@ TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
     {
         SessionJournal journal(path);
         journal.start_turn(1, test::human_entry(1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "Who are you?", 1));
-        journal.complete_turn(1, make_agent_entry(
+        journal.complete_turn(1, make_character_entry(
             2, "cheburashka", "Cheburashka", "I am Cheburashka.",
             EntryStatus::complete, 1));
         journal.start_turn(2, test::human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 2));
@@ -777,17 +775,17 @@ TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
     std::filesystem::remove(path);
 }
 
-TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
+TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostACharacter) {
     const auto path = temporary_path("cha_forum_characters_drift_");
     create_test_database(path);
     {
         SessionJournal journal(path);
         journal.start_turn(1, test::human_entry(1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "Who are you?", 1));
-        journal.complete_turn(1, make_agent_entry(
+        journal.complete_turn(1, make_character_entry(
             2, "cheburashka", "Cheburashka", "I am Cheburashka.",
             EntryStatus::complete, 1));
         journal.start_turn(2, test::human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 2));
-        journal.complete_turn(2, make_agent_entry(
+        journal.complete_turn(2, make_character_entry(
             4, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 2));
     }
 
@@ -800,21 +798,21 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostAnAgent) {
     EXPECT_EQ(restored.entries[1].display_name, "Cheburashka");
 
     EXPECT_EQ(
-        project_agent_context(
+        project_completion_context(
             restored.entries,
             std::nullopt,
             {},
             "Ismael system",
             "ismael"),
-        (std::vector<AgentMessage>{
-            {AgentRole::system, "Ismael system"},
-            {AgentRole::persona,
+        (std::vector<CompletionMessage>{
+            {CompletionRole::system, "Ismael system"},
+            {CompletionRole::persona,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"Who are you?"})"
              "\n"
-             R"({"kind":"agent","speaker":"Cheburashka","text":"I am Cheburashka."})"},
-            {AgentRole::persona, "from You:\nAnd you?"},
-            {AgentRole::assistant, "Call me Ismael."},
+             R"({"kind":"character","speaker":"Cheburashka","text":"I am Cheburashka."})"},
+            {CompletionRole::persona, "from You:\nAnd you?"},
+            {CompletionRole::assistant, "Call me Ismael."},
         }));
     std::filesystem::remove(path);
 }

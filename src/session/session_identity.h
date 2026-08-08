@@ -1,13 +1,15 @@
 #pragma once
 
+#include "domain/ids.h"
+
 #include <string>
 
 namespace cha {
 
 // Identifies one validated stored session without exposing its storage path.
 struct SessionIdentity {
-    std::string forum_id;
-    std::string session_id;
+    ForumId forum_id;
+    SessionId session_id;
 
     bool operator==(const SessionIdentity&) const = default;
     bool operator<(const SessionIdentity& other) const noexcept {
@@ -22,7 +24,7 @@ struct SessionDescriptor {
     SessionIdentity identity;
     std::string forum_display_name;
     std::string session_label;
-    std::string forum_default_character_id;
+    CharacterId forum_default_character_id;
 
     bool operator==(const SessionDescriptor&) const = default;
 };

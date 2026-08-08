@@ -39,14 +39,14 @@ struct PersonaSummary {
 };
 
 struct SessionListing {
-    std::string id;
+    SessionId id;
     std::string label;
     bool live{};
     std::int64_t updated_at{};
 };
 
 struct CharacterSummary {
-    std::string id;
+    CharacterId id;
     std::string display_name;
     std::optional<std::string> description;
     // Always sent, defaults included, so the browser never has to decide what a
@@ -56,19 +56,19 @@ struct CharacterSummary {
 };
 
 struct ForumSummary {
-    std::string id;
+    ForumId id;
     std::string display_name;
-    std::string default_character_id;
+    CharacterId default_character_id;
     std::vector<CharacterSummary> members;
     bool operator==(const ForumSummary&) const = default;
 };
 
 struct SessionSnapshot {
     ForumSummary forum;
-    std::string session_id;
+    SessionId session_id;
     std::string session_label;
     std::vector<CharacterSummary> characters;
-    std::string default_character_id;
+    CharacterId default_character_id;
     std::vector<cha::TranscriptEntry> transcript;
     GenerationStatus generation;
     std::optional<std::string> notice;
@@ -85,8 +85,8 @@ struct RawCommand {
 
 struct StopCommand {};
 
-struct SetDefaultAgentCommand {
-    std::string character_id;
+struct SetDefaultCharacterCommand {
+    CharacterId character_id;
 };
 
 // A snapshot request shares the owner queue with mutations so HTTP threads
@@ -107,7 +107,7 @@ struct SseConnectResult {
 using WebCommand = std::variant<
     RawCommand,
     StopCommand,
-    SetDefaultAgentCommand,
+    SetDefaultCharacterCommand,
     SnapshotCommand,
     SseConnectCommand>;
 
@@ -120,26 +120,26 @@ struct CommandResult {
 };
 
 struct CreateSessionSuccess {
-    std::string id;
+    SessionId id;
     std::string label;
 };
 
 struct OpenSessionSuccess {
-    std::string forum_id;
-    std::string session_id;
+    ForumId forum_id;
+    SessionId session_id;
 };
 
 struct RecentSession {
-    std::string forum_id;
-    std::string session_id;
+    ForumId forum_id;
+    SessionId session_id;
     std::string session_label;
     std::int64_t updated_at{};
 };
 
 struct Bootstrap {
     std::string initial_persona_id;
-    std::string initial_forum_id;
-    std::string initial_session_id;
+    ForumId initial_forum_id;
+    SessionId initial_session_id;
     std::vector<PersonaSummary> personas;
     std::vector<CharacterSummary> characters;
     std::vector<ForumSummary> forums;

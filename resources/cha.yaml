@@ -330,7 +330,7 @@ paths:
                   summary: Initial event shape
                   value: |-
                     event: snapshot
-                    data: {"forum":{"id":"lobby","display_name":"Lobby","default_character_id":"guide","members":[]},"session_id":"one","session_label":"One","characters":[],"default_character_id":"guide","transcript":[],"generation":{"active":false,"agent_id":"","agent_name":"","phase":"waiting","reasoning_text":""},"lifecycle":"running"}
+                    data: {"forum":{"id":"lobby","display_name":"Lobby","default_character_id":"guide","members":[]},"session_id":"one","session_label":"One","characters":[],"default_character_id":"guide","transcript":[],"generation":{"active":false,"character_id":"","character_display_name":"","phase":"waiting","reasoning_text":""},"lifecycle":"running"}
                 append:
                   summary: Incremental transcript append
                   value: |-
@@ -425,7 +425,7 @@ paths:
         "503":
           $ref: "#/components/responses/CommandUnavailable"
 
-  /s/{forum_id}/{session_id}/api/v1/actions/default-agent:
+  /s/{forum_id}/{session_id}/api/v1/actions/default-character:
     parameters:
       - $ref: "#/components/parameters/ForumId"
       - $ref: "#/components/parameters/SessionId"
@@ -816,7 +816,7 @@ components:
           $ref: "#/components/schemas/UnsignedInteger"
         kind:
           type: string
-          enum: [human, agent, notice, error]
+          enum: [human, character, notice, error]
         participant_id:
           type: string
         display_name:
@@ -836,15 +836,15 @@ components:
     GenerationState:
       type: object
       additionalProperties: false
-      required: [active, agent_id, agent_name, phase, reasoning_text]
+      required: [active, character_id, character_display_name, phase, reasoning_text]
       properties:
         active:
           type: boolean
         request_id:
           $ref: "#/components/schemas/UnsignedInteger"
-        agent_id:
+        character_id:
           type: string
-        agent_name:
+        character_display_name:
           type: string
         phase:
           type: string

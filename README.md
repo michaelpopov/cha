@@ -29,7 +29,7 @@ The chat input also accepts these controller-level commands:
 | `/clear` | Clear the transcript. |
 | `/hide-on`, `/hide`, `/hide-off` | Manage the off-record model-context span. |
 | `/mcast` | Send one prompt to multiple forum characters. |
-| `/info`, `/agents` | Inspect the session and its characters. |
+| `/info`, `/characters` | Inspect the session and its characters (`/agents` remains an alias). |
 | `/@Name` | Change the default character. |
 | `/stop` | Stop generation. |
 | `/exit` | Close the live session. |

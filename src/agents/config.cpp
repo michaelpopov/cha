@@ -319,7 +319,8 @@ void validate_effective(
 
 } // namespace
 
-CharacterDefinitionMetadata load_character_definition_metadata(const std::filesystem::path& definition_path) {
+CharacterMetadata load_character_metadata(
+    const std::filesystem::path& definition_path) {
     const ParsedConfig definition = parse_config(definition_path, ConfigLayer::definition);
     return {
         .id = utf8_path(definition_path.parent_path().filename()),
@@ -380,7 +381,7 @@ ProviderConfig load_provider_config(
     return provider;
 }
 
-LoadedConfig load_config(const CharacterConfigPaths& paths) {
+LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     const ParsedConfig definition = parse_config(paths.definition, ConfigLayer::definition);
     ConfigPatch effective;
     TemplateScope prompt_variables = definition.prompt_variables;
@@ -407,41 +408,48 @@ LoadedConfig load_config(const CharacterConfigPaths& paths) {
     apply(paths.forum_defaults, ConfigLayer::forum_defaults);
     apply(paths.member_override, ConfigLayer::member_override);
     validate_effective(effective, paths.definition, port_source, temperature_source);
-    Config config;
-    config.id = utf8_path(paths.definition.parent_path().filename());
-    config.display_name = *definition.patch.display_name;
-    config.description = definition.description;
-    config.appearance = definition.appearance;
-    config.host = *effective.host;
-    config.port = *effective.port;
+    CharacterMetadata character{
+        .id = utf8_path(paths.definition.parent_path().filename()),
+        .display_name = *definition.patch.display_name,
+        .description = definition.description,
+        .tags = definition.tags,
+        .appearance = definition.appearance,
+    };
+    CompletionConfig completion;
+    completion.host = *effective.host;
+    completion.port = *effective.port;
     if (effective.mode) {
-        config.mode = *effective.mode;
+        completion.mode = *effective.mode;
     }
     if (effective.model) {
-        config.model = *effective.model;
+        completion.model = *effective.model;
     }
     if (effective.stream) {
-        config.stream = *effective.stream;
+        completion.stream = *effective.stream;
     }
     if (effective.temperature) {
-        config.temperature = *effective.temperature;
+        completion.temperature = *effective.temperature;
     }
     if (effective.api_key) {
-        config.api_key = *effective.api_key;
+        completion.api_key = *effective.api_key;
     }
     if (effective.api_key_env) {
-        config.api_key_env = *effective.api_key_env;
+        completion.api_key_env = *effective.api_key_env;
     }
     if (effective.reasoning_effort) {
-        config.reasoning_effort = *effective.reasoning_effort;
+        completion.reasoning_effort = *effective.reasoning_effort;
     }
     if (effective.reasoning_format) {
-        config.reasoning_format = *effective.reasoning_format;
+        completion.reasoning_format = *effective.reasoning_format;
     }
     if (effective.https) {
-        config.https = *effective.https;
+        completion.https = *effective.https;
     }
-    return {.config = std::move(config), .prompt_variables = std::move(prompt_variables)};
+    return {
+        .character = std::move(character),
+        .completion = std::move(completion),
+        .prompt_variables = std::move(prompt_variables),
+    };
 }
 
 std::string_view to_string(CharacterFont value) {

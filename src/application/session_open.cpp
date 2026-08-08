@@ -18,7 +18,7 @@ OpenedSession open_session(
     if (forum == nullptr) {
         throw ForumNotFoundError("Forum '" + identity.forum_id + "' does not exist");
     }
-    std::vector<AgentDefinition> definitions =
+    std::vector<CharacterDefinition> definitions =
         model.copy_definitions_for(forum->id);
     PreparedSession prepared = sessions.prepare(identity);
     log_info("Session opened");

@@ -17,7 +17,7 @@ require recovery-specific API models.
 | Load live chat state | `GET /s/{forum}/{session}/api/v1/session` |
 | Stream chat changes | `GET /s/{forum}/{session}/api/v1/events` |
 | Submit input | `POST /s/{forum}/{session}/api/v1/input` |
-| Change the default character | `POST /s/{forum}/{session}/api/v1/actions/default-agent` |
+| Change the default character | `POST /s/{forum}/{session}/api/v1/actions/default-character` |
 | Stop generation | `POST /s/{forum}/{session}/api/v1/actions/stop` |
 
 Bootstrap replaces separate persona, character, and forum list routes. The
@@ -115,7 +115,7 @@ have worked. Appearance is definition-only: a forum's `character_defaults.toml`
 or a member override cannot set it, because it belongs to the character rather
 than to one forum's use of it.
 
-Only an agent's message body is set this way. Speaker names, the reader's own
+Only a character's message body is set this way. Speaker names, the reader's own
 messages, and every control stay in the interface font.
 
 A forum summary contains:

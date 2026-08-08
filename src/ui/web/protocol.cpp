@@ -50,8 +50,8 @@ nlohmann::json transcript_entry_json(const cha::TranscriptEntry& value) {
 nlohmann::json generation_json(const GenerationStatus& value) {
     nlohmann::json json = {
         {"active", value.active},
-        {"agent_id", value.agent_id},
-        {"agent_name", value.agent_name},
+        {"character_id", value.character_id},
+        {"character_display_name", value.character_display_name},
         {"phase", to_string(value.phase)},
         {"reasoning_text", value.reasoning_text},
     };
@@ -83,7 +83,7 @@ std::string_view to_string(EntryKind value) {
         value,
         {
             {EntryKind::human, "human"},
-            {EntryKind::agent, "agent"},
+            {EntryKind::character, "character"},
             {EntryKind::notice, "notice"},
             {EntryKind::error, "error"},
         });

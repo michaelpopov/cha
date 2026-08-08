@@ -302,7 +302,7 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
         host->submit(StopCommand{}, 2s)));
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(SetDefaultAgentCommand{"scribe"}, 2s)));
+        host->submit(SetDefaultCharacterCommand{"scribe"}, 2s)));
     const auto state = host->snapshot(2s);
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(state));
     EXPECT_EQ(std::get<SessionSnapshot>(state).default_character_id, "scribe");
@@ -515,7 +515,7 @@ TEST(LiveSession, IncompatibleAppendTargetRepairsBrowserStateWithASnapshot) {
                 continue;
             }
             for (const cha::TranscriptEntry& entry : snapshot_of(*payload).transcript) {
-                if (entry.kind == EntryKind::agent
+                if (entry.kind == EntryKind::character
                     && entry.text.find("answer") != std::string::npos) {
                     answer_flag = true;
                 }

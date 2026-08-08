@@ -120,7 +120,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         .default_character_id = "guide",
         .transcript = {{
             .id = 7,
-            .kind = EntryKind::agent,
+            .kind = EntryKind::character,
             .participant_id = "guide",
             .display_name = "Guide",
             .text = "<answer>",
@@ -130,8 +130,8 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         .generation = {
             .active = true,
             .request_id = 3,
-            .agent_id = "guide",
-            .agent_name = "Guide",
+            .character_id = "guide",
+            .character_display_name = "Guide",
             .phase = ResponsePhase::answering,
             .reasoning_text = "<reasoning>",
         },
@@ -147,8 +147,8 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         {"generation",
          {
              {"active", true},
-             {"agent_id", "guide"},
-             {"agent_name", "Guide"},
+             {"character_id", "guide"},
+             {"character_display_name", "Guide"},
              {"phase", "answering"},
              {"reasoning_text", "<reasoning>"},
              {"request_id", 3},
@@ -166,7 +166,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
              {"addressed_to_name", ""},
              {"display_name", "Guide"},
              {"id", 7},
-             {"kind", "agent"},
+             {"kind", "character"},
              {"participant_id", "guide"},
              {"request_id", 3},
              {"status", "streaming"},
@@ -259,7 +259,7 @@ TEST(WebProtocol, EscapesAndOwnsPresentationText) {
 TEST(WebProtocol, DefinesEveryEnumSpelling) {
     expect_spellings<EntryKind>({
         {EntryKind::human, "human"},
-        {EntryKind::agent, "agent"},
+        {EntryKind::character, "character"},
         {EntryKind::notice, "notice"},
         {EntryKind::error, "error"},
     });
@@ -322,11 +322,11 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     EXPECT_EQ(std::get<RawCommand>(input).persona, "reader");
     EXPECT_EQ(std::get<RawCommand>(input).text, "hello");
 
-    const WebCommand default_agent =
-        parse_default_agent_command({{"character_id", "guide"}});
-    ASSERT_TRUE(std::holds_alternative<SetDefaultAgentCommand>(default_agent));
+    const WebCommand default_character =
+        parse_default_character_command({{"character_id", "guide"}});
+    ASSERT_TRUE(std::holds_alternative<SetDefaultCharacterCommand>(default_character));
     EXPECT_EQ(
-        std::get<SetDefaultAgentCommand>(default_agent).character_id,
+        std::get<SetDefaultCharacterCommand>(default_character).character_id,
         "guide");
 
     const WebCommand stop = StopCommand{};
@@ -344,13 +344,13 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         (void)parse_input_command({{"persona", ""}, {"text", "hello"}}),
         std::invalid_argument);
     EXPECT_THROW(
-        (void)parse_default_agent_command({
-            {"type", "default_agent"},
+        (void)parse_default_character_command({
+            {"type", "default_character"},
             {"character_id", "guide"},
         }),
         std::invalid_argument);
     EXPECT_THROW(
-        (void)parse_default_agent_command({}),
+        (void)parse_default_character_command({}),
         std::invalid_argument);
 
     EXPECT_EQ(parse_create_session_label({{"label", "Notes"}}), "Notes");
@@ -452,12 +452,12 @@ TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
     ASSERT_NE(forum, nullptr);
     EXPECT_EQ(forum->display_name, "The Lobby");
     EXPECT_EQ(forum->member_ids, (std::vector<std::string>{"guide"}));
-    const auto config = load_config({
+    const auto config = load_character_config({
         .definition = fixture.root()
             / "characters/guide/character.toml",
         .forum_defaults = fixture.root()
             / "forums/lobby/members/character_defaults.toml",
-    }).config;
+    }).completion;
     EXPECT_EQ(config.mode, Mode::test);
     EXPECT_EQ(config.model, "fake");
 }

@@ -470,7 +470,7 @@ TEST_F(SessionStorageTest, OpensAStoredSessionWhateverTheCurrentForumCharactersA
                 1, {"human", "You"}, {"other-id", "Other"}, "Question", 1));
         journal.complete_turn(
             1,
-            make_agent_entry(
+            make_character_entry(
                 2,
                 "other-id",
                 "Other",

@@ -71,7 +71,7 @@ describe('application navigation reducer', () => {
       ...snapshotFixture,
       transcript: [{
         id: 4,
-        kind: 'agent' as const,
+        kind: 'character' as const,
         participant_id: 'assistant',
         display_name: 'Assistant',
         addressed_to: 'guest',
@@ -83,8 +83,8 @@ describe('application navigation reducer', () => {
       generation: {
         active: true,
         request_id: 7,
-        agent_id: 'assistant',
-        agent_name: 'Assistant',
+        character_id: 'assistant',
+        character_display_name: 'Assistant',
         phase: 'reasoning' as const,
         reasoning_text: 'Think',
       },
@@ -117,7 +117,7 @@ describe('application navigation reducer', () => {
       ...snapshotFixture,
       transcript: [{
         id: 4,
-        kind: 'agent' as const,
+        kind: 'character' as const,
         participant_id: 'assistant',
         display_name: 'Assistant',
         addressed_to: 'guest',

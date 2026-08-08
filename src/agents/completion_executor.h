@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "agents/completion_backend.h"
 #include "agents/completion_batch.h"
 #include "util/thread_pool.h"
@@ -30,7 +30,7 @@ public:
     // The caller owns the pool and must join it while this executor and its
     // notifier remain alive.
     CompletionExecutor(
-        std::vector<AgentDefinition> definitions,
+        std::vector<CharacterDefinition> definitions,
         WakeNotifier& notifier,
         ThreadPool& worker_pool);
     CompletionExecutor(
@@ -42,7 +42,7 @@ public:
     CompletionExecutor(const CompletionExecutor&) = delete;
     CompletionExecutor& operator=(const CompletionExecutor&) = delete;
 
-    [[nodiscard]] const std::vector<AgentRuntimeInfo>& runtime_info()
+    [[nodiscard]] const std::vector<CompletionBackendInfo>& runtime_info()
         const noexcept;
 
     // Owner-thread staging. Strong guarantee: on success every task was
@@ -55,7 +55,7 @@ private:
     [[nodiscard]] std::size_t backend_index(std::string_view id) const;
 
     std::vector<std::unique_ptr<CompletionBackend>> backends_;
-    std::vector<AgentRuntimeInfo> runtime_info_;
+    std::vector<CompletionBackendInfo> runtime_info_;
     WakeNotifier& notifier_;
     ThreadPool& worker_pool_;
     BeforeSubmitHook before_submit_;

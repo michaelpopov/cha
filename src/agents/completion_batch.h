@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "agents/completion_backend.h"
 #include "util/concurrent_queue.h"
 #include "util/thread_pool.h"
@@ -47,7 +47,7 @@ public:
     // Releases every execution from the shared gate. The first gate transition
     // wins, so opening an already cancelled gate does nothing.
     void open() noexcept;
-    [[nodiscard]] ChannelReadStatus try_receive_foreground(AgentEvent& event);
+    [[nodiscard]] ChannelReadStatus try_receive_foreground(CompletionEvent& event);
     // Valid only once the foreground slot's terminal event has been delivered
     // and only while a next slot exists.
     void advance_foreground();

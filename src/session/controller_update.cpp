@@ -24,7 +24,7 @@ ControllerStateUpdate merge_state(
 
 void merge(ControllerUpdate& all, ControllerUpdate one) {
     all.state = merge_state(std::move(all.state), std::move(one.state));
-    // Agent events never consume input, so this OR preserves a command-side
+    // Completion events never consume input, so this OR preserves a command-side
     // acceptance without letting a drained event manufacture one.
     all.input_consumed = all.input_consumed || one.input_consumed;
     all.session_ended = all.session_ended || one.session_ended;

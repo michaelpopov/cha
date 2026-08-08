@@ -1,5 +1,5 @@
 #include "session/session_controller.h"
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "agents/completion_backend.h"
 #include "session/session_database.h"
 #include "support/test_backends.h"
@@ -35,8 +35,8 @@ test::TestNotifier& notifier() {
     return instance;
 }
 
-AgentMessage operator_prompt(std::string_view text) {
-    return {AgentRole::persona, "from Operator:\n" + std::string(text)};
+CompletionMessage operator_prompt(std::string_view text) {
+    return {CompletionRole::persona, "from Operator:\n" + std::string(text)};
 }
 
 // Blocks the execution's final wake. This makes `execution_finished` true
@@ -85,8 +85,8 @@ private:
     bool release_final_wake_{};
 };
 
-std::vector<TranscriptEntry> copy_entries(const Transcript& transcript) {
-    const std::span<const TranscriptEntry> entries = transcript.entries();
+std::vector<TranscriptEntry> copy_entries(TranscriptView transcript) {
+    const std::span<const TranscriptEntry> entries = transcript.entries;
     return {entries.begin(), entries.end()};
 }
 
@@ -156,7 +156,7 @@ public:
 
     RequestPayload prepare(const CompletionInput& input) override {
         inputs.push_back(input);
-        model_contexts.push_back(project_agent_context(input, system_prompt));
+        model_contexts.push_back(project_completion_context(input, system_prompt));
         return {.bytes = input.run.prompt_text};
     }
 
@@ -176,11 +176,11 @@ public:
         return result_;
     }
 
-    AgentRuntimeInfo info() const override {
+    CompletionBackendInfo info() const override {
         return {
             .character = {
                 .id = id_,
-                .name = name_,
+                .display_name = name_,
             },
             .model = "test-model",
             .api = "test://completion",
@@ -189,7 +189,7 @@ public:
     }
 
     std::vector<CompletionInput> inputs;
-    std::vector<std::vector<AgentMessage>> model_contexts;
+    std::vector<std::vector<CompletionMessage>> model_contexts;
     std::string system_prompt;
 
 private:
@@ -240,9 +240,9 @@ public:
         return {};
     }
 
-    AgentRuntimeInfo info() const override {
+    CompletionBackendInfo info() const override {
         return {
-            .character = {.id = id_, .name = name_},
+            .character = {.id = id_, .display_name = name_},
             .model = "test-model",
             .api = "test://completion",
             .streaming = true,
@@ -288,9 +288,9 @@ public:
         return {CompletionOutcome::cancelled, {}};
     }
 
-    AgentRuntimeInfo info() const override {
+    CompletionBackendInfo info() const override {
         return {
-            .character = {.id = id_, .name = name_},
+            .character = {.id = id_, .display_name = name_},
             .model = "test-model",
             .api = "test://completion",
             .streaming = true,
@@ -319,11 +319,11 @@ public:
         return {};
     }
 
-    AgentRuntimeInfo info() const override {
+    CompletionBackendInfo info() const override {
         return {
             .character = {
                 .id = "guide-id",
-                .name = "Guide",
+                .display_name = "Guide",
             },
             .model = "test-model",
             .api = "test://completion",
@@ -373,21 +373,21 @@ SessionRestore restore_with(
     };
 }
 
-TEST(SessionController, RejectsEmptyAgentConfigurationWithExecutorMessage) {
+TEST(SessionController, RejectsEmptyCharacterConfigurationWithExecutorMessage) {
     TemporaryJournal temporary;
 
     try {
         (void)test::from_definitions_for_testing(
             {}, temporary.path, notifier());
-        FAIL() << "Expected empty-agent configuration rejection";
+        FAIL() << "Expected empty-character configuration rejection";
     } catch (const std::invalid_argument& error) {
         EXPECT_EQ(
             error.what(),
-            std::string("Completion executor requires at least one agent"));
+            std::string("Completion executor requires at least one character"));
     }
 }
 
-TEST(SessionController, RejectsUnknownInitialDefaultAgentID) {
+TEST(SessionController, RejectsUnknownInitialDefaultCharacterID) {
     TemporaryJournal temporary;
 
     try {
@@ -401,7 +401,7 @@ TEST(SessionController, RejectsUnknownInitialDefaultAgentID) {
     } catch (const std::invalid_argument& error) {
         EXPECT_EQ(
             error.what(),
-            std::string("Initial default agent ID is not in the forum roster"));
+            std::string("Initial default character ID is not in the forum roster"));
     }
 }
 
@@ -441,16 +441,16 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(request.history->entries.front(), earlier);
     EXPECT_EQ(
         backend_view->model_contexts.front(),
-        (std::vector<AgentMessage>{
-            {AgentRole::persona, "from You:\nEarlier"},
+        (std::vector<CompletionMessage>{
+            {CompletionRole::persona, "from You:\nEarlier"},
             operator_prompt("Current"),
         }));
     EXPECT_TRUE(has_state_update(completed));
 
-    const auto entries = copy_entries(controller->transcript());
+    const auto entries = copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 3U);
     const TranscriptEntry& response = entries.back();
-    EXPECT_EQ(response.kind, EntryKind::agent);
+    EXPECT_EQ(response.kind, EntryKind::character);
     EXPECT_EQ(response.participant_id, "guide-id");
     EXPECT_EQ(response.display_name, "Guide");
     EXPECT_EQ(response.text, "Hello there");
@@ -486,7 +486,7 @@ TEST(SessionController, ResolvesAndStampsTheAuthorForEveryBatchRun) {
     EXPECT_EQ(first_view->inputs.front().run.author.id, "engineer");
     EXPECT_EQ(first_view->inputs.front().run.author.display_name, "Engineer");
     EXPECT_EQ(second_view->inputs.front().run.author.id, "engineer");
-    const std::vector<TranscriptEntry> entries = copy_entries(controller->transcript());
+    const std::vector<TranscriptEntry> entries = copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 4U);
     EXPECT_EQ(entries[0].participant_id, "engineer");
     EXPECT_EQ(entries[0].display_name, "Engineer");
@@ -522,13 +522,13 @@ TEST(SessionController, KeepsTheStaticSystemPromptAcrossDifferentAuthors) {
     EXPECT_EQ(backend_view->model_contexts[0].front(),
               backend_view->model_contexts[1].front());
     EXPECT_EQ(backend_view->model_contexts[0].front(),
-              (AgentMessage{AgentRole::system, "Static system prompt"}));
+              (CompletionMessage{CompletionRole::system, "Static system prompt"}));
     EXPECT_NE(backend_view->model_contexts[0].back(),
               backend_view->model_contexts[1].back());
     EXPECT_EQ(backend_view->model_contexts[0].back(),
-              (AgentMessage{AgentRole::persona, "from Reader:\nFirst question"}));
+              (CompletionMessage{CompletionRole::persona, "from Reader:\nFirst question"}));
     EXPECT_EQ(backend_view->model_contexts[1].back(),
-              (AgentMessage{AgentRole::persona, "from Athlete:\nSecond question"}));
+              (CompletionMessage{CompletionRole::persona, "from Athlete:\nSecond question"}));
 }
 
 TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
@@ -549,11 +549,11 @@ TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
         controller->start_multicast(
             "unknown", "Question", {"Guide"}).notice,
         "Unknown persona ID 'unknown'");
-    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
     EXPECT_TRUE(backend_view->inputs.empty());
 }
 
-TEST(SessionController, BoundsAgentEventDrains) {
+TEST(SessionController, BoundsCompletionEventDrains) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
         CompletionResult{},
@@ -576,12 +576,12 @@ TEST(SessionController, BoundsAgentEventDrains) {
     const ControllerEventBatch first = controller->receive_events(2);
     EXPECT_TRUE(first.full);
     EXPECT_TRUE(controller->is_generating());
-    EXPECT_EQ(controller->transcript().entries().back().text, "onetwo");
+    EXPECT_EQ(controller->view().transcript.entries.back().text, "onetwo");
 
     const ControllerEventBatch second = controller->receive_events(2);
     EXPECT_TRUE(second.full);
     EXPECT_FALSE(controller->is_generating());
-    EXPECT_EQ(controller->transcript().entries().back().text, "onetwothree");
+    EXPECT_EQ(controller->view().transcript.entries.back().text, "onetwothree");
 
     EXPECT_FALSE(controller->receive_events(2).full);
 }
@@ -604,9 +604,9 @@ TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedTranscript) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<AgentMessage>{
+        (std::vector<CompletionMessage>{
             operator_prompt("First"),
-            {AgentRole::assistant, "Answer"},
+            {CompletionRole::assistant, "Answer"},
             operator_prompt("Second"),
         }));
 }
@@ -630,7 +630,7 @@ TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<AgentMessage>{operator_prompt("Second")}));
+        (std::vector<CompletionMessage>{operator_prompt("Second")}));
 }
 
 TEST(SessionController, ExcludesFailedTurnsFromTheFollowingModelContext) {
@@ -651,7 +651,7 @@ TEST(SessionController, ExcludesFailedTurnsFromTheFollowingModelContext) {
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<AgentMessage>{operator_prompt("Second")}));
+        (std::vector<CompletionMessage>{operator_prompt("Second")}));
 }
 
 TEST(SessionController, ExcludesCancelledPartialOutputFromFollowingModelContext) {
@@ -673,7 +673,7 @@ TEST(SessionController, ExcludesCancelledPartialOutputFromFollowingModelContext)
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
         backend_view->model_contexts[1],
-        (std::vector<AgentMessage>{
+        (std::vector<CompletionMessage>{
             operator_prompt("First"),
             operator_prompt("Second"),
         }));
@@ -697,7 +697,7 @@ TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
     const auto restored =
         load_transcript_entries(temporary.path);
     ASSERT_EQ(restored.size(), 2U);
-    EXPECT_EQ(restored.back().kind, EntryKind::agent);
+    EXPECT_EQ(restored.back().kind, EntryKind::character);
     EXPECT_EQ(
         restored.back().status,
         EntryStatus::cancelled);
@@ -715,7 +715,7 @@ TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     (void)controller->submit_prompt("operator", "Question");
     receive_until_idle(*controller);
 
-    const auto entries = copy_entries(controller->transcript());
+    const auto entries = copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().kind, EntryKind::human);
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
@@ -736,7 +736,7 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
         controller->view().generation.phase,
         ResponsePhase::waiting);
 
-    (void)controller->handle_agent_event(AgentDelta{
+    (void)controller->handle_completion_event(CompletionEventDelta{
         1,
         CompletionDeltaKind::reasoning,
         "PRIVATE_REASONING",
@@ -747,9 +747,9 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
     EXPECT_EQ(
         controller->view().generation.reasoning_text,
         "PRIVATE_REASONING");
-    ASSERT_EQ(controller->transcript().entries().size(), 1U);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
 
-    (void)controller->handle_agent_event(AgentDelta{
+    (void)controller->handle_completion_event(CompletionEventDelta{
         1,
         CompletionDeltaKind::answer,
         "Answer",
@@ -757,9 +757,9 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
     EXPECT_EQ(
         controller->view().generation.phase,
         ResponsePhase::answering);
-    ASSERT_EQ(controller->transcript().entries().size(), 2U);
-    EXPECT_EQ(controller->transcript().entries().back().text, "Answer");
-    (void)controller->handle_agent_event(AgentDelta{
+    ASSERT_EQ(controller->view().transcript.entries.size(), 2U);
+    EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer");
+    (void)controller->handle_completion_event(CompletionEventDelta{
         1,
         CompletionDeltaKind::reasoning,
         " late",
@@ -771,11 +771,11 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
         controller->view().generation.reasoning_text,
         "PRIVATE_REASONING late");
 
-    (void)controller->handle_agent_event(AgentCompleted{1});
+    (void)controller->handle_completion_event(CompletionCompleted{1});
     EXPECT_FALSE(controller->is_generating());
     EXPECT_TRUE(controller->view().generation.reasoning_text.empty());
     const std::vector<TranscriptEntry> live =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(live.size(), 2U);
     EXPECT_EQ(live.back().text, "Answer");
     EXPECT_EQ(live.back().status, EntryStatus::complete);
@@ -796,7 +796,7 @@ TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    (void)controller->handle_agent_event(AgentDelta{
+    (void)controller->handle_completion_event(CompletionEventDelta{
         1,
         CompletionDeltaKind::reasoning,
         "EPHEMERAL_REASONING_ONLY",
@@ -804,13 +804,13 @@ TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
     EXPECT_EQ(
         controller->view().generation.reasoning_text,
         "EPHEMERAL_REASONING_ONLY");
-    ASSERT_EQ(controller->transcript().entries().size(), 1U);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
     (void)controller->request_stop();
     receive_until_idle(*controller);
     EXPECT_TRUE(controller->view().generation.reasoning_text.empty());
 
     const std::vector<TranscriptEntry> live =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(live.size(), 1U);
     EXPECT_EQ(live.front().kind, EntryKind::human);
 
@@ -832,12 +832,12 @@ TEST(SessionController, RejectsCompletionWithoutResponseContent) {
 
     ASSERT_TRUE(update.notice);
     EXPECT_EQ(*update.notice, "Generation failed");
-    const auto entries = copy_entries(controller->transcript());
+    const auto entries = copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.back().kind, EntryKind::error);
     EXPECT_EQ(
         entries.back().text,
-        "Agent completed without answer content");
+        "Completion finished without answer content");
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
@@ -856,7 +856,7 @@ TEST(SessionController, PersistsPreparationFailureAsTheTurnOutcome) {
     EXPECT_EQ(update.notice, "Generation failed");
     EXPECT_FALSE(backend_view->performed);
     const std::vector<TranscriptEntry> entries =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.front().kind, EntryKind::human);
     EXPECT_EQ(entries.back().kind, EntryKind::error);
@@ -879,7 +879,7 @@ TEST(SessionController, ReplacesPartialOutputWithATypedError) {
     (void)controller->submit_prompt("operator", "Question");
     receive_until_idle(*controller);
 
-    const auto entries = copy_entries(controller->transcript());
+    const auto entries = copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 2U);
     const TranscriptEntry& error = entries.back();
     EXPECT_EQ(error.kind, EntryKind::error);
@@ -907,7 +907,7 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
     const ControllerUpdate cleared =
         controller->clear_transcript();
     EXPECT_EQ(cleared.notice, "Transcript cleared");
-    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
     EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
 
     const ControllerUpdate info = controller->session_information();
@@ -919,7 +919,7 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
         info.notice->find("* @Guide  test-model  test://completion  streaming"),
         std::string::npos);
     EXPECT_EQ(info.notice->find("Model:"), std::string::npos);
-    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
     EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
 
 }
@@ -949,7 +949,7 @@ TEST(SessionController, KeepsOffrecordMarkersOutOfTheSessionDatabase) {
     EXPECT_TRUE(nothing_to_restore.input_consumed);
 
     EXPECT_EQ(
-        copy_entries(controller->transcript()),
+        copy_entries(controller->view().transcript),
         (std::vector<TranscriptEntry>{
             make_hide_on_marker(1),
             make_hide_marker(2),
@@ -980,9 +980,9 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
     ASSERT_EQ(backend_view->model_contexts.size(), 3U);
     EXPECT_EQ(
         backend_view->model_contexts[2],
-        (std::vector<AgentMessage>{
+        (std::vector<CompletionMessage>{
             operator_prompt("Visible"),
-            {AgentRole::assistant, "Answer"},
+            {CompletionRole::assistant, "Answer"},
             operator_prompt("Current"),
         }));
 
@@ -993,13 +993,13 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
     ASSERT_EQ(backend_view->model_contexts.size(), 4U);
     EXPECT_EQ(
         backend_view->model_contexts[3],
-        (std::vector<AgentMessage>{
+        (std::vector<CompletionMessage>{
             operator_prompt("Visible"),
-            {AgentRole::assistant, "Answer"},
+            {CompletionRole::assistant, "Answer"},
             operator_prompt("Hidden"),
-            {AgentRole::assistant, "Answer"},
+            {CompletionRole::assistant, "Answer"},
             operator_prompt("Current"),
-            {AgentRole::assistant, "Answer"},
+            {CompletionRole::assistant, "Answer"},
             operator_prompt("Restored"),
         }));
 }
@@ -1026,7 +1026,7 @@ TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan
     EXPECT_TRUE(has_state_update(clear_controller->open_offrecord()));
     EXPECT_EQ(clear_controller->clear_transcript().notice, "Transcript cleared");
     EXPECT_EQ(clear_controller->extend_offrecord().notice, "No off-record span to extend");
-    EXPECT_TRUE(clear_controller->transcript().entries().empty());
+    EXPECT_TRUE(clear_controller->view().transcript.entries.empty());
 }
 
 TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
@@ -1050,15 +1050,11 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
         {"One", "Two"});
     EXPECT_TRUE(started.input_consumed);
     EXPECT_TRUE(controller->is_generating());
-    EXPECT_EQ(
-        controller->transcript().offrecord_span(),
-        OffrecordSpan{});
 
     const ControllerUpdate finished = receive_until_idle(*controller);
     EXPECT_TRUE(has_state_update(finished));
     EXPECT_FALSE(finished.session_ended);
     EXPECT_FALSE(controller->is_generating());
-    EXPECT_EQ(controller->transcript().offrecord_span(), OffrecordSpan{});
 
     ASSERT_EQ(one_view->inputs.size(), 1U);
     ASSERT_EQ(two_view->inputs.size(), 1U);
@@ -1067,13 +1063,13 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     EXPECT_EQ(one_view->inputs.front().history, two_view->inputs.front().history);
     EXPECT_EQ(
         one_view->model_contexts.front(),
-        (std::vector<AgentMessage>{operator_prompt("What time is it?")}));
+        (std::vector<CompletionMessage>{operator_prompt("What time is it?")}));
     EXPECT_EQ(
         two_view->model_contexts.front(),
-        (std::vector<AgentMessage>{operator_prompt("What time is it?")}));
+        (std::vector<CompletionMessage>{operator_prompt("What time is it?")}));
 
     const std::vector<TranscriptEntry> multicast_entries =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(multicast_entries.size(), 4U);
     EXPECT_EQ(multicast_entries[0].participant_id, "operator");
     EXPECT_EQ(multicast_entries[0].display_name, "Operator");
@@ -1092,7 +1088,7 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
         multicast_entries);
     EXPECT_EQ(
         load_transcript_entries(temporary.path),
-        copy_entries(controller->transcript()));
+        copy_entries(controller->view().transcript));
 }
 
 TEST(SessionController, ResolvesMulticastHandlesAndTreatsAnEmptyListAsAllCharacters) {
@@ -1113,11 +1109,11 @@ TEST(SessionController, ResolvesMulticastHandlesAndTreatsAnEmptyListAsAllCharact
 
     EXPECT_EQ(
         controller->start_multicast("operator", "Question", {"missing"}).notice,
-        "Unknown agent @missing. Characters in this forum: @One, @Two");
+        "Unknown character @missing. Characters in this forum: @One, @Two");
     EXPECT_EQ(
         controller->start_multicast("operator", "Question", {"One", "One"}).notice,
         "Multicast target @One is duplicated");
-    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
 
     const ControllerUpdate started =
         controller->start_multicast("operator", "Question", {});
@@ -1170,7 +1166,7 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
     const ControllerGenerationView stopping =
         stop_controller->view().generation;
     EXPECT_TRUE(stopping.active);
-    EXPECT_EQ(stopping.agent_name, "One");
+    EXPECT_EQ(stopping.character_display_name, "One");
     EXPECT_EQ(stopping.phase, ResponsePhase::stopping);
     const ControllerUpdate stopped = receive_until_idle(*stop_controller);
     EXPECT_EQ(stopped.notice, "Generation stopped");
@@ -1180,10 +1176,9 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
     // the child's durable turn.
     EXPECT_LE(second_view->inputs.size(), 1U);
     const std::vector<TranscriptEntry> entries =
-        copy_entries(stop_controller->transcript());
+        copy_entries(stop_controller->view().transcript);
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().addressed_to, "one-id");
-    EXPECT_EQ(stop_controller->transcript().offrecord_span(), OffrecordSpan{});
     stop_controller->shutdown();
 }
 
@@ -1214,7 +1209,7 @@ TEST(SessionController, CompletedForegroundWinsTheStopRace) {
 
     EXPECT_EQ(stopped.notice, "Generation stopped");
     const std::vector<TranscriptEntry> entries =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries[0].addressed_to, "one-id");
     EXPECT_EQ(entries[1].text, "One answer");
@@ -1291,9 +1286,8 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     ASSERT_EQ(complete_view->inputs.size(), 1U);
     EXPECT_EQ(
         complete_view->model_contexts.front(),
-        (std::vector<AgentMessage>{operator_prompt("Question")}));
+        (std::vector<CompletionMessage>{operator_prompt("Question")}));
     EXPECT_FALSE(controller->is_generating());
-    EXPECT_EQ(controller->transcript().offrecord_span(), OffrecordSpan{});
 }
 
 TEST(SessionController, StartsAllChildrenAndBuffersLaterOutputUntilForeground) {
@@ -1325,14 +1319,14 @@ TEST(SessionController, StartsAllChildrenAndBuffersLaterOutputUntilForeground) {
 
     // Child 2 has already completed, but only child 1's prompt is durable and
     // its queued answer remains hidden until child 1 commits.
-    ASSERT_EQ(controller->transcript().entries().size(), 1U);
-    EXPECT_EQ(controller->transcript().entries().front().addressed_to, "one-id");
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
+    EXPECT_EQ(controller->view().transcript.entries.front().addressed_to, "one-id");
 
     release_first.store(true, std::memory_order_release);
     receive_until_idle(*controller);
 
     const std::vector<TranscriptEntry> entries =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 4U);
     EXPECT_EQ(entries[0].addressed_to, "one-id");
     EXPECT_EQ(entries[1].text, "One answer");
@@ -1380,13 +1374,13 @@ TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedCompletion) 
     release_second.store(true, std::memory_order_release);
     ASSERT_TRUE(wait_for_finish(*second_view));
     // Nothing from the two finished children is visible yet.
-    ASSERT_EQ(controller->transcript().entries().size(), 1U);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
     release_first.store(true, std::memory_order_release);
     ASSERT_TRUE(wait_for_finish(*first_view));
     receive_until_idle(*controller);
 
     const std::vector<TranscriptEntry> entries =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 6U);
     const std::vector<std::string> expected_ids{"one-id", "two-id", "three-id"};
     const std::vector<std::string> expected_names{"One", "Two", "Three"};
@@ -1398,7 +1392,7 @@ TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedCompletion) 
         EXPECT_EQ(prompt.addressed_to, expected_ids[child]);
         EXPECT_EQ(prompt.text, "Question");
         EXPECT_EQ(prompt.request_id, request_id);
-        EXPECT_EQ(answer.kind, EntryKind::agent);
+        EXPECT_EQ(answer.kind, EntryKind::character);
         EXPECT_EQ(answer.participant_id, expected_ids[child]);
         EXPECT_EQ(answer.display_name, expected_names[child]);
         EXPECT_EQ(answer.text, expected_names[child] + " answer");
@@ -1440,13 +1434,13 @@ TEST(SessionController, DrainsLargeCompletedBackgroundBacklogInOrder) {
         std::this_thread::yield();
     }
     ASSERT_TRUE(second_view->finished.load(std::memory_order_acquire));
-    ASSERT_EQ(controller->transcript().entries().size(), 1U);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
 
     release_first.store(true, std::memory_order_release);
     receive_until_idle(*controller);
 
     const std::vector<TranscriptEntry> entries =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 4U);
     EXPECT_EQ(entries[1].text, "One answer");
     EXPECT_EQ(entries[2].addressed_to, "two-id");
@@ -1455,7 +1449,7 @@ TEST(SessionController, DrainsLargeCompletedBackgroundBacklogInOrder) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
-TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndAgent) {
+TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndCharacter) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>();
     ScriptedBackend* backend_view = backend.get();
@@ -1530,7 +1524,7 @@ TEST(SessionController, FirstActivationFailureTearsDownEveryGatedExecution) {
             "Question", {"One", "Two"}),
         std::runtime_error);
     EXPECT_FALSE(controller->is_generating());
-    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
     EXPECT_TRUE(first_view->inputs.empty());
     EXPECT_TRUE(second_view->inputs.empty());
 
@@ -1574,7 +1568,7 @@ TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryExecution) 
         std::runtime_error);
     EXPECT_FALSE(controller->is_generating());
     const std::vector<TranscriptEntry> entries =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries[0].addressed_to, "one-id");
     EXPECT_EQ(entries[1].text, "One answer");
@@ -1623,20 +1617,20 @@ TEST(SessionController, IgnoresEventsForAnotherRequest) {
 
     (void)controller->submit_prompt("operator", "Question");
     const ControllerUpdate delta =
-        controller->handle_agent_event(
-            AgentDelta{
+        controller->handle_completion_event(
+            CompletionEventDelta{
                 999,
                 CompletionDeltaKind::answer,
                 "Wrong response",
             });
     const ControllerUpdate completed =
-        controller->handle_agent_event(
-            AgentCompleted{999});
+        controller->handle_completion_event(
+            CompletionCompleted{999});
 
     EXPECT_FALSE(has_state_update(delta));
     EXPECT_FALSE(has_state_update(completed));
     EXPECT_TRUE(controller->is_generating());
-    const auto entries = copy_entries(controller->transcript());
+    const auto entries = copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 1U);
     EXPECT_EQ(entries.front().kind, EntryKind::human);
 
@@ -1660,7 +1654,7 @@ TEST(SessionController, StagingFailureLeavesNoDurableTurn) {
     const auto restored =
         load_transcript_entries(temporary.path);
     EXPECT_TRUE(restored.empty());
-    EXPECT_TRUE(controller->transcript().entries().empty());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
 }
 
 TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
@@ -1711,10 +1705,10 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
         {},
         "ismael-id");
 
-    EXPECT_EQ(controller->default_agent_id(), "ismael-id");
-    ASSERT_EQ(controller->characters().all().size(), 2U);
-    EXPECT_EQ(controller->characters().all()[0].id, "guide-id");
-    EXPECT_EQ(controller->characters().all()[1].id, "ismael-id");
+    EXPECT_EQ(controller->view().default_character_id, "ismael-id");
+    ASSERT_EQ(controller->view().characters.size(), 2U);
+    EXPECT_EQ(controller->view().characters[0].id, "guide-id");
+    EXPECT_EQ(controller->view().characters[1].id, "ismael-id");
 
     (void)controller->submit_prompt("operator", "initial default");
     receive_until_idle(*controller);
@@ -1729,7 +1723,7 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
     EXPECT_EQ(guide_view->inputs.back().run.target.id, "guide-id");
     EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
     const std::vector<TranscriptEntry> entries_after_multicast =
-        copy_entries(controller->transcript());
+        copy_entries(controller->view().transcript);
     ASSERT_EQ(entries_after_multicast.size(), 6U);
     EXPECT_EQ(entries_after_multicast[2].addressed_to, "guide-id");
     EXPECT_EQ(entries_after_multicast[4].addressed_to, "ismael-id");
@@ -1743,52 +1737,52 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
     EXPECT_EQ(guide_view->inputs.size(), 1U);
 
     const ControllerUpdate default_changed =
-        controller->set_default_agent("Gui");
+        controller->set_default_character("Gui");
     EXPECT_TRUE(default_changed.input_consumed);
-    EXPECT_EQ(default_changed.notice, "Default agent is now Guide");
+    EXPECT_EQ(default_changed.notice, "Default character is now Guide");
     (void)controller->submit_prompt("operator", "next");
     receive_until_idle(*controller);
     ASSERT_EQ(guide_view->inputs.size(), 2U);
     EXPECT_EQ(guide_view->inputs.back().run.target.id, "guide-id");
 
     const ControllerUpdate stable_id_changed =
-        controller->set_default_agent_by_id("ismael-id");
+        controller->set_default_character_by_id("ismael-id");
     EXPECT_FALSE(stable_id_changed.input_consumed);
-    EXPECT_EQ(stable_id_changed.notice, "Default agent is now Ismael");
+    EXPECT_EQ(stable_id_changed.notice, "Default character is now Ismael");
     (void)controller->submit_prompt("operator", "by stable ID");
     receive_until_idle(*controller);
     ASSERT_EQ(ismael_view->inputs.size(), 4U);
     EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
 
     const ControllerUpdate unknown_id =
-        controller->set_default_agent_by_id("unknown-id");
+        controller->set_default_character_by_id("unknown-id");
     EXPECT_FALSE(unknown_id.input_consumed);
-    EXPECT_EQ(unknown_id.notice, "Unknown agent");
+    EXPECT_EQ(unknown_id.notice, "Unknown character");
 
-    const std::size_t entries_before_rejection = controller->transcript().entries().size();
+    const std::size_t entries_before_rejection = controller->view().transcript.entries.size();
     const ControllerUpdate rejected =
         controller->submit_prompt("operator", "text", "nobody");
     EXPECT_FALSE(rejected.input_consumed);
     EXPECT_NE(rejected.notice->find("@nobody"), std::string::npos);
-    EXPECT_EQ(controller->transcript().entries().size(), entries_before_rejection);
+    EXPECT_EQ(controller->view().transcript.entries.size(), entries_before_rejection);
 
     const std::vector<TranscriptEntry> entries_before_agents =
-        copy_entries(controller->transcript());
-    const ControllerUpdate agents = controller->agent_information();
-    EXPECT_TRUE(agents.input_consumed);
-    ASSERT_TRUE(agents.notice);
+        copy_entries(controller->view().transcript);
+    const ControllerUpdate characters = controller->character_information();
+    EXPECT_TRUE(characters.input_consumed);
+    ASSERT_TRUE(characters.notice);
     EXPECT_NE(
-        agents.notice->find("Any unambiguous prefix works."),
+        characters.notice->find("Any unambiguous prefix works."),
         std::string::npos);
-    EXPECT_EQ(agents.notice->find("Cheburashka"), std::string::npos);
-    EXPECT_NE(agents.notice->find("@Ismael"), std::string::npos);
-    EXPECT_LT(agents.notice->find("@Guide"), agents.notice->find("@Ismael"));
-    EXPECT_LT(agents.notice->find("* @Ismael"), agents.notice->find("@Ismael"));
+    EXPECT_EQ(characters.notice->find("Cheburashka"), std::string::npos);
+    EXPECT_NE(characters.notice->find("@Ismael"), std::string::npos);
+    EXPECT_LT(characters.notice->find("@Guide"), characters.notice->find("@Ismael"));
+    EXPECT_LT(characters.notice->find("* @Ismael"), characters.notice->find("@Ismael"));
     const ControllerUpdate info = controller->session_information();
     ASSERT_TRUE(info.notice);
     EXPECT_NE(info.notice->find("* @Ismael"), std::string::npos);
     EXPECT_EQ(
-        copy_entries(controller->transcript()),
+        copy_entries(controller->view().transcript),
         entries_before_agents);
     EXPECT_EQ(
         load_transcript_entries(temporary.path),
@@ -1836,13 +1830,13 @@ TEST(SessionController, ViewBorrowsControllerValuesAndTranscriptContinuity) {
     const ControllerView view = controller->view();
     ASSERT_EQ(view.characters.size(), 1U);
     EXPECT_EQ(view.characters.front().id, "guide-id");
-    EXPECT_EQ(view.default_agent_id, "guide-id");
+    EXPECT_EQ(view.default_character_id, "guide-id");
     EXPECT_EQ(
         std::vector<TranscriptEntry>(
             view.transcript.entries.begin(), view.transcript.entries.end()),
         std::vector<TranscriptEntry>({entry}));
     EXPECT_GT(view.transcript.revision, 0U);
-    EXPECT_EQ(view.transcript.revision, controller->transcript().view().revision);
+    EXPECT_EQ(view.transcript.revision, controller->view().transcript.revision);
     EXPECT_FALSE(view.transcript.open_entry_id);
     EXPECT_FALSE(view.generation.active);
 
@@ -1861,14 +1855,14 @@ TEST(SessionController, ViewBorrowsActiveGenerationAndOpenEntry) {
         notifier());
 
     (void)controller->submit_prompt("operator", "Question");
-    (void)controller->handle_agent_event(AgentDelta{
+    (void)controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::reasoning, "Thinking",
     });
-    (void)controller->handle_agent_event(AgentDelta{
+    (void)controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::answer, "Answer",
     });
     const ControllerView view = controller->view();
-    const TranscriptView transcript = controller->transcript().view();
+    const TranscriptView transcript = controller->view().transcript;
 
     ASSERT_TRUE(view.transcript.open_entry_id);
     EXPECT_EQ(view.transcript.open_entry_id, transcript.open_entry_id);
@@ -1876,8 +1870,8 @@ TEST(SessionController, ViewBorrowsActiveGenerationAndOpenEntry) {
     EXPECT_EQ(view.transcript.history_epoch, transcript.history_epoch);
     EXPECT_TRUE(view.generation.active);
     EXPECT_EQ(view.generation.request_id, 1);
-    EXPECT_EQ(view.generation.agent_id, "guide-id");
-    EXPECT_EQ(view.generation.agent_name, "Guide");
+    EXPECT_EQ(view.generation.character_id, "guide-id");
+    EXPECT_EQ(view.generation.character_display_name, "Guide");
     EXPECT_EQ(view.generation.phase, ResponsePhase::answering);
     EXPECT_EQ(view.generation.reasoning_text, "Thinking");
     ASSERT_EQ(view.transcript.size(), 2U);
@@ -1885,7 +1879,7 @@ TEST(SessionController, ViewBorrowsActiveGenerationAndOpenEntry) {
         view.transcript.entries.back().id, *view.transcript.open_entry_id);
     EXPECT_EQ(view.transcript.entries.back().text, "Answer");
 
-    (void)controller->handle_agent_event(AgentCompleted{1});
+    (void)controller->handle_completion_event(CompletionCompleted{1});
     const ControllerView after = controller->view();
     EXPECT_FALSE(after.generation.active);
     EXPECT_TRUE(after.generation.reasoning_text.empty());
@@ -1905,11 +1899,11 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
         controller->submit_prompt("operator", "Question")));
 
     // The first reasoning chunk establishes visible request state.
-    EXPECT_TRUE(requires_snapshot(controller->handle_agent_event(AgentDelta{
+    EXPECT_TRUE(requires_snapshot(controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::reasoning, "Think",
     })));
     const ControllerUpdate more_reasoning =
-        controller->handle_agent_event(AgentDelta{
+        controller->handle_completion_event(CompletionEventDelta{
             1, CompletionDeltaKind::reasoning, " more",
         });
     ASSERT_NE(text_append(more_reasoning), nullptr);
@@ -1918,18 +1912,18 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
         (TextAppend{ReasoningTextTarget{1}, " more"}));
 
     const ControllerUpdate careful_reasoning =
-        controller->handle_agent_event(AgentDelta{
+        controller->handle_completion_event(CompletionEventDelta{
             1, CompletionDeltaKind::reasoning, " carefully",
         });
     ASSERT_NE(text_append(careful_reasoning), nullptr);
     EXPECT_EQ(text_append(careful_reasoning)->text, " carefully");
 
     // The first answer chunk changes phase and opens the response entry.
-    EXPECT_TRUE(requires_snapshot(controller->handle_agent_event(AgentDelta{
+    EXPECT_TRUE(requires_snapshot(controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::answer, "Answer",
     })));
     const ControllerUpdate more_answer =
-        controller->handle_agent_event(AgentDelta{
+        controller->handle_completion_event(CompletionEventDelta{
             1, CompletionDeltaKind::answer, " again",
         });
     ASSERT_NE(text_append(more_answer), nullptr);
@@ -1940,7 +1934,7 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
     // Reasoning arriving after the answer began is still a pure append; the
     // transport decides whether that target switch needs a snapshot.
     const ControllerUpdate late_reasoning =
-        controller->handle_agent_event(AgentDelta{
+        controller->handle_completion_event(CompletionEventDelta{
             1, CompletionDeltaKind::reasoning, " late",
         });
     ASSERT_NE(text_append(late_reasoning), nullptr);
@@ -1950,7 +1944,7 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
 
     // Completion finalizes the entry even though it also carries text.
     EXPECT_TRUE(
-        requires_snapshot(controller->handle_agent_event(AgentCompleted{1})));
+        requires_snapshot(controller->handle_completion_event(CompletionCompleted{1})));
 }
 
 TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
@@ -1961,29 +1955,29 @@ TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
         notifier());
 
     // No request is active, so nothing is applied.
-    EXPECT_FALSE(has_state_update(controller->handle_agent_event(AgentDelta{
+    EXPECT_FALSE(has_state_update(controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::answer, "Orphan",
     })));
 
     (void)controller->submit_prompt("operator", "Question");
     // A mismatched request and an empty delta both leave state untouched.
-    EXPECT_FALSE(has_state_update(controller->handle_agent_event(AgentDelta{
+    EXPECT_FALSE(has_state_update(controller->handle_completion_event(CompletionEventDelta{
         99, CompletionDeltaKind::answer, "Other request",
     })));
-    EXPECT_FALSE(has_state_update(controller->handle_agent_event(AgentDelta{
+    EXPECT_FALSE(has_state_update(controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::answer, "",
     })));
 
     // Cancellation and failure are terminal regardless of accumulated text.
-    (void)controller->handle_agent_event(AgentDelta{
+    (void)controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::answer, "Partial",
     });
     EXPECT_TRUE(
-        requires_snapshot(controller->handle_agent_event(AgentCancelled{1})));
+        requires_snapshot(controller->handle_completion_event(CompletionCancelled{1})));
 
     (void)controller->submit_prompt("operator", "Another question");
     EXPECT_TRUE(requires_snapshot(
-        controller->handle_agent_event(AgentFailed{2, "boom"})));
+        controller->handle_completion_event(CompletionFailed{2, "boom"})));
 }
 
 TEST(SessionController, EventDrainMergesAppendsAndPromotesMixedBatches) {
@@ -1993,16 +1987,16 @@ TEST(SessionController, EventDrainMergesAppendsAndPromotesMixedBatches) {
         temporary.path,
         notifier());
     (void)controller->submit_prompt("operator", "Question");
-    (void)controller->handle_agent_event(AgentDelta{
+    (void)controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::answer, "Answer",
     });
 
     // Two same-target deltas applied in one operation concatenate exactly.
     ControllerUpdate batch;
-    merge(batch, controller->handle_agent_event(AgentDelta{
+    merge(batch, controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::answer, " in",
     }));
-    merge(batch, controller->handle_agent_event(AgentDelta{
+    merge(batch, controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::answer, " one query",
     }));
     ASSERT_NE(text_append(batch), nullptr);
@@ -2011,7 +2005,7 @@ TEST(SessionController, EventDrainMergesAppendsAndPromotesMixedBatches) {
         (TextAppend{EntryTextTarget{2}, " in one query"}));
 
     // Mixing targets in one drain forces a snapshot.
-    merge(batch, controller->handle_agent_event(AgentDelta{
+    merge(batch, controller->handle_completion_event(CompletionEventDelta{
         1, CompletionDeltaKind::reasoning, "aside",
     }));
     EXPECT_TRUE(requires_snapshot(batch));
@@ -2019,7 +2013,7 @@ TEST(SessionController, EventDrainMergesAppendsAndPromotesMixedBatches) {
     // An append followed by a terminal event is a snapshot as well.
     ControllerUpdate terminal{
         .state = TextAppend{EntryTextTarget{2}, " end"}};
-    merge(terminal, controller->handle_agent_event(AgentCompleted{1}));
+    merge(terminal, controller->handle_completion_event(CompletionCompleted{1}));
     EXPECT_TRUE(requires_snapshot(terminal));
     ASSERT_TRUE(terminal.notice);
     EXPECT_TRUE(terminal.notice->empty());
@@ -2040,12 +2034,12 @@ TEST(SessionController, CommandsRequestSnapshotsAndNoticesAloneDoNot) {
     EXPECT_FALSE(information.notice->empty());
 
     // A rejected default change is a notice without a state effect.
-    const ControllerUpdate unknown = controller->set_default_agent("nobody");
+    const ControllerUpdate unknown = controller->set_default_character("nobody");
     EXPECT_FALSE(has_state_update(unknown));
 
     // An accepted one is structural.
-    EXPECT_TRUE(requires_snapshot(controller->set_default_agent("Guide")));
-    EXPECT_TRUE(requires_snapshot(controller->set_default_agent_by_id("guide-id")));
+    EXPECT_TRUE(requires_snapshot(controller->set_default_character("Guide")));
+    EXPECT_TRUE(requires_snapshot(controller->set_default_character_by_id("guide-id")));
     EXPECT_TRUE(requires_snapshot(controller->clear_transcript()));
     EXPECT_TRUE(requires_snapshot(controller->open_offrecord()));
     EXPECT_TRUE(requires_snapshot(controller->extend_offrecord()));
@@ -2113,12 +2107,12 @@ TEST(SessionController, ReportsSemanticStateAndInputConsumptionIndependently) {
     EXPECT_TRUE(information.input_consumed);
     ASSERT_TRUE(information.notice);
 
-    const ControllerUpdate empty_handle = controller->set_default_agent({});
+    const ControllerUpdate empty_handle = controller->set_default_character({});
     EXPECT_FALSE(has_state_update(empty_handle));
     EXPECT_TRUE(empty_handle.input_consumed);
 
     const ControllerUpdate typed_default =
-        controller->set_default_agent_by_id("guide-id");
+        controller->set_default_character_by_id("guide-id");
     EXPECT_TRUE(has_state_update(typed_default));
     EXPECT_FALSE(typed_default.input_consumed);
 

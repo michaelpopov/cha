@@ -1,5 +1,6 @@
 #pragma once
 
+#include "domain/ids.h"
 #include "util/text_template.h"
 
 #include <filesystem>
@@ -51,16 +52,20 @@ std::string_view to_string(CharacterSlant value);
 std::string_view to_string(CharacterWeight value);
 std::string_view to_string(CharacterScale value);
 
-// Everything needed to initialize one character: public metadata plus endpoint,
-// credentials, model, streaming, and reasoning settings. The character directory
-// provides the stable ID; its config provides display metadata.
-struct Config {
-    std::string id{"assistant"};
-    // Reserved for a future character-name concept distinct from display name.
-    std::string name{"Assistant"};
-    std::string display_name{"Assistant"};
+// Public, discovery-safe character data. It contains no endpoint, credential,
+// model, or other completion-provider detail.
+struct CharacterMetadata {
+    CharacterId id;
+    std::string display_name;
     std::optional<std::string> description;
+    std::vector<std::string> tags;
     CharacterAppearance appearance;
+    bool operator==(const CharacterMetadata&) const = default;
+};
+
+// Effective private configuration for one completion backend after workspace,
+// character, forum-default, and member-override layers have been applied.
+struct CompletionConfig {
     std::string host;
     int port{};
     Mode mode{Mode::test};
@@ -72,15 +77,6 @@ struct Config {
     std::string reasoning_effort;
     ReasoningFormat reasoning_format{ReasoningFormat::automatic};
     bool https{};
-};
-
-// Definition-only data used for workspace validation and character browsing.
-struct CharacterDefinitionMetadata {
-    std::string id;
-    std::string display_name;
-    std::optional<std::string> description;
-    std::vector<std::string> tags;
-    CharacterAppearance appearance;
 };
 
 // Provider/runtime settings supplied by workspace.toml. Identity and prompt fields
@@ -116,16 +112,17 @@ ProviderConfig load_provider_config(
     const std::filesystem::path& workspace_config_path);
 
 // The typed connection configuration and initial template scope after all layers.
-struct LoadedConfig {
-    Config config;
+struct LoadedCharacterConfig {
+    CharacterMetadata character;
+    CompletionConfig completion;
     TemplateScope prompt_variables;
 };
 
 // Loads application provider, definition, forum defaults, and member override in precedence order.
-LoadedConfig load_config(const CharacterConfigPaths& paths);
+LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths);
 
 // Loads definition-only identity and tag metadata without requiring provider settings.
-CharacterDefinitionMetadata load_character_definition_metadata(
+CharacterMetadata load_character_metadata(
     const std::filesystem::path& definition_path);
 
 } // namespace cha

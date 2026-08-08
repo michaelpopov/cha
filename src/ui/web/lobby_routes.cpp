@@ -64,7 +64,7 @@ void set_open_result(
     }
 }
 
-CharacterSummary character_summary(const CharacterDefinitionMetadata& character) {
+CharacterSummary character_summary(const CharacterMetadata& character) {
     return {character.id, character.display_name, character.description, character.appearance};
 }
 
@@ -73,7 +73,7 @@ ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceModel& model) 
                         .default_character_id = forum.default_character_id};
     result.members.reserve(forum.member_ids.size());
     for (const std::string& id : forum.member_ids) {
-        const CharacterDefinitionMetadata* character = model.find_character(id);
+        const CharacterMetadata* character = model.find_character(id);
         if (character == nullptr) throw std::runtime_error("Forum member is absent from the workspace model");
         result.members.push_back(character_summary(*character));
     }
@@ -151,7 +151,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
                             .initial_forum_id = initial.session.forum_id,
                             .initial_session_id = initial.session.session_id};
         for (const Persona& persona : *model->personas()) bootstrap.personas.push_back({persona.id, persona.display_name, persona.description});
-        for (const CharacterDefinitionMetadata& character : model->characters()) bootstrap.characters.push_back(character_summary(character));
+        for (const CharacterMetadata& character : model->characters()) bootstrap.characters.push_back(character_summary(character));
         for (const ForumInfo& forum : model->forums()) bootstrap.forums.push_back(forum_summary(forum, *model));
         bootstrap.recent_sessions = recent_sessions(*model, *sessions);
         set_json_response(response, 200, nlohmann::json(bootstrap));
@@ -160,7 +160,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     server.Get(R"(/api/v1/characters/([^/]+))", [model](const httplib::Request& request, httplib::Response& response) {
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) return set_route_not_found(response);
-        const CharacterDefinitionMetadata* character = model->find_character(id);
+        const CharacterMetadata* character = model->find_character(id);
         if (character == nullptr) return set_route_not_found(response);
         set_json_response(response, 200, nlohmann::json(CharacterDetail{
             character_summary(*character),

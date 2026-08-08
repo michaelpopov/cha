@@ -230,7 +230,7 @@ export function ChatScreen({
               <div className="cha-speaker">{entry.display_name}</div>
             )}
             <div
-              className={`cha-message-text${entry.kind === 'agent'
+              className={`cha-message-text${entry.kind === 'character'
                 ? voiceClasses(voices.get(entry.participant_id))
                 : ''}`}
             >
@@ -245,10 +245,10 @@ export function ChatScreen({
             {/* Only the phase is announced. Marking the region live would make
                 a screen reader re-read the whole reasoning text per token. */}
             <div className="cha-speaker" aria-live="polite">
-              {generation.phase === 'reasoning' && `${generation.agent_name} is reasoning…`}
-              {generation.phase === 'answering' && `${generation.agent_name} is answering…`}
-              {generation.phase === 'stopping' && `Stopping ${generation.agent_name}…`}
-              {generation.phase === 'waiting' && `Waiting for ${generation.agent_name}…`}
+              {generation.phase === 'reasoning' && `${generation.character_display_name} is reasoning…`}
+              {generation.phase === 'answering' && `${generation.character_display_name} is answering…`}
+              {generation.phase === 'stopping' && `Stopping ${generation.character_display_name}…`}
+              {generation.phase === 'waiting' && `Waiting for ${generation.character_display_name}…`}
             </div>
             {generation.reasoning_text && (
               <div className="cha-reasoning-text">{generation.reasoning_text}</div>

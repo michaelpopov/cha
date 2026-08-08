@@ -84,7 +84,7 @@ bool starts_with_name_word(std::string_view name, std::string_view handle) {
 } // namespace
 
 ForumCharacters::ForumCharacters(
-    std::vector<CharacterInfo> characters,
+    std::vector<CharacterMetadata> characters,
     bool allow_reserved_names)
     : characters_(std::move(characters)) {
     if (characters_.empty()) {
@@ -92,34 +92,30 @@ ForumCharacters::ForumCharacters(
     }
     std::unordered_set<std::string> ids;
     std::unordered_set<std::string> names;
-    for (const CharacterInfo& character : characters_) {
+    for (const CharacterMetadata& character : characters_) {
         validate_character_id(character.id);
-        if (allow_reserved_names) validate_character_name_syntax(character.name);
-        else validate_character_name(character.name);
+        if (allow_reserved_names) validate_character_display_name_syntax(character.display_name);
+        else validate_character_display_name(character.display_name);
         if (!ids.insert(character.id).second) {
             throw std::invalid_argument(
                 "Forum has duplicate character ID '" + character.id + "'");
         }
-        if (!names.insert(fold_ascii(character.name)).second) {
+        if (!names.insert(fold_ascii(character.display_name)).second) {
             throw std::invalid_argument(
-                "Forum has duplicate character name '" + character.name + "'");
+                "Forum has duplicate character name '" + character.display_name + "'");
         }
     }
 }
 
-const std::vector<CharacterInfo>& ForumCharacters::all() const noexcept {
+const std::vector<CharacterMetadata>& ForumCharacters::all() const noexcept {
     return characters_;
 }
 
-const CharacterInfo& ForumCharacters::first() const {
-    return characters_.front();
-}
-
-const CharacterInfo* ForumCharacters::find(std::string_view id) const {
+const CharacterMetadata* ForumCharacters::find(std::string_view id) const {
     const auto found = std::find_if(
         characters_.begin(),
         characters_.end(),
-        [id](const CharacterInfo& character) { return character.id == id; });
+        [id](const CharacterMetadata& character) { return character.id == id; });
     return found == characters_.end() ? nullptr : &*found;
 }
 
@@ -127,30 +123,30 @@ HandleResolution ForumCharacters::resolve_handle(std::string_view handle) const 
     if (handle.empty()) {
         return {};
     }
-    const auto named = [this](std::string_view value) -> const CharacterInfo* {
+    const auto named = [this](std::string_view value) -> const CharacterMetadata* {
         const auto found = std::find_if(
             characters_.begin(),
             characters_.end(),
-            [value](const CharacterInfo& character) {
-                return ascii_iequals(character.name, value);
+            [value](const CharacterMetadata& character) {
+                return ascii_iequals(character.display_name, value);
             });
         return found == characters_.end() ? nullptr : &*found;
     };
-    if (const CharacterInfo* character = named(handle)) {
+    if (const CharacterMetadata* character = named(handle)) {
         return {HandleMatch::resolved, character, {}};
     }
     const std::string_view trimmed = trim_punctuation(handle);
     if (trimmed != handle) {
-        if (const CharacterInfo* character = named(trimmed)) {
+        if (const CharacterMetadata* character = named(trimmed)) {
             return {HandleMatch::resolved, character, {}};
         }
     }
     if (trimmed.empty()) {
         return {};
     }
-    std::vector<const CharacterInfo*> candidates;
-    for (const CharacterInfo& character : characters_) {
-        if (matches_name_word(character.name, trimmed)) {
+    std::vector<const CharacterMetadata*> candidates;
+    for (const CharacterMetadata& character : characters_) {
+        if (matches_name_word(character.display_name, trimmed)) {
             candidates.push_back(&character);
         }
     }
@@ -160,9 +156,9 @@ HandleResolution ForumCharacters::resolve_handle(std::string_view handle) const 
     if (candidates.size() > 1) {
         return {HandleMatch::ambiguous, nullptr, std::move(candidates)};
     }
-    for (const CharacterInfo& character : characters_) {
-        if (starts_with_folded(character.name, trimmed)
-            || starts_with_name_word(character.name, trimmed)) {
+    for (const CharacterMetadata& character : characters_) {
+        if (starts_with_folded(character.display_name, trimmed)
+            || starts_with_name_word(character.display_name, trimmed)) {
             candidates.push_back(&character);
         }
     }
@@ -177,11 +173,11 @@ HandleResolution ForumCharacters::resolve_handle(std::string_view handle) const 
 
 std::string ForumCharacters::handle_list() const {
     std::string result;
-    for (const CharacterInfo& character : characters_) {
+    for (const CharacterMetadata& character : characters_) {
         if (!result.empty()) {
             result += ", ";
         }
-        result += "@" + character.name;
+        result += "@" + character.display_name;
     }
     return result;
 }
@@ -191,37 +187,37 @@ std::string format_handle_resolution_notice(
     const HandleResolution& resolution,
     const ForumCharacters& characters) {
     if (resolution.match == HandleMatch::unknown) {
-        return "Unknown agent @" + std::string(handle)
+        return "Unknown character @" + std::string(handle)
             + ". Characters in this forum: " + characters.handle_list();
     }
     std::string result =
-        "Ambiguous agent @" + std::string(handle) + ": matches ";
+        "Ambiguous character @" + std::string(handle) + ": matches ";
     for (std::size_t index = 0; index < resolution.candidates.size(); ++index) {
         if (index) {
             result += ", ";
         }
-        result += "@" + resolution.candidates[index]->name;
+        result += "@" + resolution.candidates[index]->display_name;
     }
     return result + ". Type more of the name.";
 }
 
-std::string format_duplicate_character_notice(std::string_view name) {
-    return "Multicast target @" + std::string(name) + " is duplicated";
+std::string format_duplicate_character_notice(std::string_view display_name) {
+    return "Multicast target @" + std::string(display_name) + " is duplicated";
 }
 
 std::string format_characters_notice(
     const ForumCharacters& characters,
-    const std::vector<AgentRuntimeInfo>& runtime_info,
-    const ParticipantId& default_agent_id) {
+    const std::vector<CompletionBackendInfo>& runtime_info,
+    const CharacterId& default_character_id) {
     std::ostringstream result;
     result << "Characters in this forum (" << characters.all().size()
            << "), * marks the default.";
     result << " Any unambiguous prefix works.";
-    for (const AgentRuntimeInfo& agent : runtime_info) {
-        result << " | " << (agent.character.id == default_agent_id ? "* " : "")
-               << "@" << agent.character.name << "  " << agent.model << "  "
-               << agent.api << "  "
-               << (agent.streaming ? "streaming" : "non-streaming");
+    for (const CompletionBackendInfo& backend : runtime_info) {
+        result << " | " << (backend.character.id == default_character_id ? "* " : "")
+               << "@" << backend.character.display_name << "  " << backend.model << "  "
+               << backend.api << "  "
+               << (backend.streaming ? "streaming" : "non-streaming");
     }
     return result.str();
 }
@@ -229,12 +225,12 @@ std::string format_characters_notice(
 std::string format_session_information(
     std::size_t entry_count,
     const ForumCharacters& characters,
-    const std::vector<AgentRuntimeInfo>& runtime_info,
-    const ParticipantId& default_agent_id) {
+    const std::vector<CompletionBackendInfo>& runtime_info,
+    const CharacterId& default_character_id) {
     std::ostringstream text;
     text << "Transcript entries: " << entry_count
          << " | " << format_characters_notice(
-             characters, runtime_info, default_agent_id);
+             characters, runtime_info, default_character_id);
     return text.str();
 }
 

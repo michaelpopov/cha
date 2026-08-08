@@ -227,7 +227,7 @@ export function createChaClient(
 
     setDefaultCharacter: (forumId, sessionId, characterId) => requestJson<CommandResult>(
       fetcher,
-      sessionApiUrl(forumId, sessionId, 'actions/default-agent'),
+      sessionApiUrl(forumId, sessionId, 'actions/default-character'),
       jsonMutation({ character_id: characterId }),
     ),
   };

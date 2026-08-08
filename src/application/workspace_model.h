@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/agent.h"
+#include "agents/character.h"
 #include "agents/config.h"
 #include "agents/persona.h"
 #include "session/opened_session.h"
@@ -35,11 +35,11 @@ WorkspaceConfig load_workspace_config(
 // One forum as the browser sees it. It deliberately carries no filesystem
 // path: routes should not learn the workspace layout.
 struct ForumInfo {
-    std::string id;
+    ForumId id;
     std::string display_name;
     std::optional<std::string> description;
-    std::vector<std::string> member_ids;
-    std::string default_character_id;
+    std::vector<CharacterId> member_ids;
+    CharacterId default_character_id;
 };
 
 // The authoritative static workspace for one server process. It is loaded once
@@ -53,12 +53,12 @@ public:
         WorkspaceConfig config);
 
     const SharedPersonaRoster& personas() const noexcept { return personas_; }
-    std::span<const CharacterDefinitionMetadata> characters() const noexcept {
+    std::span<const CharacterMetadata> characters() const noexcept {
         return characters_;
     }
     std::span<const ForumInfo> forums() const noexcept { return forums_; }
 
-    const CharacterDefinitionMetadata* find_character(
+    const CharacterMetadata* find_character(
         std::string_view id) const noexcept;
     const ForumInfo* find_forum(std::string_view id) const noexcept;
     std::string_view character_markdown(std::string_view id) const;
@@ -78,17 +78,17 @@ private:
         const SessionIdentity&,
         WakeNotifier&);
 
-    std::vector<AgentDefinition> copy_definitions_for(
+    std::vector<CharacterDefinition> copy_definitions_for(
         std::string_view forum_id) const;
 
     WorkspaceConfig config_;
     SharedPersonaRoster personas_;
-    std::vector<CharacterDefinitionMetadata> characters_;
+    std::vector<CharacterMetadata> characters_;
     std::vector<ForumInfo> forums_;
     std::unordered_map<std::string, std::size_t> character_index_;
     std::unordered_map<std::string, std::size_t> forum_index_;
     std::unordered_map<std::string, std::string> character_markdown_;
-    std::unordered_map<std::string, std::vector<AgentDefinition>> definitions_;
+    std::unordered_map<std::string, std::vector<CharacterDefinition>> definitions_;
     std::vector<ForumSessionDirectory> session_directories_;
 };
 
