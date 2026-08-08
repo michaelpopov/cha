@@ -180,7 +180,8 @@ add_library(cha_core STATIC
     src/util/utf8_path.cpp
     src/transcript/transcript.cpp
     src/agents/agent.cpp
-    src/agents/agent_registry.cpp
+    src/agents/completion_batch.cpp
+    src/agents/completion_executor.cpp
     src/agents/completion_client.cpp
     src/agents/config.cpp
     src/session/controller_update.cpp
@@ -285,7 +286,8 @@ if(BUILD_TESTING)
         tests/transcript/unit_transcript.cpp
         tests/agents/unit_agent_context.cpp
         tests/agents/unit_agent_definition_loader.cpp
-        tests/agents/unit_agent_registry.cpp
+        tests/agents/unit_completion_batch.cpp
+        tests/agents/unit_completion_executor.cpp
         tests/agents/unit_config_loader.cpp
         tests/agents/unit_json_serialization.cpp
         tests/session/unit_concurrent_controllers.cpp

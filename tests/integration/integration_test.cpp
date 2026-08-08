@@ -1,5 +1,6 @@
 #include "agents/agent.h"
-#include "agents/agent_registry.h"
+#include "agents/completion_batch.h"
+#include "agents/completion_executor.h"
 #include "session/session_controller.h"
 #include "agents/config.h"
 #include "util/environment.h"
@@ -56,27 +57,23 @@ using IntegrationDeadline = IntegrationClock::time_point;
 // chunk.
 constexpr auto integration_chat_timeout = std::chrono::seconds(60);
 
-class AgentRunCleanup final {
+// Declared before the batch so the batch is destroyed first: its destructor
+// cancels the live request — curl's progress callback observes that while the
+// transfer is blocked — and waits, after which stopping the pool joins the
+// worker safely even when the test exits through an exception.
+class PoolCleanup final {
 public:
-    AgentRunCleanup(AgentRegistry& registry, ThreadPool& pool)
-        : registry_(registry), pool_(pool) {
+    explicit PoolCleanup(ThreadPool& pool) : pool_(pool) {
     }
 
-    ~AgentRunCleanup() {
-        // curl's progress callback observes this cancellation while a live
-        // request is blocked, allowing clear_batch() and pool shutdown to join
-        // the worker safely even when the test exits through an exception.
-        registry_.cancel_batch();
-        registry_.clear_batch();
-        registry_.stop();
+    ~PoolCleanup() {
         pool_.stop();
     }
 
-    AgentRunCleanup(const AgentRunCleanup&) = delete;
-    AgentRunCleanup& operator=(const AgentRunCleanup&) = delete;
+    PoolCleanup(const PoolCleanup&) = delete;
+    PoolCleanup& operator=(const PoolCleanup&) = delete;
 
 private:
-    AgentRegistry& registry_;
     ThreadPool& pool_;
 };
 
@@ -93,12 +90,12 @@ Config integration_config(bool stream) {
 }
 
 AgentEvent wait_for_agent_event(
-    AgentRegistry& registry,
+    CompletionBatch& batch,
     IntegrationDeadline deadline) {
     while (true) {
         const std::size_t observed = notifier().wake_count();
         AgentEvent event = AgentCompleted{};
-        const ChannelReadStatus status = registry.try_receive(0, event);
+        const ChannelReadStatus status = batch.try_receive_foreground(event);
         if (status == ChannelReadStatus::value) {
             return event;
         }
@@ -109,7 +106,7 @@ AgentEvent wait_for_agent_event(
 
         const auto now = IntegrationClock::now();
         if (now >= deadline) {
-            registry.cancel_batch();
+            batch.cancel();
             throw std::runtime_error(
                 "Timed out after 60 seconds waiting for an integration agent "
                 "event; cancelled the live request");
@@ -122,7 +119,7 @@ AgentEvent wait_for_agent_event(
         if (!notifier().wait_for_wake(
                 observed,
                 remaining)) {
-            registry.cancel_batch();
+            batch.cancel();
             throw std::runtime_error(
                 "Timed out after 60 seconds waiting for an integration agent "
                 "event; cancelled the live request");
@@ -130,9 +127,13 @@ AgentEvent wait_for_agent_event(
     }
 }
 
-void start_agent_run(AgentRegistry& registry, CompletionInput input) {
-    registry.stage_batch(std::vector<CompletionInput>{std::move(input)});
-    registry.open_gate();
+CompletionBatch start_agent_run(
+    CompletionExecutor& executor,
+    CompletionInput input) {
+    CompletionBatch batch =
+        executor.stage_batch(std::vector<CompletionInput>{std::move(input)});
+    batch.open();
+    return batch;
 }
 
 ChatResult run_chat(bool stream) {
@@ -141,11 +142,11 @@ ChatResult run_chat(bool stream) {
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
     ThreadPool pool(1);
-    AgentRegistry registry(
+    CompletionExecutor executor(
         std::move(definitions),
         notifier(),
         pool);
-    const AgentRunCleanup cleanup(registry, pool);
+    const PoolCleanup cleanup(pool);
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     CompletionInput request{
@@ -157,13 +158,13 @@ ChatResult run_chat(bool stream) {
             .prompt_text = input,
         },
     };
-    start_agent_run(registry, std::move(request));
+    CompletionBatch batch = start_agent_run(executor, std::move(request));
 
     ChatResult result;
     const IntegrationDeadline deadline =
         IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(registry, deadline);
+        const AgentEvent event = wait_for_agent_event(batch, deadline);
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
@@ -182,11 +183,11 @@ ChatResult run_cancelled_chat() {
     std::vector<AgentDefinition> definitions;
     definitions.push_back({.config = config});
     ThreadPool pool(1);
-    AgentRegistry registry(
+    CompletionExecutor executor(
         std::move(definitions),
         notifier(),
         pool);
-    const AgentRunCleanup cleanup(registry, pool);
+    const PoolCleanup cleanup(pool);
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     CompletionInput request{
@@ -198,17 +199,17 @@ ChatResult run_cancelled_chat() {
             .prompt_text = input,
         },
     };
-    start_agent_run(registry, std::move(request));
+    CompletionBatch batch = start_agent_run(executor, std::move(request));
 
     ChatResult result;
     const IntegrationDeadline deadline =
         IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const AgentEvent event = wait_for_agent_event(registry, deadline);
+        const AgentEvent event = wait_for_agent_event(batch, deadline);
         if (const auto* delta = std::get_if<AgentDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
-            registry.cancel_batch();
+            batch.cancel();
         } else {
             EXPECT_TRUE(std::holds_alternative<AgentCancelled>(event));
             break;

@@ -41,7 +41,7 @@ AgentMessage operator_prompt(std::string_view text) {
 
 // Blocks the execution's final wake. This makes `execution_finished` true
 // while the worker task is still live, so shutdown must join the pool rather
-// than treating the registry's backend-safety barrier as full quiescence.
+// than treating the batch's backend-safety barrier as full quiescence.
 class FinalWakeBlockingNotifier final : public WakeNotifier {
 public:
     void block_final_wake() noexcept {
@@ -373,7 +373,7 @@ SessionRestore restore_with(
     };
 }
 
-TEST(SessionController, RejectsEmptyAgentConfigurationWithRegistryMessage) {
+TEST(SessionController, RejectsEmptyAgentConfigurationWithExecutorMessage) {
     TemporaryJournal temporary;
 
     try {
@@ -383,7 +383,7 @@ TEST(SessionController, RejectsEmptyAgentConfigurationWithRegistryMessage) {
     } catch (const std::invalid_argument& error) {
         EXPECT_EQ(
             error.what(),
-            std::string("Agent registry requires at least one agent"));
+            std::string("Completion executor requires at least one agent"));
     }
 }
 
@@ -1341,6 +1341,82 @@ TEST(SessionController, StartsAllChildrenAndBuffersLaterOutputUntilForeground) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
+// The batch owns both the run and the queue for each slot, so a child that
+// finishes early cannot have its output paired with another child's prompt.
+TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedCompletion) {
+    TemporaryJournal temporary;
+    std::atomic_bool release_first{false};
+    std::atomic_bool release_second{false};
+    auto first = std::make_unique<ConcurrentBackend>(
+        "one-id", "One", "One answer", &release_first);
+    auto second = std::make_unique<ConcurrentBackend>(
+        "two-id", "Two", "Two answer", &release_second);
+    auto third = std::make_unique<ConcurrentBackend>(
+        "three-id", "Three", "Three answer");
+    ConcurrentBackend* const first_view = first.get();
+    ConcurrentBackend* const second_view = second.get();
+    ConcurrentBackend* const third_view = third.get();
+    std::vector<std::unique_ptr<CompletionBackend>> backends;
+    backends.push_back(std::move(first));
+    backends.push_back(std::move(second));
+    backends.push_back(std::move(third));
+    auto controller = test::from_backends_for_testing(
+        std::move(backends), temporary.path, notifier());
+
+    (void)controller->start_multicast(
+        "operator", "Question", {"One", "Two", "Three"});
+
+    // Completion order is the exact reverse of the selected foreground order.
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    const auto wait_for_finish = [&deadline](const ConcurrentBackend& backend) {
+        while (!backend.finished.load(std::memory_order_acquire)
+               && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
+        }
+        return backend.finished.load(std::memory_order_acquire);
+    };
+    ASSERT_TRUE(wait_for_finish(*third_view));
+    release_second.store(true, std::memory_order_release);
+    ASSERT_TRUE(wait_for_finish(*second_view));
+    // Nothing from the two finished children is visible yet.
+    ASSERT_EQ(controller->transcript().entries().size(), 1U);
+    release_first.store(true, std::memory_order_release);
+    ASSERT_TRUE(wait_for_finish(*first_view));
+    receive_until_idle(*controller);
+
+    const std::vector<TranscriptEntry> entries =
+        copy_entries(controller->transcript());
+    ASSERT_EQ(entries.size(), 6U);
+    const std::vector<std::string> expected_ids{"one-id", "two-id", "three-id"};
+    const std::vector<std::string> expected_names{"One", "Two", "Three"};
+    for (std::size_t child = 0; child < expected_ids.size(); ++child) {
+        const TranscriptEntry& prompt = entries[child * 2];
+        const TranscriptEntry& answer = entries[child * 2 + 1];
+        const RequestId request_id = static_cast<RequestId>(child + 1);
+        EXPECT_EQ(prompt.kind, EntryKind::human);
+        EXPECT_EQ(prompt.addressed_to, expected_ids[child]);
+        EXPECT_EQ(prompt.text, "Question");
+        EXPECT_EQ(prompt.request_id, request_id);
+        EXPECT_EQ(answer.kind, EntryKind::agent);
+        EXPECT_EQ(answer.participant_id, expected_ids[child]);
+        EXPECT_EQ(answer.display_name, expected_names[child]);
+        EXPECT_EQ(answer.text, expected_names[child] + " answer");
+        EXPECT_EQ(answer.status, EntryStatus::complete);
+        EXPECT_EQ(answer.request_id, request_id);
+    }
+
+    // Each backend saw exactly its own slot's request, whatever order the
+    // provider work finished in.
+    ASSERT_EQ(first_view->inputs.size(), 1U);
+    ASSERT_EQ(second_view->inputs.size(), 1U);
+    ASSERT_EQ(third_view->inputs.size(), 1U);
+    EXPECT_EQ(first_view->inputs.front().run.request_id, 1U);
+    EXPECT_EQ(second_view->inputs.front().run.request_id, 2U);
+    EXPECT_EQ(third_view->inputs.front().run.request_id, 3U);
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+}
+
 TEST(SessionController, DrainsLargeCompletedBackgroundBacklogInOrder) {
     TemporaryJournal temporary;
     constexpr std::size_t backlog_size = 4096;
@@ -1979,11 +2055,16 @@ TEST(SessionController, CommandsRequestSnapshotsAndNoticesAloneDoNot) {
     EXPECT_FALSE(has_state_update(controller->request_stop()));
 }
 
-TEST(SessionController, ShutdownJoinsPoolBeforeRegistryCanBeDestroyed) {
+TEST(SessionController, ShutdownJoinsPoolBeforeExecutorCanBeDestroyed) {
     TemporaryJournal temporary;
     FinalWakeBlockingNotifier shutdown_notifier;
+    // The backend stays inside perform() until shutdown cancels it, so the
+    // notifier is still silent when the test arms the block below. The
+    // execution's two wakes are then exactly its terminal event and its
+    // completion, and the blocked one is the completion wake.
+    const std::atomic_bool never_released{false};
     auto backend = std::make_unique<ConcurrentBackend>(
-        "guide-id", "Guide", "unused");
+        "guide-id", "Guide", "unused", &never_released);
     ConcurrentBackend* backend_view = backend.get();
     std::vector<std::unique_ptr<CompletionBackend>> backends;
     backends.push_back(std::move(backend));

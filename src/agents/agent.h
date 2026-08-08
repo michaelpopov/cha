@@ -127,8 +127,8 @@ std::vector<AgentMessage> project_agent_context(
     std::string_view system_prompt);
 
 // One fragment of streamed provider output, classified as private reasoning or answer text.
-// CompletionBackend emits this without request identity; AgentRegistry attaches that identity
-// when it publishes an AgentDelta.
+// CompletionBackend emits this without request identity; the batch execution attaches that
+// identity when it publishes an AgentDelta.
 enum class CompletionDeltaKind {
     reasoning,
     answer,

@@ -2,7 +2,7 @@
 
 `agents/` owns everything about configured chat agents: loading a character,
 projecting the transcript into model context, running completions as
-registry-owned pool tasks, and speaking the provider's HTTP protocol. The ordered
+batch-owned pool tasks, and speaking the provider's HTTP protocol. The ordered
 characters in a forum and `@handle` resolution belong to `session/`.
 
 It is the only layer that talks to a model server, and the only one that owns
@@ -16,7 +16,8 @@ completion pool tasks.
 | `persona.h` | `Persona` and the ordered `PersonaRoster` values passed down from workspace discovery. |
 | `agent.*` | `AgentDefinition`, `CharacterInfo`, `AgentRuntimeInfo`, identity validation, definition loading with template expansion, the request and event protocol types, and `project_agent_context()`. |
 | `json_serialization.h` | JSON dumping with consistent, context-specific invalid-UTF-8 errors. |
-| `agent_registry.*` | Runtime metadata, gated pool executions, per-run event routing, cancellation, and batch cleanup. |
+| `completion_executor.*` | Backend ownership, runtime metadata validation, target resolution, and failure-atomic staging of a new batch. |
+| `completion_batch.*` | One in-flight operation: its execution slots, shared start gate, foreground position, cancellation, event queues, and wait state. |
 | `completion_backend.h` | The `CompletionBackend` seam and its prepared-request and result types. |
 | `completion_client.*` | The HTTP backend: request bodies, SSE and non-streaming parsing, model discovery, and protocol diagnostics. |
 
@@ -50,9 +51,9 @@ flowchart LR
     conf --> def
     roster --> def
     def -->|"one per character"| client["CompletionClient"]
-    client --> registry["AgentRegistry"]
+    client --> executor["CompletionExecutor"]
     client -->|"info"| runtime["AgentRuntimeInfo"]
-    runtime --> registry
+    runtime --> executor
     runtime -->|"identity only"| characters["session/ForumCharacters"]
 ```
 
@@ -73,7 +74,7 @@ loader values always win. The generated section names the current agent, lists
 the other current characters, and defines how quoted shared history is encoded.
 It is added even for a single-agent forum, because restored history can still
 mention a character that has left. During session construction, loading happens
-on the registry-owned session thread; a forum check loads synchronously on its
+on the session's owner thread; a forum check loads synchronously on its
 calling thread. `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
@@ -102,7 +103,7 @@ Workspace construction rejects persona/character ID collisions and
 case-insensitive display-name collisions across all definitions. Tags organize
 definitions only; they never imply membership in a forum.
 
-`AgentRegistry` validates these rules when it accepts backend metadata.
+`CompletionExecutor` validates these rules when it accepts backend metadata.
 `ForumCharacters` in `session/` separately owns the ordered identity-only view used
 for lookup and handle resolution.
 
@@ -114,24 +115,31 @@ field and unprefixed text.
 
 ## Execution: staged pool tasks and foreground routing
 
-`AgentRegistry` exists so slow providers never block the UI. It owns one
-backend per forum character and borrows the session's fixed-size `ThreadPool`.
-Every execution has its own cancellation flag and event queue. The queue buffers
+This split exists so slow providers never block the UI, and so that two
+different lifetimes stay in two different types. `CompletionExecutor` lives as
+long as the session: it owns one backend per forum character and borrows the
+session's fixed-size `ThreadPool`. `CompletionBatch` lives as long as one
+submitted operation: it owns that operation's ordered execution slots, their
+shared start gate, the foreground position, and cancellation state.
+
+Each slot owns the one `CompletionInput` its backend uses — including its
+`RunSpec` — plus its own cancellation flag and event queue. The queue buffers
 deltas and reserves separate storage for one final event supplied when it closes.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant M as Session owner thread
-    participant R as AgentRegistry
+    participant X as CompletionExecutor
+    participant C as CompletionBatch
     participant P as ThreadPool
     participant W as Pool workers
     participant B as Backends
 
-    M->>R: stage_batch(CompletionInput[])
-    R->>P: submit one gated task per child
-    R-->>M: staged; positions match input order
-    M->>R: open_gate
+    M->>X: stage_batch(CompletionInput[])
+    X->>P: submit one gated task per child
+    X-->>M: CompletionBatch by value; slots follow input order
+    M->>C: open after the foreground turn is durable
     par available workers
         P->>W: run child 0
         W->>B: prepare then perform
@@ -139,40 +147,43 @@ sequenceDiagram
         P->>W: run other children
         W->>B: prepare then perform
     end
-    W-->>M: foreground channel through try_receive(index)
+    W-->>M: foreground channel through try_receive_foreground
     Note over W: background channels remain buffered
-    M->>R: clear_batch after the final terminal
+    M->>C: advance_foreground, then destroy after the final terminal
 ```
 
 Rules that fall out of this design:
 
 - **One operation, several backends.** The controller still admits one persona
   operation, while a multicast may target several distinct backends at once.
-- **One explicit batch.** The registry stores at most one `BatchRecord`, not a
-  collection keyed by batch ID. Its fixed vector of executions follows input
-  order for the full batch lifetime.
+- **One batch object.** The batch *is* the operation; there is no registry of
+  batches, no batch ID, and no current-batch record in the executor. The
+  controller's `optional<CompletionBatch>` is what makes at most one live.
 - **Backend exclusivity.** One live batch and distinct validated targets ensure
   a backend is never called concurrently with itself.
-- **Failure-atomic staging.** Input and task construction complete before
-  submission. A partial submission cancels the unopened gate and waits only
-  for the accepted tasks to finish.
+- **Failure-atomic staging.** Target resolution, slot construction, and task
+  submission all complete before the batch is returned. A partial submission
+  cancels the unopened gate, waits only for the accepted tasks to finish, and
+  returns no batch.
 - **One start decision.** Opening or cancelling the shared gate is idempotent;
   the first transition wins. Queued tasks observe an already-open or cancelled
   gate when they receive a worker; cancellation produces `AgentCancelled`
   without calling the backend.
-- **Foreground-only consumption.** `try_receive()` exposes only the selected
-  execution at the controller-selected index. Executions remain owned by the
-  batch until whole-batch cleanup.
+- **Foreground-only consumption.** `foreground_run()` and
+  `try_receive_foreground()` read the same slot, so no caller passes an index
+  between objects. `advance_foreground()` is rejected until that slot's terminal
+  event has been delivered, and executions stay owned by the batch until it is
+  destroyed.
 - **Guaranteed terminal delivery.** Allocating delta storage may fail and
   becomes an execution failure, but every launched execution—including one
   cancelled before `perform()`—publishes exactly one terminal event through
   the queue's allocation-free `close_with()` operation.
 - **Cancellation is per execution.** It is checked before preparation and by
   the transport. `/stop` cancels every live execution and returns immediately.
-- **Abort cleanup is event-loop driven.** `/stop` only cancels the executions
-  and marks the batch aborting. Each execution wakes the main loop after
-  becoming done; the controller clears the batch only after its foreground
-  terminal was committed and all executions are done.
+- **Abort cleanup is event-loop driven.** `/stop` only calls `cancel()`, which
+  is the batch's single cancellation transition. Each execution wakes the main
+  loop after becoming done; the controller releases the batch only after its
+  foreground terminal was committed and all executions are done.
 - **Background buffering is lossless and unbounded.** There is no artificial
   queue cap or silent dropping in this version. Memory use is proportional to
   the total delta data and queue overhead buffered by children that have not
@@ -185,8 +196,13 @@ Rules that fall out of this design:
   this in-flight work.
 - **Exceptions become events.** Anything thrown on the worker is converted to
   `AgentFailed`, so an accepted request always has an observable outcome.
-- **Shutdown is ordered.** The registry cancels and waits for its executions;
-  the controller then stops and joins the pool before returning from shutdown.
+- **Shutdown is ordered.** The controller cancels the batch and waits until no
+  execution can reach a backend, drains the foreground terminal event while the
+  queues are still alive, releases the batch, and only then stops and joins the
+  pool. Waiting is also the batch destructor's safety fallback, so an
+  exceptional path cannot leave an execution running against a released
+  backend. Because a worker can issue its final notifier wake after that wait
+  returns, the pool must be joined before the executor and notifier die.
 
 ## The backend seam
 
@@ -196,10 +212,10 @@ Rules that fall out of this design:
 | --- | --- | --- |
 | `prepare(input)` | Agent worker | Project owned `CompletionHistory`, append the run prompt once, and build a `RequestPayload`. Must be fast and local. |
 | `perform(payload, sink, cancellation)` | Agent worker | One synchronous completion, streaming fragments to the sink. |
-| `info()` | Any time | Character identity and public runtime details for the registry. |
+| `info()` | Any time | Character identity and public runtime details for the executor. |
 
 The controller captures immutable completion history before activating a turn,
-so neither the registry nor a backend reads the live transcript. Splitting
+so neither the agent runtime nor a backend reads the live transcript. Splitting
 preparation from performance keeps request construction separate from slow
 provider I/O. Tests supply their own backend and never touch the network;
 `tests/support/test_backends.h` has the helpers.
@@ -305,7 +321,8 @@ from its answer.
 | `tests/agents/unit_config_loader.cpp` | TOML fields, defaults, and rejection of malformed values. |
 | `tests/agents/unit_agent_definition_loader.cpp` | Character and forum prompt expansion, composition, scopes, and load errors. |
 | `tests/session/unit_forum_characters.cpp` | Forum-character validation and every handle-resolution branch. |
-| `tests/agents/unit_agent_registry.cpp` | Pool-width validation, batch gating, terminal delivery, cancellation, indexed routing, and shutdown closure. |
+| `tests/agents/unit_completion_executor.cpp` | Backend construction and metadata validation, pool-width validation, target resolution, input validation, and failure-atomic submission. |
+| `tests/agents/unit_completion_batch.cpp` | Gate behavior, full-width fan-out, foreground routing and advancement rules, event buffering, cancellation, exactly-one terminal delivery, explicit waiting, and destructor cleanup. |
 | `tests/agents/unit_agent_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
 | `tests/agents/unit_json_serialization.cpp` | Context-specific invalid-UTF-8 diagnostics for JSON serialization. |
 | `tests/agents/unit_completion_client.cpp` | Request bodies, SSE and JSON parsing, reasoning formats, and the error taxonomy, driven by `tests/support/mock_http_server.h`. |

@@ -45,7 +45,7 @@ provider event draining. HTTP threads communicate through `CommandQueue`; owner-
 is copied into protocol snapshots or append events and delivered through an
 `SseMailbox`.
 
-Each `SessionController` owns a fixed-width worker pool and an `AgentRegistry`.
+Each `SessionController` owns a fixed-width worker pool and a `CompletionExecutor`.
 Provider work runs on those workers and publishes deltas plus exactly one final
 event. The owner thread applies events and persists turn transitions. A stored
 session lease remains owned until the controller and journal are destroyed.

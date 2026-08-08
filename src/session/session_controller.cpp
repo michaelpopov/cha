@@ -59,7 +59,7 @@ ForumCharacters make_forum_characters(
 void require_agent_count(std::size_t count) {
     if (count == 0) {
         throw std::invalid_argument(
-            "Agent registry requires at least one agent");
+            "Completion executor requires at least one agent");
     }
 }
 
@@ -129,8 +129,8 @@ SessionController::SessionController(
     : lease_(std::move(lease)),
       journal_(std::move(path)),
       worker_pool_(definitions.size()),
-      registry_(std::move(definitions), notifier, worker_pool_),
-      characters_(make_forum_characters(registry_.runtime_info())),
+      completion_executor_(std::move(definitions), notifier, worker_pool_),
+      characters_(make_forum_characters(completion_executor_.runtime_info())),
       personas_(std::move(personas)),
       default_agent_id_(std::move(initial_default_agent_id)) {
     initialize(std::move(restored));
@@ -147,8 +147,8 @@ SessionController::SessionController(
     : lease_(SessionLease::inactive_for_testing()),
       journal_(std::move(path)),
       worker_pool_(backends.size()),
-      registry_(std::move(backends), notifier, worker_pool_),
-      characters_(make_forum_characters(registry_.runtime_info())),
+      completion_executor_(std::move(backends), notifier, worker_pool_),
+      characters_(make_forum_characters(completion_executor_.runtime_info())),
       personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
       default_agent_id_(std::move(initial_default_agent_id)),
       before_activation_(std::move(before_activation)) {
@@ -184,8 +184,8 @@ void SessionController::initialize(SessionRestore restored) {
 }
 
 ControllerGenerationView SessionController::generation_view() const noexcept {
-    if (batch_ && batch_->abort_requested) {
-        const RunSpec& run = batch_->runs[batch_->foreground_index];
+    if (batch_ && batch_->cancellation_requested()) {
+        const RunSpec& run = batch_->foreground_run();
         return {
             .active = true,
             .request_id = run.request_id,
@@ -300,54 +300,48 @@ void SessionController::start_batch(
     ControllerUpdate& update) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
-            "Response batch requires history and at least one target");
+            "Completion batch requires history and at least one target");
     }
-    ResponseBatch batch{
-        .history = std::move(history),
-    };
-    batch.runs.reserve(targets.size());
-    for (CharacterInfo& target : targets) {
-        batch.runs.push_back({
-            .request_id = next_request_id_++,
-            .target = std::move(target),
-            .author = author,
-            .prompt_text = text,
-        });
-    }
-
+    // Each input owns its own run, so there is no second run vector to keep in
+    // step with the batch's execution slots.
     std::vector<CompletionInput> inputs;
-    inputs.reserve(batch.runs.size());
-    for (const RunSpec& run : batch.runs) {
+    inputs.reserve(targets.size());
+    for (CharacterInfo& target : targets) {
         inputs.push_back({
-            .history = batch.history,
-            .run = run,
+            .history = history,
+            .run = {
+                .request_id = next_request_id_++,
+                .target = std::move(target),
+                .author = author,
+                .prompt_text = text,
+            },
         });
     }
 
     try {
-        (void)registry_.stage_batch(std::move(inputs));
+        batch_.emplace(completion_executor_.stage_batch(std::move(inputs)));
     } catch (const std::runtime_error&) {
         update.input_consumed = false;
         update.notice = "Request could not be dispatched";
         return;
     }
 
-    batch_ = std::move(batch);
     try {
         activate_current_run(update);
-        registry_.open_gate();
+        // Only now can a backend publish output, and only into session state
+        // that is already durable and able to receive it.
+        batch_->open();
     } catch (...) {
-        abandon_batch();
-        registry_.clear_batch();
+        release_batch();
         throw;
     }
 }
 
 void SessionController::activate_current_run(ControllerUpdate& update) {
-    if (!batch_ || batch_->foreground_index >= batch_->runs.size()) {
-        throw std::logic_error("Response batch run index is out of range");
+    if (!batch_) {
+        throw std::logic_error("Foreground activation requires a staged batch");
     }
-    const RunSpec& run = batch_->runs[batch_->foreground_index];
+    const RunSpec& run = batch_->foreground_run();
     TranscriptEntry prompt = make_human_entry({
         .id = next_entry_id_++,
         .author = run.author,
@@ -364,7 +358,7 @@ void SessionController::activate_current_run(ControllerUpdate& update) {
     };
 
     if (before_activation_) {
-        before_activation_(batch_->foreground_index);
+        before_activation_(batch_->foreground_index());
     }
     persist(
         request_action(
@@ -401,19 +395,15 @@ void SessionController::start_next_batch_run(ControllerUpdate& update) {
     if (!batch_) {
         return;
     }
-    if (batch_->abort_requested) {
+    if (batch_->cancellation_requested()) {
         poll_abort_cleanup(update);
         return;
-    }
-    if (batch_->foreground_index >= batch_->runs.size()) {
-        throw std::logic_error("Response batch run index is out of range");
     }
 
     try {
         activate_current_run(update);
     } catch (...) {
-        abandon_batch();
-        registry_.clear_batch();
+        release_batch();
         throw;
     }
 }
@@ -427,18 +417,18 @@ void SessionController::finish_batch_run(ControllerUpdate& update) {
         return;
     }
 
-    if (batch_->abort_requested) {
+    if (batch_->cancellation_requested()) {
         append_batch_notice(update);
         poll_abort_cleanup(update);
         return;
     }
 
-    if (batch_->foreground_index + 1 == batch_->runs.size()) {
+    if (!batch_->has_next_foreground()) {
         finish_batch(update);
         return;
     }
     append_batch_notice(update);
-    ++batch_->foreground_index;
+    batch_->advance_foreground();
     start_next_batch_run(update);
 }
 
@@ -447,9 +437,8 @@ void SessionController::finish_batch(ControllerUpdate& update) {
         return;
     }
     append_batch_notice(update);
-    const std::string terminal_notices = batch_->terminal_notices;
-    registry_.clear_batch();
-    abandon_batch();
+    const std::string terminal_notices = terminal_notices_;
+    release_batch();
     // Ending the batch ends the visible generation. Every caller reaches here
     // from a terminal event that already requested a snapshot; classify it
     // locally anyway so this helper cannot be moved into a purer path.
@@ -463,23 +452,22 @@ void SessionController::finish_aborted_batch(ControllerUpdate& update) {
     if (!batch_) {
         return;
     }
-    std::string notices = batch_->terminal_notices;
-    if (!batch_->stop_notice_recorded && !notices.empty()) {
+    std::string notices = terminal_notices_;
+    if (!stop_notice_recorded_ && !notices.empty()) {
         notices += "\nGeneration stopped";
-    } else if (!batch_->stop_notice_recorded) {
+    } else if (!stop_notice_recorded_) {
         notices = "Generation stopped";
     }
-    abandon_batch();
+    release_batch();
     require_snapshot(update);
     update.notice = std::move(notices);
 }
 
 void SessionController::poll_abort_cleanup(ControllerUpdate& update) {
-    if (!batch_ || !batch_->abort_requested) {
+    if (!batch_ || !batch_->cancellation_requested()) {
         return;
     }
-    if (!active_ && registry_.executions_finished()) {
-        registry_.clear_batch();
+    if (!active_ && batch_->executions_finished()) {
         finish_aborted_batch(update);
     }
 }
@@ -488,14 +476,23 @@ void SessionController::append_batch_notice(const ControllerUpdate& update) {
     if (!batch_ || !update.notice || update.notice->empty()) {
         return;
     }
-    if (!batch_->terminal_notices.empty()) {
-        batch_->terminal_notices += '\n';
+    if (!terminal_notices_.empty()) {
+        terminal_notices_ += '\n';
     }
-    batch_->terminal_notices += *update.notice;
+    terminal_notices_ += *update.notice;
 }
 
-void SessionController::abandon_batch() {
-    batch_.reset();
+void SessionController::release_batch() noexcept {
+    if (batch_) {
+        // Wait here rather than in the destructor so every blocking point is
+        // visible on the path that reaches it. Events buffered for children
+        // that never became foreground are discarded with their queues.
+        batch_->cancel();
+        batch_->wait_until_finished();
+        batch_.reset();
+    }
+    terminal_notices_.clear();
+    stop_notice_recorded_ = false;
 }
 
 ControllerUpdate SessionController::clear_transcript() {
@@ -648,7 +645,7 @@ ControllerUpdate SessionController::session_information() {
         .notice = format_session_information(
             transcript_.size(),
             characters_,
-            registry_.runtime_info(),
+            completion_executor_.runtime_info(),
             default_agent_id_),
     };
 }
@@ -660,7 +657,7 @@ ControllerUpdate SessionController::agent_information() {
     return {
         .input_consumed = true,
         .notice = format_characters_notice(
-            characters_, registry_.runtime_info(), default_agent_id_),
+            characters_, completion_executor_.runtime_info(), default_agent_id_),
     };
 }
 
@@ -708,10 +705,11 @@ ControllerUpdate SessionController::request_stop() {
         return update;
     }
 
-    if (!batch_->abort_requested) {
+    if (!batch_->cancellation_requested()) {
         log_info("Session generation cancellation requested");
-        batch_->abort_requested = true;
-        registry_.cancel_batch();
+        // Non-blocking: cancellation only signals the executions. The event
+        // loop performs the cleanup.
+        batch_->cancel();
         require_snapshot(update);
     }
     if (!active_) {
@@ -825,7 +823,7 @@ void SessionController::apply(const AgentCancelled& event, ControllerUpdate& upd
     active_.reset();
     require_snapshot(update);
     update.notice = "Generation stopped";
-    batch_->stop_notice_recorded = true;
+    stop_notice_recorded_ = true;
     finish_batch_run(update);
 }
 
@@ -897,8 +895,7 @@ ControllerEventBatch SessionController::receive_events(std::size_t max_events) {
     AgentEvent event = AgentCompleted{};
     std::size_t processed = 0;
     while (batch_ && active_ && processed < max_events) {
-        const ChannelReadStatus status = registry_.try_receive(
-            batch_->foreground_index, event);
+        const ChannelReadStatus status = batch_->try_receive_foreground(event);
         if (status != ChannelReadStatus::value) {
             break;
         }
@@ -918,22 +915,20 @@ void SessionController::shutdown() {
     }
     log_info("Session controller shutting down");
     shutdown_ = true;
-    if (batch_) {
-        batch_->abort_requested = true;
-    }
     try {
-        registry_.cancel_batch();
-        registry_.stop();
-        (void)receive_events(std::numeric_limits<std::size_t>::max());
         if (batch_) {
-            registry_.clear_batch();
+            batch_->cancel();
+            // No execution can reach a backend after this returns, while its
+            // queues stay drainable below.
+            batch_->wait_until_finished();
         }
+        (void)receive_events(std::numeric_limits<std::size_t>::max());
         active_.reset();
-        abandon_batch();
+        release_batch();
     } catch (...) {
         // `execution_finished` allows a task to issue its final wake after
-        // registry stop() returns. Join the pool while the registry and its
-        // borrowed notifier are still alive even when terminal persistence
+        // wait_until_finished() returns. Join the pool while the executor and
+        // its borrowed notifier are still alive even when terminal persistence
         // fails.
         worker_pool_.stop();
         throw;

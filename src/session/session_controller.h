@@ -1,7 +1,8 @@
 #pragma once
 
 #include "agents/agent.h"
-#include "agents/agent_registry.h"
+#include "agents/completion_batch.h"
+#include "agents/completion_executor.h"
 #include "agents/persona.h"
 #include "session/controller_update.h"
 #include "session/controller_view.h"
@@ -28,7 +29,7 @@ namespace cha {
 // halves: read-only session state (transcript, forum characters, default agent, generation status) and
 // commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
 // each returning a ControllerUpdate instead of touching a frontend. It owns the Transcript,
-// SessionJournal, AgentRegistry, and the state of the in-flight response batch. Command syntax,
+// SessionJournal, CompletionExecutor, and the one in-flight CompletionBatch. Command syntax,
 // mentions, and transport formats belong to front ends, not here.
 class SessionController {
 public:
@@ -111,15 +112,6 @@ private:
         std::string reasoning_text;
     };
 
-    struct ResponseBatch {
-        SharedCompletionHistory history;
-        std::vector<RunSpec> runs;
-        std::size_t foreground_index{};
-        bool abort_requested{};
-        bool stop_notice_recorded{};
-        std::string terminal_notices;
-    };
-
     SessionController(
         std::vector<AgentDefinition> definitions,
         SharedPersonaRoster personas,
@@ -161,7 +153,10 @@ private:
     void finish_aborted_batch(ControllerUpdate& update);
     void poll_abort_cleanup(ControllerUpdate& update);
     void append_batch_notice(const ControllerUpdate& update);
-    void abandon_batch();
+    // The one release path: waits until no execution can reach a backend,
+    // destroys the batch, and clears the controller's notice accumulation so it
+    // cannot leak into a later operation.
+    void release_batch() noexcept;
     void apply(const AgentDelta& event, ControllerUpdate& update);
     void apply(const AgentCompleted& event, ControllerUpdate& update);
     void apply(const AgentCancelled& event, ControllerUpdate& update);
@@ -179,18 +174,23 @@ private:
     SessionLease lease_;
     Transcript transcript_;
     SessionJournal journal_;
-    // Explicit shutdown joins this pool while registry_ is still alive.
-    // One worker per backend intentionally admits full-width multicast work.
-    // Declaration order is the fallback only for construction failures.
+    // Explicit shutdown joins this pool while completion_executor_ is still
+    // alive. One worker per backend intentionally admits full-width multicast
+    // work. Declaration order — pool, then executor, then batch — is the
+    // fallback only for construction failures.
     ThreadPool worker_pool_;
-    AgentRegistry registry_;
+    CompletionExecutor completion_executor_;
     ForumCharacters characters_;
     SharedPersonaRoster personas_;
     ParticipantId default_agent_id_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;
-    std::optional<ResponseBatch> batch_;
+    std::optional<CompletionBatch> batch_;
+    // Presentation state only: the batch owns runs, foreground selection,
+    // cancellation, and completion.
+    std::string terminal_notices_;
+    bool stop_notice_recorded_{};
     ActivationHook before_activation_;
     bool shutdown_{};
 };

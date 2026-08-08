@@ -18,7 +18,7 @@ web frontend and tests drive the same code.
 | `session_identity.h` / `opened_session.h` | Stable `SessionIdentity`, presentation-safe `SessionDescriptor`, and the owner-thread-only `OpenedSession` result. |
 | `controller_update.h/.cpp` | The transport-neutral outcome of one controller operation: the `ControllerStateUpdate` variant, its text targets and owning append, `ControllerUpdate`, the bounded event-drain result, and the one merge rule. |
 | `controller_view.h` | The borrowed, owner-thread-only read model used to build a full frontend snapshot. |
-| `session_controller.*` | Own one live session: commands, the in-flight response batch, agent events, default agent, notices, and shutdown. |
+| `session_controller.*` | Own one live session: commands, the one in-flight `CompletionBatch`, agent events, default agent, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
 ## Workspace layout
@@ -118,7 +118,7 @@ returns resolved, unknown, or ambiguous.
 `forum_characters.*` also owns the wording of the notices built from those
 results, so all of it sits in one place: handle errors, duplicate multicast
 targets, the `/agents` character listing, and the `/info` line. Model, API, and
-streaming details are not `ForumCharacters` state — `AgentRegistry` exposes
+streaming details are not `ForumCharacters` state — `CompletionExecutor` exposes
 those separately as `AgentRuntimeInfo`, which the formatters take as a
 parameter, and `SessionController` supplies to them only for `/agents` and
 `/info`. The `/info` formatter takes an entry count rather than a `Transcript`
@@ -358,9 +358,9 @@ never tells a widget to clear itself or to navigate away.
 | `session_information()` | Entry count plus the forum characters and their runtime details. | A notice and consumed submitted input; state is unchanged. |
 | `agent_information()` | Forum characters and runtime details, marking the default. | A notice and consumed submitted input; state is unchanged. |
 | `set_default_agent(handle)` | Changes the default for this run only. | A successful change is observable state; a text command may consume its submitted input. |
-| `request_stop()` | Cancels every live execution and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
+| `request_stop()` | Calls `CompletionBatch::cancel()` and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. It never waits for an execution. | Immediate stopping notice, followed by the final stop notice after cleanup. |
 | `receive_events(max_events)` | Boundedly drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged semantic changes; after shutdown drains its batch, `session_ended` is true. |
-| `shutdown()` | Cancels executions, commits the retained foreground terminal state, and joins the session pool. | — |
+| `shutdown()` | Cancels the batch and waits until no execution can reach a backend, commits the retained foreground terminal state, releases the batch, then joins the session pool — including on the persistence-exception path. | — |
 
 Every command except `request_stop()` and `receive_events()` is refused while a turn or
 multicast is active, with the shared in-progress notice. Session notices —
@@ -434,32 +434,40 @@ Front ends translate those into these calls.
 
 ## The in-flight turn
 
-`SessionController` holds the mechanics and state of one in-flight response
-batch. An ordinary prompt is represented as a one-child batch.
+`SessionController` owns at most one `optional<CompletionBatch>`, and that
+batch is the single authority for the operation's runs, foreground selection,
+cancellation, and execution completion. The agent layer owns the execution
+mechanics; the controller owns durability and presentation. An ordinary prompt
+is represented as a one-child batch.
 
 Starting a batch, in order:
 
 1. Resolve and deduplicate every target, then capture one immutable pre-batch
-   history and build every complete `CompletionInput`, including its moved run
-   specification.
-2. Stage all pool tasks behind a closed gate. A staging failure opens no gate,
-   calls no backend, waits for any already-submitted task, and creates no
-   durable turn.
+   history and build every complete `CompletionInput`, including its run
+   specification. There is no separate controller-owned run vector.
+2. `CompletionExecutor::stage_batch()` returns the batch with all pool tasks
+   accepted behind a closed gate. A staging failure opens no gate, calls no
+   backend, waits for any already-submitted task, and creates no durable turn.
    Expected runtime refusals are reported as
    `Request could not be dispatched` and preserve the persona's draft; invalid
-   inputs are controller bugs and propagate. The one live registry batch keeps
-   each run at its stable controller index.
-3. Persist `start_turn()`, add the human entry, and install the active response.
-   If in-memory activation fails after the journal write, the controller
-   compensates with `fail_turn()` and discards the gated batch.
-4. Open the gate once. Every staged backend may now begin concurrently, while
+   inputs are controller bugs and propagate.
+3. Persist `start_turn()` for `batch_->foreground_run()`, add the human entry,
+   and install the active response. If in-memory activation fails after the
+   journal write, the controller compensates with `fail_turn()` and releases the
+   still-unopened batch, whose destruction cancels the gate and waits without
+   calling a backend.
+4. Call `open()` once. Every staged backend may now begin concurrently, while
    only the foreground child's events are applied to the transcript. The
    background work remains intentionally volatile until each child becomes
    foreground, as described in the reviewed durability tradeoff above.
 
-After a foreground terminal event is committed, the controller selects the next
-child, activates its turn, and drains its already-buffered events in the same
-controller turn. It clears the whole batch after its final terminal event.
+After a foreground terminal event is committed, the controller calls
+`advance_foreground()`, activates the new `foreground_run()`, and drains its
+already-buffered events in the same controller turn. Because the run and the
+event queue come from the same execution slot, no index travels between two
+objects. One release helper waits for execution safety, destroys the batch, and
+clears the controller's notice accumulation; every normal, aborted, activation-
+failure, and shutdown path goes through it.
 
 Applying events:
 
@@ -480,8 +488,8 @@ what makes a cancelled turn's late fragments harmless.
 `ResponsePhase` is monotonic during normal generation:
 `waiting` → `reasoning` → `answering`. The separate `stopping` phase is an
 abort-cleanup overlay. It keeps the foreground agent name visible while the
-registry commits that child's terminal event and waits for all remaining
-executions. A foreground completion already queued when `/stop` is processed wins
+controller commits that child's terminal event and the batch's remaining
+executions finish. A foreground completion already queued when `/stop` is processed wins
 the race and is committed normally.
 
 ## Failure policy
@@ -507,7 +515,7 @@ session continues.
 | `tests/session/unit_workspace.cpp` | Layout resolution, forum loading and checking, session create/open. |
 | `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics, and the cross-process creation race in which every creator derives the same base ID. |
 | `tests/session/unit_session_repository.cpp` | Forum routing, tolerant listing against strict validation, the temporary session, and the lease boundary in `prepare()`. |
-| `tests/session/unit_session_controller.cpp` | Command behavior, exact update classification for every important transition, borrowed views, concurrent staging, ordered foreground drain, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
+| `tests/session/unit_session_controller.cpp` | Command behavior, exact update classification for every important transition, borrowed views, concurrent staging, ordered foreground drain, per-slot pairing under reversed completion, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
 | `tests/session/unit_concurrent_controllers.cpp` | Independent owner-thread controllers, concurrent workspace/catalog access, and atomic catalog publication while listing. |
 | `tests/session/unit_controller_update.cpp` | The merge contract driven directly: every pair of state effects, append concatenation and target promotion, lifecycle OR, and notice ordering. |
 | `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |

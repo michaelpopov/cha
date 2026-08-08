@@ -24,7 +24,7 @@ struct HandleResolution {
     const class ForumCharacters& characters);
 [[nodiscard]] std::string format_duplicate_character_notice(
     std::string_view name);
-// Runtime details come from AgentRegistry rather than the identity-only
+// Runtime details come from CompletionExecutor rather than the identity-only
 // character view, so both are passed in. The entry count is a plain size for
 // the same reason: this wording belongs to the session, not to a transcript.
 [[nodiscard]] std::string format_characters_notice(
