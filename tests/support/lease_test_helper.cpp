@@ -1,10 +1,11 @@
-#include "session/catalog_lease.h"
 #include "session/session_catalog.h"
 #include "session/session_lease.h"
 #include "support/lease_test_protocol.h"
 
 #include <cerrno>
+#include <ctime>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -26,6 +27,30 @@ bool write_ready(int descriptor) {
     }
 }
 
+// Blocks until the parent releases every child at once by closing the gate's
+// write end, so creation attempts collide instead of running in sequence.
+bool wait_for_gate(int descriptor) {
+    while (true) {
+        char ignored{};
+        const ssize_t count = read(descriptor, &ignored, 1);
+        if (count >= 0) {
+            return true;
+        }
+        if (errno != EINTR) {
+            return false;
+        }
+    }
+}
+
+std::optional<int> parse_descriptor(std::string_view text) {
+    std::size_t parsed{};
+    const int descriptor = std::stoi(std::string(text), &parsed);
+    if (parsed != text.size() || descriptor < 0) {
+        return std::nullopt;
+    }
+    return descriptor;
+}
+
 int hold_lease(const std::filesystem::path& database, int ready_descriptor) {
     cha::SessionLease lease = cha::SessionLease::acquire(database);
     if (!write_ready(ready_descriptor)) {
@@ -37,26 +62,35 @@ int hold_lease(const std::filesystem::path& database, int ready_descriptor) {
     }
 }
 
-int create_session(
+// Creates one session under a caller-supplied clock value, so several helper
+// processes released together all derive the same base ID and must resolve the
+// collision through candidate leases and atomic publication alone.
+int race_create(
     const std::filesystem::path& directory,
     std::string_view forum,
-    std::string_view name) {
-    (void)cha::SessionCatalog(directory, std::string(forum))
-        .create(std::string(name));
-    return cha::test::catalog_create_succeeded;
-}
+    std::string_view label,
+    std::time_t fixed_time,
+    int ready_descriptor,
+    int gate_descriptor) {
 
-int hold_catalog(const std::filesystem::path& directory, int ready_descriptor) {
-    cha::CatalogLease lease = cha::CatalogLease::acquire(directory);
-    if (!write_ready(ready_descriptor)) return cha::test::lease_probe_failed;
+    if (!write_ready(ready_descriptor)) {
+        return cha::test::lease_probe_failed;
+    }
     (void)close(ready_descriptor);
-    while (true) pause();
+    if (!wait_for_gate(gate_descriptor)) {
+        return cha::test::lease_probe_failed;
+    }
+    (void)close(gate_descriptor);
+    (void)cha::SessionCatalog(
+        directory, std::string(forum), [fixed_time] { return fixed_time; })
+        .create(std::string(label));
+    return cha::test::catalog_create_succeeded;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 3 && argc != 4 && argc != 5) {
+    if (argc != 3 && argc != 4 && argc != 8) {
         return cha::test::lease_probe_failed;
     }
     try {
@@ -67,29 +101,35 @@ int main(int argc, char** argv) {
             return cha::test::lease_probe_acquired;
         }
         if (operation == "hold" && argc == 4) {
-            std::size_t parsed{};
-            const int ready_descriptor = std::stoi(argv[3], &parsed);
-            if (parsed != std::string_view(argv[3]).size()
-                || ready_descriptor < 0) {
+            const std::optional<int> ready_descriptor =
+                parse_descriptor(argv[3]);
+            if (!ready_descriptor) {
                 return cha::test::lease_probe_failed;
             }
-            return hold_lease(database, ready_descriptor);
+            return hold_lease(database, *ready_descriptor);
         }
-        if (operation == "create" && argc == 5) {
-            return create_session(database, argv[3], argv[4]);
-        }
-        if (operation == "catalog-hold" && argc == 4) {
+        if (operation == "race-create" && argc == 8) {
             std::size_t parsed{};
-            const int ready_descriptor = std::stoi(argv[3], &parsed);
-            if (parsed != std::string_view(argv[3]).size() || ready_descriptor < 0) {
+            const std::string clock_text(argv[5]);
+            const long long fixed_time = std::stoll(clock_text, &parsed);
+            const std::optional<int> ready_descriptor =
+                parse_descriptor(argv[6]);
+            const std::optional<int> gate_descriptor =
+                parse_descriptor(argv[7]);
+            if (parsed != clock_text.size() || !ready_descriptor
+                || !gate_descriptor) {
                 return cha::test::lease_probe_failed;
             }
-            return hold_catalog(database, ready_descriptor);
+            return race_create(
+                database,
+                argv[3],
+                argv[4],
+                static_cast<std::time_t>(fixed_time),
+                *ready_descriptor,
+                *gate_descriptor);
         }
     } catch (const cha::SessionBusyError&) {
         return cha::test::lease_probe_busy;
-    } catch (const cha::CatalogBusyError&) {
-        return cha::test::catalog_create_busy;
     } catch (...) {
         return cha::test::lease_probe_failed;
     }

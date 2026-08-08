@@ -1,6 +1,5 @@
 #include "session/session_catalog.h"
 
-#include "session/catalog_lease.h"
 #include "session/session_lease.h"
 #include "util/path_name.h"
 #include "util/logging.h"
@@ -44,24 +43,6 @@ std::string timestamp_name(std::time_t now) {
     return result.str();
 }
 
-void validate_metadata(
-    const std::filesystem::path& path,
-    std::string_view expected_id,
-    std::string_view expected_forum,
-    const SessionDatabaseMetadata& metadata) {
-
-    if (metadata.id != expected_id) {
-        throw std::runtime_error(
-            "Session database '" + utf8_path(path)
-            + "' does not match its filename");
-    }
-    if (metadata.forum != expected_forum) {
-        throw std::runtime_error(
-            "Session database '" + utf8_path(path) + "' does not belong to forum '"
-            + std::string(expected_forum) + "'");
-    }
-}
-
 } // namespace
 
 SessionCatalog::SessionCatalog(
@@ -77,20 +58,20 @@ SessionCatalog::SessionCatalog(
     }
 }
 
-Session SessionCatalog::validated_session(
+std::string SessionCatalog::validated_label(
     const std::filesystem::path& path,
     const std::string& session_id) const {
     const SessionDatabaseMetadata metadata = read_session_database_metadata(path);
-    validate_metadata(path, session_id, forum_name_, metadata);
-    return {session_id, metadata.label};
+    validate_session_database_identity(path, {forum_name_, session_id}, metadata);
+    return metadata.label;
 }
 
-std::vector<Session> SessionCatalog::list() const {
+std::vector<StoredSession> SessionCatalog::list() const {
     if (!std::filesystem::exists(directory_)) return {};
     if (!std::filesystem::is_directory(directory_)) {
         throw std::runtime_error("Sessions path '" + utf8_path(directory_) + "' is not a directory");
     }
-    std::vector<Session> result;
+    std::vector<StoredSession> result;
     for (const auto& entry : std::filesystem::directory_iterator(directory_)) {
         if (!entry.is_regular_file() || entry.path().extension() != ".sqlite3") continue;
         const std::string id = utf8_path(entry.path().stem());
@@ -99,46 +80,67 @@ std::vector<Session> SessionCatalog::list() const {
                 + " reason=session ID is not URL-safe");
             continue;
         }
-        std::string label = id;
-        std::string error;
+        // Path and timestamp come from the entry being inspected, so no caller
+        // has to rebuild them; a timestamp that cannot be read fails the whole
+        // listing rather than becoming one row's metadata error.
+        StoredSession stored{
+            .identity = {forum_name_, id},
+            .label = id,
+            .database_path = entry.path(),
+            .updated_at = entry.last_write_time(),
+        };
         try {
-            label = validated_session(entry.path(), id).label;
+            stored.label = validated_label(entry.path(), id);
         } catch (const std::exception& exception) {
-            error = exception.what();
-            label += " [invalid database]";
+            stored.error = exception.what();
+            stored.label += " [invalid database]";
             log_warn("Invalid session database ignored: path=" + utf8_path(entry.path())
-                + " reason=" + error);
+                + " reason=" + stored.error);
         }
-        result.push_back({id, std::move(label), std::move(error)});
+        result.push_back(std::move(stored));
     }
-    std::sort(result.begin(), result.end(), [](const Session& left, const Session& right) {
-        return left.id < right.id;
-    });
+    std::sort(result.begin(), result.end(),
+        [](const StoredSession& left, const StoredSession& right) {
+            return left.identity.session_id < right.identity.session_id;
+        });
     return result;
 }
 
-Session SessionCatalog::session(const std::string& session_id) const {
+StoredSession SessionCatalog::inspect(const std::string& session_id) const {
     const std::filesystem::path path = database_path(session_id);
     if (!std::filesystem::is_regular_file(path)) {
-        throw SessionNotFoundError(
-            "Session '" + session_id + "' does not have a database");
+        throw missing_session_error(session_id);
     }
-    return validated_session(path, session_id);
+    return {
+        .identity = {forum_name_, session_id},
+        .label = validated_label(path, session_id),
+        .database_path = path,
+        .updated_at = std::filesystem::last_write_time(path),
+    };
 }
 
-Session SessionCatalog::create(std::string label) const {
+StoredSession SessionCatalog::create(std::string label) const {
     std::filesystem::create_directories(directory_);
-    CatalogLease catalog_lease = CatalogLease::acquire(directory_);
     const std::string base_id = timestamp_name(clock_());
     for (std::size_t suffix = 1;; ++suffix) {
         const std::string id = suffix == 1 ? base_id : base_id + "-" + std::to_string(suffix);
         const std::filesystem::path path = database_path(id);
+        // An advisory fast path only: publication below is the authority, so a
+        // destination appearing after this check is still detected as a
+        // collision rather than overwritten.
         if (std::filesystem::exists(path)) continue;
         try {
             SessionLease lease = SessionLease::acquire(path);
-            const std::string effective_label = label.empty() ? id : label;
+            std::string effective_label = label.empty() ? id : label;
             if (create_session_database(path, {.id = id, .forum = forum_name_, .label = effective_label})) {
-                return {id, effective_label};
+                // Publication has already committed, so a timestamp that cannot
+                // be read is reported rather than rolled back.
+                return {
+                    .identity = {forum_name_, id},
+                    .label = std::move(effective_label),
+                    .database_path = path,
+                    .updated_at = std::filesystem::last_write_time(path),
+                };
             }
         } catch (const SessionBusyError&) {
             // A stale companion file is harmless; its held kernel lock means
@@ -151,18 +153,6 @@ std::filesystem::path SessionCatalog::database_path(
     const std::string& session_id) const {
     require_url_safe_identifier(session_id, directory_);
     return directory_ / path_from_utf8(session_id + ".sqlite3");
-}
-
-std::filesystem::path SessionCatalog::open_database_path(
-    const std::string& session_id) const {
-
-    const std::filesystem::path path = database_path(session_id);
-    if (!std::filesystem::is_regular_file(path)) {
-        throw SessionNotFoundError(
-            "Session '" + session_id + "' does not have a database");
-    }
-    (void)validated_session(path, session_id);
-    return path;
 }
 
 } // namespace cha

@@ -374,7 +374,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
         } while (creating);
     });
 
-    std::vector<std::future<SessionEntry>> creations;
+    std::vector<std::future<StoredSession>> creations;
     creations.reserve(session_count);
     for (std::size_t index = 0; index != session_count; ++index) {
         creations.push_back(std::async(std::launch::async, [&, index] {
@@ -382,7 +382,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
                 "lobby", "Load " + std::to_string(index));
         }));
     }
-    std::vector<SessionEntry> sessions;
+    std::vector<StoredSession> sessions;
     sessions.reserve(session_count);
     for (auto& creation : creations) sessions.push_back(creation.get());
     creating = false;
@@ -396,7 +396,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     LiveSessionManager manager(settings, graph.opener());
     std::vector<std::future<LiveSessionOpenResult>> opens;
     opens.reserve(session_count);
-    for (const SessionEntry& session : sessions) {
+    for (const StoredSession& session : sessions) {
         opens.push_back(std::async(std::launch::async, [&, key = session.identity] {
             return manager.open(key, 10s);
         }));
@@ -411,7 +411,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     std::set<const SseMailbox*> mailboxes;
     handles.reserve(session_count);
     streams.reserve(session_count);
-    for (const SessionEntry& session : sessions) {
+    for (const StoredSession& session : sessions) {
         handles.push_back(manager.lookup(session.identity));
         ASSERT_TRUE(handles.back());
         CommandSubmitResult connected = handles.back()->connect_sse(10s);
@@ -425,7 +425,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     }
     EXPECT_EQ(mailboxes.size(), session_count);
 
-    for (const SessionEntry& session : sessions) {
+    for (const StoredSession& session : sessions) {
         const std::filesystem::path database =
             fixture.root() / "forums" / "lobby" / "sessions"
             / (session.identity.session_id + ".sqlite3");
@@ -460,7 +460,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     for (auto& unload : unloads) unload.get();
 
     ASSERT_TRUE(wait_for_live_count(manager, 0));
-    for (const SessionEntry& session : sessions) {
+    for (const StoredSession& session : sessions) {
         const std::filesystem::path database =
             fixture.root() / "forums" / "lobby" / "sessions"
             / (session.identity.session_id + ".sqlite3");

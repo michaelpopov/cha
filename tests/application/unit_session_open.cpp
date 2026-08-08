@@ -50,7 +50,7 @@ protected:
 TEST_F(SessionOpenTest, OpensAStoredSessionWithTheLoadedForumDefinitions) {
     const WorkspaceModel model = load_model();
     const auto sessions = make_repository(model);
-    const SessionEntry created = sessions->create("lobby", "Stored");
+    const StoredSession created = sessions->create("lobby", "Stored");
 
     OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
 
@@ -85,7 +85,7 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePathWithTheAssistantRoster) {
 TEST_F(SessionOpenTest, GivesEveryControllerTheModelsGuestInclusivePersonaRoster) {
     const WorkspaceModel model = load_model();
     const auto sessions = make_repository(model);
-    const SessionEntry created = sessions->create("lobby", "Stored");
+    const StoredSession created = sessions->create("lobby", "Stored");
 
     OpenedSession stored = open_session(model, *sessions, created.identity, notifier_);
     OpenedSession entrance = open_session(model, *sessions, welcome(), notifier_);
@@ -111,7 +111,7 @@ TEST_F(SessionOpenTest, GivesEveryControllerTheModelsGuestInclusivePersonaRoster
 TEST_F(SessionOpenTest, PropagatesMissingForumsSessionsAndLeaseContention) {
     const WorkspaceModel model = load_model();
     const auto sessions = make_repository(model);
-    const SessionEntry created = sessions->create("lobby", "Stored");
+    const StoredSession created = sessions->create("lobby", "Stored");
 
     EXPECT_THROW(
         (void)open_session(model, *sessions, {"absent", created.identity.session_id}, notifier_),
@@ -133,7 +133,7 @@ TEST_F(SessionOpenTest, ReleasesTheLeaseWhenControllerConstructionFails) {
         "api_key_env = \"CHA_TEST_UNSET_API_KEY\"\n");
     const WorkspaceModel model = load_model();
     const auto sessions = make_repository(model);
-    const SessionEntry created = sessions->create("lobby", "Stored");
+    const StoredSession created = sessions->create("lobby", "Stored");
 
     EXPECT_THROW(
         (void)open_session(model, *sessions, created.identity, notifier_),
@@ -146,7 +146,7 @@ TEST_F(SessionOpenTest, ReleasesTheLeaseWhenControllerConstructionFails) {
 TEST_F(SessionOpenTest, OpensWithTheLoadedModelAfterTheWorkspaceChangesOnDisk) {
     const WorkspaceModel model = load_model();
     const auto sessions = make_repository(model);
-    const SessionEntry created = sessions->create("lobby", "Stored");
+    const StoredSession created = sessions->create("lobby", "Stored");
 
     fixture_.write_character_config("display_name = \"Renamed\"\n");
     std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
@@ -171,7 +171,7 @@ TEST_F(SessionOpenTest, OpensWithTheLoadedModelAfterTheWorkspaceChangesOnDisk) {
 TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {
     const WorkspaceModel model = load_model();
     const auto sessions = make_repository(model);
-    const SessionEntry created = sessions->create("lobby", "Browser-ready session");
+    const StoredSession created = sessions->create("lobby", "Browser-ready session");
 
     SessionDescriptor first;
     {
@@ -188,7 +188,7 @@ TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {
         opened.controller->shutdown();
     }
 
-    const std::vector<SessionEntry> listed = sessions->list("lobby");
+    const std::vector<StoredSession> listed = sessions->list("lobby");
     ASSERT_EQ(listed.size(), 1U);
     EXPECT_EQ(listed.front().identity, created.identity);
 
@@ -205,7 +205,7 @@ TEST_F(SessionOpenTest, OpensAWorkspaceWithoutSharedCharacterDefaults) {
         "display_name = \"Guide\"\nhost = \"127.0.0.1\"\nport = 8080\n");
     const WorkspaceModel model = load_model();
     const auto sessions = make_repository(model);
-    const SessionEntry created = sessions->create("lobby", "No shared config");
+    const StoredSession created = sessions->create("lobby", "No shared config");
 
     OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
     opened.controller->shutdown();
@@ -215,7 +215,7 @@ TEST_F(SessionOpenTest, OpensAWorkspaceWithoutSharedCharacterDefaults) {
 TEST_F(SessionOpenTest, HoldsTheLeaseThroughExplicitShutdownUntilTheControllerIsDestroyed) {
     const WorkspaceModel model = load_model();
     const auto sessions = make_repository(model);
-    const SessionEntry created = sessions->create("lobby", "Shutdown lease");
+    const StoredSession created = sessions->create("lobby", "Shutdown lease");
     const std::filesystem::path database =
         fixture_.root() / "forums" / "lobby" / "sessions"
         / (created.identity.session_id + ".sqlite3");
@@ -231,7 +231,7 @@ TEST_F(SessionOpenTest, HoldsTheLeaseThroughExplicitShutdownUntilTheControllerIs
 TEST_F(SessionOpenTest, ReportsContentionBeforeRestoringSessionState) {
     const WorkspaceModel model = load_model();
     const auto sessions = make_repository(model);
-    const SessionEntry created = sessions->create("lobby", "Leased");
+    const StoredSession created = sessions->create("lobby", "Leased");
     const std::filesystem::path database =
         fixture_.root() / "forums" / "lobby" / "sessions"
         / (created.identity.session_id + ".sqlite3");

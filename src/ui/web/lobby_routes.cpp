@@ -94,7 +94,7 @@ std::vector<SessionListing> sessions_for(
     const LiveSessionManagerSnapshot& snapshot,
     std::string_view forum_id) {
     std::vector<SessionListing> result;
-    for (const SessionEntry& stored : sessions.list(forum_id)) {
+    for (const StoredSession& stored : sessions.list(forum_id)) {
         result.push_back({stored.identity.session_id, stored.label,
                           is_running(snapshot, stored.identity),
                           updated_at(stored.updated_at)});
@@ -107,7 +107,7 @@ std::vector<RecentSession> recent_sessions(
     const SessionRepository& sessions) {
     std::vector<RecentSession> result;
     for (const ForumInfo& forum : model.forums()) {
-        for (const SessionEntry& stored : sessions.list(forum.id)) {
+        for (const StoredSession& stored : sessions.list(forum.id)) {
             result.push_back({forum.id, stored.identity.session_id, stored.label,
                 updated_at(stored.updated_at)});
         }
@@ -191,7 +191,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
                     label = parse_create_session_label(json);
                 })) return;
         try {
-            const SessionEntry created = sessions->create(forum, std::move(label));
+            const StoredSession created = sessions->create(forum, std::move(label));
             set_json_response(response, 201, nlohmann::json(CreateSessionSuccess{
                 created.identity.session_id, created.label}));
         } catch (const ForumNotFoundError&) {

@@ -418,7 +418,7 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
         "display_name = \"Guide\"\n"
         "description = \"Explains the workspace\"\n");
     const test::WebGraph graph(fixture.root());
-    const SessionEntry stored = graph.sessions->create("lobby", "Named session");
+    const StoredSession stored = graph.sessions->create("lobby", "Named session");
     const WebSettings settings{
         .session_limit = 1,
         .open_deadline = 5s,

@@ -11,6 +11,7 @@ web frontend and tests drive the same code.
 | --- | --- |
 | `session_repository.*` | Own every session-storage operation: list, strictly validate, create, and prepare the persistent per-forum databases, plus the one process-local temporary session it creates and removes. |
 | `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
+| `stored_session.h` | `StoredSession`: one unleased observation of a stored database — identity, label, path, timestamp, and validation error. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
 | `forum_characters.*` | The ordered character identities in a forum, including validation, lookup, handle resolution, and the wording of every session notice built from them. |
@@ -92,7 +93,15 @@ The repository receives plain forum IDs and `sessions/` paths, never a
 `WorkspaceModel`, so the session layer never depends on application types. It
 keeps only that immutable map plus the temporary session it owns, and builds a
 short-lived `SessionCatalog` per operation, so one constructed repository serves
-concurrent const calls; exclusion comes from `CatalogLease` and `SessionLease`.
+concurrent const calls; the only exclusion is `SessionLease`.
+
+Listing, inspection, and creation all return `StoredSession`: the identity,
+label, path, modification time, and validation error observed at that moment.
+It is a reading, not a cache and not a handle — it holds no lease, and the file
+it describes may be leased, rewritten, or removed immediately afterwards. Only
+`PreparedSession`, which owns the lease, proves anything about the session it
+names, which is why the two types stay separate and why a `StoredSession` is
+never handed to a live controller as evidence.
 
 ## Forum characters
 
@@ -132,19 +141,20 @@ sequenceDiagram
     UI->>WS: create forum, label
     WS->>SC: create label
     SC->>SC: timestamp id, numeric suffix on collision
+    SC->>SL: acquire the candidate's companion lock, or take the next suffix
     SC->>DB: build hidden temporary sibling, then link into place
-    WS-->>UI: SessionEntry with assigned ID, effective label, and timestamp
+    WS-->>UI: StoredSession with assigned ID, effective label, path, and timestamp
 
     Note over UI,CC: Opening a session
     UI->>WM: open_session(model, repository, identity)
     WM->>WM: find forum, copy its preloaded definitions
     WM->>WS: prepare identity
-    WS->>SC: open_database_path id
-    SC->>DB: read metadata, check id and forum match
+    WS->>SC: database_path id
+    WS->>WS: reject an absent database as not-found
     WS->>SL: acquire `<database>.cha-lock` without waiting
-    WS->>SC: session id, for the stored label
-    WS->>DB: load_session_state
-    DB-->>WS: SessionRestore
+    WS->>DB: load_session_database path, identity
+    DB->>DB: check id and forum match, then read restore state
+    DB-->>WS: metadata + SessionRestore
     WS-->>WM: PreparedSession (path, label, lease, restore)
     WM->>CC: from_shared_definitions with restore and the model's shared roster
     CC->>CC: repair interrupted turns, then install entries
@@ -154,28 +164,50 @@ sequenceDiagram
 `SessionRepository::create()` is the creation primitive; it delegates
 publication to `SessionCatalog`. Forum definitions were already validated when
 `WorkspaceModel` loaded, so creation performs no prompt or provider work.
-Publication uses `link(2)`, which fails rather
-than overwriting, so a half-written database is never visible under a real
-session name and a collision simply retries with the next numeric suffix. The
-operation returns only a `SessionEntry`: it neither acquires a session lease
-nor constructs a controller or provider. Web callers create and open in
-separate operations, so an open failure leaves the successfully stored session
-available for a later ordinary open.
+
+There is no directory-wide creation lock. Uniqueness comes from two mechanisms
+only: each candidate stem is claimed with a `SessionLease` before the expensive
+initialization, and publication uses `link(2)`, which fails rather than
+overwriting. So a half-written database is never visible under a real session
+name, and either kind of collision simply retries with the next numeric suffix.
+Concurrent creators in one forum therefore never wait on each other and never
+report a busy failure of their own; which of them receives the unsuffixed ID is
+unspecified, and tests must not assume it. Labels need not be unique — the
+generated ID, not the label, is what identifies a session. The existence check
+before each candidate is a fast path only; `create_session_database()` remains
+the authority that decides whether the destination was free.
+
+The operation returns a `StoredSession`: it neither retains a session lease nor
+constructs a controller or provider. Web callers create and open in separate
+operations, so an open failure leaves the successfully stored session available
+for a later ordinary open.
 
 Listing is tolerant: a file that fails validation still appears, with its error
-attached, so the selector can show it instead of hiding a broken session.
+attached, so the selector can show it instead of hiding a broken session. It
+records the path and modification time of the entry it inspected, so no caller
+rebuilds them afterwards. A sessions directory that cannot be read, or a
+timestamp that cannot be taken, fails the whole listing rather than becoming one
+row's error. Anything that is not a `.sqlite3` file with a URL-safe stem —
+companion locks, hidden temporary siblings, a `catalog.cha-lock` left by an
+older release — is simply not a catalog entry.
 
-Session paths are resolved only by `SessionCatalog`. Its `database_path()` and
-`open_database_path()` require the session ID to be one safe path component
-before appending `.sqlite3` beneath the forum's `sessions/` directory, so an
-absolute path, `..`, or an ID containing a directory separator cannot escape
-that directory.
+Session paths are resolved only by `SessionCatalog`. Its `database_path()`
+requires the session ID to be one safe path component before appending
+`.sqlite3` beneath the forum's `sessions/` directory, so an absolute path, `..`,
+or an ID containing a directory separator cannot escape that directory.
 
 Every live controller holds a `SessionLease` on `<database>.cha-lock`. The
 companion file may remain after a run; only its non-blocking exclusive operating
-system lock means the session is active. `SessionRepository::prepare()` acquires
-the lease after resolving a database but before restore, and `open_session()`
-moves it into `SessionController`.
+system lock means the session is active. `SessionRepository::prepare()` settles
+absence first — so asking for a session that was never stored leaves no
+companion file behind — then acquires the lease, and only then performs the one
+authoritative read: `load_session_database()` checks the embedded ID and forum
+and builds `SessionRestore` through a single read-only connection. Nothing
+observed before the lease is reused as proof, which is why a database that is
+already leased reports `SessionBusyError` even when it would also have proved
+invalid; the route-level preflight `validate()` is what still separates missing
+from corrupt for callers. `open_session()` moves the lease into
+`SessionController`.
 The controller keeps it through explicit shutdown and journal destruction, so
 `chaweb` fails immediately with `SessionBusyError` when another process owns
 that stored session. Test-only controller factories
@@ -473,7 +505,8 @@ session continues.
 | Test | Covers |
 | --- | --- |
 | `tests/session/unit_workspace.cpp` | Layout resolution, forum loading and checking, session create/open. |
-| `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics. |
+| `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics, and the cross-process creation race in which every creator derives the same base ID. |
+| `tests/session/unit_session_repository.cpp` | Forum routing, tolerant listing against strict validation, the temporary session, and the lease boundary in `prepare()`. |
 | `tests/session/unit_session_controller.cpp` | Command behavior, exact update classification for every important transition, borrowed views, concurrent staging, ordered foreground drain, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
 | `tests/session/unit_concurrent_controllers.cpp` | Independent owner-thread controllers, concurrent workspace/catalog access, and atomic catalog publication while listing. |
 | `tests/session/unit_controller_update.cpp` | The merge contract driven directly: every pair of state effects, append concatenation and target promotion, lifecycle OR, and notice ordering. |

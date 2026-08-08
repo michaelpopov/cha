@@ -85,58 +85,43 @@ SessionCatalog SessionRepository::catalog_for(std::string_view forum_id) const {
     return SessionCatalog(found->second, std::string(forum_id));
 }
 
-std::vector<SessionEntry> SessionRepository::list(std::string_view forum_id) const {
-    const SessionCatalog catalog = catalog_for(forum_id);
-    std::vector<SessionEntry> result;
-    for (Session& stored : catalog.list()) {
-        result.push_back({
-            .identity = {std::string(forum_id), stored.id},
-            .label = std::move(stored.label),
-            .error = std::move(stored.error),
-            .updated_at = std::filesystem::last_write_time(
-                catalog.database_path(stored.id)),
-        });
-    }
-    return result;
+std::vector<StoredSession> SessionRepository::list(std::string_view forum_id) const {
+    return catalog_for(forum_id).list();
 }
 
 void SessionRepository::validate(const SessionIdentity& identity) const {
-    (void)catalog_for(identity.forum_id).session(identity.session_id);
+    (void)catalog_for(identity.forum_id).inspect(identity.session_id);
 }
 
-SessionEntry SessionRepository::create(
+StoredSession SessionRepository::create(
     std::string_view forum_id,
     std::string label) const {
     if (forum_id == temporary_identity_.forum_id) {
         throw ForumNotFoundError(
             "Forum '" + std::string(forum_id) + "' does not store sessions");
     }
-    const SessionCatalog catalog = catalog_for(forum_id);
-    Session created = catalog.create(std::move(label));
-    const std::filesystem::path path = catalog.database_path(created.id);
-    return {
-        .identity = {std::string(forum_id), created.id},
-        .label = std::move(created.label),
-        .error = std::move(created.error),
-        .updated_at = std::filesystem::last_write_time(path),
-    };
+    return catalog_for(forum_id).create(std::move(label));
 }
 
 PreparedSession SessionRepository::prepare(const SessionIdentity& identity) const {
-    const SessionCatalog catalog = catalog_for(identity.forum_id);
-    // The lease must be held before any state is restored, so the metadata
-    // check that precedes it is deliberately repeated once it is acquired.
     const std::filesystem::path database_path =
-        catalog.open_database_path(identity.session_id);
+        catalog_for(identity.forum_id).database_path(identity.session_id);
+    // Absence is settled before a lease exists, so asking for a session that
+    // was never stored does not leave a companion lock behind for it.
+    if (!std::filesystem::is_regular_file(database_path)) {
+        throw missing_session_error(identity.session_id);
+    }
     SessionLease lease = SessionLease::acquire(database_path);
-    Session stored = catalog.session(identity.session_id);
-    SessionRestore restore = load_session_state(database_path);
+    // Nothing observed before the lease is trusted: the one authoritative read
+    // of this database happens here, behind it. A file that was leased first
+    // therefore reports busy even if it would also have proved invalid.
+    LoadedSessionDatabase loaded = load_session_database(database_path, identity);
     return {
         .identity = identity,
-        .label = std::move(stored.label),
+        .label = std::move(loaded.metadata.label),
         .database_path = database_path,
         .lease = std::move(lease),
-        .restore = std::move(restore),
+        .restore = std::move(loaded.restore),
     };
 }
 

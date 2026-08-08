@@ -3,6 +3,7 @@
 #include "session/session_database.h"
 #include "session/session_identity.h"
 #include "session/session_lease.h"
+#include "session/stored_session.h"
 
 #include <filesystem>
 #include <string>
@@ -30,18 +31,10 @@ struct TemporarySessionSeed {
     std::string label;
 };
 
-// One stored session as offered for selection, with the modification time the
-// lobby orders by. A non-empty error marks a database that is identifiable but
-// failed its metadata check; it stays listed under a fallback label.
-struct SessionEntry {
-    SessionIdentity identity;
-    std::string label;
-    std::string error;
-    std::filesystem::file_time_type updated_at;
-};
-
 // A session's storage, validated and leased, ready for a controller. Holding
-// this value holds the lease: destroying it releases the session again.
+// this value holds the lease: destroying it releases the session again. This is
+// the only storage value that proves anything about the session it names; a
+// StoredSession observed before the lease does not.
 struct PreparedSession {
     SessionIdentity identity;
     std::string label;
@@ -54,8 +47,9 @@ struct PreparedSession {
 // per-forum catalogs and the one temporary session it creates at construction
 // and removes at destruction. It holds only an immutable forum-to-directory
 // map and constructs catalog helpers per operation, so a constructed
-// repository serves concurrent const calls; exclusion comes from the existing
-// catalog and session leases.
+// repository serves concurrent const calls; exclusion comes from session
+// leases. It caches nothing: every StoredSession it returns is read from
+// storage at the moment it is asked for.
 class SessionRepository final {
 public:
     SessionRepository(
@@ -68,11 +62,11 @@ public:
 
     // Tolerant: an identifiable database with invalid metadata stays visible.
     // Results are ordered by session ID.
-    [[nodiscard]] std::vector<SessionEntry> list(std::string_view forum_id) const;
+    [[nodiscard]] std::vector<StoredSession> list(std::string_view forum_id) const;
     // Strict: throws for a missing or invalid selected session.
     void validate(const SessionIdentity& identity) const;
     // The temporary forum has no creation path and reports ForumNotFoundError.
-    [[nodiscard]] SessionEntry create(std::string_view forum_id, std::string label) const;
+    [[nodiscard]] StoredSession create(std::string_view forum_id, std::string label) const;
     [[nodiscard]] PreparedSession prepare(const SessionIdentity& identity) const;
 
 private:

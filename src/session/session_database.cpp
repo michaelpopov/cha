@@ -435,8 +435,21 @@ void validate_database_identity(Database& database) {
     }
 }
 
-void validate_database(Database& database) {
-    validate_database_identity(database);
+SessionDatabaseMetadata read_metadata(Database& database) {
+    Statement statement = database.prepare(
+        "SELECT id, forum, label FROM session WHERE singleton = 1");
+    if (!statement.step()) {
+        throw std::runtime_error(
+            "Session database '" + database.path() + "' has no metadata");
+    }
+    return {
+        .id = statement.text(0),
+        .forum = statement.text(1),
+        .label = statement.text(2),
+    };
+}
+
+void validate_database_contents(Database& database) {
     (void)read_state(database);
     Statement turns_without_prompt = database.prepare(
         "SELECT t.request_id FROM turns AS t LEFT JOIN entries AS e "
@@ -445,6 +458,11 @@ void validate_database(Database& database) {
     if (turns_without_prompt.step()) {
         throw std::runtime_error("Session database '" + database.path() + "' has a turn without exactly one prompt");
     }
+}
+
+void validate_database(Database& database) {
+    validate_database_identity(database);
+    validate_database_contents(database);
 }
 
 EntryKind parse_kind(std::int64_t value) {
@@ -657,6 +675,40 @@ std::filesystem::path create_temporary_database_path(
     return temporary_path;
 }
 
+// The restore half of an already validated database, so opening reads it
+// through the same connection the identity check used.
+SessionRestore build_restore(Database& database) {
+    const DurableState state = read_state(database);
+    SessionRestore result{
+        .next_request_id = state.next_request_id,
+        .next_entry_id = state.next_entry_id,
+    };
+
+    Statement entries = database.prepare(
+        "SELECT entry_id, request_id, kind, participant_id, display_name, addressed_to, addressed_to_name, text, status "
+        "FROM entries WHERE epoch = ?1 ORDER BY entry_id",
+        state.epoch);
+    while (entries.step()) {
+        result.entries.push_back(read_entry(entries));
+    }
+
+    Statement interrupted = database.prepare(
+        "SELECT t.request_id, e.addressed_to FROM turns AS t JOIN entries AS e "
+        "ON e.request_id = t.request_id AND e.epoch = t.epoch AND e.kind = 0 "
+        "WHERE t.state = 0 ORDER BY t.request_id");
+    while (interrupted.step()) {
+        const RequestId request_id =
+            unsigned_id(interrupted.integer(0), "interrupted request ID");
+        TranscriptEntry error = make_error_entry(
+            result.next_entry_id++,
+            "Response interrupted before completion",
+            request_id,
+            interrupted.text(1));
+        result.interrupted_turns.push_back({request_id, std::move(error)});
+    }
+    return result;
+}
+
 bool publish_database_path(
     const std::filesystem::path& temporary_path,
     const std::filesystem::path& path) {
@@ -721,24 +773,31 @@ bool create_session_database(
     }
 }
 
+void validate_session_database_identity(
+    const std::filesystem::path& path,
+    const SessionIdentity& expected_identity,
+    const SessionDatabaseMetadata& metadata) {
+
+    if (metadata.id != expected_identity.session_id) {
+        throw std::runtime_error(
+            "Session database '" + utf8_path(path)
+            + "' does not match its filename");
+    }
+    if (metadata.forum != expected_identity.forum_id) {
+        throw std::runtime_error(
+            "Session database '" + utf8_path(path) + "' does not belong to forum '"
+            + expected_identity.forum_id + "'");
+    }
+}
+
 SessionDatabaseMetadata read_session_database_metadata(
     const std::filesystem::path& path) {
 
     Database database(path, Database::Mode::read_only);
     // Listing sessions needs only stable identity metadata; opening one later
-    // performs the full transcript validation below.
+    // performs the full transcript validation too.
     validate_database_identity(database);
-    Statement statement = database.prepare(
-        "SELECT id, forum, label FROM session WHERE singleton = 1");
-    if (!statement.step()) {
-        throw std::runtime_error(
-            "Session database '" + utf8_path(path) + "' has no metadata");
-    }
-    return {
-        .id = statement.text(0),
-        .forum = statement.text(1),
-        .label = statement.text(2),
-    };
+    return read_metadata(database);
 }
 
 SessionRestore load_session_state(
@@ -746,36 +805,24 @@ SessionRestore load_session_state(
 
     Database database(path, Database::Mode::read_only);
     validate_database(database);
+    return build_restore(database);
+}
 
-    const DurableState state = read_state(database);
-    SessionRestore result{
-        .next_request_id = state.next_request_id,
-        .next_entry_id = state.next_entry_id,
+LoadedSessionDatabase load_session_database(
+    const std::filesystem::path& path,
+    const SessionIdentity& expected_identity) {
+
+    Database database(path, Database::Mode::read_only);
+    // Identity first: a database that is not the one asked for is rejected
+    // before its transcript is read, let alone trusted.
+    validate_database_identity(database);
+    SessionDatabaseMetadata metadata = read_metadata(database);
+    validate_session_database_identity(path, expected_identity, metadata);
+    validate_database_contents(database);
+    return {
+        .metadata = std::move(metadata),
+        .restore = build_restore(database),
     };
-
-    Statement entries = database.prepare(
-        "SELECT entry_id, request_id, kind, participant_id, display_name, addressed_to, addressed_to_name, text, status "
-        "FROM entries WHERE epoch = ?1 ORDER BY entry_id",
-        state.epoch);
-    while (entries.step()) {
-        result.entries.push_back(read_entry(entries));
-    }
-
-    Statement interrupted = database.prepare(
-        "SELECT t.request_id, e.addressed_to FROM turns AS t JOIN entries AS e "
-        "ON e.request_id = t.request_id AND e.epoch = t.epoch AND e.kind = 0 "
-        "WHERE t.state = 0 ORDER BY t.request_id");
-    while (interrupted.step()) {
-        const RequestId request_id =
-            unsigned_id(interrupted.integer(0), "interrupted request ID");
-        TranscriptEntry error = make_error_entry(
-            result.next_entry_id++,
-            "Response interrupted before completion",
-            request_id,
-            interrupted.text(1));
-        result.interrupted_turns.push_back({request_id, std::move(error)});
-    }
-    return result;
 }
 
 class SessionJournal::Impl {

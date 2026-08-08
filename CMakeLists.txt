@@ -185,7 +185,6 @@ add_library(cha_core STATIC
     src/agents/config.cpp
     src/session/controller_update.cpp
     src/session/forum_characters.cpp
-    src/session/catalog_lease.cpp
     src/session/session_catalog.cpp
     src/session/session_controller.cpp
     src/session/session_database.cpp
@@ -292,7 +291,6 @@ if(BUILD_TESTING)
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_forum_characters.cpp
         tests/session/unit_session_catalog.cpp
-        tests/session/unit_catalog_lease.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
         tests/session/unit_session_repository.cpp

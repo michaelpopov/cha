@@ -282,7 +282,7 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
                     observed_forum_identity_mismatch.store(
                         true, std::memory_order_release);
                 }
-                for (const SessionEntry& session : graph.repository.list("forum")) {
+                for (const StoredSession& session : graph.repository.list("forum")) {
                     if (!session.error.empty()) {
                         observed_invalid_session.store(
                             true, std::memory_order_release);
@@ -295,7 +295,7 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
     });
 
     std::barrier start(creator_count + 1);
-    std::vector<Session> created(creator_count);
+    std::vector<StoredSession> created(creator_count);
     std::vector<std::thread> creators;
     creators.reserve(creator_count);
     for (std::size_t index = 0; index < creator_count; ++index) {
@@ -321,12 +321,12 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
     EXPECT_FALSE(observed_invalid_session.load(std::memory_order_acquire));
 
     std::set<std::string> created_ids;
-    for (const Session& session : created) {
-        EXPECT_FALSE(session.id.empty());
-        EXPECT_TRUE(created_ids.insert(session.id).second)
-            << "duplicate published session ID: " << session.id;
+    for (const StoredSession& session : created) {
+        EXPECT_FALSE(session.identity.session_id.empty());
+        EXPECT_TRUE(created_ids.insert(session.identity.session_id).second)
+            << "duplicate published session ID: " << session.identity.session_id;
         const std::filesystem::path database =
-            layout.forum / "sessions" / (session.id + ".sqlite3");
+            layout.forum / "sessions" / (session.identity.session_id + ".sqlite3");
         EXPECT_TRUE(std::filesystem::is_regular_file(database));
         EXPECT_EQ(
             read_session_database_metadata(database).label,
@@ -334,9 +334,9 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
     }
     EXPECT_EQ(created_ids.size(), creator_count);
 
-    const std::vector<SessionEntry> sessions = graph.repository.list("forum");
+    const std::vector<StoredSession> sessions = graph.repository.list("forum");
     ASSERT_EQ(sessions.size(), creator_count);
-    for (const SessionEntry& session : sessions) {
+    for (const StoredSession& session : sessions) {
         EXPECT_TRUE(session.error.empty());
     }
 }
@@ -350,12 +350,12 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
         "forum",
         [] { return std::time_t{1'700'000'000}; });
     constexpr std::size_t session_count = 4;
-    std::vector<Session> created;
+    std::vector<StoredSession> created;
     created.reserve(session_count);
     for (std::size_t index = 0; index < session_count; ++index) {
         created.push_back(catalog.create("Session " + std::to_string(index)));
     }
-    ASSERT_NE(created[0].id, created[1].id);
+    ASSERT_NE(created[0].identity.session_id, created[1].identity.session_id);
 
     // The web composition shares this same model and repository between lobby
     // threads and session owner threads. Exercise listing while two owners open distinct
@@ -368,13 +368,13 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     };
     std::barrier open_start(4);
     std::array<bool, 2> opened{};
-    std::vector<SessionEntry> listed_during_open;
+    std::vector<StoredSession> listed_during_open;
     std::thread opening_first([&] {
         try {
             test::NoopNotifier notifier;
             open_start.arrive_and_wait();
             auto controller = open_session(
-                graph.model, graph.repository, {"forum", created[0].id}, notifier);
+                graph.model, graph.repository, {"forum", created[0].identity.session_id}, notifier);
             opened[0] = true;
             controller.controller->shutdown();
         } catch (...) {
@@ -386,7 +386,7 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
             test::NoopNotifier notifier;
             open_start.arrive_and_wait();
             auto controller = open_session(
-                graph.model, graph.repository, {"forum", created[1].id}, notifier);
+                graph.model, graph.repository, {"forum", created[1].identity.session_id}, notifier);
             opened[1] = true;
             controller.controller->shutdown();
         } catch (...) {
@@ -410,7 +410,7 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     EXPECT_TRUE(opened[0]);
     EXPECT_TRUE(opened[1]);
     ASSERT_EQ(listed_during_open.size(), session_count);
-    for (const SessionEntry& session : listed_during_open) {
+    for (const StoredSession& session : listed_during_open) {
         EXPECT_TRUE(session.error.empty());
     }
 }

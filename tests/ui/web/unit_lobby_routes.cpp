@@ -500,8 +500,8 @@ TEST(LobbyRoutes, ReattachesFromTheLiveSessionMapWithoutReadingStorageAgain) {
 TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleasesCapacity) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    const SessionEntry deleted = graph.sessions->create("lobby", "Deleted");
-    const SessionEntry survivor = graph.sessions->create("lobby", "Survivor");
+    const StoredSession deleted = graph.sessions->create("lobby", "Deleted");
+    const StoredSession survivor = graph.sessions->create("lobby", "Survivor");
     const std::filesystem::path deleted_database =
         fixture.root() / "forums" / "lobby" / "sessions"
         / (deleted.identity.session_id + ".sqlite3");
@@ -541,7 +541,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
 TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    const SessionEntry stored = graph.sessions->create("lobby", "Deleted forum");
+    const StoredSession stored = graph.sessions->create("lobby", "Deleted forum");
     const std::filesystem::path forum_directory =
         fixture.root() / "forums" / "lobby";
     const WebSettings settings = lobby_settings(1);

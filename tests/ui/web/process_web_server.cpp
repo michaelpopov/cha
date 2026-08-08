@@ -899,7 +899,7 @@ TEST(ServerShutdownCoordinatorProcess, BlockedOwnerForcesExitAndLogsIdentity) {
 TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerCommits) {
     test::TestWorkspace fixture;
     const test::WebGraph graph(fixture.root());
-    const SessionEntry stored = graph.sessions->create("lobby", "Opening");
+    const StoredSession stored = graph.sessions->create("lobby", "Opening");
     OpeningGate gate;
     WebSettings settings;
     settings.open_deadline = 5s;
