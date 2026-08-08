@@ -1,7 +1,7 @@
 #pragma once
 
+#include "session/controller_view.h"
 #include "session/session_identity.h"
-#include "session/session_state.h"
 #include "ui/web/protocol.h"
 
 #include <optional>
@@ -18,12 +18,13 @@ struct WebPresentationState {
     std::optional<ShutdownReason> shutdown_reason;
 };
 
-// Combines one consumed core state value with web-only identity and lifecycle
-// fields. Core transcript, generation, and append types remain unchanged at
-// the JSON boundary.
+// Copies a borrowed controller view into an owning protocol snapshot, adding
+// web-only identity, lifecycle, and notice fields. Borrowing ends here: the
+// returned value stays valid after the controller mutates or is destroyed, so
+// callers must invoke this synchronously on the controller's owner thread.
 [[nodiscard]] SessionSnapshot to_snapshot(
     const SessionDescriptor& descriptor,
-    SessionState&& state,
+    const ControllerView& controller,
     const WebPresentationState& presentation);
 
 } // namespace cha::web

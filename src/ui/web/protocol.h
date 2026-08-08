@@ -1,8 +1,8 @@
 #pragma once
 
 #include "agents/config.h"
-#include "session/session_change.h"
-#include "session/session_state.h"
+#include "session/controller_update.h"
+#include "session/generation_status.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -114,7 +114,7 @@ using WebCommand = std::variant<
 struct CommandResult {
     // Owner-thread effects stay in this in-process result. The JSON serializer
     // exposes only clear_input and session.notice to the browser.
-    SessionChange session;
+    ControllerUpdate session;
     bool clear_input{};
     bool close_session{};
 };
@@ -157,7 +157,7 @@ struct Error {
 };
 
 struct SnapshotAppendSelection {
-    SessionTextTarget target;
+    TextTarget target;
     std::optional<std::size_t> transcript_index;
 };
 
@@ -174,7 +174,7 @@ struct SnapshotEvent {
 };
 
 struct AppendEvent {
-    SessionTextTarget target;
+    TextTarget target;
     std::string text;
     std::uint64_t seq{};
 };

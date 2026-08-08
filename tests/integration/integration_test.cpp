@@ -458,10 +458,10 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
             notifier());
         (void)controller->submit_prompt("reader", "Visible question");
         run_until_idle(*controller);
-        EXPECT_TRUE(controller->open_offrecord().state_changed);
+        EXPECT_TRUE(has_state_update(controller->open_offrecord()));
         (void)controller->submit_prompt("reader", "Hidden question");
         run_until_idle(*controller);
-        EXPECT_TRUE(controller->extend_offrecord().state_changed);
+        EXPECT_TRUE(has_state_update(controller->extend_offrecord()));
         (void)controller->submit_prompt("reader", "Current question");
         run_until_idle(*controller);
     }
@@ -511,7 +511,7 @@ TEST(MultiAgentIntegration, RoutesEachPromptToItsOwnAgentOverItsOwnTransport) {
         ASSERT_EQ(controller->characters().first().id, "Cheburashka");
 
         // No mention: the first character directory in name order answers.
-        SessionChange update =
+        ControllerUpdate update =
             controller->submit_prompt("reader", "Who are you?");
         ASSERT_TRUE(update.input_consumed);
         run_until_idle(*controller);
@@ -583,7 +583,7 @@ TEST(MultiAgentIntegration, MulticastSendsIndependentBodiesAndRestoresHistory) {
         auto controller = test::from_definitions_for_testing(
             std::move(definitions), lobby.personas, session.path,
             notifier());
-        const SessionChange multicast = controller->start_multicast(
+        const ControllerUpdate multicast = controller->start_multicast(
             "reader", "What time is it?", {});
         ASSERT_TRUE(multicast.input_consumed);
         run_until_idle(*controller);

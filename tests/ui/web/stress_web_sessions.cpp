@@ -45,9 +45,10 @@ public:
         ++count_;
         return {.clear_input = true};
     }
-    SessionChange request_stop() override { return {}; }
-    SessionChange set_default_agent_id(std::string_view) override { return {}; }
-    SessionEventBatch receive(std::size_t) override { return {}; }
+    ControllerUpdate request_stop() override { return {}; }
+    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] ControllerView view() const override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
 
@@ -91,9 +92,10 @@ public:
         gate_.wait();
         return {.clear_input = true};
     }
-    SessionChange request_stop() override { return {}; }
-    SessionChange set_default_agent_id(std::string_view) override { return {}; }
-    SessionEventBatch receive(std::size_t) override { return {}; }
+    ControllerUpdate request_stop() override { return {}; }
+    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] ControllerView view() const override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
 
@@ -105,12 +107,13 @@ class FatalRaceController final : public WebSessionController {
 public:
     explicit FatalRaceController(std::atomic<bool>& fail) : fail_(fail) {}
     CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionChange request_stop() override { return {}; }
-    SessionChange set_default_agent_id(std::string_view) override { return {}; }
-    SessionEventBatch receive(std::size_t) override {
+    ControllerUpdate request_stop() override { return {}; }
+    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override {
         if (fail_) throw std::runtime_error("injected fatal race");
         return {};
     }
+    [[nodiscard]] ControllerView view() const override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
 
@@ -126,11 +129,11 @@ public:
         ++count_;
         return {.clear_input = true};
     }
-    SessionChange request_stop() override { return {}; }
-    SessionChange set_default_agent_id(std::string_view) override { return {}; }
-    SessionEventBatch receive(std::size_t) override { return {}; }
+    ControllerUpdate request_stop() override { return {}; }
+    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return true; }
-    SessionState state() override {
+    [[nodiscard]] ControllerView view() const override {
         return {
             .generation = {
                 .active = true,

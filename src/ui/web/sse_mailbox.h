@@ -32,18 +32,14 @@ public:
     std::size_t end_stream(Stream stream) noexcept;
 
     void publish(SnapshotEvent snapshot) override;
-    void publish_append(
-        SessionTextAppend append,
-        const SessionSnapshot& fallback_snapshot) override;
+    [[nodiscard]] AppendPublishResult publish_append(TextAppend append) override;
     [[nodiscard]] bool wait_for_written(
         std::chrono::milliseconds deadline) override;
     void close() noexcept override;
 
 private:
     void publish_snapshot_locked(SnapshotEvent snapshot);
-    void publish_append_locked(
-        SessionTextAppend append,
-        const SessionSnapshot& fallback_snapshot);
+    [[nodiscard]] AppendPublishResult publish_append_locked(TextAppend append);
 
     std::mutex mutex_;
     std::condition_variable changed_;
@@ -52,7 +48,7 @@ private:
     std::uint64_t next_stream_{1};
     std::shared_ptr<const SsePayload> in_flight_;
     std::shared_ptr<const SsePayload> pending_;
-    std::optional<SessionTextTarget> target_;
+    std::optional<TextTarget> target_;
     std::uint64_t next_sequence_{};
     std::size_t collapsed_payloads_{};
 };

@@ -143,9 +143,9 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_EQ(
         handle_text_input(*controller, "not-a-persona", "/clear").session.notice,
         "Transcript cleared");
-    EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide-on").session.state_changed);
-    EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide").session.state_changed);
-    EXPECT_TRUE(handle_text_input(*controller, "operator", "/hide-off").session.state_changed);
+    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/hide-on").session));
+    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/hide").session));
+    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/hide-off").session));
     EXPECT_EQ(
         copy_entries(controller->transcript()),
         (std::vector<TranscriptEntry>{
@@ -327,19 +327,19 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
         handle_text_input(*controller, "operator", "/hide");
     EXPECT_TRUE(no_span.session.input_consumed);
     EXPECT_TRUE(no_span.clear_input);
-    EXPECT_FALSE(no_span.session.state_changed);
+    EXPECT_FALSE(has_state_update(no_span.session));
 
     const CommandResult nothing_to_restore =
         handle_text_input(*controller, "operator", "/hide-off");
     EXPECT_TRUE(nothing_to_restore.session.input_consumed);
     EXPECT_TRUE(nothing_to_restore.clear_input);
-    EXPECT_FALSE(nothing_to_restore.session.state_changed);
+    EXPECT_FALSE(has_state_update(nothing_to_restore.session));
 
     const CommandResult exit_result =
         handle_text_input(*controller, "operator", "/exit");
     EXPECT_TRUE(exit_result.clear_input);
     EXPECT_TRUE(exit_result.close_session);
-    EXPECT_FALSE(exit_result.session.controller_ended);
+    EXPECT_FALSE(exit_result.session.session_ended);
 
     controller->shutdown();
     const CommandResult undispatchable =

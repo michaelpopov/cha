@@ -12,9 +12,9 @@
 
 namespace cha::test {
 
-inline SessionChange receive_all_events(SessionController& controller) {
+inline ControllerUpdate receive_all_events(SessionController& controller) {
     return std::move(
-        controller.receive_events(std::numeric_limits<std::size_t>::max()).change);
+        controller.receive_events(std::numeric_limits<std::size_t>::max()).update);
 }
 
 inline PersonaRoster operator_roster() {

@@ -60,13 +60,14 @@ void SseMailbox::publish(SnapshotEvent snapshot) {
     changed_.notify_all();
 }
 
-void SseMailbox::publish_append(
-    SessionTextAppend append,
-    const SessionSnapshot& fallback_snapshot) {
+AppendPublishResult SseMailbox::publish_append(TextAppend append) {
     std::lock_guard lock(mutex_);
-    if (!active_stream_ || closed_) return;
-    publish_append_locked(std::move(append), fallback_snapshot);
-    changed_.notify_all();
+    // With no live stream there is no browser state to repair; the next
+    // connection starts from a full snapshot anyway.
+    if (!active_stream_ || closed_) return AppendPublishResult::Accepted;
+    const AppendPublishResult result = publish_append_locked(std::move(append));
+    if (result == AppendPublishResult::Accepted) changed_.notify_all();
+    return result;
 }
 
 bool SseMailbox::wait_for_written(std::chrono::milliseconds deadline) {
@@ -92,37 +93,34 @@ void SseMailbox::publish_snapshot_locked(SnapshotEvent snapshot) {
     if (pending_) ++collapsed_payloads_;
     const auto selection = snapshot_append_selection(snapshot.snapshot);
     target_ = selection
-        ? std::optional<SessionTextTarget>{selection->target}
+        ? std::optional<TextTarget>{selection->target}
         : std::nullopt;
     next_sequence_ = 0;
     pending_ = std::make_shared<const SsePayload>(std::move(snapshot));
 }
 
-void SseMailbox::publish_append_locked(
-    SessionTextAppend append,
-    const SessionSnapshot& fallback_snapshot) {
+AppendPublishResult SseMailbox::publish_append_locked(TextAppend append) {
+    // An empty append is a controller contract error. Reporting it as an
+    // unrepresentable update keeps the browser correct either way.
     if (append.text.empty() || !target_ || *target_ != append.target) {
-        publish_snapshot_locked({fallback_snapshot});
-        return;
+        return AppendPublishResult::SnapshotRequired;
     }
     if (const auto* pending = pending_
             ? std::get_if<AppendEvent>(pending_.get())
             : nullptr) {
-        if (pending->target == append.target) {
-            ++collapsed_payloads_;
-            pending_ = std::make_shared<const SsePayload>(AppendEvent{
-                pending->target, pending->text + append.text, pending->seq});
-            return;
+        if (pending->target != append.target) {
+            return AppendPublishResult::SnapshotRequired;
         }
-        publish_snapshot_locked({fallback_snapshot});
-        return;
+        ++collapsed_payloads_;
+        pending_ = std::make_shared<const SsePayload>(AppendEvent{
+            pending->target, pending->text + append.text, pending->seq});
+        return AppendPublishResult::Accepted;
     }
-    if (pending_) { // A pending snapshot must absorb the later owner state.
-        publish_snapshot_locked({fallback_snapshot});
-        return;
-    }
+    // A pending snapshot must absorb the later owner state instead.
+    if (pending_) return AppendPublishResult::SnapshotRequired;
     pending_ = std::make_shared<const SsePayload>(AppendEvent{
         std::move(append.target), std::move(append.text), next_sequence_++});
+    return AppendPublishResult::Accepted;
 }
 
 } // namespace cha::web

@@ -38,8 +38,12 @@ TEST(SseMailbox, MergesCompatibleAppendsWithoutConsumingSequence) {
     ASSERT_TRUE(mailbox.next(stream, 1ms).payload);
     mailbox.written(stream);
 
-    mailbox.publish_append({EntryTextTarget{42}, "\xE2\x82\xAC"}, streaming_snapshot("a\xE2\x82\xAC"));
-    mailbox.publish_append({EntryTextTarget{42}, "!"}, streaming_snapshot("a\xE2\x82\xAC!"));
+    EXPECT_EQ(
+        mailbox.publish_append({EntryTextTarget{42}, "\xE2\x82\xAC"}),
+        AppendPublishResult::Accepted);
+    EXPECT_EQ(
+        mailbox.publish_append({EntryTextTarget{42}, "!"}),
+        AppendPublishResult::Accepted);
     const SseMailbox::Next merged = mailbox.next(stream, 1ms);
     ASSERT_TRUE(merged.open);
     const auto* append = std::get_if<AppendEvent>(&*merged.payload);
@@ -48,7 +52,9 @@ TEST(SseMailbox, MergesCompatibleAppendsWithoutConsumingSequence) {
     EXPECT_EQ(append->text, "\xE2\x82\xAC!");
     mailbox.written(stream);
 
-    mailbox.publish_append({EntryTextTarget{42}, "?"}, streaming_snapshot("a\xE2\x82\xAC!?"));
+    EXPECT_EQ(
+        mailbox.publish_append({EntryTextTarget{42}, "?"}),
+        AppendPublishResult::Accepted);
     const SseMailbox::Next next = mailbox.next(stream, 1ms);
     const auto* following = std::get_if<AppendEvent>(&*next.payload);
     ASSERT_NE(following, nullptr);
@@ -57,17 +63,23 @@ TEST(SseMailbox, MergesCompatibleAppendsWithoutConsumingSequence) {
     EXPECT_EQ(mailbox.end_stream(stream), 1U);
 }
 
-TEST(SseMailbox, StructuralOrPendingSnapshotAppendCollapsesToSnapshot) {
+TEST(SseMailbox, RejectsAppendsItCannotRepresentWithoutLosingPendingWork) {
     SseMailbox mailbox;
     const SseMailbox::Stream stream = mailbox.begin_stream({streaming_snapshot("a")});
     ASSERT_TRUE(mailbox.next(stream, 1ms).payload);
     mailbox.written(stream);
 
-    mailbox.publish_append(
-        {EntryTextTarget{42}, "b"}, streaming_snapshot("ab"));
+    // A pending snapshot cannot absorb a later append, and rejection must not
+    // disturb the payload the browser is still owed.
+    EXPECT_EQ(
+        mailbox.publish_append({EntryTextTarget{42}, "b"}),
+        AppendPublishResult::Accepted);
     SessionSnapshot structural_snapshot = streaming_snapshot("ab");
     structural_snapshot.notice = "structural change";
     mailbox.publish(SnapshotEvent{std::move(structural_snapshot)});
+    EXPECT_EQ(
+        mailbox.publish_append({EntryTextTarget{42}, "c"}),
+        AppendPublishResult::SnapshotRequired);
     const SseMailbox::Next structural = mailbox.next(stream, 1ms);
     ASSERT_TRUE(structural.open);
     const auto* snapshot = std::get_if<SnapshotEvent>(structural.payload.get());
@@ -76,11 +88,46 @@ TEST(SseMailbox, StructuralOrPendingSnapshotAppendCollapsesToSnapshot) {
     EXPECT_EQ(snapshot->snapshot.notice, "structural change");
     mailbox.written(stream);
 
-    mailbox.publish_append({ReasoningTextTarget{7}, "think"}, streaming_snapshot("ab"));
-    const SseMailbox::Next incompatible = mailbox.next(stream, 1ms);
-    EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(*incompatible.payload));
-    mailbox.written(stream);
+    // The base target established by the last snapshot is an answer entry, so
+    // a reasoning append is not representable.
+    EXPECT_EQ(
+        mailbox.publish_append({ReasoningTextTarget{7}, "think"}),
+        AppendPublishResult::SnapshotRequired);
+    // An empty append is a controller contract error, reported conservatively.
+    EXPECT_EQ(
+        mailbox.publish_append({EntryTextTarget{42}, ""}),
+        AppendPublishResult::SnapshotRequired);
+    EXPECT_FALSE(mailbox.next(stream, 1ms).payload);
     EXPECT_EQ(mailbox.end_stream(stream), 1U);
+}
+
+TEST(SseMailbox, AcceptsAppendsWithNoStreamToRepair) {
+    SseMailbox mailbox;
+
+    EXPECT_EQ(
+        mailbox.publish_append({EntryTextTarget{42}, "b"}),
+        AppendPublishResult::Accepted);
+
+    const SseMailbox::Stream stream = mailbox.begin_stream({streaming_snapshot("a")});
+    mailbox.close();
+    EXPECT_EQ(
+        mailbox.publish_append({EntryTextTarget{42}, "b"}),
+        AppendPublishResult::Accepted);
+    EXPECT_EQ(mailbox.end_stream(stream), 0U);
+}
+
+TEST(SseMailbox, AppendWithoutASnapshotBaseRequiresASnapshot) {
+    SseMailbox mailbox;
+    SessionSnapshot idle;
+    const SseMailbox::Stream stream = mailbox.begin_stream({std::move(idle)});
+    ASSERT_TRUE(mailbox.next(stream, 1ms).payload);
+    mailbox.written(stream);
+
+    EXPECT_EQ(
+        mailbox.publish_append({EntryTextTarget{42}, "b"}),
+        AppendPublishResult::SnapshotRequired);
+    EXPECT_FALSE(mailbox.next(stream, 1ms).payload);
+    mailbox.end_stream(stream);
 }
 
 TEST(SseMailbox, ReturnedPayloadRemainsImmutableAfterWriterAcknowledgement) {

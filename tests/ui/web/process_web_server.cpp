@@ -170,9 +170,10 @@ class PermanentlyBlockedShutdownController final
     : public WebSessionController {
 public:
     CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionChange request_stop() override { return {}; }
-    SessionChange set_default_agent_id(std::string_view) override { return {}; }
-    SessionEventBatch receive(std::size_t) override { return {}; }
+    ControllerUpdate request_stop() override { return {}; }
+    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] ControllerView view() const override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {
         std::unique_lock lock(mutex_);
@@ -226,9 +227,10 @@ private:
 class IdleController final : public WebSessionController {
 public:
     CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionChange request_stop() override { return {}; }
-    SessionChange set_default_agent_id(std::string_view) override { return {}; }
-    SessionEventBatch receive(std::size_t) override { return {}; }
+    ControllerUpdate request_stop() override { return {}; }
+    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] ControllerView view() const override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
 };
@@ -339,27 +341,27 @@ private:
 class LargeSnapshotController final : public WebSessionController {
 public:
     explicit LargeSnapshotController(std::size_t text_size)
-        : text_(text_size, 'x') {}
+        : entries_({{
+              .id = 1,
+              .kind = EntryKind::agent,
+              .text = std::string(text_size, 'x'),
+              .status = EntryStatus::complete,
+          }}) {}
 
     CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionChange request_stop() override { return {}; }
-    SessionChange set_default_agent_id(std::string_view) override { return {}; }
-    SessionEventBatch receive(std::size_t) override { return {}; }
+    ControllerUpdate request_stop() override { return {}; }
+    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
-    SessionState state() override {
-        return {
-            .transcript = {{
-                .id = 1,
-                .kind = EntryKind::agent,
-                .text = text_,
-                .status = EntryStatus::complete,
-            }},
-        };
+    // The entry is owner-thread state built once, so every borrowed view stays
+    // valid for the synchronous projection that consumes it.
+    [[nodiscard]] ControllerView view() const override {
+        return {.transcript = {.entries = entries_}};
     }
     void shutdown() override {}
 
 private:
-    std::string text_;
+    std::vector<cha::TranscriptEntry> entries_;
 };
 
 // Instrumented builds run the server several times slower, which starves the

@@ -104,22 +104,20 @@ public:
         std::string input) override {
         return handle_text_input(controller_, author_id, std::move(input));
     }
-    SessionChange request_stop() override {
+    ControllerUpdate request_stop() override {
         return controller_.request_stop();
     }
-    SessionChange set_default_agent_id(std::string_view id) override {
+    ControllerUpdate set_default_agent_id(std::string_view id) override {
         return controller_.set_default_agent_by_id(id);
     }
-    SessionEventBatch receive(std::size_t max_events) override {
+    ControllerEventBatch receive(std::size_t max_events) override {
         return controller_.receive_events(max_events);
     }
     [[nodiscard]] bool is_generating() const override {
         return controller_.is_generating();
     }
-    SessionState state() override { return controller_.state(); }
-    std::optional<SessionAppendProjection> text_append_since(
-        const SessionStateCursor& cursor) override {
-        return controller_.text_append_since(cursor);
+    [[nodiscard]] ControllerView view() const override {
+        return controller_.view();
     }
     void shutdown() override { controller_.shutdown(); }
 
@@ -256,7 +254,7 @@ void WebSessionRuntime::owner_loop(
         if (!controller) throw std::runtime_error("Web controller factory returned null");
         log_event("lease_acquired_owner_started");
         browser_connection_.published(clock_());
-        publish_change(*controller);
+        publish_current_snapshot(*controller);
         while (true) {
             std::size_t processed = 0;
             while (processed < settings_.command_batch_size) {
@@ -277,12 +275,11 @@ void WebSessionRuntime::owner_loop(
                 std::lock_guard lock(state_mutex_);
                 if (stopping_) { reason = shutdown_reason_; break; }
             }
-            SessionEventBatch events = controller->receive(settings_.event_batch_size);
-            const bool presentation_changed = apply_notice(events.change);
-            if (events.change.state_changed || presentation_changed) {
-                publish_change(*controller, presentation_changed);
-            }
-            if (events.change.controller_ended) {
+            ControllerEventBatch events = controller->receive(settings_.event_batch_size);
+            const bool presentation_changed = apply_notice(events.update.notice);
+            publish_update(
+                *controller, std::move(events.update.state), presentation_changed);
+            if (events.update.session_ended) {
                 (void)mark_stopping(ShutdownReason::browser_disconnected);
             }
             {
@@ -331,17 +328,11 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
                     ErrorCode::browser_stream_in_use);
                 return;
             }
-            // Establish the exact snapshot sent on connect as the runtime's
-            // append base. This keeps later candidates relative to what the
-            // browser actually received even if a controller changed without
-            // first emitting a render hint.
-            SessionState state = controller.state();
-            const auto cursor = session_state_cursor(state);
-            publish_snapshot(to_snapshot(
-                descriptor_, std::move(state),
-                presentation(SessionLifecycle::running)), cursor);
+            // The snapshot sent on connect establishes the mailbox's append
+            // base and resets its sequence accounting, so a later append is
+            // always relative to what this browser actually received.
             const SseMailbox::Stream stream =
-                sse_mailbox_->begin_stream({*last_snapshot_});
+                sse_mailbox_->begin_stream({make_snapshot(controller)});
             if (!command.completion->complete(SseConnectResult{
                     sse_mailbox_, stream, *connection_id})) {
                 // Mutations retain their unknown outcome after a timeout, but
@@ -375,12 +366,13 @@ void WebSessionRuntime::execute(WebSessionController& controller, OwnerCommand c
             static_assert(unsupported_web_command<T>);
         }
     }, command.command);
-    const bool presentation_changed = apply_notice(outcome.session);
-    if (outcome.session.state_changed || presentation_changed) {
-        publish_change(controller, presentation_changed);
-    }
+    const bool presentation_changed = apply_notice(outcome.session.notice);
+    // The state effect is in-process only; the serialized result carries just
+    // clear_input and the notice.
+    publish_update(
+        controller, std::move(outcome.session.state), presentation_changed);
     const bool close_session =
-        outcome.session.controller_ended || outcome.close_session;
+        outcome.session.session_ended || outcome.close_session;
     (void)command.completion->complete(std::move(outcome));
     if (close_session) {
         (void)mark_stopping(ShutdownReason::browser_disconnected);
@@ -396,8 +388,10 @@ void WebSessionRuntime::apply_notification(OwnerNotification notification) {
 }
 
 SessionSnapshot WebSessionRuntime::make_snapshot(WebSessionController& controller) {
+    // The borrowed view lives only for this expression; to_snapshot() copies
+    // everything it needs into the returned owning value.
     return to_snapshot(
-        descriptor_, controller.state(), presentation(SessionLifecycle::running));
+        descriptor_, controller.view(), presentation(SessionLifecycle::running));
 }
 
 WebPresentationState WebSessionRuntime::presentation(
@@ -410,15 +404,15 @@ WebPresentationState WebSessionRuntime::presentation(
     };
 }
 
-bool WebSessionRuntime::apply_notice(const SessionChange& change) {
-    if (!change.notice) return false;
-    if (change.notice->empty()) {
+bool WebSessionRuntime::apply_notice(const std::optional<std::string>& notice) {
+    if (!notice) return false;
+    if (notice->empty()) {
         if (!notice_) return false;
         notice_.reset();
         return true;
     }
-    if (notice_ && *notice_ == *change.notice) return false;
-    notice_ = *change.notice;
+    if (notice_ && *notice_ == *notice) return false;
+    notice_ = *notice;
     return true;
 }
 
@@ -429,89 +423,64 @@ ShutdownReason WebSessionRuntime::mark_stopping(ShutdownReason reason) {
     return shutdown_reason_;
 }
 
-void WebSessionRuntime::publish_change(
+void WebSessionRuntime::publish_update(
     WebSessionController& controller,
-    bool force_snapshot) {
+    ControllerStateUpdate state,
+    bool presentation_changed) {
     if (!sink_) return;
-    if (!force_snapshot && last_cursor_) {
-        if (auto projection = controller.text_append_since(*last_cursor_);
-            projection && publish_append(
-                std::move(projection->append),
-                std::move(projection->cursor))) {
+    // Notice lives only in a full snapshot under the current protocol, so a
+    // presentation change dominates append delivery.
+    if (presentation_changed) {
+        publish_current_snapshot(controller);
+        return;
+    }
+    if (!has_state_update(state)) return;
+    if (TextAppend* append = text_append(state)) {
+        if (sink_->publish_append(std::move(*append))
+            == AppendPublishResult::Accepted) {
             return;
         }
     }
+    publish_current_snapshot(controller);
+}
 
-    SessionState state = controller.state();
-    const auto cursor = session_state_cursor(state);
-    SessionSnapshot current = to_snapshot(
-        descriptor_, std::move(state), presentation(SessionLifecycle::running));
-    const bool was_active = last_snapshot_
-        && last_snapshot_->generation.active;
+void WebSessionRuntime::publish_current_snapshot(
+    WebSessionController& controller) {
+    if (!sink_) return;
+    SessionSnapshot current = make_snapshot(controller);
+    log_generation_transitions(current);
+    sink_->publish(SnapshotEvent{std::move(current)});
+}
+
+void WebSessionRuntime::log_generation_transitions(
+    const SessionSnapshot& current) {
+    const bool was_active = logged_generation_active_;
     const bool is_active = current.generation.active;
-    const bool active_request_changed = was_active && is_active
-        && last_snapshot_->generation.request_id
-            != current.generation.request_id;
-    if (was_active && (!is_active || active_request_changed)) {
+    const bool request_changed = was_active && is_active
+        && logged_active_request_ != current.generation.request_id;
+    if (was_active && (!is_active || request_changed)) {
         log_event("generation_terminal request_id="
-            + (last_snapshot_->generation.request_id
-                ? std::to_string(*last_snapshot_->generation.request_id)
+            + (logged_active_request_
+                ? std::to_string(*logged_active_request_)
                 : std::string("none"))
             + " status="
             + std::string(generation_terminal_status(
-                current, last_snapshot_->generation.request_id)));
+                current, logged_active_request_)));
     }
-    if (is_active && (!was_active || active_request_changed)) {
+    if (is_active && (!was_active || request_changed)) {
         log_event("generation_started request_id="
             + (current.generation.request_id
                 ? std::to_string(*current.generation.request_id)
                 : std::string("none")));
     }
-    if (last_snapshot_ && current == *last_snapshot_) return;
-    publish_snapshot(std::move(current), cursor);
-}
-
-bool WebSessionRuntime::publish_append(
-    SessionTextAppend append,
-    SessionStateCursor cursor) {
-    if (!sink_ || !last_snapshot_ || append.text.empty()) {
-        return false;
-    }
-    if (const auto* entry = std::get_if<EntryTextTarget>(&append.target)) {
-        const auto found = std::find_if(
-            last_snapshot_->transcript.begin(), last_snapshot_->transcript.end(),
-            [entry](const cha::TranscriptEntry& value) {
-                return value.id == entry->entry_id;
-            });
-        if (found == last_snapshot_->transcript.end()) {
-            return false;
-        }
-        found->text.append(append.text);
-    } else {
-        const auto& reasoning =
-            std::get<ReasoningTextTarget>(append.target);
-        if (last_snapshot_->generation.request_id != reasoning.request_id) {
-            return false;
-        }
-        last_snapshot_->generation.reasoning_text.append(append.text);
-    }
-    sink_->publish_append(std::move(append), *last_snapshot_);
-    last_cursor_ = std::move(cursor);
-    return true;
-}
-
-void WebSessionRuntime::publish_snapshot(
-    SessionSnapshot snapshot,
-    std::optional<SessionStateCursor> cursor) {
-    sink_->publish(SnapshotEvent{snapshot});
-    last_snapshot_ = std::move(snapshot);
-    last_cursor_ = std::move(cursor);
+    logged_generation_active_ = is_active;
+    logged_active_request_ = current.generation.request_id;
 }
 
 void WebSessionRuntime::publish_final(WebSessionController& controller, ShutdownReason reason) {
     if (!sink_) return;
     SessionSnapshot snapshot = to_snapshot(
-        descriptor_, controller.state(),
+        descriptor_, controller.view(),
         presentation(SessionLifecycle::stopping, reason));
     sink_->publish(SnapshotEvent{std::move(snapshot)});
 }

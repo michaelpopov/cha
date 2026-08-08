@@ -3,12 +3,12 @@
 #include "agents/agent.h"
 #include "agents/agent_registry.h"
 #include "agents/persona.h"
+#include "session/controller_update.h"
+#include "session/controller_view.h"
 #include "session/generation_status.h"
 #include "session/forum_characters.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
-#include "session/session_state.h"
-#include "session/session_change.h"
 #include "transcript/transcript.h"
 #include "util/wake_notifier.h"
 #include "util/thread_pool.h"
@@ -27,7 +27,7 @@ namespace cha {
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, forum characters, default agent, generation status) and
 // commands (submit a prompt, clear, stop, switch the default agent, drain agent events),
-// each returning a SessionChange instead of touching a frontend. It owns the Transcript,
+// each returning a ControllerUpdate instead of touching a frontend. It owns the Transcript,
 // SessionJournal, AgentRegistry, and the state of the in-flight response batch. Command syntax,
 // mentions, and transport formats belong to front ends, not here.
 class SessionController {
@@ -70,50 +70,38 @@ public:
     // --- Session state (read-only) --------------------------------------------
     const Transcript& transcript() const { return transcript_; }
     [[nodiscard]] bool is_generating() const noexcept;
-    // Builds an owning state value on this controller's owner thread for
-    // asynchronous presentation consumers.
-    [[nodiscard]] SessionState state() const;
-    // Owner-thread-only proof of a text-only extension since a previously
-    // published core cursor. Any ambiguity deliberately returns no append.
-    [[nodiscard]] std::optional<SessionAppendProjection> text_append_since(
-        const SessionStateCursor& cursor) const;
+    // A borrowed read model for full projection. It is valid only on this
+    // controller's owner thread and only until the next mutation, so callers
+    // must consume it synchronously.
+    [[nodiscard]] ControllerView view() const noexcept;
     const ForumCharacters& characters() const { return characters_; }
     const ParticipantId& default_agent_id() const { return default_agent_id_; }
 
     // --- Session commands (mutate, then report semantic changes) --------------
-    [[nodiscard]] SessionChange submit_prompt(
+    [[nodiscard]] ControllerUpdate submit_prompt(
         std::string_view author_id,
         std::string text,
         std::string handle = {});
-    [[nodiscard]] SessionChange clear_transcript();
-    [[nodiscard]] SessionChange open_offrecord();
-    [[nodiscard]] SessionChange extend_offrecord();
-    [[nodiscard]] SessionChange restore_offrecord();
+    [[nodiscard]] ControllerUpdate clear_transcript();
+    [[nodiscard]] ControllerUpdate open_offrecord();
+    [[nodiscard]] ControllerUpdate extend_offrecord();
+    [[nodiscard]] ControllerUpdate restore_offrecord();
     // The web text grammar submits handles; resolution and all target
     // validation stay here with the forum's authoritative character set.
-    [[nodiscard]] SessionChange start_multicast(
+    [[nodiscard]] ControllerUpdate start_multicast(
         std::string_view author_id,
         std::string text,
         std::vector<std::string> handles);
-    [[nodiscard]] SessionChange session_information();
-    [[nodiscard]] SessionChange agent_information();
-    [[nodiscard]] SessionChange set_default_agent(std::string_view handle);
-    [[nodiscard]] SessionChange set_default_agent_by_id(std::string_view id);
-    [[nodiscard]] SessionChange request_stop();
-    [[nodiscard]] SessionChange handle_agent_event(AgentEvent event);
-    [[nodiscard]] SessionEventBatch receive_events(std::size_t max_events);
+    [[nodiscard]] ControllerUpdate session_information();
+    [[nodiscard]] ControllerUpdate agent_information();
+    [[nodiscard]] ControllerUpdate set_default_agent(std::string_view handle);
+    [[nodiscard]] ControllerUpdate set_default_agent_by_id(std::string_view id);
+    [[nodiscard]] ControllerUpdate request_stop();
+    [[nodiscard]] ControllerUpdate handle_agent_event(AgentEvent event);
+    [[nodiscard]] ControllerEventBatch receive_events(std::size_t max_events);
     void shutdown();
 
 private:
-    struct GenerationView {
-        bool active{};
-        std::optional<RequestId> request_id;
-        std::string_view agent_id;
-        std::string_view agent_name;
-        ResponsePhase phase{ResponsePhase::waiting};
-        std::string_view reasoning_text;
-    };
-
     struct ActiveResponse {
         RequestId request_id{};
         EntryId response_entry_id{};
@@ -150,39 +138,38 @@ private:
         ActivationHook before_activation);
 
     void initialize(SessionRestore restored);
-    [[nodiscard]] GenerationView generation_view() const noexcept;
-    [[nodiscard]] GenerationStatus snapshot_generation() const;
+    [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
     bool busy() const noexcept;
-    SessionChange busy_notice() const;
+    ControllerUpdate busy_notice() const;
     [[nodiscard]] std::optional<EntryIdentity> resolve_author(
         std::string_view author_id,
-        SessionChange& change) const;
+        ControllerUpdate& update) const;
     void start_batch(
         EntryIdentity author,
         std::string text,
         std::vector<CharacterInfo> targets,
         SharedCompletionHistory history,
-        SessionChange& change);
-    [[nodiscard]] SessionChange start_resolved_multicast(
+        ControllerUpdate& update);
+    [[nodiscard]] ControllerUpdate start_resolved_multicast(
         std::string_view author_id,
         std::string text,
         std::vector<CharacterInfo> targets);
-    void activate_current_run(SessionChange& change);
-    void start_next_batch_run(SessionChange& change);
-    void finish_batch_run(SessionChange& change);
-    void finish_batch(SessionChange& change);
-    void finish_aborted_batch(SessionChange& change);
-    void poll_abort_cleanup(SessionChange& change);
-    void append_batch_notice(const SessionChange& change);
+    void activate_current_run(ControllerUpdate& update);
+    void start_next_batch_run(ControllerUpdate& update);
+    void finish_batch_run(ControllerUpdate& update);
+    void finish_batch(ControllerUpdate& update);
+    void finish_aborted_batch(ControllerUpdate& update);
+    void poll_abort_cleanup(ControllerUpdate& update);
+    void append_batch_notice(const ControllerUpdate& update);
     void abandon_batch();
-    void apply(const AgentDelta& event, SessionChange& change);
-    void apply(const AgentCompleted& event, SessionChange& change);
-    void apply(const AgentCancelled& event, SessionChange& change);
-    void apply(const AgentFailed& event, SessionChange& change);
+    void apply(const AgentDelta& event, ControllerUpdate& update);
+    void apply(const AgentCompleted& event, ControllerUpdate& update);
+    void apply(const AgentCancelled& event, ControllerUpdate& update);
+    void apply(const AgentFailed& event, ControllerUpdate& update);
     void fail_active_response(
         std::string message,
         ParticipantId participant_id,
-        SessionChange& change);
+        ControllerUpdate& update);
     void finish_response_entry(EntryStatus status);
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;

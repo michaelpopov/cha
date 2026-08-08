@@ -183,6 +183,7 @@ add_library(cha_core STATIC
     src/agents/agent_registry.cpp
     src/agents/completion_client.cpp
     src/agents/config.cpp
+    src/session/controller_update.cpp
     src/session/forum_characters.cpp
     src/session/catalog_lease.cpp
     src/session/session_catalog.cpp
@@ -190,7 +191,6 @@ add_library(cha_core STATIC
     src/session/session_database.cpp
     src/session/session_lease.cpp
     src/session/session_repository.cpp
-    src/session/session_state.cpp
     src/application/workspace_model.cpp
     src/application/session_open.cpp
     src/application/builtins.cpp
@@ -296,7 +296,7 @@ if(BUILD_TESTING)
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
         tests/session/unit_session_repository.cpp
-        tests/session/unit_session_state.cpp
+        tests/session/unit_controller_update.cpp
         tests/application/unit_workspace_model.cpp
         tests/application/unit_session_open.cpp
         tests/application/unit_builtins.cpp

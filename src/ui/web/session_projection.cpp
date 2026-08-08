@@ -3,13 +3,12 @@
 #include "util/text.h"
 
 #include <algorithm>
-#include <utility>
 
 namespace cha::web {
 
 SessionSnapshot to_snapshot(
     const SessionDescriptor& descriptor,
-    SessionState&& state,
+    const ControllerView& controller,
     const WebPresentationState& presentation) {
     SessionSnapshot snapshot{
         .forum = {
@@ -19,29 +18,33 @@ SessionSnapshot to_snapshot(
         },
         .session_id = descriptor.identity.session_id,
         .session_label = descriptor.session_label,
-        .default_character_id = std::move(state.default_agent_id),
-        .transcript = std::move(state.transcript),
-        .generation = std::move(state.generation),
+        .default_character_id = std::string(controller.default_agent_id),
+        .transcript = {
+            controller.transcript.entries.begin(),
+            controller.transcript.entries.end(),
+        },
+        .generation = {
+            .active = controller.generation.active,
+            .request_id = controller.generation.request_id,
+            .agent_id = std::string(controller.generation.agent_id),
+            .agent_name = std::string(controller.generation.agent_name),
+            .phase = controller.generation.phase,
+            .reasoning_text = std::string(controller.generation.reasoning_text),
+        },
         .notice = presentation.notice,
         .lifecycle = presentation.lifecycle,
         .shutdown_reason = presentation.shutdown_reason,
     };
-    snapshot.characters.reserve(state.characters.size());
-    snapshot.forum.members.reserve(state.characters.size());
-    for (CharacterInfo& character : state.characters) {
-        snapshot.forum.members.push_back({
+    snapshot.characters.reserve(controller.characters.size());
+    for (const CharacterInfo& character : controller.characters) {
+        snapshot.characters.push_back({
             .id = character.id,
             .display_name = character.name,
             .description = character.description,
             .appearance = character.appearance,
         });
-        snapshot.characters.push_back({
-            .id = std::move(character.id),
-            .display_name = std::move(character.name),
-            .description = std::move(character.description),
-            .appearance = character.appearance,
-        });
     }
+    snapshot.forum.members = snapshot.characters;
     std::sort(snapshot.forum.members.begin(), snapshot.forum.members.end(),
         [](const CharacterSummary& left, const CharacterSummary& right) {
             return fold_ascii(left.display_name) < fold_ascii(right.display_name);

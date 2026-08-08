@@ -59,7 +59,7 @@ nlohmann::json generation_json(const GenerationStatus& value) {
     return json;
 }
 
-nlohmann::json append_target_json(const SessionTextTarget& value) {
+nlohmann::json append_target_json(const TextTarget& value) {
     return std::visit([](const auto& target) {
         using Target = std::decay_t<decltype(target)>;
         if constexpr (std::is_same_v<Target, EntryTextTarget>) {

@@ -56,14 +56,6 @@ ForumCharacters make_forum_characters(
     return ForumCharacters(std::move(characters), true);
 }
 
-void merge_change(SessionChange& all, SessionChange one) {
-    all.state_changed = all.state_changed || one.state_changed;
-    all.controller_ended = all.controller_ended || one.controller_ended;
-    if (one.notice) {
-        all.notice = std::move(one.notice);
-    }
-}
-
 void require_agent_count(std::size_t count) {
     if (count == 0) {
         throw std::invalid_argument(
@@ -191,20 +183,7 @@ void SessionController::initialize(SessionRestore restored) {
     }
 }
 
-GenerationStatus SessionController::snapshot_generation() const {
-    const GenerationView view = generation_view();
-    return {
-        .active = view.active,
-        .request_id = view.request_id,
-        .agent_id = std::string(view.agent_id),
-        .agent_name = std::string(view.agent_name),
-        .phase = view.phase,
-        .reasoning_text = std::string(view.reasoning_text),
-    };
-}
-
-SessionController::GenerationView
-SessionController::generation_view() const noexcept {
+ControllerGenerationView SessionController::generation_view() const noexcept {
     if (batch_ && batch_->abort_requested) {
         const RunSpec& run = batch_->runs[batch_->foreground_index];
         return {
@@ -229,32 +208,15 @@ SessionController::generation_view() const noexcept {
     };
 }
 
-SessionState SessionController::state() const {
-    const TranscriptView view = transcript_.view();
+ControllerView SessionController::view() const noexcept {
+    // Every field borrows live controller storage. The caller consumes it
+    // before the next mutation on this thread; nothing here allocates.
     return {
         .characters = characters_.all(),
         .default_agent_id = default_agent_id_,
-        .transcript = {view.entries.begin(), view.entries.end()},
-        .revision = view.revision,
-        .open_entry_id = view.open_entry_id,
-        .history_epoch = view.history_epoch,
-        .generation = snapshot_generation(),
+        .transcript = transcript_.view(),
+        .generation = generation_view(),
     };
-}
-
-std::optional<SessionAppendProjection> SessionController::text_append_since(
-    const SessionStateCursor& cursor) const {
-    const GenerationView generation = generation_view();
-    return session_text_append_since(
-        transcript_.view(),
-        {
-            .active = generation.active,
-            .request_id = generation.request_id,
-            .phase = generation.phase,
-            .reasoning_text = generation.reasoning_text,
-        },
-        default_agent_id_,
-        cursor);
 }
 
 bool SessionController::is_generating() const noexcept {
@@ -265,13 +227,13 @@ bool SessionController::busy() const noexcept {
     return active_ || batch_;
 }
 
-SessionChange SessionController::busy_notice() const {
+ControllerUpdate SessionController::busy_notice() const {
     return {.notice = std::string(generation_in_progress_notice)};
 }
 
 std::optional<EntryIdentity> SessionController::resolve_author(
     std::string_view author_id,
-    SessionChange& update) const {
+    ControllerUpdate& update) const {
     const auto author = std::find_if(
         personas_->begin(), personas_->end(),
         [author_id](const Persona& persona) { return persona.id == author_id; });
@@ -282,7 +244,7 @@ std::optional<EntryIdentity> SessionController::resolve_author(
     return EntryIdentity{author->id, author->display_name};
 }
 
-SessionChange SessionController::submit_prompt(
+ControllerUpdate SessionController::submit_prompt(
     std::string_view author_id,
     std::string text,
     std::string handle) {
@@ -293,7 +255,7 @@ SessionChange SessionController::submit_prompt(
         return {};
     }
 
-    SessionChange update;
+    ControllerUpdate update;
     const CharacterInfo* target = nullptr;
     if (handle.empty()) {
         target = characters_.find(default_agent_id_);
@@ -335,7 +297,7 @@ void SessionController::start_batch(
     std::string text,
     std::vector<CharacterInfo> targets,
     SharedCompletionHistory history,
-    SessionChange& update) {
+    ControllerUpdate& update) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
             "Response batch requires history and at least one target");
@@ -381,7 +343,7 @@ void SessionController::start_batch(
     }
 }
 
-void SessionController::activate_current_run(SessionChange& update) {
+void SessionController::activate_current_run(ControllerUpdate& update) {
     if (!batch_ || batch_->foreground_index >= batch_->runs.size()) {
         throw std::logic_error("Response batch run index is out of range");
     }
@@ -431,11 +393,11 @@ void SessionController::activate_current_run(SessionChange& update) {
         throw;
     }
     active_ = std::move(response);
-    update.state_changed = true;
+    require_snapshot(update);
     update.notice = "";
 }
 
-void SessionController::start_next_batch_run(SessionChange& update) {
+void SessionController::start_next_batch_run(ControllerUpdate& update) {
     if (!batch_) {
         return;
     }
@@ -456,7 +418,7 @@ void SessionController::start_next_batch_run(SessionChange& update) {
     }
 }
 
-void SessionController::finish_batch_run(SessionChange& update) {
+void SessionController::finish_batch_run(ControllerUpdate& update) {
     if (!batch_) {
         return;
     }
@@ -480,7 +442,7 @@ void SessionController::finish_batch_run(SessionChange& update) {
     start_next_batch_run(update);
 }
 
-void SessionController::finish_batch(SessionChange& update) {
+void SessionController::finish_batch(ControllerUpdate& update) {
     if (!batch_) {
         return;
     }
@@ -488,12 +450,16 @@ void SessionController::finish_batch(SessionChange& update) {
     const std::string terminal_notices = batch_->terminal_notices;
     registry_.clear_batch();
     abandon_batch();
+    // Ending the batch ends the visible generation. Every caller reaches here
+    // from a terminal event that already requested a snapshot; classify it
+    // locally anyway so this helper cannot be moved into a purer path.
+    require_snapshot(update);
     if (!terminal_notices.empty()) {
         update.notice = terminal_notices;
     }
 }
 
-void SessionController::finish_aborted_batch(SessionChange& update) {
+void SessionController::finish_aborted_batch(ControllerUpdate& update) {
     if (!batch_) {
         return;
     }
@@ -504,11 +470,11 @@ void SessionController::finish_aborted_batch(SessionChange& update) {
         notices = "Generation stopped";
     }
     abandon_batch();
-    update.state_changed = true;
+    require_snapshot(update);
     update.notice = std::move(notices);
 }
 
-void SessionController::poll_abort_cleanup(SessionChange& update) {
+void SessionController::poll_abort_cleanup(ControllerUpdate& update) {
     if (!batch_ || !batch_->abort_requested) {
         return;
     }
@@ -518,7 +484,7 @@ void SessionController::poll_abort_cleanup(SessionChange& update) {
     }
 }
 
-void SessionController::append_batch_notice(const SessionChange& update) {
+void SessionController::append_batch_notice(const ControllerUpdate& update) {
     if (!batch_ || !update.notice || update.notice->empty()) {
         return;
     }
@@ -532,7 +498,7 @@ void SessionController::abandon_batch() {
     batch_.reset();
 }
 
-SessionChange SessionController::clear_transcript() {
+ControllerUpdate SessionController::clear_transcript() {
     if (busy()) {
         return busy_notice();
     }
@@ -544,13 +510,13 @@ SessionChange SessionController::clear_transcript() {
     }
     transcript_.clear();
     return {
-        .state_changed = true,
+        .state = SnapshotRequired{},
         .input_consumed = true,
         .notice = "Transcript cleared",
     };
 }
 
-SessionChange SessionController::open_offrecord() {
+ControllerUpdate SessionController::open_offrecord() {
     if (busy()) {
         return busy_notice();
     }
@@ -562,12 +528,12 @@ SessionChange SessionController::open_offrecord() {
     }
     ++next_entry_id_;
     return {
-        .state_changed = true,
+        .state = SnapshotRequired{},
         .input_consumed = true,
     };
 }
 
-SessionChange SessionController::extend_offrecord() {
+ControllerUpdate SessionController::extend_offrecord() {
     if (busy()) {
         return busy_notice();
     }
@@ -579,12 +545,12 @@ SessionChange SessionController::extend_offrecord() {
     }
     ++next_entry_id_;
     return {
-        .state_changed = true,
+        .state = SnapshotRequired{},
         .input_consumed = true,
     };
 }
 
-SessionChange SessionController::restore_offrecord() {
+ControllerUpdate SessionController::restore_offrecord() {
     if (busy()) {
         return busy_notice();
     }
@@ -596,12 +562,12 @@ SessionChange SessionController::restore_offrecord() {
     }
     ++next_entry_id_;
     return {
-        .state_changed = true,
+        .state = SnapshotRequired{},
         .input_consumed = true,
     };
 }
 
-SessionChange SessionController::start_multicast(
+ControllerUpdate SessionController::start_multicast(
     std::string_view author_id,
     std::string text,
     std::vector<std::string> handles) {
@@ -636,7 +602,7 @@ SessionChange SessionController::start_multicast(
     return start_resolved_multicast(author_id, std::move(text), std::move(targets));
 }
 
-SessionChange SessionController::start_resolved_multicast(
+ControllerUpdate SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
     std::vector<CharacterInfo> targets) {
@@ -647,7 +613,7 @@ SessionChange SessionController::start_resolved_multicast(
         return {.notice = "Multicast has no targets"};
     }
 
-    SessionChange update;
+    ControllerUpdate update;
     std::optional<EntryIdentity> author = resolve_author(author_id, update);
     if (!author) return update;
 
@@ -673,7 +639,7 @@ SessionChange SessionController::start_resolved_multicast(
     return update;
 }
 
-SessionChange SessionController::session_information() {
+ControllerUpdate SessionController::session_information() {
     if (busy()) {
         return busy_notice();
     }
@@ -687,7 +653,7 @@ SessionChange SessionController::session_information() {
     };
 }
 
-SessionChange SessionController::agent_information() {
+ControllerUpdate SessionController::agent_information() {
     if (busy()) {
         return busy_notice();
     }
@@ -698,11 +664,11 @@ SessionChange SessionController::agent_information() {
     };
 }
 
-SessionChange SessionController::set_default_agent(std::string_view handle) {
+ControllerUpdate SessionController::set_default_agent(std::string_view handle) {
     if (busy()) {
         return busy_notice();
     }
-    SessionChange update{.input_consumed = true};
+    ControllerUpdate update{.input_consumed = true};
     if (handle.empty()) {
         update.notice = "Usage: /@AgentName";
         return update;
@@ -713,30 +679,30 @@ SessionChange SessionController::set_default_agent(std::string_view handle) {
         return update;
     }
     default_agent_id_ = result.character->id;
-    update.state_changed = true;
+    require_snapshot(update);
     update.notice = "Default agent is now " + result.character->name;
     return update;
 }
 
-SessionChange SessionController::set_default_agent_by_id(std::string_view id) {
+ControllerUpdate SessionController::set_default_agent_by_id(std::string_view id) {
     if (busy()) {
         return busy_notice();
     }
     // This typed action submits no editor text, so it never clears a draft.
-    SessionChange update;
+    ControllerUpdate update;
     const CharacterInfo* character = characters_.find(id);
     if (!character) {
         update.notice = "Unknown agent";
         return update;
     }
     default_agent_id_ = character->id;
-    update.state_changed = true;
+    require_snapshot(update);
     update.notice = "Default agent is now " + character->name;
     return update;
 }
 
-SessionChange SessionController::request_stop() {
-    SessionChange update;
+ControllerUpdate SessionController::request_stop() {
+    ControllerUpdate update;
     if (!batch_) {
         update.notice = "No generation is active";
         return update;
@@ -746,7 +712,7 @@ SessionChange SessionController::request_stop() {
         log_info("Session generation cancellation requested");
         batch_->abort_requested = true;
         registry_.cancel_batch();
-        update.state_changed = true;
+        require_snapshot(update);
     }
     if (!active_) {
         poll_abort_cleanup(update);
@@ -759,34 +725,51 @@ SessionChange SessionController::request_stop() {
     return update;
 }
 
-SessionChange SessionController::handle_agent_event(AgentEvent event) {
-    SessionChange update;
+ControllerUpdate SessionController::handle_agent_event(AgentEvent event) {
+    ControllerUpdate update;
     std::visit(
         [this, &update](const auto& value) { apply(value, update); },
         event);
     return update;
 }
 
-void SessionController::apply(const AgentDelta& event, SessionChange& update) {
+void SessionController::apply(const AgentDelta& event, ControllerUpdate& update) {
     if (!matches(event.request_id) || event.text.empty()) {
         return;
     }
     if (event.kind == CompletionDeltaKind::answer) {
-        if (active_->phase != ResponsePhase::answering) {
+        // Opening the response entry also changes the phase, so only growth of
+        // an already-answering entry is a pure append.
+        const bool structural = active_->phase != ResponsePhase::answering;
+        if (structural) {
             transcript_.begin_entry(response_entry(EntryStatus::streaming));
         }
-        transcript_.append_answer(active_->response_entry_id, event.text);
+        // Capture the target before the text moves into transcript storage.
+        const EntryId entry_id = active_->response_entry_id;
+        transcript_.append_answer(entry_id, event.text);
         active_->phase = ResponsePhase::answering;
-    } else {
-        active_->reasoning_text.append(event.text);
-        if (active_->phase == ResponsePhase::waiting) {
-            active_->phase = ResponsePhase::reasoning;
+        if (structural) {
+            require_snapshot(update);
+            return;
         }
+        merge(update, {.state = TextAppend{EntryTextTarget{entry_id}, event.text}});
+        return;
     }
-    update.state_changed = true;
+    // The first reasoning chunk establishes visible request state. Later
+    // reasoning is a pure append even after answering began; the frontend's
+    // transport decides whether that target switch needs a snapshot.
+    const bool structural = active_->phase == ResponsePhase::waiting;
+    const RequestId request_id = active_->request_id;
+    active_->reasoning_text.append(event.text);
+    if (structural) {
+        active_->phase = ResponsePhase::reasoning;
+        require_snapshot(update);
+        return;
+    }
+    merge(update, {.state = TextAppend{ReasoningTextTarget{request_id}, event.text}});
 }
 
-void SessionController::apply(const AgentCompleted& event, SessionChange& update) {
+void SessionController::apply(const AgentCompleted& event, ControllerUpdate& update) {
     if (!matches(event.request_id)) {
         return;
     }
@@ -808,12 +791,12 @@ void SessionController::apply(const AgentCompleted& event, SessionChange& update
         });
     finish_response_entry(EntryStatus::complete);
     active_.reset();
-    update.state_changed = true;
+    require_snapshot(update);
     update.notice = "";
     finish_batch_run(update);
 }
 
-void SessionController::apply(const AgentCancelled& event, SessionChange& update) {
+void SessionController::apply(const AgentCancelled& event, ControllerUpdate& update) {
     if (!matches(event.request_id)) {
         return;
     }
@@ -840,13 +823,13 @@ void SessionController::apply(const AgentCancelled& event, SessionChange& update
             });
     }
     active_.reset();
-    update.state_changed = true;
+    require_snapshot(update);
     update.notice = "Generation stopped";
     batch_->stop_notice_recorded = true;
     finish_batch_run(update);
 }
 
-void SessionController::apply(const AgentFailed& event, SessionChange& update) {
+void SessionController::apply(const AgentFailed& event, ControllerUpdate& update) {
     if (matches(event.request_id)) {
         fail_active_response(event.message, active_->agent_id, update);
         finish_batch_run(update);
@@ -856,7 +839,7 @@ void SessionController::apply(const AgentFailed& event, SessionChange& update) {
 void SessionController::fail_active_response(
     std::string message,
     ParticipantId participant_id,
-    SessionChange& update) {
+    ControllerUpdate& update) {
     TranscriptEntry error = make_error_entry(
         next_entry_id_++,
         std::move(message),
@@ -876,7 +859,7 @@ void SessionController::fail_active_response(
     }
     transcript_.add_entry(std::move(error));
     active_.reset();
-    update.state_changed = true;
+    require_snapshot(update);
     update.notice = "Generation failed";
 }
 
@@ -902,14 +885,14 @@ bool SessionController::matches(RequestId request_id) const {
     return active_ && active_->request_id == request_id;
 }
 
-SessionEventBatch SessionController::receive_events(std::size_t max_events) {
+ControllerEventBatch SessionController::receive_events(std::size_t max_events) {
     if (max_events == 0) {
         throw std::invalid_argument("Agent event batch size must be positive");
     }
-    SessionChange update;
+    ControllerUpdate update;
     if (shutdown_ && !batch_) {
-        update.controller_ended = true;
-        return {.change = std::move(update)};
+        update.session_ended = true;
+        return {.update = std::move(update)};
     }
     AgentEvent event = AgentCompleted{};
     std::size_t processed = 0;
@@ -919,12 +902,12 @@ SessionEventBatch SessionController::receive_events(std::size_t max_events) {
         if (status != ChannelReadStatus::value) {
             break;
         }
-        merge_change(update, handle_agent_event(std::move(event)));
+        merge(update, handle_agent_event(std::move(event)));
         ++processed;
     }
     poll_abort_cleanup(update);
     return {
-        .change = std::move(update),
+        .update = std::move(update),
         .full = processed == max_events,
     };
 }

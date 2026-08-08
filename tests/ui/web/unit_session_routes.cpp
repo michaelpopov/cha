@@ -44,7 +44,6 @@ struct Calls {
     bool input_entered{};
     bool release_input{};
     int completed_inputs{};
-    std::string transcript_text{"hello"};
     std::condition_variable input_changed;
 };
 
@@ -65,63 +64,60 @@ public:
         }
         ++calls_->completed_inputs;
         calls_->input_changed.notify_all();
-        if (calls_->input == "rejected") return {};
-        if (calls_->input == "append") {
-            calls_->transcript_text.append(" world");
-            return {.session = {.state_changed = true}, .clear_input = true};
+        const std::string command = calls_->input;
+        lock.unlock();
+        if (command == "rejected") return {};
+        if (command == "append") {
+            // Owner-thread state and the exact suffix it grew by.
+            entries_.back().text.append(" world");
+            return {
+                .session = {.state = TextAppend{EntryTextTarget{1}, " world"}},
+                .clear_input = true,
+            };
         }
         return {.session = {.notice = "input accepted"}, .clear_input = true};
     }
-    SessionChange request_stop() override {
+    ControllerUpdate request_stop() override {
         std::lock_guard lock(calls_->mutex);
         ++calls_->stops;
         return {.notice = "stop requested"};
     }
-    SessionChange set_default_agent_id(std::string_view id) override {
+    ControllerUpdate set_default_agent_id(std::string_view id) override {
         std::lock_guard lock(calls_->mutex);
         calls_->agent = std::string(id);
         return {};
     }
-    SessionEventBatch receive(std::size_t) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
-    SessionState state() override {
-        std::lock_guard lock(calls_->mutex);
+    // Backing values are owner-thread members, so the borrowed view stays
+    // valid for the synchronous projection that consumes it.
+    [[nodiscard]] ControllerView view() const override {
         return {
-            .characters = {{"guide", "Guide"}},
+            .characters = characters_,
             .default_agent_id = "guide",
-            .transcript = {{
-                .id = 1,
-                .kind = EntryKind::agent,
-                .display_name = "Guide",
-                .text = calls_->transcript_text,
-                .status = EntryStatus::streaming,
-                .request_id = 1,
-            }},
-            .revision = 1,
-            .open_entry_id = 1,
+            .transcript = {
+                .entries = entries_,
+                .revision = 1,
+                .open_entry_id = 1,
+            },
             .generation = {.active = true, .request_id = 1,
                            .agent_id = "guide", .agent_name = "Guide",
                            .phase = ResponsePhase::answering},
         };
     }
-    std::optional<SessionAppendProjection> text_append_since(
-        const SessionStateCursor& before) override {
-        std::lock_guard lock(calls_->mutex);
-        if (before.phase != ResponsePhase::answering
-            || calls_->transcript_text.size()
-                <= before.answer_length) {
-            return std::nullopt;
-        }
-        SessionStateCursor cursor = before;
-        cursor.answer_length = calls_->transcript_text.size();
-        return SessionAppendProjection{
-            .append = {EntryTextTarget{1}, calls_->transcript_text.substr(before.answer_length)},
-            .cursor = std::move(cursor)};
-    }
     void shutdown() override {}
 
 private:
     std::shared_ptr<Calls> calls_;
+    std::vector<CharacterInfo> characters_{{"guide", "Guide"}};
+    std::vector<cha::TranscriptEntry> entries_{{
+        .id = 1,
+        .kind = EntryKind::agent,
+        .display_name = "Guide",
+        .text = "hello",
+        .status = EntryStatus::streaming,
+        .request_id = 1,
+    }};
 };
 
 class RouteServer {

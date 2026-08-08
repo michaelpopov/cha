@@ -14,7 +14,7 @@ chat box. The composition root builds one immutable `WorkspaceModel` and one
 repository, and the registry callback opens every session — including the
 built-in Welcome — through `open_session()` with the model's Guest-plus-
 workspace persona roster. It depends on core `SessionIdentity`, `SessionDescriptor`,
-`OpenedSession`, `SessionState`, append proof, and `SessionChange`, but puts no
+`OpenedSession`, `ControllerView`, and `ControllerUpdate`, but puts no
 HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
 a `SessionController`; HTTP workers exchange only owning commands and results
 with it.
@@ -45,9 +45,9 @@ authoritative character rules. While generation is active, only a bare
 This grammar is web policy, not a reusable core or terminal abstraction.
 `/exit` explicitly requests that `WebSessionRuntime` close the live web
 session. `handle_text_input()` returns the same `CommandResult` completed back
-to the HTTP request: it owns the controller's `SessionChange`, `clear_input`,
+to the HTTP request: it owns the controller's `ControllerUpdate`, `clear_input`,
 and the internal `close_session` decision. JSON exposes only `clear_input` and
-the change's optional notice.
+the update's optional notice.
 
 `SessionRegistry` owns one permanent thread per runtime and invokes the
 threadless `WebSessionRuntime` on it. The runtime owns an `OwnerWakeSignal`,
@@ -56,13 +56,29 @@ condition-variable wait consumed by the owner loop, plus a bounded
 multi-producer command queue. HTTP-facing callers get
 only owning command results; the owner thread alone reaches a controller and
 continues draining agent notifications without a browser connection. The
-runtime obtains an owning, transport-neutral `SessionState` from the controller
-and combines it with the descriptor and web presentation state in a protocol
-`SessionSnapshot`. The snapshot directly owns the moved core `TranscriptEntry`
-and `GenerationStatus` values, so there is no parallel web transcript model and
-the SSE writer never borrows controller state or blocks the owner. Core
-`SessionTextAppend` targets also cross that boundary unchanged; the mailbox adds
-sequence values only to payloads it actually stores. Its idempotent owner-thread teardown
+runtime builds every full snapshot on demand: it borrows a `ControllerView` and
+passes it straight to `to_snapshot()`, which copies the descriptor, the view,
+and web presentation state into an owning protocol `SessionSnapshot` before the
+borrow ends. The snapshot owns copies of the core `TranscriptEntry` values, so
+there is no parallel web transcript model and the SSE writer never borrows
+controller state or blocks the owner. The runtime keeps no snapshot or cursor
+cache and never compares two protocol values to discover what changed: it
+consumes the controller's own classification.
+
+For each update the owner thread applies the notice, then publishes a full
+snapshot if presentation changed (notice lives only in a snapshot under the
+current protocol), publishes nothing for `NoStateUpdate`, publishes a full
+snapshot for `SnapshotRequired`, and otherwise offers the exact `TextAppend` to
+the snapshot sink. A sink returns `AppendPublishResult::Accepted` when it can
+represent the update exactly with its current base and pending payload, or
+`SnapshotRequired` when it cannot — an unset or different base target, an empty
+append, or an incompatible pending payload. Rejection leaves the sink's pending
+work untouched and obliges the owner to project one fresh snapshot, so no eager
+fallback snapshot is ever built for the common append path. Append acceptance is
+an optimization boundary, not a correctness promise: mailbox pressure may turn a
+controller-proven append into a full snapshot at any time. Core `TextAppend`
+targets cross the boundary unchanged; the mailbox adds sequence values only to
+payloads it actually stores. Its idempotent owner-thread teardown
 uses registry hooks only for lifecycle notifications, drains a final snapshot
 for a bounded interval, and contains controller failures to that runtime.
 `SessionRegistry` is a web host registry and the sole process-local liveness authority.
@@ -125,6 +141,8 @@ carry `forum_id` and `session_id`; neither form includes prompt, answer,
 transcript, provider-message, or credential text. Route exceptions are recorded
 with their message so a 500 stays diagnosable, and the response itself always
 uses the common error envelope, which carries no exception detail.
-Generation logging treats an active request-ID change as a terminal event for
-the old request followed by a start event for the new request, covering
-multicast handoffs that never pass through an inactive snapshot.
+Generation logging retains only whether a generation was active and its request
+ID, not a snapshot. It treats an active request-ID change as a terminal event
+for the old request followed by a start event for the new request, covering
+multicast handoffs that never pass through an inactive snapshot; the terminal
+status is read from the freshly projected transcript.

@@ -15,8 +15,8 @@ web frontend and tests drive the same code.
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
 | `forum_characters.*` | The ordered character identities in a forum, including validation, lookup, handle resolution, and the wording of every session notice built from them. |
 | `session_identity.h` / `opened_session.h` | Stable `SessionIdentity`, presentation-safe `SessionDescriptor`, and the owner-thread-only `OpenedSession` result. |
-| `session_state.*` | Owning `SessionState` snapshots, and the transport-neutral append continuity proof as a matched pair of pure functions: `session_state_cursor()` produces a cursor and `session_text_append_since()` consumes it. |
-| `session_change.h` | Semantic controller outcomes (`SessionChange`) and bounded event-drain results. |
+| `controller_update.h/.cpp` | The transport-neutral outcome of one controller operation: the `ControllerStateUpdate` variant, its text targets and owning append, `ControllerUpdate`, the bounded event-drain result, and the one merge rule. |
+| `controller_view.h` | The borrowed, owner-thread-only read model used to build a full frontend snapshot. |
 | `session_controller.*` | Own one live session: commands, the in-flight response batch, agent events, default agent, notices, and shutdown. |
 | `generation_status.h` | `GenerationStatus`, `ResponsePhase`, and the shared generation-in-progress notice. |
 
@@ -309,11 +309,11 @@ terminal outcome before making it visible.
 ## Session control
 
 `SessionController` is the owner-thread-only engine behind one live session. It
-offers `state()` as an owning transport-neutral `SessionState`, and commands
-that return `SessionChange`.
-`SessionChange` reports observable state changes, accepted input, controller
-termination, and a presentation-safe notice; it never tells a widget to clear
-itself or to navigate away.
+offers `view()` as a borrowed transport-neutral read model, and commands that
+return `ControllerUpdate`.
+`ControllerUpdate` reports the exact observable effect of the mutation it just
+made, accepted input, session termination, and a presentation-safe notice; it
+never tells a widget to clear itself or to navigate away.
 
 | Command | Behavior | Semantic result |
 | --- | --- | --- |
@@ -327,7 +327,7 @@ itself or to navigate away.
 | `agent_information()` | Forum characters and runtime details, marking the default. | A notice and consumed submitted input; state is unchanged. |
 | `set_default_agent(handle)` | Changes the default for this run only. | A successful change is observable state; a text command may consume its submitted input. |
 | `request_stop()` | Cancels every live execution and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. | Immediate stopping notice, followed by the final stop notice after cleanup. |
-| `receive_events(max_events)` | Boundedly drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged semantic changes; after shutdown drains its batch, `controller_ended` is true. |
+| `receive_events(max_events)` | Boundedly drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged semantic changes; after shutdown drains its batch, `session_ended` is true. |
 | `shutdown()` | Cancels executions, commits the retained foreground terminal state, and joins the session pool. | — |
 
 Every command except `request_stop()` and `receive_events()` is refused while a turn or
@@ -335,30 +335,60 @@ multicast is active, with the shared in-progress notice. Session notices —
 handle errors, forum-character text, `/info` — are worded in
 `forum_characters.*` rather than by a front end, because that wording belongs
 to the session.
-For read-only activity checks, `is_generating()` avoids constructing a
-`GenerationStatus` and copying its potentially growing reasoning text.
-Frontends receive the full status as part of the owning `state()` snapshot.
+For read-only activity checks, `is_generating()` avoids reading the rest of the
+controller. Frontends receive the full status through `view()`.
 
-### Owning state and append continuity
+### Update classification
 
-`state()` builds the owning `SessionState` used when a consumer cannot borrow
-the controller-owned transcript. A consumer may retain a compact
-`SessionStateCursor` beside its published presentation state and ask
-`text_append_since()` for a `SessionTextAppend`. The controller only supplies
-the live transcript view and generation facts; the proof itself is the pure
-`session_text_append_since()` beside the `session_state_cursor()` that produced
-the cursor, so the two halves of the contract are read and tested together
-rather than through a live controller. The cursor stores only
-revision, epoch, entry/open-entry identity, default agent, active request and
-phase, plus published text lengths; it never stores transcript or reasoning
-text. The proof relies on transcript revisions changing for every structural
-or answer-text mutation, a single open streaming entry, and the controller's
-owner-thread-only access. Any changed epoch, metadata, request, phase, shape,
-or non-growing text is ambiguous and returns no append, requiring a full state
-replacement. The web frontend serializes the core append target directly,
-while transport sequence numbers, event names, and mailbox coalescing remain
-frontend policy. `SessionState`, its cursor, and `SessionTextAppend` contain no
-HTTP, JSON, SSE, or mailbox concepts.
+The controller is the only component that classifies its own mutations, at the
+moment it makes them. Every operation reports exactly one state effect:
+
+| Effect | Meaning |
+| --- | --- |
+| `NoStateUpdate` | No externally visible core state changed. A repeated or ignored event may still carry a notice or a lifecycle flag. |
+| `TextAppend` | All visible change is the non-empty suffix in `text`, appended to exactly the value named by `target` — an `EntryTextTarget` for answer text in one transcript entry, or a `ReasoningTextTarget` for one request's reasoning. |
+| `SnapshotRequired` | At least one structural or non-append-only value changed, so an incremental text event cannot represent the transition. |
+
+Classification is conservative: an operation reports `TextAppend` only when no
+other snapshot-visible value changed in the same operation. Starting a
+generation, inserting a transcript entry, changing the default character, the
+first reasoning chunk that establishes visible request state, the first answer
+chunk that opens the response entry, and every completion, cancellation,
+failure, and session end all request a snapshot even when they also grow text.
+Only a later chunk extending the same open value is a pure append.
+
+Reasoning that arrives after answering began is still a pure append to that
+request's reasoning target. A frontend whose transport has a different current
+target resolves that switch itself; the controller does not downgrade the
+classification for it.
+
+Missing an update is a correctness failure while an extra full snapshot is only
+a performance cost, so anything ambiguous requests a snapshot. Classification is
+therefore part of the controller's public behavioral contract and is asserted
+directly in controller tests.
+
+`merge()` combines the effects of a bounded event drain: `NoStateUpdate` is the
+identity, `SnapshotRequired` dominates, two appends to one target concatenate in
+event order, appends to different targets become `SnapshotRequired`, lifecycle
+flags combine with logical OR, and the last supplied notice wins including an
+empty clearing one. Agent events never manufacture input consumption. The
+drain's `full` flag stays outside `ControllerUpdate` because it is queue
+scheduling information, not an observable session effect.
+
+### The borrowed controller view
+
+`view()` returns a `ControllerView` that borrows the live characters, default
+participant ID, `TranscriptView`, and active-generation facts. It allocates
+nothing. The view is valid **only** on the controller's owner thread and **only**
+until the next controller mutation, so a caller must consume it synchronously.
+It must never be stored in a runtime field, moved into a transport queue, or
+captured by work that can outlive the call. A frontend copies whatever it needs
+into its own owning value inside that call.
+
+`ControllerUpdate`, its targets, and `ControllerView` contain no HTTP, JSON,
+SSE, or mailbox concepts. The web frontend serializes the append target
+directly, while transport sequence numbers, event names, and mailbox coalescing
+remain frontend policy.
 
 The three off-record commands are the only ones that add a transcript entry
 without a journal write. Each passes the current `next_entry_id_` to the
@@ -444,9 +474,9 @@ session continues.
 | --- | --- |
 | `tests/session/unit_workspace.cpp` | Layout resolution, forum loading and checking, session create/open. |
 | `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics. |
-| `tests/session/unit_session_controller.cpp` | Command behavior, concurrent staging, ordered foreground drain, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
+| `tests/session/unit_session_controller.cpp` | Command behavior, exact update classification for every important transition, borrowed views, concurrent staging, ordered foreground drain, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
 | `tests/session/unit_concurrent_controllers.cpp` | Independent owner-thread controllers, concurrent workspace/catalog access, and atomic catalog publication while listing. |
-| `tests/session/unit_session_state.cpp` | The append proof driven directly with literal transcript views and cursors: proven answer and reasoning growth, every ambiguity that must refuse, and the producer/consumer round trip. |
+| `tests/session/unit_controller_update.cpp` | The merge contract driven directly: every pair of state effects, append concatenation and target promotion, lifecycle OR, and notice ordering. |
 | `tests/transcript/unit_transcript.cpp` | `SessionJournal` and the session database, checked against the in-memory model they mirror: turn transitions, rollback, constraint violations, interrupted-turn recovery, and version rejection. |
 
 Those database tests link `cha_sqlite3` directly, so they can assert on the

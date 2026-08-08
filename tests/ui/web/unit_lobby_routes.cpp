@@ -41,9 +41,10 @@ using namespace std::chrono_literals;
 class IdleController final : public WebSessionController {
 public:
     CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionChange request_stop() override { return {}; }
-    SessionChange set_default_agent_id(std::string_view) override { return {}; }
-    SessionEventBatch receive(std::size_t) override { return {}; }
+    ControllerUpdate request_stop() override { return {}; }
+    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] ControllerView view() const override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override {}
 };
@@ -81,9 +82,10 @@ class GatedShutdownController final : public WebSessionController {
 public:
     explicit GatedShutdownController(ShutdownGate& gate) : gate_(gate) {}
     CommandResult handle_raw_input(std::string_view, std::string) override { return {}; }
-    SessionChange request_stop() override { return {}; }
-    SessionChange set_default_agent_id(std::string_view) override { return {}; }
-    SessionEventBatch receive(std::size_t) override { return {}; }
+    ControllerUpdate request_stop() override { return {}; }
+    ControllerUpdate set_default_agent_id(std::string_view) override { return {}; }
+    ControllerEventBatch receive(std::size_t) override { return {}; }
+    [[nodiscard]] ControllerView view() const override { return {}; }
     [[nodiscard]] bool is_generating() const override { return false; }
     void shutdown() override { gate_.wait(); }
 

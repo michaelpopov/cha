@@ -2,11 +2,47 @@
 
 #include <gtest/gtest.h>
 
+#include <optional>
+#include <string>
+#include <vector>
+
 namespace cha::web {
 namespace {
 
-TEST(SessionProjection, MovesCompleteCoreStateIntoTheProtocolDto) {
-    SessionState state{
+// Backing storage a borrowed ControllerView points into. Tests mutate or
+// destroy it after projection to prove the snapshot retained no borrow.
+struct BackingState {
+    std::vector<CharacterInfo> characters;
+    std::string default_agent_id;
+    std::vector<cha::TranscriptEntry> transcript;
+    std::string agent_id;
+    std::string agent_name;
+    std::string reasoning_text;
+
+    [[nodiscard]] ControllerView view() const {
+        return {
+            .characters = characters,
+            .default_agent_id = default_agent_id,
+            .transcript = {
+                .entries = transcript,
+                .revision = 42,
+                .open_entry_id = 2,
+                .history_epoch = 9,
+            },
+            .generation = {
+                .active = true,
+                .request_id = 7,
+                .agent_id = agent_id,
+                .agent_name = agent_name,
+                .phase = ResponsePhase::reasoning,
+                .reasoning_text = reasoning_text,
+            },
+        };
+    }
+};
+
+BackingState populated_state() {
+    return {
         .characters = {
             {"reviewer", "Reviewer", "Checks details"},
             {"guide", "guide", "Explains things"},
@@ -18,34 +54,31 @@ TEST(SessionProjection, MovesCompleteCoreStateIntoTheProtocolDto) {
             {3, EntryKind::notice, {}, "System", {}, {}, "Notice", EntryStatus::cancelled, std::nullopt},
             {4, EntryKind::error, "reviewer", "Error", {}, {}, "Failure", EntryStatus::failed, 8},
         },
-        .revision = 42,
-        .open_entry_id = 2,
-        .history_epoch = 9,
-        .generation = {
-            .active = true,
-            .request_id = 7,
-            .agent_id = "guide",
-            .agent_name = "Guide",
-            .phase = ResponsePhase::reasoning,
-            .reasoning_text = "Thinking",
-        },
+        .agent_id = "guide",
+        .agent_name = "Guide",
+        .reasoning_text = "Thinking",
     };
-    const SessionDescriptor descriptor{
+}
+
+SessionDescriptor test_descriptor() {
+    return {
         .identity = {"forum", "session"},
         .forum_display_name = "Forum",
         .session_label = "Label",
         .forum_default_character_id = "guide",
     };
+}
+
+TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
+    const BackingState state = populated_state();
     const WebPresentationState presentation{
         .notice = "Current notice",
         .lifecycle = SessionLifecycle::stopping,
         .shutdown_reason = ShutdownReason::server_stopping,
     };
-    const cha::TranscriptEntry* const transcript_storage =
-        state.transcript.data();
 
-    const SessionSnapshot snapshot = to_snapshot(
-        descriptor, std::move(state), presentation);
+    const SessionSnapshot snapshot =
+        to_snapshot(test_descriptor(), state.view(), presentation);
 
     EXPECT_EQ(snapshot, (SessionSnapshot{
         .forum = {"forum", "Forum", "guide", {
@@ -70,10 +103,47 @@ TEST(SessionProjection, MovesCompleteCoreStateIntoTheProtocolDto) {
         .lifecycle = SessionLifecycle::stopping,
         .shutdown_reason = ShutdownReason::server_stopping,
     }));
+}
 
-    // Projection reuses the core transcript storage rather than building a
-    // third entry model at the protocol boundary.
-    EXPECT_EQ(snapshot.transcript.data(), transcript_storage);
+TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
+    SessionSnapshot snapshot;
+    {
+        BackingState state = populated_state();
+        snapshot = to_snapshot(test_descriptor(), state.view(), {});
+
+        // Mutating the backing values before they are destroyed catches a
+        // retained span as well as a retained string view.
+        state.characters.clear();
+        state.default_agent_id = "gone";
+        state.transcript.clear();
+        state.agent_name = "gone";
+        state.reasoning_text = "gone";
+    }
+
+    ASSERT_EQ(snapshot.characters.size(), 2U);
+    EXPECT_EQ(snapshot.characters.front().id, "reviewer");
+    EXPECT_EQ(snapshot.forum.members.size(), 2U);
+    EXPECT_EQ(snapshot.default_character_id, "reviewer");
+    ASSERT_EQ(snapshot.transcript.size(), 4U);
+    EXPECT_EQ(snapshot.transcript.back().text, "Failure");
+    EXPECT_EQ(snapshot.generation.agent_name, "Guide");
+    EXPECT_EQ(snapshot.generation.reasoning_text, "Thinking");
+}
+
+TEST(SessionProjection, ProjectsAnEmptyControllerView) {
+    const SessionSnapshot snapshot = to_snapshot(
+        test_descriptor(),
+        ControllerView{},
+        {.lifecycle = SessionLifecycle::running});
+
+    EXPECT_TRUE(snapshot.characters.empty());
+    EXPECT_TRUE(snapshot.forum.members.empty());
+    EXPECT_TRUE(snapshot.transcript.empty());
+    EXPECT_TRUE(snapshot.default_character_id.empty());
+    EXPECT_FALSE(snapshot.generation.active);
+    EXPECT_FALSE(snapshot.notice);
+    EXPECT_EQ(snapshot.lifecycle, SessionLifecycle::running);
+    EXPECT_EQ(snapshot.session_id, "session");
 }
 
 } // namespace

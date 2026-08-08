@@ -1,8 +1,8 @@
 #pragma once
 
+#include "session/controller_update.h"
+#include "session/controller_view.h"
 #include "session/opened_session.h"
-#include "session/session_change.h"
-#include "session/session_state.h"
 #include "ui/web/browser_connection_state.h"
 #include "ui/web/command_queue.h"
 #include "ui/web/protocol.h"
@@ -38,21 +38,21 @@ public:
     virtual CommandResult handle_raw_input(
         std::string_view author_id,
         std::string input) = 0;
-    virtual SessionChange request_stop() = 0;
-    virtual SessionChange set_default_agent_id(std::string_view character_id) = 0;
-    virtual SessionEventBatch receive(std::size_t max_events) = 0;
+    virtual ControllerUpdate request_stop() = 0;
+    virtual ControllerUpdate set_default_agent_id(std::string_view character_id) = 0;
+    virtual ControllerEventBatch receive(std::size_t max_events) = 0;
     [[nodiscard]] virtual bool is_generating() const = 0;
-    // Called only by the owner thread. The returned value owns every field and
-    // contains no controller or transcript borrows.
-    virtual SessionState state() { return {}; }
-    // Controllers may prove a text-only delta without rebuilding a snapshot.
-    // Returning nullopt makes the runtime publish a full snapshot; the runtime
-    // does not independently infer an append from snapshot differences.
-    virtual std::optional<SessionAppendProjection> text_append_since(
-        const SessionStateCursor&) {
-        return std::nullopt;
-    }
+    // Called only by the owner thread and consumed synchronously: the returned
+    // view borrows controller storage that the next mutation invalidates.
+    [[nodiscard]] virtual ControllerView view() const = 0;
     virtual void shutdown() = 0;
+};
+
+// Whether a sink represented one controller-proven append exactly, or needs the
+// owner to publish a current full snapshot instead.
+enum class AppendPublishResult {
+    Accepted,
+    SnapshotRequired,
 };
 
 // This is deliberately a transport-neutral final-drain seam. The SSE mailbox
@@ -62,12 +62,10 @@ class WebSnapshotSink {
 public:
     virtual ~WebSnapshotSink() = default;
     virtual void publish(SnapshotEvent snapshot) = 0;
-    // A pending snapshot cannot safely coexist with a later append. Concrete
-    // sinks borrow the latest state and copy it only if they actually need to
-    // collapse the append to a replacement snapshot.
-    virtual void publish_append(
-        SessionTextAppend append,
-        const SessionSnapshot& fallback_snapshot) = 0;
+    // A pending snapshot cannot safely coexist with a later append. Rejecting
+    // the append leaves the sink's payload untouched and obliges the owner to
+    // project and publish a current full snapshot.
+    [[nodiscard]] virtual AppendPublishResult publish_append(TextAppend append) = 0;
     virtual bool wait_for_written(std::chrono::milliseconds deadline) = 0;
     virtual void close() noexcept = 0;
 };
@@ -142,17 +140,14 @@ private:
     [[nodiscard]] WebPresentationState presentation(
         SessionLifecycle lifecycle,
         std::optional<ShutdownReason> shutdown_reason = std::nullopt) const;
-    bool apply_notice(const SessionChange& change);
+    bool apply_notice(const std::optional<std::string>& notice);
     [[nodiscard]] ShutdownReason mark_stopping(ShutdownReason reason);
-    void publish_change(
+    void publish_update(
         WebSessionController& controller,
-        bool force_snapshot = false);
-    [[nodiscard]] bool publish_append(
-        SessionTextAppend append,
-        SessionStateCursor cursor);
-    void publish_snapshot(
-        SessionSnapshot snapshot,
-        std::optional<SessionStateCursor> cursor = std::nullopt);
+        ControllerStateUpdate state,
+        bool presentation_changed);
+    void publish_current_snapshot(WebSessionController& controller);
+    void log_generation_transitions(const SessionSnapshot& current);
     void publish_final(WebSessionController& controller, ShutdownReason reason);
     void log_fatal_once() noexcept;
     void log_event(std::string_view event) noexcept;
@@ -174,8 +169,10 @@ private:
 
     // Owner thread only. Snapshot construction must stay on that thread.
     std::optional<std::string> notice_;
-    std::optional<SessionSnapshot> last_snapshot_;
-    std::optional<SessionStateCursor> last_cursor_;
+    // The only generation facts the runtime retains: enough to recognize start
+    // and terminal transitions without caching a protocol snapshot.
+    bool logged_generation_active_{};
+    std::optional<RequestId> logged_active_request_;
     bool fatal_logged_{};
     BrowserConnectionState browser_connection_;
     bool has_connected_sse_{};

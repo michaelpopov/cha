@@ -207,13 +207,13 @@ TEST(WebProtocol, SelectsAppendTargetAndTranscriptIndexTogether) {
 
     auto selection = snapshot_append_selection(snapshot);
     ASSERT_TRUE(selection);
-    EXPECT_EQ(selection->target, SessionTextTarget{EntryTextTarget{7}});
+    EXPECT_EQ(selection->target, TextTarget{EntryTextTarget{7}});
     EXPECT_EQ(selection->transcript_index, 1U);
 
     snapshot.transcript[1].status = EntryStatus::complete;
     selection = snapshot_append_selection(snapshot);
     ASSERT_TRUE(selection);
-    EXPECT_EQ(selection->target, SessionTextTarget{ReasoningTextTarget{3}});
+    EXPECT_EQ(selection->target, TextTarget{ReasoningTextTarget{3}});
     EXPECT_FALSE(selection->transcript_index);
 
     snapshot.generation.active = false;
