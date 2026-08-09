@@ -14,8 +14,6 @@ namespace cha::web {
 // components deliberately do not modify these server-global hooks.
 void configure_http_server(
     httplib::Server& server,
-    WebSettings settings,
-    std::string listener_host,
-    int listener_port);
+    WebSettings settings);
 
 } // namespace cha::web

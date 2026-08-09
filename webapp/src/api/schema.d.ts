@@ -467,7 +467,7 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_host" | "forbidden_origin" | "internal_error" | "session_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "browser_stream_in_use" | "command_timeout" | "command_queue_full";
+                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "browser_stream_in_use" | "command_timeout" | "command_queue_full";
                 message: string;
             };
         };
@@ -491,23 +491,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /**
-         * @description The Host header does not identify the configured listener.
-         *     `error.code` is `forbidden_host`.
-         */
-        ForbiddenHost: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["ErrorResponse"];
-            };
-        };
-        /**
-         * @description The Host header is forbidden, or Origin does not match Host.
-         *     `error.code` is `forbidden_host` or `forbidden_origin`; the status alone
-         *     does not distinguish them.
-         */
+        /** @description Origin does not match Host. `error.code` is `forbidden_origin`. */
         ForbiddenMutation: {
             headers: {
                 [name: string]: unknown;
@@ -627,7 +611,6 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["Shell"];
-            403: components["responses"]["ForbiddenHost"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -646,7 +629,6 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["Shell"];
-            403: components["responses"]["ForbiddenHost"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -668,7 +650,6 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
-            403: components["responses"]["ForbiddenHost"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -690,7 +671,6 @@ export interface operations {
                     "application/json": components["schemas"]["Bootstrap"];
                 };
             };
-            403: components["responses"]["ForbiddenHost"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -715,7 +695,6 @@ export interface operations {
                     "application/json": components["schemas"]["CharacterDetail"];
                 };
             };
-            403: components["responses"]["ForbiddenHost"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
@@ -741,7 +720,6 @@ export interface operations {
                     "application/json": components["schemas"]["SessionListing"][];
                 };
             };
-            403: components["responses"]["ForbiddenHost"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
@@ -859,7 +837,6 @@ export interface operations {
                     "application/json": components["schemas"]["SessionSnapshot"];
                 };
             };
-            403: components["responses"]["ForbiddenHost"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["SessionNotLive"];
             500: components["responses"]["InternalError"];
@@ -894,7 +871,6 @@ export interface operations {
                     "text/event-stream": string;
                 };
             };
-            403: components["responses"]["ForbiddenHost"];
             404: components["responses"]["NotFound"];
             /**
              * @description Session is not live or already has an event stream. `error.code` is

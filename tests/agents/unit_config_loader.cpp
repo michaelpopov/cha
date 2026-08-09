@@ -352,5 +352,144 @@ TEST(Config, DerivesIdFromANonAsciiDefinitionDirectory) {
     std::filesystem::remove_all(root);
 }
 
+TEST(Config, DefaultsApiAndWebSearchWhenOmitted) {
+    ConfigFiles files;
+    files.write(files.definition(), required_definition);
+    const ModelBackendConfig config = load_character_config(files.paths()).backend;
+    EXPECT_EQ(config.api, ProviderApi::responses);
+    EXPECT_EQ(config.web_search, WebSearchMode::required);
+}
+
+TEST(Config, ReadsResponsesWithAutomaticAndRequiredWebSearch) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        std::string(required_definition)
+            + "api = \"responses\"\nweb_search = \"auto\"\n");
+    const ModelBackendConfig automatic = load_character_config(files.paths()).backend;
+    EXPECT_EQ(automatic.api, ProviderApi::responses);
+    EXPECT_EQ(automatic.web_search, WebSearchMode::automatic);
+
+    files.write(files.definition(),
+        std::string(required_definition)
+            + "api = \"responses\"\nweb_search = \"required\"\n");
+    const ModelBackendConfig required = load_character_config(files.paths()).backend;
+    EXPECT_EQ(required.api, ProviderApi::responses);
+    EXPECT_EQ(required.web_search, WebSearchMode::required);
+}
+
+TEST(Config, HigherLayerCanDisableWebSearch) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        std::string(required_definition)
+            + "api = \"responses\"\nweb_search = \"auto\"\n");
+    files.write(files.member(), "web_search = \"off\"\n");
+    const ModelBackendConfig config =
+        load_character_config(files.paths(false, true)).backend;
+    EXPECT_EQ(config.api, ProviderApi::responses);
+    EXPECT_EQ(config.web_search, WebSearchMode::off);
+}
+
+TEST(Config, OverlaysApiAndWebSearchAcrossAllProviderLayers) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        "display_name = \"Example\"\napi = \"chat_completions\"\nweb_search = \"off\"\n");
+    files.write(files.defaults(), "api = \"responses\"\nweb_search = \"auto\"\n");
+    files.write(files.member(), "web_search = \"required\"\n");
+    const ModelBackendConfig config =
+        load_character_config(files.paths(true, true, true)).backend;
+    EXPECT_EQ(config.api, ProviderApi::responses);
+    EXPECT_EQ(config.web_search, WebSearchMode::required);
+}
+
+TEST(Config, RejectsUnknownApiAndWebSearchValuesWithSourceAttribution) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        std::string(required_definition) + "api = \"completion\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths()); },
+        files.definition(),
+        "api");
+    files.write(files.definition(),
+        std::string(required_definition) + "web_search = \"maybe\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths()); },
+        files.definition(),
+        "web_search");
+    files.write(files.definition(), required_definition);
+    files.write(files.defaults(), "api = \"completion\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths(true)); },
+        files.defaults(),
+        "api");
+    files.write(files.defaults(), "web_search = \"maybe\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths(true)); },
+        files.defaults(),
+        "web_search");
+}
+
+TEST(Config, RejectsWebSearchWithoutResponsesApiAndNamesSearchSource) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        std::string(required_definition)
+            + "api = \"chat_completions\"\nweb_search = \"auto\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths()); },
+        files.definition(),
+        "web_search");
+    files.write(files.definition(),
+        std::string(required_definition) + "api = \"chat_completions\"\n");
+    files.write(files.defaults(), "web_search = \"required\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths(true)); },
+        files.defaults(),
+        "web_search");
+}
+
+TEST(Config, ExplicitChatCompletionsMustAlsoDisableMandatorySearch) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        std::string(required_definition) + "api = \"chat_completions\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths()); },
+        files.definition(),
+        "web_search");
+
+    files.write(files.definition(),
+        std::string(required_definition)
+            + "api = \"chat_completions\"\nweb_search = \"off\"\n");
+    const ModelBackendConfig config = load_character_config(files.paths()).backend;
+    EXPECT_EQ(config.api, ProviderApi::chat_completions);
+    EXPECT_EQ(config.web_search, WebSearchMode::off);
+}
+
+TEST(Config, AcceptsResponsesWithWebSearchOff) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        std::string(required_definition)
+            + "api = \"responses\"\nweb_search = \"off\"\n");
+    const ModelBackendConfig config = load_character_config(files.paths()).backend;
+    EXPECT_EQ(config.api, ProviderApi::responses);
+    EXPECT_EQ(config.web_search, WebSearchMode::off);
+}
+
+TEST(Config, WorkspaceProviderAcceptsApiAndWebSearchAndRejectsApiKey) {
+    ConfigFiles files;
+    files.write(files.application(),
+        "[provider]\nhost = \"application\"\nport = 81\nmode = \"test\"\n"
+        "api = \"responses\"\nweb_search = \"auto\"\n");
+    const ProviderConfig provider = load_provider_config(files.application());
+    EXPECT_EQ(provider.api, ProviderApi::responses);
+    EXPECT_EQ(provider.web_search, WebSearchMode::automatic);
+
+    files.write(files.application(),
+        "[provider]\nhost = \"application\"\nport = 81\nmode = \"test\"\n"
+        "api_key = \"secret\"\n");
+    expect_error_containing(
+        [&] { (void)load_provider_config(files.application()); },
+        files.application(),
+        "api_key");
+}
+
 } // namespace
 } // namespace cha

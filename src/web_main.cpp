@@ -75,8 +75,7 @@ int main(int argc, const char* const* argv) {
                     return cha::open_session(*model, *sessions, identity, notifier);
                 });
             httplib::Server server;
-            cha::web::configure_http_server(
-                server, settings, application.host, application.port);
+            cha::web::configure_http_server(server, settings);
             const cha::web::AssetHandler assets(application.root / "web");
             assets.install(server);
             const cha::web::InitialSelection initial{

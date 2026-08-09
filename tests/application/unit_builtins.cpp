@@ -62,6 +62,8 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
     EXPECT_EQ(sparse.reasoning_effort, defaults.reasoning_effort);
     EXPECT_EQ(sparse.reasoning_format, defaults.reasoning_format);
     EXPECT_EQ(sparse.https, defaults.https);
+    EXPECT_EQ(sparse.api, cha::ProviderApi::responses);
+    EXPECT_EQ(sparse.web_search, cha::WebSearchMode::required);
 }
 
 TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {

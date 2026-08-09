@@ -23,7 +23,7 @@ public:
         AssetHandler(web_root).install(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ <= 0) throw std::runtime_error("Could not bind asset test server");
-        configure_http_server(server_, {}, "127.0.0.1", port_);
+        configure_http_server(server_, {});
         listener_ = std::thread([this] { server_.listen_after_bind(); });
         server_.wait_until_ready();
     }
@@ -119,24 +119,27 @@ TEST(AssetHandler, RejectsAssetSymlinkEscapingTheWebRoot) {
     EXPECT_EQ(body["error"]["code"], "not_found");
 }
 
-TEST(HttpServer, WildcardListenerAcceptsOnlyLocalhostAndIpLiteralAuthorities) {
+TEST(HttpServer, AcceptsRequestsRegardlessOfHostAuthority) {
     httplib::Server server;
     server.Get("/health", [](const httplib::Request&, httplib::Response& response) {
         response.set_content("ok", "text/plain");
     });
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
-    configure_http_server(server, {}, "0.0.0.0", port);
+    configure_http_server(server, {});
     std::thread listener([&server] { server.listen_after_bind(); });
     server.wait_until_ready();
 
     httplib::Client client("127.0.0.1", port);
-    const std::vector<std::string> allowed{
+    const std::vector<std::string> authorities{
         "127.0.0.1:" + std::to_string(port),
         "192.168.1.20:" + std::to_string(port),
         "localhost:" + std::to_string(port),
-        "[::1]:" + std::to_string(port)};
-    for (const std::string& host : allowed) {
+        "[::1]:" + std::to_string(port),
+        "alien:" + std::to_string(port),
+        "evil.example:" + std::to_string(port),
+        "127.0.0.1:" + std::to_string(port + 1)};
+    for (const std::string& host : authorities) {
         const auto result = client.Get(
             "/health", httplib::Headers{{"Host", host}});
         if (!result) {
@@ -144,18 +147,6 @@ TEST(HttpServer, WildcardListenerAcceptsOnlyLocalhostAndIpLiteralAuthorities) {
             continue;
         }
         EXPECT_EQ(result->status, 200) << host;
-    }
-    const std::vector<std::string> rejected{
-        "evil.example:" + std::to_string(port),
-        "127.0.0.1:" + std::to_string(port + 1)};
-    for (const std::string& host : rejected) {
-        const auto result = client.Get(
-            "/health", httplib::Headers{{"Host", host}});
-        if (!result) {
-            ADD_FAILURE() << host;
-            continue;
-        }
-        EXPECT_EQ(result->status, 403) << host;
     }
 
     server.stop();

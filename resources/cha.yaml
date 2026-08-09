@@ -11,15 +11,8 @@ info:
     `/s/{forum_id}/{session_id}/api/v1`.
 
     The API has no authentication mechanism. Persona IDs select transcript
-    attribution and are not credentials. The server accepts requests only when
-    the `Host` header matches its configured listener authority, compared
-    case-insensitively. A loopback listener also accepts the other loopback
-    authorities, so `127.0.0.1`, `localhost`, and `[::1]` are interchangeable
-    for a listener bound to any of them. The port is part of the authority and
-    must be present, except on port 80, where a bare host is also accepted.
-
-    JSON mutations that include an `Origin` header additionally require that
-    origin's authority to equal `Host`.
+    attribution and are not credentials. JSON mutations that include an
+    `Origin` header require that origin's authority to equal `Host`.
 servers:
   - url: http://{host}:{port}
     description: Locally configured CHA web listener
@@ -49,8 +42,6 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/Shell"
-        "403":
-          $ref: "#/components/responses/ForbiddenHost"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -72,8 +63,6 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/Shell"
-        "403":
-          $ref: "#/components/responses/ForbiddenHost"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -89,8 +78,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
-        "403":
-          $ref: "#/components/responses/ForbiddenHost"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -114,8 +101,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Bootstrap"
-        "403":
-          $ref: "#/components/responses/ForbiddenHost"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -136,8 +121,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CharacterDetail"
-        "403":
-          $ref: "#/components/responses/ForbiddenHost"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
@@ -162,8 +145,6 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SessionListing"
-        "403":
-          $ref: "#/components/responses/ForbiddenHost"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
@@ -271,8 +252,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionSnapshot"
-        "403":
-          $ref: "#/components/responses/ForbiddenHost"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -337,8 +316,6 @@ paths:
                     event: append
                     data: {"target":{"kind":"entry","entry_id":1},"text":" more text","seq":0}
 
-        "403":
-          $ref: "#/components/responses/ForbiddenHost"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -498,19 +475,9 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
-    ForbiddenHost:
-      description: |
-        The Host header does not identify the configured listener.
-        `error.code` is `forbidden_host`.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
     ForbiddenMutation:
       description: |
-        The Host header is forbidden, or Origin does not match Host.
-        `error.code` is `forbidden_host` or `forbidden_origin`; the status alone
-        does not distinguish them.
+        Origin does not match Host. `error.code` is `forbidden_origin`.
       content:
         application/json:
           schema:
@@ -953,7 +920,6 @@ components:
                 - bad_request
                 - body_too_large
                 - prompt_too_large
-                - forbidden_host
                 - forbidden_origin
                 - internal_error
                 - session_busy

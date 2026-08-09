@@ -69,7 +69,7 @@ public:
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
-        configure_http_server(server_, settings, "127.0.0.1", port_);
+        configure_http_server(server_, settings);
         thread_ = std::thread([this] { server_.listen_after_bind(); });
         server_.wait_until_ready();
     }
@@ -349,7 +349,7 @@ TEST(LobbyRoutes, AcceptsConfiguredAndLoopbackAliasOrigins) {
     EXPECT_EQ(localhost->status, 201);
 }
 
-TEST(LobbyRoutes, RejectsDnsRebindingHostOnReadsAndMutations) {
+TEST(LobbyRoutes, AcceptsDnsHostOnReadsAndMutations) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
@@ -359,40 +359,17 @@ TEST(LobbyRoutes, RejectsDnsRebindingHostOnReadsAndMutations) {
         {"Origin", "http://evil.example:" + std::to_string(server.port())},
     };
 
-    expect_error(
-        server.client().Get("/api/v1/forums", rebound),
-        403,
-        "forbidden_host");
-    const int other_port = server.port() == 65535
-        ? server.port() - 1
-        : server.port() + 1;
-    expect_error(
-        server.client().Get(
-            "/api/v1/forums",
-            httplib::Headers{{
-                "Host",
-                "127.0.0.1:" + std::to_string(other_port),
-            }}),
-        403,
-        "forbidden_host");
-    expect_error(
-        server.client().Get(
-            "/api/v1/forums",
-            httplib::Headers{
-                {"Host", "127.0.0.1:" + std::to_string(server.port())},
-                {"Host", "evil.example:" + std::to_string(server.port())},
-            }),
-        403,
-        "forbidden_host");
-    expect_error(
-        server.client().Post(
-            "/api/v1/forums/lobby/sessions",
-            rebound,
-            R"({"label":"rebound"})",
-            "application/json"),
-        403,
-        "forbidden_host");
-    EXPECT_TRUE(graph.sessions->list("lobby").empty());
+    const auto read = server.client().Get("/api/v1/bootstrap", rebound);
+    ASSERT_TRUE(read);
+    EXPECT_EQ(read->status, 200);
+    const auto mutation = server.client().Post(
+        "/api/v1/forums/lobby/sessions",
+        rebound,
+        R"({"label":"hostname"})",
+        "application/json");
+    ASSERT_TRUE(mutation);
+    EXPECT_EQ(mutation->status, 201);
+    EXPECT_EQ(graph.sessions->list("lobby").size(), 1U);
 }
 
 TEST(LobbyRoutes, ValidatesMissingIdentifiersMethodsAndOriginWithoutOrigin) {

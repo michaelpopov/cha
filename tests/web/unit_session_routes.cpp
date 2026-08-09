@@ -105,7 +105,7 @@ public:
         SessionRoutes(live_sessions, settings, assets).install(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
-        configure_http_server(server_, settings, "127.0.0.1", port_);
+        configure_http_server(server_, settings);
         thread_ = std::thread([this] { server_.listen_after_bind(); });
         server_.wait_until_ready();
     }
@@ -538,7 +538,7 @@ TEST(SessionRoutes, EnforcesOriginPolicyOnSessionMutations) {
     manager.begin_shutdown();
 }
 
-TEST(SessionRoutes, RejectsDnsRebindingHostBeforeSnapshotsStreamsAndMutations) {
+TEST(SessionRoutes, AcceptsDnsHostForSnapshotsAndMutations) {
     SessionFiles files;
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionManager manager(route_settings(), session_opener(files, controls));
@@ -551,21 +551,17 @@ TEST(SessionRoutes, RejectsDnsRebindingHostBeforeSnapshotsStreamsAndMutations) {
         {"Origin", "http://evil.example:" + std::to_string(server.port())},
     };
 
-    expect_error(
-        server.client().Get(base + "session", rebound),
-        403,
-        "forbidden_host");
-    expect_error(
-        server.client().Get(base + "events", rebound),
-        403,
-        "forbidden_host");
-    expect_error(
-        server.client().Post(
-            base + "input", rebound, R"({"persona":"reader","text":"rebound"})", "application/json"),
-        403,
-        "forbidden_host");
-    // Nothing reached the controller, so no generation ever started.
-    EXPECT_EQ(controls->runs(), 0U);
+    const auto snapshot = server.client().Get(base + "session", rebound);
+    ASSERT_TRUE(snapshot);
+    EXPECT_EQ(snapshot->status, 200);
+    const auto mutation = server.client().Post(
+        base + "input", rebound,
+        R"({"persona":"reader","text":"hostname"})", "application/json");
+    ASSERT_TRUE(mutation);
+    EXPECT_EQ(mutation->status, 200);
+    ASSERT_TRUE(controls->wait_until_running());
+    controls->finish();
+    ASSERT_TRUE(controls->wait_until_idle());
     manager.begin_shutdown();
 }
 

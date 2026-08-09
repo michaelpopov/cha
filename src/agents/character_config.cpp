@@ -145,6 +145,45 @@ std::optional<ReasoningFormat> read_reasoning_format(
         + "' has unsupported reasoning_format '" + *value + "'");
 }
 
+std::optional<ProviderApi> read_provider_api(
+    const toml::table& table,
+    const std::filesystem::path& path) {
+    const auto value = read_optional<std::string>(table, path, "api", "string");
+    if (!value) {
+        return std::nullopt;
+    }
+    if (*value == "chat_completions") {
+        return ProviderApi::chat_completions;
+    }
+    if (*value == "responses") {
+        return ProviderApi::responses;
+    }
+    throw std::runtime_error("Config file '" + utf8_path(path)
+        + "' has unsupported api '" + *value
+        + "'; expected one of chat_completions, responses");
+}
+
+std::optional<WebSearchMode> read_web_search_mode(
+    const toml::table& table,
+    const std::filesystem::path& path) {
+    const auto value = read_optional<std::string>(table, path, "web_search", "string");
+    if (!value) {
+        return std::nullopt;
+    }
+    if (*value == "off") {
+        return WebSearchMode::off;
+    }
+    if (*value == "auto") {
+        return WebSearchMode::automatic;
+    }
+    if (*value == "required") {
+        return WebSearchMode::required;
+    }
+    throw std::runtime_error("Config file '" + utf8_path(path)
+        + "' has unsupported web_search '" + *value
+        + "'; expected one of off, auto, required");
+}
+
 std::vector<std::string> read_tags(
     const toml::table& table,
     const std::filesystem::path& path) {
@@ -237,6 +276,8 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
             .reasoning_effort = read_optional<std::string>(table, path, "reasoning_effort", "string"),
             .reasoning_format = read_reasoning_format(table, path),
             .https = read_optional<bool>(table, path, "https", "boolean"),
+            .api = read_provider_api(table, path),
+            .web_search = read_web_search_mode(table, path),
         },
         .prompt_variables = template_scope_from_toml(table, prompt_scope_table, utf8_path(path)),
         .tags = definition ? read_tags(table, path) : std::vector<std::string>{},
@@ -267,6 +308,8 @@ void overlay_provider(ProviderConfig& effective, const ProviderConfig& upper) {
     override_with(effective.reasoning_effort, upper.reasoning_effort);
     override_with(effective.reasoning_format, upper.reasoning_format);
     override_with(effective.https, upper.https);
+    override_with(effective.api, upper.api);
+    override_with(effective.web_search, upper.web_search);
 }
 
 void overlay(TemplateScope& effective, TemplateScope upper) {
@@ -279,7 +322,8 @@ void validate_effective(
     const ProviderConfig& effective,
     const std::filesystem::path& definition,
     const std::filesystem::path& port_source,
-    const std::filesystem::path& temperature_source) {
+    const std::filesystem::path& temperature_source,
+    const std::filesystem::path& web_search_source) {
     if (!effective.host || !effective.port) {
         throw std::runtime_error("Effective config for character file '"
             + utf8_path(definition) + "' requires string 'host' and integer 'port' values");
@@ -294,6 +338,15 @@ void validate_effective(
             || *effective.temperature > 2.0)) {
         throw std::runtime_error("Config file '" + utf8_path(temperature_source)
             + "' requires 'temperature' between 0 and 2");
+    }
+    const WebSearchMode search =
+        effective.web_search.value_or(default_web_search_mode);
+    if (search != WebSearchMode::off) {
+        const ProviderApi api = effective.api.value_or(default_provider_api);
+        if (api != ProviderApi::responses) {
+            throw std::runtime_error("Config file '" + utf8_path(web_search_source)
+                + "' enables web_search but web search requires api = \"responses\"");
+        }
     }
 }
 
@@ -328,6 +381,8 @@ ModelBackendConfig make_backend_config(const ProviderConfig& effective) {
     if (effective.reasoning_effort) backend.reasoning_effort = *effective.reasoning_effort;
     if (effective.reasoning_format) backend.reasoning_format = *effective.reasoning_format;
     if (effective.https) backend.https = *effective.https;
+    if (effective.api) backend.api = *effective.api;
+    if (effective.web_search) backend.web_search = *effective.web_search;
     return backend;
 }
 
@@ -345,7 +400,8 @@ ProviderConfig load_provider_config(
     if (!table) throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path) + "' requires a [provider] table");
     static const std::unordered_set<std::string_view> allowed{
         "host", "port", "mode", "model", "stream", "temperature",
-        "api_key_env", "reasoning_effort", "reasoning_format", "https"};
+        "api_key_env", "reasoning_effort", "reasoning_format", "https",
+        "api", "web_search"};
     for (const auto& [key, value] : *table) {
         (void)value;
         const std::string_view name = key.str();
@@ -364,7 +420,9 @@ ProviderConfig load_provider_config(
         .api_key_env = read_optional<std::string>(*table, workspace_config_path, "api_key_env", "string"),
         .reasoning_effort = read_optional<std::string>(*table, workspace_config_path, "reasoning_effort", "string"),
         .reasoning_format = read_reasoning_format(*table, workspace_config_path),
-        .https = read_optional<bool>(*table, workspace_config_path, "https", "boolean")};
+        .https = read_optional<bool>(*table, workspace_config_path, "https", "boolean"),
+        .api = read_provider_api(*table, workspace_config_path),
+        .web_search = read_web_search_mode(*table, workspace_config_path)};
     if (!provider.host || provider.host->empty() || !provider.port) {
         throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
             + "' [provider] requires non-empty string 'host' and integer 'port'");
@@ -387,13 +445,16 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     TemplateScope prompt_variables = definition.prompt_variables;
     std::filesystem::path port_source = paths.definition;
     std::filesystem::path temperature_source = paths.definition;
+    std::filesystem::path web_search_source = paths.definition;
     if (paths.application_provider) {
         overlay_provider(effective, *paths.application_provider);
         if (effective.port) port_source = paths.application_provider->source;
         if (effective.temperature) temperature_source = paths.application_provider->source;
+        if (effective.web_search) web_search_source = paths.application_provider->source;
     }
     if (definition.provider.port) port_source = paths.definition;
     if (definition.provider.temperature) temperature_source = paths.definition;
+    if (definition.provider.web_search) web_search_source = paths.definition;
     overlay_provider(effective, definition.provider);
     const auto apply = [&](const std::optional<std::filesystem::path>& path, ConfigLayer layer) {
         if (!path) {
@@ -402,12 +463,14 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
         const ParsedConfig parsed = parse_config(*path, layer);
         if (parsed.provider.port) port_source = *path;
         if (parsed.provider.temperature) temperature_source = *path;
+        if (parsed.provider.web_search) web_search_source = *path;
         overlay_provider(effective, parsed.provider);
         overlay(prompt_variables, parsed.prompt_variables);
     };
     apply(paths.forum_defaults, ConfigLayer::forum_defaults);
     apply(paths.member_override, ConfigLayer::member_override);
-    validate_effective(effective, paths.definition, port_source, temperature_source);
+    validate_effective(
+        effective, paths.definition, port_source, temperature_source, web_search_source);
     CharacterMetadata character{
         .id = utf8_path(paths.definition.parent_path().filename()),
         .display_name = *definition.display_name,

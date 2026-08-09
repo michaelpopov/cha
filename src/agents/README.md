@@ -19,8 +19,9 @@ generation pool tasks.
 | `generation_executor.*` | Backend ownership, runtime metadata validation, target resolution, and failure-atomic staging of a new batch. |
 | `generation_batch.*` | One in-flight operation: its execution slots, shared start gate, foreground position, cancellation, event queues, and wait state. |
 | `model_backend.h` | The `ModelBackend` seam, discovery-safe runtime diagnostics, and prepared-request/result types. |
-| `provider_client.*` | The HTTP backend: request bodies, curl execution, cancellation, model discovery, HTTP outcome mapping, and transport diagnostics. |
-| `provider_response.*` | Provider response interpretation: incremental SSE framing, streaming/non-streaming JSON decoding, reasoning fields, and answer validation. |
+| `provider_client.*` | Shared HTTP transport for Chat Completions and Responses: curl execution, cancellation, model discovery, HTTP outcome mapping, and transport diagnostics. |
+| `provider_response.*` | Chat Completions response interpretation: incremental SSE framing, streaming/non-streaming JSON decoding, reasoning fields, and answer validation. |
+| `responses_api.*` | Responses API request body builder plus streaming and non-streaming decoding for answer/refusal text. |
 
 ## From character directory to running model backend
 
@@ -90,6 +91,24 @@ non-empty, free of controls and line breaks, and unique under ASCII case
 folding while retaining authored casing. The removed `id` and `name` fields are
 rejected. Parsing and validation errors identify the file that supplied the
 invalid value.
+
+Provider protocol and search fields:
+
+| TOML field | Values | Default | Notes |
+| --- | --- | --- | --- |
+| `api` | `chat_completions`, `responses` | `responses` | Selects `/v1/chat/completions` or `/v1/responses`. |
+| `web_search` | `off`, `auto`, `required` | `required` | Hosted OpenAI web search; non-`off` requires `api = "responses"`. |
+
+The effective defaults are `api = "responses"` and
+`web_search = "required"`, so every character searches unless a higher layer
+overrides the policy. Selecting Chat Completions also requires an explicit
+`web_search = "off"`.
+
+`web_search = "auto"` sends `tools: [{type: web_search}]` with `tool_choice: "auto"`.
+`required` uses the same tool with `tool_choice: "required"`. Effective validation
+rejects search on Chat Completions and attributes the error to the highest-
+precedence file that set `web_search`. Workspace `[provider]` accepts both fields
+but still rejects `api_key`.
 
 Identity rules, enforced by `validate_character_id` and `validate_character_display_name`:
 
@@ -223,30 +242,53 @@ provider I/O. Tests supply their own backend and never touch the network;
 
 ## HTTP transport and response decoding
 
-`ProviderClient` implements the backend seam for OpenAI-compatible servers. It
-owns curl and HTTP behavior. The call-scoped `ProviderStreamDecoder` and
-`decode_provider_response()` interpret successful provider response bytes
-without knowing about curl, HTTP status, content type, cancellation, or logging.
+`ProviderClient` is the single curl transport for both Chat Completions and the
+Responses API. It owns authentication, discovery, cancellation, byte limits,
+HTTP outcome mapping, and sanitized logging. Protocol-specific request builders
+and decoders are selected from `config.api`. Call-scoped
+`StreamingResponseDecoder` implementations and complete-body decoders interpret
+successful provider bytes without knowing about curl, HTTP status, content type,
+cancellation, or logging.
 
 ```mermaid
 flowchart TD
     prep["prepare"] --> proj["project_model_context"]
-    proj --> body["JSON body: model, stream, messages,<br/>temperature and optional reasoning_effort"]
-    body --> post["POST to /v1/chat/completions"]
-    post --> transfer{"curl and HTTP success?"}
+    proj --> api{"config.api"}
+    api -->|"chat_completions"| chat_body["JSON: model, stream, messages,<br/>temperature, optional reasoning_effort"]
+    api -->|"responses"| resp_body["JSON: model, stream, store false,<br/>instructions, input, temperature,<br/>optional reasoning.effort and tools"]
+    chat_body --> chat_post["POST /v1/chat/completions"]
+    resp_body --> resp_post["POST /v1/responses"]
+    chat_post --> transfer{"curl and HTTP success?"}
+    resp_post --> transfer
     transfer -->|"no"| transport["ProviderClient maps cancellation,<br/>transport, or HTTP error"]
     transfer -->|"yes"| mode{"streaming?"}
-    mode -->|"yes"| sse["ProviderStreamDecoder:<br/>frame SSE and parse delta objects"]
-    mode -->|"no"| json["decode_provider_response:<br/>parse choices 0 message"]
-    sse --> frag["GenerationDelta:<br/>reasoning or answer"]
-    json --> frag
-    sse --> done{"DONE marker seen?"}
-    done -->|"no"| perr["protocol_error"]
-    done -->|"yes"| ans{"any answer text?"}
-    json --> ans
+    mode -->|"yes"| sse{"protocol decoder"}
+    mode -->|"no"| json{"complete decoder"}
+    sse -->|"chat"| chat_sse["ProviderStreamDecoder"]
+    sse -->|"responses"| resp_sse["ResponsesStreamDecoder"]
+    json -->|"chat"| chat_json["decode_provider_response"]
+    json -->|"responses"| resp_json["decode_responses_response"]
+    chat_sse --> frag["GenerationDelta answer/refusal text<br/>or optional chat reasoning"]
+    resp_sse --> frag
+    chat_json --> frag
+    resp_json --> frag
+    chat_sse --> chat_done{"DONE marker seen?"}
+    resp_sse --> resp_done{"response.completed seen?"}
+    chat_done -->|"no"| perr["protocol_error"]
+    resp_done -->|"no"| perr
+    chat_done -->|"yes"| ans{"any answer text?"}
+    resp_done -->|"yes"| ans
+    chat_json --> ans
+    resp_json --> ans
     ans -->|"no"| perr
     ans -->|"yes"| ok["completed"]
 ```
+
+Responses web-search lifecycle events, reasoning items, queries, annotations,
+and tool-call metadata are private model context and are discarded. The
+Responses decoders emit only final answer or refusal text through
+`GenerationDelta`. Requests always send `store: false`; CHA remains the owner
+of conversation history.
 
 The boundary is deliberately narrow: the curl callback counts and retains
 response bytes, forwards streaming bytes to the decoder, and captures exceptions
@@ -257,21 +299,23 @@ HTTP metadata to streaming decoder errors.
 Details worth knowing before changing these files:
 
 - **Model discovery.** When `model` is unset, the constructor GETs `/v1/models`
-  and takes `data[0].id`. That request has a 10-second timeout; the chat request
-  deliberately has none, because generations are long. Both use a 10-second
-  connect timeout.
+  and takes `data[0].id`. That request has a 10-second timeout; generation
+  requests deliberately have none, because they are long. Both use a 10-second
+  connect timeout. Discovery is shared by both protocols.
 - **Cancellation** is wired through libcurl's progress callback, so an in-flight
   transfer aborts promptly and is reported as `cancelled` rather than an error.
-- **Reasoning formats.** `auto` accepts `reasoning_content` or `reasoning`
-  (preferring the former), `none` disables extraction, and the two named formats
-  select exactly one field. Reasoning inside ordinary `content`, such as
-  `<think>` tags, is *not* parsed — it has no structured boundary, so it is
-  treated as answer text.
+  Cancellation wins over a decoder's missing-terminal-event error.
+- **Reasoning formats.** `reasoning_format` applies to Chat Completions decoding
+  only. `auto` accepts `reasoning_content` or `reasoning` (preferring the
+  former), `none` disables extraction, and the two named formats select exactly
+  one field. Reasoning inside ordinary `content`, such as `<think>` tags, is
+  *not* parsed. The Responses path maps non-empty `reasoning_effort` to
+  `reasoning.effort` and ignores reasoning/summary stream events.
 - **Outcome taxonomy.** `completed`, `cancelled`, `protocol_error` (bad HTTP
   status, malformed JSON or SSE, missing terminator, no answer content), and
   `transport_error` (libcurl failure). Only the error outcomes carry a message,
   and streaming protocol errors report sanitized status, content type, and byte
-  counts — never model output.
+  counts — never model output, search queries, or source URLs.
 - **Test mode.** `mode = "test"` skips HTTP entirely: `prepare` returns the
   prompt text and `perform` echoes it back as a single answer delta. This is
   what makes the checked-in workspace runnable without a server.
@@ -337,4 +381,5 @@ from its answer.
 | `tests/agents/unit_generation_batch.cpp` | Gate behavior, full-width fan-out, foreground routing and advancement rules, event buffering, cancellation, exactly-one terminal delivery, explicit waiting, and destructor cleanup. |
 | `tests/agents/unit_model_context.cpp` | Projection rules, JSONL attribution, escaping, and message boundaries. |
 | `tests/agents/unit_provider_response.cpp` | Socket-free SSE chunking and completion rules, streaming/non-streaming JSON interpretation, reasoning formats, delta order, and answer requirements. |
-| `tests/agents/unit_provider_client.cpp` | Request bodies and headers, successful response integration, HTTP/transport errors, cancellation, logging, and model discovery, driven by `tests/support/mock_http_server.h`. |
+| `tests/agents/unit_responses_api.cpp` | Socket-free Responses request mapping, SSE framing, typed event handling, and non-streaming output decoding. |
+| `tests/agents/unit_provider_client.cpp` | Request bodies and headers for both protocols, successful response integration, HTTP/transport errors, cancellation, logging, and model discovery, driven by `tests/support/mock_http_server.h`. |

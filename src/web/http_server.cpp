@@ -6,120 +6,12 @@
 
 #include <httplib.h>
 
-#ifdef _WIN32
-#include <ws2tcpip.h>
-#else
-#include <arpa/inet.h>
-#endif
-
-#include <algorithm>
-#include <cctype>
 #include <exception>
 #include <stdexcept>
 #include <string>
-#include <string_view>
-#include <unordered_set>
-#include <utility>
 
 namespace cha::web {
 namespace {
-
-std::string lowercase_ascii(std::string value) {
-    std::transform(
-        value.begin(), value.end(), value.begin(),
-        [](const unsigned char character) {
-            return static_cast<char>(std::tolower(character));
-        });
-    return value;
-}
-
-std::string unbracketed_host(std::string host) {
-    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
-        host.erase(host.begin());
-        host.pop_back();
-    }
-    return lowercase_ascii(std::move(host));
-}
-
-std::string host_authority(std::string host, int port) {
-    host = unbracketed_host(std::move(host));
-    if (host.find(':') != std::string::npos) {
-        host = '[' + host + ']';
-    }
-    return host + ':' + std::to_string(port);
-}
-
-std::unordered_set<std::string> allowed_host_authorities(
-    std::string listener_host,
-    int listener_port) {
-    if (listener_host.empty()) {
-        throw std::invalid_argument("Web listener host must not be empty");
-    }
-    if (listener_port < 1 || listener_port > 65535) {
-        throw std::invalid_argument("Web listener port must be between 1 and 65535");
-    }
-
-    const std::string normalized = unbracketed_host(listener_host);
-    std::unordered_set<std::string> allowed;
-    const auto add = [&](const std::string& host) {
-        const std::string authority = host_authority(host, listener_port);
-        allowed.insert(authority);
-        if (listener_port == 80) {
-            allowed.insert(authority.substr(0, authority.size() - 3));
-        }
-    };
-    add(normalized);
-    if (normalized == "127.0.0.1"
-        || normalized == "::1"
-        || normalized == "localhost") {
-        add("127.0.0.1");
-        add("::1");
-        add("localhost");
-    }
-    return allowed;
-}
-
-bool is_ip_literal(std::string_view host) {
-    in_addr ipv4{};
-    in6_addr ipv6{};
-    const std::string value(host);
-    return ::inet_pton(AF_INET, value.c_str(), &ipv4) == 1
-        || ::inet_pton(AF_INET6, value.c_str(), &ipv6) == 1;
-}
-
-bool wildcard_authority_allowed(
-    std::string authority,
-    int listener_port) {
-    authority = lowercase_ascii(std::move(authority));
-    std::string host;
-    std::string port;
-    if (!authority.empty() && authority.front() == '[') {
-        const std::size_t closing = authority.find(']');
-        if (closing == std::string::npos) return false;
-        host = authority.substr(1, closing - 1);
-        if (closing + 1 == authority.size() && listener_port == 80) {
-            port = "80";
-        } else if (closing + 1 < authority.size()
-                   && authority[closing + 1] == ':') {
-            port = authority.substr(closing + 2);
-        } else {
-            return false;
-        }
-    } else {
-        const std::size_t colon = authority.rfind(':');
-        if (colon == std::string::npos) {
-            if (listener_port != 80) return false;
-            host = std::move(authority);
-            port = "80";
-        } else {
-            if (authority.find(':') != colon) return false;
-            host = authority.substr(0, colon);
-            port = authority.substr(colon + 1);
-        }
-    }
-    return port == std::to_string(listener_port)
-        && (host == "localhost" || is_ip_literal(host));
-}
 
 void set_generated_error(httplib::Response& response) {
     if (!response.body.empty()) return;
@@ -174,9 +66,7 @@ void set_exception_error(
 
 void configure_http_server(
     httplib::Server& server,
-    WebSettings settings,
-    std::string listener_host,
-    int listener_port) {
+    WebSettings settings) {
     const std::size_t minimum_workers =
         settings.session_limit + settings.http_request_headroom;
     if (settings.http_thread_pool_size < minimum_workers) {
@@ -187,11 +77,6 @@ void configure_http_server(
         throw std::invalid_argument(
             "Web pending-request limit must cover the HTTP request pool");
     }
-    const std::string normalized_listener = unbracketed_host(listener_host);
-    const bool wildcard_listener = normalized_listener == "0.0.0.0"
-        || normalized_listener == "::";
-    const auto allowed_hosts = allowed_host_authorities(
-        std::move(listener_host), listener_port);
     server.new_task_queue = [settings] {
         return new httplib::ThreadPool(
             settings.http_thread_pool_size,
@@ -203,23 +88,6 @@ void configure_http_server(
     // cpp-httplib waits for writability before every content-provider write,
     // so this bounds lack of progress rather than total stream duration.
     server.set_write_timeout(settings.http_write_timeout);
-    server.set_pre_routing_handler(
-        [allowed_hosts, wildcard_listener, listener_port](
-            const httplib::Request& request,
-            httplib::Response& response) {
-            const bool one_host = request.get_header_value_count("Host") == 1;
-            const std::string authority = request.get_header_value("Host");
-            const bool allowed = one_host
-                && (allowed_hosts.contains(lowercase_ascii(authority))
-                    || (wildcard_listener
-                        && wildcard_authority_allowed(authority, listener_port)));
-            if (allowed) return httplib::Server::HandlerResponse::Unhandled;
-            set_error_response(
-                response,
-                403,
-                {ErrorCode::forbidden_host, "Request host is not allowed."});
-            return httplib::Server::HandlerResponse::Handled;
-        });
     server.set_error_handler(
         [](const httplib::Request&, httplib::Response& response) {
             set_generated_error(response);

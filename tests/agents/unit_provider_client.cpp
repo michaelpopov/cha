@@ -79,6 +79,15 @@ CharacterDefinition network_definition(int port, bool stream = true) {
     definition.backend.mode = Mode::net;
     definition.backend.model = "configured-model";
     definition.backend.stream = stream;
+    definition.backend.api = ProviderApi::chat_completions;
+    definition.backend.web_search = WebSearchMode::off;
+    return definition;
+}
+
+CharacterDefinition responses_network_definition(int port, bool stream = true) {
+    CharacterDefinition definition = network_definition(port, stream);
+    definition.backend.api = ProviderApi::responses;
+    definition.backend.web_search = WebSearchMode::automatic;
     return definition;
 }
 
@@ -232,6 +241,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     EXPECT_EQ(deltas, (std::vector<std::string>{"Hello", " world"}));
     mock.join();
     ASSERT_EQ(mock.requests().size(), 1U);
+    EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/chat/completions HTTP/1.1"));
     EXPECT_NE(mock.requests().front().find("Authorization: Bearer test-key"), std::string::npos);
     const Json body = Json::parse(request_body(mock.requests().front()));
     EXPECT_EQ(body["model"], "configured-model");
@@ -248,6 +258,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
           R"({"kind":"character","speaker":"Other","text":"Other answer"})"}},
         {{"role", "user"}, {"content", "from You:\nQuestion"}},
     }));
+    EXPECT_TRUE(client.info().api.ends_with("/v1/chat/completions"));
 }
 
 TEST(ProviderClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
@@ -450,6 +461,191 @@ TEST(ProviderClient, DiscoversItsModelBeforeTheFirstGeneration) {
     mock.join();
     ASSERT_EQ(mock.requests().size(), 2U);
     EXPECT_TRUE(mock.requests()[0].starts_with("GET /v1/models HTTP/1.1"));
+    EXPECT_EQ(Json::parse(request_body(mock.requests()[1]))["model"], "discovered-model");
+}
+
+TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
+    const std::string stream =
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n"
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n"
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n";
+    MockHttpServer mock({http_response("text/event-stream", stream)});
+    mock.start();
+
+    CharacterDefinition definition = responses_network_definition(mock.port());
+    definition.backend.temperature = 0.25;
+    definition.backend.reasoning_effort = "medium";
+    definition.backend.api_key = "test-key";
+    definition.system_prompt = "Be concise.";
+    std::atomic_bool cancellation{false};
+    ProviderClient client(std::move(definition));
+    Transcript transcript;
+    const GenerationRequest request = client_request(
+        transcript, 27, "Question", {
+            test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier question", 6),
+            make_character_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 6),
+        });
+    std::vector<std::string> deltas;
+
+    const GenerationResult result = complete(
+        client, request, transcript,
+        [&deltas](GenerationDelta delta) {
+            deltas.push_back(std::move(delta.text));
+        },
+        cancellation);
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    EXPECT_EQ(deltas, (std::vector<std::string>{"Hello", " world"}));
+    mock.join();
+    ASSERT_EQ(mock.requests().size(), 1U);
+    EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/responses HTTP/1.1"));
+    EXPECT_TRUE(client.info().api.ends_with("/v1/responses"));
+    const Json body = Json::parse(request_body(mock.requests().front()));
+    EXPECT_EQ(body["model"], "configured-model");
+    EXPECT_TRUE(body["stream"]);
+    EXPECT_FALSE(body["store"]);
+    EXPECT_DOUBLE_EQ(body["temperature"], 0.25);
+    EXPECT_EQ(body["reasoning"]["effort"], "medium");
+    EXPECT_FALSE(body.contains("reasoning_effort"));
+    EXPECT_FALSE(body.contains("include"));
+    EXPECT_EQ(body["tools"], Json::array({Json{{"type", "web_search"}}}));
+    EXPECT_EQ(body["tool_choice"], "auto");
+    EXPECT_EQ(body["instructions"], "Be concise.");
+    EXPECT_EQ(body["input"], Json::array({
+        {{"role", "user"}, {"content", "from You:\nEarlier question"}},
+        {{"role", "assistant"}, {"content", "Earlier answer"}},
+        {{"role", "user"}, {"content", "from You:\nQuestion"}},
+    }));
+}
+
+TEST(ProviderClient, HandlesNonStreamingResponsesApiResponse) {
+    MockHttpServer mock({http_response(
+        "application/json",
+        R"({"status":"completed","output":[{"type":"message","role":"assistant",)"
+        R"("content":[{"type":"output_text","text":"Answer"}]}]})")});
+    mock.start();
+    std::atomic_bool cancellation{false};
+    ProviderClient client(responses_network_definition(mock.port(), false));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 28, "Question");
+    std::string output;
+
+    const GenerationResult result = complete(
+        client, request, transcript,
+        [&output](GenerationDelta delta) { output += delta.text; }, cancellation);
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    EXPECT_EQ(output, "Answer");
+    mock.join();
+    ASSERT_EQ(mock.requests().size(), 1U);
+    EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/responses HTTP/1.1"));
+}
+
+TEST(ProviderClient, UnconfiguredProtocolDefaultsToMandatoryWebSearch) {
+    MockHttpServer mock({http_response(
+        "application/json",
+        R"({"status":"completed","output":[{"type":"message","role":"assistant",)"
+        R"("content":[{"type":"output_text","text":"Answer"}]}]})")});
+    mock.start();
+    CharacterDefinition definition = test_definition();
+    definition.backend.host = "127.0.0.1";
+    definition.backend.port = mock.port();
+    definition.backend.mode = Mode::net;
+    definition.backend.model = "configured-model";
+    definition.backend.stream = false;
+    std::atomic_bool cancellation{false};
+    ProviderClient client(std::move(definition));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 32, "Question");
+
+    const GenerationResult result = complete(
+        client, request, transcript, [](GenerationDelta) {}, cancellation);
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    mock.join();
+    ASSERT_EQ(mock.requests().size(), 1U);
+    EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/responses HTTP/1.1"));
+    const Json body = Json::parse(request_body(mock.requests().front()));
+    EXPECT_EQ(body["tools"], Json::array({Json{{"type", "web_search"}}}));
+    EXPECT_EQ(body["tool_choice"], "required");
+}
+
+TEST(ProviderClient, ReportsATruncatedResponsesStreamAsATransportError) {
+    const std::string body =
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Partial\"}\n\n";
+    const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+        "Content-Length: " + std::to_string(body.size() + 20)
+        + "\r\nConnection: close\r\n\r\n" + body;
+    MockHttpServer mock({response});
+    mock.start();
+    std::atomic_bool cancellation{false};
+    ProviderClient client(responses_network_definition(mock.port()));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 29, "Question");
+    std::string output;
+
+    const GenerationResult result = complete(
+        client, request, transcript,
+        [&output](GenerationDelta delta) { output += delta.text; }, cancellation);
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
+    EXPECT_NE(result.message.find("HTTP request failed"), std::string::npos);
+    EXPECT_EQ(output, "Partial");
+    mock.join();
+}
+
+TEST(ProviderClient, CancelsAnActiveResponsesStreamingTransfer) {
+    const std::string body =
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Partial\"}\n\n";
+    const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+        "Content-Length: " + std::to_string(body.size() + 20)
+        + "\r\nConnection: close\r\n\r\n" + body;
+    MockHttpServer mock({response}, true);
+    mock.start();
+    std::atomic_bool cancellation{false};
+    ProviderClient client(responses_network_definition(mock.port()));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 30, "Question");
+    std::string output;
+
+    const GenerationResult result = complete(
+        client, request, transcript,
+        [&output, &cancellation](GenerationDelta delta) {
+            output += delta.text;
+            cancellation.store(true, std::memory_order_release);
+        }, cancellation);
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
+    EXPECT_EQ(output, "Partial");
+    mock.join();
+}
+
+TEST(ProviderClient, DiscoversModelBeforeResponsesGeneration) {
+    MockHttpServer mock({
+        http_response("application/json", R"({"data":[{"id":"discovered-model"}]})"),
+        http_response(
+            "application/json",
+            R"({"status":"completed","output":[{"type":"message","role":"assistant",)"
+            R"("content":[{"type":"output_text","text":"Answer"}]}]})"),
+    });
+    mock.start();
+    CharacterDefinition definition = responses_network_definition(mock.port(), false);
+    definition.backend.model.clear();
+    std::atomic_bool cancellation{false};
+    ProviderClient client(std::move(definition));
+    EXPECT_EQ(client.info().model, "discovered-model");
+    EXPECT_TRUE(client.info().api.ends_with("/v1/responses"));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 31, "Question");
+
+    const GenerationResult result = complete(
+        client, request, transcript, [](GenerationDelta) {}, cancellation);
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    mock.join();
+    ASSERT_EQ(mock.requests().size(), 2U);
+    EXPECT_TRUE(mock.requests()[0].starts_with("GET /v1/models HTTP/1.1"));
+    EXPECT_TRUE(mock.requests()[1].starts_with("POST /v1/responses HTTP/1.1"));
     EXPECT_EQ(Json::parse(request_body(mock.requests()[1]))["model"], "discovered-model");
 }
 

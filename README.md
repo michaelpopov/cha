@@ -61,6 +61,28 @@ file = "logs/cha.log"
 level = "info"
 ```
 
+Optional provider fields select the OpenAI protocol and hosted web search.
+By default, every character uses the Responses API with mandatory web search:
+
+```toml
+api = "responses"          # responses | chat_completions
+web_search = "required"    # required | auto | off
+```
+
+`web_search` other than `off` requires `api = "responses"`. With
+`web_search = "auto"`, the model may search when the prompt and turn warrant
+it; `required` forces a search tool call on every generation. These fields
+overlay through workspace `[provider]`, character definitions, forum defaults,
+and member overrides. Configuration is loaded at process startup, so changes
+take effect only after a restart.
+
+To use the legacy Chat Completions path for a character or provider layer, set
+both `api = "chat_completions"` and `web_search = "off"` explicitly.
+
+Search queries, progress, retrieved pages, annotations, and tool-call details
+stay inside the provider interaction. Only the character's synthesized answer
+text enters the transcript.
+
 Provider secrets belong in the environment or the workspace `.env`, never in
 the application directory. `chaweb` reads listener and workspace settings from
 `app.toml` beside the executable; `--host`, `--port`, `--workspace`, and

@@ -401,7 +401,7 @@ public:
         if (port_ <= 0) {
             throw std::runtime_error("Could not bind real-socket SSE fixture");
         }
-        configure_http_server(server_, settings_, "127.0.0.1", port_);
+        configure_http_server(server_, settings_);
         listener_ = std::thread([this] { server_.listen_after_bind(); });
         server_.wait_until_ready();
     }
@@ -457,7 +457,7 @@ TEST(WebServerSocketLimits, RejectsARequestThatExceedsInjectedReadTimeout) {
     });
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
-    configure_http_server(server, settings, "127.0.0.1", port);
+    configure_http_server(server, settings);
     std::thread listener([&server] { server.listen_after_bind(); });
     server.wait_until_ready();
 
@@ -950,7 +950,7 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
         live_sessions, settings).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
-    configure_http_server(server, settings, "127.0.0.1", port);
+    configure_http_server(server, settings);
     std::thread listener([&server] { server.listen_after_bind(); });
     server.wait_until_ready();
     ServerShutdownCoordinator coordinator(live_sessions, server);

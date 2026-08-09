@@ -27,6 +27,23 @@ enum class ReasoningFormat {
     reasoning,
 };
 
+// Which OpenAI-compatible wire protocol ProviderClient should speak.
+enum class ProviderApi {
+    chat_completions,
+    responses,
+};
+
+// Hosted web-search policy for the Responses API. TOML spelling "auto" maps to
+// automatic; Chat Completions rejects any value other than off.
+enum class WebSearchMode {
+    off,
+    automatic,
+    required,
+};
+
+inline constexpr ProviderApi default_provider_api = ProviderApi::responses;
+inline constexpr WebSearchMode default_web_search_mode = WebSearchMode::required;
+
 // Effective private configuration for one model backend after workspace,
 // character, forum-default, and member-override layers have been applied.
 struct ModelBackendConfig {
@@ -41,6 +58,8 @@ struct ModelBackendConfig {
     std::string reasoning_effort;
     ReasoningFormat reasoning_format{ReasoningFormat::automatic};
     bool https{};
+    ProviderApi api{default_provider_api};
+    WebSearchMode web_search{default_web_search_mode};
 };
 
 // Provider/runtime settings supplied by one configuration layer: workspace
@@ -62,6 +81,8 @@ struct ProviderConfig {
     std::optional<std::string> reasoning_effort;
     std::optional<ReasoningFormat> reasoning_format;
     std::optional<bool> https;
+    std::optional<ProviderApi> api;
+    std::optional<WebSearchMode> web_search;
 };
 
 // Materializes the effective provider values, leaving ModelBackendConfig's own

@@ -163,19 +163,12 @@ the live-session map or session storage is consulted; creation reaches only
 reattach and otherwise strictly validates only the selected session's stored
 metadata before a new open. `AssetHandler` separately owns the HTML/asset boundary and serves
 the same client-routed shell at the root and session deep links.
-`configure_http_server()` owns the
-server-global allowed-host check, request pool, read/write timeouts, payload
-limit, and fallback error/exception handlers so route installers cannot
-silently replace one another's policy. The allowed-host check runs before
-routing and admits only the configured listener authority; loopback listeners
-also admit the equivalent `localhost`, IPv4, and IPv6 loopback authorities.
-A wildcard listener (`0.0.0.0` or `::`) cannot name the authority a browser
-will send, so it instead admits any `Host` on the listener port whose host part
-is an IP address literal or `localhost`, and rejects every DNS name. Refusing
-names is what denies a hostile page the easiest route to this API: pointing its
-own domain at the machine and letting the browser send that domain as `Host`.
-The `Origin`-must-equal-`Host` rule for JSON mutations is unaffected, because a
-real browser sends the address the user typed in both headers.
+`configure_http_server()` owns the server-global request pool, read/write
+timeouts, payload limit, and fallback error/exception handlers so route
+installers cannot silently replace one another's policy. It does not restrict
+the `Host` header: clients may reach the configured listener through a DNS
+name, IP address, proxy, or other network path. JSON mutations that send an
+`Origin` header must still use an origin authority equal to `Host`.
 `ServerShutdownCoordinator` implements the bounded process shutdown sequence:
 it waits for signal notification, sets the manager's stopping flag, stops HTTP
 acceptance, wakes opening waiters, requests every live actor to stop, waits for

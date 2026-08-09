@@ -139,7 +139,6 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::bad_request, "bad_request"},
             {ErrorCode::body_too_large, "body_too_large"},
             {ErrorCode::prompt_too_large, "prompt_too_large"},
-            {ErrorCode::forbidden_host, "forbidden_host"},
             {ErrorCode::forbidden_origin, "forbidden_origin"},
             {ErrorCode::internal_error, "internal_error"},
             {ErrorCode::session_busy, "session_busy"},

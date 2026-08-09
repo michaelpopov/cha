@@ -19,7 +19,6 @@ const knownErrorCodes = {
   bad_request: true,
   body_too_large: true,
   prompt_too_large: true,
-  forbidden_host: true,
   forbidden_origin: true,
   internal_error: true,
   session_busy: true,

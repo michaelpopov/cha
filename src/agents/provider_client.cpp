@@ -2,6 +2,7 @@
 
 #include "agents/character.h"
 #include "agents/provider_response.h"
+#include "agents/responses_api.h"
 #include "util/logging.h"
 #include "util/json_serialization.h"
 
@@ -14,7 +15,6 @@
 #include <exception>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -125,7 +125,7 @@ constexpr std::size_t max_streaming_error_body_size = 64 * 1024;
 struct ResponseContext {
     // Set for streaming generation only; discovery and single-response calls
     // keep the whole body instead.
-    ProviderStreamDecoder* decoder{};
+    StreamingResponseDecoder* decoder{};
     std::size_t received_bytes{};
     std::string body;
     std::exception_ptr error;
@@ -246,7 +246,7 @@ std::string_view role_name(ModelRole role) {
     throw std::logic_error("Unknown model context role");
 }
 
-std::string build_request_body(
+std::string build_chat_completions_request_body(
     const GenerationRequest& input,
     const ModelBackendConfig& config,
     std::string_view system_prompt) {
@@ -387,12 +387,23 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
     if (config_.mode == Mode::test) {
         return {.bytes = input.run.prompt_text};
     }
-    return {
-        .bytes = build_request_body(
-            input,
-            config_,
-            system_prompt_),
-    };
+    switch (config_.api) {
+    case ProviderApi::chat_completions:
+        return {
+            .bytes = build_chat_completions_request_body(
+                input,
+                config_,
+                system_prompt_),
+        };
+    case ProviderApi::responses:
+        return {
+            .bytes = build_responses_request_body(
+                input,
+                config_,
+                system_prompt_),
+        };
+    }
+    throw std::logic_error("Unknown provider API");
 }
 
 GenerationResult ProviderClient::perform(
@@ -412,12 +423,22 @@ GenerationResult ProviderClient::perform(
     }
 
     const std::string& request_body = payload.bytes;
-    std::optional<ProviderStreamDecoder> decoder;
+    std::unique_ptr<StreamingResponseDecoder> decoder;
     if (config_.stream) {
-        decoder.emplace(config_.reasoning_format, on_delta);
+        switch (config_.api) {
+        case ProviderApi::chat_completions:
+            decoder = std::make_unique<ProviderStreamDecoder>(
+                config_.reasoning_format, on_delta);
+            break;
+        case ProviderApi::responses:
+            decoder = std::make_unique<ResponsesStreamDecoder>(on_delta);
+            break;
+        default:
+            throw std::logic_error("Unknown provider API");
+        }
     }
     ResponseContext response{
-        .decoder = decoder ? &*decoder : nullptr,
+        .decoder = decoder.get(),
     };
 
     curl_->reset();
@@ -535,13 +556,22 @@ GenerationResult ProviderClient::perform(
         return complete(std::move(decoded.result), status, content_type);
     }
 
-    return complete(
-        decode_provider_response(
-            response.body,
-            config_.reasoning_format,
-            on_delta),
-        status,
-        content_type);
+    switch (config_.api) {
+    case ProviderApi::chat_completions:
+        return complete(
+            decode_provider_response(
+                response.body,
+                config_.reasoning_format,
+                on_delta),
+            status,
+            content_type);
+    case ProviderApi::responses:
+        return complete(
+            decode_responses_response(response.body, on_delta),
+            status,
+            content_type);
+    }
+    throw std::logic_error("Unknown provider API");
 }
 
 ModelBackendInfo ProviderClient::info() const {
@@ -563,7 +593,13 @@ std::string ProviderClient::base_url() const {
 }
 
 std::string ProviderClient::endpoint() const {
-    return base_url() + "/v1/chat/completions";
+    switch (config_.api) {
+    case ProviderApi::chat_completions:
+        return base_url() + "/v1/chat/completions";
+    case ProviderApi::responses:
+        return base_url() + "/v1/responses";
+    }
+    throw std::logic_error("Unknown provider API");
 }
 
 std::string ProviderClient::models_endpoint() const {
