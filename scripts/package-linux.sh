@@ -62,6 +62,7 @@ cmake -E remove_directory "$temporary"
 mkdir -p "$temporary/web"
 cp "$native_build/chaweb" "$temporary/chaweb"
 cp "$repository/packaging/linux/app.toml" "$temporary/app.toml"
+cp -R "$repository/packaging/linux/workspace" "$temporary/workspace"
 
 # The launcher's behavior lives in one file, bin/start-cha.sh, whose committed
 # settings are the development ones. The customer's settings live in one file,
@@ -93,7 +94,7 @@ done <"$repository/bin/start-cha.sh" >"$temporary/start-cha.sh"
 cp -R "$webapp/dist/." "$temporary/web/"
 chmod 755 "$temporary"
 chmod 755 "$temporary/chaweb" "$temporary/start-cha.sh"
-chmod -R u=rwX,go=rX "$temporary/web" "$temporary/app.toml"
+chmod -R u=rwX,go=rX "$temporary/web" "$temporary/workspace" "$temporary/app.toml"
 
 "$repository/scripts/check-linux-package.sh" "$temporary"
 

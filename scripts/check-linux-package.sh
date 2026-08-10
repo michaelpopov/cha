@@ -18,7 +18,7 @@ if [ "$(stat -c '%a' "$application")" != "755" ]; then
     exit 1
 fi
 
-for required in chaweb start-cha.sh app.toml web/index.html; do
+for required in chaweb start-cha.sh app.toml workspace/workspace.toml web/index.html; do
     if [ ! -f "$application/$required" ]; then
         echo "package check: missing $required" >&2
         exit 1
@@ -31,7 +31,7 @@ if [ ! -x "$application/chaweb" ] || [ ! -x "$application/start-cha.sh" ]; then
 fi
 
 actual_entries=$(find "$application" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
-expected_entries=$(printf '%s\n' app.toml chaweb start-cha.sh web | LC_ALL=C sort)
+expected_entries=$(printf '%s\n' app.toml chaweb start-cha.sh web workspace | LC_ALL=C sort)
 if [ "$actual_entries" != "$expected_entries" ]; then
     echo "package check: application directory has unexpected top-level entries" >&2
     printf '%s\n' "$actual_entries" >&2
@@ -49,12 +49,25 @@ if [ "$config_lines" -ne 3 ] \
     exit 1
 fi
 
-for forbidden in workspace.toml .env characters forums personas logs; do
-    if find "$application" -name "$forbidden" -print -quit | grep -q .; then
-        echo "package check: workspace-owned '$forbidden' leaked into the application" >&2
+for required_directory in characters forums personas; do
+    if [ ! -d "$application/workspace/$required_directory" ]; then
+        echo "package check: default workspace is missing $required_directory/" >&2
         exit 1
     fi
 done
+
+workspace_entries=$(find "$application/workspace" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
+expected_workspace_entries=$(printf '%s\n' characters forums personas workspace.toml | LC_ALL=C sort)
+if [ "$workspace_entries" != "$expected_workspace_entries" ]; then
+    echo "package check: default workspace contains unexpected top-level entries" >&2
+    printf '%s\n' "$workspace_entries" >&2
+    exit 1
+fi
+
+if find "$application/workspace" \( -name '.env' -o -name '*.sqlite3' -o -name '*.cha-lock' \) -print -quit | grep -q .; then
+    echo "package check: credentials or stored workspace data leaked into the package" >&2
+    exit 1
+fi
 
 if find "$application" \( -name '*.sqlite3' -o -name '*.cha-lock' \) -print -quit | grep -q .; then
     echo "package check: stored workspace data leaked into the application" >&2

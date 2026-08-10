@@ -88,6 +88,13 @@ the application directory. `chaweb` reads listener and workspace settings from
 `app.toml` beside the executable; `--host`, `--port`, `--workspace`, and
 `--root` override them.
 
+Linux deployment packages include a minimal `workspace/` directory containing
+the default provider and logging settings. The packaged `start-cha.sh` uses it
+automatically, so the application can be started immediately after unpacking.
+Set `OPENAI_API_KEY` in the process environment before starting it; no `.env`
+file is included. The packaged workspace is also the location for any
+workspace customization and stored sessions.
+
 `chaweb` reads the static workspace once, at startup. Edits to `workspace.toml`,
 personas, characters, forums, member overrides, or prompts take effect only
 after the server is restarted; stored sessions remain dynamic and appear in the

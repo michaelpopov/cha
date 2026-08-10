@@ -5,10 +5,10 @@ WORKSPACE='../workspace'
 
 # Starts CHA from this directory.
 #
-# This directory is laid out the way a real installation is: the executable and
-# web/ live here, the workspace lives somewhere else. The build copies chaweb
-# and web/ into this directory; nothing here is edited by hand except the three
-# settings above.
+# This directory is laid out the way a real installation is: the executable,
+# web/, and (in deployment packages) the default workspace live here. The build
+# copies chaweb and web/ into this directory; nothing here is edited by hand
+# except the three settings above.
 #
 # These are the development values: loopback, and the repository's own
 # workspace. scripts/package-linux.sh ships this same script with the three
