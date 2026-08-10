@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -108,6 +109,7 @@ export function ChatScreen({
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<'send' | 'stop' | 'target' | null>(null);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
+  const composerInput = useRef<HTMLTextAreaElement | null>(null);
   const followingLatest = useRef(true);
   const snapshot = state.sessionSnapshot;
   const generation = snapshot?.generation;
@@ -144,6 +146,16 @@ export function ChatScreen({
       transcriptEnd.current.scrollIntoView({ block: 'end' });
     }
   }, [conversationKey, generation?.reasoning_text, snapshot?.transcript]);
+
+  // A textarea begins as a single line, then follows its wrapped content. It
+  // is measured after React has put the latest draft in the DOM so deletion
+  // shrinks it again as well as typing grows it.
+  useLayoutEffect(() => {
+    const input = composerInput.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${input.scrollHeight}px`;
+  }, [draft]);
 
   // Growing the transcript moves the end away without moving the viewport, so
   // whether the reader is following has to be recorded when they last scrolled
@@ -289,44 +301,48 @@ export function ChatScreen({
       {actionError && (
         <p className="cha-chat-action-error cha-error-message" role="alert">{actionError}</p>
       )}
-      <form className="cha-composer" onSubmit={submit}>
-        <label className="cha-target-select" title="Choose target character">
-          <TargetIcon />
-          <select
-            aria-label="Choose target character"
-            disabled={!connected || pendingAction !== null}
-            onChange={(event) => void chooseTarget(event.target.value)}
-            value={state.currentDefaultCharacterId ?? ''}
+      <div className="cha-composer-area">
+        <form className="cha-composer" onSubmit={submit}>
+          <label className="cha-target-select" title="Choose target character">
+            <TargetIcon />
+            <select
+              aria-label="Choose target character"
+              disabled={!connected || pendingAction !== null}
+              onChange={(event) => void chooseTarget(event.target.value)}
+              value={state.currentDefaultCharacterId ?? ''}
+            >
+              {snapshot?.characters.map((member) => (
+                <option key={member.id} value={member.id}>{member.display_name}</option>
+              ))}
+            </select>
+          </label>
+          <textarea
+            aria-label="Message"
+            autoComplete="off"
+            disabled={!sessionAvailable}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder={`Message ${character?.display_name ?? 'character'}`}
+            ref={composerInput}
+            rows={1}
+            value={draft}
+          />
+          <button
+            aria-label={generationActive ? 'Stop generation' : 'Send message'}
+            className={`cha-composer-action ${generationActive ? 'cha-stop' : 'cha-send'}`}
+            disabled={generationActive
+              ? pendingAction !== null || !sessionAvailable
+              : !canSend}
+            onClick={generationActive ? () => void stop() : undefined}
+            type={generationActive ? 'button' : 'submit'}
           >
-            {snapshot?.characters.map((member) => (
-              <option key={member.id} value={member.id}>{member.display_name}</option>
-            ))}
-          </select>
-        </label>
-        <input
-          aria-label="Message"
-          autoComplete="off"
-          disabled={!sessionAvailable}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder={`Message ${character?.display_name ?? 'character'}`}
-          value={draft}
-        />
-        <button
-          aria-label={generationActive ? 'Stop generation' : 'Send message'}
-          className={`cha-composer-action ${generationActive ? 'cha-stop' : 'cha-send'}`}
-          disabled={generationActive
-            ? pendingAction !== null || !sessionAvailable
-            : !canSend}
-          onClick={generationActive ? () => void stop() : undefined}
-          type={generationActive ? 'button' : 'submit'}
-        >
-          {generationActive ? <StopIcon /> : <SendIcon />}
-        </button>
-      </form>
-      <div className="cha-chat-status" aria-label="Current chat context">
-        <span>{forum?.display_name ?? 'Unknown forum'}</span>
-        <span>From: {persona?.display_name ?? 'Unknown persona'}</span>
-        <span>To: {character?.display_name ?? 'Unknown character'}</span>
+            {generationActive ? <StopIcon /> : <SendIcon />}
+          </button>
+        </form>
+        <div className="cha-chat-status" aria-label="Current chat context">
+          <span>{forum?.display_name ?? 'Unknown forum'}</span>
+          <span>From: {persona?.display_name ?? 'Unknown persona'}</span>
+          <span>To: {character?.display_name ?? 'Unknown character'}</span>
+        </div>
       </div>
     </section>
   );
