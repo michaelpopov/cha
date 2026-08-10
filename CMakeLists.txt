@@ -170,14 +170,12 @@ target_compile_definitions(
 add_library(cha_core STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     src/util/environment.cpp
-    src/util/executable_path.cpp
     src/util/logging.cpp
     src/util/path_name.cpp
     src/util/public_name.cpp
     src/util/text.cpp
     src/util/text_template.cpp
     src/util/thread_pool.cpp
-    src/util/utf8_path.cpp
     src/chat/character.cpp
     src/chat/transcript.cpp
     src/agents/character.cpp

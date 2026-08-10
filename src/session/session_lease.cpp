@@ -1,6 +1,6 @@
 #include "session/session_lease.h"
 
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <system_error>
 #include <string>

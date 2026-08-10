@@ -1,6 +1,6 @@
 #include "util/logging.h"
 
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/spdlog.h>

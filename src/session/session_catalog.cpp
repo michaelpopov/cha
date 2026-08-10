@@ -3,7 +3,7 @@
 #include "session/session_lease.h"
 #include "util/path_name.h"
 #include "util/logging.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 #include "session/session_database.h"
 
 #include <algorithm>

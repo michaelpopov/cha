@@ -1,5 +1,5 @@
 #include "util/text_template.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 

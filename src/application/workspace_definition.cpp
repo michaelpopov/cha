@@ -8,7 +8,7 @@
 #include "util/path_name.h"
 #include "util/public_name.h"
 #include "util/text.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <nlohmann/json.hpp>
 #include <toml++/toml.hpp>
@@ -494,11 +494,6 @@ WorkspaceDefinition WorkspaceDefinition::load(
             throw std::runtime_error("Character ID '" + character.id + "' is reserved");
         }
         character_ids.insert(character.id);
-        model.character_markdown_.emplace(
-            character.id,
-            read_text_file(
-                definitions_directory / path_from_utf8(character.id) / "CHARACTER.md",
-                "character definition"));
     }
 
     std::vector<LoadedForum> forums;
@@ -546,11 +541,17 @@ WorkspaceDefinition WorkspaceDefinition::load(
     // prompt cannot wait until someone opens that forum to be discovered.
     for (const LoadedForum& forum : forums) {
         try {
-            model.definitions_.emplace(
-                forum.info.id,
-                load_forum_definitions(
-                    forum, *model.personas_, definitions_directory,
-                    model.config_.provider));
+            std::vector<CharacterDefinition> definitions = load_forum_definitions(
+                forum, *model.personas_, definitions_directory, model.config_.provider);
+            for (const CharacterDefinition& definition : definitions) {
+                // A character may participate in multiple forums. The detail
+                // endpoint is workspace-wide, so retain the first effective
+                // character prompt, which is exactly what that definition's
+                // agent receives before forum context is appended.
+                model.character_markdown_.emplace(
+                    definition.character.id, definition.character_prompt);
+            }
+            model.definitions_.emplace(forum.info.id, std::move(definitions));
         } catch (const std::exception& error) {
             throw std::runtime_error(
                 "Forum '" + forum.info.id + "' at '" + utf8_path(forum.directory)
@@ -559,6 +560,18 @@ WorkspaceDefinition WorkspaceDefinition::load(
         model.session_directories_.push_back(
             {forum.info.id, forum.directory / "sessions"});
         model.forums_.push_back(forum.info);
+    }
+
+    // Keep unassigned characters discoverable. They have no effective forum
+    // prompt, so there is nothing to expand against until they are assigned.
+    for (const CharacterMetadata& character : characters) {
+        if (!model.character_markdown_.contains(character.id)) {
+            model.character_markdown_.emplace(
+                character.id,
+                read_text_file(
+                    definitions_directory / path_from_utf8(character.id) / "CHARACTER.md",
+                    "character definition"));
+        }
     }
 
     characters.push_back(

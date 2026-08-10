@@ -7,8 +7,7 @@ agents, sessions, or UI policy.
 | --- | --- |
 | `text.*` | Byte-oriented whitespace, trimming, and ASCII case folding. |
 | `text_template.*` | Prompt includes, variables, scopes, containment, and resource limits. |
-| `path_name.*` | Safe path-component and URL-identifier validation. |
-| `utf8_path.*` | UTF-8 application text and native filesystem path conversion. |
+| `path_name.*` | UTF-8 path conversion, safe path-component, and URL-identifier validation. |
 | `json_serialization.h` | JSON dumping with caller-supplied invalid-UTF-8 diagnostic context. |
 | `environment.*` | Optional `.env` loading without overriding the process environment. |
 | `logging.*` | Synchronous rotating diagnostic-file logging. |

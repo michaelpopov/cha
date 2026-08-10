@@ -7,7 +7,7 @@
 #include "util/text.h"
 #include "util/text_template.h"
 #include "util/public_name.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <nlohmann/json.hpp>
 
@@ -128,6 +128,7 @@ CharacterDefinition load_definition_files(
     return {
         .character = std::move(character),
         .backend = std::move(backend_config),
+        .character_prompt = character_prompt,
         .system_prompt = std::move(character_prompt)
             + "\n\n" + std::move(forum_prompt),
     };

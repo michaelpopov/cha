@@ -111,8 +111,9 @@ export interface paths {
         };
         /**
          * Get character details
-         * @description Returns the character summary and its verbatim Markdown definition.
-         *     The built-in Assistant returns the embedded application guide.
+         * @description Returns the character summary and its template-expanded Markdown
+         *     definition. The built-in Assistant returns the embedded application
+         *     guide.
          */
         get: operations["getCharacter"];
         put?: never;

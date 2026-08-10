@@ -3,7 +3,7 @@
 #include "session/session_database.h"
 #include "support/test_session_database.h"
 #include "support/test_transcript.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>

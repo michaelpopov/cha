@@ -1,6 +1,6 @@
 #include "web/application_config.h"
 
-#include "util/executable_path.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 

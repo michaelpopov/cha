@@ -7,7 +7,7 @@
 #include "support/test_backends.h"
 #include "support/test_live_session.h"
 #include "util/logging.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>

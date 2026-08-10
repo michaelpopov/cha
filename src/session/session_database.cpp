@@ -1,6 +1,6 @@
 #include "session/session_database.h"
 
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <sqlite3.h>
 #include <uv.h>

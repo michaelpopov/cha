@@ -21,6 +21,9 @@ inline constexpr std::string_view reserved_participant_names[] = {
 struct CharacterDefinition {
     CharacterMetadata character;
     ModelBackendConfig backend;
+    // The expanded character-level prompt before forum context is appended.
+    // This is also the public character description shown by the web UI.
+    std::string character_prompt;
     std::string system_prompt;
 };
 

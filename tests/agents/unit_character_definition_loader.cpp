@@ -45,6 +45,7 @@ TEST(CharacterDefinitions, UsesDefinitionPromptAndThreeLayerConfiguration) {
 
     ASSERT_EQ(definitions.size(), 1U);
     EXPECT_EQ(definitions.front().backend.port, 9);
+    EXPECT_EQ(definitions.front().character_prompt, "Definition member");
     EXPECT_TRUE(definitions.front().system_prompt.starts_with("Definition member\n\nForum Guide"));
 }
 

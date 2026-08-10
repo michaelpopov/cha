@@ -152,12 +152,15 @@ GET /api/v1/characters/{character_id}
 ```
 
 The detail response contains the character summary fields plus
-`character_markdown`. For workspace characters this is the definition
-`characters/<id>/CHARACTER.md`. Assistant uses the embedded application guide.
+`character_markdown`. For workspace characters this is the template-expanded
+definition `characters/<id>/CHARACTER.md`, using the same effective character
+scope as the agent prompt. Assistant uses the embedded application guide.
 
 The short description comes from `character.toml`. There is no `DISPLAY.md`,
 separate display template, or additional character entity. Character browsing
-does not load provider configuration or forum-local overrides.
+does not load provider configuration; when a character has forum-local prompt
+overrides, detail uses the first effective character definition loaded by the
+workspace.
 
 The browser renders a restricted Markdown subset. Headings, paragraphs,
 emphasis, lists, inline code, and code blocks are supported. Links are not

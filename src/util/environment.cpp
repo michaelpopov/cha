@@ -1,7 +1,7 @@
 #include "util/environment.h"
 
 #include "util/text.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <cctype>
 #include <cstdlib>

@@ -1,7 +1,7 @@
 #include "web/application_config.h"
 
-#include "util/executable_path.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
+#include "util/path_name.h"
 
 #include <toml++/toml.hpp>
 

@@ -6,7 +6,7 @@
 #include "support/test_live_session.h"
 #include "support/test_web_graph.h"
 #include "support/test_workspace.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>

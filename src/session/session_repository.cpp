@@ -4,7 +4,7 @@
 #include "session/session_catalog.h"
 #include "session/session_lease.h"
 #include "util/logging.h"
-#include "util/utf8_path.h"
+#include "util/path_name.h"
 
 #include <chrono>
 #include <random>
