@@ -1,6 +1,6 @@
-#include "application/session_open.h"
+#include "workspace/session_open.h"
 
-#include "application/builtins.h"
+#include "workspace/builtins.h"
 #include "session/not_found_error.h"
 #include "session/session_lease.h"
 #include "session/session_repository.h"

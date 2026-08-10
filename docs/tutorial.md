@@ -33,7 +33,7 @@ them into a learning sequence:
 - [Chat model](../src/chat/README.md)
 - [Agent and generation layer](../src/agents/README.md)
 - [Session layer](../src/session/README.md)
-- [Application composition](../src/application/README.md)
+- [Workspace composition](../src/workspace/README.md)
 - [Web runtime](../src/web/README.md)
 
 When this tutorial and a subsystem reference differ, inspect the current
@@ -106,7 +106,7 @@ important production targets:
 
 | Target | Role |
 | --- | --- |
-| `cha_core` | `util`, `chat`, `agents`, `session`, and `application` |
+| `cha_core` | `util`, `chat`, `agents`, `session`, and `workspace` |
 | `cha_web` | HTTP, SSE, actor runtime, routing, and protocol; links `cha_core` |
 | `chaweb_app` | Small composition root in `src/web_main.cpp`; links `cha_web` |
 
@@ -118,7 +118,7 @@ The intended dependency direction is:
 ```text
 chaweb_app -> cha_web -> cha_core
 
-application -> session -> agents -> chat
+workspace -> session -> agents -> chat
                     \                 ^
                      +-------------- util where needed
 ```
@@ -131,8 +131,8 @@ rules are simpler:
 - `agents` knows model backends and generation, but not sessions or HTTP.
 - `session` coordinates transcripts, persistence, and generation, but not web
   routes.
-- `application` loads the workspace and wires a session from application data.
-- `web` adapts HTTP/SSE to the application and session APIs.
+- `workspace` loads the workspace and wires a session from workspace data.
+- `web` adapts HTTP/SSE to the workspace and session APIs.
 - Only `web_main.cpp` assembles the complete process.
 
 If a proposed change makes `chat` include a web header, or makes `session`
@@ -159,7 +159,7 @@ unit suite; see the root [README](../README.md).
 | [src/util](../src/util) | Queues, worker pool, template expansion, logging, path/text helpers |
 | [src/agents](../src/agents) | Character configuration, model context, provider calls, generation batches |
 | [src/session](../src/session) | Controller, transcript orchestration, SQLite journal, leases, repository |
-| [src/application](../src/application) | Workspace loading, built-ins, and session construction |
+| [src/workspace](../src/workspace) | Workspace loading, built-ins, and session construction |
 | [src/web](../src/web) | Native protocol, routes, actor, mailbox, lifecycle, shutdown |
 | [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
 | [workspace](../workspace) | A real workspace to compare against the loaders |
@@ -350,9 +350,9 @@ run in reverse order, and log users must be destroyed before logging itself.
 
 ### 8.1 What `WorkspaceDefinition::load()` builds
 
-Read [application/workspace_definition.h](../src/application/workspace_definition.h), then
+Read [workspace/workspace_definition.h](../src/workspace/workspace_definition.h), then
 the helpers and `WorkspaceDefinition::load()` in
-[application/workspace_definition.cpp](../src/application/workspace_definition.cpp).
+[workspace/workspace_definition.cpp](../src/workspace/workspace_definition.cpp).
 
 The loader treats the workspace as one configuration unit:
 
@@ -400,7 +400,7 @@ latter is a concrete, validated runtime configuration.
 - effective model backend settings.
 
 The built-in Assistant is assembled in
-[application/builtins.cpp](../src/application/builtins.cpp). Its application
+[workspace/builtins.cpp](../src/workspace/builtins.cpp). Its workspace
 guide is generated into the build and combined with public workspace inventory
 data. The Entrance/Welcome session is a normal session at the controller level;
 its specialness is in how the application constructs and stores it.
@@ -418,7 +418,7 @@ Read these in order:
 4. [session/session_lease.h](../src/session/session_lease.h)
 5. [session/session_database.h](../src/session/session_database.h)
 6. [session/session_repository.h](../src/session/session_repository.h)
-7. [application/session_open.cpp](../src/application/session_open.cpp)
+7. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
 
 ### 9.1 Observation versus authority
 
@@ -459,7 +459,7 @@ directory when the repository is destroyed.
 
 ### 9.3 `open_session()` is the bridge
 
-`application/session_open.cpp` performs a short but crucial composition:
+`workspace/session_open.cpp` performs a short but crucial composition:
 
 1. find the immutable forum;
 2. copy its prevalidated definitions;
@@ -468,7 +468,7 @@ directory when the repository is destroyed.
 5. construct a `SessionController`, transferring the database path, restore
    state, lease, persona roster, definitions, and wake notifier.
 
-The application layer knows both the static workspace and dynamic repository;
+The workspace layer knows both the static workspace and dynamic repository;
 neither needs to know about HTTP.
 
 Checkpoint: explain why route code calls `validate()` before starting an actor,

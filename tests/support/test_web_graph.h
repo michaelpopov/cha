@@ -1,8 +1,8 @@
 #pragma once
 
-#include "application/builtins.h"
-#include "application/session_open.h"
-#include "application/workspace_definition.h"
+#include "workspace/builtins.h"
+#include "workspace/session_open.h"
+#include "workspace/workspace_definition.h"
 #include "session/session_repository.h"
 #include "web/live_session.h"
 #include "web/lobby_routes.h"

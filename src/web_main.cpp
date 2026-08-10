@@ -1,6 +1,6 @@
-#include "application/builtins.h"
-#include "application/session_open.h"
-#include "application/workspace_definition.h"
+#include "workspace/builtins.h"
+#include "workspace/session_open.h"
+#include "workspace/workspace_definition.h"
 #include "session/session_repository.h"
 #include "web/application_config.h"
 #include "web/asset_handler.h"
@@ -136,4 +136,3 @@ void configure_test_idle_grace(WebSettings& settings, const ApplicationConfig& a
         settings.sse_heartbeat_interval = std::min(settings.sse_heartbeat_interval, max_interval);
     }
 }
-

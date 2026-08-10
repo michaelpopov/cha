@@ -7,7 +7,7 @@
 #include "util/thread_pool.h"
 #include "support/mock_http_server.h"
 #include "session/session_database.h"
-#include "application/workspace_definition.h"
+#include "workspace/workspace_definition.h"
 #include "support/test_notifier.h"
 #include "support/test_controller.h"
 #include "support/test_session_database.h"
@@ -310,6 +310,11 @@ void point_at(CharacterDefinition& definition, int port) {
     definition.backend.port = port;
     definition.backend.https = false;
     definition.backend.mode = Mode::net;
+    // The local fixtures below use the Chat Completions wire format. The
+    // checked-in workspace defaults to Responses, so make the test transport
+    // choice explicit rather than relying on the workspace default.
+    definition.backend.api = ProviderApi::chat_completions;
+    definition.backend.web_search = WebSearchMode::off;
     definition.backend.stream = false;
     definition.backend.api_key = "integration-key";
     definition.backend.api_key_env.clear();

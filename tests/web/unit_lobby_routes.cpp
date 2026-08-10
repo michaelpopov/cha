@@ -6,7 +6,7 @@
 #include "support/test_web_graph.h"
 #include "support/test_workspace.h"
 
-#include "application/builtins.h"
+#include "workspace/builtins.h"
 
 #include "session/session_controller.h"
 #include "session/session_lease.h"

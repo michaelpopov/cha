@@ -1,6 +1,6 @@
-#include "application/builtins.h"
+#include "workspace/builtins.h"
 
-#include "application/workspace_definition.h"
+#include "workspace/workspace_definition.h"
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>

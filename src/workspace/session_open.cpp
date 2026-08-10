@@ -1,4 +1,4 @@
-#include "application/session_open.h"
+#include "workspace/session_open.h"
 
 #include "session/not_found_error.h"
 #include "session/session_controller.h"

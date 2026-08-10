@@ -10,7 +10,7 @@ through HTTP and server-sent events.
 chaweb_app -> cha_web
 cha_web    -> cha_core
 
-cha_core -> application / agents / chat / session / util
+cha_core -> workspace / agents / chat / session / util
 cha_web  -> cpp-httplib / nlohmann-json
 cha_core -> curl / sqlite / libuv / threads / toml++ / spdlog
 ```
@@ -25,7 +25,7 @@ commands to a registry-owned session thread.
 `web_main.cpp` owns only process wiring and top-level error handling. It loads
 configuration, assembles the workspace model, session repository, live-session
 manager, routes, assets, HTTP listener, and shutdown coordinator, then starts
-the server. Reusable application policy remains in `application/`, and HTTP/SSE
+the server. Reusable workspace policy remains in `workspace/`, and HTTP/SSE
 policy remains in `web/`.
 
 Declaration order in the composition root also defines shutdown order: the HTTP
@@ -37,7 +37,7 @@ model, and diagnostic logging remains available until their teardown finishes.
 | Directory | Responsibility |
 | --- | --- |
 | `web/` | HTTP/SSE transport, chat-input grammar, API DTOs, live-session registry, mailboxes, and lifecycle policy. |
-| `application/` | The immutable loaded workspace model, built-ins, and the one controller-opening operation. |
+| `workspace/` | The immutable loaded workspace model, built-ins, and the one controller-opening operation. |
 | `session/` | Session storage, databases and leases, controller state, persistence, and character resolution. |
 | `agents/` | Character configuration, provider clients, model context, generation execution, cancellation, and event delivery. |
 | `chat/` | Stable domain IDs plus presentation-neutral transcript records, validation, and live mutation. |
@@ -99,7 +99,7 @@ The browser has Vitest checks and Playwright development/production flows under
 
 ## Detailed contracts
 
-- [Application layer](application/README.md)
+- [Workspace layer](workspace/README.md)
 - [Generation execution](agents/README.md)
 - [Sessions and persistence](session/README.md)
 - [Shared chat model](chat/README.md)

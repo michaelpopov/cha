@@ -1,6 +1,6 @@
-# Application layer
+# Workspace layer
 
-`application/` owns the static workspace this process knows about and the one
+`workspace/` owns the static workspace this process knows about and the one
 operation that turns it into a live session. It contains no HTTP transport or
 live-session switching policy.
 

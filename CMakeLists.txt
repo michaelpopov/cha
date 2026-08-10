@@ -193,9 +193,9 @@ add_library(cha_core STATIC
     src/session/session_database.cpp
     src/session/session_lease.cpp
     src/session/session_repository.cpp
-    src/application/workspace_definition.cpp
-    src/application/session_open.cpp
-    src/application/builtins.cpp
+    src/workspace/workspace_definition.cpp
+    src/workspace/session_open.cpp
+    src/workspace/builtins.cpp
 )
 
 add_custom_command(

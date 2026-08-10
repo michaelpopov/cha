@@ -1,6 +1,6 @@
-#include "application/workspace_definition.h"
+#include "workspace/workspace_definition.h"
 
-#include "application/builtins.h"
+#include "workspace/builtins.h"
 #include "agents/character.h"
 #include "session/forum_characters.h"
 #include "session/not_found_error.h"

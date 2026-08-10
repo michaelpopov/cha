@@ -1,6 +1,6 @@
 #include "web/lobby_routes.h"
 
-#include "application/workspace_definition.h"
+#include "workspace/workspace_definition.h"
 #include "session/not_found_error.h"
 #include "session/session_repository.h"
 #include "web/http_response.h"

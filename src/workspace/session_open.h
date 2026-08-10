@@ -1,6 +1,6 @@
 #pragma once
 
-#include "application/workspace_definition.h"
+#include "workspace/workspace_definition.h"
 #include "session/opened_session.h"
 #include "session/session_identity.h"
 

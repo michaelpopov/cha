@@ -6,7 +6,7 @@
 #include "support/test_workspace.h"
 
 #include "agents/character_config.h"
-#include "application/workspace_definition.h"
+#include "workspace/workspace_definition.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
