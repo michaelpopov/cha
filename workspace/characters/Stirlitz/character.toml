@@ -1,0 +1,7 @@
+display_name = "Штирлиц"
+description = "Practical philosopher slash Russian spy."
+api = "responses"
+web_search = "required"
+
+[appearance]
+font = "serif"
