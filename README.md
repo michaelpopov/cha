@@ -69,6 +69,10 @@ api = "responses"          # responses | chat_completions
 web_search = "required"    # required | auto | off
 ```
 
+Set `base_path` when a compatible provider exposes its API below a path rather
+than at the host root. For example, OpenRouter uses `base_path = "/api"`, which
+produces `/api/v1/chat/completions`.
+
 `web_search` other than `off` requires `api = "responses"`. With
 `web_search = "auto"`, the model may search when the prompt and turn warrant
 it; `required` forces a search tool call on every generation. These fields

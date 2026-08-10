@@ -184,6 +184,13 @@ std::optional<WebSearchMode> read_web_search_mode(
         + "'; expected one of off, auto, required");
 }
 
+bool is_valid_base_path(std::string_view base_path) {
+    return base_path.empty()
+        || (base_path.starts_with('/')
+            && !base_path.ends_with('/')
+            && base_path.find_first_of("?# \t\r\n") == std::string_view::npos);
+}
+
 std::vector<std::string> read_tags(
     const toml::table& table,
     const std::filesystem::path& path) {
@@ -267,6 +274,7 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
             .source = path,
             .host = read_optional<std::string>(table, path, "host", "string"),
             .port = read_optional<int>(table, path, "port", "integer"),
+            .base_path = read_optional<std::string>(table, path, "base_path", "string"),
             .mode = read_mode(table, path),
             .model = read_optional<std::string>(table, path, "model", "string"),
             .stream = read_optional<bool>(table, path, "stream", "boolean"),
@@ -299,6 +307,7 @@ void override_with(std::optional<Value>& effective, const std::optional<Value>& 
 void overlay_provider(ProviderConfig& effective, const ProviderConfig& upper) {
     override_with(effective.host, upper.host);
     override_with(effective.port, upper.port);
+    override_with(effective.base_path, upper.base_path);
     override_with(effective.mode, upper.mode);
     override_with(effective.model, upper.model);
     override_with(effective.stream, upper.stream);
@@ -323,7 +332,8 @@ void validate_effective(
     const std::filesystem::path& definition,
     const std::filesystem::path& port_source,
     const std::filesystem::path& temperature_source,
-    const std::filesystem::path& web_search_source) {
+    const std::filesystem::path& web_search_source,
+    const std::filesystem::path& base_path_source) {
     if (!effective.host || !effective.port) {
         throw std::runtime_error("Effective config for character file '"
             + utf8_path(definition) + "' requires string 'host' and integer 'port' values");
@@ -338,6 +348,10 @@ void validate_effective(
             || *effective.temperature > 2.0)) {
         throw std::runtime_error("Config file '" + utf8_path(temperature_source)
             + "' requires 'temperature' between 0 and 2");
+    }
+    if (effective.base_path && !is_valid_base_path(*effective.base_path)) {
+        throw std::runtime_error("Config file '" + utf8_path(base_path_source)
+            + "' requires 'base_path' to start with '/', not end with '/', and contain no query, fragment, or whitespace");
     }
     const WebSearchMode search =
         effective.web_search.value_or(default_web_search_mode);
@@ -372,6 +386,7 @@ ModelBackendConfig make_backend_config(const ProviderConfig& effective) {
     ModelBackendConfig backend;
     backend.host = *effective.host;
     backend.port = *effective.port;
+    if (effective.base_path) backend.base_path = *effective.base_path;
     if (effective.mode) backend.mode = *effective.mode;
     if (effective.model) backend.model = *effective.model;
     if (effective.stream) backend.stream = *effective.stream;
@@ -399,7 +414,7 @@ ProviderConfig load_provider_config(
     const toml::table* table = workspace_config["provider"].as_table();
     if (!table) throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path) + "' requires a [provider] table");
     static const std::unordered_set<std::string_view> allowed{
-        "host", "port", "mode", "model", "stream", "temperature",
+        "host", "port", "base_path", "mode", "model", "stream", "temperature",
         "api_key_env", "reasoning_effort", "reasoning_format", "https",
         "api", "web_search"};
     for (const auto& [key, value] : *table) {
@@ -413,6 +428,7 @@ ProviderConfig load_provider_config(
     ProviderConfig provider{.source = workspace_config_path,
         .host = read_optional<std::string>(*table, workspace_config_path, "host", "string"),
         .port = read_optional<int>(*table, workspace_config_path, "port", "integer"),
+        .base_path = read_optional<std::string>(*table, workspace_config_path, "base_path", "string"),
         .mode = read_mode(*table, workspace_config_path),
         .model = read_optional<std::string>(*table, workspace_config_path, "model", "string"),
         .stream = read_optional<bool>(*table, workspace_config_path, "stream", "boolean"),
@@ -436,6 +452,10 @@ ProviderConfig load_provider_config(
         throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
             + "' [provider] requires 'temperature' between 0 and 2");
     }
+    if (provider.base_path && !is_valid_base_path(*provider.base_path)) {
+        throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
+            + "' [provider] requires 'base_path' to start with '/', not end with '/', and contain no query, fragment, or whitespace");
+    }
     return provider;
 }
 
@@ -446,15 +466,18 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     std::filesystem::path port_source = paths.definition;
     std::filesystem::path temperature_source = paths.definition;
     std::filesystem::path web_search_source = paths.definition;
+    std::filesystem::path base_path_source = paths.definition;
     if (paths.application_provider) {
         overlay_provider(effective, *paths.application_provider);
         if (effective.port) port_source = paths.application_provider->source;
         if (effective.temperature) temperature_source = paths.application_provider->source;
         if (effective.web_search) web_search_source = paths.application_provider->source;
+        if (effective.base_path) base_path_source = paths.application_provider->source;
     }
     if (definition.provider.port) port_source = paths.definition;
     if (definition.provider.temperature) temperature_source = paths.definition;
     if (definition.provider.web_search) web_search_source = paths.definition;
+    if (definition.provider.base_path) base_path_source = paths.definition;
     overlay_provider(effective, definition.provider);
     const auto apply = [&](const std::optional<std::filesystem::path>& path, ConfigLayer layer) {
         if (!path) {
@@ -464,13 +487,15 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
         if (parsed.provider.port) port_source = *path;
         if (parsed.provider.temperature) temperature_source = *path;
         if (parsed.provider.web_search) web_search_source = *path;
+        if (parsed.provider.base_path) base_path_source = *path;
         overlay_provider(effective, parsed.provider);
         overlay(prompt_variables, parsed.prompt_variables);
     };
     apply(paths.forum_defaults, ConfigLayer::forum_defaults);
     apply(paths.member_override, ConfigLayer::member_override);
     validate_effective(
-        effective, paths.definition, port_source, temperature_source, web_search_source);
+        effective, paths.definition, port_source, temperature_source, web_search_source,
+        base_path_source);
     CharacterMetadata character{
         .id = utf8_path(paths.definition.parent_path().filename()),
         .display_name = *definition.display_name,

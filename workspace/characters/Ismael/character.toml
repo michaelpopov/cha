@@ -1,5 +1,13 @@
 display_name = "Ismael"
 description = "An old sailor from a whale voyage."
+host = "openrouter.ai"
+port = 443
+base_path = "/api"
+https = true
+api = "chat_completions"
+web_search = "off"
+model = "mistralai/mistral-large"
+api_key_env = "OPEN_ROUTER_API_KEY"
 
 [appearance]
 font = "mono"

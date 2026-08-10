@@ -68,6 +68,7 @@ void expect_definition_values(const LoadedCharacterConfig& loaded) {
     const ModelBackendConfig& config = loaded.backend;
     EXPECT_EQ(config.host, "definition");
     EXPECT_EQ(config.port, 80);
+    EXPECT_EQ(config.base_path, "/definition");
     EXPECT_EQ(config.mode, Mode::test);
     EXPECT_EQ(config.model, "one");
     EXPECT_TRUE(config.stream);
@@ -84,7 +85,7 @@ constexpr std::string_view complete_definition =
     "display_name = \"Example\"\nhost = \"definition\"\nport = 80\nmode = \"test\"\n"
     "model = \"one\"\nstream = true\ntemperature = 0.1\napi_key = \"one\"\n"
     "api_key_env = \"ONE\"\nreasoning_effort = \"low\"\nreasoning_format = \"none\"\n"
-    "https = false\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n";
+    "https = false\nbase_path = \"/definition\"\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n";
 
 TEST(Config, BackendMaterializationRequiresHostAndPort) {
     EXPECT_THROW(
@@ -110,17 +111,18 @@ TEST(Config, SeparatesDefinitionMetadataFromModelBackendConfiguration) {
 TEST(Config, OverlaysEveryRuntimeAndPromptFieldAcrossThreeLayers) {
     ConfigFiles files;
     files.write(files.definition(),
-        "display_name = \"Example\"\nhost = \"definition\"\nport = 80\nmode = \"test\"\nmodel = \"one\"\nstream = false\ntemperature = 0.1\napi_key = \"one\"\napi_key_env = \"ONE\"\nreasoning_effort = \"low\"\nreasoning_format = \"none\"\nhttps = false\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n");
+        "display_name = \"Example\"\nhost = \"definition\"\nport = 80\nbase_path = \"/definition\"\nmode = \"test\"\nmodel = \"one\"\nstream = false\ntemperature = 0.1\napi_key = \"one\"\napi_key_env = \"ONE\"\nreasoning_effort = \"low\"\nreasoning_format = \"none\"\nhttps = false\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n");
     files.write(files.defaults(),
-        "host = \"defaults\"\nport = 443\nmode = \"test\"\nmodel = \"two\"\nstream = false\ntemperature = 0.2\napi_key = \"two\"\napi_key_env = \"TWO\"\nreasoning_effort = \"medium\"\nreasoning_format = \"reasoning\"\nhttps = false\n[prompt]\nvalue = \"defaults\"\ndefault = \"default\"\n");
+        "host = \"defaults\"\nport = 443\nbase_path = \"/defaults\"\nmode = \"test\"\nmodel = \"two\"\nstream = false\ntemperature = 0.2\napi_key = \"two\"\napi_key_env = \"TWO\"\nreasoning_effort = \"medium\"\nreasoning_format = \"reasoning\"\nhttps = false\n[prompt]\nvalue = \"defaults\"\ndefault = \"default\"\n");
     files.write(files.member(),
-        "host = \"member\"\nport = 8443\nmode = \"net\"\nmodel = \"three\"\nstream = true\ntemperature = 0.3\napi_key = \"three\"\napi_key_env = \"THREE\"\nreasoning_effort = \"high\"\nreasoning_format = \"reasoning_content\"\nhttps = true\n[prompt]\nvalue = \"member\"\nmember = \"member\"\n");
+        "host = \"member\"\nport = 8443\nbase_path = \"/member\"\nmode = \"net\"\nmodel = \"three\"\nstream = true\ntemperature = 0.3\napi_key = \"three\"\napi_key_env = \"THREE\"\nreasoning_effort = \"high\"\nreasoning_format = \"reasoning_content\"\nhttps = true\n[prompt]\nvalue = \"member\"\nmember = \"member\"\n");
     const LoadedCharacterConfig loaded = load_character_config(files.paths(true, true));
     const ModelBackendConfig& effective = loaded.backend;
     EXPECT_EQ(loaded.character.id, "definition");
     EXPECT_EQ(loaded.character.display_name, "Example");
     EXPECT_EQ(effective.host, "member");
     EXPECT_EQ(effective.port, 8443);
+    EXPECT_EQ(effective.base_path, "/member");
     EXPECT_EQ(effective.mode, Mode::net);
     EXPECT_EQ(effective.model, "three");
     EXPECT_TRUE(effective.stream);
@@ -428,6 +430,16 @@ TEST(Config, RejectsUnknownApiAndWebSearchValuesWithSourceAttribution) {
         "web_search");
 }
 
+TEST(Config, ValidatesBasePathWithSourceAttribution) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        std::string(required_definition) + "base_path = \"api\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths()); },
+        files.definition(),
+        "base_path");
+}
+
 TEST(Config, RejectsWebSearchWithoutResponsesApiAndNamesSearchSource) {
     ConfigFiles files;
     files.write(files.definition(),
@@ -477,8 +489,9 @@ TEST(Config, WorkspaceProviderAcceptsApiAndWebSearchAndRejectsApiKey) {
     ConfigFiles files;
     files.write(files.application(),
         "[provider]\nhost = \"application\"\nport = 81\nmode = \"test\"\n"
-        "api = \"responses\"\nweb_search = \"auto\"\n");
+        "base_path = \"/api\"\napi = \"responses\"\nweb_search = \"auto\"\n");
     const ProviderConfig provider = load_provider_config(files.application());
+    EXPECT_EQ(provider.base_path, "/api");
     EXPECT_EQ(provider.api, ProviderApi::responses);
     EXPECT_EQ(provider.web_search, WebSearchMode::automatic);
 

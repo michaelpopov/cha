@@ -518,6 +518,27 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
     }));
 }
 
+TEST(ProviderClient, PrefixesProviderEndpointsWithConfiguredBasePath) {
+    MockHttpServer mock({http_response(
+        "application/json", R"({"choices":[{"message":{"content":"Answer"}}]})")});
+    mock.start();
+    CharacterDefinition definition = network_definition(mock.port(), false);
+    definition.backend.base_path = "/api";
+    std::atomic_bool cancellation{false};
+    ProviderClient client(std::move(definition));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 33, "Question");
+
+    const GenerationResult result = complete(
+        client, request, transcript, [](GenerationDelta) {}, cancellation);
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    mock.join();
+    ASSERT_EQ(mock.requests().size(), 1U);
+    EXPECT_TRUE(mock.requests().front().starts_with("POST /api/v1/chat/completions HTTP/1.1"));
+    EXPECT_TRUE(client.info().api.ends_with("/api/v1/chat/completions"));
+}
+
 TEST(ProviderClient, HandlesNonStreamingResponsesApiResponse) {
     MockHttpServer mock({http_response(
         "application/json",

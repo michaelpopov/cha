@@ -589,7 +589,7 @@ std::string ProviderClient::base_url() const {
         host = '[' + host + ']';
     }
     return std::string(config_.https ? "https://" : "http://")
-        + host + ':' + std::to_string(config_.port);
+        + host + ':' + std::to_string(config_.port) + config_.base_path;
 }
 
 std::string ProviderClient::endpoint() const {

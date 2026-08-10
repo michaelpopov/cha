@@ -49,6 +49,7 @@ inline constexpr WebSearchMode default_web_search_mode = WebSearchMode::required
 struct ModelBackendConfig {
     std::string host;
     int port{};
+    std::string base_path;
     Mode mode{Mode::test};
     std::string model;
     bool stream{true};
@@ -72,6 +73,7 @@ struct ProviderConfig {
     std::filesystem::path source;
     std::optional<std::string> host;
     std::optional<int> port;
+    std::optional<std::string> base_path;
     std::optional<Mode> mode;
     std::optional<std::string> model;
     std::optional<bool> stream;

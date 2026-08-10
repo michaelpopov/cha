@@ -98,6 +98,7 @@ Provider protocol and search fields:
 | --- | --- | --- | --- |
 | `api` | `chat_completions`, `responses` | `responses` | Selects `/v1/chat/completions` or `/v1/responses`. |
 | `web_search` | `off`, `auto`, `required` | `required` | Hosted OpenAI web search; non-`off` requires `api = "responses"`. |
+| `base_path` | URL path prefix | empty | Prepended before the API's `/v1` path; for example, OpenRouter uses `/api`. |
 
 The effective defaults are `api = "responses"` and
 `web_search = "required"`, so every character searches unless a higher layer

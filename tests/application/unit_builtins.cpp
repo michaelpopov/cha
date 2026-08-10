@@ -21,6 +21,7 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
         .source = "workspace.toml",
         .host = "provider.example",
         .port = 8443,
+        .base_path = "/api",
         .mode = cha::Mode::net,
         .model = "model-one",
         .stream = false,
@@ -35,6 +36,7 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
     const cha::ModelBackendConfig& backend = definitions.front().backend;
     EXPECT_EQ(backend.host, "provider.example");
     EXPECT_EQ(backend.port, 8443);
+    EXPECT_EQ(backend.base_path, "/api");
     EXPECT_EQ(backend.mode, cha::Mode::net);
     EXPECT_EQ(backend.model, "model-one");
     EXPECT_FALSE(backend.stream);
@@ -53,6 +55,7 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
     const cha::ModelBackendConfig defaults;
     EXPECT_EQ(sparse.host, "only.example");
     EXPECT_EQ(sparse.port, 80);
+    EXPECT_EQ(sparse.base_path, defaults.base_path);
     EXPECT_EQ(sparse.mode, defaults.mode);
     EXPECT_EQ(sparse.model, defaults.model);
     EXPECT_EQ(sparse.stream, defaults.stream);
