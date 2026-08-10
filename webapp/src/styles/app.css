@@ -38,12 +38,13 @@ html,
 body,
 #root {
   width: 100%;
+  min-width: 0;
   height: 100%;
+  height: 100dvh;
   margin: 0;
 }
 
 body {
-  min-width: 20rem;
   overflow: hidden;
   color: var(--foreground);
   background: var(--background);
@@ -76,10 +77,12 @@ select:disabled {
 }
 
 .cha-app {
-  position: relative;
-  width: 100%;
-  height: 100%;
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: 100dvh;
   overflow: hidden;
+  overscroll-behavior: none;
   color: var(--foreground);
   background: var(--background);
 }
@@ -187,6 +190,7 @@ button.cha-recent-row:hover,
   z-index: 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
   overflow: hidden;
   color: var(--foreground);
   background: var(--surface);
@@ -239,6 +243,7 @@ button.cha-recent-row:hover,
 .cha-screen {
   display: flex;
   min-height: 0;
+  min-width: 0;
 }
 
 /* The same reading column the transcript, the composer, and a character's
@@ -442,7 +447,8 @@ button.cha-recent-row:hover,
 
 .cha-chat {
   flex-direction: column;
-  padding: 0.2rem 1rem 1rem;
+  min-width: 0;
+  padding: 0.2rem 1rem max(1rem, env(safe-area-inset-bottom));
 }
 
 .cha-transcript {
@@ -753,6 +759,19 @@ button.cha-recent-row:hover,
 }
 
 @media (max-width: 430px) {
+  :root {
+    --cha-column: 100%;
+  }
+
+  .cha-topbar {
+    grid-template-columns: 2.65rem minmax(0, 1fr);
+    padding: max(0.5rem, env(safe-area-inset-top)) 0.65rem 0.35rem;
+  }
+
+  .cha-empty-action {
+    display: none;
+  }
+
   .cha-sidebar {
     width: calc(100% - 3.5rem);
   }
@@ -763,6 +782,10 @@ button.cha-recent-row:hover,
 
   .cha-navigation {
     padding-inline: 1rem;
+  }
+
+  .cha-chat {
+    padding-inline: 0.65rem;
   }
 
   .cha-message,

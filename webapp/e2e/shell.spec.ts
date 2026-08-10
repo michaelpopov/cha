@@ -131,6 +131,7 @@ test('keeps the pushed sidebar usable at desktop and iPhone widths', async ({ pa
     const app = page.locator('.cha-app');
     await expect(app).toHaveAttribute('data-sidebar', 'open');
     await expect(page.getByRole('button', { name: 'Hide sidebar' })).toBeInViewport();
+    await expect(page.getByRole('textbox', { name: 'Message' })).toBeInViewport();
     // A pushed panel that kept its full width would hang off the right edge and
     // carry everything centred inside it off-centre with it.
     await expect(async () => {
@@ -138,10 +139,21 @@ test('keeps the pushed sidebar usable at desktop and iPhone widths', async ({ pa
       expect(panel).not.toBeNull();
       expect(Math.round((panel?.x ?? 0) + (panel?.width ?? 0))).toBeLessThanOrEqual(width);
     }).toPass();
+    await expect(async () => {
+      const pageSize = await page.evaluate(() => ({
+        height: document.documentElement.scrollHeight,
+        visibleHeight: document.documentElement.clientHeight,
+        visibleWidth: document.documentElement.clientWidth,
+        width: document.documentElement.scrollWidth,
+      }));
+      expect(pageSize.width).toBeLessThanOrEqual(pageSize.visibleWidth);
+      expect(pageSize.height).toBeLessThanOrEqual(pageSize.visibleHeight);
+    }).toPass();
 
     await page.getByRole('button', { name: 'Hide sidebar' }).click();
     await expect(app).toHaveAttribute('data-sidebar', 'closed');
     await expect(page.getByRole('button', { name: 'Show sidebar' })).toBeInViewport();
+    await expect(page.getByRole('textbox', { name: 'Message' })).toBeInViewport();
     await page.getByRole('button', { name: 'Show sidebar' }).click();
   }
 });
