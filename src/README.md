@@ -74,7 +74,7 @@ are stored and used in routes; display names and labels are presentation data.
 Opening a session validates that its database metadata matches its forum,
 filename, and schema before restoring it.
 
-One `WorkspaceModel` holds every static workspace value for the server lifetime,
+One `WorkspaceDefinition` holds every static workspace value for the server lifetime,
 and both discovery and newly opened sessions read from it, so the browser and a
 controller cannot disagree. Session listings are read from storage per request,
 so newly created sessions appear without a restart. Changes to personas,

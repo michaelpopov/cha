@@ -47,7 +47,7 @@ HTTP API, and streams session changes with server-sent events (SSE).
 
 The most useful high-level model is:
 
-- `WorkspaceModel` is the immutable catalog of personas, characters, forums,
+- `WorkspaceDefinition` is the immutable catalog of personas, characters, forums,
   prompts, and effective provider configuration loaded at process startup.
 - `SessionRepository` is the dynamic storage gateway. It lists, creates,
   validates, leases, and restores SQLite session databases.
@@ -334,7 +334,7 @@ Startup proceeds in this order:
 2. `load_dotenv()` loads `workspace/.env`.
 3. `load_workspace_config()` reads `workspace.toml`.
 4. File logging is initialized.
-5. `WorkspaceModel::load()` reads and validates all static workspace data.
+5. `WorkspaceDefinition::load()` reads and validates all static workspace data.
 6. `SessionRepository` is constructed from the forum session directories and
    creates the temporary Entrance/Welcome database.
 7. `LiveSessionManager` is given an opener lambda that calls `open_session()`.
@@ -348,11 +348,11 @@ Startup proceeds in this order:
 The local declaration order and the explicit inner scope matter: destructors
 run in reverse order, and log users must be destroyed before logging itself.
 
-### 8.1 What `WorkspaceModel::load()` builds
+### 8.1 What `WorkspaceDefinition::load()` builds
 
-Read [application/workspace_model.h](../src/application/workspace_model.h), then
-the helpers and `WorkspaceModel::load()` in
-[application/workspace_model.cpp](../src/application/workspace_model.cpp).
+Read [application/workspace_definition.h](../src/application/workspace_definition.h), then
+the helpers and `WorkspaceDefinition::load()` in
+[application/workspace_definition.cpp](../src/application/workspace_definition.cpp).
 
 The loader treats the workspace as one configuration unit:
 
@@ -973,7 +973,7 @@ Treat snapshots as truth and appends as a verified compression of truth.
 
 | Object | Lifetime/owner | Thread rule |
 | --- | --- | --- |
-| `WorkspaceModel` | Process, shared immutable | Concurrent reads only |
+| `WorkspaceDefinition` | Process, shared immutable | Concurrent reads only |
 | `SessionRepository` | Process, shared immutable mapping | Concurrent const operations; leases arbitrate sessions |
 | `LiveSessionManager` | Process web runtime | Internal mutex protects registry/lifecycle coordination |
 | `LiveSession` | Manager entry plus transient route handles | Owner thread mutates session; lifecycle methods synchronize |
@@ -1185,7 +1185,7 @@ Work through these in order. Write the answer with symbol names, not only prose.
 
 ### Exercise 1: draw the object graph
 
-Starting at `main()`, draw who owns `WorkspaceModel`, `SessionRepository`,
+Starting at `main()`, draw who owns `WorkspaceDefinition`, `SessionRepository`,
 `LiveSessionManager`, routes, a `LiveSession`, its controller, journal, executor,
 backends, batch, and mailbox. Mark `shared_ptr`, `unique_ptr`, value, and borrowed
 references.

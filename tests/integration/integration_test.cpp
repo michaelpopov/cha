@@ -7,7 +7,7 @@
 #include "util/thread_pool.h"
 #include "support/mock_http_server.h"
 #include "session/session_database.h"
-#include "application/workspace_model.h"
+#include "application/workspace_definition.h"
 #include "support/test_notifier.h"
 #include "support/test_controller.h"
 #include "support/test_session_database.h"
@@ -277,7 +277,7 @@ struct LobbySetup {
 LobbySetup lobby_setup() {
     const std::filesystem::path root{CHA_WORKSPACE_DIRECTORY};
     const WorkspaceConfig config = load_workspace_config(root);
-    const WorkspaceModel model = WorkspaceModel::load(root, config);
+    const WorkspaceDefinition model = WorkspaceDefinition::load(root, config);
     const ForumInfo* const forum = model.find_forum("lobby");
     if (forum == nullptr) throw std::runtime_error("Checked-in workspace has no lobby forum");
     const std::filesystem::path forum_directory = root / "forums" / "lobby";

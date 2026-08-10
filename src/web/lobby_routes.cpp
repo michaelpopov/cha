@@ -1,6 +1,6 @@
 #include "web/lobby_routes.h"
 
-#include "application/workspace_model.h"
+#include "application/workspace_definition.h"
 #include "session/not_found_error.h"
 #include "session/session_repository.h"
 #include "web/http_response.h"
@@ -68,7 +68,7 @@ CharacterSummary character_summary(const CharacterMetadata& character) {
     return {character.id, character.display_name, character.description, character.appearance};
 }
 
-ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceModel& model) {
+ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& model) {
     ForumSummary result{.id = forum.id, .display_name = forum.display_name,
                         .default_character_id = forum.default_character_id};
     result.members.reserve(forum.member_ids.size());
@@ -103,7 +103,7 @@ std::vector<SessionListing> sessions_for(
 }
 
 std::vector<RecentSession> recent_sessions(
-    const WorkspaceModel& model,
+    const WorkspaceDefinition& model,
     const SessionRepository& sessions) {
     std::vector<RecentSession> result;
     for (const ForumInfo& forum : model.forums()) {
@@ -122,7 +122,7 @@ std::vector<RecentSession> recent_sessions(
 } // namespace
 
 LobbyRoutes::LobbyRoutes(
-    std::shared_ptr<const WorkspaceModel> model,
+    std::shared_ptr<const WorkspaceDefinition> model,
     std::shared_ptr<const SessionRepository> sessions,
     InitialSelection initial,
     LiveSessionManager& live_sessions,

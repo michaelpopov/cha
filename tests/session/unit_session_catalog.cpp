@@ -95,7 +95,7 @@ protected:
     }
 
     // Session tests address storage by explicit fixture path; resolving the
-    // workspace layout is WorkspaceModel's job, not this catalog's.
+    // workspace layout is WorkspaceDefinition's job, not this catalog's.
     std::filesystem::path sessions_directory(std::string_view forum = "lobby") const {
         return root / "forums" / std::string(forum) / "sessions";
     }

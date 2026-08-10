@@ -1,4 +1,4 @@
-#include "application/workspace_model.h"
+#include "application/workspace_definition.h"
 
 #include "application/builtins.h"
 #include "agents/character.h"
@@ -471,10 +471,10 @@ WorkspaceConfig load_workspace_config(const std::filesystem::path& root) {
     };
 }
 
-WorkspaceModel WorkspaceModel::load(
+WorkspaceDefinition WorkspaceDefinition::load(
     std::filesystem::path root,
     WorkspaceConfig config) {
-    WorkspaceModel model;
+    WorkspaceDefinition model;
     model.config_ = std::move(config);
 
     if (!std::filesystem::is_directory(root / "forums")) {
@@ -590,18 +590,18 @@ WorkspaceModel WorkspaceModel::load(
     return model;
 }
 
-const CharacterMetadata* WorkspaceModel::find_character(
+const CharacterMetadata* WorkspaceDefinition::find_character(
     std::string_view id) const noexcept {
     const auto found = character_index_.find(std::string(id));
     return found == character_index_.end() ? nullptr : &characters_[found->second];
 }
 
-const ForumInfo* WorkspaceModel::find_forum(std::string_view id) const noexcept {
+const ForumInfo* WorkspaceDefinition::find_forum(std::string_view id) const noexcept {
     const auto found = forum_index_.find(std::string(id));
     return found == forum_index_.end() ? nullptr : &forums_[found->second];
 }
 
-std::string_view WorkspaceModel::character_markdown(std::string_view id) const {
+std::string_view WorkspaceDefinition::character_markdown(std::string_view id) const {
     const auto found = character_markdown_.find(std::string(id));
     if (found == character_markdown_.end()) {
         throw std::runtime_error("Character '" + std::string(id) + "' is not defined");
@@ -609,11 +609,11 @@ std::string_view WorkspaceModel::character_markdown(std::string_view id) const {
     return found->second;
 }
 
-std::vector<ForumSessionDirectory> WorkspaceModel::session_directories() const {
+std::vector<ForumSessionDirectory> WorkspaceDefinition::session_directories() const {
     return session_directories_;
 }
 
-std::vector<CharacterDefinition> WorkspaceModel::copy_definitions_for(
+std::vector<CharacterDefinition> WorkspaceDefinition::copy_definitions_for(
     std::string_view forum_id) const {
     const auto found = definitions_.find(std::string(forum_id));
     if (found == definitions_.end()) {

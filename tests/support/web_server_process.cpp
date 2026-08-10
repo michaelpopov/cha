@@ -181,8 +181,8 @@ bool WebServerProcess::wait_until_ready(std::chrono::milliseconds timeout) {
     // the stdout pipe. Serving alone would let a caller read output() before
     // either happened, so readiness means both.
     const std::string announcement =
-        "CHA ready at http://" + std::string(loopback_host) + ':'
-        + std::to_string(port_) + '/';
+        "CHA ready at " + std::string(loopback_host) + ':'
+        + std::to_string(port_);
     httplib::Client client(loopback_host, port_);
     client.set_connection_timeout(0, 100000);
     client.set_read_timeout(0, 100000);

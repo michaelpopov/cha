@@ -1,6 +1,6 @@
 #include "application/builtins.h"
 
-#include "application/workspace_model.h"
+#include "application/workspace_definition.h"
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
@@ -69,7 +69,7 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
 TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {
     cha::test::TestWorkspace fixture;
     const cha::WorkspaceConfig config = cha::load_workspace_config(fixture.root());
-    const cha::WorkspaceModel model = cha::WorkspaceModel::load(fixture.root(), config);
+    const cha::WorkspaceDefinition model = cha::WorkspaceDefinition::load(fixture.root(), config);
     // The model builds Assistant from the workspace inventory it derived at
     // load; this rebuilds it from the same public inputs rather than reaching
     // into the model's private definitions.

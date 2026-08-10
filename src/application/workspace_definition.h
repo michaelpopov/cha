@@ -46,9 +46,9 @@ struct ForumInfo {
 // at startup and performs no filesystem reads afterwards, so every discovery
 // response and every newly opened session sees the same definitions. Session
 // databases remain dynamic and are owned by SessionRepository.
-class WorkspaceModel final {
+class WorkspaceDefinition final {
 public:
-    static WorkspaceModel load(
+    static WorkspaceDefinition load(
         std::filesystem::path root,
         WorkspaceConfig config);
 
@@ -68,12 +68,12 @@ public:
     std::vector<ForumSessionDirectory> session_directories() const;
 
 private:
-    WorkspaceModel() = default;
+    WorkspaceDefinition() = default;
 
     // Full definitions may carry provider credentials, so they stay off the
     // general API. open_session() is the one production caller that needs them.
     friend OpenedSession open_session(
-        const WorkspaceModel&,
+        const WorkspaceDefinition&,
         const SessionRepository&,
         const SessionIdentity&,
         WakeNotifier&);

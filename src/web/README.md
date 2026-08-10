@@ -9,7 +9,7 @@ presentation result types.
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and
 live-session coordination, including the textual grammar accepted by the
-browser's chat box. The composition root builds one immutable `WorkspaceModel`
+browser's chat box. The composition root builds one immutable `WorkspaceDefinition`
 and one `SessionRepository`; routes read discovery from the model and storage
 from the repository, and the `SessionOpener` opens every session — including the
 built-in Welcome — through `open_session()` with the model's Guest-plus-

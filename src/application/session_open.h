@@ -1,6 +1,6 @@
 #pragma once
 
-#include "application/workspace_model.h"
+#include "application/workspace_definition.h"
 #include "session/opened_session.h"
 #include "session/session_identity.h"
 
@@ -19,7 +19,7 @@ class WakeNotifier;
 // SessionNotFoundError, SessionBusyError, and storage failures reach the
 // caller, which maps them to registry or HTTP results.
 OpenedSession open_session(
-    const WorkspaceModel& model,
+    const WorkspaceDefinition& model,
     const SessionRepository& sessions,
     const SessionIdentity& identity,
     WakeNotifier& notifier);

@@ -6,7 +6,7 @@
 #include "support/test_workspace.h"
 
 #include "agents/character_config.h"
-#include "application/workspace_model.h"
+#include "application/workspace_definition.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -431,7 +431,7 @@ TEST(WebSettings, RequestHeadroomIsInjectable) {
 
 TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
     test::TestWorkspace fixture;
-    const WorkspaceModel model = WorkspaceModel::load(
+    const WorkspaceDefinition model = WorkspaceDefinition::load(
         fixture.root(), load_workspace_config(fixture.root()));
     const ForumInfo* const forum = model.find_forum("lobby");
     ASSERT_NE(forum, nullptr);

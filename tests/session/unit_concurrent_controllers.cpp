@@ -4,7 +4,7 @@
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "application/session_open.h"
-#include "application/workspace_model.h"
+#include "application/workspace_definition.h"
 #include "session/session_repository.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
@@ -137,12 +137,12 @@ struct WorkspaceLayout {
 // repository that owns its storage.
 struct SessionGraph {
     explicit SessionGraph(const std::filesystem::path& root)
-        : model(WorkspaceModel::load(root, load_workspace_config(root))),
+        : model(WorkspaceDefinition::load(root, load_workspace_config(root))),
           repository(
               model.session_directories(),
               TemporarySessionSeed{{"temporary-forum", "temporary-session"}, "Temporary"}) {}
 
-    WorkspaceModel model;
+    WorkspaceDefinition model;
     SessionRepository repository;
 };
 

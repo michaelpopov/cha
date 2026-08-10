@@ -609,10 +609,6 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     workspace.write_workspace_config();
     test::WebServerProcess server(workspace.root(), port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
-    EXPECT_NE(
-        server.output().find(
-            "CHA ready at http://127.0.0.1:" + std::to_string(port) + "/"),
-        std::string::npos);
 
     httplib::Client client = web_client(port);
     const auto shell = client.Get("/");

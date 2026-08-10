@@ -27,11 +27,11 @@ namespace {
 
 class SessionOpenTest : public ::testing::Test {
 protected:
-    WorkspaceModel load_model() const {
-        return WorkspaceModel::load(fixture_.root(), load_workspace_config(fixture_.root()));
+    WorkspaceDefinition load_model() const {
+        return WorkspaceDefinition::load(fixture_.root(), load_workspace_config(fixture_.root()));
     }
 
-    std::unique_ptr<SessionRepository> make_repository(const WorkspaceModel& model) const {
+    std::unique_ptr<SessionRepository> make_repository(const WorkspaceDefinition& model) const {
         return std::make_unique<SessionRepository>(
             model.session_directories(),
             TemporarySessionSeed{
@@ -48,7 +48,7 @@ protected:
 };
 
 TEST_F(SessionOpenTest, OpensAStoredSessionWithTheLoadedForumDefinitions) {
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
 
@@ -67,7 +67,7 @@ TEST_F(SessionOpenTest, OpensAStoredSessionWithTheLoadedForumDefinitions) {
 }
 
 TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePathWithTheAssistantRoster) {
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
 
     OpenedSession opened = open_session(model, *sessions, welcome(), notifier_);
@@ -83,7 +83,7 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePathWithTheAssistantRoster) {
 }
 
 TEST_F(SessionOpenTest, GivesEveryControllerTheModelsGuestInclusivePersonaRoster) {
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
 
@@ -109,7 +109,7 @@ TEST_F(SessionOpenTest, GivesEveryControllerTheModelsGuestInclusivePersonaRoster
 }
 
 TEST_F(SessionOpenTest, PropagatesMissingForumsSessionsAndLeaseContention) {
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
 
@@ -131,7 +131,7 @@ TEST_F(SessionOpenTest, ReleasesTheLeaseWhenControllerConstructionFails) {
     fixture_.write_character_defaults(
         "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n"
         "api_key_env = \"CHA_TEST_UNSET_API_KEY\"\n");
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
 
@@ -144,7 +144,7 @@ TEST_F(SessionOpenTest, ReleasesTheLeaseWhenControllerConstructionFails) {
 }
 
 TEST_F(SessionOpenTest, OpensWithTheLoadedModelAfterTheWorkspaceChangesOnDisk) {
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
 
@@ -159,7 +159,7 @@ TEST_F(SessionOpenTest, OpensWithTheLoadedModelAfterTheWorkspaceChangesOnDisk) {
         opened.controller->shutdown();
     }
 
-    const WorkspaceModel reloaded = load_model();
+    const WorkspaceDefinition reloaded = load_model();
     const auto reloaded_sessions = make_repository(reloaded);
     OpenedSession fresh =
         open_session(reloaded, *reloaded_sessions, created.identity, notifier_);
@@ -169,7 +169,7 @@ TEST_F(SessionOpenTest, OpensWithTheLoadedModelAfterTheWorkspaceChangesOnDisk) {
 }
 
 TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Browser-ready session");
 
@@ -203,7 +203,7 @@ TEST_F(SessionOpenTest, OpensAWorkspaceWithoutSharedCharacterDefaults) {
         fixture_.root() / "forums" / "lobby" / "members" / "character_defaults.toml");
     fixture_.write_character_config(
         "display_name = \"Guide\"\nhost = \"127.0.0.1\"\nport = 8080\n");
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "No shared config");
 
@@ -213,7 +213,7 @@ TEST_F(SessionOpenTest, OpensAWorkspaceWithoutSharedCharacterDefaults) {
 
 #ifndef _WIN32
 TEST_F(SessionOpenTest, HoldsTheLeaseThroughExplicitShutdownUntilTheControllerIsDestroyed) {
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Shutdown lease");
     const std::filesystem::path database =
@@ -229,7 +229,7 @@ TEST_F(SessionOpenTest, HoldsTheLeaseThroughExplicitShutdownUntilTheControllerIs
 }
 
 TEST_F(SessionOpenTest, ReportsContentionBeforeRestoringSessionState) {
-    const WorkspaceModel model = load_model();
+    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Leased");
     const std::filesystem::path database =

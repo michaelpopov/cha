@@ -2,7 +2,7 @@
 
 #include "application/builtins.h"
 #include "application/session_open.h"
-#include "application/workspace_model.h"
+#include "application/workspace_definition.h"
 #include "session/session_repository.h"
 #include "web/live_session.h"
 #include "web/lobby_routes.h"
@@ -22,8 +22,8 @@ class WebGraph {
 public:
     explicit WebGraph(std::filesystem::path root)
         : root_(std::move(root)),
-          model(std::make_shared<const WorkspaceModel>(
-              WorkspaceModel::load(root_, load_workspace_config(root_)))),
+          model(std::make_shared<const WorkspaceDefinition>(
+              WorkspaceDefinition::load(root_, load_workspace_config(root_)))),
           sessions(std::make_shared<const SessionRepository>(
               model->session_directories(),
               TemporarySessionSeed{
@@ -52,7 +52,7 @@ private:
     std::filesystem::path root_;
 
 public:
-    std::shared_ptr<const WorkspaceModel> model;
+    std::shared_ptr<const WorkspaceDefinition> model;
     std::shared_ptr<const SessionRepository> sessions;
 };
 

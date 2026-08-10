@@ -75,6 +75,8 @@ host = "127.0.0.1"
 port = ${modelPort}
 mode = "net"
 model = "browser-test"
+api = "chat_completions"
+web_search = "off"
 stream = true
 https = false
 

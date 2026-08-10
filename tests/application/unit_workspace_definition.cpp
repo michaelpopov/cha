@@ -1,4 +1,4 @@
-#include "application/workspace_model.h"
+#include "application/workspace_definition.h"
 
 #include "application/builtins.h"
 #include "support/test_workspace.h"
@@ -16,8 +16,8 @@
 namespace cha {
 namespace {
 
-WorkspaceModel load_model(const std::filesystem::path& root) {
-    return WorkspaceModel::load(root, load_workspace_config(root));
+WorkspaceDefinition load_model(const std::filesystem::path& root) {
+    return WorkspaceDefinition::load(root, load_workspace_config(root));
 }
 
 std::vector<std::string> display_names(std::span<const CharacterMetadata> values) {
@@ -34,7 +34,7 @@ std::vector<std::string> display_names(std::span<const ForumInfo> values) {
 
 // The workspace personas the model published, without the built-in Guest it
 // always puts first.
-PersonaRoster custom_personas(const WorkspaceModel& model) {
+PersonaRoster custom_personas(const WorkspaceDefinition& model) {
     PersonaRoster roster = *model.personas();
     EXPECT_FALSE(roster.empty());
     EXPECT_EQ(roster.front().id, guest_id);
@@ -44,9 +44,9 @@ PersonaRoster custom_personas(const WorkspaceModel& model) {
 
 // --- Published catalogs ----------------------------------------------------
 
-TEST(WorkspaceModel, LoadsCustomWorkspaceDataAlongsideTheBuiltins) {
+TEST(WorkspaceDefinition, LoadsCustomWorkspaceDataAlongsideTheBuiltins) {
     test::TestWorkspace fixture;
-    const WorkspaceModel model = load_model(fixture.root());
+    const WorkspaceDefinition model = load_model(fixture.root());
 
     ASSERT_NE(model.find_character("guide"), nullptr);
     ASSERT_NE(model.find_character(assistant_id), nullptr);
@@ -56,10 +56,10 @@ TEST(WorkspaceModel, LoadsCustomWorkspaceDataAlongsideTheBuiltins) {
     EXPECT_EQ(model.find_forum("absent"), nullptr);
 }
 
-TEST(WorkspaceModel, PublishesGuestFirstAndEveryCatalogInDisplayOrder) {
+TEST(WorkspaceDefinition, PublishesGuestFirstAndEveryCatalogInDisplayOrder) {
     test::TestWorkspace fixture;
     fixture.add_persona("author_key", "An Author");
-    const WorkspaceModel model = load_model(fixture.root());
+    const WorkspaceDefinition model = load_model(fixture.root());
 
     ASSERT_EQ(model.personas()->size(), 3U);
     EXPECT_EQ(model.personas()->front().id, guest_id);
@@ -69,9 +69,9 @@ TEST(WorkspaceModel, PublishesGuestFirstAndEveryCatalogInDisplayOrder) {
     EXPECT_EQ(display_names(model.forums()), (std::vector<std::string>{"Entrance", "The Lobby"}));
 }
 
-TEST(WorkspaceModel, ReportsForumMembershipAndDefaultsWithoutAPath) {
+TEST(WorkspaceDefinition, ReportsForumMembershipAndDefaultsWithoutAPath) {
     test::TestWorkspace fixture;
-    const WorkspaceModel model = load_model(fixture.root());
+    const WorkspaceDefinition model = load_model(fixture.root());
 
     const ForumInfo* lobby = model.find_forum("lobby");
     ASSERT_NE(lobby, nullptr);
@@ -85,16 +85,16 @@ TEST(WorkspaceModel, ReportsForumMembershipAndDefaultsWithoutAPath) {
     EXPECT_EQ(entrance->default_character_id, assistant_id);
 }
 
-TEST(WorkspaceModel, ServesAssistantDetailFromTheEmbeddedApplicationGuide) {
+TEST(WorkspaceDefinition, ServesAssistantDetailFromTheEmbeddedApplicationGuide) {
     test::TestWorkspace fixture;
-    const WorkspaceModel model = load_model(fixture.root());
+    const WorkspaceDefinition model = load_model(fixture.root());
 
     EXPECT_EQ(model.character_markdown(assistant_id), application_guide());
     EXPECT_EQ(model.character_markdown("guide"), "Character instructions\n");
     EXPECT_THROW((void)model.character_markdown("absent"), std::runtime_error);
 }
 
-TEST(WorkspaceModel, BuildsAssistantFromAWorkspaceCarryingDescriptionsAndTags) {
+TEST(WorkspaceDefinition, BuildsAssistantFromAWorkspaceCarryingDescriptionsAndTags) {
     test::TestWorkspace fixture;
     fixture.write_character_config(
         "display_name = \"Guide\"\ndescription = \"Shows the way\"\ntags = [\"help\"]\n");
@@ -104,9 +104,9 @@ TEST(WorkspaceModel, BuildsAssistantFromAWorkspaceCarryingDescriptionsAndTags) {
     EXPECT_NO_THROW((void)load_model(fixture.root()));
 }
 
-TEST(WorkspaceModel, ReturnsOneSessionDirectoryPerCustomForum) {
+TEST(WorkspaceDefinition, ReturnsOneSessionDirectoryPerCustomForum) {
     test::TestWorkspace fixture;
-    const WorkspaceModel model = load_model(fixture.root());
+    const WorkspaceDefinition model = load_model(fixture.root());
 
     const std::vector<ForumSessionDirectory> directories = model.session_directories();
     ASSERT_EQ(directories.size(), 1U);
@@ -116,7 +116,7 @@ TEST(WorkspaceModel, ReturnsOneSessionDirectoryPerCustomForum) {
         fixture.root() / "forums" / "lobby" / "sessions");
 }
 
-TEST(WorkspaceModel, FailsToLoadWhenAnyConfiguredForumHasABrokenPrompt) {
+TEST(WorkspaceDefinition, FailsToLoadWhenAnyConfiguredForumHasABrokenPrompt) {
     test::TestWorkspace fixture;
     std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
         << "$$(missing.md)";
@@ -132,7 +132,7 @@ TEST(WorkspaceModel, FailsToLoadWhenAnyConfiguredForumHasABrokenPrompt) {
     }
 }
 
-TEST(WorkspaceModel, RejectsCharacterAndForumIdsReservedForBuiltins) {
+TEST(WorkspaceDefinition, RejectsCharacterAndForumIdsReservedForBuiltins) {
     {
         test::TestWorkspace fixture;
         const auto definition = fixture.root() / "characters" / std::string(guest_id);
@@ -153,13 +153,13 @@ TEST(WorkspaceModel, RejectsCharacterAndForumIdsReservedForBuiltins) {
     }
 }
 
-TEST(WorkspaceModel, RejectsAWorkspaceWithoutAPersonasDirectory) {
+TEST(WorkspaceDefinition, RejectsAWorkspaceWithoutAPersonasDirectory) {
     test::TestWorkspace fixture;
     std::filesystem::remove_all(fixture.root() / "personas");
     EXPECT_THROW((void)load_model(fixture.root()), std::runtime_error);
 }
 
-TEST(WorkspaceModel, RejectsMalformedForumsButAcceptsAWorkspaceWithNoCustomForum) {
+TEST(WorkspaceDefinition, RejectsMalformedForumsButAcceptsAWorkspaceWithNoCustomForum) {
     {
         test::TestWorkspace fixture;
         std::filesystem::create_directories(fixture.root() / "forums" / "broken" / "members");
@@ -174,13 +174,13 @@ TEST(WorkspaceModel, RejectsMalformedForumsButAcceptsAWorkspaceWithNoCustomForum
     {
         test::TestWorkspace fixture;
         std::filesystem::remove_all(fixture.root() / "forums" / "lobby");
-        const WorkspaceModel model = load_model(fixture.root());
+        const WorkspaceDefinition model = load_model(fixture.root());
         EXPECT_EQ(display_names(model.forums()), (std::vector<std::string>{"Entrance"}));
         EXPECT_TRUE(model.session_directories().empty());
     }
 }
 
-TEST(WorkspaceModel, RejectsDuplicateAndReservedForumPublicNames) {
+TEST(WorkspaceDefinition, RejectsDuplicateAndReservedForumPublicNames) {
     test::TestWorkspace fixture;
     const auto forum = fixture.root() / "forums" / "other";
     std::filesystem::create_directories(forum / "members" / "guide");
@@ -191,9 +191,9 @@ TEST(WorkspaceModel, RejectsDuplicateAndReservedForumPublicNames) {
     EXPECT_THROW((void)load_model(fixture.root()), std::runtime_error);
 }
 
-TEST(WorkspaceModel, KeepsPublicResultsFixedWhenWorkspaceFilesChangeAfterLoading) {
+TEST(WorkspaceDefinition, KeepsPublicResultsFixedWhenWorkspaceFilesChangeAfterLoading) {
     test::TestWorkspace fixture;
-    const WorkspaceModel model = load_model(fixture.root());
+    const WorkspaceDefinition model = load_model(fixture.root());
     const std::vector<std::string> characters = display_names(model.characters());
     const std::vector<std::string> forums = display_names(model.forums());
     const std::size_t persona_count = model.personas()->size();
@@ -212,7 +212,7 @@ TEST(WorkspaceModel, KeepsPublicResultsFixedWhenWorkspaceFilesChangeAfterLoading
     EXPECT_EQ(model.find_forum("lobby")->display_name, "The Lobby");
     EXPECT_EQ(model.character_markdown("guide"), "Character instructions\n");
 
-    const WorkspaceModel reloaded = load_model(fixture.root());
+    const WorkspaceDefinition reloaded = load_model(fixture.root());
     EXPECT_EQ(reloaded.find_character("guide")->display_name, "Renamed");
     EXPECT_EQ(reloaded.find_forum("lobby")->display_name, "Renamed Lobby");
     EXPECT_EQ(reloaded.character_markdown("guide"), "Edited instructions\n");
@@ -223,11 +223,11 @@ TEST(WorkspaceModel, KeepsPublicResultsFixedWhenWorkspaceFilesChangeAfterLoading
 
 // A hand-built workspace, so each test can break exactly one part of the
 // directory graph the model validates at load.
-class WorkspaceModelLayoutTest : public testing::Test {
+class WorkspaceDefinitionLayoutTest : public testing::Test {
 protected:
     void SetUp() override {
         root_ = std::filesystem::temp_directory_path()
-            / ("cha_workspace_model_"
+            / ("cha_workspace_definition_"
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root_ / "characters" / "guide");
@@ -254,19 +254,19 @@ protected:
 
     void TearDown() override { std::filesystem::remove_all(root_); }
 
-    WorkspaceModel load() const { return load_model(root_); }
+    WorkspaceDefinition load() const { return load_model(root_); }
 
     std::filesystem::path root_;
 };
 
-TEST_F(WorkspaceModelLayoutTest, ResolvesLoggingSettingsRelativeToTheWorkspace) {
+TEST_F(WorkspaceDefinitionLayoutTest, ResolvesLoggingSettingsRelativeToTheWorkspace) {
     const WorkspaceConfig config = load_workspace_config(root_);
     EXPECT_EQ(config.log_file, root_ / "logs" / "cha.log");
     EXPECT_EQ(config.log_level, "off");
-    EXPECT_NO_THROW((void)WorkspaceModel::load(root_, config));
+    EXPECT_NO_THROW((void)WorkspaceDefinition::load(root_, config));
 }
 
-TEST_F(WorkspaceModelLayoutTest, LeavesAnAbsoluteLogPathUntouched) {
+TEST_F(WorkspaceDefinitionLayoutTest, LeavesAnAbsoluteLogPathUntouched) {
     const std::filesystem::path absolute_log = root_ / "elsewhere" / "cha.log";
     std::ofstream(root_ / "workspace.toml")
         << "[provider]\nhost = \"test\"\nport = 1\nmode = \"test\"\n"
@@ -276,17 +276,17 @@ TEST_F(WorkspaceModelLayoutTest, LeavesAnAbsoluteLogPathUntouched) {
     EXPECT_EQ(load_workspace_config(root_).log_file, absolute_log);
 }
 
-TEST_F(WorkspaceModelLayoutTest, KeepsBindAndProviderConfigurationDistinct) {
+TEST_F(WorkspaceDefinitionLayoutTest, KeepsBindAndProviderConfigurationDistinct) {
     std::ofstream(root_ / "workspace.toml")
         << "[provider]\nhost = \"provider.example\"\nport = 444\nmode = \"test\"\n"
            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
     const WorkspaceConfig config = load_workspace_config(root_);
     EXPECT_EQ(*config.provider.host, "provider.example");
     EXPECT_EQ(*config.provider.port, 444);
-    EXPECT_NO_THROW((void)WorkspaceModel::load(root_, config));
+    EXPECT_NO_THROW((void)WorkspaceDefinition::load(root_, config));
 }
 
-TEST_F(WorkspaceModelLayoutTest, RequiresValidProviderWithoutAcceptingIdentityFields) {
+TEST_F(WorkspaceDefinitionLayoutTest, RequiresValidProviderWithoutAcceptingIdentityFields) {
     std::ofstream(root_ / "workspace.toml")
         << "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
     EXPECT_THROW((void)load(), std::runtime_error);
@@ -307,7 +307,7 @@ TEST_F(WorkspaceModelLayoutTest, RequiresValidProviderWithoutAcceptingIdentityFi
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelLayoutTest, RequiresWorkspaceConfiguration) {
+TEST_F(WorkspaceDefinitionLayoutTest, RequiresWorkspaceConfiguration) {
     std::filesystem::remove(root_ / "workspace.toml");
 
     try {
@@ -318,7 +318,7 @@ TEST_F(WorkspaceModelLayoutTest, RequiresWorkspaceConfiguration) {
     }
 }
 
-TEST_F(WorkspaceModelLayoutTest, RequiresValidLoggingConfiguration) {
+TEST_F(WorkspaceDefinitionLayoutTest, RequiresValidLoggingConfiguration) {
     std::ofstream(root_ / "workspace.toml")
         << "[provider]\nhost = \"test\"\nport = 1\nmode = \"test\"\n";
     EXPECT_THROW((void)load_workspace_config(root_), std::runtime_error);
@@ -329,7 +329,7 @@ TEST_F(WorkspaceModelLayoutTest, RequiresValidLoggingConfiguration) {
     EXPECT_THROW((void)load_workspace_config(root_), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelLayoutTest, RequiresWorkspaceDefinitions) {
+TEST_F(WorkspaceDefinitionLayoutTest, RequiresWorkspaceDefinitions) {
     std::filesystem::remove_all(root_ / "characters");
     try {
         (void)load();
@@ -340,7 +340,7 @@ TEST_F(WorkspaceModelLayoutTest, RequiresWorkspaceDefinitions) {
     }
 }
 
-TEST_F(WorkspaceModelLayoutTest, RequiresAForumsDirectory) {
+TEST_F(WorkspaceDefinitionLayoutTest, RequiresAForumsDirectory) {
     std::filesystem::remove_all(root_ / "forums");
     try {
         (void)load();
@@ -350,7 +350,7 @@ TEST_F(WorkspaceModelLayoutTest, RequiresAForumsDirectory) {
     }
 }
 
-TEST_F(WorkspaceModelLayoutTest, RequiresMembersDirectory) {
+TEST_F(WorkspaceDefinitionLayoutTest, RequiresMembersDirectory) {
     std::filesystem::remove_all(root_ / "forums" / "lobby" / "members");
     try {
         (void)load();
@@ -361,7 +361,7 @@ TEST_F(WorkspaceModelLayoutTest, RequiresMembersDirectory) {
     }
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsDanglingMember) {
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsDanglingMember) {
     std::filesystem::rename(
         root_ / "forums" / "lobby" / "members" / "guide",
         root_ / "forums" / "lobby" / "members" / "unknown");
@@ -374,7 +374,7 @@ TEST_F(WorkspaceModelLayoutTest, RejectsDanglingMember) {
     }
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsInvalidMemberIdBeforeReferenceValidation) {
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsInvalidMemberIdBeforeReferenceValidation) {
     std::filesystem::rename(
         root_ / "forums" / "lobby" / "members" / "guide",
         root_ / "forums" / "lobby" / "members" / "guide.invalid");
@@ -388,7 +388,7 @@ TEST_F(WorkspaceModelLayoutTest, RejectsInvalidMemberIdBeforeReferenceValidation
     }
 }
 
-TEST_F(WorkspaceModelLayoutTest, ValidatesRequiredDefinitionFiles) {
+TEST_F(WorkspaceDefinitionLayoutTest, ValidatesRequiredDefinitionFiles) {
     std::filesystem::remove(root_ / "characters" / "guide" / "character.toml");
     EXPECT_THROW((void)load(), std::runtime_error);
 
@@ -398,25 +398,25 @@ TEST_F(WorkspaceModelLayoutTest, ValidatesRequiredDefinitionFiles) {
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsMalformedDefinition) {
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsMalformedDefinition) {
     std::ofstream(root_ / "characters" / "guide" / "character.toml")
         << "display_name = [\"Guide\"]\n";
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsInvalidDefinitionId) {
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsInvalidDefinitionId) {
     std::filesystem::rename(
         root_ / "characters" / "guide", root_ / "characters" / "guide.invalid");
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsReservedDefinitionDisplayName) {
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsReservedDefinitionDisplayName) {
     std::ofstream(root_ / "characters" / "guide" / "character.toml")
         << "display_name = \"system\"\n";
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsDuplicateCharacterDisplayNames) {
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsDuplicateCharacterDisplayNames) {
     const std::filesystem::path duplicate = root_ / "characters" / "other";
     std::filesystem::create_directories(duplicate);
     std::ofstream(duplicate / "character.toml") << "display_name = \"gUiDe\"\n";
@@ -430,7 +430,7 @@ TEST_F(WorkspaceModelLayoutTest, RejectsDuplicateCharacterDisplayNames) {
     }
 }
 
-TEST_F(WorkspaceModelLayoutTest, AcceptsEmptyMemberDirectoriesAndOrphanDefinitions) {
+TEST_F(WorkspaceDefinitionLayoutTest, AcceptsEmptyMemberDirectoriesAndOrphanDefinitions) {
     std::filesystem::remove(
         root_ / "forums" / "lobby" / "members" / "guide" / "character.toml");
     std::filesystem::create_directories(root_ / "characters" / "orphan");
@@ -440,7 +440,7 @@ TEST_F(WorkspaceModelLayoutTest, AcceptsEmptyMemberDirectoriesAndOrphanDefinitio
     EXPECT_NO_THROW((void)load());
 }
 
-TEST_F(WorkspaceModelLayoutTest, AllowsOneDefinitionInMultipleForums) {
+TEST_F(WorkspaceDefinitionLayoutTest, AllowsOneDefinitionInMultipleForums) {
     const std::filesystem::path other = root_ / "forums" / "other";
     std::filesystem::create_directories(other / "members" / "guide");
     std::ofstream(other / "config.toml") << "display_name = \"Other\"\n";
@@ -448,7 +448,7 @@ TEST_F(WorkspaceModelLayoutTest, AllowsOneDefinitionInMultipleForums) {
     EXPECT_NO_THROW((void)load());
 }
 
-TEST_F(WorkspaceModelLayoutTest, EnumeratesForumsInNameOrderAndIgnoresUnsafeDirectories) {
+TEST_F(WorkspaceDefinitionLayoutTest, EnumeratesForumsInNameOrderAndIgnoresUnsafeDirectories) {
     for (const std::string_view name : {"alpha", "zulu", "bad space", "bad#fragment"}) {
         const std::filesystem::path forum = root_ / "forums" / std::string(name);
         std::filesystem::create_directories(forum / "members" / "guide");
@@ -456,7 +456,7 @@ TEST_F(WorkspaceModelLayoutTest, EnumeratesForumsInNameOrderAndIgnoresUnsafeDire
             << "display_name = \"Forum " << name << "\"\n";
         std::ofstream(forum / "FORUM.md") << "Forum";
     }
-    const WorkspaceModel model = load();
+    const WorkspaceDefinition model = load();
 
     EXPECT_EQ(
         display_names(model.forums()),
@@ -469,7 +469,7 @@ TEST_F(WorkspaceModelLayoutTest, EnumeratesForumsInNameOrderAndIgnoresUnsafeDire
     EXPECT_EQ(model.find_forum("bad#fragment"), nullptr);
 }
 
-TEST_F(WorkspaceModelLayoutTest, ResolvesDefaultCharacterWithoutReorderingMembers) {
+TEST_F(WorkspaceDefinitionLayoutTest, ResolvesDefaultCharacterWithoutReorderingMembers) {
     std::filesystem::create_directories(root_ / "characters" / "alpha");
     std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "alpha");
     std::ofstream(root_ / "characters" / "alpha" / "character.toml")
@@ -478,27 +478,27 @@ TEST_F(WorkspaceModelLayoutTest, ResolvesDefaultCharacterWithoutReorderingMember
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\ndefault_character = \"guide\"\n";
 
-    const WorkspaceModel model = load();
+    const WorkspaceDefinition model = load();
     const ForumInfo* const forum = model.find_forum("lobby");
     ASSERT_NE(forum, nullptr);
     EXPECT_EQ(forum->member_ids, (std::vector<std::string>{"alpha", "guide"}));
     EXPECT_EQ(forum->default_character_id, "guide");
 }
 
-TEST_F(WorkspaceModelLayoutTest, DefaultsToFirstLexicographicMember) {
+TEST_F(WorkspaceDefinitionLayoutTest, DefaultsToFirstLexicographicMember) {
     std::filesystem::create_directories(root_ / "characters" / "alpha");
     std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "alpha");
     std::ofstream(root_ / "characters" / "alpha" / "character.toml")
         << "display_name = \"Alpha\"\n";
     std::ofstream(root_ / "characters" / "alpha" / "CHARACTER.md") << "Alpha";
 
-    const WorkspaceModel model = load();
+    const WorkspaceDefinition model = load();
     const ForumInfo* const forum = model.find_forum("lobby");
     ASSERT_NE(forum, nullptr);
     EXPECT_EQ(forum->default_character_id, "alpha");
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsUnknownAndMalformedDefaultCharacter) {
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsUnknownAndMalformedDefaultCharacter) {
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\ndefault_character = \"missing\"\n";
     EXPECT_THROW((void)load(), std::runtime_error);
@@ -508,7 +508,7 @@ TEST_F(WorkspaceModelLayoutTest, RejectsUnknownAndMalformedDefaultCharacter) {
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelLayoutTest, AcceptsLegacyDefaultAgentButRejectsBothKeys) {
+TEST_F(WorkspaceDefinitionLayoutTest, AcceptsLegacyDefaultAgentButRejectsBothKeys) {
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\ndefault_agent = \"guide\"\n";
     EXPECT_EQ(load().find_forum("lobby")->default_character_id, "guide");
@@ -519,7 +519,7 @@ TEST_F(WorkspaceModelLayoutTest, AcceptsLegacyDefaultAgentButRejectsBothKeys) {
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelLayoutTest, RequiresPersonaDirectoryButAllowsItEmpty) {
+TEST_F(WorkspaceDefinitionLayoutTest, RequiresPersonaDirectoryButAllowsItEmpty) {
     std::filesystem::remove_all(root_ / "personas");
     EXPECT_THROW((void)load(), std::runtime_error);
 
@@ -527,12 +527,12 @@ TEST_F(WorkspaceModelLayoutTest, RequiresPersonaDirectoryButAllowsItEmpty) {
     EXPECT_TRUE(custom_personas(load()).empty());
 }
 
-TEST_F(WorkspaceModelLayoutTest, PersonaLoadingDoesNotSkipMalformedDirectories) {
+TEST_F(WorkspaceDefinitionLayoutTest, PersonaLoadingDoesNotSkipMalformedDirectories) {
     std::filesystem::create_directories(root_ / "personas" / "missing_config");
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsPersonaCharacterIdCollision) {
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsPersonaCharacterIdCollision) {
     std::filesystem::rename(root_ / "personas" / "operator", root_ / "personas" / "guide");
     try {
         (void)load();
@@ -544,7 +544,7 @@ TEST_F(WorkspaceModelLayoutTest, RejectsPersonaCharacterIdCollision) {
     }
 }
 
-TEST_F(WorkspaceModelLayoutTest, RejectsPersonaCharacterDisplayNameCollision) {
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsPersonaCharacterDisplayNameCollision) {
     std::ofstream(root_ / "personas" / "operator" / "persona.toml")
         << "display_name = \"gUiDe\"\n";
     try {
@@ -556,7 +556,7 @@ TEST_F(WorkspaceModelLayoutTest, RejectsPersonaCharacterDisplayNameCollision) {
     }
 }
 
-TEST_F(WorkspaceModelLayoutTest, AcceptsDefinitionDefaultsWithAMemberOverride) {
+TEST_F(WorkspaceDefinitionLayoutTest, AcceptsDefinitionDefaultsWithAMemberOverride) {
     std::ofstream(root_ / "characters" / "guide" / "character.toml")
         << "display_name = \"Guide\"\nhost = \"127.0.0.1\"\n";
     std::ofstream(root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
@@ -568,7 +568,7 @@ TEST_F(WorkspaceModelLayoutTest, AcceptsDefinitionDefaultsWithAMemberOverride) {
     EXPECT_NO_THROW((void)load());
 }
 
-TEST_F(WorkspaceModelLayoutTest, InheritsApplicationProviderSettingsWithoutSharedDefaults) {
+TEST_F(WorkspaceDefinitionLayoutTest, InheritsApplicationProviderSettingsWithoutSharedDefaults) {
     std::filesystem::remove(
         root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
     EXPECT_NO_THROW((void)load());
@@ -576,7 +576,7 @@ TEST_F(WorkspaceModelLayoutTest, InheritsApplicationProviderSettingsWithoutShare
 
 // --- Persona loading --------------------------------------------------------
 
-class WorkspaceModelPersonaTest : public testing::Test {
+class WorkspaceDefinitionPersonaTest : public testing::Test {
 protected:
     void SetUp() override {
         root_ = std::filesystem::temp_directory_path()
@@ -613,7 +613,7 @@ protected:
     std::filesystem::path root_;
 };
 
-TEST_F(WorkspaceModelPersonaTest, PublishesPersonasInDisplayNameOrderAndReadsOptionalPrompt) {
+TEST_F(WorkspaceDefinitionPersonaTest, PublishesPersonasInDisplayNameOrderAndReadsOptionalPrompt) {
     add_persona("zebra", "Zebra", "Verbatim\ntext");
     add_persona("alpha", "Alpha");
 
@@ -628,7 +628,7 @@ TEST_F(WorkspaceModelPersonaTest, PublishesPersonasInDisplayNameOrderAndReadsOpt
     EXPECT_EQ(roster[1].prompt, "Verbatim\ntext");
 }
 
-TEST_F(WorkspaceModelPersonaTest, LoadsOptionalDescriptionAndRejectsMalformedDescription) {
+TEST_F(WorkspaceDefinitionPersonaTest, LoadsOptionalDescriptionAndRejectsMalformedDescription) {
     add_persona("ada", "Ada");
     const auto config = root_ / "personas" / "ada" / "persona.toml";
     std::ofstream(config) << "display_name = \"Ada\"\ndescription = \"A careful reader\"\n";
@@ -640,18 +640,18 @@ TEST_F(WorkspaceModelPersonaTest, LoadsOptionalDescriptionAndRejectsMalformedDes
     EXPECT_THROW((void)load_model(root_), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelPersonaTest, RequiresAPersonaTomlForEveryPersonaDirectory) {
+TEST_F(WorkspaceDefinitionPersonaTest, RequiresAPersonaTomlForEveryPersonaDirectory) {
     std::filesystem::create_directories(root_ / "personas" / "missing");
     EXPECT_THROW((void)load_model(root_), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelPersonaTest, RequiresPersonaPromptToBeARegularFile) {
+TEST_F(WorkspaceDefinitionPersonaTest, RequiresPersonaPromptToBeARegularFile) {
     add_persona("ada", "Ada");
     std::filesystem::create_directory(root_ / "personas" / "ada" / "PERSONA.md");
     EXPECT_THROW((void)load_model(root_), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelPersonaTest, RejectsUnknownOrMissingOrWrongTypedConfigFields) {
+TEST_F(WorkspaceDefinitionPersonaTest, RejectsUnknownOrMissingOrWrongTypedConfigFields) {
     add_persona("ada", "Ada");
     const auto config = root_ / "personas" / "ada" / "persona.toml";
 
@@ -665,7 +665,7 @@ TEST_F(WorkspaceModelPersonaTest, RejectsUnknownOrMissingOrWrongTypedConfigField
     EXPECT_THROW((void)load_model(root_), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelPersonaTest, RejectsInvalidAndReservedIds) {
+TEST_F(WorkspaceDefinitionPersonaTest, RejectsInvalidAndReservedIds) {
     add_persona("bad-id", "Ada");
     EXPECT_THROW((void)load_model(root_), std::runtime_error);
 
@@ -678,7 +678,7 @@ TEST_F(WorkspaceModelPersonaTest, RejectsInvalidAndReservedIds) {
     EXPECT_THROW((void)load_model(root_), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelPersonaTest, RejectsInvalidReservedAndDuplicateDisplayNames) {
+TEST_F(WorkspaceDefinitionPersonaTest, RejectsInvalidReservedAndDuplicateDisplayNames) {
     add_persona("ada", " Ada");
     EXPECT_THROW((void)load_model(root_), std::runtime_error);
 
@@ -697,7 +697,7 @@ TEST_F(WorkspaceModelPersonaTest, RejectsInvalidReservedAndDuplicateDisplayNames
     EXPECT_THROW((void)load_model(root_), std::runtime_error);
 }
 
-TEST_F(WorkspaceModelPersonaTest, RejectsUnicodeControlsLineBreaksAndBoundaryWhitespace) {
+TEST_F(WorkspaceDefinitionPersonaTest, RejectsUnicodeControlsLineBreaksAndBoundaryWhitespace) {
     add_persona("ada", "Ada");
     const std::filesystem::path config = root_ / "personas" / "ada" / "persona.toml";
 

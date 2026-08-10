@@ -10,7 +10,7 @@
 namespace cha {
 
 OpenedSession open_session(
-    const WorkspaceModel& model,
+    const WorkspaceDefinition& model,
     const SessionRepository& sessions,
     const SessionIdentity& identity,
     WakeNotifier& notifier) {

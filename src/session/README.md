@@ -39,7 +39,7 @@ flowchart TD
     forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
 ```
 
-`WorkspaceModel` refuses to load unless `forums/`, `characters/`, and a valid
+`WorkspaceDefinition` refuses to load unless `forums/`, `characters/`, and a valid
 `personas/` directory exist. The directory may contain no custom personas; the
 model adds the built-in Guest to the effective browser roster.
 The `forums/` directory may be temporarily empty; its valid forum names are
@@ -75,7 +75,7 @@ Template containment follows the file's layer: a definition `CHARACTER.md` is
 contained to workspace `characters/`; a member `CHARACTER.md` and `FORUM.md`
 are contained to their forum directory.
 
-`WorkspaceModel` supplies validated metadata and forum definitions.
+`WorkspaceDefinition` supplies validated metadata and forum definitions.
 Each controller receives the effective application-wide persona roster and
 resolves submitted stable author IDs against it. The roster also contributes
 static model context, but it is not forum or session membership. The generation layer applies the shared provider
@@ -92,7 +92,7 @@ reattach directly, and otherwise use it before asking the registry to open a
 session.
 
 The repository receives plain forum IDs and `sessions/` paths, never a
-`WorkspaceModel`, so the session layer never depends on application types. It
+`WorkspaceDefinition`, so the session layer never depends on application types. It
 keeps only that immutable map plus the temporary session it owns, and builds a
 short-lived `SessionCatalog` per operation, so one constructed repository serves
 concurrent const calls; the only exclusion is `SessionLease`.
@@ -165,7 +165,7 @@ sequenceDiagram
 
 `SessionRepository::create()` is the creation primitive; it delegates
 publication to `SessionCatalog`. Forum definitions were already validated when
-`WorkspaceModel` loaded, so creation performs no prompt or provider work.
+`WorkspaceDefinition` loaded, so creation performs no prompt or provider work.
 
 There is no directory-wide creation lock. Uniqueness comes from two mechanisms
 only: each candidate stem is claimed with a `SessionLease` before the expensive
