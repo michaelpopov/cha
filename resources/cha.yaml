@@ -310,7 +310,7 @@ paths:
                   summary: Initial event shape
                   value: |-
                     event: snapshot
-                    data: {"forum":{"id":"lobby","display_name":"Lobby","default_character_id":"guide","members":[]},"session_id":"one","session_label":"One","characters":[],"default_character_id":"guide","transcript":[],"generation":{"active":false,"character_id":"","character_display_name":"","phase":"waiting","reasoning_text":""},"lifecycle":"running"}
+                    data: {"forum":{"id":"lobby","display_name":"Lobby","default_character_id":"guide","default_persona_id":"builtin-guest","members":[]},"session_id":"one","session_label":"One","characters":[],"default_character_id":"guide","transcript":[],"generation":{"active":false,"character_id":"","character_display_name":"","phase":"waiting","reasoning_text":""},"lifecycle":"running"}
                 append:
                   summary: Incremental transcript append
                   value: |-
@@ -614,13 +614,15 @@ components:
     ForumSummary:
       type: object
       additionalProperties: false
-      required: [id, display_name, default_character_id, members]
+      required: [id, display_name, default_character_id, default_persona_id, members]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
         display_name:
           type: string
         default_character_id:
+          $ref: "#/components/schemas/Identifier"
+        default_persona_id:
           $ref: "#/components/schemas/Identifier"
         members:
           type: array

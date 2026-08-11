@@ -20,11 +20,14 @@ function hasForumIdentity(
   id: string;
   display_name: string;
   default_character_id: string;
+  default_persona_id: string;
   members: Array<{ id: string; display_name: string; description?: string }>;
 } {
   return isRecord(value)
     && typeof value.default_character_id === 'string'
     && value.default_character_id.length > 0
+    && typeof value.default_persona_id === 'string'
+    && value.default_persona_id.length > 0
     && Array.isArray(value.members)
     && value.members.every(hasIdentity)
     && hasIdentity(value);
@@ -64,10 +67,16 @@ export function validateBootstrap(value: unknown): Bootstrap {
   if (!bootstrap.personas.some(({ id }) => id === bootstrap.initial_persona_id)) {
     throw new TypeError('Bootstrap initial persona is absent from personas.');
   }
-  const initialForum = bootstrap.forums.find(({ id }) => id === bootstrap.initial_forum_id);
-  if (!initialForum) throw new TypeError('Bootstrap initial forum is absent from forums.');
-  if (!bootstrap.characters.some(({ id }) => id === initialForum.default_character_id)) {
-    throw new TypeError('Bootstrap initial default character is absent from characters.');
+  if (!bootstrap.forums.some(({ id }) => id === bootstrap.initial_forum_id)) {
+    throw new TypeError('Bootstrap initial forum is absent from forums.');
+  }
+  for (const forum of bootstrap.forums) {
+    if (!bootstrap.characters.some(({ id }) => id === forum.default_character_id)) {
+      throw new TypeError('Bootstrap forum default character is absent from characters.');
+    }
+    if (!bootstrap.personas.some(({ id }) => id === forum.default_persona_id)) {
+      throw new TypeError('Bootstrap forum default persona is absent from personas.');
+    }
   }
 
   // The checks above cover values the UI goes on to resolve against a roster.

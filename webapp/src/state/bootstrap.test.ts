@@ -40,6 +40,9 @@ describe('validateBootstrap', () => {
     ['default character', (value: typeof bootstrapFixture) => {
       value.characters = value.characters.filter(({ id }) => id !== 'assistant');
     }],
+    ['default persona', (value: typeof bootstrapFixture) => {
+      value.personas = value.personas.filter(({ id }) => id !== 'guest');
+    }],
   ])('rejects a response whose %s cannot be resolved', (_name, corrupt) => {
     const response = structuredClone(bootstrapFixture);
     corrupt(response);

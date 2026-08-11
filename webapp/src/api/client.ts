@@ -100,6 +100,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
   return isRecord(value)
     && isRecord(value.forum)
+    && typeof value.forum.default_persona_id === 'string'
+    && value.forum.default_persona_id.length > 0
     && typeof value.session_id === 'string'
     && typeof value.session_label === 'string'
     && Array.isArray(value.characters)

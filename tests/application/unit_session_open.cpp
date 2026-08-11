@@ -58,6 +58,7 @@ TEST_F(SessionOpenTest, OpensAStoredSessionWithTheLoadedForumDefinitions) {
     EXPECT_EQ(opened.descriptor.forum_display_name, "The Lobby");
     EXPECT_EQ(opened.descriptor.session_label, "Stored");
     EXPECT_EQ(opened.descriptor.forum_default_character_id, "guide");
+    EXPECT_EQ(opened.descriptor.forum_default_persona_id, guest_id);
     ASSERT_EQ(opened.controller->view().characters.size(), 1U);
     EXPECT_EQ(opened.controller->view().characters.front().id, "guide");
     EXPECT_EQ(opened.controller->view().characters.front().display_name, "Guide");
@@ -76,6 +77,7 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePathWithTheAssistantRoster) {
     EXPECT_EQ(opened.descriptor.forum_display_name, entrance_name);
     EXPECT_EQ(opened.descriptor.session_label, welcome_name);
     EXPECT_EQ(opened.descriptor.forum_default_character_id, assistant_id);
+    EXPECT_EQ(opened.descriptor.forum_default_persona_id, guest_id);
     ASSERT_EQ(opened.controller->view().characters.size(), 1U);
     EXPECT_EQ(opened.controller->view().characters.front().id, assistant_id);
     EXPECT_EQ(opened.controller->view().default_character_id, assistant_id);
@@ -184,6 +186,7 @@ TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {
                 .forum_display_name = "The Lobby",
                 .session_label = "Browser-ready session",
                 .forum_default_character_id = "guide",
+                .forum_default_persona_id = std::string(guest_id),
             }));
         opened.controller->shutdown();
     }

@@ -359,7 +359,7 @@ The loader treats the workspace as one configuration unit:
 - It requires `characters/`, `forums/`, and `personas/` in the expected form.
 - It validates character IDs and public-name uniqueness.
 - It loads persona metadata and optional `PERSONA.md` prompts.
-- It validates every forum's members and default character.
+- It validates every forum's members, default character, and default persona.
 - It resolves every forum's effective character definitions immediately.
 - It builds public indexes and private definition maps.
 - It adds the built-in Guest persona, Assistant character, and Entrance forum.

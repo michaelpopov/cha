@@ -15,6 +15,7 @@ SessionSnapshot to_snapshot(
             .id = descriptor.identity.forum_id,
             .display_name = descriptor.forum_display_name,
             .default_character_id = descriptor.forum_default_character_id,
+            .default_persona_id = descriptor.forum_default_persona_id,
         },
         .session_id = descriptor.identity.session_id,
         .session_label = descriptor.session_label,

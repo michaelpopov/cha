@@ -159,7 +159,7 @@ describe('live chat', () => {
     await waitFor(() => expect(input).toHaveValue(''));
   });
 
-  it('accepts wrapped, multiline drafts and grows the composer to their content', async () => {
+  it('sends a draft with Enter and adds a line with Ctrl+Enter', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn(async () => ({ clear_input: true }));
@@ -176,13 +176,13 @@ describe('live chat', () => {
     expect(input).toHaveAttribute('rows', '1');
     Object.defineProperty(input, 'scrollHeight', { configurable: true, value: 72 });
 
-    await user.type(input, 'First line{enter}Second line');
+    await user.type(input, 'First line{Control>}{Enter}{/Control}Second line');
 
     expect(input).toHaveValue('First line\nSecond line');
     expect(input).toHaveStyle({ height: '72px' });
     expect(submitInput).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await user.type(input, '{enter}');
     await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
       'entrance', 'welcome', { persona: 'guest', text: 'First line\nSecond line' },
     ));

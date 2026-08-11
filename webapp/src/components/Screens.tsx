@@ -6,6 +6,7 @@ import {
   useState,
   type Dispatch,
   type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
   type UIEvent,
 } from 'react';
@@ -184,6 +185,23 @@ export function ChatScreen({
     }
   }
 
+  // Enter is the quick way to send. Ctrl+Enter inserts a line explicitly: it
+  // is not a consistently native textarea shortcut, so relying on the browser
+  // would make multiline drafts depend on the platform. IME composition has to
+  // finish before Enter can be interpreted as the command.
+  function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+    if (event.ctrlKey) {
+      event.preventDefault();
+      const { selectionEnd, selectionStart } = event.currentTarget;
+      setDraft((current) => `${current.slice(0, selectionStart)}\n${current.slice(selectionEnd)}`);
+      return;
+    }
+    event.preventDefault();
+    if (!canSend || generationActive) return;
+    event.currentTarget.form?.requestSubmit();
+  }
+
   async function stop() {
     if (!generationActive || !sessionAvailable || pendingAction) return;
     setPendingAction('stop');
@@ -321,6 +339,7 @@ export function ChatScreen({
             autoComplete="off"
             disabled={!sessionAvailable}
             onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={submitOnEnter}
             placeholder={`Message ${character?.display_name ?? 'character'}`}
             ref={composerInput}
             rows={1}

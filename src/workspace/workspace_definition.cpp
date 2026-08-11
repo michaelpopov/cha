@@ -91,6 +91,18 @@ LoadedForum load_forum_metadata(
             "Failed to read forum config '" + utf8_path(path) + "'");
     }
     const toml::table table = toml::parse(file, utf8_path(path));
+    // Every optional key here silently falls back to a default, so a misspelled
+    // one would be indistinguishable from an omitted one without this.
+    static constexpr std::string_view fields[]{
+        "display_name", "description", "default_character", "default_agent",
+        "default_persona"};
+    for (const auto& [key, value] : table) {
+        (void)value;
+        if (std::ranges::find(fields, key.str()) == std::end(fields)) {
+            throw std::runtime_error("Forum config '" + utf8_path(path)
+                + "' has unknown field '" + std::string(key.str()) + "'");
+        }
+    }
     const std::optional<std::string> display_name =
         table["display_name"].value<std::string>();
     if (!display_name) {
@@ -149,6 +161,16 @@ LoadedForum load_forum_metadata(
     } else {
         default_character_id = member_ids.front();
     }
+    std::string default_persona_id = std::string(guest_id);
+    if (table.contains("default_persona")) {
+        const std::optional<std::string> configured =
+            table["default_persona"].value<std::string>();
+        if (!configured || configured->empty()) {
+            throw std::runtime_error("Forum config '" + utf8_path(path)
+                + "' requires a non-empty string 'default_persona'");
+        }
+        default_persona_id = *configured;
+    }
     return {
         .info = {
             .id = std::move(name),
@@ -156,6 +178,7 @@ LoadedForum load_forum_metadata(
             .description = description,
             .member_ids = member_ids,
             .default_character_id = std::move(default_character_id),
+            .default_persona_id = std::move(default_persona_id),
         },
         .directory = directory,
     };
@@ -496,6 +519,11 @@ WorkspaceDefinition WorkspaceDefinition::load(
         character_ids.insert(character.id);
     }
 
+    // The effective roster a forum may default to is the custom personas plus
+    // the built-in Guest, which is also the fallback when it names none.
+    std::unordered_set<std::string> persona_ids{std::string(guest_id)};
+    for (const Persona& persona : custom_personas) persona_ids.insert(persona.id);
+
     std::vector<LoadedForum> forums;
     std::unordered_set<std::string> forum_names;
     for (const std::string& id : subdirectory_names(
@@ -518,6 +546,12 @@ WorkspaceDefinition WorkspaceDefinition::load(
                 throw std::runtime_error("Forum '" + forum.info.id + "' member '" + member_id
                     + "' has no matching character definition");
             }
+        }
+        if (!persona_ids.contains(forum.info.default_persona_id)) {
+            throw std::runtime_error("Forum config '"
+                + utf8_path(forum.directory / "config.toml")
+                + "' default_persona '" + forum.info.default_persona_id
+                + "' does not name a workspace persona");
         }
         forums.push_back(std::move(forum));
     }
@@ -588,6 +622,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
         .description = std::nullopt,
         .member_ids = {std::string(assistant_id)},
         .default_character_id = std::string(assistant_id),
+        .default_persona_id = std::string(guest_id),
     });
 
     // The built-ins take their place in display order rather than trailing it.

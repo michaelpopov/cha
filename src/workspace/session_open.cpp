@@ -28,6 +28,7 @@ OpenedSession open_session(
             .forum_display_name = forum->display_name,
             .session_label = prepared.label,
             .forum_default_character_id = forum->default_character_id,
+            .forum_default_persona_id = forum->default_persona_id,
         },
         .controller = SessionController::from_shared_definitions(
             std::move(definitions),

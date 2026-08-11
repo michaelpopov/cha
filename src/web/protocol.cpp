@@ -176,6 +176,7 @@ void to_json(nlohmann::json& json, const ForumSummary& value) {
         {"id", value.id},
         {"display_name", value.display_name},
         {"default_character_id", value.default_character_id},
+        {"default_persona_id", value.default_persona_id},
         {"members", value.members},
     };
 }

@@ -352,6 +352,7 @@ export interface components {
             id: components["schemas"]["Identifier"];
             display_name: string;
             default_character_id: components["schemas"]["Identifier"];
+            default_persona_id: components["schemas"]["Identifier"];
             members: components["schemas"]["CharacterSummary"][];
         };
         SessionListing: {

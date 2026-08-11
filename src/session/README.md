@@ -31,7 +31,7 @@ flowchart TD
     root --> characters["characters/<id>/"]
     characters --> character["character.toml + CHARACTER.md<br/>definition + includes"]
     forums --> forum["forum-name/"]
-    forum --> config["config.toml — required display_name + optional description/default_character"]
+    forum --> config["config.toml — required display_name + optional description/default_character/default_persona"]
     forum --> members["members/"]
     members --> base["character_defaults.toml<br/>optional forum defaults + [prompt]"]
     members --> member["<id>/character.toml + CHARACTER.md<br/>optional overrides"]
@@ -42,6 +42,11 @@ flowchart TD
 `WorkspaceDefinition` refuses to load unless `forums/`, `characters/`, and a valid
 `personas/` directory exist. The directory may contain no custom personas; the
 model adds the built-in Guest to the effective browser roster.
+Each forum may set `default_persona` in `config.toml`; it must name a workspace
+persona and defaults to Guest. The browser applies that persona when entering a
+different forum, while a manual choice remains active between sessions in the
+same forum. A forum `config.toml` carries no keys beyond the ones above, so a
+misspelled optional key is a load error rather than a silent default.
 The `forums/` directory may be temporarily empty; its valid forum names are
 sorted before presentation. Forum IDs and session database stems may contain
 only RFC 3986 unreserved ASCII characters, excluding the complete names `.` and

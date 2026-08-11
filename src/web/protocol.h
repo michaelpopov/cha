@@ -59,6 +59,7 @@ struct ForumSummary {
     ForumId id;
     std::string display_name;
     CharacterId default_character_id;
+    std::string default_persona_id;
     std::vector<CharacterSummary> members;
     bool operator==(const ForumSummary&) const = default;
 };

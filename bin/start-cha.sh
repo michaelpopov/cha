@@ -1,6 +1,6 @@
 #!/bin/sh
 HOST='0.0.0.0'
-PORT='8080'
+PORT='8086'
 WORKSPACE='../workspace'
 
 # Starts CHA from this directory.

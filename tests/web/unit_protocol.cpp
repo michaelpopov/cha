@@ -72,8 +72,8 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json(OpenSessionSuccess{"forum", "s1"}),
         nlohmann::json({{"forum_id", "forum"}, {"session_id", "s1"}}));
     EXPECT_EQ(
-        nlohmann::json(ForumSummary{"forum", "Forum", "guide", {{"guide", "Guide"}}}),
-        nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"},
+        nlohmann::json(ForumSummary{"forum", "Forum", "guide", "reader", {{"guide", "Guide"}}}),
+        nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"default_persona_id", "reader"},
             {"members", {{{"id", "guide"}, {"display_name", "Guide"}, {"appearance", default_appearance()}}}}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
@@ -143,7 +143,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
     const auto value = nlohmann::json(SnapshotEvent{std::move(snapshot)});
     const nlohmann::json expected = {
         {"default_character_id", "guide"},
-        {"forum", {{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", ""}, {"members", nlohmann::json::array()}}},
+        {"forum", {{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", ""}, {"default_persona_id", ""}, {"members", nlohmann::json::array()}}},
         {"generation",
          {
              {"active", true},

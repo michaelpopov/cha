@@ -78,11 +78,13 @@ TEST(WorkspaceDefinition, ReportsForumMembershipAndDefaultsWithoutAPath) {
     EXPECT_EQ(lobby->display_name, "The Lobby");
     EXPECT_EQ(lobby->member_ids, (std::vector<std::string>{"guide"}));
     EXPECT_EQ(lobby->default_character_id, "guide");
+    EXPECT_EQ(lobby->default_persona_id, guest_id);
 
     const ForumInfo* entrance = model.find_forum(entrance_id);
     ASSERT_NE(entrance, nullptr);
     EXPECT_EQ(entrance->member_ids, (std::vector<std::string>{std::string(assistant_id)}));
     EXPECT_EQ(entrance->default_character_id, assistant_id);
+    EXPECT_EQ(entrance->default_persona_id, guest_id);
 }
 
 TEST(WorkspaceDefinition, ServesAssistantDetailFromTheEmbeddedApplicationGuide) {
@@ -505,6 +507,26 @@ TEST_F(WorkspaceDefinitionLayoutTest, RejectsUnknownAndMalformedDefaultCharacter
 
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\ndefault_character = [\"guide\"]\n";
+    EXPECT_THROW((void)load(), std::runtime_error);
+}
+
+TEST_F(WorkspaceDefinitionLayoutTest, RejectsAnUnknownForumConfigField) {
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefualt_persona = \"operator\"\n";
+    EXPECT_THROW((void)load(), std::runtime_error);
+}
+
+TEST_F(WorkspaceDefinitionLayoutTest, ResolvesAndValidatesForumDefaultPersona) {
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_persona = \"operator\"\n";
+    EXPECT_EQ(load().find_forum("lobby")->default_persona_id, "operator");
+
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_persona = \"missing\"\n";
+    EXPECT_THROW((void)load(), std::runtime_error);
+
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_persona = [\"operator\"]\n";
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 

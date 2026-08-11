@@ -70,7 +70,8 @@ CharacterSummary character_summary(const CharacterMetadata& character) {
 
 ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& model) {
     ForumSummary result{.id = forum.id, .display_name = forum.display_name,
-                        .default_character_id = forum.default_character_id};
+                        .default_character_id = forum.default_character_id,
+                        .default_persona_id = forum.default_persona_id};
     result.members.reserve(forum.member_ids.size());
     for (const std::string& id : forum.member_ids) {
         const CharacterMetadata* character = model.find_character(id);

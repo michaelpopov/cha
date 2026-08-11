@@ -40,6 +40,7 @@ struct ForumInfo {
     std::optional<std::string> description;
     std::vector<CharacterId> member_ids;
     CharacterId default_character_id;
+    std::string default_persona_id;
 };
 
 // The authoritative static workspace for one server process. It is loaded once
