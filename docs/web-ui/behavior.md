@@ -7,9 +7,10 @@ The browser keeps these related pieces of UI state:
 | State | Values |
 | --- | --- |
 | Sidebar | Open or closed |
-| Main area | Chat, Personas, Characters, Character detail, Forums, Sessions, or New session |
+| Main area | Chat, Personas, Persona detail, Characters, Character detail, Forums, Sessions, or New session |
 | Current context | Forum ID |
 | Active conversation | Forum ID and session ID |
+| Inspected persona | Persona ID, used only by Persona detail |
 | Inspected character | Character ID, used only by Character detail |
 | Current default character | Character ID from the active live session |
 
@@ -32,8 +33,7 @@ The sidebar contains, from top to bottom:
 There is no sixth element. The mockup's round gear button at the bottom-right is removed in v1 and nothing replaces it.
 
 Personas and Forums have no current-selection secondary lines. Personas is
-read-only: it reports the current forum's configured persona and selects
-nothing. The active conversation's Recent entry uses the selected-row treatment. There is no separate Chat button because selecting the active Recent entry already returns to that conversation.
+read-only: it catalogs the workspace personas and selects nothing. The active conversation's Recent entry uses the selected-row treatment. There is no separate Chat button because selecting the active Recent entry already returns to that conversation.
 
 ## Controls
 
@@ -42,7 +42,9 @@ Only the two-line button changes sidebar visibility. Every other sidebar action 
 | Control | Result | Preserved state |
 | --- | --- | --- |
 | Two-line button | Toggles the sidebar | Main area and all current context |
-| Personas | Shows Personas for the current forum | Sidebar state, current forum, and active conversation |
+| Personas | Shows Personas | Sidebar state and all conversation context |
+| Persona row | Shows read-only Persona detail | Sidebar state and all conversation context |
+| Persona-detail back row | Returns to Personas | Sidebar state and all conversation context |
 | Characters | Shows Characters | Sidebar state and all conversation context |
 | Character row | Shows read-only Character detail | Sidebar state and all conversation context |
 | Character-detail back row | Returns to Characters | Sidebar state and all conversation context |
@@ -90,6 +92,17 @@ square icon. Stop requests cancellation and remains visible until authoritative
 session state reports that generation is inactive. A failed Send preserves the
 draft. Target selection and Stop never change sidebar visibility.
 
+## Personas
+
+Personas is a workspace-level, informational navigation area. It never changes
+who a message comes from; that follows the forum, as described above.
+
+- The list contains the application-wide persona roster: the built-in Guest first, then the configured personas in display-name order.
+- Each row shows the persona display name and its short configured description, which personas may omit.
+- Selecting a row opens Persona detail without changing persona, forum, session, or default character.
+- Persona detail renders that persona's `PERSONA.md` as formatted Markdown, under the same restricted presentation Character detail uses.
+- `PERSONA.md` is optional. A persona configuring none reports that in place of the description rather than showing an empty screen.
+
 ## Characters
 
 Characters is a workspace-level, informational navigation area.
@@ -132,7 +145,7 @@ Rules:
 
 - Chat has no title, session name, forum, persona, or character in its header.
 - Navigation screens show one centered title without a subtitle.
-- Character detail uses the character's display name as its title.
+- Persona detail uses the persona's display name as its title, and Character detail the character's.
 - The two-line sidebar control remains at the top-left in every Main-area state.
 - New session actions are inside the New session screen, not in the top bar.
 
@@ -145,8 +158,9 @@ The component hierarchy and interaction model are identical at desktop and iPhon
 - The two-line button moves with the Main area and remains available in the visible edge.
 - On iPhone widths the sidebar leaves only a narrow portion of the pushed Main area visible.
 - The Chat context line remains one compact line beneath the composer at both widths.
-- Long Character detail content scrolls within the main content region.
+- Long Persona and Character detail content scrolls within the main content region.
 
 ## Empty behavior
 
 - A forum with no sessions shows only the New session row.
+- A persona with no `PERSONA.md` shows a short message on Persona detail saying so, never an empty screen.

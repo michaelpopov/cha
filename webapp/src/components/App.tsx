@@ -41,6 +41,7 @@ import {
   ChatScreen,
   ForumsScreen,
   NewSessionScreen,
+  PersonaDetailScreen,
   PersonasScreen,
   SessionOperationReport,
   SessionsScreen,
@@ -96,7 +97,15 @@ function Screen({
       />
     );
     case 'personas': return (
-      <PersonasScreen state={state} sessionReport={sessionReport} />
+      <PersonasScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
+    );
+    case 'persona-detail': return (
+      <PersonaDetailScreen
+        client={client}
+        dispatch={dispatch}
+        sessionReport={sessionReport}
+        state={state}
+      />
     );
     case 'characters': return (
       <CharactersScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />

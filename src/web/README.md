@@ -26,6 +26,12 @@ text. Each `ForumSummary` carries its `default_persona_id` and
 `default_persona_display_name`, which is how the browser names the author it is
 about to write as.
 
+Bootstrap also carries the workspace persona roster as summaries, and `GET
+/api/v1/personas/{id}` serves one persona's `PERSONA.md` the way `GET
+/api/v1/characters/{id}` serves a character definition. That is discovery for
+reading, not selection: neither endpoint takes part in attribution, and
+`persona_markdown` is empty for a persona that configures no `PERSONA.md`.
+
 A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
 rejected rather than ignored, so a client written against an older shape fails
 visibly. `LiveSession` supplies the forum's persona ID from its

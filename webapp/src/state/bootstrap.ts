@@ -46,12 +46,13 @@ export function validateBootstrap(value: unknown): Bootstrap {
     }
   }
 
-  const { characters, forums, recent_sessions: recentSessions } = value;
+  const { personas, characters, forums, recent_sessions: recentSessions } = value;
+  if (!Array.isArray(personas)) throw new TypeError('Bootstrap is missing personas.');
   if (!Array.isArray(characters)) throw new TypeError('Bootstrap is missing characters.');
   if (!Array.isArray(forums)) throw new TypeError('Bootstrap is missing forums.');
   if (!Array.isArray(recentSessions)) throw new TypeError('Bootstrap is missing recent_sessions.');
 
-  if (!characters.every(hasIdentity)) {
+  if (!personas.every(hasIdentity) || !characters.every(hasIdentity)) {
     throw new TypeError('Bootstrap contains an invalid discovery summary.');
   }
   if (!forums.every(hasForumIdentity)) {
@@ -72,6 +73,9 @@ export function validateBootstrap(value: unknown): Bootstrap {
   for (const forum of bootstrap.forums) {
     if (!bootstrap.characters.some(({ id }) => id === forum.default_character_id)) {
       throw new TypeError('Bootstrap forum default character is absent from characters.');
+    }
+    if (!bootstrap.personas.some(({ id }) => id === forum.default_persona_id)) {
+      throw new TypeError('Bootstrap forum default persona is absent from personas.');
     }
   }
 

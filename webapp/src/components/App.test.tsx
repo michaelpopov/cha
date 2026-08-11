@@ -8,6 +8,7 @@ import type { SessionEventHandlers } from '../api/events';
 import {
   bootstrapFixture,
   fixtureClient,
+  personaDetailFixture,
   snapshotFixture,
 } from '../test/fixtures';
 import { App } from './App';
@@ -149,23 +150,53 @@ it('renders bootstrap discovery data and preserves conversation context while na
   expect(openSession).toHaveBeenCalledTimes(1);
 });
 
-it('shows the browsed forum persona rather than the attached conversation one', async () => {
-  render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
-  await screen.findByLabelText('Current chat context');
+it('lists every persona and renders one as read-only Markdown', async () => {
+  const getPersona = vi.fn(async () => personaDetailFixture);
+  render(<App client={fixtureClient({ getPersona })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
 
-  fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
-  const personas = () => within(screen.getByLabelText('Personas navigation'));
-  expect(personas().getByText('Entrance speaks as')).toBeInTheDocument();
-  expect(personas().getByText('Guest')).toBeInTheDocument();
+  // The built-in Guest and the configured personas share the one catalog.
+  const personas = within(screen.getByLabelText('Personas navigation'));
+  expect(personas.getByRole('button', { name: /Guest/ })).toBeInTheDocument();
+  expect(personas.getByText('Thoughtful, curious, and concise')).toBeInTheDocument();
 
-  // Selecting a forum leaves the Entrance conversation attached, so a screen
-  // reading the snapshot instead of the current forum would still say Guest.
-  fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
-  fireEvent.click(within(screen.getByLabelText('Forums navigation'))
-    .getByRole('button', { name: /The Lobby/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
-  expect(personas().getByText('The Lobby speaks as')).toBeInTheDocument();
-  expect(personas().getByText('Reader')).toBeInTheDocument();
+  fireEvent.click(personas.getByRole('button', { name: /Reader/ }));
+  expect(await screen.findByRole('heading', { name: 'Reader notes' })).toBeInTheDocument();
+  expect(screen.getByText('thoughtful').tagName).toBe('STRONG');
+  expect(getPersona).toHaveBeenCalledWith('reader');
+  // The topbar names the persona from bootstrap while its description loads.
+  expect(screen.getByRole('heading', { name: 'Reader' })).toBeInTheDocument();
+
+  fireEvent.click(within(screen.getByLabelText('Persona detail navigation'))
+    .getByRole('button', { name: 'Personas' }));
+  expect(screen.getByRole('heading', { name: 'Personas' })).toBeInTheDocument();
+});
+
+it('reports a persona with no PERSONA.md rather than an empty screen', async () => {
+  const getPersona = vi.fn(async () => ({ ...personaDetailFixture, persona_markdown: '' }));
+  render(<App client={fixtureClient({ getPersona })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
+  fireEvent.click(within(screen.getByLabelText('Personas navigation'))
+    .getByRole('button', { name: /Reader/ }));
+
+  expect(await screen.findByText('This persona has no PERSONA.md description.'))
+    .toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('retries a failed persona-detail request without exposing implementation details', async () => {
+  const getPersona = vi.fn()
+    .mockRejectedValueOnce(new ChaUnavailableError())
+    .mockResolvedValueOnce(personaDetailFixture);
+  render(<App client={fixtureClient({ getPersona })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
+  fireEvent.click(within(screen.getByLabelText('Personas navigation'))
+    .getByRole('button', { name: /Reader/ }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('application API is unavailable');
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByRole('heading', { name: 'Reader notes' })).toBeInTheDocument();
+  expect(getPersona).toHaveBeenCalledTimes(2);
 });
 
 it('loads character detail and renders the restricted Markdown presentation', async () => {

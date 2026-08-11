@@ -153,6 +153,9 @@ void LobbyRoutes::install(httplib::Server& server) const {
     server.Get("/api/v1/bootstrap", [model, sessions, initial](const httplib::Request&, httplib::Response& response) {
         Bootstrap bootstrap{.initial_forum_id = initial.session.forum_id,
                             .initial_session_id = initial.session.session_id};
+        for (const Persona& persona : *model->personas()) {
+            bootstrap.personas.push_back({persona.id, persona.display_name, persona.description});
+        }
         for (const CharacterMetadata& character : model->characters()) bootstrap.characters.push_back(character_summary(character));
         for (const ForumInfo& forum : model->forums()) bootstrap.forums.push_back(forum_summary(forum, *model));
         bootstrap.recent_sessions = recent_sessions(*model, *sessions);
@@ -167,6 +170,15 @@ void LobbyRoutes::install(httplib::Server& server) const {
         set_json_response(response, 200, nlohmann::json(CharacterDetail{
             character_summary(*character),
             std::string(model->character_markdown(id))}));
+    });
+
+    server.Get(R"(/api/v1/personas/([^/]+))", [model](const httplib::Request& request, httplib::Response& response) {
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)) return set_route_not_found(response);
+        const Persona* const persona = model->find_persona(id);
+        if (persona == nullptr) return set_route_not_found(response);
+        set_json_response(response, 200, nlohmann::json(PersonaDetail{
+            {persona->id, persona->display_name, persona->description}, persona->prompt}));
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [sessions, live_sessions](const httplib::Request& request, httplib::Response& response) {

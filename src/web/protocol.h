@@ -29,8 +29,11 @@ enum class ErrorCode {
     command_queue_full,
 };
 
-// The lobby exposes identities only for browser-side attribution selection.
-// A session snapshot deliberately does not carry this workspace-wide roster.
+// The lobby publishes the workspace-wide persona roster for discovery: the
+// browser lists these and reads one persona's Markdown from
+// /api/v1/personas/{id}. Nothing here selects attribution — a session resolves
+// the persona its own forum configures, and a session snapshot deliberately
+// does not carry this roster.
 struct PersonaSummary {
     std::string id;
     std::string display_name;
@@ -141,6 +144,7 @@ struct RecentSession {
 struct Bootstrap {
     ForumId initial_forum_id;
     SessionId initial_session_id;
+    std::vector<PersonaSummary> personas;
     std::vector<CharacterSummary> characters;
     std::vector<ForumSummary> forums;
     std::vector<RecentSession> recent_sessions;
@@ -149,6 +153,12 @@ struct Bootstrap {
 struct CharacterDetail {
     CharacterSummary summary;
     std::string character_markdown;
+};
+
+struct PersonaDetail {
+    PersonaSummary summary;
+    // PERSONA.md verbatim, and empty for a persona that configures none.
+    std::string persona_markdown;
 };
 
 struct Error {
@@ -197,6 +207,7 @@ void to_json(nlohmann::json& json, const OpenSessionSuccess& value);
 void to_json(nlohmann::json& json, const RecentSession& value);
 void to_json(nlohmann::json& json, const Bootstrap& value);
 void to_json(nlohmann::json& json, const CharacterDetail& value);
+void to_json(nlohmann::json& json, const PersonaDetail& value);
 void to_json(nlohmann::json& json, const Error& value);
 void to_json(nlohmann::json& json, const SnapshotEvent& value);
 void to_json(nlohmann::json& json, const AppendEvent& value);

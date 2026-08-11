@@ -3,6 +3,7 @@ import type {
   ChaClient,
   CharacterAppearance,
   CharacterDetail,
+  PersonaDetail,
   SessionSnapshot,
 } from '../api/client';
 
@@ -14,6 +15,10 @@ export const plainVoice: CharacterAppearance = {
 export const bootstrapFixture: Bootstrap = {
   initial_forum_id: 'entrance',
   initial_session_id: 'welcome',
+  personas: [
+    { id: 'guest', display_name: 'Guest', description: 'The built-in visitor persona' },
+    { id: 'reader', display_name: 'Reader', description: 'Thoughtful, curious, and concise' },
+  ],
   characters: [
     { id: 'assistant', display_name: 'Assistant', description: 'CHA application guide', appearance: plainVoice },
     { id: 'guide', display_name: 'Guide', description: 'A deterministic test character', appearance: plainVoice },
@@ -62,6 +67,16 @@ export const characterDetailFixture: CharacterDetail = {
   character_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
 };
 
+// The Markdown heading deliberately differs from the display name the topbar
+// shows, so a test asserting the rendered description cannot be satisfied by
+// the title this screen already has from bootstrap.
+export const personaDetailFixture: PersonaDetail = {
+  id: 'reader',
+  display_name: 'Reader',
+  description: 'Thoughtful, curious, and concise',
+  persona_markdown: '# Reader notes\n\nA **thoughtful** reader.',
+};
+
 export const snapshotFixture: SessionSnapshot = {
   forum: bootstrapFixture.forums[0],
   session_id: 'welcome',
@@ -83,6 +98,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
   return {
     getBootstrap: async () => bootstrapFixture,
     getCharacter: async () => characterDetailFixture,
+    getPersona: async () => personaDetailFixture,
     listSessions: async () => [],
     createSession: async (_forumId, label) => ({ id: 'created', label }),
     openSession: async (forumId, sessionId) => ({ forum_id: forumId, session_id: sessionId }),

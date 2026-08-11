@@ -4,6 +4,7 @@ import type { AppendEvent } from '../api/events';
 export type MainView =
   | 'chat'
   | 'personas'
+  | 'persona-detail'
   | 'characters'
   | 'character-detail'
   | 'forums'
@@ -33,6 +34,7 @@ export interface AppState {
   currentForumId: string | null;
   activeConversation: ActiveConversation | null;
   inspectedCharacterId: string | null;
+  inspectedPersonaId: string | null;
   currentDefaultCharacterId: string | null;
   sessionOperation: 'idle' | 'pending' | 'failed';
   sessionOperationMessage: string | null;
@@ -52,6 +54,7 @@ export const initialAppState: AppState = {
   currentForumId: null,
   activeConversation: null,
   inspectedCharacterId: null,
+  inspectedPersonaId: null,
   currentDefaultCharacterId: null,
   sessionOperation: 'idle',
   sessionOperationMessage: null,
@@ -69,6 +72,7 @@ export type AppAction =
   | { type: 'bootstrap-refreshed'; bootstrap: Bootstrap }
   | { type: 'toggle-sidebar' }
   | { type: 'show-personas' }
+  | { type: 'inspect-persona'; personaId: string }
   | { type: 'show-characters' }
   | { type: 'inspect-character'; characterId: string }
   | { type: 'show-forums' }
@@ -169,7 +173,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'toggle-sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'show-personas':
-      return { ...state, mainView: 'personas', ...idleSessionOperation() };
+      return { ...state, mainView: 'personas', inspectedPersonaId: null, ...idleSessionOperation() };
+    case 'inspect-persona':
+      return {
+        ...state,
+        mainView: 'persona-detail',
+        inspectedPersonaId: action.personaId,
+        ...idleSessionOperation(),
+      };
     case 'show-characters':
       return {
         ...state,
@@ -278,6 +289,10 @@ export function sessionOperationState(state: AppState): {
 export function navigationTitle(state: AppState): string | null {
   switch (state.mainView) {
     case 'personas': return 'Personas';
+    case 'persona-detail':
+      return state.bootstrap?.personas.find(
+        ({ id }) => id === state.inspectedPersonaId,
+      )?.display_name ?? 'Persona';
     case 'characters': return 'Characters';
     case 'character-detail':
       return state.bootstrap?.characters.find(

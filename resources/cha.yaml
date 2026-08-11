@@ -127,6 +127,28 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/personas/{persona_id}:
+    parameters:
+      - $ref: "#/components/parameters/PersonaId"
+    get:
+      tags: [Discovery]
+      operationId: getPersona
+      summary: Get persona details
+      description: |
+        Returns the persona summary and its `PERSONA.md` description verbatim.
+        `persona_markdown` is empty for a persona that configures none.
+      responses:
+        "200":
+          description: Persona details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonaDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/forums/{forum_id}/sessions:
     parameters:
       - $ref: "#/components/parameters/ForumId"
@@ -458,6 +480,13 @@ components:
       description: Stable URL-safe character identifier.
       schema:
         $ref: "#/components/schemas/Identifier"
+    PersonaId:
+      name: persona_id
+      in: path
+      required: true
+      description: Stable URL-safe persona identifier.
+      schema:
+        $ref: "#/components/schemas/Identifier"
 
   requestBodies:
     EmptyJsonObject:
@@ -665,6 +694,7 @@ components:
       required:
         - initial_forum_id
         - initial_session_id
+        - personas
         - characters
         - forums
         - recent_sessions
@@ -673,6 +703,10 @@ components:
           $ref: "#/components/schemas/Identifier"
         initial_session_id:
           $ref: "#/components/schemas/Identifier"
+        personas:
+          type: array
+          items:
+            $ref: "#/components/schemas/PersonaSummary"
         characters:
           type: array
           items:
@@ -701,6 +735,20 @@ components:
         appearance:
           $ref: "#/components/schemas/CharacterAppearance"
         character_markdown:
+          type: string
+
+    PersonaDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, persona_markdown]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        persona_markdown:
           type: string
 
     CreateSessionRequest:

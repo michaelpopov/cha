@@ -2,6 +2,7 @@ import type { components } from './schema';
 
 export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
+export type PersonaDetail = components['schemas']['PersonaDetail'];
 export type CharacterAppearance = components['schemas']['CharacterAppearance'];
 export type SessionListing = components['schemas']['SessionListing'];
 export type CreateSessionResult = components['schemas']['CreateSessionResult'];
@@ -77,6 +78,7 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 export interface ChaClient {
   getBootstrap(): Promise<Bootstrap>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
+  getPersona(personaId: string): Promise<PersonaDetail>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, label: string): Promise<CreateSessionResult>;
   openSession(forumId: string, sessionId: string): Promise<OpenSessionResult>;
@@ -186,6 +188,11 @@ export function createChaClient(
     getCharacter: (characterId) => requestJson<CharacterDetail>(
       fetcher,
       `/api/v1/characters/${component(characterId)}`,
+    ),
+
+    getPersona: (personaId) => requestJson<PersonaDetail>(
+      fetcher,
+      `/api/v1/personas/${component(personaId)}`,
     ),
 
     listSessions: (forumId) => requestJson<SessionListing[]>(

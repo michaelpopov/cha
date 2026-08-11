@@ -10,7 +10,7 @@ interface SidebarProps {
 }
 
 const navigation = [
-  { action: 'show-personas' as const, views: ['personas'] as MainView[], label: 'Personas', icon: PersonasIcon },
+  { action: 'show-personas' as const, views: ['personas', 'persona-detail'] as MainView[], label: 'Personas', icon: PersonasIcon },
   {
     action: 'show-characters' as const,
     views: ['characters', 'character-detail'] as MainView[],

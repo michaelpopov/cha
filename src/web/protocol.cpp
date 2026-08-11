@@ -257,7 +257,7 @@ void to_json(nlohmann::json& json, const RecentSession& value) {
 
 void to_json(nlohmann::json& json, const Bootstrap& value) {
     json = {{"initial_forum_id", value.initial_forum_id},
-            {"initial_session_id", value.initial_session_id},
+            {"initial_session_id", value.initial_session_id}, {"personas", value.personas},
             {"characters", value.characters}, {"forums", value.forums},
             {"recent_sessions", value.recent_sessions}};
 }
@@ -265,6 +265,11 @@ void to_json(nlohmann::json& json, const Bootstrap& value) {
 void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json = nlohmann::json(value.summary);
     json["character_markdown"] = value.character_markdown;
+}
+
+void to_json(nlohmann::json& json, const PersonaDetail& value) {
+    json = nlohmann::json(value.summary);
+    json["persona_markdown"] = value.persona_markdown;
 }
 
 void to_json(nlohmann::json& json, const Error& value) {

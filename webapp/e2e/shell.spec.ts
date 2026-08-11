@@ -101,10 +101,18 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
   await expect(page.getByLabel('Current chat context')).toContainText('Entrance');
   await expect(page.getByLabel('Current chat context')).toContainText('From: Guest');
 
-  // The persona follows the forum being browsed, so Entrance reports its own.
+  // Personas is a workspace-wide catalog: the built-in Guest beside every
+  // configured persona, each row opening that persona's own PERSONA.md. Which
+  // persona a forum speaks as is checked where the browser shows it, on the
+  // chat context line of a Lobby session further down this file.
   await page.getByRole('button', { name: 'Personas' }).click();
-  await expect(page.getByText('Entrance speaks as')).toBeVisible();
-  await expect(page.getByText('Guest', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Guest/ })).toBeVisible();
+  await page.getByRole('button', { name: /Reader\s+The deterministic browser-test persona/ })
+    .click();
+  await expect(page.getByText('Write concise browser-test prompts.')).toBeVisible();
+  await page.getByLabel('Persona detail navigation')
+    .getByRole('button', { name: 'Personas' }).click();
+  await expect(page.getByText('The deterministic browser-test persona')).toBeVisible();
 
   await page.getByRole('button', { name: 'Characters' }).click();
   await expect(page.getByText('A deterministic test character')).toBeVisible();
@@ -114,13 +122,8 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
 
   await page.getByRole('button', { name: 'Forums' }).click();
   await expect(page.getByRole('button', { name: /The Lobby\s+Guide/ })).toBeVisible();
-
-  // The Lobby configures a persona of its own, which is the whole point of the
-  // setting: moving there changes who the browser speaks as.
   await page.getByRole('button', { name: /The Lobby\s+Guide/ }).click();
-  await page.getByRole('button', { name: 'Personas' }).click();
-  await expect(page.getByText('The Lobby speaks as')).toBeVisible();
-  await expect(page.getByText('Reader', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Forum sessions navigation')).toBeVisible();
 });
 
 test('recovers when the application API is initially unavailable', async ({ page }) => {
@@ -178,6 +181,7 @@ test('lays every screen out inside the visible panel', async ({ page }) => {
   const steps: (() => Promise<void>)[] = [
     async () => {},
     async () => page.getByRole('button', { name: 'Personas' }).click(),
+    async () => on('Personas').getByRole('button', { name: /Reader/ }).click(),
     async () => page.getByRole('button', { name: 'Characters' }).click(),
     async () => on('Characters').getByRole('button', { name: /Guide/ }).click(),
     async () => page.getByRole('button', { name: 'Forums' }).click(),

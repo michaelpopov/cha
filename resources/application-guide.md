@@ -9,8 +9,10 @@ settings rather than chosen in the browser. Entrance speaks as Guest; the
 inventory names every other forum's persona. Nothing in the browser changes a
 persona, so users asking to switch should be pointed at forum configuration.
 
-Use the browser navigation to inspect forums and characters, create a stored
-session, or reopen a recent conversation. Workspace sessions persist; Welcome is
+Use the browser navigation to inspect personas, forums, and characters, create a
+stored session, or reopen a recent conversation. The Personas screen is a
+read-only catalog of the workspace personas and their descriptions; opening one
+does not change who anyone speaks as. Workspace sessions persist; Welcome is
 private to this server run and is removed on shutdown.
 
 ## Commands

@@ -115,7 +115,7 @@ select:disabled {
 .cha-side-action,
 .cha-recent-row,
 .cha-list-action,
-.cha-character-row,
+.cha-roster-row,
 .cha-icon-action,
 .cha-composer-action,
 .cha-back-row,
@@ -142,7 +142,7 @@ select:disabled {
 .cha-side-action.is-current,
 .cha-list-action:hover,
 .cha-list-action.is-current,
-.cha-character-row:hover,
+.cha-roster-row:hover,
 .cha-icon-action:hover:not(:disabled) {
   color: var(--accent-foreground);
   background: var(--accent);
@@ -292,8 +292,7 @@ button.cha-recent-row:hover,
 }
 
 .cha-list,
-.cha-persona-list,
-.cha-character-list {
+.cha-roster {
   display: grid;
   gap: 0.2rem;
 }
@@ -320,7 +319,7 @@ button.cha-recent-row:hover,
 }
 
 .cha-list-copy,
-.cha-persona-copy {
+.cha-roster-copy {
   display: grid;
   min-width: 0;
   gap: 0.12rem;
@@ -334,7 +333,7 @@ button.cha-recent-row:hover,
 }
 
 .cha-secondary-line,
-.cha-persona-description {
+.cha-roster-description {
   color: var(--muted-foreground);
   font-size: 0.78rem;
 }
@@ -352,24 +351,11 @@ button.cha-recent-row:hover,
   color: var(--muted-foreground);
 }
 
-.cha-persona-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
-  padding: 0.8rem 0.65rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.cha-persona-name {
+.cha-roster-name {
   font-weight: 520;
 }
 
-.cha-persona-row input {
-  accent-color: var(--primary);
-}
-
-.cha-character-row {
+.cha-roster-row {
   display: grid;
   width: 100%;
   grid-template-columns: minmax(0, 1fr) auto;

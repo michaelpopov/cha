@@ -805,13 +805,14 @@ keyed by `SessionIdentity`.
 - Finished actors are removed under the mutex and joined outside it.
 - A caller timing out while an actor starts does not cancel shared startup.
 
-Lobby routes provide health, bootstrap, public character detail, session
-listing/creation, and open. Session routes operate only on a live actor:
+Lobby routes provide health, bootstrap, public character and persona detail,
+session listing/creation, and open. Session routes operate only on a live actor:
 
 ```text
 GET  /health
 GET  /api/v1/bootstrap
 GET  /api/v1/characters/{character}
+GET  /api/v1/personas/{persona}
 GET  /api/v1/forums/{forum}/sessions
 POST /api/v1/forums/{forum}/sessions
 POST /api/v1/forums/{forum}/sessions/{session}/open

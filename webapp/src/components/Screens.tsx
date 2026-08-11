@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -15,7 +16,6 @@ import {
   publicErrorMessage,
   type ChaClient,
   type CharacterAppearance,
-  type CharacterDetail,
   type CommandResult,
   type SessionListing,
   type SessionSnapshot,
@@ -366,105 +366,88 @@ export function ChatScreen({
   );
 }
 
-export function PersonasScreen({ state, sessionReport }: Omit<NavigationScreenProps, 'dispatch'>) {
-  // The forum being browsed, which is not always the attached conversation's:
-  // selecting a forum leaves an open session attached while moving the current
-  // forum elsewhere. Naming the forum keeps the two distinguishable on screen.
-  const forum = state.bootstrap?.forums.find(({ id }) => id === state.currentForumId);
+// Personas and Characters are the same control twice over: a roster of rows
+// showing a display name above its optional configured description, each row
+// opening that entry's read-only Markdown detail. Only the roster, the endpoint
+// behind a row, and the wording differ, so the pair below is written once.
+function RosterRow({ description, displayName, onSelect }: {
+  description?: string;
+  displayName: string;
+  onSelect(): void;
+}) {
   return (
-    <section className="cha-screen cha-navigation" aria-label="Personas navigation">
-      {sessionReport}
-      <p className="cha-screen-instruction">
-        {forum ? `${forum.display_name} speaks as` : 'This forum’s fixed persona'}
-      </p>
-      <div className="cha-persona-list">
-        <div className="cha-persona-row">
-          <span className="cha-persona-copy">
-            <span className="cha-persona-name">
-              {forum?.default_persona_display_name ?? 'Unknown persona'}
-            </span>
-          </span>
-        </div>
-      </div>
-    </section>
+    <button className="cha-roster-row" onClick={onSelect} type="button">
+      <span className="cha-roster-copy">
+        <span className="cha-roster-name">{displayName}</span>
+        {description && <span className="cha-roster-description">{description}</span>}
+      </span>
+      <ChevronRightIcon className="cha-chevron" />
+    </button>
   );
 }
 
-export function CharactersScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
-  return (
-    <section className="cha-screen cha-navigation" aria-label="Characters navigation">
-      {sessionReport}
-      <div className="cha-character-list">
-        {state.bootstrap?.characters.map((character) => (
-          <button
-            className="cha-character-row"
-            key={character.id}
-            onClick={() => dispatch({ type: 'inspect-character', characterId: character.id })}
-            type="button"
-          >
-            <span className="cha-persona-copy">
-              <span className="cha-persona-name">{character.display_name}</span>
-              {character.description && (
-                <span className="cha-persona-description">{character.description}</span>
-              )}
-            </span>
-            <ChevronRightIcon className="cha-chevron" />
-          </button>
-        ))}
-      </div>
-    </section>
-  );
+interface RosterDetailCopy {
+  absent: string;
+  loading: string;
+  failed: string;
+  // A persona's PERSONA.md is optional, so a roster entry can legitimately
+  // resolve to no Markdown at all. That is a configuration to report, not a
+  // failure and not a blank screen.
+  empty: string;
 }
 
-interface CharacterDetailScreenProps extends NavigationScreenProps {
-  client: ChaClient;
+interface RosterDetailScreenProps {
+  ariaLabel: string;
+  backLabel: string;
+  copy: RosterDetailCopy;
+  // Stable across renders, so reading one entry does not restart itself.
+  load(subjectId: string): Promise<string>;
+  onBack(): void;
+  sessionReport: ReactNode;
+  subjectId: string | null;
 }
 
-export function CharacterDetailScreen({
-  state,
-  dispatch,
-  client,
+function RosterDetailScreen({
+  ariaLabel,
+  backLabel,
+  copy,
+  load,
+  onBack,
   sessionReport,
-}: CharacterDetailScreenProps) {
-  const [detail, setDetail] = useState<CharacterDetail | null>(null);
+  subjectId,
+}: RosterDetailScreenProps) {
+  const [markdown, setMarkdown] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [requestVersion, setRequestVersion] = useState(0);
-  const characterId = state.inspectedCharacterId;
 
   useEffect(() => {
-    if (!characterId) return;
+    if (!subjectId) return;
     let current = true;
-    setDetail(null);
+    setMarkdown(null);
     setError(null);
-    void client.getCharacter(characterId).then(
+    void load(subjectId).then(
       (loaded) => {
-        if (current) setDetail(loaded);
+        if (current) setMarkdown(loaded);
       },
       (failure: unknown) => {
-        if (current) {
-          setError(publicErrorMessage(failure, 'Character detail could not be loaded.'));
-        }
+        if (current) setError(publicErrorMessage(failure, copy.failed));
       },
     );
     return () => {
       current = false;
     };
-  }, [characterId, client, requestVersion]);
+  }, [copy.failed, load, requestVersion, subjectId]);
 
   return (
-    <section className="cha-screen cha-navigation" aria-label="Character detail navigation">
-      <button
-        className="cha-back-row"
-        onClick={() => dispatch({ type: 'show-characters' })}
-        type="button"
-      >
+    <section className="cha-screen cha-navigation" aria-label={ariaLabel}>
+      <button className="cha-back-row" onClick={onBack} type="button">
         <ChevronLeftIcon />
-        <span>Characters</span>
+        <span>{backLabel}</span>
       </button>
       {sessionReport}
-      {!characterId && <p className="cha-state-message">No character is selected.</p>}
-      {characterId && !detail && !error && (
-        <p className="cha-state-message" role="status">Loading character…</p>
+      {!subjectId && <p className="cha-state-message">{copy.absent}</p>}
+      {subjectId && markdown === null && !error && (
+        <p className="cha-state-message" role="status">{copy.loading}</p>
       )}
       {error && (
         <div className="cha-state-message cha-error-message" role="alert">
@@ -478,8 +461,108 @@ export function CharacterDetailScreen({
           </button>
         </div>
       )}
-      {detail && <Markdown source={detail.character_markdown} />}
+      {markdown !== null && (markdown.trim() === ''
+        ? <p className="cha-state-message">{copy.empty}</p>
+        : <Markdown source={markdown} />)}
     </section>
+  );
+}
+
+interface RosterDetailProps extends NavigationScreenProps {
+  client: ChaClient;
+}
+
+export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Personas navigation">
+      {sessionReport}
+      <p className="cha-screen-instruction">Choose a persona</p>
+      <div className="cha-roster">
+        {state.bootstrap?.personas.map((persona) => (
+          <RosterRow
+            description={persona.description}
+            displayName={persona.display_name}
+            key={persona.id}
+            onSelect={() => dispatch({ type: 'inspect-persona', personaId: persona.id })}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function PersonaDetailScreen({
+  state,
+  dispatch,
+  client,
+  sessionReport,
+}: RosterDetailProps) {
+  const load = useCallback(
+    (personaId: string) => client.getPersona(personaId).then((detail) => detail.persona_markdown),
+    [client],
+  );
+  return (
+    <RosterDetailScreen
+      ariaLabel="Persona detail navigation"
+      backLabel="Personas"
+      copy={{
+        absent: 'No persona is selected.',
+        loading: 'Loading persona…',
+        failed: 'Persona detail could not be loaded.',
+        empty: 'This persona has no PERSONA.md description.',
+      }}
+      load={load}
+      onBack={() => dispatch({ type: 'show-personas' })}
+      sessionReport={sessionReport}
+      subjectId={state.inspectedPersonaId}
+    />
+  );
+}
+
+export function CharactersScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Characters navigation">
+      {sessionReport}
+      <div className="cha-roster">
+        {state.bootstrap?.characters.map((character) => (
+          <RosterRow
+            description={character.description}
+            displayName={character.display_name}
+            key={character.id}
+            onSelect={() => dispatch({ type: 'inspect-character', characterId: character.id })}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function CharacterDetailScreen({
+  state,
+  dispatch,
+  client,
+  sessionReport,
+}: RosterDetailProps) {
+  const load = useCallback(
+    (characterId: string) => client.getCharacter(characterId)
+      .then((detail) => detail.character_markdown),
+    [client],
+  );
+  return (
+    <RosterDetailScreen
+      ariaLabel="Character detail navigation"
+      backLabel="Characters"
+      copy={{
+        absent: 'No character is selected.',
+        loading: 'Loading character…',
+        failed: 'Character detail could not be loaded.',
+        empty: 'This character has no CHARACTER.md definition.',
+      }}
+      load={load}
+      onBack={() => dispatch({ type: 'show-characters' })}
+      sessionReport={sessionReport}
+      subjectId={state.inspectedCharacterId}
+    />
   );
 }
 
