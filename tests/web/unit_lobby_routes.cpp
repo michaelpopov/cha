@@ -166,11 +166,9 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_TRUE(bootstrap);
     EXPECT_EQ(bootstrap->status, 200);
     const nlohmann::json bootstrap_body = body(bootstrap);
-    EXPECT_EQ(bootstrap_body["initial_persona_id"], "builtin-guest");
     EXPECT_EQ(bootstrap_body["initial_forum_id"], "builtin-entrance");
     EXPECT_EQ(bootstrap_body["initial_session_id"], "builtin-welcome");
     EXPECT_EQ(bootstrap_body["forums"].size(), 2);
-    EXPECT_EQ(bootstrap_body["personas"].size(), 2);
     EXPECT_EQ(bootstrap_body["characters"].size(), 2);
     const auto guide = std::find_if(
         bootstrap_body["characters"].begin(), bootstrap_body["characters"].end(),
@@ -828,7 +826,7 @@ TEST(LobbyRoutes, MapsStoppingAndManagerShutdownOpenFailuresToExistingEnvelopes)
     ASSERT_TRUE(session);
     controls->ignore_cancellation();
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        session->submit(RawCommand{"reader", "Question"}, 5s)));
+        session->submit(RawCommand{"Question"}, 5s)));
     ASSERT_TRUE(controls->wait_until_running());
     session->request_shutdown();
     const auto stopping_deadline = std::chrono::steady_clock::now() + 5s;

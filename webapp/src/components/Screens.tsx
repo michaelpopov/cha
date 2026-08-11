@@ -115,7 +115,6 @@ export function ChatScreen({
   const snapshot = state.sessionSnapshot;
   const generation = snapshot?.generation;
   const conversationKey = snapshot && `${snapshot.forum.id}/${snapshot.session_id}`;
-  const persona = state.bootstrap?.personas.find(({ id }) => id === state.currentPersonaId);
   const forum = snapshot?.forum ?? state.bootstrap?.forums.find(
     ({ id }) => id === state.activeConversation?.forumId,
   );
@@ -359,7 +358,7 @@ export function ChatScreen({
         </form>
         <div className="cha-chat-status" aria-label="Current chat context">
           <span>{forum?.display_name ?? 'Unknown forum'}</span>
-          <span>From: {persona?.display_name ?? 'Unknown persona'}</span>
+          <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
           <span>To: {character?.display_name ?? 'Unknown character'}</span>
         </div>
       </div>
@@ -367,29 +366,25 @@ export function ChatScreen({
   );
 }
 
-export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
+export function PersonasScreen({ state, sessionReport }: Omit<NavigationScreenProps, 'dispatch'>) {
+  // The forum being browsed, which is not always the attached conversation's:
+  // selecting a forum leaves an open session attached while moving the current
+  // forum elsewhere. Naming the forum keeps the two distinguishable on screen.
+  const forum = state.bootstrap?.forums.find(({ id }) => id === state.currentForumId);
   return (
     <section className="cha-screen cha-navigation" aria-label="Personas navigation">
       {sessionReport}
-      <p className="cha-screen-instruction">Select a persona</p>
-      <div className="cha-persona-list" role="radiogroup" aria-label="Persona">
-        {state.bootstrap?.personas.map((persona) => (
-          <label className="cha-persona-row" key={persona.id}>
-            <span className="cha-persona-copy">
-              <span className="cha-persona-name">{persona.display_name}</span>
-              {persona.description && (
-                <span className="cha-persona-description">{persona.description}</span>
-              )}
+      <p className="cha-screen-instruction">
+        {forum ? `${forum.display_name} speaks as` : 'This forum’s fixed persona'}
+      </p>
+      <div className="cha-persona-list">
+        <div className="cha-persona-row">
+          <span className="cha-persona-copy">
+            <span className="cha-persona-name">
+              {forum?.default_persona_display_name ?? 'Unknown persona'}
             </span>
-            <input
-              checked={state.currentPersonaId === persona.id}
-              name="persona"
-              onChange={() => dispatch({ type: 'select-persona', personaId: persona.id })}
-              type="radio"
-              value={persona.id}
-            />
-          </label>
-        ))}
+          </span>
+        </div>
       </div>
     </section>
   );

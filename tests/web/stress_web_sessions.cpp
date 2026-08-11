@@ -140,10 +140,10 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     results.reserve(commands_per_session * 2);
     for (unsigned int index = 0; index != commands_per_session; ++index) {
         results.push_back(std::async(std::launch::async, [&first] {
-            return first->submit(RawCommand{"reader", "/info"}, 10s);
+            return first->submit(RawCommand{"/info"}, 10s);
         }));
         results.push_back(std::async(std::launch::async, [&second] {
-            return second->submit(RawCommand{"reader", "/info"}, 10s);
+            return second->submit(RawCommand{"/info"}, 10s);
         }));
     }
     for (auto& result : results) {
@@ -153,7 +153,7 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     // Each actor owns its own controller and storage, so a prompt submitted to
     // one can never appear in the other's transcript.
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        first->submit(RawCommand{"reader", "first-only"}, 10s)));
+        first->submit(RawCommand{"first-only"}, 10s)));
     const auto first_state = first->snapshot(10s);
     const auto second_state = second->snapshot(10s);
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(first_state));
@@ -197,17 +197,17 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
     ASSERT_TRUE(healthy);
 
     auto blocked_command = std::async(std::launch::async, [&] {
-        return blocked->submit(RawCommand{"reader", "wait"}, 50ms);
+        return blocked->submit(RawCommand{"wait"}, 50ms);
     });
     ASSERT_TRUE(gate.wait_until_entered());
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        healthy->submit(RawCommand{"reader", "/info"}, 10s)));
+        healthy->submit(RawCommand{"/info"}, 10s)));
     EXPECT_EQ(
         std::get<ErrorCode>(blocked_command.get()), ErrorCode::command_timeout);
 
     gate.release();
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        healthy->submit(RawCommand{"reader", "/info"}, 10s)));
+        healthy->submit(RawCommand{"/info"}, 10s)));
     ASSERT_TRUE(blocked_controls->wait_until_running());
     blocked_controls->finish();
     manager.begin_shutdown();
@@ -334,12 +334,12 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptItsPeer) {
     // A corrupted journal makes the next real controller write fail inside the
     // failing actor's owner loop.
     execute_sql(files.path_for(failing), "DROP TABLE turns");
-    (void)failing_session->submit(RawCommand{"reader", "Question"}, 500ms);
+    (void)failing_session->submit(RawCommand{"Question"}, 500ms);
 
     std::vector<std::future<CommandSubmitResult>> commands;
     for (int index = 0; index != 40; ++index) {
         commands.push_back(std::async(std::launch::async, [&] {
-            return healthy_session->submit(RawCommand{"reader", "/info"}, 10s);
+            return healthy_session->submit(RawCommand{"/info"}, 10s);
         }));
     }
     for (auto& command : commands) {
@@ -437,7 +437,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     for (LiveSessionHandle& session : handles) {
         LiveSession* const target = session.get();
         commands.push_back(std::async(std::launch::async, [target] {
-            return target->submit(RawCommand{"reader", "/clear"}, 10s);
+            return target->submit(RawCommand{"/clear"}, 10s);
         }));
     }
     for (auto& command : commands) {

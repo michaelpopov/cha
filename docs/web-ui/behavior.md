@@ -8,7 +8,7 @@ The browser keeps these related pieces of UI state:
 | --- | --- |
 | Sidebar | Open or closed |
 | Main area | Chat, Personas, Characters, Character detail, Forums, Sessions, or New session |
-| Current context | Persona ID and forum ID |
+| Current context | Forum ID |
 | Active conversation | Forum ID and session ID |
 | Inspected character | Character ID, used only by Character detail |
 | Current default character | Character ID from the active live session |
@@ -16,8 +16,8 @@ The browser keeps these related pieces of UI state:
 The Main area is exclusive: Chat and Navigation are never visible together. Opening or closing the sidebar changes layout only; it does not change the Main-area state or any current context.
 
 On startup the active conversation is the shared built-in Welcome session in
-Entrance, the selected persona is Guest, and the current default character is
-Assistant.
+Entrance, whose configured persona is Guest, and the current default character
+is Assistant.
 
 ## Sidebar
 
@@ -31,7 +31,9 @@ The sidebar contains, from top to bottom:
 
 There is no sixth element. The mockup's round gear button at the bottom-right is removed in v1 and nothing replaces it.
 
-Personas and Forums have no current-selection secondary lines. The active conversation's Recent entry uses the selected-row treatment. There is no separate Chat button because selecting the active Recent entry already returns to that conversation.
+Personas and Forums have no current-selection secondary lines. Personas is
+read-only: it reports the current forum's configured persona and selects
+nothing. The active conversation's Recent entry uses the selected-row treatment. There is no separate Chat button because selecting the active Recent entry already returns to that conversation.
 
 ## Controls
 
@@ -40,25 +42,24 @@ Only the two-line button changes sidebar visibility. Every other sidebar action 
 | Control | Result | Preserved state |
 | --- | --- | --- |
 | Two-line button | Toggles the sidebar | Main area and all current context |
-| Personas | Shows Personas | Sidebar state, current forum, and active conversation |
-| Persona radio | Selects exactly one persona | Sidebar state, current forum, and active conversation |
+| Personas | Shows Personas for the current forum | Sidebar state, current forum, and active conversation |
 | Characters | Shows Characters | Sidebar state and all conversation context |
 | Character row | Shows read-only Character detail | Sidebar state and all conversation context |
 | Character-detail back row | Returns to Characters | Sidebar state and all conversation context |
-| Forums | Shows Forums | Sidebar state, current persona, and active conversation |
-| Forum row | Sets the current forum and shows Sessions directly | Sidebar state and current persona |
-| Recent session | Sets that forum/session as active, opens or reattaches it, and shows Chat | Sidebar state and current persona |
-| New session row | Shows New session for the current forum | Sidebar state, current persona, and forum |
-| Target-character chooser | Lists the active session's characters; selecting one requests it as the default | Sidebar state, current persona, forum, session, and draft |
-| Send | Submits the draft as the selected persona while generation is inactive | Sidebar state and active conversation |
+| Forums | Shows Forums | Sidebar state and active conversation |
+| Forum row | Sets the current forum and shows Sessions directly | Sidebar state |
+| Recent session | Sets that forum/session as active, opens or reattaches it, and shows Chat | Sidebar state |
+| New session row | Shows New session for the current forum | Sidebar state and forum |
+| Target-character chooser | Lists the active session's characters; selecting one requests it as the default | Sidebar state, forum, session, and draft |
+| Send | Submits the draft while generation is inactive | Sidebar state and active conversation |
 | Stop | Replaces Send while generation is active and requests that generation stop | Sidebar state, active conversation, and draft |
 
-Selecting a persona affects the next submitted message, including messages in an
-already-open session. It does not create, close, or switch sessions. Personas
-are application-wide authors and never members of a forum or session. On each
-submission the session resolves the selected ID against the effective
-application-wide roster it received when it opened. That roster contains Guest
-and every workspace persona and is not derived from forum membership.
+The browser never chooses an author. A submission carries text only, and the
+session attributes it to the persona its forum configures, resolved against the
+single-persona roster it received when it opened. Entering a different forum is
+therefore the only thing that changes who a message comes from, and it does so
+by opening a session there rather than by any client-side selection. Personas
+remain authors, never members of a forum or session.
 
 ## Chat context line
 
@@ -67,12 +68,12 @@ Chat places one compact, read-only status line directly below the prompt compose
 `<Forum>   From: <Persona>   To: <Current default character in the forum>`
 
 - Forum is the active conversation's forum.
-- From is the currently selected persona and updates immediately after a persona radio selection.
+- From is the active conversation's forum persona, taken from the session snapshot.
 - To is the current default character for the live session.
 - A live change to the session's default character updates To from the authoritative session state.
 - The line is not an editor or navigation control.
 
-The current persona and forum do not appear in the sidebar or Chat header.
+The persona and current forum do not appear in the sidebar or Chat header.
 
 ## Chat composer controls
 

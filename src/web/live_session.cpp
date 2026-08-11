@@ -421,11 +421,11 @@ void LiveSession::execute(OwnerCommand command) {
         return;
     }
     SessionController& controller = *controller_;
-    CommandResult outcome = std::visit([&controller](auto&& value) -> CommandResult {
+    CommandResult outcome = std::visit([this, &controller](auto&& value) -> CommandResult {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) {
             return handle_text_input(
-                controller, value.persona, std::move(value.text));
+                controller, descriptor_.forum_default_persona_id, std::move(value.text));
         } else if constexpr (std::is_same_v<T, StopCommand>) {
             return {.session = controller.request_stop()};
         } else if constexpr (std::is_same_v<T, SetDefaultCharacterCommand>) {

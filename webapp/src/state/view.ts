@@ -30,7 +30,6 @@ export interface AppState {
   bootstrapStatus: BootstrapStatus;
   bootstrap: Bootstrap | null;
   bootstrapMessage: string | null;
-  currentPersonaId: string | null;
   currentForumId: string | null;
   activeConversation: ActiveConversation | null;
   inspectedCharacterId: string | null;
@@ -50,7 +49,6 @@ export const initialAppState: AppState = {
   bootstrapStatus: 'loading',
   bootstrap: null,
   bootstrapMessage: null,
-  currentPersonaId: null,
   currentForumId: null,
   activeConversation: null,
   inspectedCharacterId: null,
@@ -71,7 +69,6 @@ export type AppAction =
   | { type: 'bootstrap-refreshed'; bootstrap: Bootstrap }
   | { type: 'toggle-sidebar' }
   | { type: 'show-personas' }
-  | { type: 'select-persona'; personaId: string }
   | { type: 'show-characters' }
   | { type: 'inspect-character'; characterId: string }
   | { type: 'show-forums' }
@@ -112,23 +109,12 @@ function showInitialConversation(state: AppState, bootstrap: Bootstrap): AppStat
       sessionId: bootstrap.initial_session_id,
     },
     activeConversationLabel: initialRecent?.session_label ?? null,
-    currentPersonaId: initialForum?.default_persona_id ?? bootstrap.initial_persona_id,
     currentDefaultCharacterId: initialForum?.default_character_id ?? null,
     sessionSnapshot: null,
     streamStatus: 'idle',
     streamMessage: null,
     ...idleSessionOperation(),
   };
-}
-
-// A manual persona choice stays in force while moving between sessions in the
-// same forum. Crossing into another forum restores that forum's default.
-function personaForForum(state: AppState, forumId: string): string | null {
-  if (state.currentForumId === forumId && state.currentPersonaId) {
-    return state.currentPersonaId;
-  }
-  return state.bootstrap?.forums.find(({ id }) => id === forumId)?.default_persona_id
-    ?? state.currentPersonaId;
 }
 
 function appendSessionEvent(
@@ -171,7 +157,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         bootstrapStatus: 'ready',
         bootstrap: action.bootstrap,
         bootstrapMessage: null,
-        currentPersonaId: action.bootstrap.initial_persona_id,
       }, action.bootstrap);
     case 'bootstrap-failed':
       return {
@@ -185,8 +170,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'show-personas':
       return { ...state, mainView: 'personas', ...idleSessionOperation() };
-    case 'select-persona':
-      return { ...state, currentPersonaId: action.personaId };
     case 'show-characters':
       return {
         ...state,
@@ -208,7 +191,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'sessions',
         currentForumId: action.forumId,
-        currentPersonaId: personaForForum(state, action.forumId),
         ...idleSessionOperation(),
       };
     case 'show-sessions':
@@ -236,7 +218,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'chat',
         currentForumId: action.snapshot.forum.id,
-        currentPersonaId: personaForForum(state, action.snapshot.forum.id),
         activeConversation: {
           forumId: action.snapshot.forum.id,
           sessionId: action.snapshot.session_id,

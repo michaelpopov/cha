@@ -2,11 +2,16 @@
 
 CHA opens a disposable help conversation as **Guest** in **Entrance** /
 **Welcome**. Assistant is the application guide. Ask it about the workspace,
-personas, forums, and characters.
+forums, and characters.
 
-Use the browser navigation to choose a persona, inspect forums and characters,
-create a stored session, or reopen a recent conversation. Workspace sessions
-persist; Welcome is private to this server run and is removed on shutdown.
+Each forum fixes the persona its visitors speak as, configured in that forum's
+settings rather than chosen in the browser. Entrance speaks as Guest; the
+inventory names every other forum's persona. Nothing in the browser changes a
+persona, so users asking to switch should be pointed at forum configuration.
+
+Use the browser navigation to inspect forums and characters, create a stored
+session, or reopen a recent conversation. Workspace sessions persist; Welcome is
+private to this server run and is removed on shutdown.
 
 ## Commands
 

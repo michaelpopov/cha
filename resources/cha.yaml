@@ -10,9 +10,9 @@ info:
     routes. Operations on an open session are scoped beneath
     `/s/{forum_id}/{session_id}/api/v1`.
 
-    The API has no authentication mechanism. Persona IDs select transcript
-    attribution and are not credentials. JSON mutations that include an
-    `Origin` header require that origin's authority to equal `Host`.
+    The API has no authentication mechanism. Each forum's configured persona
+    is used for transcript attribution. JSON mutations that include an `Origin`
+    header require that origin's authority to equal `Host`.
 servers:
   - url: http://{host}:{port}
     description: Locally configured CHA web listener
@@ -87,11 +87,11 @@ paths:
       operationId: getBootstrap
       summary: Get initial navigation and discovery state
       description: |
-        Returns the initial built-in IDs, the effective persona and character
-        rosters, forum membership, and all recent sessions ordered newest first.
+        Returns the initial forum and character rosters, including each forum's
+        fixed persona, and all recent sessions ordered newest first.
 
-        The persona, character, and forum rosters are loaded once at server
-        startup, so workspace configuration changes require a restart. Sessions
+        The character and forum rosters are loaded once at server startup, so
+        workspace configuration changes require a restart. Sessions
         are read from storage on every request, so `recent_sessions` includes
         sessions created since startup.
       responses:
@@ -310,7 +310,7 @@ paths:
                   summary: Initial event shape
                   value: |-
                     event: snapshot
-                    data: {"forum":{"id":"lobby","display_name":"Lobby","default_character_id":"guide","default_persona_id":"builtin-guest","members":[]},"session_id":"one","session_label":"One","characters":[],"default_character_id":"guide","transcript":[],"generation":{"active":false,"character_id":"","character_display_name":"","phase":"waiting","reasoning_text":""},"lifecycle":"running"}
+                    data: {"forum":{"id":"lobby","display_name":"Lobby","default_character_id":"guide","default_persona_id":"builtin-guest","default_persona_display_name":"Guest","members":[]},"session_id":"one","session_label":"One","characters":[],"default_character_id":"guide","transcript":[],"generation":{"active":false,"character_id":"","character_display_name":"","phase":"waiting","reasoning_text":""},"lifecycle":"running"}
                 append:
                   summary: Incremental transcript append
                   value: |-
@@ -342,8 +342,8 @@ paths:
       operationId: submitInput
       summary: Submit user input
       description: |
-        Submits text through the session's shared input path. `persona` is a
-        stable attribution ID, not an authentication identity.
+        Submits text through the session's shared input path using the fixed
+        persona configured for the session's forum.
       requestBody:
         required: true
         content:
@@ -614,7 +614,7 @@ components:
     ForumSummary:
       type: object
       additionalProperties: false
-      required: [id, display_name, default_character_id, default_persona_id, members]
+      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -624,6 +624,8 @@ components:
           $ref: "#/components/schemas/Identifier"
         default_persona_id:
           $ref: "#/components/schemas/Identifier"
+        default_persona_display_name:
+          type: string
         members:
           type: array
           items:
@@ -661,24 +663,16 @@ components:
       type: object
       additionalProperties: false
       required:
-        - initial_persona_id
         - initial_forum_id
         - initial_session_id
-        - personas
         - characters
         - forums
         - recent_sessions
       properties:
-        initial_persona_id:
-          $ref: "#/components/schemas/Identifier"
         initial_forum_id:
           $ref: "#/components/schemas/Identifier"
         initial_session_id:
           $ref: "#/components/schemas/Identifier"
-        personas:
-          type: array
-          items:
-            $ref: "#/components/schemas/PersonaSummary"
         characters:
           type: array
           items:
@@ -740,12 +734,8 @@ components:
     InputRequest:
       type: object
       additionalProperties: false
-      required: [persona, text]
+      required: [text]
       properties:
-        persona:
-          type: string
-          minLength: 1
-          description: Stable persona attribution ID; not an authentication credential.
         text:
           type: string
           description: Input text, limited by the server's configured prompt byte limit.

@@ -20,8 +20,8 @@ require recovery-specific API models.
 | Change the default character | `POST /s/{forum}/{session}/api/v1/actions/default-character` |
 | Stop generation | `POST /s/{forum}/{session}/api/v1/actions/stop` |
 
-Bootstrap replaces separate persona, character, and forum list routes. The
-existing live-session API remains the base for Chat.
+Bootstrap replaces separate character and forum list routes. The existing
+live-session API remains the base for Chat.
 
 ## Startup and discovery
 
@@ -29,10 +29,8 @@ existing live-session API remains the base for Chat.
 
 ```json
 {
-  "initial_persona_id": "builtin-guest",
   "initial_forum_id": "builtin-entrance",
   "initial_session_id": "builtin-welcome",
-  "personas": [],
   "characters": [],
   "forums": [],
   "recent_sessions": []
@@ -53,26 +51,29 @@ ID-only reference variants solely to avoid repeating display data.
 
 ## Persona attribution
 
-Personas are application-wide authors, not forum or session members. Every input
-request carries the selected persona ID:
+A persona belongs to a forum, not to the submitter. An input request carries
+text only:
 
 ```json
-{"persona":"reader","text":"Hello"}
+{"text":"Hello"}
 ```
 
-The owning command carries that ID to the session. `SessionController` resolves
-it to the server-owned ID and display name against the effective roster captured
-when the web session opened. That roster is Guest plus every workspace persona;
-it is application-wide and independent of forum membership, so Guest and every
-configured persona can author in any forum.
+A body naming a persona is rejected with `400 bad_request`, so a client written
+against an older shape fails visibly rather than being silently reattributed.
+
+The session applies the persona ID from its own `SessionDescriptor`.
+`SessionController` resolves it to the server-owned ID and display name against
+the roster captured when the web session opened, which holds that forum's
+configured persona and nothing else.
 
 Persona prompt context may be captured when a session opens. It is model context
 only and never controls message attribution.
 
 ## Reusable summaries
 
-A persona summary contains `id`, `display_name`, and its configured optional
-`description`. It never contains `PERSONA.md` prompt text.
+A forum summary carries `default_persona_id` and `default_persona_display_name`,
+which is how the browser names the author it writes as. Neither field ever
+contains `PERSONA.md` prompt text.
 
 A character summary contains:
 
@@ -205,7 +206,7 @@ No separate endpoint is needed.
 | Field | Source |
 | --- | --- |
 | Forum | Active session's forum summary |
-| From | Current client persona selection |
+| From | Active session's forum summary `default_persona_display_name` |
 | To | Live `default_character_id`, resolved through the character summaries |
 
 The composer's target chooser calls the default-character action. The UI does
@@ -216,8 +217,9 @@ routes.
 
 ## Client-owned state
 
-Sidebar visibility, Navigation state, selected persona, selected forum,
-inspected character, and the highlighted Recent row require no mutation API.
+Sidebar visibility, Navigation state, selected forum, inspected character, and
+the highlighted Recent row require no mutation API. The persona is not among
+them: it is server state carried on the forum summary.
 
 ## Non-requirements
 

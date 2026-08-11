@@ -69,9 +69,12 @@ CharacterSummary character_summary(const CharacterMetadata& character) {
 }
 
 ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& model) {
+    const Persona* const persona = model.find_persona(forum.default_persona_id);
+    if (persona == nullptr) throw std::runtime_error("Forum default persona is absent from the workspace model");
     ForumSummary result{.id = forum.id, .display_name = forum.display_name,
                         .default_character_id = forum.default_character_id,
-                        .default_persona_id = forum.default_persona_id};
+                        .default_persona_id = forum.default_persona_id,
+                        .default_persona_display_name = persona->display_name};
     result.members.reserve(forum.member_ids.size());
     for (const std::string& id : forum.member_ids) {
         const CharacterMetadata* character = model.find_character(id);
@@ -148,10 +151,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Get("/api/v1/bootstrap", [model, sessions, initial](const httplib::Request&, httplib::Response& response) {
-        Bootstrap bootstrap{.initial_persona_id = initial.persona_id,
-                            .initial_forum_id = initial.session.forum_id,
+        Bootstrap bootstrap{.initial_forum_id = initial.session.forum_id,
                             .initial_session_id = initial.session.session_id};
-        for (const Persona& persona : *model->personas()) bootstrap.personas.push_back({persona.id, persona.display_name, persona.description});
         for (const CharacterMetadata& character : model->characters()) bootstrap.characters.push_back(character_summary(character));
         for (const ForumInfo& forum : model->forums()) bootstrap.forums.push_back(forum_summary(forum, *model));
         bootstrap.recent_sessions = recent_sessions(*model, *sessions);

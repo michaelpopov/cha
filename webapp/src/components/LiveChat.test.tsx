@@ -128,7 +128,7 @@ describe('live chat', () => {
     expect(screen.getByText('Checking again')).toBeInTheDocument();
   });
 
-  it('submits with the selected persona, clears accepted input, and preserves a failed draft', async () => {
+  it('submits with the forum persona, clears accepted input, and preserves a failed draft', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn()
@@ -142,9 +142,6 @@ describe('live chat', () => {
     );
     await attachInitial(events);
 
-    await user.click(screen.getByRole('button', { name: 'Personas' }));
-    await user.click(screen.getByRole('radio', { name: /Reader/ }));
-    await user.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
     const input = screen.getByRole('textbox', { name: 'Message' });
     await user.type(input, 'Keep this draft');
     await user.click(screen.getByRole('button', { name: 'Send message' }));
@@ -152,7 +149,7 @@ describe('live chat', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('not accepted');
     expect(input).toHaveValue('Keep this draft');
     expect(submitInput).toHaveBeenLastCalledWith(
-      'entrance', 'welcome', { persona: 'reader', text: 'Keep this draft' },
+      'entrance', 'welcome', { text: 'Keep this draft' },
     );
 
     await user.click(screen.getByRole('button', { name: 'Send message' }));
@@ -184,7 +181,7 @@ describe('live chat', () => {
 
     await user.type(input, '{enter}');
     await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
-      'entrance', 'welcome', { persona: 'guest', text: 'First line\nSecond line' },
+      'entrance', 'welcome', { text: 'First line\nSecond line' },
     ));
   });
 
@@ -253,7 +250,7 @@ describe('live chat', () => {
     await user.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith(
-      'lobby', 'planning', { persona: 'guest', text: 'Fresh conversation' },
+      'lobby', 'planning', { text: 'Fresh conversation' },
     ));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });

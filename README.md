@@ -14,8 +14,9 @@ make run
 
 Open the address printed by the launcher. CHA starts in the process-local
 **Entrance / Welcome** conversation as **Guest** with **Assistant**. Use the
-browser to choose a persona, inspect forums, create or reopen a stored session,
-and select a forum character.
+browser to inspect forums, create or reopen a stored session, and select a forum
+character. Which persona you speak as follows the forum you are in and is set in
+that forum's configuration, not in the browser.
 
 Welcome is private to the running server and is deleted on shutdown. Stored
 sessions in workspace forums remain in their SQLite databases. Conversation
@@ -41,8 +42,9 @@ with an at-sign.
 
 A workspace contains `workspace.toml`, `characters/`, `forums/`, and
 `personas/`. The `personas/` directory may be empty because the built-in Guest
-persona is always available. Persona, character, and forum definitions have a
-public `display_name` and may have a one-line `description`.
+persona is always available, and is what a forum that names no `default_persona`
+speaks as. Persona, character, and forum definitions have a public
+`display_name` and may have a one-line `description`.
 
 `workspace.toml` supplies provider and diagnostic logging settings:
 

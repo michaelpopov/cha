@@ -46,36 +46,36 @@ flowchart TD
 
 Stored-session rows contain a name and compact time metadata only. They do not contain descriptions.
 
-## Persona selection
+## Persona attribution
 
 ```mermaid
 flowchart LR
-    Sidebar["Sidebar"] -->|"Personas"| Personas["Personas"]
-    Personas -->|"Select one radio"| Current["Update current persona"]
-    Current --> Next["Next submitted message carries that persona ID"]
-    Next --> Resolve["Session resolves ID in application-wide roster"]
-    Resolve --> Session["Session records author; roster is not forum membership"]
-    Current --> Status["Update Chat status: From"]
-    Current -.-> Unchanged["Forum and active session remain unchanged"]
+    Sidebar["Sidebar"] -->|"Personas"| Personas["Personas: current forum's persona, read-only"]
+    Config["Forum config.toml default_persona"] --> Open["Session opens with a one-persona roster"]
+    Open --> Descriptor["SessionDescriptor carries ID and display name"]
+    Descriptor --> Personas
+    Descriptor --> Status["Chat status: From"]
+    Submit["Submitted message carries text only"] --> Resolve["Session resolves its own forum persona"]
+    Resolve --> Session["Session records author"]
 ```
 
-Resolution happens for every submission against the effective Guest-plus-
-workspace roster captured when the session opened. Guest can write in an
-ordinary workspace forum because that roster is application-wide, not forum
-membership. The browser never supplies the display name that is persisted with
-the message.
+Attribution is settled when the session opens, not per submission: the roster it
+captured holds one persona, so every message in that session has the same
+author. Moving to a forum with a different `default_persona` changes the author
+by opening a session there. The browser supplies neither the ID nor the display
+name that is persisted with the message.
 
 ## Chat routing status
 
 ```mermaid
 flowchart LR
     Forum["Active forum"] --> Status["Forum · From: Persona · To: Default character"]
-    Persona["Current persona"] --> Status
+    Persona["Forum persona from the session snapshot"] --> Status
     Default["Live session default character"] --> Status
     Snapshot["Live session snapshot or event"] --> Default
 ```
 
-The status line is read-only and appears below the prompt composer. It is the only persistent display of the current persona, forum, and target character in Chat.
+The status line is read-only and appears below the prompt composer. It is the only persistent display of the forum, its persona, and the target character in Chat.
 
 ## Chat controls
 
@@ -84,7 +84,7 @@ flowchart TD
     Target["Target chooser"] -->|"Select character"| Request["Request default-character change"]
     Request --> Snapshot["Snapshot or event confirms default character"]
     Snapshot --> Status["Update read-only To status"]
-    Idle["Generation inactive"] --> Send["Send draft as selected persona"]
+    Idle["Generation inactive"] --> Send["Send draft; the forum persona authors it"]
     Active["Generation active"] --> Stop["Same button becomes Stop"]
     Stop --> Stopping["Request stop; wait for authoritative inactive state"]
 ```

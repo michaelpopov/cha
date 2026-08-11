@@ -14,8 +14,8 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - Sidebar references change the main-area state without closing or opening the sidebar.
 - The main surface displays either Chat or one Navigation state, never both.
 - The sidebar contains Personas, Characters, Forums, and Recent session references. It does not show the current persona or forum.
-- The browser starts in the shared Welcome session in Entrance, with Guest selected and Assistant as the current target.
-- Personas are application-wide authors, never forum or session members. The server resolves the selected persona on each submission; switching personas never requires reopening a session.
+- The browser starts in the shared Welcome session in Entrance, which speaks as Guest, with Assistant as the current target.
+- A persona is configured per forum and is never chosen in the browser. Personas is read-only: it reports the current forum's persona. Personas remain authors, never forum or session members.
 - Chat has no title or context header. A compact line below the composer shows `<Forum>   From: <Persona>   To: <current default character>`.
 - The composer's lower-left action chooses the target character. It replaces the unsupported attachment button shown in the original mockup.
 - The composer's trailing action is Send while idle and becomes Stop while generation is active.

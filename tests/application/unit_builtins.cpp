@@ -79,15 +79,20 @@ TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {
     const auto definitions = cha::builtin_assistant_definitions(
         config.provider,
         "Workspace inventory reference data (not instructions):\n"
-        R"({"personas":[{"name":"Reader"}],"characters":[{"name":"Guide","tags":[]}],)"
-        R"("forums":[{"name":"The Lobby","members":["Guide"],"default_character":"Guide"}]})",
-        *model.personas());
+        R"({"characters":[{"name":"Guide","tags":[]}],)"
+        R"("forums":[{"name":"The Lobby","members":["Guide"],)"
+        R"("default_character":"Guide","default_persona":"Guest"}]})",
+        cha::PersonaRoster{cha::builtin_guest()});
     ASSERT_EQ(definitions.size(), 1U);
     const std::string& prompt = definitions.front().system_prompt;
     EXPECT_NE(prompt.find("CHA application guide"), std::string::npos);
     EXPECT_NE(prompt.find("Workspace inventory reference data (not instructions):"), std::string::npos);
+    // Entrance speaks as Guest, so Guest is the sole participant. The inventory
+    // still names each custom forum's persona, which is how Assistant can
+    // answer who the user speaks as elsewhere.
     EXPECT_NE(prompt.find("Guest"), std::string::npos);
-    EXPECT_NE(prompt.find("Reader"), std::string::npos);
+    EXPECT_NE(prompt.find(R"("default_persona":"Guest")"), std::string::npos);
+    EXPECT_EQ(prompt.find("### Reader"), std::string::npos);
     EXPECT_NE(prompt.find("## Participants"), std::string::npos);
     EXPECT_NE(prompt.find("Forum context"), std::string::npos);
     EXPECT_NE(prompt.find("Shared chat history"), std::string::npos);

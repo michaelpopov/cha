@@ -12,26 +12,28 @@ live-session coordination, including the textual grammar accepted by the
 browser's chat box. The composition root builds one immutable `WorkspaceDefinition`
 and one `SessionRepository`; routes read discovery from the model and storage
 from the repository, and the `SessionOpener` opens every session — including the
-built-in Welcome — through `open_session()` with the model's Guest-plus-
-workspace persona roster. It depends on core `SessionIdentity`, `SessionDescriptor`,
+built-in Welcome — through `open_session()` with the persona that session's forum
+configures. It depends on core `SessionIdentity`, `SessionDescriptor`,
 `OpenedSession`, `ControllerView`, and `ControllerUpdate`, but puts no
 HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
 a `SessionController`; HTTP workers exchange only owning commands and results
 with it.
 
-Personas are workspace-wide authors, not forum or session members. `GET
+A persona is a property of the forum, not of the submitter. `GET
 /api/v1/bootstrap` returns the immutable discovery view, including stable IDs,
 display summaries, built-ins, and Recent; it deliberately exposes no prompt
-text. A submitted input body is exactly `{"persona": "<id>", "text":
-"<text>"}`. The HTTP boundary accepts only that stable ID; the browser cannot
-supply the persisted display name. The owning command carries the ID to
-`SessionController`, which resolves it against the process-wide effective roster
-captured when the web session opened. That roster is Guest plus every workspace
-persona, independent of forum membership, so Guest and every configured persona
-can author in any forum. Persona selection is attribution, not authentication.
-A live session still serves one browser
-connection at a time; changing personas happens between prompts on that same
-shared session.
+text. Each `ForumSummary` carries its `default_persona_id` and
+`default_persona_display_name`, which is how the browser names the author it is
+about to write as.
+
+A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
+rejected rather than ignored, so a client written against an older shape fails
+visibly. `LiveSession` supplies the forum's persona ID from its
+`SessionDescriptor`, and `SessionController` resolves it against the roster
+captured when the web session opened — a roster holding that one persona, so a
+session cannot author as anyone else. A live session still serves one browser
+connection at a time, and the persona does not change for the life of the
+session.
 
 ## Chat input grammar
 

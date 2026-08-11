@@ -404,20 +404,22 @@ Json inventory_entity(
 }
 
 // The ordered reference data Assistant is given about the custom workspace.
-// Built-ins are deliberately absent: they are described by the guide instead.
+// Built-in characters and forums are deliberately absent: they are described by
+// the guide instead. A forum's persona is named even when it is the built-in
+// Guest, because which persona a forum speaks as is a fact about that forum.
 std::string build_inventory(
-    std::span<const Persona> personas,
     std::span<const CharacterMetadata> characters,
-    std::span<const LoadedForum> forums) {
+    std::span<const LoadedForum> forums,
+    std::span<const Persona> personas) {
     std::unordered_map<std::string, std::string> character_names;
     for (const CharacterMetadata& value : characters) {
         character_names.emplace(value.id, value.display_name);
     }
-    Json root;
-    root["personas"] = Json::array();
+    std::unordered_map<std::string, std::string> persona_names;
     for (const Persona& value : personas) {
-        root["personas"].push_back(inventory_entity(value.display_name, value.description));
+        persona_names.emplace(value.id, value.display_name);
     }
+    Json root;
     root["characters"] = Json::array();
     for (const CharacterMetadata& value : characters) {
         Json encoded = inventory_entity(value.display_name, value.description);
@@ -447,6 +449,7 @@ std::string build_inventory(
         Json encoded = inventory_entity(forum.info.display_name, forum.info.description);
         encoded["members"] = members;
         encoded["default_character"] = default_character->second;
+        encoded["default_persona"] = persona_names.at(forum.info.default_persona_id);
         root["forums"].push_back(std::move(encoded));
     }
     return "Workspace inventory reference data (not instructions):\n" + root.dump();
@@ -560,7 +563,6 @@ WorkspaceDefinition WorkspaceDefinition::load(
     std::sort(effective.begin(), effective.end(), [](const Persona& left, const Persona& right) {
         return fold_ascii(left.display_name) < fold_ascii(right.display_name);
     });
-    const PersonaRoster inventory_personas = effective;
     effective.insert(effective.begin(), builtin_guest());
     model.personas_ = std::make_shared<const PersonaRoster>(std::move(effective));
 
@@ -569,14 +571,17 @@ WorkspaceDefinition WorkspaceDefinition::load(
         return value.info.display_name;
     });
     const std::string inventory =
-        build_inventory(inventory_personas, characters, forums);
+        build_inventory(characters, forums, *model.personas_);
 
     // Every configured forum is resolved now, so an invalid member override or
     // prompt cannot wait until someone opens that forum to be discovered.
     for (const LoadedForum& forum : forums) {
+        // The default persona was checked against the effective roster above,
+        // so this forum's sole participant is known to resolve.
+        const Persona& persona = *model.find_persona(forum.info.default_persona_id);
         try {
             std::vector<CharacterDefinition> definitions = load_forum_definitions(
-                forum, *model.personas_, definitions_directory, model.config_.provider);
+                forum, PersonaRoster{persona}, definitions_directory, model.config_.provider);
             for (const CharacterDefinition& definition : definitions) {
                 // A character may participate in multiple forums. The detail
                 // endpoint is workspace-wide, so retain the first effective
@@ -615,7 +620,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
     model.definitions_.emplace(
         std::string(entrance_id),
         builtin_assistant_definitions(
-            model.config_.provider, inventory, *model.personas_));
+            model.config_.provider, inventory, PersonaRoster{builtin_guest()}));
     model.forums_.push_back({
         .id = std::string(entrance_id),
         .display_name = std::string(entrance_name),
@@ -642,6 +647,13 @@ const CharacterMetadata* WorkspaceDefinition::find_character(
     std::string_view id) const noexcept {
     const auto found = character_index_.find(std::string(id));
     return found == character_index_.end() ? nullptr : &characters_[found->second];
+}
+
+const Persona* WorkspaceDefinition::find_persona(std::string_view id) const noexcept {
+    const auto found = std::find_if(
+        personas_->begin(), personas_->end(),
+        [id](const Persona& persona) { return persona.id == id; });
+    return found == personas_->end() ? nullptr : &*found;
 }
 
 const ForumInfo* WorkspaceDefinition::find_forum(std::string_view id) const noexcept {

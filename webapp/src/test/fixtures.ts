@@ -12,13 +12,8 @@ export const plainVoice: CharacterAppearance = {
 };
 
 export const bootstrapFixture: Bootstrap = {
-  initial_persona_id: 'guest',
   initial_forum_id: 'entrance',
   initial_session_id: 'welcome',
-  personas: [
-    { id: 'guest', display_name: 'Guest', description: 'The built-in visitor persona' },
-    { id: 'reader', display_name: 'Reader', description: 'Thoughtful, curious, and concise' },
-  ],
   characters: [
     { id: 'assistant', display_name: 'Assistant', description: 'CHA application guide', appearance: plainVoice },
     { id: 'guide', display_name: 'Guide', description: 'A deterministic test character', appearance: plainVoice },
@@ -29,13 +24,17 @@ export const bootstrapFixture: Bootstrap = {
       display_name: 'Entrance',
       default_character_id: 'assistant',
       default_persona_id: 'guest',
+      default_persona_display_name: 'Guest',
       members: [{ id: 'assistant', display_name: 'Assistant', description: 'CHA application guide', appearance: plainVoice }],
     },
     {
       id: 'lobby',
       display_name: 'The Lobby',
       default_character_id: 'guide',
-      default_persona_id: 'guest',
+      // Deliberately not Entrance's persona: the two forums differ so that a
+      // screen reading the wrong one is visible in the assertions.
+      default_persona_id: 'reader',
+      default_persona_display_name: 'Reader',
       members: [{ id: 'guide', display_name: 'Guide', description: 'A deterministic test character', appearance: plainVoice }],
     },
   ],

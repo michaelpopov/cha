@@ -294,7 +294,7 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     LiveSessionHost host(
         test_settings(), two_agent_opener(file.path(), guide, scribe));
 
-    const auto info = host->submit(RawCommand{"reader", "/info"}, 2s);
+    const auto info = host->submit(RawCommand{"/info"}, 2s);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(info));
     EXPECT_TRUE(std::get<CommandResult>(info).session.notice);
 
@@ -314,7 +314,7 @@ TEST(LiveSession, UnknownCommandReportsANoticeWithoutTouchingTheTranscript) {
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
 
-    const auto result = host->submit(RawCommand{"reader", "/nonsense"}, 2s);
+    const auto result = host->submit(RawCommand{"/nonsense"}, 2s);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(result));
     ASSERT_TRUE(std::get<CommandResult>(result).session.notice);
     EXPECT_NE(
@@ -337,12 +337,12 @@ TEST(LiveSession, FullAndStoppingCommandsDoNotExecute) {
         }));
 
     auto blocked = std::async(std::launch::async, [&] {
-        return host->submit(RawCommand{"reader", "First question"}, 5s);
+        return host->submit(RawCommand{"First question"}, 5s);
     });
     ASSERT_TRUE(gate.wait_until_entered());
 
     EXPECT_EQ(
-        std::get<ErrorCode>(host->submit(RawCommand{"reader", "queued"}, 5ms)),
+        std::get<ErrorCode>(host->submit(RawCommand{"queued"}, 5ms)),
         ErrorCode::command_timeout);
     EXPECT_EQ(
         std::get<ErrorCode>(host->submit(StopCommand{}, 1s)),
@@ -369,7 +369,7 @@ TEST(LiveSession, TimeoutLeavesAcceptedCommandAliveAndLateReplySafe) {
         }));
 
     EXPECT_EQ(
-        std::get<ErrorCode>(host->submit(RawCommand{"reader", "Slow"}, 5ms)),
+        std::get<ErrorCode>(host->submit(RawCommand{"Slow"}, 5ms)),
         ErrorCode::command_timeout);
     ASSERT_TRUE(gate.wait_until_entered());
     gate.release();
@@ -390,7 +390,7 @@ TEST(LiveSession, NotificationPressureDoesNotStarveCommands) {
         test_settings(8, 8, 1), scripted_opener(file.path(), controls));
 
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"reader", "Question"}, 2s)));
+        host->submit(RawCommand{"Question"}, 2s)));
     ASSERT_TRUE(controls->wait_until_running());
     for (int index = 0; index != 200; ++index) {
         controls->emit_answer("fragment ");
@@ -427,10 +427,10 @@ TEST(LiveSession, IndependentSessionsProgressWithoutSharedState) {
     ASSERT_TRUE(second);
 
     auto first_result = std::async(std::launch::async, [&] {
-        return first->submit(RawCommand{"reader", "First"}, 5s);
+        return first->submit(RawCommand{"First"}, 5s);
     });
     auto second_result = std::async(std::launch::async, [&] {
-        return second->submit(RawCommand{"reader", "Second"}, 5s);
+        return second->submit(RawCommand{"Second"}, 5s);
     });
     EXPECT_TRUE(std::holds_alternative<CommandResult>(first_result.get()));
     EXPECT_TRUE(std::holds_alternative<CommandResult>(second_result.get()));
@@ -455,7 +455,7 @@ TEST(LiveSession, PublishesExactAppendsAndSnapshotsForStructuralUpdates) {
     // A new prompt is a structural transcript change, so it must arrive as a
     // full snapshot rather than an append.
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"reader", "Question"}, 2s)));
+        host->submit(RawCommand{"Question"}, 2s)));
     std::shared_ptr<const SsePayload> structural = next_payload(connection);
     ASSERT_TRUE(structural);
     ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*structural));
@@ -494,7 +494,7 @@ TEST(LiveSession, IncompatibleAppendTargetRepairsBrowserStateWithASnapshot) {
     connection.mailbox->written(connection.stream);
 
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"reader", "Question"}, 2s)));
+        host->submit(RawCommand{"Question"}, 2s)));
     ASSERT_TRUE(controls->wait_until_running());
 
     // Reasoning text and answer text are different append targets. The first
@@ -549,7 +549,7 @@ TEST(LiveSession, PresentationChangesPublishOneSnapshotEach) {
     connection.mailbox->written(connection.stream);
 
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"reader", "/nonsense"}, 2s)));
+        host->submit(RawCommand{"/nonsense"}, 2s)));
     std::shared_ptr<const SsePayload> noticed = next_payload(connection);
     ASSERT_TRUE(noticed);
     ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*noticed));
@@ -560,7 +560,7 @@ TEST(LiveSession, PresentationChangesPublishOneSnapshotEach) {
 
     // Repeating the same notice is not a presentation change.
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"reader", "/nonsense"}, 2s)));
+        host->submit(RawCommand{"/nonsense"}, 2s)));
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
     EXPECT_FALSE(connection.mailbox->next(connection.stream, 50ms).payload);
 
@@ -627,7 +627,7 @@ TEST(LiveSession, TimedOutSseConnectReleasesItsUnclaimedStream) {
         }));
 
     EXPECT_EQ(
-        std::get<ErrorCode>(host->submit(RawCommand{"reader", "Slow"}, 5ms)),
+        std::get<ErrorCode>(host->submit(RawCommand{"Slow"}, 5ms)),
         ErrorCode::command_timeout);
     ASSERT_TRUE(gate.wait_until_entered());
     const CommandSubmitResult abandoned = host->connect_sse(5ms);
@@ -680,7 +680,7 @@ TEST(LiveSession, GeneratingDisconnectUsesOrphanLimitFromDisconnection) {
     connection.mailbox->end_stream(connection.stream);
     host->disconnect_sse(connection.connection_id, 0);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"reader", "Question"}, 2s)));
+        host->submit(RawCommand{"Question"}, 2s)));
     ASSERT_TRUE(controls->wait_until_running());
 
     // Generation is active, so the idle grace does not apply.
@@ -710,7 +710,7 @@ TEST(LiveSession, GenerationFinalizationReevaluatesDisconnectDeadline) {
     connection.mailbox->end_stream(connection.stream);
     host->disconnect_sse(connection.connection_id, 0);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"reader", "Question"}, 2s)));
+        host->submit(RawCommand{"Question"}, 2s)));
     ASSERT_TRUE(controls->wait_until_running());
 
     const std::size_t at_idle_deadline = clock->advance(10ms);
@@ -729,7 +729,7 @@ TEST(LiveSession, ExitRequestFromRawInputStopsTheSession) {
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
 
-    const auto exited = host->submit(RawCommand{"reader", "/exit"}, 2s);
+    const auto exited = host->submit(RawCommand{"/exit"}, 2s);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(exited));
     EXPECT_TRUE(std::get<CommandResult>(exited).close_session);
     EXPECT_TRUE(wait_for_finished(host.handle()));
@@ -814,7 +814,7 @@ TEST(LiveSession, ProcessStopWinsTheShutdownReasonAndSkipsTheDrain) {
 
     host->request_shutdown(ShutdownReason::server_stopping);
     EXPECT_EQ(
-        std::get<ErrorCode>(host->submit(RawCommand{"reader", "late"}, 1s)),
+        std::get<ErrorCode>(host->submit(RawCommand{"late"}, 1s)),
         ErrorCode::server_stopping);
     // The higher-priority request interrupts the already-active five-second
     // local drain rather than merely waking the ordinary owner loop.
@@ -868,7 +868,7 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
     execute_sql(failing.path(), "DROP TABLE turns");
     EXPECT_EQ(
         std::get<ErrorCode>(
-            failing_session->submit(RawCommand{"reader", "Question"}, 200ms)),
+            failing_session->submit(RawCommand{"Question"}, 200ms)),
         ErrorCode::command_timeout);
     EXPECT_TRUE(wait_for_finished(failing_session));
 
@@ -914,7 +914,7 @@ TEST(LiveSession, GenerationLoggingRecordsStartAndTerminalTransitions) {
             test_settings(), scripted_opener(file.path(), controls),
             {}, SessionIdentity{"lobby", "logged"});
         ASSERT_TRUE(std::holds_alternative<CommandResult>(
-            host->submit(RawCommand{"reader", "Question"}, 2s)));
+            host->submit(RawCommand{"Question"}, 2s)));
         ASSERT_TRUE(controls->wait_until_running());
         controls->emit_answer("answer");
         controls->finish();

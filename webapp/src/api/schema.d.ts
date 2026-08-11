@@ -82,11 +82,11 @@ export interface paths {
         };
         /**
          * Get initial navigation and discovery state
-         * @description Returns the initial built-in IDs, the effective persona and character
-         *     rosters, forum membership, and all recent sessions ordered newest first.
+         * @description Returns the initial forum and character rosters, including each forum's
+         *     fixed persona, and all recent sessions ordered newest first.
          *
-         *     The persona, character, and forum rosters are loaded once at server
-         *     startup, so workspace configuration changes require a restart. Sessions
+         *     The character and forum rosters are loaded once at server startup, so
+         *     workspace configuration changes require a restart. Sessions
          *     are read from storage on every request, so `recent_sessions` includes
          *     sessions created since startup.
          */
@@ -254,8 +254,8 @@ export interface paths {
         put?: never;
         /**
          * Submit user input
-         * @description Submits text through the session's shared input path. `persona` is a
-         *     stable attribution ID, not an authentication identity.
+         * @description Submits text through the session's shared input path using the fixed
+         *     persona configured for the session's forum.
          */
         post: operations["submitInput"];
         delete?: never;
@@ -353,6 +353,7 @@ export interface components {
             display_name: string;
             default_character_id: components["schemas"]["Identifier"];
             default_persona_id: components["schemas"]["Identifier"];
+            default_persona_display_name: string;
             members: components["schemas"]["CharacterSummary"][];
         };
         SessionListing: {
@@ -368,10 +369,8 @@ export interface components {
             updated_at: components["schemas"]["UnixTimestamp"];
         };
         Bootstrap: {
-            initial_persona_id: components["schemas"]["Identifier"];
             initial_forum_id: components["schemas"]["Identifier"];
             initial_session_id: components["schemas"]["Identifier"];
-            personas: components["schemas"]["PersonaSummary"][];
             characters: components["schemas"]["CharacterSummary"][];
             forums: components["schemas"]["ForumSummary"][];
             /** @description All sessions ordered by `updated_at` descending. */
@@ -396,8 +395,6 @@ export interface components {
             session_id: components["schemas"]["Identifier"];
         };
         InputRequest: {
-            /** @description Stable persona attribution ID; not an authentication credential. */
-            persona: string;
             /** @description Input text, limited by the server's configured prompt byte limit. */
             text: string;
         };

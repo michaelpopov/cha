@@ -22,7 +22,6 @@ class LiveSessionManager;
 // What the browser starts on. These are startup facts rather than model state,
 // so the application decides them and the route layer only reports them.
 struct InitialSelection {
-    std::string persona_id;
     SessionIdentity session;
 };
 

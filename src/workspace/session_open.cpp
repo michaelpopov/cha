@@ -18,6 +18,10 @@ OpenedSession open_session(
     if (forum == nullptr) {
         throw ForumNotFoundError("Forum '" + identity.forum_id + "' does not exist");
     }
+    const Persona* const persona = model.find_persona(forum->default_persona_id);
+    if (persona == nullptr) {
+        throw std::logic_error("Forum default persona is absent from the workspace model");
+    }
     std::vector<CharacterDefinition> definitions =
         model.copy_definitions_for(forum->id);
     PreparedSession prepared = sessions.prepare(identity);
@@ -29,10 +33,11 @@ OpenedSession open_session(
             .session_label = prepared.label,
             .forum_default_character_id = forum->default_character_id,
             .forum_default_persona_id = forum->default_persona_id,
+            .forum_default_persona_display_name = persona->display_name,
         },
         .controller = SessionController::from_shared_definitions(
             std::move(definitions),
-            model.personas(),
+            std::make_shared<const PersonaRoster>(PersonaRoster{*persona}),
             forum->default_character_id,
             prepared.database_path,
             std::move(prepared.lease),

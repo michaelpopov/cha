@@ -36,7 +36,7 @@ async function seedLiveSession(
     const created = await post('/api/v1/forums/lobby/sessions', { label: sessionLabel });
     const id = String(created.id);
     await post(`/api/v1/forums/lobby/sessions/${id}/open`, {});
-    await post(`/s/lobby/${id}/api/v1/input`, { persona: 'reader', text });
+    await post(`/s/lobby/${id}/api/v1/input`, { text });
 
     // The recovery scenario is about a lost event stream, not a model request
     // racing the snapshot probe. Wait until the seeded exchange is durable and
@@ -101,9 +101,10 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
   await expect(page.getByLabel('Current chat context')).toContainText('Entrance');
   await expect(page.getByLabel('Current chat context')).toContainText('From: Guest');
 
+  // The persona follows the forum being browsed, so Entrance reports its own.
   await page.getByRole('button', { name: 'Personas' }).click();
-  await expect(page.getByText('Reader', { exact: true })).toBeVisible();
-  await expect(page.getByText('The deterministic browser-test persona')).toBeVisible();
+  await expect(page.getByText('Entrance speaks as')).toBeVisible();
+  await expect(page.getByText('Guest', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Characters' }).click();
   await expect(page.getByText('A deterministic test character')).toBeVisible();
@@ -113,6 +114,13 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
 
   await page.getByRole('button', { name: 'Forums' }).click();
   await expect(page.getByRole('button', { name: /The Lobby\s+Guide/ })).toBeVisible();
+
+  // The Lobby configures a persona of its own, which is the whole point of the
+  // setting: moving there changes who the browser speaks as.
+  await page.getByRole('button', { name: /The Lobby\s+Guide/ }).click();
+  await page.getByRole('button', { name: 'Personas' }).click();
+  await expect(page.getByText('The Lobby speaks as')).toBeVisible();
+  await expect(page.getByText('Reader', { exact: true })).toBeVisible();
 });
 
 test('recovers when the application API is initially unavailable', async ({ page }) => {
@@ -230,14 +238,11 @@ test('rapid Recent navigation settles on the last requested session without an e
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
-test('submits as the selected persona and renders the streamed transcript', async ({ page }) => {
+test('submits as the forum persona and renders the streamed transcript', async ({ page }) => {
   const sessionName = `Live browser test ${Date.now()}`;
   const prompt = 'Stream this browser message back to me.';
   await startLobbySession(page, sessionName);
 
-  await page.getByRole('button', { name: 'Personas' }).click();
-  await page.getByRole('radio', { name: /Reader/ }).check();
-  await page.getByRole('button', { name: new RegExp(`${sessionName}\\s+The Lobby`) }).click();
   await page.getByRole('textbox', { name: 'Message' }).fill(prompt);
   await page.getByRole('button', { name: 'Send message' }).click();
 

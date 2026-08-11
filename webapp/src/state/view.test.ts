@@ -8,28 +8,25 @@ function readyState(): AppState {
 }
 
 describe('application navigation reducer', () => {
-  it('selects all three server-provided startup IDs without hard-coding them', () => {
+  it('selects the server-provided startup conversation without hard-coding it', () => {
     const state = readyState();
-    expect(state.currentPersonaId).toBe('guest');
     expect(state.currentForumId).toBe('entrance');
     expect(state.activeConversation).toEqual({ forumId: 'entrance', sessionId: 'welcome' });
     expect(state.currentDefaultCharacterId).toBe('assistant');
   });
 
-  it('selects a forum default persona while preserving a manual choice within that forum', () => {
+  it('preserves the active conversation while navigating between forum views', () => {
     let state = readyState();
     state = appReducer(state, { type: 'toggle-sidebar' });
     expect(state.sidebarOpen).toBe(false);
 
     const conversation = state.activeConversation;
     const actions: AppAction[] = [
-      { type: 'show-personas' },
       { type: 'show-characters' },
       { type: 'inspect-character', characterId: 'guide' },
       { type: 'show-characters' },
       { type: 'show-forums' },
       { type: 'select-forum', forumId: 'lobby' },
-      { type: 'select-persona', personaId: 'reader' },
       { type: 'show-new-session' },
       { type: 'show-chat' },
     ];
@@ -39,27 +36,7 @@ describe('application navigation reducer', () => {
       expect(state.sidebarOpen).toBe(false);
       expect(state.activeConversation).toEqual(conversation);
     }
-    expect(state.currentPersonaId).toBe('reader');
     expect(state.currentForumId).toBe('lobby');
-  });
-
-  it('restores each forum default persona when moving between forums', () => {
-    const bootstrap = structuredClone(bootstrapFixture);
-    bootstrap.forums[1].default_persona_id = 'reader';
-    let state = appReducer(initialAppState, { type: 'bootstrap-loaded', bootstrap });
-    state = appReducer(state, { type: 'select-forum', forumId: 'lobby' });
-    expect(state.currentPersonaId).toBe('reader');
-
-    state = appReducer(state, { type: 'select-persona', personaId: 'guest' });
-    state = appReducer(state, { type: 'conversation-opened', snapshot: {
-      ...snapshotFixture,
-      forum: bootstrapFixture.forums[1],
-      session_id: 'planning',
-    } });
-    expect(state.currentPersonaId).toBe('guest');
-
-    state = appReducer(state, { type: 'select-forum', forumId: 'entrance' });
-    expect(state.currentPersonaId).toBe('guest');
   });
 
   it('changes active conversation and default character only from authoritative snapshots', () => {
@@ -161,7 +138,6 @@ describe('application navigation reducer', () => {
   it('refreshes Recent without resetting current navigation and returns to startup defaults', () => {
     let state = readyState();
     state = appReducer(state, { type: 'select-forum', forumId: 'lobby' });
-    state = appReducer(state, { type: 'select-persona', personaId: 'reader' });
     const refreshed = structuredClone(bootstrapFixture);
     refreshed.recent_sessions = [
       {
@@ -174,7 +150,6 @@ describe('application navigation reducer', () => {
     ];
 
     state = appReducer(state, { type: 'bootstrap-refreshed', bootstrap: refreshed });
-    expect(state.currentPersonaId).toBe('reader');
     expect(state.currentForumId).toBe('lobby');
     expect(state.bootstrap?.recent_sessions[0].session_id).toBe('created');
 

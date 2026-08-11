@@ -60,6 +60,7 @@ struct ForumSummary {
     std::string display_name;
     CharacterId default_character_id;
     std::string default_persona_id;
+    std::string default_persona_display_name;
     std::vector<CharacterSummary> members;
     bool operator==(const ForumSummary&) const = default;
 };
@@ -78,9 +79,9 @@ struct SessionSnapshot {
     bool operator==(const SessionSnapshot&) const = default;
 };
 
+// Author attribution is not carried here: LiveSession applies the persona its
+// forum configures, so a submitter cannot choose one.
 struct RawCommand {
-    // Stable author ID forwarded to the web text-input grammar.
-    std::string persona;
     std::string text;
 };
 
@@ -138,10 +139,8 @@ struct RecentSession {
 };
 
 struct Bootstrap {
-    std::string initial_persona_id;
     ForumId initial_forum_id;
     SessionId initial_session_id;
-    std::vector<PersonaSummary> personas;
     std::vector<CharacterSummary> characters;
     std::vector<ForumSummary> forums;
     std::vector<RecentSession> recent_sessions;

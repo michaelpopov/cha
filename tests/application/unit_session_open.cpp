@@ -84,7 +84,7 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePathWithTheAssistantRoster) {
     opened.controller->shutdown();
 }
 
-TEST_F(SessionOpenTest, GivesEveryControllerTheModelsGuestInclusivePersonaRoster) {
+TEST_F(SessionOpenTest, GivesEveryControllerOnlyItsForumPersona) {
     const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
@@ -92,19 +92,19 @@ TEST_F(SessionOpenTest, GivesEveryControllerTheModelsGuestInclusivePersonaRoster
     OpenedSession stored = open_session(model, *sessions, created.identity, notifier_);
     OpenedSession entrance = open_session(model, *sessions, welcome(), notifier_);
 
-    // The roster is observable through author resolution: Guest and the
-    // workspace persona are known to both controllers, an outsider is not.
+    // The roster is observable through author resolution: the forum's Guest
+    // persona is known, while another workspace persona is not.
     for (const OpenedSession& opened : {std::cref(stored), std::cref(entrance)}) {
         SessionController& controller = *opened.controller;
         EXPECT_EQ(
             controller.submit_prompt("outsider", "Hello").notice.value_or(""),
             "Unknown persona ID 'outsider'");
         EXPECT_EQ(
-            controller.submit_prompt(guest_id, "Hello").notice.value_or(""),
-            "");
-        EXPECT_NE(
             controller.submit_prompt("reader", "Hello").notice.value_or(""),
             "Unknown persona ID 'reader'");
+        EXPECT_EQ(
+            controller.submit_prompt(guest_id, "Hello").notice.value_or(""),
+            "");
     }
     stored.controller->shutdown();
     entrance.controller->shutdown();
@@ -187,6 +187,7 @@ TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {
                 .session_label = "Browser-ready session",
                 .forum_default_character_id = "guide",
                 .forum_default_persona_id = std::string(guest_id),
+                .forum_default_persona_display_name = std::string(guest_name),
             }));
         opened.controller->shutdown();
     }

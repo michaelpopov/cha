@@ -61,6 +61,7 @@ public:
 
     const CharacterMetadata* find_character(
         std::string_view id) const noexcept;
+    const Persona* find_persona(std::string_view id) const noexcept;
     const ForumInfo* find_forum(std::string_view id) const noexcept;
     std::string_view character_markdown(std::string_view id) const;
 

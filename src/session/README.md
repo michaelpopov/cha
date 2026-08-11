@@ -43,9 +43,9 @@ flowchart TD
 `personas/` directory exist. The directory may contain no custom personas; the
 model adds the built-in Guest to the effective browser roster.
 Each forum may set `default_persona` in `config.toml`; it must name a workspace
-persona and defaults to Guest. The browser applies that persona when entering a
-different forum, while a manual choice remains active between sessions in the
-same forum. A forum `config.toml` carries no keys beyond the ones above, so a
+persona and defaults to Guest. That persona is the only one a session in that
+forum can author as, and nothing in the browser overrides it. A forum
+`config.toml` carries no keys beyond the ones above, so a
 misspelled optional key is a load error rather than a silent default.
 The `forums/` directory may be temporarily empty; its valid forum names are
 sorted before presentation. Forum IDs and session database stems may contain
@@ -81,8 +81,9 @@ contained to workspace `characters/`; a member `CHARACTER.md` and `FORUM.md`
 are contained to their forum directory.
 
 `WorkspaceDefinition` supplies validated metadata and forum definitions.
-Each controller receives the effective application-wide persona roster and
-resolves submitted stable author IDs against it. The roster also contributes
+Each controller receives a persona roster holding its forum's configured persona
+alone, and resolves submitted stable author IDs against it, so an author from
+another forum is refused rather than attributed. That persona also contributes
 static model context, but it is not forum or session membership. The generation layer applies the shared provider
 layer, definition, forum-default, and member override policy,
 deriving the definition containment root from the definition directory's parent

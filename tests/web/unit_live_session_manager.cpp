@@ -107,7 +107,7 @@ public:
             controls_for(session.identity());
         controls->ignore_cancellation();
         if (!std::holds_alternative<CommandResult>(
-                session.submit(RawCommand{"reader", "Question"}, 5s))) {
+                session.submit(RawCommand{"Question"}, 5s))) {
             return false;
         }
         return controls->wait_until_running();
@@ -203,7 +203,7 @@ TEST(LiveSessionManager, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSess
     EXPECT_EQ(welcome_snapshot->characters.front().id, assistant_id);
 
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        welcome->submit(RawCommand{std::string(guest_id), "Welcome"}, 5s)));
+        welcome->submit(RawCommand{"Welcome"}, 5s)));
     const CommandSubmitResult attributed_welcome_state = welcome->snapshot(5s);
     const auto* attributed_welcome =
         std::get_if<SessionSnapshot>(&attributed_welcome_state);
@@ -218,7 +218,7 @@ TEST(LiveSessionManager, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSess
     LiveSessionHandle ordinary = manager.lookup(stored.identity);
     ASSERT_TRUE(ordinary);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        ordinary->submit(RawCommand{std::string(guest_id), "Ordinary"}, 5s)));
+        ordinary->submit(RawCommand{"Ordinary"}, 5s)));
     const CommandSubmitResult attributed_ordinary_state = ordinary->snapshot(5s);
     const auto* attributed_ordinary =
         std::get_if<SessionSnapshot>(&attributed_ordinary_state);
@@ -230,7 +230,7 @@ TEST(LiveSessionManager, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSess
     manager.begin_shutdown();
 }
 
-TEST(LiveSessionManager, WelcomeReopensOnlyFromTheSameStorageWithTheEffectiveRoster) {
+TEST(LiveSessionManager, WelcomeReopensOnlyFromTheSameStorageWithItsForumPersona) {
     test::TestWorkspace fixture;
     const test::WebGraph graph(fixture.root());
     const SessionIdentity welcome_key = test::WebGraph::welcome();
@@ -242,7 +242,7 @@ TEST(LiveSessionManager, WelcomeReopensOnlyFromTheSameStorageWithTheEffectiveRos
         LiveSessionHandle welcome = manager.lookup(welcome_key);
         ASSERT_TRUE(welcome);
         ASSERT_TRUE(std::holds_alternative<CommandResult>(
-            welcome->submit(RawCommand{"reader", "Remember this"}, 5s)));
+            welcome->submit(RawCommand{"Remember this"}, 5s)));
 
         std::optional<SessionSnapshot> settled;
         for (int attempt = 0; attempt < 200 && !settled; ++attempt) {
@@ -256,8 +256,8 @@ TEST(LiveSessionManager, WelcomeReopensOnlyFromTheSameStorageWithTheEffectiveRos
         }
         ASSERT_TRUE(settled);
         ASSERT_EQ(settled->transcript.size(), 2U);
-        EXPECT_EQ(settled->transcript.front().participant_id, "reader");
-        EXPECT_EQ(settled->transcript.front().display_name, "Reader");
+        EXPECT_EQ(settled->transcript.front().participant_id, guest_id);
+        EXPECT_EQ(settled->transcript.front().display_name, guest_name);
         manager.begin_shutdown();
     }
 
@@ -610,7 +610,7 @@ TEST(LiveSessionManager, StoppingActorRejectsOpenConsumesCapacityAndLateHandleSt
     // The map no longer owns the actor, but this in-flight request handle keeps
     // it alive and sees the already-stopped session.
     EXPECT_EQ(
-        std::get<ErrorCode>(session->submit(RawCommand{"reader", "ignored"}, 10ms)),
+        std::get<ErrorCode>(session->submit(RawCommand{"ignored"}, 10ms)),
         ErrorCode::session_not_live);
 }
 

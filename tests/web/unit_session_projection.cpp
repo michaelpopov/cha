@@ -67,6 +67,7 @@ SessionDescriptor test_descriptor() {
         .session_label = "Label",
         .forum_default_character_id = "guide",
         .forum_default_persona_id = "persona",
+        .forum_default_persona_display_name = "Persona",
     };
 }
 
@@ -82,7 +83,7 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
         to_snapshot(test_descriptor(), state.view(), presentation);
 
     EXPECT_EQ(snapshot, (SessionSnapshot{
-        .forum = {"forum", "Forum", "guide", "persona", {
+        .forum = {"forum", "Forum", "guide", "persona", "Persona", {
             {"guide", "guide", "Explains things"},
             {"reviewer", "Reviewer", "Checks details"},
         }},

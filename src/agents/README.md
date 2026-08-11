@@ -35,7 +35,7 @@ flowchart LR
         member_cfg["forums/R/members/X/character.toml<br/>optional"]
         member_prompt["forums/R/members/X/CHARACTER.md<br/>optional replacement"]
         usr["forums/R/FORUM.md"]
-        roster["personas/*/persona.toml + PERSONA.md<br/>verbatim"]
+        roster["personas/&lt;forum default_persona&gt;/<br/>persona.toml + PERSONA.md verbatim"]
         shared["definition includes under characters/;<br/>member/forum includes under the forum"]
     end
 
@@ -60,9 +60,11 @@ flowchart LR
 ```
 
 The effective system prompt has four sections in this exact order: expanded
-character `CHARACTER.md`, expanded forum `FORUM.md`, the static persona roster (each
+character `CHARACTER.md`, expanded forum `FORUM.md`, the persona roster (each
 `PERSONA.md` verbatim under its display-name heading), and generated forum context.
-The roster is in lexicographic ID order and does not change for a live session.
+The roster a forum's characters receive holds that forum's `default_persona`
+alone, so a character is told about the one human it can actually be addressed
+by, and it does not change for a live session.
 It is model reference context only, not forum/session membership and not an
 authorization list. Persona authorship is resolved independently at the
 frontend/application input boundary.

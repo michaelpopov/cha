@@ -72,8 +72,8 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json(OpenSessionSuccess{"forum", "s1"}),
         nlohmann::json({{"forum_id", "forum"}, {"session_id", "s1"}}));
     EXPECT_EQ(
-        nlohmann::json(ForumSummary{"forum", "Forum", "guide", "reader", {{"guide", "Guide"}}}),
-        nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"default_persona_id", "reader"},
+        nlohmann::json(ForumSummary{"forum", "Forum", "guide", "reader", "Reader", {{"guide", "Guide"}}}),
+        nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"default_persona_id", "reader"}, {"default_persona_display_name", "Reader"},
             {"members", {{{"id", "guide"}, {"display_name", "Guide"}, {"appearance", default_appearance()}}}}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
@@ -143,7 +143,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
     const auto value = nlohmann::json(SnapshotEvent{std::move(snapshot)});
     const nlohmann::json expected = {
         {"default_character_id", "guide"},
-        {"forum", {{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", ""}, {"default_persona_id", ""}, {"members", nlohmann::json::array()}}},
+        {"forum", {{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", ""}, {"default_persona_id", ""}, {"default_persona_display_name", ""}, {"members", nlohmann::json::array()}}},
         {"generation",
          {
              {"active", true},
@@ -314,11 +314,10 @@ TEST(WebProtocol, RejectsInvalidEnumValues) {
 }
 
 TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
-    nlohmann::json input_body = {{"persona", "reader"}, {"text", "hello"}};
+    nlohmann::json input_body = {{"text", "hello"}};
     const WebCommand input = parse_input_command(input_body);
     input_body["text"] = "changed";
     ASSERT_TRUE(std::holds_alternative<RawCommand>(input));
-    EXPECT_EQ(std::get<RawCommand>(input).persona, "reader");
     EXPECT_EQ(std::get<RawCommand>(input).text, "hello");
 
     const WebCommand default_character =
@@ -331,16 +330,15 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     const WebCommand stop = StopCommand{};
     EXPECT_TRUE(std::holds_alternative<StopCommand>(stop));
     EXPECT_THROW(
-        (void)parse_input_command({{"type", "input"}, {"persona", "reader"}, {"text", "hello"}}),
+        (void)parse_input_command({{"type", "input"}, {"text", "hello"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_input_command({{"text", 1}}),
         std::invalid_argument);
+    // Author attribution is the forum's to decide, so naming one is refused
+    // rather than quietly ignored.
     EXPECT_THROW(
-        (void)parse_input_command({{"text", "hello"}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        (void)parse_input_command({{"persona", ""}, {"text", "hello"}}),
+        (void)parse_input_command({{"persona", "reader"}, {"text", "hello"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_default_character_command({

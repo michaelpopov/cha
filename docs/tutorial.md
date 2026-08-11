@@ -359,7 +359,8 @@ The loader treats the workspace as one configuration unit:
 - It requires `characters/`, `forums/`, and `personas/` in the expected form.
 - It validates character IDs and public-name uniqueness.
 - It loads persona metadata and optional `PERSONA.md` prompts.
-- It validates every forum's members, default character, and default persona.
+- It validates every forum's members, default character, and default persona,
+  the last of which becomes the sole author for sessions in that forum.
 - It resolves every forum's effective character definitions immediately.
 - It builds public indexes and private definition maps.
 - It adds the built-in Guest persona, Assistant character, and Entrance forum.
@@ -395,7 +396,7 @@ latter is a concrete, validated runtime configuration.
 
 - the character definition prompt;
 - forum prompt/context;
-- the persona roster and persona prompts;
+- the forum's persona and its `PERSONA.md` prompt;
 - standard generated context;
 - effective model backend settings.
 
@@ -466,7 +467,8 @@ directory when the repository is destroyed.
 3. prepare and lease the stored session;
 4. create the public `SessionDescriptor`;
 5. construct a `SessionController`, transferring the database path, restore
-   state, lease, persona roster, definitions, and wake notifier.
+   state, lease, a roster holding the forum's persona alone, definitions, and
+   wake notifier.
 
 The workspace layer knows both the static workspace and dynamic repository;
 neither needs to know about HTTP.
@@ -600,7 +602,7 @@ One controller owns:
 - the session lease and `SessionJournal`;
 - the owner-thread-confined `Transcript`;
 - a fixed `ThreadPool` and `GenerationExecutor`;
-- the resolved forum character roster and shared immutable personas;
+- the resolved forum character roster and the forum's immutable persona;
 - default-character selection;
 - next request and entry IDs;
 - at most one active foreground response;
@@ -622,8 +624,8 @@ session state without gaining access to controller internals.
 ### 11.2 Starting a prompt
 
 `submit_prompt()` resolves a character handle or uses the current default,
-resolves the submitted persona ID, copies current `ModelHistory`, and delegates
-to `start_batch()`.
+resolves the author ID against its one-persona roster, copies current
+`ModelHistory`, and delegates to `start_batch()`.
 
 `start_batch()` is ordered carefully:
 
@@ -744,7 +746,8 @@ says the outcome is unknown.
 
 ### 12.3 Text parsing is a web adapter
 
-The browser sends `RawCommand { persona, text }`. The actor passes it to
+The browser sends `RawCommand { text }`; the author is not the browser's to
+choose, so `LiveSession` supplies its forum's persona ID. The actor passes it to
 `handle_text_input()` in [web/text_input.cpp](../src/web/text_input.cpp).
 Parsing is divided among:
 
@@ -876,7 +879,7 @@ The lease-and-load in `prepare()` remains authoritative.
 1. `SessionRoutes` parses JSON into `RawCommand` and enqueues it.
 2. `LiveSession::execute()` calls `handle_text_input()` on the owner thread.
 3. Text parsing selects `SessionController::submit_prompt()`.
-4. The controller resolves persona and target, copies `ModelHistory`, stages one
+4. The controller resolves the forum persona and target, copies `ModelHistory`, stages one
    execution, persists the started turn, adds the prompt, installs active state,
    and opens the gate.
 5. The actor publishes a snapshot showing the prompt and active generation.

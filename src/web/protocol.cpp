@@ -177,6 +177,7 @@ void to_json(nlohmann::json& json, const ForumSummary& value) {
         {"display_name", value.display_name},
         {"default_character_id", value.default_character_id},
         {"default_persona_id", value.default_persona_id},
+        {"default_persona_display_name", value.default_persona_display_name},
         {"members", value.members},
     };
 }
@@ -255,9 +256,8 @@ void to_json(nlohmann::json& json, const RecentSession& value) {
 }
 
 void to_json(nlohmann::json& json, const Bootstrap& value) {
-    json = {{"initial_persona_id", value.initial_persona_id},
-            {"initial_forum_id", value.initial_forum_id},
-            {"initial_session_id", value.initial_session_id}, {"personas", value.personas},
+    json = {{"initial_forum_id", value.initial_forum_id},
+            {"initial_session_id", value.initial_session_id},
             {"characters", value.characters}, {"forums", value.forums},
             {"recent_sessions", value.recent_sessions}};
 }

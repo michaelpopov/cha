@@ -79,12 +79,8 @@ nlohmann::json parse_json_body(
 }
 
 RawCommand parse_input_command(const nlohmann::json& json) {
-    exact_keys(json, {"persona", "text"});
-    const std::string& persona = required_string(json, "persona");
-    if (persona.empty()) {
-        throw std::invalid_argument("Invalid web command");
-    }
-    return {persona, required_string(json, "text")};
+    exact_keys(json, {"text"});
+    return {required_string(json, "text")};
 }
 
 SetDefaultCharacterCommand parse_default_character_command(

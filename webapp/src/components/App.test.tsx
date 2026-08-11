@@ -105,13 +105,13 @@ describe.each([
     const app = container.querySelector('.cha-app');
     expect(app).toHaveAttribute('data-sidebar', 'open');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
-    expect(screen.getByRole('heading', { name: 'Personas' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
+    expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
     expect(app).toHaveAttribute('data-sidebar', 'open');
 
     fireEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }));
     expect(app).toHaveAttribute('data-sidebar', 'closed');
-    expect(screen.getByRole('heading', { name: 'Personas' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
     expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
@@ -136,21 +136,36 @@ it('renders bootstrap discovery data and preserves conversation context while na
   expect(within(recents).getByText('Planning')).toBeInTheDocument();
   expect(within(recents).getByText('The Lobby')).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
-  expect(screen.getByText('Thoughtful, curious, and concise')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('radio', { name: /Reader/ }));
-
   // The startup conversation is active but not yet attached, so Recent opens it.
   fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
   await waitFor(() => expect(screen.getByLabelText('Current chat context'))
-    .toHaveTextContent('From: Reader'));
+    .toHaveTextContent('From: Guest'));
   expect(openSession).toHaveBeenCalledWith('entrance', 'welcome');
 
   // Attached now, so returning to it is a view change and not a second open.
-  fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
   await waitFor(() => expect(screen.getByLabelText('Current chat context')).toBeInTheDocument());
   expect(openSession).toHaveBeenCalledTimes(1);
+});
+
+it('shows the browsed forum persona rather than the attached conversation one', async () => {
+  render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+  await screen.findByLabelText('Current chat context');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
+  const personas = () => within(screen.getByLabelText('Personas navigation'));
+  expect(personas().getByText('Entrance speaks as')).toBeInTheDocument();
+  expect(personas().getByText('Guest')).toBeInTheDocument();
+
+  // Selecting a forum leaves the Entrance conversation attached, so a screen
+  // reading the snapshot instead of the current forum would still say Guest.
+  fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
+  fireEvent.click(within(screen.getByLabelText('Forums navigation'))
+    .getByRole('button', { name: /The Lobby/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
+  expect(personas().getByText('The Lobby speaks as')).toBeInTheDocument();
+  expect(personas().getByText('Reader')).toBeInTheDocument();
 });
 
 it('loads character detail and renders the restricted Markdown presentation', async () => {
@@ -296,7 +311,7 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
   expect(connect.mock.calls.filter(([, sessionId]) => sessionId === 'created')).toHaveLength(1);
   expect(window.location.pathname).toBe('/s/lobby/created/');
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent(
-    'The LobbyFrom: GuestTo: Guide',
+    'The LobbyFrom: ReaderTo: Guide',
   );
   expect(screen.getByRole('button', { name: 'Architecture reviewThe Lobby' }))
     .toHaveAttribute('aria-current', 'page');
@@ -371,7 +386,7 @@ it('opens and snapshots a session-shaped deep link before showing Chat', async (
   );
 
   await waitFor(() => expect(screen.getByLabelText('Current chat context')).toHaveTextContent(
-    'The LobbyFrom: GuestTo: Guide',
+    'The LobbyFrom: ReaderTo: Guide',
   ));
   expect(openSession).toHaveBeenCalledWith('lobby', 'planning');
   expect(getSessionSnapshot).toHaveBeenCalledWith('lobby', 'planning');
@@ -533,16 +548,15 @@ it('lets the sidebar navigate during an open, and that open never pulls the user
   await openPlanningFromTheLobby();
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Opening session'));
 
-  const personas = screen.getByRole('button', { name: 'Personas' });
-  expect(personas).toBeEnabled();
-  fireEvent.click(personas);
-  expect(screen.getByRole('heading', { name: 'Personas' })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('radio', { name: /Reader/ }));
+  const characters = screen.getByRole('button', { name: 'Characters' });
+  expect(characters).toBeEnabled();
+  fireEvent.click(characters);
+  expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
 
   held.settle();
   await waitFor(() => expect(openSession).toHaveResolved());
 
-  expect(screen.getByRole('heading', { name: 'Personas' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Current chat context')).not.toBeInTheDocument();
   expect(events.connections).toHaveLength(0);
   expect(window.location.pathname).toBe('/');
@@ -596,12 +610,12 @@ it('reports a Recent open failure on whichever navigation screen is showing', as
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
   await screen.findByLabelText('Current chat context');
 
-  fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
   const recent = within(screen.getByLabelText('Recent sessions'));
   fireEvent.click(recent.getByRole('button', { name: /^Planning/ }));
 
   expect(await screen.findByRole('alert')).toHaveTextContent('Planning is busy.');
-  expect(screen.getByLabelText('Personas navigation')).toBeInTheDocument();
+  expect(screen.getByLabelText('Characters navigation')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
 });
 
@@ -658,17 +672,17 @@ it('names the open session in the transcript placeholder', async () => {
 it('shows a clear incompatible-response state instead of a blank screen', async () => {
   const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const client = fixtureClient({
-    getBootstrap: async () => ({ personas: [] } as unknown as Bootstrap),
+    getBootstrap: async () => ({ characters: [] } as unknown as Bootstrap),
   });
   render(<App client={client} />);
 
   expect(await screen.findByRole('heading', { name: 'Incompatible application response' }))
     .toBeInTheDocument();
   expect(screen.getByRole('alert')).toHaveTextContent('matching browser files');
-  expect(screen.getByRole('alert')).not.toHaveTextContent('initial_persona_id');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('initial_forum_id');
   expect(consoleError).toHaveBeenCalledWith(
     'CHA bootstrap validation failed.',
-    expect.objectContaining({ message: 'Bootstrap is missing initial_persona_id.' }),
+    expect.objectContaining({ message: 'Bootstrap is missing initial_forum_id.' }),
   );
   consoleError.mockRestore();
 });
@@ -694,5 +708,5 @@ it('contains the amended chat controls and no Settings entry point', async () =>
   expect(await screen.findByRole('combobox', { name: 'Choose target character' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
-  expect(bootstrapFixture.personas).toHaveLength(2);
+  expect(screen.getByRole('button', { name: 'Personas' })).toBeInTheDocument();
 });

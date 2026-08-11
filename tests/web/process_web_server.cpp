@@ -545,7 +545,7 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     LiveSessionHandle session = live_sessions.lookup(key);
     if (!session
         || !std::holds_alternative<CommandResult>(
-            session->submit(RawCommand{"reader", "Question"}, 5s))
+            session->submit(RawCommand{"Question"}, 5s))
         || !controls->wait_until_running()) {
         _exit(4);
     }
@@ -687,7 +687,7 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     }
 }
 
-TEST(WebServerProcess, InputAuthorReachesTheLiveTranscript) {
+TEST(WebServerProcess, ForumPersonaReachesTheLiveTranscript) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
@@ -702,7 +702,7 @@ TEST(WebServerProcess, InputAuthorReachesTheLiveTranscript) {
     ASSERT_FALSE(path.empty());
     const auto submitted = client.Post(
         path + "api/v1/input",
-        R"({"persona":"reader","text":"Who wrote this?"})",
+        R"({"text":"Who wrote this?"})",
         "application/json");
     ASSERT_TRUE(submitted);
     ASSERT_EQ(submitted->status, 200) << submitted->body;
@@ -717,8 +717,8 @@ TEST(WebServerProcess, InputAuthorReachesTheLiveTranscript) {
             return entry.at("kind") == "human";
         });
     ASSERT_NE(human, transcript.end());
-    EXPECT_EQ(human->at("participant_id"), "reader");
-    EXPECT_EQ(human->at("display_name"), "Reader");
+    EXPECT_EQ(human->at("participant_id"), guest_id);
+    EXPECT_EQ(human->at("display_name"), guest_name);
     EXPECT_EQ(human->at("text"), "Who wrote this?");
 
     const test::ProcessExit stopped = server.stop(SIGINT);
@@ -797,7 +797,7 @@ TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
         httplib::Client concurrent_client = web_client(port);
         return concurrent_client.Post(
             std::move(route),
-            std::string(R"({"persona":"reader","text":")") + std::string(text) + R"("})",
+            std::string(R"({"text":")") + std::string(text) + R"("})",
             "application/json");
     };
     auto first_submission = std::async(
@@ -890,7 +890,7 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
     ASSERT_FALSE(path.empty());
     const auto input = client.Post(
         path + "api/v1/input",
-        R"({"persona":"reader","text":"Question"})",
+        R"({"text":"Question"})",
         "application/json");
     ASSERT_TRUE(input);
     ASSERT_EQ(input->status, 200) << input->body;

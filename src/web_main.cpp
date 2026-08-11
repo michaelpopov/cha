@@ -84,7 +84,7 @@ int run_web_server(
     const AssetHandler assets(root / "web");
     assets.install(server);
 
-    const InitialSelection initial{std::string(guest_id), {std::string(entrance_id), std::string(welcome_id)}};
+    const InitialSelection initial{{std::string(entrance_id), std::string(welcome_id)}};
     LobbyRoutes(ws_def, sessions, initial, live_sessions, settings).install(server);
     SessionRoutes(live_sessions, settings, assets).install(server);
 

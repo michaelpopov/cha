@@ -96,7 +96,7 @@ function Screen({
       />
     );
     case 'personas': return (
-      <PersonasScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
+      <PersonasScreen state={state} sessionReport={sessionReport} />
     );
     case 'characters': return (
       <CharactersScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
@@ -194,7 +194,6 @@ function SessionOperationState({
 // actions change no view and must therefore supersede nothing.
 const inPlaceActions = new Set<AppAction['type']>([
   'toggle-sidebar',
-  'select-persona',
 ]);
 
 export type SessionEventsConnector = (
@@ -688,14 +687,13 @@ export function App({
 
   const submitInput = useCallback((text: string) => {
     const active = state.activeConversation;
-    const persona = state.currentPersonaId;
-    if (!active || !persona) return Promise.reject(new Error('No live conversation is selected.'));
+    if (!active) return Promise.reject(new Error('No live conversation is selected.'));
     return runMutation(active, 'submit', () => client.submitInput(
       active.forumId,
       active.sessionId,
-      { persona, text },
+      { text },
     ));
-  }, [client, runMutation, state.activeConversation, state.currentPersonaId]);
+  }, [client, runMutation, state.activeConversation]);
 
   const stopGeneration = useCallback(() => {
     const active = state.activeConversation;

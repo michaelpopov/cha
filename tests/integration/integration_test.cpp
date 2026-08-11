@@ -290,8 +290,11 @@ LobbySetup lobby_setup() {
     }
     // The mock provider needs mutable definitions, so this loads its own copy
     // from explicit fixture paths rather than reaching into the model's
-    // private, provider-bearing values.
-    PersonaRoster personas = *model.personas();
+    // private, provider-bearing values. The roster is the forum's own persona
+    // alone, which is what a session opened on this forum receives.
+    const Persona* const persona = model.find_persona(forum->default_persona_id);
+    if (persona == nullptr) throw std::runtime_error("Lobby default persona is not in the roster");
+    PersonaRoster personas{*persona};
     return {
         .definitions = load_character_definitions(
             sources,

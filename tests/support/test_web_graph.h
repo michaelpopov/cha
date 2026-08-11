@@ -40,8 +40,7 @@ public:
     }
 
     static web::InitialSelection initial_selection() {
-        return {std::string(guest_id),
-                {std::string(entrance_id), std::string(welcome_id)}};
+        return {{std::string(entrance_id), std::string(welcome_id)}};
     }
 
     static SessionIdentity welcome() {

@@ -13,6 +13,7 @@ live-session switching policy.
 `WorkspaceDefinition::load()` performs one all-or-nothing startup pass: it validates
 the workspace layout, loads personas, character metadata and Markdown, and forum
 membership, builds the Guest-inclusive persona roster and Assistant's inventory,
+checks that each forum's `default_persona` names a persona in that roster,
 resolves every configured forum's effective `CharacterDefinition` values, and adds
 Assistant and Entrance to the public catalogs. After construction it performs no
 filesystem reads, so discovery responses and newly opened sessions can never
@@ -32,8 +33,10 @@ and the startup-only `ForumSessionDirectory` values used to build
 
 `open_session()` is deliberately small: find the forum, copy its preloaded
 definitions, ask `SessionRepository` to prepare storage, build the
-`SessionDescriptor`, and construct the controller with the model's shared
-persona roster. Entrance and Welcome need no branch — Entrance is an ordinary
+`SessionDescriptor`, and construct the controller with a roster holding that
+forum's `default_persona` alone. The whole roster is never handed to a session,
+so the persona a forum configures is the only one its transcripts can attribute.
+Entrance and Welcome need no branch — Entrance is an ordinary
 forum in the model and Welcome an ordinary prepared session in the repository.
 
 This directory may depend on `session/`, `agents/`, `chat/`, and `util/`.

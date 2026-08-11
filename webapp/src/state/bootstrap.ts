@@ -21,6 +21,7 @@ function hasForumIdentity(
   display_name: string;
   default_character_id: string;
   default_persona_id: string;
+  default_persona_display_name: string;
   members: Array<{ id: string; display_name: string; description?: string }>;
 } {
   return isRecord(value)
@@ -28,6 +29,8 @@ function hasForumIdentity(
     && value.default_character_id.length > 0
     && typeof value.default_persona_id === 'string'
     && value.default_persona_id.length > 0
+    && typeof value.default_persona_display_name === 'string'
+    && value.default_persona_display_name.length > 0
     && Array.isArray(value.members)
     && value.members.every(hasIdentity)
     && hasIdentity(value);
@@ -36,20 +39,19 @@ function hasForumIdentity(
 export function validateBootstrap(value: unknown): Bootstrap {
   if (!isRecord(value)) throw new TypeError('Bootstrap must be an object.');
 
-  const requiredIds = ['initial_persona_id', 'initial_forum_id', 'initial_session_id'] as const;
+  const requiredIds = ['initial_forum_id', 'initial_session_id'] as const;
   for (const field of requiredIds) {
     if (typeof value[field] !== 'string' || value[field].length === 0) {
       throw new TypeError(`Bootstrap is missing ${field}.`);
     }
   }
 
-  const { personas, characters, forums, recent_sessions: recentSessions } = value;
-  if (!Array.isArray(personas)) throw new TypeError('Bootstrap is missing personas.');
+  const { characters, forums, recent_sessions: recentSessions } = value;
   if (!Array.isArray(characters)) throw new TypeError('Bootstrap is missing characters.');
   if (!Array.isArray(forums)) throw new TypeError('Bootstrap is missing forums.');
   if (!Array.isArray(recentSessions)) throw new TypeError('Bootstrap is missing recent_sessions.');
 
-  if (!personas.every(hasIdentity) || !characters.every(hasIdentity)) {
+  if (!characters.every(hasIdentity)) {
     throw new TypeError('Bootstrap contains an invalid discovery summary.');
   }
   if (!forums.every(hasForumIdentity)) {
@@ -64,18 +66,12 @@ export function validateBootstrap(value: unknown): Bootstrap {
   }
 
   const bootstrap = value as unknown as Bootstrap;
-  if (!bootstrap.personas.some(({ id }) => id === bootstrap.initial_persona_id)) {
-    throw new TypeError('Bootstrap initial persona is absent from personas.');
-  }
   if (!bootstrap.forums.some(({ id }) => id === bootstrap.initial_forum_id)) {
     throw new TypeError('Bootstrap initial forum is absent from forums.');
   }
   for (const forum of bootstrap.forums) {
     if (!bootstrap.characters.some(({ id }) => id === forum.default_character_id)) {
       throw new TypeError('Bootstrap forum default character is absent from characters.');
-    }
-    if (!bootstrap.personas.some(({ id }) => id === forum.default_persona_id)) {
-      throw new TypeError('Bootstrap forum default persona is absent from personas.');
     }
   }
 

@@ -31,17 +31,11 @@ describe('validateBootstrap', () => {
   });
 
   it.each([
-    ['initial_persona_id', (value: typeof bootstrapFixture) => {
-      value.initial_persona_id = 'absent';
-    }],
     ['initial_forum_id', (value: typeof bootstrapFixture) => {
       value.initial_forum_id = 'absent';
     }],
     ['default character', (value: typeof bootstrapFixture) => {
       value.characters = value.characters.filter(({ id }) => id !== 'assistant');
-    }],
-    ['default persona', (value: typeof bootstrapFixture) => {
-      value.personas = value.personas.filter(({ id }) => id !== 'guest');
     }],
   ])('rejects a response whose %s cannot be resolved', (_name, corrupt) => {
     const response = structuredClone(bootstrapFixture);
