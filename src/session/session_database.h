@@ -70,6 +70,13 @@ LoadedSessionDatabase load_session_database(
     const std::filesystem::path& path,
     const SessionIdentity& expected_identity);
 
+// Validates the complete database and its embedded identity before updating
+// its display label in one transaction. The caller must hold its lease.
+void rename_session_database(
+    const std::filesystem::path& path,
+    const SessionIdentity& expected_identity,
+    std::string_view label);
+
 // The durable half of one session. It writes turn transitions — start, complete,
 // cancel, fail — to a single SQLite file as transactions, so a run that dies
 // mid-turn can be restored and repaired afterwards. It accepts only terminal
@@ -89,6 +96,7 @@ public:
     void cancel_turn(RequestId request_id, std::optional<TranscriptEntry> response);
     void fail_turn(RequestId request_id, const TranscriptEntry& error);
     void clear();
+    void rename(std::string_view label);
 
 private:
     class Impl;

@@ -1,4 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 
 // Both ports are chosen here rather than written into the suite, because a
 // fixed port makes the whole suite fail whenever anything else on the machine
@@ -16,6 +18,9 @@ const api = `http://127.0.0.1:${apiPort}`;
 const dev = `http://127.0.0.1:${devPort}`;
 
 process.env.CHA_API_TARGET ??= api;
+process.env.CHA_E2E_WORKSPACE ??= resolve(
+  tmpdir(), `cha-webapp-e2e-${apiPort}`, 'workspace',
+);
 const assembledApplication = Boolean(process.env.CHA_E2E_APPLICATION_ROOT);
 
 export default defineConfig({

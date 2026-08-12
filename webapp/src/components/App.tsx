@@ -20,6 +20,7 @@ import {
   type SessionEventHandlers,
 } from '../api/events';
 import { validateBootstrap } from '../state/bootstrap';
+import { conversationText, hasCopyableConversation } from '../state/conversationText';
 import { parseAppRoute, sessionRoute } from '../state/route';
 import {
   isSessionLimit,
@@ -34,7 +35,7 @@ import {
   type AppAction,
   type AppState,
 } from '../state/view';
-import { MenuIcon } from './Icons';
+import { CheckIcon, CopyIcon, SidebarIcon } from './Icons';
 import {
   CharacterDetailScreen,
   CharactersScreen,
@@ -58,6 +59,7 @@ interface ScreenProps extends ChatActions {
   onCreateSession(forumId: string, label: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
   onRetrySession(): void;
+  catalogRevision: number;
 }
 
 function Screen({
@@ -72,6 +74,7 @@ function Screen({
   onSetDefaultCharacter,
   onStopGeneration,
   onSubmitInput,
+  catalogRevision,
 }: ScreenProps) {
   // A session can be opened from the sidebar while any navigation screen is
   // showing, so each one carries the report rather than only the two screens
@@ -123,6 +126,7 @@ function Screen({
     );
     case 'sessions': return (
       <SessionsScreen
+        catalogRevision={catalogRevision}
         client={client}
         dispatch={dispatch}
         onOpenSession={onOpenSession}
@@ -198,6 +202,35 @@ function SessionOperationState({
   );
 }
 
+function ManualCopyDialog({ text, onClose }: { text: string; onClose(): void }) {
+  const dialog = useRef<HTMLDialogElement | null>(null);
+  useEffect(() => {
+    if (typeof dialog.current?.showModal === 'function') dialog.current.showModal();
+    else dialog.current?.setAttribute('open', '');
+    return () => {
+      if (typeof dialog.current?.close === 'function') dialog.current.close();
+    };
+  }, []);
+  return (
+    <dialog className="cha-session-dialog" onCancel={onClose} ref={dialog}>
+      <form method="dialog" onSubmit={onClose}>
+        <h2>Copy conversation</h2>
+        <p>Clipboard access was unavailable. Copy the selected text below.</p>
+        <textarea
+          autoFocus
+          className="cha-manual-copy"
+          onFocus={(event) => event.currentTarget.select()}
+          readOnly
+          value={text}
+        />
+        <div className="cha-dialog-actions">
+          <button className="cha-button cha-button-primary" type="submit">Done</button>
+        </div>
+      </form>
+    </dialog>
+  );
+}
+
 // Every navigation supersedes an open still in flight, so a slow one cannot
 // land afterwards and pull the user into a conversation they have left. These
 // actions change no view and must therefore supersede nothing.
@@ -254,6 +287,9 @@ export function App({
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [initialRouteReady, setInitialRouteReady] = useState(false);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
+  const [catalogRevision, setCatalogRevision] = useState(0);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
+  const [manualCopyText, setManualCopyText] = useState<string | null>(null);
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -265,6 +301,7 @@ export function App({
   const connection = useRef<AttachedStream | null>(null);
   const recovery = useRef<RecoveryRun | null>(null);
   const retryTimerCancellation = useRef<(() => void) | null>(null);
+  const copyFeedbackTimer = useRef<number | null>(null);
   const liveGeneration = useRef(0);
   // A stream that has already delivered a snapshot can fail at any later
   // moment, and the handler that notices it was built before the ladder that
@@ -723,6 +760,61 @@ export function App({
     ));
   }, [client, runMutation, state.activeConversation]);
 
+  const renameSession = useCallback(async (
+    forumId: string,
+    sessionId: string,
+    label: string,
+  ) => {
+    await runMutation({ forumId, sessionId }, 'catalog', () => (
+      client.renameSession(forumId, sessionId, label)
+    ));
+    await refreshBootstrap();
+    setCatalogRevision((revision) => revision + 1);
+  }, [client, refreshBootstrap, runMutation]);
+
+  const deleteSession = useCallback(async (forumId: string, sessionId: string) => {
+    await runMutation({ forumId, sessionId }, 'catalog', () => (
+      client.deleteSession(forumId, sessionId)
+    ));
+    const active = state.activeConversation?.forumId === forumId
+      && state.activeConversation.sessionId === sessionId;
+    if (active) {
+      resetLiveSession();
+      retryTarget.current = null;
+      navigate({ type: 'show-initial-conversation' });
+      window.history.replaceState(null, '', '/');
+    }
+    await refreshBootstrap();
+    setCatalogRevision((revision) => revision + 1);
+  }, [client, navigate, refreshBootstrap, resetLiveSession, runMutation,
+    state.activeConversation]);
+
+  const copySnapshot = state.sessionSnapshot;
+  const copyMatchesActive = copySnapshot !== null
+    && copySnapshot.forum.id === state.activeConversation?.forumId
+    && copySnapshot.session_id === state.activeConversation.sessionId;
+  const canCopy = copyMatchesActive && hasCopyableConversation(copySnapshot);
+
+  const copyConversation = useCallback(async () => {
+    if (!copySnapshot || !copyMatchesActive || !hasCopyableConversation(copySnapshot)) return;
+    const text = conversationText(copySnapshot);
+    if (copyFeedbackTimer.current !== null) {
+      window.clearTimeout(copyFeedbackTimer.current);
+      copyFeedbackTimer.current = null;
+    }
+    setCopyStatus('idle');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus('copied');
+      copyFeedbackTimer.current = window.setTimeout(() => {
+        copyFeedbackTimer.current = null;
+        setCopyStatus('idle');
+      }, 1800);
+    } catch {
+      setManualCopyText(text);
+    }
+  }, [copyMatchesActive, copySnapshot]);
+
   useEffect(() => {
     if (state.bootstrapStatus !== 'ready' || initialRouteHandled.current) return;
     initialRouteHandled.current = true;
@@ -797,6 +889,12 @@ export function App({
     resetLiveSession();
   }, [resetLiveSession]);
 
+  useEffect(() => () => {
+    if (copyFeedbackTimer.current !== null) {
+      window.clearTimeout(copyFeedbackTimer.current);
+    }
+  }, []);
+
   const title = navigationTitle(state);
   const ready = state.bootstrapStatus === 'ready';
   const wholeApplication = state.sessionOperation !== 'idle' && state.mainView === 'chat';
@@ -806,20 +904,45 @@ export function App({
       className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}`}
       data-sidebar={state.sidebarOpen ? 'open' : 'closed'}
     >
-      <Sidebar dispatch={navigate} onOpenSession={openConversation} state={state} />
-      <main className="cha-main">
+      <Sidebar
+        dispatch={navigate}
+        onDeleteSession={deleteSession}
+        onOpenSession={openConversation}
+        onRenameSession={renameSession}
+        state={state}
+      />
+      <main className="cha-main" data-view={state.mainView}>
         <header className="cha-topbar">
-          <button
-            aria-expanded={state.sidebarOpen}
-            aria-label={state.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-            className="cha-icon-action"
-            onClick={() => dispatch({ type: 'toggle-sidebar' })}
-            type="button"
-          >
-            <MenuIcon />
-          </button>
+          <div className="cha-topbar-lead">
+            <button
+              aria-expanded={state.sidebarOpen}
+              aria-label={state.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+              className="cha-icon-action"
+              onClick={() => dispatch({ type: 'toggle-sidebar' })}
+              type="button"
+            >
+              <SidebarIcon />
+            </button>
+            {state.mainView === 'chat' && (
+              <button
+                aria-label={copyStatus === 'copied' ? 'Conversation copied' : 'Copy conversation'}
+                className="cha-topbar-copy"
+                disabled={!canCopy}
+                onClick={() => void copyConversation()}
+                title={copyStatus === 'copied' ? 'Copied' : 'Copy conversation'}
+                type="button"
+              >
+                {copyStatus === 'copied' ? <CheckIcon /> : <CopyIcon />}
+              </button>
+            )}
+          </div>
           <div className="cha-topbar-title">{title && <h1>{title}</h1>}</div>
-          <div className="cha-empty-action" aria-hidden="true" />
+          {/* Balances the leading controls so a navigation title stays centred.
+              Chat has no title to centre, so nothing is reserved there. */}
+          {title && <div className="cha-topbar-balance" aria-hidden="true" />}
+          <span className="cha-copy-status" aria-live="polite">
+            {copyStatus === 'copied' ? 'Conversation copied to clipboard.' : ''}
+          </span>
         </header>
         {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
         {ready && wholeApplication && (
@@ -831,6 +954,7 @@ export function App({
         )}
         {ready && !wholeApplication && (
           <Screen
+            catalogRevision={catalogRevision}
             client={client}
             dispatch={navigate}
             onCreateSession={createConversation}
@@ -845,6 +969,9 @@ export function App({
           />
         )}
       </main>
+      {manualCopyText !== null && (
+        <ManualCopyDialog onClose={() => setManualCopyText(null)} text={manualCopyText} />
+      )}
     </div>
   );
 }

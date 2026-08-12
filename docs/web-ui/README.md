@@ -23,6 +23,12 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - Forums list member character names beneath each forum title. Forum descriptions do not exist, and member names are not links.
 - Sessions show names and compact time metadata, never descriptions.
 - Recent contains cross-forum session references. The active session is highlighted.
+- Mutable Recent references have Rename and Delete actions through right-click
+  or their ellipsis button. Welcome is immutable.
+- An open conversation can be copied as plain text from the icon paired with
+  Chat's sidebar control — stacked beneath it in the transcript's left gutter at
+  every panel width but a phone's, where the pair moves into a header row —
+  including after its live runtime has stopped.
 - There is no Chat shortcut or global New session shortcut in the sidebar.
 - Users cannot create forums, personas, or characters in this version.
 - There is no Settings screen and no gear button. The mockup and the screenshots in this directory still show one at the bottom-right of the sidebar; v1 removes it, and nothing takes its place.

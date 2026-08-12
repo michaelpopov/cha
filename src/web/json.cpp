@@ -94,6 +94,11 @@ std::string parse_create_session_label(const nlohmann::json& json) {
     return required_string(json, "label");
 }
 
+std::string parse_rename_session_label(const nlohmann::json& json) {
+    exact_keys(json, {"label"});
+    return required_string(json, "label");
+}
+
 void parse_empty_object(const nlohmann::json& json) {
     exact_keys(json, {});
 }

@@ -34,6 +34,37 @@ LiveSessionOpenResult map_start_result(LiveSessionStartResult result) {
 
 } // namespace
 
+LiveSessionMaintenanceReservation::LiveSessionMaintenanceReservation(
+    LiveSessionManager& manager,
+    SessionIdentity identity)
+    : manager_(&manager), identity_(std::move(identity)) {}
+
+LiveSessionMaintenanceReservation::~LiveSessionMaintenanceReservation() {
+    release();
+}
+
+LiveSessionMaintenanceReservation::LiveSessionMaintenanceReservation(
+    LiveSessionMaintenanceReservation&& other) noexcept
+    : manager_(std::exchange(other.manager_, nullptr)),
+      identity_(std::move(other.identity_)) {}
+
+LiveSessionMaintenanceReservation&
+LiveSessionMaintenanceReservation::operator=(
+    LiveSessionMaintenanceReservation&& other) noexcept {
+    if (this != &other) {
+        release();
+        manager_ = std::exchange(other.manager_, nullptr);
+        identity_ = std::move(other.identity_);
+    }
+    return *this;
+}
+
+void LiveSessionMaintenanceReservation::release() noexcept {
+    if (LiveSessionManager* const manager = std::exchange(manager_, nullptr)) {
+        manager->release_maintenance(identity_);
+    }
+}
+
 LiveSessionManager::LiveSessionManager(
     WebSettings settings,
     SessionOpener opener,
@@ -79,6 +110,11 @@ LiveSessionOpenResult LiveSessionManager::open(
             lock.unlock();
             reap(std::move(retired));
             return LiveSessionOpenFailure::manager_stopping;
+        }
+        if (maintenance_.contains(key)) {
+            lock.unlock();
+            reap(std::move(retired));
+            return LiveSessionOpenFailure::stopping;
         }
         const auto found = sessions_.find(key);
         if (found != sessions_.end()) {
@@ -146,6 +182,17 @@ LiveSessionOpenResult LiveSessionManager::open(
             ? LiveSessionOpenResult{LiveSessionOpenFailure::manager_stopping}
             : LiveSessionOpenResult{LiveSessionOpenFailure::open_timeout};
     }
+    if (*outcome == LiveSessionStartResult::ready) {
+        std::lock_guard lock(mutex_);
+        if (stopping_) return LiveSessionOpenFailure::manager_stopping;
+        if (maintenance_.contains(key)) return LiveSessionOpenFailure::stopping;
+        const auto found = sessions_.find(key);
+        if (found == sessions_.end()
+            || found->second != starting
+            || found->second->lifecycle() != LiveSessionState::running) {
+            return LiveSessionOpenFailure::stopping;
+        }
+    }
     return map_start_result(*outcome);
 }
 
@@ -158,6 +205,8 @@ std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(
         retired = sweep_locked();
         if (stopping_) {
             result = LiveSessionOpenFailure::manager_stopping;
+        } else if (maintenance_.contains(key)) {
+            result = LiveSessionOpenFailure::stopping;
         } else {
             const auto found = sessions_.find(key);
             if (found != sessions_.end()
@@ -208,6 +257,41 @@ LiveSessionManagerSnapshot LiveSessionManager::snapshot() {
     }
     reap(std::move(retired));
     return result;
+}
+
+MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
+    const SessionIdentity& key,
+    std::chrono::milliseconds deadline) {
+    RetiredSessions retired;
+    LiveSessionHandle actor;
+    std::optional<MaintenanceFailure> failure;
+    {
+        std::lock_guard lock(mutex_);
+        retired = sweep_locked();
+        if (stopping_) {
+            failure = MaintenanceFailure::manager_stopping;
+        } else if (maintenance_.contains(key)) {
+            failure = MaintenanceFailure::stopping;
+        } else {
+            maintenance_.insert(key);
+            const auto found = sessions_.find(key);
+            if (found != sessions_.end()) actor = found->second;
+        }
+    }
+    reap(std::move(retired));
+    if (failure) return *failure;
+
+    LiveSessionMaintenanceReservation reservation(*this, key);
+    if (!actor) return reservation;
+
+    log_info(session_log(key, "delete_shutdown_requested"));
+    actor->request_shutdown(ShutdownReason::session_deleted);
+    const auto absolute_deadline = std::chrono::steady_clock::now() + deadline;
+    if (!actor->wait_until_finished(absolute_deadline)) {
+        return MaintenanceFailure::stopping;
+    }
+    sweep();
+    return reservation;
 }
 
 void LiveSessionManager::begin_shutdown(
@@ -301,6 +385,16 @@ void LiveSessionManager::reap(RetiredSessions retired) {
         // still retain this actor; that is safe because its thread is joined
         // and every call now returns the not-live/stopping result.
         log_info(session_log(session->identity(), "registry_sweep_joined"));
+    }
+}
+
+void LiveSessionManager::release_maintenance(
+    const SessionIdentity& key) noexcept {
+    try {
+        std::lock_guard lock(mutex_);
+        maintenance_.erase(key);
+    } catch (...) {
+        std::terminate();
     }
 }
 

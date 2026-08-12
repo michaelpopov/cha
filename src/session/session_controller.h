@@ -96,6 +96,7 @@ public:
     [[nodiscard]] ControllerUpdate set_default_character(std::string_view handle);
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
     [[nodiscard]] ControllerUpdate request_stop();
+    void rename(std::string_view label);
     [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
     [[nodiscard]] ControllerEventBatch receive_events(std::size_t max_events);
     void shutdown();

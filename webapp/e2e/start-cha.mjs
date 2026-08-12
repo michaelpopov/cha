@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { cp, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -7,6 +7,20 @@ import { fileURLToPath } from 'node:url';
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repository = resolve(project, '..');
+const publishedWorkspace = process.env.CHA_E2E_WORKSPACE
+  ? resolve(process.env.CHA_E2E_WORKSPACE)
+  : null;
+if (publishedWorkspace) {
+  try {
+    await lstat(publishedWorkspace);
+    throw new Error(
+      `Refusing to replace an existing E2E workspace: ${publishedWorkspace}`,
+    );
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  await mkdir(dirname(publishedWorkspace), { recursive: true });
+}
 const temporary = await mkdtemp(resolve(tmpdir(), 'cha-webapp-e2e-'));
 const packagedApplication = process.env.CHA_E2E_APPLICATION_ROOT
   ? resolve(process.env.CHA_E2E_APPLICATION_ROOT)
@@ -15,11 +29,15 @@ const application = packagedApplication ?? resolve(temporary, 'application');
 const executable = packagedApplication
   ? resolve(application, 'chaweb')
   : resolve(repository, 'build/ninja/chaweb');
-const workspace = resolve(temporary, 'workspace');
+const workspace = publishedWorkspace ?? resolve(temporary, 'workspace');
 const apiPort = Number(process.env.CHA_E2E_PORT ?? '8080');
 const modelPort = apiPort + 2;
 
-await cp(resolve(project, 'e2e/fixtures/workspace'), workspace, { recursive: true });
+await cp(resolve(project, 'e2e/fixtures/workspace'), workspace, {
+  recursive: true,
+  force: false,
+  errorOnExist: true,
+});
 
 // A local OpenAI-shaped stream is slow enough for the browser to observe and
 // stop an active generation, while remaining deterministic and offline.
@@ -164,5 +182,8 @@ const exitCode = await new Promise((resolveExit, reject) => {
 });
 
 await new Promise((resolveClose) => modelServer.close(resolveClose));
+if (publishedWorkspace) {
+  await rm(publishedWorkspace, { recursive: true, force: true });
+}
 await rm(temporary, { recursive: true, force: true });
 process.exitCode = exitCode;

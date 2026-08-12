@@ -825,6 +825,29 @@ LoadedSessionDatabase load_session_database(
     };
 }
 
+void rename_session_database(
+    const std::filesystem::path& path,
+    const SessionIdentity& expected_identity,
+    std::string_view label) {
+
+    Database database(path, Database::Mode::read_write);
+    validate_database_identity(database);
+    const SessionDatabaseMetadata metadata = read_metadata(database);
+    validate_session_database_identity(path, expected_identity, metadata);
+    validate_database_contents(database);
+
+    Transaction transaction(database);
+    Statement update = database.prepare(
+        "UPDATE session SET label = ?1 WHERE singleton = 1",
+        label);
+    update.run();
+    if (database.changes() != 1) {
+        throw std::runtime_error("Failed to rename session database '"
+            + utf8_path(path) + "'");
+    }
+    transaction.commit();
+}
+
 class SessionJournal::Impl {
 public:
     explicit Impl(const std::filesystem::path& path)
@@ -916,6 +939,18 @@ void SessionJournal::clear() {
     impl_->database.execute(
         "UPDATE state SET history_epoch = history_epoch + 1 "
         "WHERE singleton = 1");
+    transaction.commit();
+}
+
+void SessionJournal::rename(std::string_view label) {
+    Transaction transaction(impl_->database);
+    Statement update = impl_->database.prepare(
+        "UPDATE session SET label = ?1 WHERE singleton = 1",
+        label);
+    update.run();
+    if (impl_->database.changes() != 1) {
+        throw std::runtime_error("Failed to rename live session");
+    }
     transaction.commit();
 }
 

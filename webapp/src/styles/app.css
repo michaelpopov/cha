@@ -117,6 +117,7 @@ select:disabled {
 .cha-list-action,
 .cha-roster-row,
 .cha-icon-action,
+.cha-topbar-copy,
 .cha-composer-action,
 .cha-back-row,
 .cha-button {
@@ -143,7 +144,8 @@ select:disabled {
 .cha-list-action:hover,
 .cha-list-action.is-current,
 .cha-roster-row:hover,
-.cha-icon-action:hover:not(:disabled) {
+.cha-icon-action:hover:not(:disabled),
+.cha-topbar-copy:hover:not(:disabled) {
   color: var(--accent-foreground);
   background: var(--accent);
 }
@@ -167,15 +169,53 @@ select:disabled {
 
 .cha-recent-row {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   width: 100%;
   min-width: 0;
-  gap: 0.08rem;
-  padding: 0.55rem 0.65rem;
+  align-items: center;
   border-radius: 0.75rem;
   text-align: left;
 }
 
-button.cha-recent-row:hover,
+.cha-recent-open,
+.cha-recent-more,
+.cha-session-menu button {
+  appearance: none;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cha-recent-open {
+  display: grid;
+  min-width: 0;
+  gap: 0.08rem;
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+}
+
+.cha-recent-more {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.cha-recent-row:hover .cha-recent-more,
+.cha-recent-row:focus-within .cha-recent-more {
+  opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .cha-recent-more {
+    opacity: 1;
+  }
+}
+
+.cha-recent-row:hover,
 .cha-recent-row.is-current {
   color: var(--accent-foreground);
   background: var(--accent);
@@ -204,14 +244,16 @@ button.cha-recent-row:hover,
 }
 
 .cha-topbar {
+  position: relative;
   display: grid;
-  grid-template-columns: 3rem minmax(0, 1fr) 3rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.5rem;
   padding: 0.8rem 1rem 0.55rem;
 }
 
-.cha-icon-action {
+.cha-icon-action,
+.cha-topbar-copy {
   display: inline-grid;
   width: 2.65rem;
   height: 2.65rem;
@@ -236,8 +278,151 @@ button.cha-recent-row:hover,
   white-space: nowrap;
 }
 
-.cha-empty-action {
+/* The two conversation-level controls share one leading cluster, stacked on one
+   vertical axis in the transcript's left gutter. They fall back to sitting side
+   by side only on a panel too narrow to have a gutter at all — see below. */
+.cha-topbar-lead {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.cha-topbar-balance {
   width: 2.65rem;
+}
+
+.cha-topbar-copy:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* The rules below depend on the width of this panel rather than of the window:
+   an open sidebar takes about 264px out of it, and a window query would read a
+   900px window as roomy while the panel behind the sidebar is 620px. */
+.cha-main {
+  container-type: inline-size;
+}
+
+/* Copy sits on the sidebar toggle's vertical axis and out of flow, which keeps
+   the header the height of a single control. The gutter it stands in is
+   guaranteed rather than waited for — see the indent below — so this holds at
+   every panel width down to a phone, where the column has no gutter worth
+   reserving and the pair returns to a header row. */
+@container (min-width: 560px) {
+  .cha-topbar-copy {
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    left: 0;
+  }
+
+  /* Chat puts no title in the header, so the whole bar is the pair of controls
+     standing in that same gutter. A header row would push the conversation down
+     the screen to clear space nothing occupies, so the bar lifts out of the
+     grid — collapsing its row to nothing — and the transcript claims the full
+     panel height. Matching the bar's top padding then lands the first line of
+     the conversation level with the top of the sidebar toggle. */
+  .cha-main[data-view='chat'] .cha-topbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 3;
+  }
+
+  /* Taking the bar out of flow also takes it out of grid placement, which would
+     promote the screen into the header's own row and leave it sized to its
+     content with the panel's height stranded below. The row assignment has to
+     be restated for what remains. */
+  .cha-main[data-view='chat'] > :not(.cha-topbar) {
+    grid-row: 2;
+  }
+
+  .cha-main[data-view='chat'] .cha-chat {
+    padding-top: 0.8rem;
+  }
+}
+
+/* Narrower than this the centred column would start left of the controls, so it
+   is indented far enough to clear them rather than the pair changing shape
+   around a threshold. Reserving the gutter shifts the column about 26px right of
+   centre, which is why the indent is dropped as soon as the natural gutter is
+   wide enough on its own: carried to a large panel that offset would read as a
+   conversation pushed off to one side. */
+@container (min-width: 560px) and (max-width: 804px) {
+  .cha-main[data-view='chat'] .cha-chat {
+    padding-left: 4.25rem;
+  }
+}
+
+.cha-copy-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.cha-session-menu {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  width: 10rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  color: var(--foreground);
+  background: var(--surface);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 18%);
+}
+
+.cha-session-menu button {
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.5rem;
+  text-align: left;
+}
+
+.cha-session-menu button:hover,
+.cha-session-menu button:focus {
+  outline: 0;
+  background: var(--accent);
+}
+
+.cha-session-dialog {
+  width: min(28rem, calc(100% - 2rem));
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  color: var(--foreground);
+  background: var(--surface);
+  box-shadow: 0 1rem 3rem rgb(0 0 0 / 25%);
+}
+
+.cha-session-dialog::backdrop {
+  background: rgb(0 0 0 / 35%);
+}
+
+.cha-session-dialog h2 {
+  margin: 0 0 0.8rem;
+  font-size: 1.1rem;
+}
+
+.cha-session-dialog label {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.cha-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.cha-manual-copy {
+  width: 100%;
+  min-height: 14rem;
+  resize: vertical;
 }
 
 .cha-screen {
@@ -445,7 +630,7 @@ button.cha-recent-row:hover,
   flex-direction: column;
   gap: 0.85rem;
   margin: 0 auto;
-  padding: 0.5rem 0 1rem;
+  padding: 0 0 1rem;
   overflow: auto;
 }
 
@@ -750,13 +935,10 @@ button.cha-recent-row:hover,
   }
 
   .cha-topbar {
-    grid-template-columns: 2.65rem minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
     padding: max(0.5rem, env(safe-area-inset-top)) 0.65rem 0.35rem;
   }
 
-  .cha-empty-action {
-    display: none;
-  }
 
   .cha-sidebar {
     width: calc(100% - 3.5rem);

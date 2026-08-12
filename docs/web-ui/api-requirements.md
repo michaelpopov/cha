@@ -13,6 +13,8 @@ require recovery-specific API models.
 | Read character detail | `GET /api/v1/characters/{character_id}` |
 | List one forum's sessions | `GET /api/v1/forums/{forum}/sessions` |
 | Create a stored session | `POST /api/v1/forums/{forum}/sessions` |
+| Rename a stored or live session | `PATCH /api/v1/forums/{forum}/sessions/{session}` |
+| Move a session to deleted storage | `DELETE /api/v1/forums/{forum}/sessions/{session}` |
 | Open or reattach a session | `POST /api/v1/forums/{forum}/sessions/{session}/open` |
 | Load live chat state | `GET /s/{forum}/{session}/api/v1/session` |
 | Stream chat changes | `GET /s/{forum}/{session}/api/v1/events` |

@@ -348,6 +348,96 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
     .toHaveAttribute('aria-current', 'page');
 });
 
+it('refreshes Recent and an open forum catalog after a sidebar rename', async () => {
+  const user = userEvent.setup();
+  let renamed = false;
+  const refreshed = structuredClone(bootstrapFixture);
+  refreshed.recent_sessions = refreshed.recent_sessions.map((session) => (
+    session.session_id === 'planning'
+      ? { ...session, session_label: 'Architecture review' }
+      : session
+  ));
+  const getBootstrap = vi.fn()
+    .mockResolvedValueOnce(bootstrapFixture)
+    .mockResolvedValue(refreshed);
+  const listSessions = vi.fn(async () => [{
+    id: 'planning',
+    label: renamed ? 'Architecture review' : 'Planning',
+    live: false,
+    updated_at: 1,
+  }]);
+  const renameSession = vi.fn(async (_forumId: string, sessionId: string, label: string) => {
+    renamed = true;
+    return { id: sessionId, label };
+  });
+  render(<App
+    client={fixtureClient({ getBootstrap, listSessions, renameSession })}
+    connectSessionEvents={inertSessionEvents}
+  />);
+
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  expect(await within(screen.getByLabelText('Forum sessions navigation'))
+    .findByRole('button', { name: /^Planning/ })).toBeInTheDocument();
+
+  await user.click(screen.getByLabelText('Actions for Planning'));
+  await user.click(screen.getByRole('menuitem', { name: 'Rename…' }));
+  const name = screen.getByLabelText('Session name');
+  await user.clear(name);
+  await user.type(name, 'Architecture review');
+  await user.click(screen.getByRole('button', { name: 'Rename' }));
+
+  await waitFor(() => expect(renameSession).toHaveBeenCalledWith(
+    'lobby', 'planning', 'Architecture review',
+  ));
+  await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(listSessions.mock.calls.length).toBeGreaterThanOrEqual(2));
+  expect(screen.getByRole('button', { name: 'Architecture reviewThe Lobby' }))
+    .toBeInTheDocument();
+  expect(sessionRow(/^Architecture review/)).toBeInTheDocument();
+});
+
+it('deleting the active session replaces its URL and returns to Welcome', async () => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  const refreshed = structuredClone(bootstrapFixture);
+  refreshed.recent_sessions = refreshed.recent_sessions.filter(
+    ({ session_id }) => session_id !== 'planning',
+  );
+  const getBootstrap = vi.fn()
+    .mockResolvedValueOnce(bootstrapFixture)
+    .mockResolvedValueOnce(bootstrapFixture)
+    .mockResolvedValue(refreshed);
+  const deleteSession = vi.fn(async () => undefined);
+  render(<App
+    client={storedPlanningClient({ getBootstrap, deleteSession })}
+    connectSessionEvents={events.connect}
+  />);
+
+  await waitFor(() => expect(events.connections[0]?.key).toBe('entrance/welcome'));
+  act(() => events.handlers[0].onSnapshot(snapshotFixture));
+  await user.click(screen.getByRole('button', { name: /^Planning/ }));
+  await waitFor(() => expect(events.connections.some(({ key }) => key === 'lobby/planning')).toBe(true));
+  const planning = events.connections.findIndex(({ key }) => key === 'lobby/planning');
+  act(() => events.handlers[planning].onSnapshot(lobbySnapshot()));
+  await waitFor(() => expect(window.location.pathname).toBe('/s/lobby/planning/'));
+
+  await user.click(screen.getByLabelText('Actions for Planning'));
+  await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+  await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+  await waitFor(() => expect(deleteSession).toHaveBeenCalledWith('lobby', 'planning'));
+  await waitFor(() => expect(window.location.pathname).toBe('/'));
+  await waitFor(() => expect(
+    events.connections.filter(({ key }) => key === 'entrance/welcome'),
+  ).toHaveLength(2));
+  const welcome = events.connections.map(({ key }) => key).lastIndexOf('entrance/welcome');
+  act(() => events.handlers[welcome].onSnapshot(snapshotFixture));
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('Entrance'));
+  expect(screen.queryByLabelText('Actions for Planning')).not.toBeInTheDocument();
+});
+
 // Cancelling stops the browser from following the new session, but the server
 // has already written it, so it has to turn up in the lists rather than vanish.
 it('refreshes Recent when a creation lands after the reader cancelled', async () => {

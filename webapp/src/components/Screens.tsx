@@ -90,6 +90,8 @@ function endedMessage(snapshot: SessionSnapshot): string {
       return 'CHA is shutting down. This conversation is saved.';
     case 'session_failed':
       return 'This session stopped after a failure. Its conversation is saved.';
+    case 'session_deleted':
+      return 'This session was deleted.';
     case 'browser_disconnected':
       return 'This session was released because the browser disconnected.';
     default:
@@ -596,6 +598,7 @@ export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScree
 
 interface SessionsScreenProps extends NavigationScreenProps {
   client: ChaClient;
+  catalogRevision: number;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
 }
 
@@ -657,6 +660,7 @@ export function SessionsScreen({
   state,
   dispatch,
   client,
+  catalogRevision,
   onOpenSession,
   sessionReport,
 }: SessionsScreenProps) {
@@ -688,7 +692,7 @@ export function SessionsScreen({
     return () => {
       current = false;
     };
-  }, [client, forumId, requestVersion]);
+  }, [catalogRevision, client, forumId, requestVersion]);
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Forum sessions navigation">

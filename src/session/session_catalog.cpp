@@ -1,6 +1,7 @@
 #include "session/session_catalog.h"
 
 #include "session/session_lease.h"
+#include "session/session_label.h"
 #include "util/path_name.h"
 #include "util/logging.h"
 #include "util/path_name.h"
@@ -120,6 +121,7 @@ StoredSession SessionCatalog::inspect(const std::string& session_id) const {
 }
 
 StoredSession SessionCatalog::create(std::string label) const {
+    if (!label.empty()) validate_session_label(label);
     std::filesystem::create_directories(directory_);
     const std::string base_id = timestamp_name(clock_());
     for (std::size_t suffix = 1;; ++suffix) {
@@ -128,9 +130,14 @@ StoredSession SessionCatalog::create(std::string label) const {
         // An advisory fast path only: publication below is the authority, so a
         // destination appearing after this check is still detected as a
         // collision rather than overwritten.
-        if (std::filesystem::exists(path)) continue;
+        if (std::filesystem::exists(path)
+            || std::filesystem::exists(deleted_database_path(id))) continue;
         try {
             SessionLease lease = SessionLease::acquire(path);
+            // Deletion and creation use the same active-stem lease. Recheck
+            // after acquiring it so an archive published between the fast
+            // path above and this lease cannot lead to ID reuse.
+            if (std::filesystem::exists(deleted_database_path(id))) continue;
             std::string effective_label = label.empty() ? id : label;
             if (create_session_database(path, {.id = id, .forum = forum_id_, .label = effective_label})) {
                 // Publication has already committed, so a timestamp that cannot
@@ -147,6 +154,12 @@ StoredSession SessionCatalog::create(std::string label) const {
             // this stem cannot be used by this creation attempt.
         }
     }
+}
+
+std::filesystem::path SessionCatalog::deleted_database_path(
+    const std::string& session_id) const {
+    require_url_safe_identifier(session_id, directory_);
+    return directory_ / "deleted" / path_from_utf8(session_id + ".sqlite3");
 }
 
 std::filesystem::path SessionCatalog::database_path(

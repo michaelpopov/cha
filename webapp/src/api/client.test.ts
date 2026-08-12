@@ -32,6 +32,8 @@ describe('CHA API client', () => {
     await client.getPersona('read er');
     await client.listSessions('f/one');
     await client.createSession('forum', 'Review');
+    await client.renameSession('forum', 'session', 'Renamed');
+    await client.deleteSession('forum', 'session');
     await client.openSession('forum', 'session');
     await client.getSessionSnapshot('forum', 'session');
     await client.submitInput('forum', 'session', { text: 'Hello' });
@@ -44,6 +46,8 @@ describe('CHA API client', () => {
       '/api/v1/personas/read%20er',
       '/api/v1/forums/f%2Fone/sessions',
       '/api/v1/forums/forum/sessions',
+      '/api/v1/forums/forum/sessions/session',
+      '/api/v1/forums/forum/sessions/session',
       '/api/v1/forums/forum/sessions/session/open',
       '/s/forum/session/api/v1/session',
       '/s/forum/session/api/v1/input',
@@ -57,10 +61,14 @@ describe('CHA API client', () => {
     expect(new Headers(fetcher.mock.calls[4][1]?.headers).get('Content-Type'))
       .toBe('application/json');
     expect(fetcher.mock.calls[4][1]?.body).toBe('{"label":"Review"}');
-    expect(fetcher.mock.calls[5][1]?.body).toBe('{}');
-    expect(fetcher.mock.calls[7][1]?.body).toBe('{"text":"Hello"}');
-    expect(fetcher.mock.calls[8][1]?.body).toBe('{}');
-    expect(fetcher.mock.calls[9][1]?.body).toBe('{"character_id":"guide"}');
+    expect(fetcher.mock.calls[5][1]?.method).toBe('PATCH');
+    expect(fetcher.mock.calls[5][1]?.body).toBe('{"label":"Renamed"}');
+    expect(fetcher.mock.calls[6][1]?.method).toBe('DELETE');
+    expect(fetcher.mock.calls[6][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[7][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[9][1]?.body).toBe('{"text":"Hello"}');
+    expect(fetcher.mock.calls[10][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[11][1]?.body).toBe('{"character_id":"guide"}');
     expect(sessionEventsUrl('f one', 's/two')).toBe('/s/f%20one/s%2Ftwo/api/v1/events');
   });
 

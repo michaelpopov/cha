@@ -24,10 +24,28 @@ const stroke = {
   strokeWidth: 1.7,
 };
 
-export function MenuIcon(props: IconProps) {
+export function SidebarIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M5 9h14M5 15h10" {...stroke} />
+      <rect height="18" rx="2" width="18" x="3" y="3" {...stroke} />
+      <path d="M9 3v18" {...stroke} />
+    </Icon>
+  );
+}
+
+export function CopyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect height="12" rx="2" width="12" x="9" y="9" {...stroke} />
+      <path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" {...stroke} />
+    </Icon>
+  );
+}
+
+export function CheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m5 12 4 4L19 6" {...stroke} />
     </Icon>
   );
 }
@@ -112,6 +130,16 @@ export function PlusIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="M12 5v14M5 12h14" {...stroke} />
+    </Icon>
+  );
+}
+
+export function MoreIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="6" cy="12" fill="currentColor" r="1.4" />
+      <circle cx="12" cy="12" fill="currentColor" r="1.4" />
+      <circle cx="18" cy="12" fill="currentColor" r="1.4" />
     </Icon>
   );
 }

@@ -29,7 +29,8 @@ int shutdown_reason_priority(ShutdownReason reason) {
     switch (reason) {
     case ShutdownReason::browser_disconnected: return 0;
     case ShutdownReason::session_failed: return 1;
-    case ShutdownReason::server_stopping: return 2;
+    case ShutdownReason::session_deleted: return 2;
+    case ShutdownReason::server_stopping: return 3;
     }
     return 0;
 }
@@ -82,7 +83,7 @@ std::string_view generation_terminal_status(
     return "unknown";
 }
 
-static_assert(std::variant_size_v<WebCommand> == 5);
+static_assert(std::variant_size_v<WebCommand> == 6);
 
 } // namespace
 
@@ -96,6 +97,10 @@ WebSettings validate_live_session_settings(WebSettings settings) {
     }
     if (settings.orphan_limit < settings.idle_grace) {
         throw std::invalid_argument("Web orphan limit must be at least idle grace");
+    }
+    if (settings.delete_deadline <= settings.sse_drain_deadline) {
+        throw std::invalid_argument(
+            "Web delete deadline must exceed the SSE drain deadline");
     }
     return settings;
 }
@@ -175,8 +180,8 @@ void LiveSession::request_shutdown(ShutdownReason reason) {
         std::lock_guard lock(lifecycle_mutex_);
         stopping_ = true;
         shutdown_reason_ = keep_higher_priority_reason(shutdown_reason_, reason);
-        interrupt_final_drain =
-            shutdown_reason_ != ShutdownReason::browser_disconnected;
+        interrupt_final_drain = shutdown_reason_ == ShutdownReason::session_failed
+            || shutdown_reason_ == ShutdownReason::server_stopping;
     }
     // The owner may already be waiting on the mailbox rather than its ordinary
     // wake signal. Fatal and process-stop reasons skip that drain, so wake that
@@ -420,6 +425,14 @@ void LiveSession::execute(OwnerCommand command) {
         }
         return;
     }
+    if (auto* rename = std::get_if<RenameSessionCommand>(&command.command)) {
+        controller_->rename(rename->label);
+        descriptor_.session_label = std::move(rename->label);
+        publish_current_snapshot();
+        (void)command.reply->complete(SessionLabelResult{
+            identity_.session_id, descriptor_.session_label});
+        return;
+    }
     SessionController& controller = *controller_;
     CommandResult outcome = std::visit([this, &controller](auto&& value) -> CommandResult {
         using T = std::decay_t<decltype(value)>;
@@ -430,6 +443,8 @@ void LiveSession::execute(OwnerCommand command) {
             return {.session = controller.request_stop()};
         } else if constexpr (std::is_same_v<T, SetDefaultCharacterCommand>) {
             return {.session = controller.set_default_character_by_id(value.character_id)};
+        } else if constexpr (std::is_same_v<T, RenameSessionCommand>) {
+            throw std::logic_error("Rename command handled before dispatch");
         } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
             throw std::logic_error("Snapshot command handled before dispatch");
         } else if constexpr (std::is_same_v<T, SseConnectCommand>) {

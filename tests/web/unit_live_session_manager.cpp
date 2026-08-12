@@ -767,6 +767,30 @@ TEST(LiveSessionManager, ReopensSameKeyAfterTheOldOwnerHasBeenJoined) {
     manager.begin_shutdown();
 }
 
+TEST(LiveSessionManager, DeletionReservationStopsTheActorAndBlocksOpenAndReattach) {
+    SessionFiles files;
+    WebSettings settings = manager_settings(2);
+    settings.sse_drain_deadline = 10ms;
+    settings.delete_deadline = 1s;
+    LiveSessionManager manager(settings, leased_opener(files));
+    const SessionIdentity key{"forum", "reserved"};
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
+
+    {
+        MaintenanceReservationResult reservation =
+            manager.reserve_for_deletion(key, 1s);
+        ASSERT_TRUE(std::holds_alternative<LiveSessionMaintenanceReservation>(reservation));
+        EXPECT_EQ(failure_of(manager.open(key, 10ms)), LiveSessionOpenFailure::stopping);
+        const auto reattach = manager.try_reattach(key);
+        ASSERT_TRUE(reattach);
+        EXPECT_EQ(failure_of(*reattach), LiveSessionOpenFailure::stopping);
+        EXPECT_FALSE(manager.lookup(key));
+    }
+
+    EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
+    manager.begin_shutdown();
+}
+
 TEST(LiveSessionManager, RepeatedOpenUnloadCyclesReapOwnersAndReleaseCapacity) {
     constexpr int cycles = 20;
     SessionFiles files;

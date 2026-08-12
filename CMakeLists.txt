@@ -188,9 +188,11 @@ add_library(cha_core STATIC
     src/agents/character_config.cpp
     src/session/controller_update.cpp
     src/session/forum_characters.cpp
+    src/session/session_archive.cpp
     src/session/session_catalog.cpp
     src/session/session_controller.cpp
     src/session/session_database.cpp
+    src/session/session_label.cpp
     src/session/session_lease.cpp
     src/session/session_repository.cpp
     src/workspace/workspace_definition.cpp
@@ -296,6 +298,7 @@ if(BUILD_TESTING)
         tests/agents/unit_config_loader.cpp
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_forum_characters.cpp
+        tests/session/unit_session_archive.cpp
         tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp

@@ -9,10 +9,13 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <variant>
 #include <vector>
 
 namespace cha::web {
+
+class LiveSessionManager;
 
 // A route retains the live actor itself; there is no wrapper whose only
 // operation is to hand out the thing inside it.
@@ -39,6 +42,33 @@ struct LiveSessionManagerSnapshot {
     std::size_t live_session_count{};
     std::vector<SessionIdentity> running_sessions;
 };
+
+enum class MaintenanceFailure { stopping, manager_stopping };
+
+class LiveSessionMaintenanceReservation {
+public:
+    ~LiveSessionMaintenanceReservation();
+    LiveSessionMaintenanceReservation(LiveSessionMaintenanceReservation&& other) noexcept;
+    LiveSessionMaintenanceReservation& operator=(
+        LiveSessionMaintenanceReservation&& other) noexcept;
+    LiveSessionMaintenanceReservation(const LiveSessionMaintenanceReservation&) = delete;
+    LiveSessionMaintenanceReservation& operator=(
+        const LiveSessionMaintenanceReservation&) = delete;
+
+private:
+    friend class LiveSessionManager;
+    LiveSessionMaintenanceReservation(
+        LiveSessionManager& manager,
+        SessionIdentity identity);
+    void release() noexcept;
+
+    LiveSessionManager* manager_{};
+    SessionIdentity identity_;
+};
+
+using MaintenanceReservationResult = std::variant<
+    LiveSessionMaintenanceReservation,
+    MaintenanceFailure>;
 
 // The process-wide collection of live actors, and the sole authority for
 // in-process session liveness. It owns no storage or workspace knowledge: the
@@ -71,6 +101,12 @@ public:
     // stopping actors count against the bound but only running actors are
     // returned as reattachable sessions.
     [[nodiscard]] LiveSessionManagerSnapshot snapshot();
+    // Reserves one identity against open/reattach and waits for any actor to
+    // finish, releasing its lease. Filesystem work happens only after this
+    // returns and therefore never under the manager mutex.
+    [[nodiscard]] MaintenanceReservationResult reserve_for_deletion(
+        const SessionIdentity& key,
+        std::chrono::milliseconds deadline);
 
     // Begins process shutdown without writing startup results. The optional
     // callback runs after the stopping flag is published but before open
@@ -90,16 +126,19 @@ public:
     void sweep();
 
 private:
+    friend class LiveSessionMaintenanceReservation;
     using RetiredSessions = std::vector<LiveSessionHandle>;
 
     [[nodiscard]] RetiredSessions sweep_locked();
     static void reap(RetiredSessions retired);
+    void release_maintenance(const SessionIdentity& key) noexcept;
 
     WebSettings settings_;
     SessionOpener opener_;
     LiveSessionClock clock_;
     std::mutex mutex_;
     std::map<SessionIdentity, LiveSessionHandle, std::less<>> sessions_;
+    std::set<SessionIdentity, std::less<>> maintenance_;
     bool stopping_{};
 };
 

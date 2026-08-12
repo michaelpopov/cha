@@ -237,6 +237,21 @@ TEST_F(SessionStorageTest, DefaultCreatesUseDistinctStemsUnderAFixedClock) {
     EXPECT_NE(first.identity.session_id, second.identity.session_id);
 }
 
+TEST_F(SessionStorageTest, CreateDoesNotReuseAnIdPresentInDeletedStorage) {
+    SessionCatalog sessions(
+        sessions_directory(), "lobby", [] { return std::time_t{1234567890}; });
+    const StoredSession first = sessions.create("First");
+    const std::filesystem::path archived =
+        sessions.deleted_database_path(first.identity.session_id);
+    std::filesystem::create_directories(archived.parent_path());
+    std::filesystem::rename(first.database_path, archived);
+
+    const StoredSession second = sessions.create("Second");
+
+    EXPECT_EQ(second.identity.session_id, first.identity.session_id + "-2");
+    EXPECT_TRUE(std::filesystem::exists(archived));
+}
+
 TEST_F(SessionStorageTest, CreateSkipsABusyUnpublishedStem) {
     SessionCatalog sessions(
         sessions_directory(), "lobby",

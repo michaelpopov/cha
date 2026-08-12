@@ -285,6 +285,11 @@ TEST(LiveSession, RejectsZeroQueueAndBatchSizesBeforeStarting) {
     settings.orphan_limit = settings.idle_grace - 1ms;
     EXPECT_THROW(
         (void)validate_live_session_settings(settings), std::invalid_argument);
+
+    settings = test_settings(2);
+    settings.delete_deadline = settings.sse_drain_deadline;
+    EXPECT_THROW(
+        (void)validate_live_session_settings(settings), std::invalid_argument);
 }
 
 TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
@@ -303,10 +308,16 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(SetDefaultCharacterCommand{"scribe"}, 2s)));
+
+    const auto renamed = host->submit(RenameSessionCommand{"Renamed live"}, 2s);
+    ASSERT_TRUE(std::holds_alternative<SessionLabelResult>(renamed));
+    EXPECT_EQ(std::get<SessionLabelResult>(renamed).label, "Renamed live");
     const auto state = host->snapshot(2s);
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(state));
     EXPECT_EQ(std::get<SessionSnapshot>(state).default_character_id, "scribe");
     EXPECT_EQ(std::get<SessionSnapshot>(state).characters.size(), 2U);
+    EXPECT_EQ(std::get<SessionSnapshot>(state).session_label, "Renamed live");
+    EXPECT_EQ(read_session_database_metadata(file.path()).label, "Renamed live");
 }
 
 TEST(LiveSession, UnknownCommandReportsANoticeWithoutTouchingTheTranscript) {

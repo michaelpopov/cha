@@ -9,8 +9,10 @@ web frontend and tests drive the same code.
 
 | Source | Responsibility |
 | --- | --- |
-| `session_repository.*` | Own every session-storage operation: list, strictly validate, create, and prepare the persistent per-forum databases, plus the one process-local temporary session it creates and removes. |
-| `session_catalog.*` | List, create, and safely resolve the SQLite session files of one forum. |
+| `session_repository.*` | Own every session-storage operation: list, strictly validate, create, rename, recoverably delete, and prepare the persistent per-forum databases, plus the one process-local temporary session it creates and removes. |
+| `session_catalog.*` | List, create, and safely resolve active and deleted SQLite session paths for one forum. |
+| `session_label.*` | Enforce the shared single-line, trimmed, 200-code-point session-label policy. |
+| `session_archive.*` | Move one session file into `deleted/` without ever replacing what is already there, including the hard-link fallback for mounts that reject a no-replace rename. |
 | `stored_session.h` | `StoredSession`: one unleased observation of a stored database — identity, label, path, timestamp, and validation error. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
 | `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
@@ -37,6 +39,7 @@ flowchart TD
     members --> member["<id>/character.toml + CHARACTER.md<br/>optional overrides"]
     forum --> forum_prompt["FORUM.md — template-expanded forum prompt extension"]
     forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
+    sessions --> deleted["deleted/&lt;id&gt;.sqlite3<br/>recoverable deletion"]
 ```
 
 `WorkspaceDefinition` refuses to load unless `forums/`, `characters/`, and a valid
@@ -523,6 +526,7 @@ session continues.
 | `tests/session/unit_workspace.cpp` | Layout resolution, forum loading and checking, session create/open. |
 | `tests/session/unit_session_catalog.cpp` | Listing, identity validation, collision handling, publish semantics, and the cross-process creation race in which every creator derives the same base ID. |
 | `tests/session/unit_session_repository.cpp` | Forum routing, tolerant listing against strict validation, the temporary session, and the lease boundary in `prepare()`. |
+| `tests/session/unit_session_archive.cpp` | Recoverable-delete moves that never replace a destination, driving the hard-link fallback directly — including its rollback when the source cannot be unlinked — because production reaches it only on mounts a test host rarely offers. |
 | `tests/session/unit_session_controller.cpp` | Command behavior, exact update classification for every important transition, borrowed views, concurrent staging, ordered foreground drain, per-slot pairing under reversed generation order, persistence ordering, stop races, activation-failure teardown, large buffered background output, restore, and repair. |
 | `tests/session/unit_concurrent_controllers.cpp` | Independent owner-thread controllers, concurrent workspace/catalog access, and atomic catalog publication while listing. |
 | `tests/session/unit_controller_update.cpp` | The merge contract driven directly: every pair of state effects, append concatenation and target promotion, lifecycle OR, and notice ordering. |

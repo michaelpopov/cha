@@ -1,5 +1,6 @@
 #include "session/session_controller.h"
 
+#include "session/session_label.h"
 #include "util/logging.h"
 
 #include <algorithm>
@@ -721,6 +722,11 @@ ControllerUpdate SessionController::request_stop() {
     }
     update.notice = "Stopping generation...";
     return update;
+}
+
+void SessionController::rename(std::string_view label) {
+    validate_session_label(label);
+    persist("rename session", [this, label] { journal_.rename(label); });
 }
 
 ControllerUpdate SessionController::handle_generation_event(GenerationEvent event) {

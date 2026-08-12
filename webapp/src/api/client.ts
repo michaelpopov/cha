@@ -6,6 +6,7 @@ export type PersonaDetail = components['schemas']['PersonaDetail'];
 export type CharacterAppearance = components['schemas']['CharacterAppearance'];
 export type SessionListing = components['schemas']['SessionListing'];
 export type CreateSessionResult = components['schemas']['CreateSessionResult'];
+export type SessionLabelResult = components['schemas']['SessionLabelResult'];
 export type OpenSessionResult = components['schemas']['OpenSessionResult'];
 export type SessionSnapshot = components['schemas']['SessionSnapshot'];
 export type CommandResult = components['schemas']['CommandResult'];
@@ -31,6 +32,7 @@ const knownErrorCodes = {
   browser_stream_in_use: true,
   command_timeout: true,
   command_queue_full: true,
+  session_delete_conflict: true,
 } satisfies Record<ErrorCode, true>;
 
 function isErrorCode(value: unknown): value is ErrorCode {
@@ -81,6 +83,8 @@ export interface ChaClient {
   getPersona(personaId: string): Promise<PersonaDetail>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, label: string): Promise<CreateSessionResult>;
+  renameSession(forumId: string, sessionId: string, label: string): Promise<SessionLabelResult>;
+  deleteSession(forumId: string, sessionId: string): Promise<void>;
   openSession(forumId: string, sessionId: string): Promise<OpenSessionResult>;
   getSessionSnapshot(forumId: string, sessionId: string): Promise<SessionSnapshot>;
   submitInput(forumId: string, sessionId: string, input: InputRequest): Promise<CommandResult>;
@@ -159,13 +163,37 @@ async function requestJson<T>(
   return payload as T;
 }
 
+async function requestEmpty(
+  fetcher: Fetcher,
+  url: string,
+  init: RequestInit,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetcher(url, {
+      ...init,
+      headers: { Accept: 'application/json', ...init.headers },
+    });
+  } catch {
+    throw new ChaUnavailableError();
+  }
+  if (response.ok) return;
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = undefined;
+  }
+  throw errorFrom(response.status, payload);
+}
+
 function component(value: string): string {
   return encodeURIComponent(value);
 }
 
-function jsonMutation(body: unknown): RequestInit {
+function jsonMutation(body: unknown, method = 'POST'): RequestInit {
   return {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   };
@@ -204,6 +232,18 @@ export function createChaClient(
       fetcher,
       `/api/v1/forums/${component(forumId)}/sessions`,
       jsonMutation({ label }),
+    ),
+
+    renameSession: (forumId, sessionId, label) => requestJson<SessionLabelResult>(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}`,
+      jsonMutation({ label }, 'PATCH'),
+    ),
+
+    deleteSession: (forumId, sessionId) => requestEmpty(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}`,
+      jsonMutation({}, 'DELETE'),
     ),
 
     openSession: (forumId, sessionId) => requestJson<OpenSessionResult>(

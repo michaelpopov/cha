@@ -293,6 +293,158 @@ TEST(LobbyRoutes, KeyBasedCreationAllowsDuplicateLabels) {
     EXPECT_EQ(body(listed)[1]["label"], "Repeated");
 }
 
+TEST(LobbyRoutes, SessionLabelErrorsAreDistinctFromMalformedJson) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    constexpr std::string_view route = "/api/v1/forums/lobby/sessions";
+
+    const std::vector<std::string> invalid_create_labels{
+        " leading",
+        "trailing ",
+        "line\nbreak",
+        "tab\tcharacter",
+        std::string(1, '\x01'),
+        std::string(201, 'x'),
+    };
+    for (const std::string& label : invalid_create_labels) {
+        expect_error(
+            server.client().Post(
+                std::string(route),
+                nlohmann::json({{"label", label}}).dump(),
+                "application/json"),
+            400,
+            "bad_request",
+            "Invalid session label.");
+    }
+
+    expect_error(
+        server.client().Post(
+            std::string(route), R"({"label":)", "application/json"),
+        400,
+        "bad_request",
+        "Invalid JSON request body.");
+
+    const auto empty = server.client().Post(
+        std::string(route), R"({"label":""})", "application/json");
+    ASSERT_TRUE(empty);
+    ASSERT_EQ(empty->status, 201);
+    EXPECT_EQ(body(empty)["label"], body(empty)["id"]);
+}
+
+TEST(LobbyRoutes, RenamesAndRecoverablyDeletesStoredSessions) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const std::string id = create_session(server, "Before");
+    const std::string route = "/api/v1/forums/lobby/sessions/" + id;
+
+    const auto renamed = server.client().Patch(
+        route, R"({"label":"After"})", "application/json");
+    ASSERT_TRUE(renamed);
+    EXPECT_EQ(renamed->status, 200);
+    EXPECT_EQ(body(renamed), nlohmann::json({{"id", id}, {"label", "After"}}));
+    EXPECT_EQ(graph.sessions->prepare({"lobby", id}).label, "After");
+
+    const std::vector<std::string> invalid_labels{
+        "",
+        " leading",
+        "trailing ",
+        "line\nbreak",
+        "tab\tcharacter",
+        std::string(1, '\x01'),
+        std::string(201, 'x'),
+    };
+    for (const std::string& label : invalid_labels) {
+        expect_error(
+            server.client().Patch(
+                route,
+                nlohmann::json({{"label", label}}).dump(),
+                "application/json"),
+            400,
+            "bad_request",
+            "Invalid session label.");
+    }
+
+    const auto deleted = server.client().Delete(route, "{}", "application/json");
+    ASSERT_TRUE(deleted);
+    EXPECT_EQ(deleted->status, 204);
+    EXPECT_TRUE(deleted->body.empty());
+    EXPECT_TRUE(graph.sessions->list("lobby").empty());
+    EXPECT_TRUE(std::filesystem::exists(
+        fixture.root() / "forums" / "lobby" / "sessions" / "deleted"
+            / (id + ".sqlite3")));
+}
+
+TEST(LobbyRoutes, RenamesAndDeletesAnOpenSessionThroughItsOwner) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    WebSettings settings = lobby_settings(2);
+    settings.sse_drain_deadline = 10ms;
+    settings.delete_deadline = 2s;
+    LiveSessionManager manager(settings, counting_opener(graph));
+    TestServer server(graph, manager, settings);
+    const std::string id = create_session(server, "Live before");
+    const std::string route = "/api/v1/forums/lobby/sessions/" + id;
+    ASSERT_EQ(server.client().Post(route + "/open", "{}", "application/json")->status, 200);
+
+    const auto renamed = server.client().Patch(
+        route, R"({"label":"Live after"})", "application/json");
+    ASSERT_TRUE(renamed);
+    EXPECT_EQ(renamed->status, 200);
+    EXPECT_EQ(body(renamed)["label"], "Live after");
+
+    const auto deleted = server.client().Delete(route, "{}", "application/json");
+    ASSERT_TRUE(deleted);
+    EXPECT_EQ(deleted->status, 204);
+    EXPECT_EQ(manager.snapshot().live_session_count, 0U);
+    expect_error(
+        server.client().Post(route + "/open", "{}", "application/json"),
+        404,
+        "not_found");
+}
+
+TEST(LobbyRoutes, WelcomeCannotBeRenamedOrDeletedWhileLive) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const SessionIdentity welcome = LobbyGraph::initial_selection().session;
+    const std::string route = "/api/v1/forums/" + welcome.forum_id
+        + "/sessions/" + welcome.session_id;
+
+    const auto opened = server.client().Post(
+        route + "/open", "{}", "application/json");
+    ASSERT_TRUE(opened);
+    ASSERT_EQ(opened->status, 200);
+    ASSERT_EQ(manager.snapshot().live_session_count, 1U);
+
+    expect_error(
+        server.client().Patch(
+            route, R"({"label":"HIJACKED"})", "application/json"),
+        404,
+        "not_found");
+
+    LiveSessionHandle live = manager.lookup(welcome);
+    ASSERT_TRUE(live);
+    CommandSubmitResult snapshot_result = live->snapshot(5s);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(snapshot_result));
+    EXPECT_EQ(std::get<SessionSnapshot>(snapshot_result).session_label, "Welcome");
+    ASSERT_EQ(graph.sessions->list(welcome.forum_id).size(), 1U);
+    EXPECT_EQ(graph.sessions->list(welcome.forum_id).front().label, "Welcome");
+
+    expect_error(
+        server.client().Delete(route, "{}", "application/json"),
+        404,
+        "not_found");
+    EXPECT_EQ(manager.snapshot().live_session_count, 1U);
+    EXPECT_EQ(manager.lookup(welcome), live);
+
+    manager.begin_shutdown();
+}
+
 TEST(LobbyRoutes, UsesCommonErrorsAndRejectsInvalidMutationInputsBeforeOpening) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());

@@ -67,6 +67,12 @@ public:
     void validate(const SessionIdentity& identity) const;
     // The temporary forum has no creation path and reports ForumNotFoundError.
     [[nodiscard]] StoredSession create(std::string_view forum_id, std::string label) const;
+    [[nodiscard]] StoredSession rename(
+        const SessionIdentity& identity,
+        std::string label) const;
+    // Recoverable deletion moves the database into the forum's deleted/
+    // directory. The companion lease file deliberately stays in place.
+    void move_to_deleted(const SessionIdentity& identity) const;
     [[nodiscard]] PreparedSession prepare(const SessionIdentity& identity) const;
 
 private:

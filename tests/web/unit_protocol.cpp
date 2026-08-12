@@ -283,6 +283,7 @@ TEST(WebProtocol, DefinesEveryEnumSpelling) {
     expect_spellings<ShutdownReason>({
         {ShutdownReason::browser_disconnected, "browser_disconnected"},
         {ShutdownReason::session_failed, "session_failed"},
+        {ShutdownReason::session_deleted, "session_deleted"},
         {ShutdownReason::server_stopping, "server_stopping"},
     });
     expect_spellings<ErrorCode>({
@@ -301,6 +302,7 @@ TEST(WebProtocol, DefinesEveryEnumSpelling) {
         {ErrorCode::browser_stream_in_use, "browser_stream_in_use"},
         {ErrorCode::command_timeout, "command_timeout"},
         {ErrorCode::command_queue_full, "command_queue_full"},
+        {ErrorCode::session_delete_conflict, "session_delete_conflict"},
     });
 }
 
@@ -351,6 +353,8 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         std::invalid_argument);
 
     EXPECT_EQ(parse_create_session_label({{"label", "Notes"}}), "Notes");
+    EXPECT_EQ(parse_rename_session_label({{"label", "Renamed"}}), "Renamed");
+    EXPECT_EQ(parse_rename_session_label({{"label", ""}}), "");
     EXPECT_THROW(
         (void)parse_create_session_label({}),
         std::invalid_argument);
@@ -390,6 +394,7 @@ TEST(WebSettings, DefaultsRespectCoupledResourceAndLifetimeLimits) {
     EXPECT_GT(settings.command_batch_size, 0U);
     EXPECT_GT(settings.event_batch_size, 0U);
     EXPECT_GE(settings.orphan_limit, settings.idle_grace);
+    EXPECT_GT(settings.delete_deadline, settings.sse_drain_deadline);
 }
 
 TEST(WebSettings, RequestHeadroomCoversNonStreamingWork) {

@@ -2,6 +2,9 @@
 
 #include "workspace/workspace_definition.h"
 #include "session/not_found_error.h"
+#include "session/session_delete_conflict.h"
+#include "session/session_lease.h"
+#include "session/session_label.h"
 #include "session/session_repository.h"
 #include "web/http_response.h"
 #include "web/json.h"
@@ -9,6 +12,7 @@
 #include "web/route_support.h"
 #include "web/live_session_manager.h"
 #include "util/text.h"
+#include "util/logging.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -28,6 +32,29 @@ namespace {
 bool is_running(const LiveSessionManagerSnapshot& snapshot, const SessionIdentity& key) {
     return std::find(snapshot.running_sessions.begin(), snapshot.running_sessions.end(), key)
         != snapshot.running_sessions.end();
+}
+
+std::string session_event(
+    const SessionIdentity& identity,
+    std::string_view event) {
+    return "web session forum_id=" + identity.forum_id
+        + " session_id=" + identity.session_id
+        + " event=" + std::string(event);
+}
+
+bool validate_route_session_label(
+    httplib::Response& response,
+    std::string_view label,
+    bool allow_empty) {
+    if (allow_empty && label.empty()) return true;
+    try {
+        validate_session_label(label);
+        return true;
+    } catch (const std::invalid_argument&) {
+        set_error_response(response, 400,
+            {ErrorCode::bad_request, "Invalid session label."});
+        return false;
+    }
 }
 
 void set_open_result(
@@ -61,6 +88,22 @@ void set_open_result(
     case LiveSessionOpenFailure::internal_error:
         set_error_response(response, 500, {ErrorCode::internal_error, "Session could not be opened."});
         return;
+    }
+}
+
+void set_command_error(httplib::Response& response, ErrorCode code) {
+    switch (code) {
+    case ErrorCode::command_queue_full:
+        return set_error_response(response, 503, {code, "Session command queue is full."});
+    case ErrorCode::command_timeout:
+        return set_error_response(response, 503, {code, "Session command timed out."});
+    case ErrorCode::server_stopping:
+        return set_error_response(response, 503, {code, "Server is stopping."});
+    case ErrorCode::session_not_live:
+        return set_error_response(response, 409, {code, "That session is not open."});
+    default:
+        return set_error_response(response, 500,
+            {ErrorCode::internal_error, "The request could not be completed."});
     }
 }
 
@@ -204,12 +247,132 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&label](const nlohmann::json& json) {
                     label = parse_create_session_label(json);
                 })) return;
+        if (!validate_route_session_label(response, label, true)) return;
         try {
             const StoredSession created = sessions->create(forum, std::move(label));
             set_json_response(response, 201, nlohmann::json(CreateSessionSuccess{
                 created.identity.session_id, created.label}));
         } catch (const ForumNotFoundError&) {
             set_route_not_found(response);
+        } catch (const std::invalid_argument&) {
+            set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid session label."});
+        }
+    });
+
+    server.Patch(R"(/api/v1/forums/([^/]+)/sessions/([^/]+))",
+        [sessions, initial, live_sessions, settings](const httplib::Request& request,
+                                                     httplib::Response& response) {
+        const SessionIdentity key{request.matches[1], request.matches[2]};
+        if (!is_valid_route_component(key.forum_id)
+            || !is_valid_route_component(key.session_id)) {
+            return set_route_not_found(response);
+        }
+        // Welcome is process-local and immutable. Reject it before consulting
+        // the live registry, which deliberately bypasses repository reads for
+        // an already-open session.
+        if (key == initial.session) return set_route_not_found(response);
+        if (!validate_json_mutation(request, response)) return;
+        std::string label;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&label](const nlohmann::json& json) {
+                    label = parse_rename_session_label(json);
+                })) return;
+        if (!validate_route_session_label(response, label, false)) return;
+        log_info(session_event(key, "rename_requested"));
+        try {
+            if (const LiveSessionHandle live = live_sessions->lookup(key)) {
+                CommandSubmitResult result = live->submit(
+                    RenameSessionCommand{std::move(label)},
+                    settings.command_deadline);
+                if (const auto* renamed = std::get_if<SessionLabelResult>(&result)) {
+                    log_info(session_event(key, "rename_committed"));
+                    return set_json_response(response, 200, nlohmann::json(*renamed));
+                }
+                if (const auto* error = std::get_if<ErrorCode>(&result)) {
+                    log_warn(session_event(key, "rename_failed"));
+                    return set_command_error(response, *error);
+                }
+                return set_error_response(response, 500,
+                    {ErrorCode::internal_error, "The request could not be completed."});
+            }
+            const StoredSession renamed = sessions->rename(key, std::move(label));
+            log_info(session_event(key, "rename_committed"));
+            set_json_response(response, 200, nlohmann::json(SessionLabelResult{
+                renamed.identity.session_id, renamed.label}));
+        } catch (const ForumNotFoundError&) {
+            log_warn(session_event(key, "rename_failed"));
+            set_route_not_found(response);
+        } catch (const SessionNotFoundError&) {
+            log_warn(session_event(key, "rename_failed"));
+            set_route_not_found(response);
+        } catch (const SessionBusyError&) {
+            log_warn(session_event(key, "rename_failed"));
+            set_error_response(response, 409,
+                {ErrorCode::session_busy, "Session is busy."});
+        } catch (const std::invalid_argument&) {
+            log_warn(session_event(key, "rename_failed"));
+            set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid session label."});
+        } catch (...) {
+            log_warn(session_event(key, "rename_failed"));
+            throw;
+        }
+    });
+
+    server.Delete(R"(/api/v1/forums/([^/]+)/sessions/([^/]+))",
+        [sessions, initial, live_sessions, settings](const httplib::Request& request,
+                                                     httplib::Response& response) {
+        const SessionIdentity key{request.matches[1], request.matches[2]};
+        if (!is_valid_route_component(key.forum_id)
+            || !is_valid_route_component(key.session_id)) {
+            return set_route_not_found(response);
+        }
+        // The guard must precede the maintenance reservation: acquiring one
+        // may stop a live actor, which is an impermissible side effect for an
+        // immutable-session request that will ultimately be rejected.
+        if (key == initial.session) return set_route_not_found(response);
+        if (!validate_json_mutation(request, response)) return;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [](const nlohmann::json& json) { parse_empty_object(json); })) return;
+
+        log_info(session_event(key, "delete_requested"));
+        MaintenanceReservationResult reserved =
+            live_sessions->reserve_for_deletion(key, settings.delete_deadline);
+        if (const auto* failure = std::get_if<MaintenanceFailure>(&reserved)) {
+            log_warn(session_event(key, "delete_failed"));
+            if (*failure == MaintenanceFailure::manager_stopping) {
+                return set_error_response(response, 503,
+                    {ErrorCode::server_stopping, "Server is stopping."});
+            }
+            return set_error_response(response, 409,
+                {ErrorCode::session_stopping, "Session is stopping."});
+        }
+        try {
+            sessions->move_to_deleted(key);
+            log_info(session_event(key, "delete_moved"));
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        } catch (const ForumNotFoundError&) {
+            log_warn(session_event(key, "delete_failed"));
+            set_route_not_found(response);
+        } catch (const SessionNotFoundError&) {
+            log_warn(session_event(key, "delete_failed"));
+            set_route_not_found(response);
+        } catch (const SessionBusyError&) {
+            log_warn(session_event(key, "delete_failed"));
+            set_error_response(response, 409,
+                {ErrorCode::session_busy, "Session is busy."});
+        } catch (const SessionDeleteConflictError&) {
+            log_warn(session_event(key, "delete_failed"));
+            set_error_response(response, 409,
+                {ErrorCode::session_delete_conflict,
+                 "A deleted copy of this session already exists."});
+        } catch (...) {
+            log_warn(session_event(key, "delete_failed"));
+            throw;
         }
     });
 

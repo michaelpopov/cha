@@ -127,6 +127,7 @@ std::string_view to_string(ShutdownReason value) {
         {
             {ShutdownReason::browser_disconnected, "browser_disconnected"},
             {ShutdownReason::session_failed, "session_failed"},
+            {ShutdownReason::session_deleted, "session_deleted"},
             {ShutdownReason::server_stopping, "server_stopping"},
         });
 }
@@ -150,6 +151,7 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::browser_stream_in_use, "browser_stream_in_use"},
             {ErrorCode::command_timeout, "command_timeout"},
             {ErrorCode::command_queue_full, "command_queue_full"},
+            {ErrorCode::session_delete_conflict, "session_delete_conflict"},
         });
 }
 
@@ -244,6 +246,10 @@ void to_json(nlohmann::json& json, const CreateSessionSuccess& value) {
         {"id", value.id},
         {"label", value.label},
     };
+}
+
+void to_json(nlohmann::json& json, const SessionLabelResult& value) {
+    json = {{"id", value.id}, {"label", value.label}};
 }
 
 void to_json(nlohmann::json& json, const OpenSessionSuccess& value) {

@@ -2,6 +2,7 @@
 
 #include "session/not_found_error.h"
 #include "session/session_database.h"
+#include "session/session_delete_conflict.h"
 #include "session/session_lease.h"
 #include "support/test_transcript.h"
 #include "support/test_workspace.h"
@@ -101,6 +102,83 @@ TEST_F(SessionRepositoryTest, LabelsAnEmptyRequestWithItsSessionIdAndOrdersById)
     std::vector<std::string> expected{first.identity.session_id, second.identity.session_id};
     std::sort(expected.begin(), expected.end());
     EXPECT_EQ(ids, expected);
+}
+
+TEST_F(SessionRepositoryTest, RenamesStoredMetadataWithoutChangingIdentity) {
+    const SessionRepository repository = make_repository();
+    const StoredSession created = repository.create("lobby", "Before");
+
+    const StoredSession renamed = repository.rename(created.identity, "After ✓");
+
+    EXPECT_EQ(renamed.identity, created.identity);
+    EXPECT_EQ(renamed.label, "After ✓");
+    ASSERT_EQ(repository.list("lobby").size(), 1U);
+    EXPECT_EQ(repository.list("lobby").front().label, "After ✓");
+    EXPECT_EQ(repository.prepare(created.identity).label, "After ✓");
+}
+
+TEST_F(SessionRepositoryTest, AppliesTheSharedLabelPolicyToCreateAndRename) {
+    const SessionRepository repository = make_repository();
+    EXPECT_THROW((void)repository.create("lobby", " leading"), std::invalid_argument);
+    EXPECT_THROW((void)repository.create("lobby", "line\nbreak"), std::invalid_argument);
+    EXPECT_THROW((void)repository.create("lobby", std::string(201, 'x')), std::invalid_argument);
+
+    const StoredSession created = repository.create("lobby", "Valid");
+    EXPECT_THROW((void)repository.rename(created.identity, ""), std::invalid_argument);
+    EXPECT_THROW((void)repository.rename(created.identity, "trailing "), std::invalid_argument);
+    EXPECT_EQ(repository.prepare(created.identity).label, "Valid");
+}
+
+TEST_F(SessionRepositoryTest, MovesDeletedDatabaseButLeavesItsCompanionLock) {
+    const SessionRepository repository = make_repository();
+    const StoredSession created = repository.create("lobby", "Archived");
+    const std::filesystem::path lock = SessionLease::companion_path(created.database_path);
+    ASSERT_TRUE(std::filesystem::exists(lock));
+
+    repository.move_to_deleted(created.identity);
+
+    EXPECT_FALSE(std::filesystem::exists(created.database_path));
+    EXPECT_TRUE(std::filesystem::exists(
+        sessions_directory() / "deleted" / created.database_path.filename()));
+    EXPECT_TRUE(std::filesystem::exists(lock));
+    EXPECT_TRUE(repository.list("lobby").empty());
+    EXPECT_THROW((void)repository.prepare(created.identity), SessionNotFoundError);
+}
+
+TEST_F(SessionRepositoryTest, DeletesCorruptDatabasesAndNeverReplacesAnArchive) {
+    const SessionRepository repository = make_repository();
+    const StoredSession corrupt = repository.create("lobby", "Corrupt");
+    {
+        std::ofstream file(corrupt.database_path, std::ios::binary | std::ios::trunc);
+        file << "not SQLite";
+    }
+    EXPECT_NO_THROW(repository.move_to_deleted(corrupt.identity));
+
+    const StoredSession conflict = repository.create("lobby", "Conflict");
+    const std::filesystem::path destination =
+        sessions_directory() / "deleted" / conflict.database_path.filename();
+    std::filesystem::copy_file(
+        sessions_directory() / "deleted" / corrupt.database_path.filename(),
+        destination);
+    EXPECT_THROW(
+        repository.move_to_deleted(conflict.identity),
+        SessionDeleteConflictError);
+    EXPECT_TRUE(std::filesystem::exists(conflict.database_path));
+}
+
+TEST_F(SessionRepositoryTest, RenameAndDeleteRejectBusyAndTemporarySessions) {
+    const SessionRepository repository = make_repository();
+    const StoredSession created = repository.create("lobby", "Held");
+    const PreparedSession held = repository.prepare(created.identity);
+    EXPECT_THROW((void)repository.rename(created.identity, "Later"), SessionBusyError);
+    EXPECT_THROW(repository.move_to_deleted(created.identity), SessionBusyError);
+
+    EXPECT_THROW(
+        (void)repository.rename(temporary_identity(), "Other"),
+        ForumNotFoundError);
+    EXPECT_THROW(
+        repository.move_to_deleted(temporary_identity()),
+        ForumNotFoundError);
 }
 
 TEST_F(SessionRepositoryTest, ListsAnEmptyForumWithoutCreatingItsDirectory) {

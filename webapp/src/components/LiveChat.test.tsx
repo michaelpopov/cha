@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
+import { conversationText } from '../state/conversationText';
 import { bootstrapFixture, fixtureClient, plainVoice, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 
@@ -126,6 +127,124 @@ describe('live chat', () => {
     }));
     expect(screen.getByText('Still here with you')).toBeInTheDocument();
     expect(screen.getByText('Checking again')).toBeInTheDocument();
+  });
+
+  it('keeps the copy action icon-only beside the sidebar toggle', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+
+    const copy = screen.getByRole('button', { name: 'Copy conversation' });
+    expect(copy).toBeEnabled();
+    expect(copy).toHaveTextContent('');
+    // The two conversation-level controls share one leading cluster, so the
+    // top bar reserves no separate trailing column for this action.
+    expect(copy.closest('.cha-topbar-lead')).not.toBeNull();
+    expect(copy.previousElementSibling).toHaveAccessibleName(/sidebar/i);
+  });
+
+  it('copies the visible conversation and clears its temporary feedback', async () => {
+    const events = drivableEvents();
+    const snapshot = transcriptSnapshot();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, snapshot);
+
+    const copy = screen.getByRole('button', { name: 'Copy conversation' });
+    copy.focus();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(copy);
+      await act(async () => { await Promise.resolve(); });
+      expect(writeText).toHaveBeenCalledWith(conversationText(snapshot));
+      expect(screen.getByRole('button', { name: 'Conversation copied' })).toHaveFocus();
+      expect(screen.getByText('Conversation copied to clipboard.')).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(1800));
+      expect(screen.getByRole('button', { name: 'Copy conversation' })).toHaveFocus();
+      expect(screen.queryByText('Conversation copied to clipboard.')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears pending Copy feedback when the application unmounts', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(async () => undefined) },
+    });
+    const clearTimeout = vi.spyOn(window, 'clearTimeout');
+    const view = render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+
+    await user.click(screen.getByRole('button', { name: 'Copy conversation' }));
+    expect(await screen.findByRole('button', { name: 'Conversation copied' })).toBeVisible();
+    view.unmount();
+    expect(clearTimeout).toHaveBeenCalled();
+    clearTimeout.mockRestore();
+  });
+
+  it('offers selected read-only text when clipboard permission is denied', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const snapshot = transcriptSnapshot();
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(async () => { throw new DOMException('Denied', 'NotAllowedError'); }) },
+    });
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, snapshot);
+
+    await user.click(screen.getByRole('button', { name: 'Copy conversation' }));
+    expect(await screen.findByRole('heading', { name: 'Copy conversation' })).toBeInTheDocument();
+    const manual = screen.getByRole('dialog').querySelector('textarea');
+    expect(manual).not.toBeNull();
+    expect(manual).toHaveAttribute('readonly');
+    expect(manual).toHaveValue(conversationText(snapshot));
+    expect(manual).toHaveFocus();
+    expect((manual as HTMLTextAreaElement).selectionStart).toBe(0);
+    expect((manual as HTMLTextAreaElement).selectionEnd).toBe(conversationText(snapshot).length);
+  });
+
+  it('disables Copy for empty or stale state but allows a stopped session', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    let providePlanning!: (snapshot: SessionSnapshot) => void;
+    const planningSnapshot = new Promise<SessionSnapshot>((resolve) => {
+      providePlanning = resolve;
+    });
+    render(<App
+      client={fixtureClient({
+        getSessionSnapshot: async (forumId) => (
+          forumId === 'lobby' ? planningSnapshot : snapshotFixture
+        ),
+      })}
+      connectSessionEvents={events.connect}
+    />);
+    await attachInitial(events);
+    expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: /^Planning/ }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Opening session');
+    // The control belongs to the persistent top bar now, so an open in flight
+    // disables it rather than removing it and shifting the chrome around.
+    expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeDisabled();
+
+    providePlanning({
+      ...transcriptSnapshot(),
+      forum: bootstrapFixture.forums[1],
+      session_id: 'planning',
+      session_label: 'Planning',
+      lifecycle: 'stopping',
+    });
+    await waitFor(() => expect(events.connections.some(({ key }) => key === 'lobby/planning')).toBe(true));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeEnabled());
   });
 
   it('submits with the forum persona, clears accepted input, and preserves a failed draft', async () => {

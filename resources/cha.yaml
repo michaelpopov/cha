@@ -181,6 +181,11 @@ paths:
         stored as given; an empty label is replaced by the generated session ID,
         so the returned label may differ from the requested one.
 
+        A non-empty label must be valid UTF-8, contain at most 200 Unicode code
+        points, contain no control characters or line breaks, and have no
+        leading or trailing Unicode whitespace. Invalid labels answer `400`
+        with `bad_request`.
+
         Only workspace forums accept creation. The built-in Entrance forum has no
         workspace directory, so creating a session in it answers `404` with
         `not_found`; its Welcome session is the only session it ever lists.
@@ -255,6 +260,120 @@ paths:
             `error.code` is `session_limit_reached`, `session_open_timeout`, or
             `server_stopping`. On `session_open_timeout` the session may still
             finish opening, so the request can be retried.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/forums/{forum_id}/sessions/{session_id}:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    patch:
+      tags: [Stored sessions]
+      operationId: renameSession
+      summary: Rename a stored or live session
+      description: |
+        Replaces the session's display label. The stable session ID never
+        changes, so existing deep links stay valid.
+
+        The label must be valid UTF-8, contain at most 200 Unicode code points,
+        contain no control characters or line breaks, and have no leading or
+        trailing Unicode whitespace. Unlike creation, an empty label has no
+        generated-ID fallback and answers `400` with `bad_request`.
+
+        A session with a live runtime is renamed through its owner, so the
+        database, the current snapshot, and every event-stream consumer observe
+        the same label. That path also reports the owner-queue failures:
+        `command_queue_full`, `command_timeout`, and `session_not_live`. A
+        `command_timeout` leaves the outcome unknown, because the owner may
+        still commit the rename after the request has given up.
+
+        A session without a live runtime is renamed through storage, where
+        another process holding its lease answers `409` with `session_busy`.
+
+        The built-in Welcome session is process-local and cannot be renamed; it
+        answers `404` with `not_found`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameSessionRequest"
+      responses:
+        "200":
+          description: Session renamed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionLabelResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Session is busy or no longer live.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/CommandUnavailable"
+    delete:
+      tags: [Stored sessions]
+      operationId: deleteSession
+      summary: Move a session into recoverable deleted storage
+      description: |
+        Removes the session from CHA without erasing it. Its database is moved
+        into the forum's `deleted/` directory, so the session stops listing,
+        stops opening, and answers `404` afterwards, while its transcript
+        remains on disk for an operator. The browser can neither list nor
+        restore it.
+
+        A session with a live runtime is stopped first, and its final snapshot
+        carries the `session_deleted` shutdown reason. If that shutdown does not
+        finish within the server's deletion deadline the database is left in the
+        ordinary catalog and the request answers `409` with `session_stopping`;
+        the shutdown may still complete, so a later delete can succeed.
+
+        The move never replaces a file already at the destination. That
+        collision answers `409` with `session_delete_conflict` and leaves both
+        the active session and the retained database untouched.
+
+        Deletion deliberately does not require readable session metadata, so a
+        corrupt database can still be removed from the catalog.
+
+        The built-in Welcome session is process-local and cannot be deleted; it
+        answers `404` with `not_found` without stopping its runtime.
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: Session moved to deleted storage.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Session is busy, stopping, or its archive destination exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Server shutdown prevented deletion.
           content:
             application/json:
               schema:
@@ -758,8 +877,29 @@ components:
       properties:
         label:
           type: string
+          maxLength: 200
+
+    RenameSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 200
 
     CreateSessionResult:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+
+    SessionLabelResult:
       type: object
       additionalProperties: false
       required: [id, label]
@@ -898,7 +1038,7 @@ components:
           enum: [starting, running, stopping]
         shutdown_reason:
           type: string
-          enum: [browser_disconnected, session_failed, server_stopping]
+          enum: [browser_disconnected, session_failed, session_deleted, server_stopping]
 
     AppendTargetEntry:
       type: object
@@ -972,6 +1112,7 @@ components:
                 - browser_stream_in_use
                 - command_timeout
                 - command_queue_full
+                - session_delete_conflict
             message:
               type: string
 

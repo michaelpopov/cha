@@ -1,14 +1,19 @@
 #include "session/session_repository.h"
 
 #include "session/not_found_error.h"
+#include "session/session_archive.h"
 #include "session/session_catalog.h"
+#include "session/session_delete_conflict.h"
+#include "session/session_label.h"
 #include "session/session_lease.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 
 #include <chrono>
+#include <filesystem>
 #include <random>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace cha {
@@ -31,6 +36,19 @@ std::filesystem::path create_private_directory() {
         }
     }
     throw std::runtime_error("Failed to create private temporary session storage");
+}
+
+void move_sidecar_if_present(
+    const std::filesystem::path& source,
+    const std::filesystem::path& destination) noexcept {
+    try {
+        if (std::filesystem::exists(source)) {
+            archive_without_replacement(source, destination);
+        }
+    } catch (const std::exception& error) {
+        log_warn("Failed to archive session database sidecar: path="
+            + utf8_path(source) + " reason=" + error.what());
+    }
 }
 
 } // namespace
@@ -101,6 +119,59 @@ StoredSession SessionRepository::create(
             "Forum '" + std::string(forum_id) + "' does not store sessions");
     }
     return catalog_for(forum_id).create(std::move(label));
+}
+
+StoredSession SessionRepository::rename(
+    const SessionIdentity& identity,
+    std::string label) const {
+    if (identity.forum_id == temporary_identity_.forum_id) {
+        throw ForumNotFoundError(
+            "Forum '" + identity.forum_id + "' does not store sessions");
+    }
+    validate_session_label(label);
+    const SessionCatalog catalog = catalog_for(identity.forum_id);
+    const std::filesystem::path path = catalog.database_path(identity.session_id);
+    if (!std::filesystem::is_regular_file(path)) {
+        throw missing_session_error(identity.session_id);
+    }
+    SessionLease lease = SessionLease::acquire(path);
+    if (!std::filesystem::is_regular_file(path)) {
+        throw missing_session_error(identity.session_id);
+    }
+    rename_session_database(path, identity, label);
+    return catalog.inspect(identity.session_id);
+}
+
+void SessionRepository::move_to_deleted(const SessionIdentity& identity) const {
+    if (identity.forum_id == temporary_identity_.forum_id) {
+        throw ForumNotFoundError(
+            "Forum '" + identity.forum_id + "' does not store sessions");
+    }
+    const SessionCatalog catalog = catalog_for(identity.forum_id);
+    const std::filesystem::path source = catalog.database_path(identity.session_id);
+    const std::filesystem::path destination =
+        catalog.deleted_database_path(identity.session_id);
+    if (!std::filesystem::is_regular_file(source)) {
+        throw missing_session_error(identity.session_id);
+    }
+    std::filesystem::create_directories(destination.parent_path());
+    if (std::filesystem::exists(destination)) {
+        throw SessionDeleteConflictError(
+            "A deleted session database already exists at '"
+            + utf8_path(destination) + "'");
+    }
+
+    SessionLease lease = SessionLease::acquire(source);
+    if (!std::filesystem::is_regular_file(source)) {
+        throw missing_session_error(identity.session_id);
+    }
+    archive_without_replacement(source, destination);
+
+    for (const std::string_view suffix : {"-journal", "-wal", "-shm"}) {
+        move_sidecar_if_present(
+            path_from_utf8(utf8_path(source) + std::string(suffix)),
+            path_from_utf8(utf8_path(destination) + std::string(suffix)));
+    }
 }
 
 PreparedSession SessionRepository::prepare(const SessionIdentity& identity) const {

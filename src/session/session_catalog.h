@@ -41,6 +41,9 @@ public:
     // Safe path derivation only: the returned path names where a session's
     // database belongs, whether or not one is there.
     std::filesystem::path database_path(const std::string& session_id) const;
+    // The corresponding recoverable-delete destination. Archived databases
+    // remain reserved so a later create cannot reuse their stable IDs.
+    std::filesystem::path deleted_database_path(const std::string& session_id) const;
 
 private:
     // The label a database claims, once its embedded identity has been checked

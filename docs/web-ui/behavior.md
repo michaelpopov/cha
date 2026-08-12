@@ -30,6 +30,11 @@ The sidebar contains, from top to bottom:
 4. Forums.
 5. Recent cross-forum sessions. Every entry shows the session name and forum name.
 
+Each mutable Recent row has an ellipsis action and the same menu on right-click.
+Rename changes its display label without changing its stable session ID. Delete
+requires confirmation, stops an open runtime if necessary, and removes the row
+from CHA. The built-in Welcome row exposes neither action.
+
 There is no sixth element. The mockup's round gear button at the bottom-right is removed in v1 and nothing replaces it.
 
 Personas and Forums have no current-selection secondary lines. Personas is
@@ -124,6 +129,7 @@ Characters is a workspace-level, informational navigation area.
 - Sessions uses the title `Sessions`, not the forum display name.
 - A stored-session row shows its name and compact time metadata at the trailing edge. It never shows a description or transcript excerpt because sessions have no description field.
 - New session is an action row, not a stored session, and may carry the helper text `Enter a name to begin`.
+- Session labels are single-line trimmed Unicode text of at most 200 characters.
 - A forum with no stored sessions shows only New session.
 
 ## Session creation
@@ -144,6 +150,21 @@ Rules:
 ## Main-area headers
 
 - Chat has no title, session name, forum, persona, or character in its header.
+- Chat adds an icon-only Copy conversation action to the two-line sidebar
+  control's cluster, so both conversation-level controls sit together. Copy
+  stacks directly beneath the sidebar control, on the same vertical axis. The
+  pair stands in the transcript's left gutter rather than in a header row of its
+  own, so the transcript begins level with the top of the sidebar control; where
+  the column would not leave a wide enough gutter by itself, it is indented to
+  make one. Only a phone-width panel gives up and puts the pair side by side in
+  a header row above the conversation. The measure is the width of the main
+  panel, not the window: an open sidebar takes width away from it. It copies the
+  open snapshot's
+  visible human, character, and error entries as plain text, including a
+  session/forum header. Notices and reasoning are omitted. Copy remains
+  available after the session stops, and stays in place but disabled while a
+  session is opening rather than appearing and disappearing. Clipboard denial
+  opens a selected read-only manual-copy field.
 - Navigation screens show one centered title without a subtitle.
 - Persona detail uses the persona's display name as its title, and Character detail the character's.
 - The two-line sidebar control remains at the top-left in every Main-area state.

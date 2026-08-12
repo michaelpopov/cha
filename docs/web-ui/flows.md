@@ -11,6 +11,7 @@ flowchart TD
     Sidebar -->|"Characters"| Characters["Characters"]
     Sidebar -->|"Forums"| Forums["Forums"]
     Sidebar -->|"Recent session"| Open["Open or reattach selected session"]
+    Sidebar -->|"Recent actions / right-click"| Maintain["Rename or confirm delete"]
     Personas -->|"Select persona"| PersonaDetail["Persona detail"]
     PersonaDetail -->|"Personas back row"| Personas
     Characters -->|"Select character"| Detail["Character detail"]
@@ -55,6 +56,9 @@ flowchart TD
 ```
 
 Stored-session rows contain a name and compact time metadata only. They do not contain descriptions.
+Recent rows additionally expose Rename and Delete. Delete returns an active
+conversation to Welcome after its runtime has stopped. Copy is a Chat top-bar
+icon action paired with the sidebar control and never calls the server.
 
 ## Persona attribution
 

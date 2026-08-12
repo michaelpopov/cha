@@ -171,6 +171,11 @@ export interface paths {
          *     stored as given; an empty label is replaced by the generated session ID,
          *     so the returned label may differ from the requested one.
          *
+         *     A non-empty label must be valid UTF-8, contain at most 200 Unicode code
+         *     points, contain no control characters or line breaks, and have no
+         *     leading or trailing Unicode whitespace. Invalid labels answer `400`
+         *     with `bad_request`.
+         *
          *     Only workspace forums accept creation. The built-in Entrance forum has no
          *     workspace directory, so creating a session in it answers `404` with
          *     `not_found`; its Welcome session is the only session it ever lists.
@@ -207,6 +212,74 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/forums/{forum_id}/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Move a session into recoverable deleted storage
+         * @description Removes the session from CHA without erasing it. Its database is moved
+         *     into the forum's `deleted/` directory, so the session stops listing,
+         *     stops opening, and answers `404` afterwards, while its transcript
+         *     remains on disk for an operator. The browser can neither list nor
+         *     restore it.
+         *
+         *     A session with a live runtime is stopped first, and its final snapshot
+         *     carries the `session_deleted` shutdown reason. If that shutdown does not
+         *     finish within the server's deletion deadline the database is left in the
+         *     ordinary catalog and the request answers `409` with `session_stopping`;
+         *     the shutdown may still complete, so a later delete can succeed.
+         *
+         *     The move never replaces a file already at the destination. That
+         *     collision answers `409` with `session_delete_conflict` and leaves both
+         *     the active session and the retained database untouched.
+         *
+         *     Deletion deliberately does not require readable session metadata, so a
+         *     corrupt database can still be removed from the catalog.
+         *
+         *     The built-in Welcome session is process-local and cannot be deleted; it
+         *     answers `404` with `not_found` without stopping its runtime.
+         */
+        delete: operations["deleteSession"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename a stored or live session
+         * @description Replaces the session's display label. The stable session ID never
+         *     changes, so existing deep links stay valid.
+         *
+         *     The label must be valid UTF-8, contain at most 200 Unicode code points,
+         *     contain no control characters or line breaks, and have no leading or
+         *     trailing Unicode whitespace. Unlike creation, an empty label has no
+         *     generated-ID fallback and answers `400` with `bad_request`.
+         *
+         *     A session with a live runtime is renamed through its owner, so the
+         *     database, the current snapshot, and every event-stream consumer observe
+         *     the same label. That path also reports the owner-queue failures:
+         *     `command_queue_full`, `command_timeout`, and `session_not_live`. A
+         *     `command_timeout` leaves the outcome unknown, because the owner may
+         *     still commit the rename after the request has given up.
+         *
+         *     A session without a live runtime is renamed through storage, where
+         *     another process holding its lease answers `409` with `session_busy`.
+         *
+         *     The built-in Welcome session is process-local and cannot be renamed; it
+         *     answers `404` with `not_found`.
+         */
+        patch: operations["renameSession"];
         trace?: never;
     };
     "/s/{forum_id}/{session_id}/api/v1/session": {
@@ -417,7 +490,14 @@ export interface components {
         CreateSessionRequest: {
             label: string;
         };
+        RenameSessionRequest: {
+            label: string;
+        };
         CreateSessionResult: {
+            id: components["schemas"]["Identifier"];
+            label: string;
+        };
+        SessionLabelResult: {
             id: components["schemas"]["Identifier"];
             label: string;
         };
@@ -470,7 +550,7 @@ export interface components {
             /** @enum {string} */
             lifecycle: "starting" | "running" | "stopping";
             /** @enum {string} */
-            shutdown_reason?: "browser_disconnected" | "session_failed" | "server_stopping";
+            shutdown_reason?: "browser_disconnected" | "session_failed" | "session_deleted" | "server_stopping";
         };
         AppendTargetEntry: {
             /**
@@ -497,7 +577,7 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "browser_stream_in_use" | "command_timeout" | "command_queue_full";
+                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "browser_stream_in_use" | "command_timeout" | "command_queue_full" | "session_delete_conflict";
                 message: string;
             };
         };
@@ -869,6 +949,96 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+        };
+    };
+    deleteSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description Session moved to deleted storage. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            /** @description Session is busy, stopping, or its archive destination exists. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+            /** @description Server shutdown prevented deletion. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    renameSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Session renamed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionLabelResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            /** @description Session is busy or no longer live. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["CommandUnavailable"];
         };
     };
     getSessionSnapshot: {

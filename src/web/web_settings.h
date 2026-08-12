@@ -31,6 +31,7 @@ struct WebSettings {
     // are the reason the application needs an explicit bound.
     std::chrono::milliseconds http_write_timeout{5000};
     std::chrono::milliseconds sse_drain_deadline{1000};
+    std::chrono::milliseconds delete_deadline{10000};
     std::chrono::milliseconds idle_grace{30000};
     // Runtime configuration validation must require orphan_limit >= idle_grace.
     std::chrono::milliseconds orphan_limit{300000};
