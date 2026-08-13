@@ -25,7 +25,6 @@ import { Markdown } from './Markdown';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
-  ForumsIcon,
   MessageIcon,
   PlusIcon,
   SendIcon,
@@ -478,7 +477,6 @@ export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScr
   return (
     <section className="cha-screen cha-navigation" aria-label="Personas navigation">
       {sessionReport}
-      <p className="cha-screen-instruction">Choose a persona</p>
       <div className="cha-roster">
         {state.bootstrap?.personas.map((persona) => (
           <RosterRow
@@ -572,24 +570,14 @@ export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScree
   return (
     <section className="cha-screen cha-navigation" aria-label="Forums navigation">
       {sessionReport}
-      <p className="cha-screen-instruction">Choose a forum</p>
-      <div className="cha-list">
+      <div className="cha-roster">
         {state.bootstrap?.forums.map((forum) => (
-          <button
-            className="cha-list-action"
+          <RosterRow
+            description={forum.members.map(({ display_name }) => display_name).join(', ') || 'No characters'}
+            displayName={forum.display_name}
             key={forum.id}
-            onClick={() => dispatch({ type: 'select-forum', forumId: forum.id })}
-            type="button"
-          >
-            <span className="cha-list-icon"><ForumsIcon /></span>
-            <span className="cha-list-copy">
-              <span className="cha-primary-line">{forum.display_name}</span>
-              <span className="cha-secondary-line">
-                {forum.members.map(({ display_name }) => display_name).join(', ') || 'No characters'}
-              </span>
-            </span>
-            <ChevronRightIcon className="cha-chevron" />
-          </button>
+            onSelect={() => dispatch({ type: 'select-forum', forumId: forum.id })}
+          />
         ))}
       </div>
     </section>

@@ -94,22 +94,25 @@ select:disabled {
   display: flex;
   width: var(--cha-sidebar-width);
   flex-direction: column;
-  padding: 1rem 0.9rem;
+  padding: 0.75rem 0.6rem;
   overflow: auto;
   background: var(--background);
 }
 
 .cha-brand {
-  padding: 0.35rem 0.65rem 1rem;
+  padding: 0.25rem 0.55rem 0.6rem;
   font-size: 1.25rem;
   font-weight: 540;
   letter-spacing: -0.025em;
 }
 
+/* The sidebar is a scan list, not a set of buttons: rows sit close enough that
+   the group reads as one column, and the hover surface stays just wide enough
+   to stay legible around the label. */
 .cha-sidebar-nav,
 .cha-recents {
   display: grid;
-  gap: 0.25rem;
+  gap: 0.05rem;
 }
 
 .cha-side-action,
@@ -133,9 +136,9 @@ select:disabled {
   width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.65rem;
-  border-radius: 0.8rem;
+  gap: 0.6rem;
+  padding: 0.36rem 0.55rem;
+  border-radius: 0.6rem;
   text-align: left;
 }
 
@@ -155,14 +158,14 @@ select:disabled {
 }
 
 .cha-section-label {
-  padding: 1rem 0.65rem 0.35rem;
+  padding: 0.85rem 0.55rem 0.2rem;
   color: var(--muted-foreground);
   font-weight: 500;
 }
 
 .cha-empty-list {
   margin: 0;
-  padding: 0.55rem 0.65rem;
+  padding: 0.3rem 0.55rem;
   color: var(--muted-foreground);
   font-size: 0.82rem;
 }
@@ -173,7 +176,7 @@ select:disabled {
   width: 100%;
   min-width: 0;
   align-items: center;
-  border-radius: 0.75rem;
+  border-radius: 0.6rem;
   text-align: left;
 }
 
@@ -187,18 +190,20 @@ select:disabled {
   cursor: pointer;
 }
 
+/* Two lines in a tight row: the label and its forum are one unit, so they lose
+   the gap between them and lead tighter than body text. */
 .cha-recent-open {
   display: grid;
   min-width: 0;
-  gap: 0.08rem;
-  padding: 0.55rem 0.65rem;
+  padding: 0.28rem 0.55rem;
+  line-height: 1.3;
   text-align: left;
 }
 
 .cha-recent-more {
   display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 1.9rem;
+  height: 1.9rem;
   place-items: center;
   border-radius: 50%;
   opacity: 0;
@@ -441,11 +446,6 @@ select:disabled {
   margin-inline: auto;
   padding: 0.6rem 1.2rem 1.2rem;
   overflow: auto;
-}
-
-.cha-screen-instruction {
-  margin: 0 0 0.35rem;
-  color: var(--foreground);
 }
 
 .cha-bootstrap-state,
