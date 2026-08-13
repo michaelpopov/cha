@@ -82,6 +82,28 @@ TEST(CharacterDefinitions, MemberPromptReplacesDefinitionPrompt) {
     EXPECT_EQ(definitions.front().system_prompt.find("Definition"), std::string::npos);
 }
 
+TEST(CharacterDefinitions, UsesCharacterProfileIncludeForPublicDescription) {
+    CharacterDefinitionFiles files;
+    std::ofstream(files.definitions / "guide" / "voice.md") << "Voice\n";
+    std::filesystem::create_directories(files.definitions / "guide" / "profile");
+    std::ofstream(files.definitions / "guide" / "config.toml")
+        << "[prompt]\norigin = \"wrapper\"\n";
+    std::ofstream(files.definitions / "guide" / "profile" / "PROFILE.md")
+        << "Profile for $${character.display_name}: $${voice} ($${origin})\n";
+    std::ofstream(files.definitions / "guide" / "CHARACTER.md")
+        << "$$(voice.md)\n"
+           "<character_profile>\n"
+           "$$(profile/PROFILE.md)\n"
+           "</character_profile>\n";
+
+    const auto definitions = load_character_definitions({files.source()}, files.forum, "Forum", {});
+
+    ASSERT_EQ(definitions.size(), 1U);
+    EXPECT_EQ(definitions.front().character_prompt,
+        "Voice\n\n<character_profile>\nProfile for Guide: base (wrapper)\n\n</character_profile>\n");
+    EXPECT_EQ(definitions.front().character_description, "Profile for Guide: base (wrapper)");
+}
+
 TEST(CharacterDefinitions, UsesLayerSpecificTemplateContainment) {
     CharacterDefinitionFiles files;
     std::ofstream(files.definitions / "shared.md") << "Shared";

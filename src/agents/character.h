@@ -22,8 +22,11 @@ struct CharacterDefinition {
     CharacterMetadata character;
     ModelBackendConfig backend;
     // The expanded character-level prompt before forum context is appended.
-    // This is also the public character description shown by the web UI.
     std::string character_prompt;
+    // The public character description shown by the web UI. When the expanded
+    // prompt contains a <character_profile> section, this is that section;
+    // otherwise it is the full character prompt.
+    std::string character_description;
     std::string system_prompt;
 };
 

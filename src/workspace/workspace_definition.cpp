@@ -585,10 +585,10 @@ WorkspaceDefinition WorkspaceDefinition::load(
             for (const CharacterDefinition& definition : definitions) {
                 // A character may participate in multiple forums. The detail
                 // endpoint is workspace-wide, so retain the first effective
-                // character prompt, which is exactly what that definition's
-                // agent receives before forum context is appended.
+                // character description, using the same effective character
+                // scope as that definition's agent prompt.
                 model.character_markdown_.emplace(
-                    definition.character.id, definition.character_prompt);
+                    definition.character.id, definition.character_description);
             }
             model.definitions_.emplace(forum.info.id, std::move(definitions));
         } catch (const std::exception& error) {

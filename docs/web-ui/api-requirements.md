@@ -155,9 +155,12 @@ GET /api/v1/characters/{character_id}
 ```
 
 The detail response contains the character summary fields plus
-`character_markdown`. For workspace characters this is the template-expanded
-definition `characters/<id>/CHARACTER.md`, using the same effective character
-scope as the agent prompt. Assistant uses the embedded application guide.
+`character_markdown`. For workspace characters this is the
+`<character_profile>` section of the template-expanded
+`characters/<id>/CHARACTER.md`, using the same effective character scope as
+the agent prompt. If the prompt has no such section, it is the whole
+template-expanded `CHARACTER.md`. Assistant uses the embedded application
+guide.
 
 The short description comes from `character.toml`. There is no `DISPLAY.md`,
 separate display template, or additional character entity. Character browsing

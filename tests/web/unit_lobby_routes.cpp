@@ -146,8 +146,13 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     fixture.write_character_config(
         "display_name = \"Guide\"\n"
         "description = \"Explains the workspace\"\n");
+    std::ofstream(fixture.root() / "characters" / "guide" / "PROFILE.md")
+        << "Profile $${character.display_name}\n";
     std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
-        << "Character $${character.display_name} instructions\n";
+        << "Agent instructions\n"
+           "<character_profile>\n"
+           "$$(PROFILE.md)\n"
+           "</character_profile>\n";
     const LobbyGraph graph(fixture.root());
     LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
     TestServer server(graph, manager);
@@ -200,7 +205,7 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_TRUE(workspace_character);
     ASSERT_EQ(workspace_character->status, 200);
     const nlohmann::json workspace_character_body = body(workspace_character);
-    EXPECT_EQ(workspace_character_body["character_markdown"], "Character Guide instructions\n");
+    EXPECT_EQ(workspace_character_body["character_markdown"], "Profile Guide");
     EXPECT_EQ(workspace_character_body["appearance"], (*guide)["appearance"]);
 
     const auto assistant_character = server.client().Get("/api/v1/characters/builtin-assistant");
