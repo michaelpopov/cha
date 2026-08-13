@@ -22,6 +22,7 @@ class SseMailbox;
 enum class SessionLifecycle { starting, running, stopping };
 enum class ShutdownReason {
     browser_disconnected,
+    reloading,
     session_failed,
     session_deleted,
     server_stopping,
@@ -185,6 +186,11 @@ struct StyleOption {
     std::string label;
     CharacterAppearance appearance;
     bool operator==(const StyleOption&) const = default;
+};
+
+struct CharacterSettingsUpdate {
+    std::optional<std::string> provider;
+    std::optional<std::string> style;
 };
 
 struct CharacterDetail {

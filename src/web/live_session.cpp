@@ -28,9 +28,10 @@ std::string session_log(const SessionIdentity& key, std::string_view event) {
 int shutdown_reason_priority(ShutdownReason reason) {
     switch (reason) {
     case ShutdownReason::browser_disconnected: return 0;
-    case ShutdownReason::session_failed: return 1;
-    case ShutdownReason::session_deleted: return 2;
-    case ShutdownReason::server_stopping: return 3;
+    case ShutdownReason::reloading: return 1;
+    case ShutdownReason::session_failed: return 2;
+    case ShutdownReason::session_deleted: return 3;
+    case ShutdownReason::server_stopping: return 4;
     }
     return 0;
 }
@@ -282,6 +283,7 @@ bool LiveSession::open_controller() {
         controller_ = std::move(opened.controller);
         persist_default_character_ = std::move(opened.persist_default_character);
         persist_default_persona_ = std::move(opened.persist_default_persona);
+        (void)apply_notice(opened.notice);
         return true;
     } catch (const std::bad_alloc&) {
         std::terminate();

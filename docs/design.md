@@ -314,6 +314,13 @@ After the file is written, the PATCH handler asks the affected live sessions to
 shut down, with a new shutdown reason meaning "reopening". The browser reopens,
 and the reopened session resolves the new settings through change 1.
 
+"Live" here has to include sessions that are still *opening*, not only those
+already running. A session reads its definitions on the way up, so one that is
+mid-open when the save commits is already holding the old values, and would
+otherwise arrive running settings the file no longer has, with nothing left to
+correct it. Because the write commits before the fan-out, a session that has not
+appeared by then has not read the file yet and will read the new values.
+
 Which sessions are affected depends on what actually changed, because a restart
 costs the reader any answer being generated and must never be spent for nothing:
 

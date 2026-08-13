@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -214,6 +215,64 @@ TEST(WorkspaceDefinition, ReportsNoCharacterSettingsForAConfigItCannotRead) {
     const std::optional<CharacterSettings> repaired = model.character_settings("guide");
     ASSERT_TRUE(repaired);
     EXPECT_EQ(repaired->provider, std::optional<std::string>("test"));
+}
+
+std::string file_bytes(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+TEST(WorkspaceDefinition, WritesAndErasesCharacterProviderAndStyle) {
+    test::TestWorkspace fixture;
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    model.write_character_settings("guide", "test", "serif-italic");
+    EXPECT_EQ(
+        model.character_settings("guide"),
+        (CharacterSettings{"test", "serif-italic"}));
+
+    model.write_character_settings("guide", std::nullopt, "serif-italic");
+    EXPECT_EQ(
+        model.character_settings("guide"),
+        (CharacterSettings{std::nullopt, "serif-italic"}));
+
+    model.write_character_settings("guide", "test", std::nullopt);
+    EXPECT_EQ(
+        model.character_settings("guide"),
+        (CharacterSettings{"test", std::nullopt}));
+
+    model.write_character_settings("guide", std::nullopt, std::nullopt);
+    EXPECT_EQ(model.character_settings("guide"), CharacterSettings{});
+}
+
+TEST(WorkspaceDefinition, RejectsAnUnusableSelectionWithoutTouchingTheFile) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("broken", "this is not a usable provider\n");
+    fixture.write_style("broken", "font = \"comic\"\n");
+    fixture.write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+    const auto path = fixture.root() / "characters" / "guide" / "character.toml";
+    const std::string before = file_bytes(path);
+
+    EXPECT_THROW(
+        model.write_character_settings("guide", "broken", std::nullopt),
+        std::invalid_argument);
+    EXPECT_THROW(
+        model.write_character_settings("guide", std::nullopt, "broken"),
+        std::invalid_argument);
+    EXPECT_THROW(
+        model.write_character_settings(assistant_id, "test", std::nullopt),
+        std::runtime_error);
+    EXPECT_EQ(file_bytes(path), before);
+
+    fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
+    EXPECT_THROW(
+        model.write_character_settings("guide", "test", std::nullopt),
+        std::runtime_error);
+    EXPECT_EQ(
+        file_bytes(path),
+        "display_name = \"Guide\"\nstyle = \n");
 }
 
 TEST(WorkspaceDefinition, ListsOnlyProvidersAndStylesThatResolveAndDerivesLabels) {

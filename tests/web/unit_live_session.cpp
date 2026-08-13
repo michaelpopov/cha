@@ -621,6 +621,52 @@ TEST(LiveSession, PresentationChangesPublishOneSnapshotEach) {
     host->disconnect_sse(connection.connection_id, 0);
 }
 
+TEST(LiveSession, PublishesAnOpenedSessionNoticeOnTheFirstSnapshot) {
+    test::TemporarySessionFile file("live_session_open_notice");
+    auto controls = std::make_shared<test::BackendControls>();
+    LiveSessionHost host(
+        test_settings(),
+        [path = file.path(), controls](
+            const SessionIdentity& identity, WakeNotifier& notifier) {
+            OpenedSession opened = test::open_scripted_session(
+                identity, path, notifier, controls);
+            opened.notice =
+                "Character settings could not be reloaded. This session is "
+                "using the settings from startup.";
+            return opened;
+        });
+
+    const SseConnectResult connection = connect(*host);
+    const std::shared_ptr<const SsePayload> initial = next_payload(connection);
+    ASSERT_TRUE(initial);
+    ASSERT_TRUE(snapshot_of(*initial).notice);
+    EXPECT_NE(
+        snapshot_of(*initial).notice->find("could not be reloaded"),
+        std::string::npos);
+    connection.mailbox->end_stream(connection.stream);
+    host->disconnect_sse(connection.connection_id, 0);
+}
+
+TEST(LiveSession, ReloadingOutranksBrowserDisconnectedOnTheFinalSnapshot) {
+    test::TemporarySessionFile file("live_session_reloading");
+    auto controls = std::make_shared<test::BackendControls>();
+    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
+
+    const SseConnectResult connection = connect(*host);
+    ASSERT_TRUE(next_payload(connection));
+    connection.mailbox->written(connection.stream);
+
+    host->request_shutdown(ShutdownReason::reloading);
+    const std::shared_ptr<const SsePayload> final_payload = next_payload(connection);
+    ASSERT_TRUE(final_payload);
+    ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*final_payload));
+    EXPECT_EQ(
+        snapshot_of(*final_payload).shutdown_reason,
+        ShutdownReason::reloading);
+    connection.mailbox->written(connection.stream);
+    EXPECT_TRUE(wait_for_finished(host.handle()));
+}
+
 TEST(LiveSession, OneActiveStreamRejectsConflictsAndIgnoresStaleCloses) {
     test::TemporarySessionFile file("live_session_streams");
     auto controls = std::make_shared<test::BackendControls>();

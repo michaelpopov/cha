@@ -5,6 +5,8 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace cha {
@@ -19,6 +21,9 @@ struct OpenedSession {
     // call fails there and the session reports the change as unsaved.
     std::function<void(std::string_view)> persist_default_character;
     std::function<void(std::string_view)> persist_default_persona;
+    // Set when the forum's definitions could not be re-read from disk and the
+    // session is running the copy loaded at startup instead.
+    std::optional<std::string> notice;
 };
 
 } // namespace cha

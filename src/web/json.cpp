@@ -99,6 +99,26 @@ std::string parse_rename_session_label(const nlohmann::json& json) {
     return required_string(json, "label");
 }
 
+std::optional<std::string> nullable_string(
+    const nlohmann::json& json,
+    std::string_view key) {
+    const std::string name(key);
+    if (!json.contains(name)) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    const nlohmann::json& value = json.at(name);
+    if (value.is_null()) return std::nullopt;
+    if (!value.is_string()) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    return value.get<std::string>();
+}
+
+CharacterSettingsUpdate parse_character_settings_update(const nlohmann::json& json) {
+    exact_keys(json, {"provider", "style"});
+    return {nullable_string(json, "provider"), nullable_string(json, "style")};
+}
+
 void parse_empty_object(const nlohmann::json& json) {
     exact_keys(json, {});
 }

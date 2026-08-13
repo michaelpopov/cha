@@ -33,30 +33,26 @@ using Json = nlohmann::ordered_json;
 // preserves both updates as complete TOML documents.
 std::mutex forum_config_write_mutex;
 
-// Saves one setting into a forum's config.toml, leaving every other key as the
-// author wrote it. `superseded_key` names an accepted legacy spelling to drop,
-// because retaining both would make the next workspace load reject the file.
-void write_forum_config_setting(
+// Parse → mutate → write beside the original → rename. An interrupted write
+// must not leave a config the next start cannot read. A reader either sees
+// the whole old document or the whole new one.
+template<typename Mutate>
+void rewrite_toml_file(
     const std::filesystem::path& path,
-    std::string_view key,
-    std::string_view value,
-    std::string_view superseded_key = {}) {
+    std::string_view kind,
+    Mutate mutate) {
     std::lock_guard lock(forum_config_write_mutex);
     toml::table table;
     {
         std::ifstream input(path, std::ios::binary);
         if (!input) {
             throw std::runtime_error(
-                "Failed to read forum config '" + utf8_path(path) + "'");
+                "Failed to read " + std::string(kind) + " '" + utf8_path(path) + "'");
         }
         table = toml::parse(input, utf8_path(path));
     }
-    if (!superseded_key.empty()) table.erase(superseded_key);
-    table.insert_or_assign(key, std::string(value));
+    mutate(table);
 
-    // Written beside the original and renamed over it: an interrupted write
-    // must not leave a config that the next start cannot read. A reader either
-    // sees the whole old document or the whole new one.
     std::filesystem::path temporary = path;
     temporary += ".new";
     {
@@ -65,10 +61,32 @@ void write_forum_config_setting(
         output.flush();
         if (!output) {
             throw std::runtime_error(
-                "Failed to write forum config '" + utf8_path(path) + "'");
+                "Failed to write " + std::string(kind) + " '" + utf8_path(path) + "'");
         }
     }
     std::filesystem::rename(temporary, path);
+}
+
+// Saves one setting into a forum's config.toml, leaving every other key as the
+// author wrote it. `superseded_key` names an accepted legacy spelling to drop,
+// because retaining both would make the next workspace load reject the file.
+void write_forum_config_setting(
+    const std::filesystem::path& path,
+    std::string_view key,
+    std::string_view value,
+    std::string_view superseded_key = {}) {
+    rewrite_toml_file(path, "forum config", [&](toml::table& table) {
+        if (!superseded_key.empty()) table.erase(superseded_key);
+        table.insert_or_assign(key, std::string(value));
+    });
+}
+
+void assign_or_erase(
+    toml::table& table,
+    std::string_view key,
+    const std::optional<std::string>& value) {
+    if (value) table.insert_or_assign(key, *value);
+    else table.erase(key);
 }
 
 // A custom forum while it is still being loaded. It keeps the directory only
@@ -830,13 +848,35 @@ std::vector<ForumSessionDirectory> WorkspaceDefinition::session_directories() co
     return session_directories_;
 }
 
-std::vector<CharacterDefinition> WorkspaceDefinition::copy_definitions_for(
+WorkspaceDefinition::CopiedForumDefinitions WorkspaceDefinition::copy_definitions_for(
     std::string_view forum_id) const {
     const auto found = definitions_.find(std::string(forum_id));
     if (found == definitions_.end()) {
         throw ForumNotFoundError("Forum '" + std::string(forum_id) + "' does not exist");
     }
-    return found->second;
+    const ForumInfo* const forum = find_forum(forum_id);
+    const auto directory = forum_directories_.find(std::string(forum_id));
+    if (forum == nullptr || directory == forum_directories_.end()) {
+        return {.definitions = found->second};
+    }
+    try {
+        return {.definitions = load_forum_definitions(
+            {.info = *forum, .directory = directory->second},
+            *personas_,
+            characters_directory_,
+            {config_.provider, config_.providers_directory},
+            config_.styles_directory)};
+    } catch (const std::exception& error) {
+        log_warn(
+            "Forum '" + std::string(forum_id)
+            + "' keeps its startup character settings: " + error.what());
+        return {
+            .definitions = found->second,
+            .fallback_notice =
+                "Character settings could not be reloaded. This session is "
+                "using the settings from startup.",
+        };
+    }
 }
 
 CharacterId WorkspaceDefinition::forum_default_character(
@@ -1013,6 +1053,41 @@ std::optional<std::filesystem::path> WorkspaceDefinition::character_config_path(
         characters_directory_ / path_from_utf8(id) / "character.toml";
     if (!std::filesystem::is_regular_file(path)) return std::nullopt;
     return path;
+}
+
+void WorkspaceDefinition::write_character_settings(
+    std::string_view id,
+    std::optional<std::string> provider,
+    std::optional<std::string> style) const {
+    const std::optional<std::filesystem::path> path = character_config_path(id);
+    if (!path || !character_settings(id)) {
+        throw std::runtime_error(
+            "Character '" + std::string(id) + "' has no writable configuration");
+    }
+    const auto load_selection = [&](
+        const std::optional<std::string>& name,
+        std::string_view kind,
+        auto&& load) {
+        if (!name) return;
+        try {
+            require_path_component(*name, *path);
+            load(*name);
+        } catch (const std::exception& error) {
+            throw std::invalid_argument(
+                "Character '" + std::string(id) + "' " + std::string(kind)
+                + " '" + *name + "' is not usable: " + error.what());
+        }
+    };
+    load_selection(provider, "provider", [&](std::string_view name) {
+        (void)load_named_provider(config_.providers_directory, name, *path);
+    });
+    load_selection(style, "style", [&](std::string_view name) {
+        (void)load_named_style(config_.styles_directory, name, *path);
+    });
+    rewrite_toml_file(*path, "character config", [&](toml::table& table) {
+        assign_or_erase(table, "provider", provider);
+        assign_or_erase(table, "style", style);
+    });
 }
 
 std::vector<std::string> WorkspaceDefinition::forums_overriding_provider(

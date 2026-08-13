@@ -11,6 +11,7 @@ require recovery-specific API models.
 | --- | --- |
 | Load startup and discovery data | `GET /api/v1/bootstrap` |
 | Read character detail | `GET /api/v1/characters/{character_id}` |
+| Update a character's provider and style | `PATCH /api/v1/characters/{character_id}` |
 | List one forum's sessions | `GET /api/v1/forums/{forum}/sessions` |
 | Create a stored session | `POST /api/v1/forums/{forum}/sessions` |
 | Rename a stored or live session | `PATCH /api/v1/forums/{forum}/sessions/{session}` |
@@ -172,6 +173,20 @@ workspace.
 The browser renders a restricted Markdown subset. Headings, paragraphs,
 emphasis, lists, inline code, and code blocks are supported. Links are not
 interactive, images are not fetched, and raw HTML does not execute.
+
+`PATCH /api/v1/characters/{character_id}` takes both settings:
+
+```json
+{"provider":"qwen","style":null}
+```
+
+`null` erases the key. The response is the same body as GET. A name whose
+config does not load is `400` and leaves the file untouched. The built-in
+Assistant, a missing character, and a character whose file cannot be read are
+`404`. After a write that changes a value, live sessions the change can affect
+shut down with `shutdown_reason: "reloading"`. A provider-only save does not
+restart sessions in forums that override the provider. The server does not
+reopen the session; the browser's stream recovery does.
 
 ## Sessions and Recent
 

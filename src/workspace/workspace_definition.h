@@ -53,6 +53,7 @@ struct AvailableStyle {
 struct CharacterSettings {
     std::optional<std::string> provider;
     std::optional<std::string> style;
+    bool operator==(const CharacterSettings&) const = default;
 };
 
 // One forum as the browser sees it. It deliberately carries no filesystem
@@ -114,6 +115,14 @@ public:
     // Forum IDs that contain this character and name a provider of their own.
     std::vector<std::string> forums_overriding_provider(std::string_view id) const;
 
+    // Rejects a character with no readable config file. Loads each non-null
+    // name before touching the file, so a selection that cannot run is never
+    // recorded. nullopt erases the key.
+    void write_character_settings(
+        std::string_view id,
+        std::optional<std::string> provider,
+        std::optional<std::string> style) const;
+
 private:
     WorkspaceDefinition() = default;
 
@@ -125,8 +134,11 @@ private:
         const SessionIdentity&,
         WakeNotifier&);
 
-    std::vector<CharacterDefinition> copy_definitions_for(
-        std::string_view forum_id) const;
+    struct CopiedForumDefinitions {
+        std::vector<CharacterDefinition> definitions;
+        std::optional<std::string> fallback_notice;
+    };
+    CopiedForumDefinitions copy_definitions_for(std::string_view forum_id) const;
     void persist_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id) const;

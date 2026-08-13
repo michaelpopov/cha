@@ -33,6 +33,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -166,8 +167,25 @@ public:
         std::chrono::milliseconds timeout = 2s) {
         std::unique_lock lock(mutex_);
         return changed_.wait_for(lock, timeout, [this] {
-            return content_.find("event: snapshot\n") != std::string::npos;
+            return last_snapshot_locked().has_value();
         });
+    }
+
+    [[nodiscard]] bool wait_for_shutdown_reason(
+        std::string_view reason,
+        std::chrono::milliseconds timeout = 2s) {
+        std::unique_lock lock(mutex_);
+        return changed_.wait_for(lock, timeout, [this, reason] {
+            const auto snapshot = last_snapshot_locked();
+            return snapshot
+                && snapshot->contains("shutdown_reason")
+                && (*snapshot)["shutdown_reason"] == reason;
+        });
+    }
+
+    [[nodiscard]] std::optional<nlohmann::json> last_snapshot() const {
+        std::lock_guard lock(mutex_);
+        return last_snapshot_locked();
     }
 
     [[nodiscard]] bool wait_for_end(
@@ -176,8 +194,24 @@ public:
     }
 
 private:
+    [[nodiscard]] std::optional<nlohmann::json> last_snapshot_locked() const {
+        const std::string marker = "event: snapshot\n";
+        const auto event = content_.rfind(marker);
+        if (event == std::string::npos) return std::nullopt;
+        const auto data = content_.find("data: ", event);
+        if (data == std::string::npos) return std::nullopt;
+        const auto line = content_.find('\n', data);
+        const auto payload = content_.substr(
+            data + 6, (line == std::string::npos ? content_.size() : line) - (data + 6));
+        try {
+            return nlohmann::json::parse(payload);
+        } catch (const nlohmann::json::exception&) {
+            return std::nullopt;
+        }
+    }
+
     httplib::Client client_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable changed_;
     std::string content_;
     std::future<httplib::Result> request_;
@@ -985,6 +1019,116 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     gate.release();
     EXPECT_EQ(shutdown.wait_for(1s), std::future_status::ready);
     shutdown.get();
+}
+
+bool open_after_reload(
+    httplib::Client& client,
+    std::string_view forum,
+    std::string_view id) {
+    for (int attempt = 0; attempt != 20; ++attempt) {
+        const auto opened = client.Post(
+            "/api/v1/forums/" + std::string(forum) + "/sessions/"
+                + std::string(id) + "/open",
+            "{}",
+            "application/json");
+        if (opened && opened->status == 200) return true;
+        if (opened && opened->status == 409) {
+            std::this_thread::sleep_for(50ms);
+            continue;
+        }
+        return false;
+    }
+    return false;
+}
+
+TEST(WebServerProcess, ReloadsALiveSessionAfterAStyleSave) {
+    test::TestWorkspace workspace;
+    workspace.write_style("mono-large", "font = \"mono\"\nsize = \"large\"\n");
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(workspace.root(), port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    httplib::Client client = web_client(port);
+    const std::string id = create_session(client, "Reload");
+    ASSERT_FALSE(id.empty());
+    const std::string path = open_session(client, id);
+    ASSERT_FALSE(path.empty());
+    StreamingRequest stream(port, path + "api/v1/events");
+    ASSERT_TRUE(stream.wait_for_snapshot());
+
+    const auto patched = client.Patch(
+        "/api/v1/characters/guide",
+        R"({"provider":null,"style":"mono-large"})",
+        "application/json");
+    ASSERT_TRUE(patched);
+    ASSERT_EQ(patched->status, 200) << patched->body;
+    ASSERT_TRUE(stream.wait_for_shutdown_reason("reloading"));
+    ASSERT_TRUE(stream.wait_for_end(5s));
+
+    ASSERT_TRUE(open_after_reload(client, "lobby", id));
+    const auto snapshot = client.Get(path + "api/v1/session");
+    ASSERT_TRUE(snapshot);
+    ASSERT_EQ(snapshot->status, 200) << snapshot->body;
+    const nlohmann::json characters =
+        nlohmann::json::parse(snapshot->body).at("characters");
+    ASSERT_FALSE(characters.empty());
+    EXPECT_EQ(characters.front().at("appearance"), nlohmann::json({
+        {"font", "mono"}, {"style", "normal"},
+        {"weight", "normal"}, {"size", "large"}}));
+}
+
+TEST(WebServerProcess, DoesNotReloadASessionWhoseForumOverridesTheProvider) {
+    test::TestWorkspace workspace;
+    workspace.write_provider(
+        "sol-high", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
+    const auto montaigne = workspace.root() / "characters" / "montaigne";
+    std::filesystem::create_directories(montaigne);
+    std::ofstream(montaigne / "character.toml")
+        << "display_name = \"Montaigne\"\nprovider = \"test\"\n";
+    std::ofstream(montaigne / "CHARACTER.md") << "Prompt\n";
+    const auto circle = workspace.root() / "forums" / "circle";
+    std::filesystem::create_directories(circle / "members" / "montaigne");
+    std::ofstream(circle / "config.toml") << "display_name = \"Circle of Life\"\n";
+    std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+    std::ofstream(circle / "members" / "character_defaults.toml")
+        << "provider = \"sol-high\"\n";
+
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(workspace.root(), port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    httplib::Client client = web_client(port);
+    const auto created = client.Post(
+        "/api/v1/forums/circle/sessions",
+        R"({"label":"Circle"})",
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+    const std::string id = nlohmann::json::parse(created->body).at("id");
+    const auto opened = client.Post(
+        "/api/v1/forums/circle/sessions/" + id + "/open",
+        "{}", "application/json");
+    ASSERT_TRUE(opened);
+    ASSERT_EQ(opened->status, 200) << opened->body;
+    const std::string path = "/s/circle/" + id + "/";
+    StreamingRequest stream(port, path + "api/v1/events");
+    ASSERT_TRUE(stream.wait_for_snapshot());
+
+    const auto patched = client.Patch(
+        "/api/v1/characters/montaigne",
+        R"({"provider":"sol-high","style":null})",
+        "application/json");
+    ASSERT_TRUE(patched);
+    ASSERT_EQ(patched->status, 200) << patched->body;
+    EXPECT_FALSE(stream.wait_for_shutdown_reason("reloading", 200ms));
+    const auto live = client.Get(path + "api/v1/session");
+    ASSERT_TRUE(live);
+    EXPECT_EQ(live->status, 200) << live->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(live->body).at("lifecycle"),
+        "running");
 }
 
 } // namespace

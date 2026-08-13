@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -141,6 +142,40 @@ CharacterDetail character_detail(
     return detail;
 }
 
+std::vector<std::string> forums_affected_by_save(
+    const WorkspaceDefinition& model,
+    std::string_view character_id,
+    bool style_changed,
+    bool provider_changed) {
+    if (!style_changed && !provider_changed) return {};
+    const std::vector<std::string> overridden =
+        model.forums_overriding_provider(character_id);
+    std::vector<std::string> result;
+    for (const ForumInfo& forum : model.forums()) {
+        if (!std::ranges::binary_search(forum.member_ids, character_id)) continue;
+        if (!style_changed
+            && std::ranges::find(overridden, forum.id) != overridden.end()) {
+            continue;
+        }
+        result.push_back(forum.id);
+    }
+    return result;
+}
+
+// Called only after the write has committed, so an actor that appears here
+// either read the old settings and must be reloaded, or is not here yet and
+// will read the new ones when it opens. Sessions still starting are included
+// for that reason: they have already read their definitions.
+void request_reload(
+    LiveSessionManager& live_sessions,
+    const std::vector<std::string>& forum_ids) {
+    for (const LiveSessionHandle& live : live_sessions.active_sessions()) {
+        const SessionIdentity& key = live->identity();
+        if (std::ranges::find(forum_ids, key.forum_id) == forum_ids.end()) continue;
+        live->request_shutdown(ShutdownReason::reloading);
+    }
+}
+
 ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& model) {
     const Persona* const persona = model.find_persona(forum.default_persona_id);
     if (persona == nullptr) throw std::runtime_error("Forum default persona is absent from the workspace model");
@@ -241,6 +276,38 @@ void LobbyRoutes::install(httplib::Server& server) const {
         if (!is_valid_route_component(id)) return set_route_not_found(response);
         const CharacterMetadata* character = model->find_character(id);
         if (character == nullptr) return set_route_not_found(response);
+        set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
+    });
+
+    server.Patch(R"(/api/v1/characters/([^/]+))",
+        [model, live_sessions, settings](const httplib::Request& request,
+                                         httplib::Response& response) {
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)) return set_route_not_found(response);
+        const CharacterMetadata* character = model->find_character(id);
+        if (character == nullptr) return set_route_not_found(response);
+        const std::optional<CharacterSettings> current = model->character_settings(id);
+        if (!current) return set_route_not_found(response);
+        if (!validate_json_mutation(request, response)) return;
+        CharacterSettingsUpdate update;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&update](const nlohmann::json& json) {
+                    update = parse_character_settings_update(json);
+                })) return;
+        const bool provider_changed = update.provider != current->provider;
+        const bool style_changed = update.style != current->style;
+        if (provider_changed || style_changed) {
+            try {
+                model->write_character_settings(id, update.provider, update.style);
+            } catch (const std::invalid_argument&) {
+                return set_error_response(response, 400,
+                    {ErrorCode::bad_request, "Invalid provider or style."});
+            }
+            request_reload(
+                *live_sessions,
+                forums_affected_by_save(*model, id, style_changed, provider_changed));
+        }
         set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
     });
 

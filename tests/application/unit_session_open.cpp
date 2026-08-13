@@ -252,19 +252,28 @@ TEST_F(SessionOpenTest, ReleasesTheLeaseWhenControllerConstructionFails) {
     EXPECT_NO_THROW((void)sessions->prepare(created.identity));
 }
 
-TEST_F(SessionOpenTest, OpensWithTheLoadedModelAfterTheWorkspaceChangesOnDisk) {
+TEST_F(SessionOpenTest, ReResolvesCharacterDefinitionsWhenASessionOpens) {
+    fixture_.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
     const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
 
-    fixture_.write_character_config("display_name = \"Renamed\"\n");
+    fixture_.write_character_config(
+        "display_name = \"Renamed\"\nstyle = \"serif-italic\"\n");
     std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
         << "display_name = \"Renamed Lobby\"\n";
 
     {
         OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+        // Discovery stays at startup; the session's characters re-resolve.
         EXPECT_EQ(opened.descriptor.forum_display_name, "The Lobby");
-        EXPECT_EQ(opened.controller->view().characters.front().display_name, "Guide");
+        EXPECT_EQ(opened.controller->view().characters.front().display_name, "Renamed");
+        EXPECT_EQ(
+            opened.controller->view().characters.front().appearance,
+            (CharacterAppearance{
+                CharacterFont::serif, CharacterSlant::italic,
+                CharacterWeight::normal, CharacterScale::normal}));
+        EXPECT_FALSE(opened.notice);
         opened.controller->shutdown();
     }
 
@@ -275,6 +284,21 @@ TEST_F(SessionOpenTest, OpensWithTheLoadedModelAfterTheWorkspaceChangesOnDisk) {
     EXPECT_EQ(fresh.descriptor.forum_display_name, "Renamed Lobby");
     EXPECT_EQ(fresh.controller->view().characters.front().display_name, "Renamed");
     fresh.controller->shutdown();
+}
+
+TEST_F(SessionOpenTest, FallsBackToStartupDefinitionsAndReportsWhenReloadFails) {
+    const WorkspaceDefinition model = load_model();
+    const auto sessions = make_repository(model);
+    const StoredSession created = sessions->create("lobby", "Stored");
+
+    std::ofstream(fixture_.root() / "characters" / "guide" / "CHARACTER.md")
+        << "$$(missing.md)";
+
+    OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+    EXPECT_EQ(opened.controller->view().characters.front().display_name, "Guide");
+    ASSERT_TRUE(opened.notice);
+    EXPECT_NE(opened.notice->find("could not be reloaded"), std::string::npos);
+    opened.controller->shutdown();
 }
 
 TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {

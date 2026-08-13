@@ -135,6 +135,7 @@ std::string_view to_string(ShutdownReason value) {
         value,
         {
             {ShutdownReason::browser_disconnected, "browser_disconnected"},
+            {ShutdownReason::reloading, "reloading"},
             {ShutdownReason::session_failed, "session_failed"},
             {ShutdownReason::session_deleted, "session_deleted"},
             {ShutdownReason::server_stopping, "server_stopping"},

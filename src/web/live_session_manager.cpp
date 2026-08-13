@@ -259,6 +259,25 @@ LiveSessionManagerSnapshot LiveSessionManager::snapshot() {
     return result;
 }
 
+std::vector<LiveSessionHandle> LiveSessionManager::active_sessions() {
+    RetiredSessions retired;
+    std::vector<LiveSessionHandle> result;
+    {
+        std::lock_guard lock(mutex_);
+        retired = sweep_locked();
+        for (const auto& [key, session] : sessions_) {
+            (void)key;
+            const LiveSessionState state = session->lifecycle();
+            if (state == LiveSessionState::starting
+                || state == LiveSessionState::running) {
+                result.push_back(session);
+            }
+        }
+    }
+    reap(std::move(retired));
+    return result;
+}
+
 MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
     const SessionIdentity& key,
     std::chrono::milliseconds deadline) {

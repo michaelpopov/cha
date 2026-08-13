@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -133,6 +134,15 @@ std::string create_session(TestServer& server, std::string_view label = "Notes")
     const nlohmann::json json = body(created);
     EXPECT_FALSE(json.contains("error"));
     return json.at("id").get<std::string>();
+}
+
+bool session_is_live(LiveSessionManager& manager, const SessionIdentity& key) {
+    const LiveSessionManagerSnapshot snapshot = manager.snapshot();
+    return std::find(
+               snapshot.running_sessions.begin(),
+               snapshot.running_sessions.end(),
+               key)
+        != snapshot.running_sessions.end();
 }
 
 bool listed_not_live(TestServer& server, std::string_view id) {
@@ -351,6 +361,192 @@ TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderC
     EXPECT_TRUE(damaged_body["provider"].is_null());
     EXPECT_TRUE(damaged_body["style"].is_null());
     EXPECT_EQ(damaged_body["writable"], false);
+}
+
+// A session reads its definitions on the way up, so one that is still opening
+// when the save commits is already holding the old settings. The manager
+// publishes it as running only once it has finished, so a fan-out driven by
+// running sessions alone would leave it live on values the file no longer has.
+TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
+    test::TestWorkspace fixture;
+    fixture.write_style("mono-large", "font = \"mono\"\nsize = \"large\"\n");
+    const LobbyGraph graph(fixture.root());
+
+    std::mutex mutex;
+    std::condition_variable gate;
+    bool opening = false;
+    bool released = false;
+    LiveSessionManager manager(
+        lobby_settings(2),
+        [open = graph.opener(), &mutex, &gate, &opening, &released](
+            const SessionIdentity& key, WakeNotifier& notifier) {
+            {
+                std::unique_lock lock(mutex);
+                opening = true;
+                gate.notify_all();
+                gate.wait(lock, [&released] { return released; });
+            }
+            return open(key, notifier);
+        });
+    TestServer server(graph, manager);
+    const std::string id = create_session(server, "Opening");
+    ASSERT_FALSE(id.empty());
+
+    std::thread opening_request([&server, &id] {
+        (void)server.client().Post(
+            "/api/v1/forums/lobby/sessions/" + id + "/open", "{}", "application/json");
+    });
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(gate.wait_for(lock, 5s, [&opening] { return opening; }));
+    }
+    // The actor is registered and starting, so it is deliberately absent from
+    // the running sessions a listing would report.
+    EXPECT_FALSE(session_is_live(manager, {"lobby", id}));
+
+    const auto patched = server.client().Patch(
+        "/api/v1/characters/guide",
+        R"({"provider":null,"style":"mono-large"})",
+        "application/json");
+    ASSERT_TRUE(patched);
+    ASSERT_EQ(patched->status, 200) << patched->body;
+
+    {
+        std::lock_guard lock(mutex);
+        released = true;
+    }
+    gate.notify_all();
+    opening_request.join();
+
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (manager.snapshot().live_session_count != 0
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_EQ(manager.snapshot().live_session_count, 0U)
+        << "a session that was opening when the save landed stayed live on the "
+           "settings it read before the write";
+}
+
+std::string read_bytes(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+httplib::Result patch_character(
+    TestServer& server,
+    std::string_view id,
+    const nlohmann::json& body) {
+    return server.client().Patch(
+        "/api/v1/characters/" + std::string(id),
+        body.dump(),
+        "application/json");
+}
+
+TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
+    test::TestWorkspace fixture;
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    fixture.write_provider("broken", "this is not a usable provider\n");
+    const auto path = fixture.root() / "characters" / "guide" / "character.toml";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const auto saved = patch_character(
+        server, "guide", {{"provider", "test"}, {"style", "serif-italic"}});
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200);
+    EXPECT_EQ(body(saved)["provider"], "test");
+    EXPECT_EQ(body(saved)["style"], "serif-italic");
+    EXPECT_EQ(body(saved)["writable"], true);
+
+    const auto cleared = patch_character(
+        server, "guide", {{"provider", nullptr}, {"style", nullptr}});
+    ASSERT_TRUE(cleared);
+    ASSERT_EQ(cleared->status, 200);
+    EXPECT_TRUE(body(cleared)["provider"].is_null());
+    EXPECT_TRUE(body(cleared)["style"].is_null());
+
+    const std::string before = read_bytes(path);
+    expect_error(
+        patch_character(server, "guide", {{"provider", "broken"}, {"style", nullptr}}),
+        400, "bad_request", "Invalid provider or style.");
+    EXPECT_EQ(read_bytes(path), before);
+
+    expect_error(
+        patch_character(
+            server, "builtin-assistant", {{"provider", "test"}, {"style", nullptr}}),
+        404, "not_found");
+    expect_error(
+        patch_character(server, "missing", {{"provider", "test"}, {"style", nullptr}}),
+        404, "not_found");
+    expect_error(
+        patch_character(server, "guide", {{"provider", "test"}}),
+        400, "bad_request");
+}
+
+TEST(LobbyRoutes, ReloadsOnlySessionsASaveCanChange) {
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "sol-high", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    const auto montaigne = fixture.root() / "characters" / "montaigne";
+    std::filesystem::create_directories(montaigne);
+    std::ofstream(montaigne / "character.toml")
+        << "display_name = \"Montaigne\"\nprovider = \"test\"\n";
+    std::ofstream(montaigne / "CHARACTER.md") << "Prompt\n";
+    const auto circle = fixture.root() / "forums" / "circle";
+    std::filesystem::create_directories(circle / "members" / "montaigne");
+    std::ofstream(circle / "config.toml") << "display_name = \"Circle of Life\"\n";
+    std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+    std::ofstream(circle / "members" / "character_defaults.toml")
+        << "provider = \"sol-high\"\n";
+
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(4), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const std::string lobby_id = create_session(server);
+    ASSERT_FALSE(lobby_id.empty());
+    ASSERT_EQ(
+        server.client().Post(
+            "/api/v1/forums/lobby/sessions/" + lobby_id + "/open",
+            "{}", "application/json")->status,
+        200);
+    const auto circle_created = server.client().Post(
+        "/api/v1/forums/circle/sessions",
+        R"({"label":"Circle"})",
+        "application/json");
+    ASSERT_TRUE(circle_created);
+    ASSERT_EQ(circle_created->status, 201);
+    const std::string circle_id = body(circle_created)["id"];
+    ASSERT_EQ(
+        server.client().Post(
+            "/api/v1/forums/circle/sessions/" + circle_id + "/open",
+            "{}", "application/json")->status,
+        200);
+    EXPECT_EQ(manager.snapshot().live_session_count, 2);
+
+    // Provider-only save for a character every forum overrides: no restart.
+    const auto provider_only = patch_character(
+        server, "montaigne", {{"provider", "sol-high"}, {"style", nullptr}});
+    ASSERT_TRUE(provider_only);
+    ASSERT_EQ(provider_only->status, 200);
+    EXPECT_EQ(manager.snapshot().live_session_count, 2);
+    EXPECT_TRUE(session_is_live(manager, {"circle", circle_id}));
+
+    // Style changes every forum that contains the character.
+    const auto style_save = patch_character(
+        server, "guide", {{"provider", nullptr}, {"style", "serif-italic"}});
+    ASSERT_TRUE(style_save);
+    ASSERT_EQ(style_save->status, 200);
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (session_is_live(manager, {"lobby", lobby_id})
+        && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_FALSE(session_is_live(manager, {"lobby", lobby_id}));
+    EXPECT_TRUE(session_is_live(manager, {"circle", circle_id}));
 }
 
 TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {

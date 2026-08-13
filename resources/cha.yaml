@@ -128,6 +128,43 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [Discovery]
+      operationId: updateCharacter
+      summary: Update a character's provider and style
+      description: |
+        Rewrites `provider` and `style` in the character's `character.toml`.
+        `null` erases the key. A name whose config does not load is `400` and
+        leaves the file untouched. The built-in Assistant, a missing character,
+        and a character whose file cannot be read are `404`.
+
+        After a write that actually changes a value, the server asks live
+        sessions the change can affect to shut down with `reloading`. A
+        provider-only save does not restart sessions in forums that override
+        the provider. The server does not reopen anything.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCharacterRequest"
+      responses:
+        "200":
+          description: Character details after the write.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/personas/{persona_id}:
     parameters:
@@ -936,6 +973,16 @@ components:
         writable:
           type: boolean
 
+    UpdateCharacterRequest:
+      type: object
+      additionalProperties: false
+      required: [provider, style]
+      properties:
+        provider:
+          type: [string, "null"]
+        style:
+          type: [string, "null"]
+
     PersonaDetail:
       type: object
       additionalProperties: false
@@ -1142,7 +1189,7 @@ components:
           enum: [starting, running, stopping]
         shutdown_reason:
           type: string
-          enum: [browser_disconnected, session_failed, session_deleted, server_stopping]
+          enum: [browser_disconnected, reloading, session_failed, session_deleted, server_stopping]
 
     AppendTargetEntry:
       type: object

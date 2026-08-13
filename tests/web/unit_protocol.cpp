@@ -338,6 +338,7 @@ TEST(WebProtocol, DefinesEveryEnumSpelling) {
     });
     expect_spellings<ShutdownReason>({
         {ShutdownReason::browser_disconnected, "browser_disconnected"},
+        {ShutdownReason::reloading, "reloading"},
         {ShutdownReason::session_failed, "session_failed"},
         {ShutdownReason::session_deleted, "session_deleted"},
         {ShutdownReason::server_stopping, "server_stopping"},
@@ -406,6 +407,17 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_default_character_command({}),
+        std::invalid_argument);
+
+    const CharacterSettingsUpdate update = parse_character_settings_update(
+        {{"provider", "qwen"}, {"style", nullptr}});
+    EXPECT_EQ(update.provider, std::optional<std::string>("qwen"));
+    EXPECT_FALSE(update.style);
+    EXPECT_THROW(
+        (void)parse_character_settings_update({{"provider", "qwen"}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_character_settings_update({{"provider", 1}, {"style", nullptr}}),
         std::invalid_argument);
 
     EXPECT_EQ(parse_create_session_label({{"label", "Notes"}}), "Notes");
