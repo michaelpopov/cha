@@ -111,6 +111,36 @@ CharacterSummary character_summary(const CharacterMetadata& character) {
     return {character.id, character.display_name, character.description, character.appearance};
 }
 
+CharacterDetail character_detail(
+    const WorkspaceDefinition& model, const CharacterMetadata& character) {
+    CharacterDetail detail{
+        character_summary(character),
+        std::string(model.character_markdown(character.id)),
+    };
+    // One read answers both questions: settings that cannot be read leave the
+    // character read-only rather than being published as unset.
+    const std::optional<CharacterSettings> settings =
+        model.character_settings(character.id);
+    if (settings) {
+        detail.provider = settings->provider;
+        detail.style = settings->style;
+    }
+    detail.writable = settings.has_value();
+    for (const AvailableProvider& option : model.available_providers()) {
+        detail.available_providers.push_back({option.id, option.label});
+    }
+    for (const AvailableStyle& option : model.available_styles()) {
+        detail.available_styles.push_back({option.id, option.label, option.appearance});
+    }
+    for (const std::string& forum_id : model.forums_overriding_provider(character.id)) {
+        const ForumInfo* const forum = model.find_forum(forum_id);
+        if (forum != nullptr) {
+            detail.provider_overridden_by.push_back(forum->display_name);
+        }
+    }
+    return detail;
+}
+
 ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& model) {
     const Persona* const persona = model.find_persona(forum.default_persona_id);
     if (persona == nullptr) throw std::runtime_error("Forum default persona is absent from the workspace model");
@@ -211,9 +241,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
         if (!is_valid_route_component(id)) return set_route_not_found(response);
         const CharacterMetadata* character = model->find_character(id);
         if (character == nullptr) return set_route_not_found(response);
-        set_json_response(response, 200, nlohmann::json(CharacterDetail{
-            character_summary(*character),
-            std::string(model->character_markdown(id))}));
+        set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
     });
 
     server.Get(R"(/api/v1/personas/([^/]+))", [model](const httplib::Request& request, httplib::Response& response) {

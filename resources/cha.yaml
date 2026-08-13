@@ -113,9 +113,10 @@ paths:
       operationId: getCharacter
       summary: Get character details
       description: |
-        Returns the character summary and its template-expanded Markdown
-        definition. The built-in Assistant returns the embedded application
-        guide.
+        Returns the character summary, its template-expanded Markdown
+        definition, and the provider/style settings the editor needs. The
+        built-in Assistant returns the embedded application guide and is not
+        writable.
       responses:
         "200":
           description: Character details.
@@ -869,10 +870,42 @@ components:
           items:
             $ref: "#/components/schemas/RecentSession"
 
+    ProviderOption:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+
+    StyleOption:
+      type: object
+      additionalProperties: false
+      required: [id, label, appearance]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
+
     CharacterDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, appearance, character_markdown]
+      required:
+        - id
+        - display_name
+        - appearance
+        - character_markdown
+        - provider
+        - style
+        - available_providers
+        - available_styles
+        - provider_overridden_by
+        - writable
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -884,6 +917,24 @@ components:
           $ref: "#/components/schemas/CharacterAppearance"
         character_markdown:
           type: string
+        provider:
+          type: [string, "null"]
+        style:
+          type: [string, "null"]
+        available_providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderOption"
+        available_styles:
+          type: array
+          items:
+            $ref: "#/components/schemas/StyleOption"
+        provider_overridden_by:
+          type: array
+          items:
+            type: string
+        writable:
+          type: boolean
 
     PersonaDetail:
       type: object

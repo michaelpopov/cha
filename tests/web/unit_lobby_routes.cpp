@@ -16,16 +16,19 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace cha::web {
 namespace {
@@ -219,11 +222,18 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     const nlohmann::json workspace_character_body = body(workspace_character);
     EXPECT_EQ(workspace_character_body["character_markdown"], "Profile Guide");
     EXPECT_EQ(workspace_character_body["appearance"], (*guide)["appearance"]);
+    EXPECT_TRUE(workspace_character_body["provider"].is_null());
+    EXPECT_TRUE(workspace_character_body["style"].is_null());
+    EXPECT_EQ(workspace_character_body["writable"], true);
 
     const auto assistant_character = server.client().Get("/api/v1/characters/builtin-assistant");
     ASSERT_TRUE(assistant_character);
     ASSERT_EQ(assistant_character->status, 200);
-    EXPECT_FALSE(body(assistant_character)["character_markdown"].get<std::string>().empty());
+    const nlohmann::json assistant_body = body(assistant_character);
+    EXPECT_FALSE(assistant_body["character_markdown"].get<std::string>().empty());
+    EXPECT_EQ(assistant_body["writable"], false);
+    EXPECT_TRUE(assistant_body["provider"].is_null());
+    EXPECT_TRUE(assistant_body["style"].is_null());
 
     const auto reader_persona = server.client().Get("/api/v1/personas/reader");
     ASSERT_TRUE(reader_persona);
@@ -259,6 +269,88 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ(sessions[0]["label"], "Welcome");
     EXPECT_FALSE(sessions[0]["live"]);
     EXPECT_GT(sessions[0]["updated_at"].get<std::int64_t>(), 0);
+}
+
+TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderConfig) {
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "sol-high", "host = \"secret.example\"\nport = 9\nmode = \"test\"\nmodel = \"fake\"\n");
+    fixture.write_provider("broken", "this is not a usable provider\n");
+    fixture.write_style("mono-large", "font = \"mono\"\nsize = \"large\"\n");
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    fixture.write_style("broken", "font = \"comic\"\n");
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"test\"\nstyle = \"serif-italic\"\n");
+    const auto montaigne = fixture.root() / "characters" / "montaigne";
+    std::filesystem::create_directories(montaigne);
+    std::ofstream(montaigne / "character.toml")
+        << "display_name = \"Montaigne\"\nprovider = \"test\"\nstyle = \"serif-italic\"\n";
+    std::ofstream(montaigne / "CHARACTER.md") << "Prompt\n";
+    const auto circle = fixture.root() / "forums" / "circle";
+    std::filesystem::create_directories(circle / "members" / "montaigne");
+    std::ofstream(circle / "config.toml") << "display_name = \"Circle of Life\"\n";
+    std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+    std::ofstream(circle / "members" / "character_defaults.toml")
+        << "provider = \"sol-high\"\n";
+
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const auto guide = server.client().Get("/api/v1/characters/guide");
+    ASSERT_TRUE(guide);
+    ASSERT_EQ(guide->status, 200);
+    const nlohmann::json guide_body = body(guide);
+    EXPECT_EQ(guide_body["provider"], "test");
+    EXPECT_EQ(guide_body["style"], "serif-italic");
+    EXPECT_EQ(guide_body["writable"], true);
+    EXPECT_TRUE(guide_body["provider_overridden_by"].empty());
+
+    std::vector<std::string> provider_ids;
+    for (const auto& option : guide_body["available_providers"]) {
+        ASSERT_EQ(option.size(), 2);
+        EXPECT_TRUE(option.contains("id"));
+        EXPECT_TRUE(option.contains("label"));
+        EXPECT_FALSE(option.contains("host"));
+        EXPECT_FALSE(option.contains("port"));
+        EXPECT_FALSE(option.contains("model"));
+        provider_ids.push_back(option["id"].get<std::string>());
+    }
+    EXPECT_EQ(provider_ids, (std::vector<std::string>{"sol-high", "test"}));
+
+    const auto styles = guide_body["available_styles"];
+    const auto mono_large = std::find_if(
+        styles.begin(), styles.end(),
+        [](const nlohmann::json& option) { return option["id"] == "mono-large"; });
+    ASSERT_NE(mono_large, styles.end());
+    EXPECT_EQ((*mono_large)["label"], "Mono large");
+    EXPECT_EQ((*mono_large)["appearance"], nlohmann::json({
+        {"font", "mono"}, {"style", "normal"}, {"weight", "normal"}, {"size", "large"}}));
+    for (const auto& option : styles) {
+        EXPECT_NE(option["id"], "broken");
+    }
+    for (const auto& option : guide_body["available_providers"]) {
+        EXPECT_NE(option["id"], "broken");
+    }
+
+    const auto montaigne_detail = server.client().Get("/api/v1/characters/montaigne");
+    ASSERT_TRUE(montaigne_detail);
+    ASSERT_EQ(montaigne_detail->status, 200);
+    EXPECT_EQ(body(montaigne_detail)["provider_overridden_by"],
+        nlohmann::json::array({"Circle of Life"}));
+
+    // The description is served from what startup read and does not depend on
+    // these settings, so a character.toml edited into an unreadable state must
+    // not take the screen down with it. It reports no settings and no write.
+    fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
+    const auto damaged = server.client().Get("/api/v1/characters/guide");
+    ASSERT_TRUE(damaged);
+    ASSERT_EQ(damaged->status, 200);
+    const nlohmann::json damaged_body = body(damaged);
+    EXPECT_EQ(damaged_body["character_markdown"], guide_body["character_markdown"]);
+    EXPECT_TRUE(damaged_body["provider"].is_null());
+    EXPECT_TRUE(damaged_body["style"].is_null());
+    EXPECT_EQ(damaged_body["writable"], false);
 }
 
 TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {

@@ -145,4 +145,15 @@ void validate_forum_provider_defaults(
     const std::filesystem::path& path,
     const std::optional<std::filesystem::path>& directory);
 
+// Loads one named provider or style through the same parse the session runtime
+// uses, so a catalog can drop an option that would not actually run.
+ProviderConfig load_named_provider(
+    const std::filesystem::path& directory,
+    std::string_view name,
+    const std::filesystem::path& reference_path);
+CharacterAppearance load_named_style(
+    const std::filesystem::path& directory,
+    std::string_view name,
+    const std::filesystem::path& reference_path);
+
 } // namespace cha

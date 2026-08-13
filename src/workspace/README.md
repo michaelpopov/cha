@@ -18,7 +18,9 @@ members and personas respectively,
 resolves every configured forum's effective `CharacterDefinition` values, and adds
 Assistant and Entrance to the public catalogs. Definitions are never re-read, so
 every discovery response and every session sees the same characters, personas
-and prompts.
+and prompts. The characters directory and each forum directory are retained so
+later reads can look up a character's own `character.toml` and the member files
+that may override its provider.
 
 A forum's default character is the one setting that stays live.
 `forum_default_character()` re-reads it from the forum's retained `config.toml`
@@ -28,6 +30,24 @@ change applies to the next session without a restart. The re-read is lenient
 where startup is strict: an unreadable file, or one naming a character this forum
 did not load, logs a warning and keeps the value loaded at startup, because a
 session must still open. Built-in forums have no config file and always keep it.
+
+`character_settings()` likewise re-reads a character's `character.toml` on every
+call so a hand edit reaches the next GET, and is forgiving for the same reason:
+a file it cannot parse, or one whose `provider` or `style` is not a string,
+reports no settings at all rather than throwing. The description that GET also
+serves does not depend on these keys and must not fail with them, and settings
+that cannot be read leave the character un-writable rather than being published
+as unset. `available_providers()` and
+`available_styles()` list the named configs that actually load —
+`load_named_provider()` / `load_named_style()` — and drop one that throws rather
+than failing the list. Labels are derived from the directory name. A provider
+option is only an id and a label; a style option also carries the resolved
+appearance. `forums_overriding_provider()` names the forums that contain the
+character and set a provider in `character_defaults.toml` or the member override;
+a layer file it cannot read counts as one that overrides, because that answer
+only over-warns and leaves sessions alone, while the opposite guess would tell a
+reader their choice applies where it does not. `character_config_path()` is empty
+for the built-in Assistant.
 
 Because every configured forum is resolved at startup, an invalid member
 override or prompt fails the server's startup rather than waiting for someone to

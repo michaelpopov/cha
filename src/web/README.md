@@ -32,6 +32,11 @@ Bootstrap also carries the workspace persona roster as summaries, and `GET
 /api/v1/characters/{id}` serves a character definition. That is discovery for
 reading, not selection: neither endpoint takes part in attribution, and
 `persona_markdown` is empty for a persona that configures no `PERSONA.md`.
+Character detail also carries the character's current provider and style names
+(null when the key is absent), the lists of options that resolve, the display
+names of forums that override the provider, and `writable`, which is false for
+the built-in Assistant. A provider option is only an id and a label — never
+host, model, or credential — so the response stays discovery-safe.
 
 A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
 rejected rather than ignored, so a client written against an older shape fails
