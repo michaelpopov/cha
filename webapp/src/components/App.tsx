@@ -40,6 +40,7 @@ import {
   CharacterDetailScreen,
   CharactersScreen,
   ChatScreen,
+  ForumDetailScreen,
   ForumsScreen,
   NewSessionScreen,
   PersonaDetailScreen,
@@ -130,6 +131,14 @@ function Screen({
         client={client}
         dispatch={dispatch}
         onOpenSession={onOpenSession}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
+    case 'forum-detail': return (
+      <ForumDetailScreen
+        client={client}
+        dispatch={dispatch}
         sessionReport={sessionReport}
         state={state}
       />

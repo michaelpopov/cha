@@ -44,8 +44,10 @@ changes chat routing or who a submission is attributed to.
 
 ```mermaid
 flowchart TD
-    Sidebar["Sidebar"] -->|"Forums"| Forums["Forums<br/>title + plain member names"]
+    Sidebar["Sidebar"] -->|"Forums"| Forums["Forums<br/>title + description or member names"]
     Forums -->|"Select forum"| Sessions["Sessions"]
+    Sessions -->|"Select forum header"| ForumDetail["Forum detail<br/>FORUM.md as Markdown"]
+    ForumDetail -->|"Back"| Sessions
     Sessions -->|"Select existing session"| OpenExisting["Open or reattach session"]
     OpenExisting --> Chat["Chat"]
     Sessions -->|"New session"| Name["New session: required name field"]

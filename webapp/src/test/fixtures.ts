@@ -3,6 +3,7 @@ import type {
   ChaClient,
   CharacterAppearance,
   CharacterDetail,
+  ForumDetail,
   PersonaDetail,
   SessionSnapshot,
 } from '../api/client';
@@ -77,6 +78,19 @@ export const personaDetailFixture: PersonaDetail = {
   persona_markdown: '# Reader notes\n\nA **thoughtful** reader.',
 };
 
+// As with the persona fixture, the Markdown heading differs from the display
+// name the topbar already shows, so a test asserting the rendered FORUM.md
+// cannot pass on the title alone.
+export const forumDetailFixture: ForumDetail = {
+  id: 'lobby',
+  display_name: 'The Lobby',
+  default_character_id: 'guide',
+  default_persona_id: 'reader',
+  default_persona_display_name: 'Reader',
+  members: [{ id: 'guide', display_name: 'Guide', description: 'A deterministic test character', appearance: plainVoice }],
+  forum_markdown: '# House rules\n\nA **deliberate** place to talk.\n\n- Ask one thing\n- Start a session per question',
+};
+
 export const snapshotFixture: SessionSnapshot = {
   forum: bootstrapFixture.forums[0],
   session_id: 'welcome',
@@ -99,6 +113,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     getBootstrap: async () => bootstrapFixture,
     getCharacter: async () => characterDetailFixture,
     getPersona: async () => personaDetailFixture,
+    getForum: async () => forumDetailFixture,
     listSessions: async () => [],
     createSession: async (_forumId, label) => ({ id: 'created', label }),
     renameSession: async (_forumId, sessionId, label) => ({ id: sessionId, label }),

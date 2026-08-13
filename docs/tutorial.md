@@ -400,6 +400,15 @@ latter is a concrete, validated runtime configuration.
 - standard generated context;
 - effective model backend settings.
 
+`FORUM.md` has two audiences. It is the forum prompt above, and
+`WorkspaceDefinition` also reads it verbatim and serves it through
+`/api/v1/forums/{forum}` as the forum's description. Write it for readers as
+well as for the characters. This differs from `CHARACTER.md`, which publishes
+only its `<character_profile>` section: a forum publishes the whole file. The
+raw template source is served, so `$${character.display_name}` and `$$(...)`
+includes appear literally — a description belongs to the forum rather than to
+any one member, so there is nothing to expand it against.
+
 The built-in Assistant is assembled in
 [workspace/builtins.cpp](../src/workspace/builtins.cpp). Its workspace
 guide is generated into the build and combined with public workspace inventory
@@ -805,14 +814,16 @@ keyed by `SessionIdentity`.
 - Finished actors are removed under the mutex and joined outside it.
 - A caller timing out while an actor starts does not cancel shared startup.
 
-Lobby routes provide health, bootstrap, public character and persona detail,
-session listing/creation, and open. Session routes operate only on a live actor:
+Lobby routes provide health, bootstrap, public character, persona and forum
+detail, session listing/creation, and open. Session routes operate only on a
+live actor:
 
 ```text
 GET  /health
 GET  /api/v1/bootstrap
 GET  /api/v1/characters/{character}
 GET  /api/v1/personas/{persona}
+GET  /api/v1/forums/{forum}
 GET  /api/v1/forums/{forum}/sessions
 POST /api/v1/forums/{forum}/sessions
 POST /api/v1/forums/{forum}/sessions/{session}/open

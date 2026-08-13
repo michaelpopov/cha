@@ -442,6 +442,41 @@ TEST_F(WorkspaceDefinitionLayoutTest, AcceptsEmptyMemberDirectoriesAndOrphanDefi
     EXPECT_NO_THROW((void)load());
 }
 
+TEST_F(WorkspaceDefinitionLayoutTest, PublishesForumMarkdownVerbatim) {
+    std::ofstream(root_ / "forums" / "lobby" / "FORUM.md")
+        << "# House rules\n\nTake turns and stay in character.\n";
+    EXPECT_EQ(
+        load().forum_markdown("lobby"),
+        "# House rules\n\nTake turns and stay in character.\n");
+
+    // The template source is published, not an expansion: a description belongs
+    // to the forum rather than to any one member, so there is no character to
+    // expand against and an include stays unexpanded.
+    std::ofstream(root_ / "forums" / "lobby" / "INCLUDED.md") << "Included body";
+    std::ofstream(root_ / "forums" / "lobby" / "FORUM.md")
+        << "Ask $${character.display_name}.\n$$(INCLUDED.md)\n";
+    EXPECT_EQ(
+        load().forum_markdown("lobby"),
+        "Ask $${character.display_name}.\n$$(INCLUDED.md)\n");
+
+    // The built-in Entrance keeps no forum directory, so it has none to publish.
+    EXPECT_EQ(load().forum_markdown(std::string(entrance_id)), "");
+    EXPECT_THROW((void)load().forum_markdown("missing"), std::runtime_error);
+}
+
+TEST_F(WorkspaceDefinitionLayoutTest, ReadsAnOptionalShortForumDescription) {
+    EXPECT_FALSE(load().find_forum("lobby")->description);
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndescription = \"Where visitors arrive\"\n";
+    const WorkspaceDefinition model = load();
+    ASSERT_TRUE(model.find_forum("lobby")->description);
+    EXPECT_EQ(*model.find_forum("lobby")->description, "Where visitors arrive");
+
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndescription = \" bad\"\n";
+    EXPECT_THROW((void)load(), std::runtime_error);
+}
+
 TEST_F(WorkspaceDefinitionLayoutTest, AllowsOneDefinitionInMultipleForums) {
     const std::filesystem::path other = root_ / "forums" / "other";
     std::filesystem::create_directories(other / "members" / "guide");

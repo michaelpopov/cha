@@ -66,6 +66,11 @@ struct CharacterSummary {
 struct ForumSummary {
     ForumId id;
     std::string display_name;
+    // The short line a roster row shows. The long FORUM.md description is
+    // carried by ForumDetail, which the browser fetches only when it is read.
+    // Discovery populates this; a session snapshot's forum leaves it unset,
+    // because a session descriptor carries no description and chat shows none.
+    std::optional<std::string> description;
     CharacterId default_character_id;
     std::string default_persona_id;
     std::string default_persona_display_name;
@@ -176,6 +181,13 @@ struct PersonaDetail {
     std::string persona_markdown;
 };
 
+struct ForumDetail {
+    ForumSummary summary;
+    // FORUM.md verbatim, and empty for a forum that has none. The same file is
+    // the forum's system prompt; publishing it whole is deliberate.
+    std::string forum_markdown;
+};
+
 struct Error {
     ErrorCode code{ErrorCode::internal_error};
     std::string message;
@@ -224,6 +236,7 @@ void to_json(nlohmann::json& json, const RecentSession& value);
 void to_json(nlohmann::json& json, const Bootstrap& value);
 void to_json(nlohmann::json& json, const CharacterDetail& value);
 void to_json(nlohmann::json& json, const PersonaDetail& value);
+void to_json(nlohmann::json& json, const ForumDetail& value);
 void to_json(nlohmann::json& json, const Error& value);
 void to_json(nlohmann::json& json, const SnapshotEvent& value);
 void to_json(nlohmann::json& json, const AppendEvent& value);

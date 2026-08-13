@@ -9,6 +9,7 @@ export type MainView =
   | 'character-detail'
   | 'forums'
   | 'sessions'
+  | 'forum-detail'
   | 'new-session';
 
 export type BootstrapStatus = 'loading' | 'ready' | 'failed' | 'incompatible';
@@ -78,6 +79,7 @@ export type AppAction =
   | { type: 'show-forums' }
   | { type: 'select-forum'; forumId: string }
   | { type: 'show-sessions' }
+  | { type: 'show-forum-detail' }
   | { type: 'show-new-session' }
   | { type: 'show-chat' }
   | { type: 'session-operation-started'; message: string }
@@ -206,6 +208,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     case 'show-sessions':
       return { ...state, mainView: 'sessions', ...idleSessionOperation() };
+    // The detail always describes the current forum: it is reachable only from
+    // that forum's Sessions screen, so it needs no subject of its own.
+    case 'show-forum-detail':
+      return { ...state, mainView: 'forum-detail', ...idleSessionOperation() };
     case 'show-new-session':
       return { ...state, mainView: 'new-session', ...idleSessionOperation() };
     case 'show-chat':
@@ -300,6 +306,10 @@ export function navigationTitle(state: AppState): string | null {
       )?.display_name ?? 'Character';
     case 'forums': return 'Forums';
     case 'sessions': return 'Sessions';
+    case 'forum-detail':
+      return state.bootstrap?.forums.find(
+        ({ id }) => id === state.currentForumId,
+      )?.display_name ?? 'Forum';
     case 'new-session': return 'New session';
     case 'chat': return null;
   }

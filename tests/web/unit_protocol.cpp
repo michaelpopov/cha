@@ -72,9 +72,22 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json(OpenSessionSuccess{"forum", "s1"}),
         nlohmann::json({{"forum_id", "forum"}, {"session_id", "s1"}}));
     EXPECT_EQ(
-        nlohmann::json(ForumSummary{"forum", "Forum", "guide", "reader", "Reader", {{"guide", "Guide"}}}),
+        nlohmann::json(ForumSummary{"forum", "Forum", std::nullopt, "guide", "reader", "Reader", {{"guide", "Guide"}}}),
         nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"default_persona_id", "reader"}, {"default_persona_display_name", "Reader"},
             {"members", {{{"id", "guide"}, {"display_name", "Guide"}, {"appearance", default_appearance()}}}}}));
+    EXPECT_EQ(
+        nlohmann::json(ForumSummary{"forum", "Forum", "A place to talk", "guide", "reader",
+            "Reader", {{"guide", "Guide"}}})["description"],
+        "A place to talk");
+    // The detail flattens its summary and appends FORUM.md, exactly as the
+    // character and persona details do with their own Markdown.
+    EXPECT_EQ(
+        nlohmann::json(ForumDetail{
+            {"forum", "Forum", std::nullopt, "guide", "reader", "Reader", {{"guide", "Guide"}}},
+            "# House rules"}),
+        nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"default_persona_id", "reader"}, {"default_persona_display_name", "Reader"},
+            {"members", {{{"id", "guide"}, {"display_name", "Guide"}, {"appearance", default_appearance()}}}},
+            {"forum_markdown", "# House rules"}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
         nlohmann::json({{"display_name", "Reader"}, {"id", "reader"}}));

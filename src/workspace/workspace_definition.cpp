@@ -32,6 +32,9 @@ using Json = nlohmann::ordered_json;
 struct LoadedForum {
     ForumInfo info;
     std::filesystem::path directory;
+    // FORUM.md verbatim. It is read here so the whole forum directory is
+    // consulted in one place.
+    std::string markdown;
 };
 
 enum class SubdirectoryNameKind { path_component, url_identifier };
@@ -171,6 +174,20 @@ LoadedForum load_forum_metadata(
         }
         default_persona_id = *configured;
     }
+    // FORUM.md is the forum's description as the browser shows it, and the
+    // same file is the forum's system prompt. It is published whole and by
+    // deliberate choice, so anything written here is written for both readers.
+    //
+    // The template source is read rather than an expansion. A description
+    // belongs to the forum rather than to any one member, so there is no
+    // character to expand $${character.display_name} against, and expanding
+    // would inline $$(...) includes that the author addressed to the model.
+    // Placeholders therefore appear literally.
+    std::string markdown;
+    const std::filesystem::path markdown_path = directory / "FORUM.md";
+    if (std::filesystem::is_regular_file(markdown_path)) {
+        markdown = read_text_file(markdown_path, "forum description");
+    }
     return {
         .info = {
             .id = std::move(name),
@@ -181,6 +198,7 @@ LoadedForum load_forum_metadata(
             .default_persona_id = std::move(default_persona_id),
         },
         .directory = directory,
+        .markdown = std::move(markdown),
     };
 }
 
@@ -598,6 +616,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
         }
         model.session_directories_.push_back(
             {forum.info.id, forum.directory / "sessions"});
+        model.forum_markdown_.emplace(forum.info.id, forum.markdown);
         model.forums_.push_back(forum.info);
     }
 
@@ -621,6 +640,9 @@ WorkspaceDefinition WorkspaceDefinition::load(
         std::string(entrance_id),
         builtin_assistant_definitions(
             model.config_.provider, inventory, PersonaRoster{builtin_guest()}));
+    // The Entrance is described by the application guide the Assistant carries,
+    // not by a FORUM.md of its own, so its detail reports the absent one.
+    model.forum_markdown_.emplace(std::string(entrance_id), std::string());
     model.forums_.push_back({
         .id = std::string(entrance_id),
         .display_name = std::string(entrance_name),
@@ -659,6 +681,14 @@ const Persona* WorkspaceDefinition::find_persona(std::string_view id) const noex
 const ForumInfo* WorkspaceDefinition::find_forum(std::string_view id) const noexcept {
     const auto found = forum_index_.find(std::string(id));
     return found == forum_index_.end() ? nullptr : &forums_[found->second];
+}
+
+std::string_view WorkspaceDefinition::forum_markdown(std::string_view id) const {
+    const auto found = forum_markdown_.find(std::string(id));
+    if (found == forum_markdown_.end()) {
+        throw std::runtime_error("Forum '" + std::string(id) + "' is not defined");
+    }
+    return found->second;
 }
 
 std::string_view WorkspaceDefinition::character_markdown(std::string_view id) const {

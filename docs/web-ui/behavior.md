@@ -122,11 +122,16 @@ Characters is a workspace-level, informational navigation area.
 
 ## Forums and sessions
 
-- Each forum row shows the forum display name and a plain-text list of member character display names beneath it.
-- Forums have no descriptions.
+- Each forum row shows the forum display name and, beneath it, the forum's short configured description. A forum configuring none shows a plain-text list of member character display names instead, so the row is never bare.
 - Member names are not clickable.
 - Selecting a forum opens its Sessions screen directly.
 - Sessions uses the title `Sessions`, not the forum display name.
+- Sessions shows a forum header row above the list, carrying the forum display name and its member names. It is the only place the forum is named once the sidebar is hidden.
+- Selecting the forum header opens Forum detail without changing persona, forum, session, or default character.
+- Forum detail renders the forum's `FORUM.md` as formatted Markdown, under the same restricted presentation Character detail uses. It also shows the member names and the persona the forum speaks as, both already known from bootstrap.
+- `FORUM.md` is published whole. The same file is the forum's system prompt, so anything written in it is written for readers as well as for the characters. Template placeholders such as `$${character.display_name}` and `$$(include.md)` appear literally, because a description belongs to no single member and is not expanded.
+- A forum with no `FORUM.md` reports that in place of the description rather than showing an empty screen. In practice only the built-in Entrance is in that position, since a configured forum fails to load without one.
+- Back from Forum detail returns to Sessions for the same forum.
 - A stored-session row shows its name and compact time metadata at the trailing edge. It never shows a description or transcript excerpt because sessions have no description field.
 - New session is an action row, not a stored session, and may carry the helper text `Enter a name to begin`.
 - Session labels are single-line trimmed Unicode text of at most 200 characters.

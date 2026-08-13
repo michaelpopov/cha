@@ -83,7 +83,9 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
         to_snapshot(test_descriptor(), state.view(), presentation);
 
     EXPECT_EQ(snapshot, (SessionSnapshot{
-        .forum = {"forum", "Forum", "guide", "persona", "Persona", {
+        // A session descriptor carries no forum description, so a snapshot's
+        // forum leaves it unset. Discovery is where it is read.
+        .forum = {"forum", "Forum", std::nullopt, "guide", "persona", "Persona", {
             {"guide", "guide", "Explains things"},
             {"reviewer", "Reviewer", "Checks details"},
         }},

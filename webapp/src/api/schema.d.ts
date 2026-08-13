@@ -148,6 +148,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/forums/{forum_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get forum details
+         * @description Returns the forum summary and its `FORUM.md` verbatim. That file is
+         *     also the forum's system prompt, and is published whole by design.
+         *     Template placeholders such as `$${character.display_name}` are not
+         *     expanded, because a description belongs to no single member.
+         *     `forum_markdown` is empty for a forum that has no `FORUM.md`, including
+         *     the built-in Entrance.
+         */
+        get: operations["getForum"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/forums/{forum_id}/sessions": {
         parameters: {
             query?: never;
@@ -448,6 +476,7 @@ export interface components {
         ForumSummary: {
             id: components["schemas"]["Identifier"];
             display_name: string;
+            description?: string;
             default_character_id: components["schemas"]["Identifier"];
             default_persona_id: components["schemas"]["Identifier"];
             default_persona_display_name: string;
@@ -486,6 +515,16 @@ export interface components {
             display_name: string;
             description?: string;
             persona_markdown: string;
+        };
+        ForumDetail: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            description?: string;
+            default_character_id: components["schemas"]["Identifier"];
+            default_persona_id: components["schemas"]["Identifier"];
+            default_persona_display_name: string;
+            members: components["schemas"]["CharacterSummary"][];
+            forum_markdown: string;
         };
         CreateSessionRequest: {
             label: string;
@@ -830,6 +869,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PersonaDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getForum: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Forum details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForumDetail"];
                 };
             };
             404: components["responses"]["NotFound"];

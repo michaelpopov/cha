@@ -153,6 +153,13 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
            "<character_profile>\n"
            "$$(PROFILE.md)\n"
            "</character_profile>\n";
+    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\n"
+           "description = \"Where visitors arrive\"\n";
+    std::ofstream(fixture.root() / "forums" / "lobby" / "FORUM.md")
+        << "# House rules\n"
+           "\n"
+           "A deliberate place to talk.\n";
     const LobbyGraph graph(fixture.root());
     LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
     TestServer server(graph, manager);
@@ -189,6 +196,11 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ(bootstrap_body["characters"][1]["id"], "guide");
     EXPECT_EQ(bootstrap_body["forums"][0]["id"], "builtin-entrance");
     EXPECT_EQ(bootstrap_body["forums"][1]["id"], "lobby");
+    // The short line rides along with discovery so a roster row needs no
+    // request; the long one waits for the detail endpoint.
+    EXPECT_EQ(bootstrap_body["forums"][1]["description"], "Where visitors arrive");
+    EXPECT_FALSE(bootstrap_body["forums"][1].contains("forum_markdown"));
+    EXPECT_FALSE(bootstrap_body["forums"][0].contains("description"));
     const nlohmann::json forums = bootstrap_body["forums"];
     const auto entrance = std::find_if(forums.begin(), forums.end(), [](const nlohmann::json& forum) {
         return forum["id"] == "builtin-entrance";
@@ -218,6 +230,25 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_EQ(reader_persona->status, 200);
     EXPECT_EQ(body(reader_persona)["persona_markdown"], "");
     expect_error(server.client().Get("/api/v1/personas/missing"), 404, "not_found");
+
+    const auto lobby_forum = server.client().Get("/api/v1/forums/lobby");
+    ASSERT_TRUE(lobby_forum);
+    ASSERT_EQ(lobby_forum->status, 200);
+    const nlohmann::json lobby_forum_body = body(lobby_forum);
+    EXPECT_EQ(lobby_forum_body["display_name"], "The Lobby");
+    EXPECT_EQ(lobby_forum_body["description"], "Where visitors arrive");
+    EXPECT_EQ(lobby_forum_body["forum_markdown"],
+        "# House rules\n\nA deliberate place to talk.\n");
+    EXPECT_EQ(lobby_forum_body["members"].size(), 1);
+
+    // The built-in forum keeps no forum directory, so it has nothing to
+    // publish and says so rather than borrowing the Assistant's guide.
+    const auto entrance_forum = server.client().Get("/api/v1/forums/builtin-entrance");
+    ASSERT_TRUE(entrance_forum);
+    ASSERT_EQ(entrance_forum->status, 200);
+    EXPECT_EQ(body(entrance_forum)["forum_markdown"], "");
+    EXPECT_FALSE(body(entrance_forum).contains("description"));
+    expect_error(server.client().Get("/api/v1/forums/missing"), 404, "not_found");
 
     const auto entrance_sessions = server.client().Get("/api/v1/forums/builtin-entrance/sessions");
     ASSERT_TRUE(entrance_sessions);

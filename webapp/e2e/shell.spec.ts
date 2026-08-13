@@ -241,7 +241,18 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
   await page.getByRole('button', { name: 'Forums' }).click();
   await expect(page.getByRole('button', { name: /The Lobby\s+Guide/ })).toBeVisible();
   await page.getByRole('button', { name: /The Lobby\s+Guide/ }).click();
-  await expect(page.getByLabel('Forum sessions navigation')).toBeVisible();
+  const sessions = page.getByLabel('Forum sessions navigation');
+  await expect(sessions).toBeVisible();
+
+  // Sessions is titled Sessions, so its header is the only thing naming the
+  // forum, and it is the way into that forum's description.
+  await sessions.getByRole('button', { name: /The Lobby\s+Guide/ }).click();
+  await expect(page.getByRole('heading', { name: 'Lobby house rules' })).toBeVisible();
+  await expect(page.getByText('Guide · speaking as Reader')).toBeVisible();
+  await expect(page.getByText('Ask one thing at a time')).toBeVisible();
+  await page.getByLabel('Forum detail navigation')
+    .getByRole('button', { name: 'Sessions' }).click();
+  await expect(sessions).toBeVisible();
 });
 
 test('recovers when the application API is initially unavailable', async ({ page }) => {

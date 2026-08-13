@@ -3,6 +3,8 @@ import type { components } from './schema';
 export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type PersonaDetail = components['schemas']['PersonaDetail'];
+export type ForumDetail = components['schemas']['ForumDetail'];
+export type ForumSummary = components['schemas']['ForumSummary'];
 export type CharacterAppearance = components['schemas']['CharacterAppearance'];
 export type SessionListing = components['schemas']['SessionListing'];
 export type CreateSessionResult = components['schemas']['CreateSessionResult'];
@@ -81,6 +83,7 @@ export interface ChaClient {
   getBootstrap(): Promise<Bootstrap>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
   getPersona(personaId: string): Promise<PersonaDetail>;
+  getForum(forumId: string): Promise<ForumDetail>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, label: string): Promise<CreateSessionResult>;
   renameSession(forumId: string, sessionId: string, label: string): Promise<SessionLabelResult>;
@@ -221,6 +224,11 @@ export function createChaClient(
     getPersona: (personaId) => requestJson<PersonaDetail>(
       fetcher,
       `/api/v1/personas/${component(personaId)}`,
+    ),
+
+    getForum: (forumId) => requestJson<ForumDetail>(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}`,
     ),
 
     listSessions: (forumId) => requestJson<SessionListing[]>(

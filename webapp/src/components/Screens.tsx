@@ -17,6 +17,7 @@ import {
   type ChaClient,
   type CharacterAppearance,
   type CommandResult,
+  type ForumSummary,
   type SessionListing,
   type SessionSnapshot,
 } from '../api/client';
@@ -406,6 +407,9 @@ interface RosterDetailScreenProps {
   onBack(): void;
   sessionReport: ReactNode;
   subjectId: string | null;
+  // Facts the roster already knows, shown above the Markdown and while it is
+  // still loading. A persona or character has none; a forum names its cast.
+  subtitle?: ReactNode;
 }
 
 function RosterDetailScreen({
@@ -416,6 +420,7 @@ function RosterDetailScreen({
   onBack,
   sessionReport,
   subjectId,
+  subtitle,
 }: RosterDetailScreenProps) {
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -446,6 +451,7 @@ function RosterDetailScreen({
         <span>{backLabel}</span>
       </button>
       {sessionReport}
+      {subtitle}
       {!subjectId && <p className="cha-state-message">{copy.absent}</p>}
       {subjectId && markdown === null && !error && (
         <p className="cha-state-message" role="status">{copy.loading}</p>
@@ -566,6 +572,18 @@ export function CharacterDetailScreen({
   );
 }
 
+export function forumMemberNames(forum: ForumSummary): string {
+  return forum.members.map(({ display_name }) => display_name).join(', ') || 'No characters';
+}
+
+// Who is in a forum describes it as well as prose does, so a forum that
+// configures no short description keeps naming its cast rather than showing a
+// bare row. Either way the line answers the same question the other rosters
+// answer with a description.
+export function forumRosterDescription(forum: ForumSummary): string {
+  return forum.description ?? forumMemberNames(forum);
+}
+
 export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Forums navigation">
@@ -573,7 +591,7 @@ export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScree
       <div className="cha-roster">
         {state.bootstrap?.forums.map((forum) => (
           <RosterRow
-            description={forum.members.map(({ display_name }) => display_name).join(', ') || 'No characters'}
+            description={forumRosterDescription(forum)}
             displayName={forum.display_name}
             key={forum.id}
             onSelect={() => dispatch({ type: 'select-forum', forumId: forum.id })}
@@ -581,6 +599,43 @@ export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScree
         ))}
       </div>
     </section>
+  );
+}
+
+// Members and the persona a forum speaks as, shown under its name. Both are
+// already in bootstrap, so this needs no request of its own.
+function ForumCast({ forum }: { forum: ForumSummary }) {
+  return (
+    <p className="cha-forum-cast">
+      {forumMemberNames(forum)}
+      {' · speaking as '}
+      {forum.default_persona_display_name}
+    </p>
+  );
+}
+
+export function ForumDetailScreen({ state, dispatch, client, sessionReport }: RosterDetailProps) {
+  const load = useCallback(
+    (forumId: string) => client.getForum(forumId).then((detail) => detail.forum_markdown),
+    [client],
+  );
+  const forum = state.bootstrap?.forums.find(({ id }) => id === state.currentForumId);
+  return (
+    <RosterDetailScreen
+      ariaLabel="Forum detail navigation"
+      backLabel="Sessions"
+      copy={{
+        absent: 'No forum is selected.',
+        loading: 'Loading forum…',
+        failed: 'Forum detail could not be loaded.',
+        empty: 'This forum has no FORUM.md description.',
+      }}
+      load={load}
+      onBack={() => dispatch({ type: 'show-sessions' })}
+      sessionReport={sessionReport}
+      subjectId={state.currentForumId}
+      subtitle={forum && <ForumCast forum={forum} />}
+    />
   );
 }
 
@@ -656,6 +711,7 @@ export function SessionsScreen({
   const [error, setError] = useState<string | null>(null);
   const [requestVersion, setRequestVersion] = useState(0);
   const forumId = state.currentForumId;
+  const forum = state.bootstrap?.forums.find(({ id }) => id === forumId);
   // The forum bootstrap starts in is the built-in one, whose single session the
   // server synthesizes; it stores no forum of its own, so a create there fails
   // as not-found. Offering the action would only produce that error.
@@ -688,6 +744,22 @@ export function SessionsScreen({
         <ChevronLeftIcon />
         <span>All forums</span>
       </button>
+      {/* The screen is titled Sessions, so without this the forum being listed
+          is named nowhere once the sidebar is collapsed. It reads as a pushable
+          row because that is what it is: the way into the forum's description. */}
+      {forum && (
+        <button
+          className="cha-forum-header"
+          onClick={() => dispatch({ type: 'show-forum-detail' })}
+          type="button"
+        >
+          <span className="cha-list-copy">
+            <span className="cha-primary-line">{forum.display_name}</span>
+            <span className="cha-secondary-line">{forumMemberNames(forum)}</span>
+          </span>
+          <ChevronRightIcon className="cha-chevron" />
+        </button>
+      )}
       {!forumId && <p className="cha-state-message">No forum is selected.</p>}
       {sessionReport}
       {forumId && !sessions && !error && (

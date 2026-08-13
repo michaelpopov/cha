@@ -1,1 +1,6 @@
-This forum is used by deterministic browser tests.
+# Lobby house rules
+
+A **deterministic** place to talk.
+
+- Ask one thing at a time
+- Start a session per question

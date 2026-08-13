@@ -64,6 +64,7 @@ public:
     const Persona* find_persona(std::string_view id) const noexcept;
     const ForumInfo* find_forum(std::string_view id) const noexcept;
     std::string_view character_markdown(std::string_view id) const;
+    std::string_view forum_markdown(std::string_view id) const;
 
     // The only path-bearing values the model publishes, needed once by startup
     // to construct SessionRepository.
@@ -90,6 +91,7 @@ private:
     std::unordered_map<std::string, std::size_t> character_index_;
     std::unordered_map<std::string, std::size_t> forum_index_;
     std::unordered_map<std::string, std::string> character_markdown_;
+    std::unordered_map<std::string, std::string> forum_markdown_;
     std::unordered_map<std::string, std::vector<CharacterDefinition>> definitions_;
     std::vector<ForumSessionDirectory> session_directories_;
 };

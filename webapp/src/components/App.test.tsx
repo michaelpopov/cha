@@ -8,6 +8,7 @@ import type { SessionEventHandlers } from '../api/events';
 import {
   bootstrapFixture,
   fixtureClient,
+  forumDetailFixture,
   personaDetailFixture,
   snapshotFixture,
 } from '../test/fixtures';
@@ -242,6 +243,73 @@ it('shows real forums and their plain-text character membership', async () => {
   expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
   expect(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }))
     .toBeInTheDocument();
+});
+
+it('prefers a forum’s configured description to its membership on the roster row', async () => {
+  const described = structuredClone(bootstrapFixture);
+  described.forums[1].description = 'Where the big questions get argued out';
+  render(<App client={fixtureClient({ getBootstrap: async () => described })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
+
+  const forums = within(screen.getByLabelText('Forums navigation'));
+  expect(forums.getByRole('button', { name: 'The LobbyWhere the big questions get argued out' }))
+    .toBeInTheDocument();
+  // A forum configuring none still names its cast rather than showing a bare row.
+  expect(forums.getByRole('button', { name: 'EntranceAssistant' })).toBeInTheDocument();
+});
+
+it('names the forum above its sessions and opens its FORUM.md description', async () => {
+  const getForum = vi.fn(async () => forumDetailFixture);
+  render(<App client={fixtureClient({ getForum })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+
+  // Sessions is titled Sessions, so the header is the only thing naming the
+  // forum whose list this is.
+  const sessions = within(screen.getByLabelText('Forum sessions navigation'));
+  const header = sessions.getByRole('button', { name: 'The LobbyGuide' });
+  fireEvent.click(header);
+
+  expect(await screen.findByRole('heading', { name: 'House rules' })).toBeInTheDocument();
+  expect(screen.getByText('deliberate').tagName).toBe('STRONG');
+  expect(getForum).toHaveBeenCalledWith('lobby');
+  // The topbar names the forum from bootstrap while its description loads, and
+  // the cast is shown without a request of its own.
+  expect(screen.getByRole('heading', { name: 'The Lobby' })).toBeInTheDocument();
+  expect(screen.getByText('Guide · speaking as Reader')).toBeInTheDocument();
+
+  fireEvent.click(within(screen.getByLabelText('Forum detail navigation'))
+    .getByRole('button', { name: 'Sessions' }));
+  expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
+});
+
+it('reports a forum with no FORUM.md rather than an empty screen', async () => {
+  const getForum = vi.fn(async () => ({ ...forumDetailFixture, forum_markdown: '' }));
+  render(<App client={fixtureClient({ getForum })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  fireEvent.click(within(screen.getByLabelText('Forum sessions navigation'))
+    .getByRole('button', { name: 'The LobbyGuide' }));
+
+  expect(await screen.findByText('This forum has no FORUM.md description.'))
+    .toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('retries a failed forum-detail request without exposing implementation details', async () => {
+  const getForum = vi.fn()
+    .mockRejectedValueOnce(new ChaUnavailableError())
+    .mockResolvedValueOnce(forumDetailFixture);
+  render(<App client={fixtureClient({ getForum })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  fireEvent.click(within(screen.getByLabelText('Forum sessions navigation'))
+    .getByRole('button', { name: 'The LobbyGuide' }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('application API is unavailable');
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByRole('heading', { name: 'House rules' })).toBeInTheDocument();
+  expect(getForum).toHaveBeenCalledTimes(2);
 });
 
 it('says a forum has no sessions rather than showing an empty panel', async () => {

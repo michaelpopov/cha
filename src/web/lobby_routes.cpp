@@ -115,6 +115,7 @@ ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& mo
     const Persona* const persona = model.find_persona(forum.default_persona_id);
     if (persona == nullptr) throw std::runtime_error("Forum default persona is absent from the workspace model");
     ForumSummary result{.id = forum.id, .display_name = forum.display_name,
+                        .description = forum.description,
                         .default_character_id = forum.default_character_id,
                         .default_persona_id = forum.default_persona_id,
                         .default_persona_display_name = persona->display_name};
@@ -222,6 +223,18 @@ void LobbyRoutes::install(httplib::Server& server) const {
         if (persona == nullptr) return set_route_not_found(response);
         set_json_response(response, 200, nlohmann::json(PersonaDetail{
             {persona->id, persona->display_name, persona->description}, persona->prompt}));
+    });
+
+    // `[^/]+` cannot span the separator, so this never shadows the session
+    // routes registered below it.
+    server.Get(R"(/api/v1/forums/([^/]+))", [model](const httplib::Request& request, httplib::Response& response) {
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)) return set_route_not_found(response);
+        const ForumInfo* const forum = model->find_forum(id);
+        if (forum == nullptr) return set_route_not_found(response);
+        set_json_response(response, 200, nlohmann::json(ForumDetail{
+            forum_summary(*forum, *model),
+            std::string(model->forum_markdown(id))}));
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [sessions, live_sessions](const httplib::Request& request, httplib::Response& response) {

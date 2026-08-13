@@ -182,6 +182,7 @@ void to_json(nlohmann::json& json, const ForumSummary& value) {
         {"default_persona_display_name", value.default_persona_display_name},
         {"members", value.members},
     };
+    put_optional(json, "description", value.description);
 }
 
 void to_json(nlohmann::json& json, const PersonaSummary& value) {
@@ -276,6 +277,11 @@ void to_json(nlohmann::json& json, const CharacterDetail& value) {
 void to_json(nlohmann::json& json, const PersonaDetail& value) {
     json = nlohmann::json(value.summary);
     json["persona_markdown"] = value.persona_markdown;
+}
+
+void to_json(nlohmann::json& json, const ForumDetail& value) {
+    json = nlohmann::json(value.summary);
+    json["forum_markdown"] = value.forum_markdown;
 }
 
 void to_json(nlohmann::json& json, const Error& value) {
