@@ -24,6 +24,7 @@ OpenedSession open_session(
     }
     std::vector<CharacterDefinition> definitions =
         model.copy_definitions_for(forum->id);
+    const CharacterId default_character = model.forum_default_character(forum->id);
     PreparedSession prepared = sessions.prepare(identity);
     log_info("Session opened");
     return {
@@ -31,18 +32,22 @@ OpenedSession open_session(
             .identity = prepared.identity,
             .forum_display_name = forum->display_name,
             .session_label = prepared.label,
-            .forum_default_character_id = forum->default_character_id,
+            .forum_default_character_id = default_character,
             .forum_default_persona_id = forum->default_persona_id,
             .forum_default_persona_display_name = persona->display_name,
         },
         .controller = SessionController::from_shared_definitions(
             std::move(definitions),
             std::make_shared<const PersonaRoster>(PersonaRoster{*persona}),
-            forum->default_character_id,
+            default_character,
             prepared.database_path,
             std::move(prepared.lease),
             notifier,
             std::move(prepared.restore)),
+        .persist_default_character = [&model, forum_id = forum->id](
+                                         std::string_view character_id) {
+            model.persist_forum_default_character(forum_id, character_id);
+        },
     };
 }
 

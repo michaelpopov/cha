@@ -21,12 +21,12 @@ private to this server run and is removed on shutdown.
 - `/hide-on`, `/hide`, and `/hide-off` begin, extend, and end an off-record span.
 - `/mcast <targets> <text>` sends one prompt to multiple characters.
 - `/info` shows session information; `/characters` lists the forum's characters (`/agents` is a legacy alias).
-- `/@Name` changes the default character.
+- `/@Name` changes the default character and saves it as the forum's default.
 - `/stop` stops generation; `/exit` closes the live session.
 
 Start a prompt with `@Name` to address one character. Use `@@` for a literal
 leading at-sign. Character handles are matched case-insensitively when the
-match is unambiguous.
+match is unambiguous, and a character's ID works as a handle too.
 
 ## Privacy and storage
 

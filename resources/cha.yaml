@@ -577,7 +577,7 @@ paths:
     post:
       tags: [Live sessions]
       operationId: setDefaultCharacter
-      summary: Change the session's default character
+      summary: Change and save the forum's default character
       requestBody:
         required: true
         content:

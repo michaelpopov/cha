@@ -13,11 +13,21 @@ live-session switching policy.
 `WorkspaceDefinition::load()` performs one all-or-nothing startup pass: it validates
 the workspace layout, loads personas, character metadata and Markdown, and forum
 membership, builds the Guest-inclusive persona roster and Assistant's inventory,
-checks that each forum's `default_persona` names a persona in that roster,
+checks that each forum's default character and `default_persona` name forum
+members and personas respectively,
 resolves every configured forum's effective `CharacterDefinition` values, and adds
-Assistant and Entrance to the public catalogs. After construction it performs no
-filesystem reads, so discovery responses and newly opened sessions can never
-disagree.
+Assistant and Entrance to the public catalogs. Definitions are never re-read, so
+every discovery response and every session sees the same characters, personas
+and prompts.
+
+A forum's default character is the one setting that stays live.
+`forum_default_character()` re-reads it from the forum's retained `config.toml`
+whenever a session opens or the lobby is projected, and
+`persist_forum_default_character()` writes it back there when `/@` succeeds, so a
+change applies to the next session without a restart. The re-read is lenient
+where startup is strict: an unreadable file, or one naming a character this forum
+did not load, logs a warning and keeps the value loaded at startup, because a
+session must still open. Built-in forums have no config file and always keep it.
 
 Because every configured forum is resolved at startup, an invalid member
 override or prompt fails the server's startup rather than waiting for someone to
@@ -36,6 +46,8 @@ definitions, ask `SessionRepository` to prepare storage, build the
 `SessionDescriptor`, and construct the controller with a roster holding that
 forum's `default_persona` alone. The whole roster is never handed to a session,
 so the persona a forum configures is the only one its transcripts can attribute.
+It also supplies a callback that lets the live-session owner save a changed
+default character without exposing workspace paths to web routes.
 Entrance and Welcome need no branch — Entrance is an ordinary
 forum in the model and Welcome an ordinary prepared session in the repository.
 

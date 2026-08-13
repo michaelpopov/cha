@@ -67,6 +67,79 @@ TEST_F(SessionOpenTest, OpensAStoredSessionWithTheLoadedForumDefinitions) {
     opened.controller->shutdown();
 }
 
+TEST_F(SessionOpenTest, PersistsAChangedForumDefaultCharacter) {
+    const std::filesystem::path character = fixture_.root() / "characters" / "alpha";
+    std::filesystem::create_directories(character);
+    std::filesystem::create_directories(
+        fixture_.root() / "forums" / "lobby" / "members" / "alpha");
+    std::ofstream(character / "character.toml") << "display_name = \"Alpha\"\n";
+    std::ofstream(character / "CHARACTER.md") << "Alpha instructions\n";
+    std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndescription = \"Where it starts\"\n"
+           "default_character = \"guide\"\n";
+
+    const WorkspaceDefinition model = load_model();
+    const auto sessions = make_repository(model);
+    const StoredSession created = sessions->create("lobby", "Stored");
+    OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+
+    ASSERT_TRUE(opened.persist_default_character);
+    opened.persist_default_character("alpha");
+    opened.controller->shutdown();
+
+    // The saved value reaches the next session of this same server run.
+    const StoredSession next = sessions->create("lobby", "Next");
+    OpenedSession later = open_session(model, *sessions, next.identity, notifier_);
+    EXPECT_EQ(later.descriptor.forum_default_character_id, "alpha");
+    EXPECT_EQ(later.controller->view().default_character_id, "alpha");
+    later.controller->shutdown();
+
+    // Saving rewrites the file, so the settings around it have to survive.
+    const WorkspaceDefinition reloaded = load_model();
+    ASSERT_NE(reloaded.find_forum("lobby"), nullptr);
+    EXPECT_EQ(reloaded.find_forum("lobby")->default_character_id, "alpha");
+    EXPECT_EQ(reloaded.find_forum("lobby")->display_name, "The Lobby");
+    EXPECT_EQ(reloaded.find_forum("lobby")->description, "Where it starts");
+}
+
+TEST_F(SessionOpenTest, KeepsTheLoadedDefaultWhenTheConfigNamesAStranger) {
+    std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_character = \"guide\"\n";
+    const WorkspaceDefinition model = load_model();
+    const auto sessions = make_repository(model);
+    const StoredSession created = sessions->create("lobby", "Stored");
+    // Edited after startup to name a character this forum never loaded.
+    std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_character = \"stranger\"\n";
+
+    OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+
+    EXPECT_EQ(opened.descriptor.forum_default_character_id, "guide");
+    opened.controller->shutdown();
+}
+
+TEST_F(SessionOpenTest, ReplacesTheLegacyDefaultAgentKeyWhenItSaves) {
+    const std::filesystem::path character = fixture_.root() / "characters" / "alpha";
+    std::filesystem::create_directories(character);
+    std::filesystem::create_directories(
+        fixture_.root() / "forums" / "lobby" / "members" / "alpha");
+    std::ofstream(character / "character.toml") << "display_name = \"Alpha\"\n";
+    std::ofstream(character / "CHARACTER.md") << "Alpha instructions\n";
+    std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_agent = \"guide\"\n";
+
+    const WorkspaceDefinition model = load_model();
+    const auto sessions = make_repository(model);
+    const StoredSession created = sessions->create("lobby", "Stored");
+    OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+    opened.persist_default_character("alpha");
+    opened.controller->shutdown();
+
+    // Loading rejects a config holding both spellings, so this also proves the
+    // legacy key is gone.
+    EXPECT_EQ(load_model().find_forum("lobby")->default_character_id, "alpha");
+}
+
 TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePathWithTheAssistantRoster) {
     const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);

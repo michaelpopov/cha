@@ -43,9 +43,11 @@ struct ForumInfo {
     std::string default_persona_id;
 };
 
-// The authoritative static workspace for one server process. It is loaded once
-// at startup and performs no filesystem reads afterwards, so every discovery
-// response and every newly opened session sees the same definitions. Session
+// The authoritative workspace for one server process. Definitions are loaded
+// once at startup and never re-read, so every discovery response and every
+// newly opened session sees the same characters, personas and prompts. A
+// forum's default character is the one setting that stays live: it is read
+// from config.toml when a session opens and written back there by /@. Session
 // databases remain dynamic and are owned by SessionRepository.
 class WorkspaceDefinition final {
 public:
@@ -66,6 +68,11 @@ public:
     std::string_view character_markdown(std::string_view id) const;
     std::string_view forum_markdown(std::string_view id) const;
 
+    // The forum's current default character, re-read from its config.toml so a
+    // saved /@ change applies to the next session without a restart. Falls back
+    // to the value loaded at startup when the file cannot be used.
+    CharacterId forum_default_character(std::string_view forum_id) const;
+
     // The only path-bearing values the model publishes, needed once by startup
     // to construct SessionRepository.
     std::vector<ForumSessionDirectory> session_directories() const;
@@ -83,6 +90,9 @@ private:
 
     std::vector<CharacterDefinition> copy_definitions_for(
         std::string_view forum_id) const;
+    void persist_forum_default_character(
+        std::string_view forum_id,
+        std::string_view character_id) const;
 
     WorkspaceConfig config_;
     SharedPersonaRoster personas_;
@@ -92,6 +102,7 @@ private:
     std::unordered_map<std::string, std::size_t> forum_index_;
     std::unordered_map<std::string, std::string> character_markdown_;
     std::unordered_map<std::string, std::string> forum_markdown_;
+    std::unordered_map<std::string, std::filesystem::path> forum_config_paths_;
     std::unordered_map<std::string, std::vector<CharacterDefinition>> definitions_;
     std::vector<ForumSessionDirectory> session_directories_;
 };

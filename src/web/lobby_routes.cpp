@@ -116,7 +116,7 @@ ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& mo
     if (persona == nullptr) throw std::runtime_error("Forum default persona is absent from the workspace model");
     ForumSummary result{.id = forum.id, .display_name = forum.display_name,
                         .description = forum.description,
-                        .default_character_id = forum.default_character_id,
+                        .default_character_id = model.forum_default_character(forum.id),
                         .default_persona_id = forum.default_persona_id,
                         .default_persona_display_name = persona->display_name};
     result.members.reserve(forum.member_ids.size());

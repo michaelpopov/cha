@@ -31,12 +31,14 @@ The chat input also accepts these controller-level commands:
 | `/hide-on`, `/hide`, `/hide-off` | Manage the off-record model-context span. |
 | `/mcast` | Send one prompt to multiple forum characters. |
 | `/info`, `/characters` | Inspect the session and its characters (`/agents` remains an alias). |
-| `/@Name` | Change the default character. |
+| `/@Name` | Change and save the forum's default character. |
 | `/stop` | Stop generation. |
 | `/exit` | Close the live session. |
 
 Leading `@Name` addresses a prompt to one character. `@@` starts literal text
-with an at-sign.
+with an at-sign. A handle may be a display name, an unambiguous part of one, or
+the character's ID — useful when the display name is spelled differently or
+written in another script.
 
 ## Workspace configuration
 
@@ -45,6 +47,14 @@ A workspace contains `workspace.toml`, `characters/`, `forums/`, and
 persona is always available, and is what a forum that names no `default_persona`
 speaks as. Persona, character, and forum definitions have a public
 `display_name` and may have a one-line `description`.
+
+A forum's `config.toml` can name its starting character with
+`default_character = "character-id"`. The ID must be a forum member; when the
+setting is omitted, the first member ID in lexicographic order is used. `/@Name`
+changes the live session immediately and saves that ID to the forum config, so
+the next session in that forum starts with it. The setting is read when a session
+opens, so editing the file by hand takes effect without a restart; the rest of
+the workspace is still read only at startup.
 
 `workspace.toml` supplies provider and diagnostic logging settings:
 

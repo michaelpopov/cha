@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -25,6 +26,11 @@ namespace cha {
 namespace {
 
 using Json = nlohmann::ordered_json;
+
+// Live sessions each have an owner thread, so several sessions in one forum
+// can save a changed default concurrently. Serializing the read-modify-write
+// preserves both updates as complete TOML documents.
+std::mutex forum_config_write_mutex;
 
 // A custom forum while it is still being loaded. It keeps the directory only
 // long enough to read prompts and derive the sessions path; the published
@@ -617,6 +623,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
         model.session_directories_.push_back(
             {forum.info.id, forum.directory / "sessions"});
         model.forum_markdown_.emplace(forum.info.id, forum.markdown);
+        model.forum_config_paths_.emplace(forum.info.id, forum.directory / "config.toml");
         model.forums_.push_back(forum.info);
     }
 
@@ -710,6 +717,92 @@ std::vector<CharacterDefinition> WorkspaceDefinition::copy_definitions_for(
         throw ForumNotFoundError("Forum '" + std::string(forum_id) + "' does not exist");
     }
     return found->second;
+}
+
+CharacterId WorkspaceDefinition::forum_default_character(
+    std::string_view forum_id) const {
+    const ForumInfo* const forum = find_forum(forum_id);
+    if (forum == nullptr) {
+        throw ForumNotFoundError("Forum '" + std::string(forum_id) + "' does not exist");
+    }
+    const auto config = forum_config_paths_.find(std::string(forum_id));
+    if (config == forum_config_paths_.end()) {
+        return forum->default_character_id; // Built-in forums have no config file.
+    }
+    // The only setting read again after startup, so that a /@ change or a hand
+    // edit reaches the next session without a restart. Startup is strict about
+    // this file; here anything unusable falls back to the loaded value, because
+    // a session must still open. Members come from the loaded model rather than
+    // from disk: the session's characters were resolved at startup, and a
+    // default outside them would leave the session without one.
+    try {
+        std::ifstream input(config->second, std::ios::binary);
+        if (!input) {
+            throw std::runtime_error("Failed to read forum config");
+        }
+        const toml::table table = toml::parse(input, utf8_path(config->second));
+        const std::optional<std::string> configured =
+            table["default_character"].value<std::string>();
+        if (!configured) {
+            return forum->default_character_id;
+        }
+        if (!std::ranges::binary_search(forum->member_ids, *configured)) {
+            throw std::runtime_error(
+                "default_character '" + *configured + "' is not a forum member");
+        }
+        return *configured;
+    } catch (const std::exception& error) {
+        log_warn(
+            "Forum '" + std::string(forum_id) + "' keeps its loaded default character '"
+            + forum->default_character_id + "': " + error.what());
+        return forum->default_character_id;
+    }
+}
+
+void WorkspaceDefinition::persist_forum_default_character(
+    std::string_view forum_id,
+    std::string_view character_id) const {
+    const auto config = forum_config_paths_.find(std::string(forum_id));
+    if (config == forum_config_paths_.end()) {
+        throw std::runtime_error(
+            "Forum '" + std::string(forum_id) + "' has no writable configuration");
+    }
+    const ForumInfo* const forum = find_forum(forum_id);
+    if (forum == nullptr || !std::ranges::binary_search(forum->member_ids, character_id)) {
+        throw std::invalid_argument(
+            "Character '" + std::string(character_id) + "' is not a forum member");
+    }
+
+    std::lock_guard lock(forum_config_write_mutex);
+    toml::table table;
+    {
+        std::ifstream input(config->second, std::ios::binary);
+        if (!input) {
+            throw std::runtime_error(
+                "Failed to read forum config '" + utf8_path(config->second) + "'");
+        }
+        table = toml::parse(input, utf8_path(config->second));
+    }
+    // Writing the current spelling also migrates an accepted legacy setting;
+    // retaining both would make the next workspace load reject the file.
+    table.erase("default_agent");
+    table.insert_or_assign("default_character", std::string(character_id));
+
+    // Written beside the original and renamed over it: an interrupted write
+    // must not leave a config that the next start cannot read. A reader either
+    // sees the whole old document or the whole new one.
+    std::filesystem::path temporary = config->second;
+    temporary += ".new";
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output << table << '\n';
+        output.flush();
+        if (!output) {
+            throw std::runtime_error(
+                "Failed to write forum config '" + utf8_path(config->second) + "'");
+        }
+    }
+    std::filesystem::rename(temporary, config->second);
 }
 
 } // namespace cha

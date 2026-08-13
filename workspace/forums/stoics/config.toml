@@ -1,2 +1,3 @@
 display_name = "The Stoics Forum"
 description = "A discussion among Stoic philosophers."
+default_persona = "michael"

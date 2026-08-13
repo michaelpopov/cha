@@ -29,6 +29,31 @@ TEST(ForumCharacters, ResolvesUniqueWordsAndPrefixesInDisplayNames) {
     EXPECT_EQ(characters.resolve_handle("Roose").character->id, "roosevelt");
 }
 
+TEST(ForumCharacters, ResolvesCharacterIdsThatTheDisplayNameCannotSpell) {
+    ForumCharacters characters({
+        character("markus_aurelius", "Marcus Aurelius"),
+        character("stirlitz", "Штирлиц"),
+    });
+
+    EXPECT_EQ(characters.resolve_handle("markus_aurelius").character->id, "markus_aurelius");
+    EXPECT_EQ(characters.resolve_handle("STIRLITZ").character->id, "stirlitz");
+    EXPECT_EQ(characters.resolve_handle("stirlitz.").character->id, "stirlitz");
+    EXPECT_EQ(characters.resolve_handle("Marcus").character->id, "markus_aurelius");
+    EXPECT_EQ(characters.resolve_handle("markus").match, HandleMatch::unknown);
+}
+
+TEST(ForumCharacters, PrefersExactMatchesOverWordsAndPrefixes) {
+    ForumCharacters characters({
+        character("winston", "Franklin Roosevelt"),
+        character("churchill", "Winston Churchill"),
+    });
+
+    // An exact display name beats another character's ID.
+    EXPECT_EQ(characters.resolve_handle("Winston Churchill").character->id, "churchill");
+    // An exact ID beats a word of another character's display name.
+    EXPECT_EQ(characters.resolve_handle("Winston").character->id, "winston");
+}
+
 TEST(ForumCharacters, ReportsAmbiguousDisplayNameWords) {
     ForumCharacters characters({
         character("churchill", "Winston Churchill"),

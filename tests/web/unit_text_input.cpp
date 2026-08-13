@@ -165,9 +165,10 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
         handle_text_input(*controller, "operator", "/characters");
     ASSERT_TRUE(characters.session.notice);
     EXPECT_NE(characters.session.notice->find("@Guide"), std::string::npos);
-    EXPECT_EQ(
-        handle_text_input(*controller, "operator", "/@Gui").session.notice,
-        "Default character is now Guide");
+    const CommandResult set_default =
+        handle_text_input(*controller, "operator", "/@Gui");
+    EXPECT_EQ(set_default.session.notice, "Default character is now Guide");
+    EXPECT_EQ(set_default.persist_default_character_id, "guide-id");
 
     const CommandResult idle_stop =
         handle_text_input(*controller, "operator", "/stop");

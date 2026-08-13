@@ -161,20 +161,6 @@ SessionOpener scripted_opener(
     };
 }
 
-SessionOpener two_agent_opener(
-    const std::filesystem::path& path,
-    std::shared_ptr<test::BackendControls> guide,
-    std::shared_ptr<test::BackendControls> scribe) {
-    return [path, guide, scribe](
-               const SessionIdentity& identity, WakeNotifier& notifier) {
-        std::vector<std::unique_ptr<ModelBackend>> backends;
-        backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
-        backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
-        return test::open_scripted_session(
-            identity, path, notifier, std::move(backends));
-    };
-}
-
 SessionOpener leased_opener(const std::filesystem::path& path) {
     return [path](const SessionIdentity& identity, WakeNotifier& notifier) {
         return test::open_leased_session(identity, path, notifier);
@@ -296,8 +282,21 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     test::TemporarySessionFile file("live_session_routing");
     auto guide = std::make_shared<test::BackendControls>();
     auto scribe = std::make_shared<test::BackendControls>();
-    LiveSessionHost host(
-        test_settings(), two_agent_opener(file.path(), guide, scribe));
+    std::optional<std::string> persisted_default;
+    SessionOpener opener = [path = file.path(), guide, scribe, &persisted_default](
+                               const SessionIdentity& identity,
+                               WakeNotifier& notifier) {
+        std::vector<std::unique_ptr<ModelBackend>> backends;
+        backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
+        backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
+        OpenedSession opened = test::open_scripted_session(
+            identity, path, notifier, std::move(backends));
+        opened.persist_default_character = [&persisted_default](std::string_view id) {
+            persisted_default = std::string(id);
+        };
+        return opened;
+    };
+    LiveSessionHost host(test_settings(), std::move(opener));
 
     const auto info = host->submit(RawCommand{"/info"}, 2s);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(info));
@@ -307,17 +306,51 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
         host->submit(StopCommand{}, 2s)));
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(SetDefaultCharacterCommand{"scribe"}, 2s)));
+        host->submit(RawCommand{"/@Scribe"}, 2s)));
+    EXPECT_EQ(persisted_default, "scribe");
+
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(SetDefaultCharacterCommand{"guide"}, 2s)));
+    EXPECT_EQ(persisted_default, "guide");
 
     const auto renamed = host->submit(RenameSessionCommand{"Renamed live"}, 2s);
     ASSERT_TRUE(std::holds_alternative<SessionLabelResult>(renamed));
     EXPECT_EQ(std::get<SessionLabelResult>(renamed).label, "Renamed live");
     const auto state = host->snapshot(2s);
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(state));
-    EXPECT_EQ(std::get<SessionSnapshot>(state).default_character_id, "scribe");
+    EXPECT_EQ(std::get<SessionSnapshot>(state).default_character_id, "guide");
     EXPECT_EQ(std::get<SessionSnapshot>(state).characters.size(), 2U);
     EXPECT_EQ(std::get<SessionSnapshot>(state).session_label, "Renamed live");
     EXPECT_EQ(read_session_database_metadata(file.path()).label, "Renamed live");
+}
+
+TEST(LiveSession, KeepsADefaultCharacterThatCouldNotBeSaved) {
+    test::TemporarySessionFile file("live_session_unsaved_default");
+    auto guide = std::make_shared<test::BackendControls>();
+    auto scribe = std::make_shared<test::BackendControls>();
+    SessionOpener opener = [path = file.path(), guide, scribe](
+                               const SessionIdentity& identity, WakeNotifier& notifier) {
+        std::vector<std::unique_ptr<ModelBackend>> backends;
+        backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
+        backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
+        OpenedSession opened = test::open_scripted_session(
+            identity, path, notifier, std::move(backends));
+        opened.persist_default_character = [](std::string_view) {
+            throw std::runtime_error("workspace is read-only");
+        };
+        return opened;
+    };
+    LiveSessionHost host(test_settings(), std::move(opener));
+
+    const auto result = host->submit(RawCommand{"/@Scribe"}, 2s);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(result));
+    const auto& notice = std::get<CommandResult>(result).session.notice;
+    ASSERT_TRUE(notice);
+    EXPECT_EQ(*notice, "Default character is now Scribe (not saved)");
+
+    const auto state = host->snapshot(2s);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(state));
+    EXPECT_EQ(std::get<SessionSnapshot>(state).default_character_id, "scribe");
 }
 
 TEST(LiveSession, UnknownCommandReportsANoticeWithoutTouchingTheTranscript) {

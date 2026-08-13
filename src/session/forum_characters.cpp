@@ -146,6 +146,19 @@ HandleResolution ForumCharacters::resolve_handle(std::string_view handle) const 
     if (trimmed.empty()) {
         return {};
     }
+    // A character's ID is a stable ASCII handle, which its display name need not
+    // be: names can be spelled differently or written in another script. Display
+    // names still win, so this only reaches handles that would otherwise be
+    // matched loosely or not at all.
+    const auto by_id = std::find_if(
+        characters_.begin(),
+        characters_.end(),
+        [trimmed](const CharacterMetadata& character) {
+            return ascii_iequals(character.id, trimmed);
+        });
+    if (by_id != characters_.end()) {
+        return {HandleMatch::resolved, &*by_id, {}};
+    }
     std::vector<const CharacterMetadata*> candidates;
     for (const CharacterMetadata& character : characters_) {
         if (matches_name_word(character.display_name, trimmed)) {

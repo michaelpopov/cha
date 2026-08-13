@@ -179,6 +179,7 @@ private:
     // on that thread; none of this needs the lifecycle mutex.
     std::unique_ptr<SessionController> controller_;
     SessionDescriptor descriptor_;
+    std::function<void(std::string_view)> persist_default_character_;
     std::optional<std::string> notice_;
     // The only generation facts the actor retains: enough to recognize start
     // and terminal transitions without caching a protocol snapshot.

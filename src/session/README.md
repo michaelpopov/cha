@@ -123,8 +123,12 @@ character ID separately: it is `config.toml`'s `default_character` when supplied
 otherwise the first lexicographic member ID. It never reorders this view.
 
 `resolve_handle()` tries an exact case-insensitive name, retries after removing
-trailing `,.;:!?`, and finally accepts a unique case-insensitive prefix. It
-returns resolved, unknown, or ambiguous.
+trailing `,.;:!?`, then accepts an exact case-insensitive character ID, and
+finally a unique case-insensitive prefix. It returns resolved, unknown, or
+ambiguous. Exact matches come first, so an exact display name beats an ID and an
+exact ID beats a loose match on another character's name. IDs are accepted
+because a display name may be spelled differently from the ID or written in a
+non-ASCII script, leaving that character otherwise unaddressable.
 
 `forum_characters.*` also owns the wording of the notices built from those
 results, so all of it sits in one place: handle errors, duplicate multicast

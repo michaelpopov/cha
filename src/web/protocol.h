@@ -137,6 +137,9 @@ struct CommandResult {
     ControllerUpdate session;
     bool clear_input{};
     bool close_session{};
+    // A successful default-character command also carries the canonical ID so
+    // the session owner can update the forum configuration before publishing.
+    std::optional<CharacterId> persist_default_character_id;
 };
 
 struct CreateSessionSuccess {

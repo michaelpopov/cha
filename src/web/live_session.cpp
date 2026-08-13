@@ -280,6 +280,7 @@ bool LiveSession::open_controller() {
         }
         descriptor_ = std::move(opened.descriptor);
         controller_ = std::move(opened.controller);
+        persist_default_character_ = std::move(opened.persist_default_character);
         return true;
     } catch (const std::bad_alloc&) {
         std::terminate();
@@ -442,7 +443,13 @@ void LiveSession::execute(OwnerCommand command) {
         } else if constexpr (std::is_same_v<T, StopCommand>) {
             return {.session = controller.request_stop()};
         } else if constexpr (std::is_same_v<T, SetDefaultCharacterCommand>) {
-            return {.session = controller.set_default_character_by_id(value.character_id)};
+            CommandResult result{
+                .session = controller.set_default_character_by_id(value.character_id)};
+            if (requires_snapshot(result.session)) {
+                result.persist_default_character_id =
+                    std::string(controller.view().default_character_id);
+            }
+            return result;
         } else if constexpr (std::is_same_v<T, RenameSessionCommand>) {
             throw std::logic_error("Rename command handled before dispatch");
         } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
@@ -453,6 +460,21 @@ void LiveSession::execute(OwnerCommand command) {
             static_assert(unsupported_web_command<T>);
         }
     }, command.command);
+    if (outcome.persist_default_character_id && persist_default_character_) {
+        try {
+            persist_default_character_(*outcome.persist_default_character_id);
+        } catch (const std::bad_alloc&) {
+            throw;
+        } catch (const std::exception& error) {
+            // The session keeps the new default; only the saved copy is missing.
+            // The reason can name workspace paths, so it goes to the log alone.
+            log_warn(session_log(
+                identity_, "default_character_not_saved " + std::string(error.what())));
+            outcome.session.notice =
+                outcome.session.notice.value_or(std::string()) + " (not saved)";
+            outcome.persist_default_character_id.reset();
+        }
+    }
     const bool presentation_changed = apply_notice(outcome.session.notice);
     // The state effect is in-process only; the serialized result carries just
     // clear_input and the notice.

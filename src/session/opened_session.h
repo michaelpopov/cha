@@ -3,7 +3,9 @@
 #include "session/session_controller.h"
 #include "session/session_identity.h"
 
+#include <functional>
 #include <memory>
+#include <string_view>
 
 namespace cha {
 
@@ -12,6 +14,10 @@ namespace cha {
 struct OpenedSession {
     SessionDescriptor descriptor;
     std::unique_ptr<SessionController> controller;
+    // Saves a changed default character to the forum's config, on the owner
+    // thread. Every forum gets one; built-in forums have no config file, so the
+    // call fails there and the session reports the change as unsaved.
+    std::function<void(std::string_view)> persist_default_character;
 };
 
 } // namespace cha

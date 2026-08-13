@@ -90,7 +90,12 @@ CommandResult handle_text_input(
     case CommandKind::characters:
         result.session = controller.character_information(); break;
     case CommandKind::set_default:
-        result.session = controller.set_default_character(command.handle); break;
+        result.session = controller.set_default_character(command.handle);
+        if (requires_snapshot(result.session)) {
+            result.persist_default_character_id =
+                std::string(controller.view().default_character_id);
+        }
+        break;
     case CommandKind::unknown:
         result.clear_input = true;
         result.session.notice = "Unknown command. Commands: " + command_names();
