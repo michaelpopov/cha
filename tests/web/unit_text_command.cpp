@@ -66,6 +66,17 @@ TEST(Command, ParsesTheDefaultCharacterCommandHandle) {
     EXPECT_EQ(punctuated.handle, "Ismael,");
 }
 
+TEST(Command, ParsesThePersonaCommandHandle) {
+    const Command named = parse_command("/!Reader");
+    EXPECT_EQ(named.kind, CommandKind::set_persona);
+    EXPECT_EQ(named.handle, "Reader");
+    EXPECT_TRUE(named.argument.empty());
+
+    const Command by_id = parse_command("/!michael");
+    EXPECT_EQ(by_id.kind, CommandKind::set_persona);
+    EXPECT_EQ(by_id.handle, "michael");
+}
+
 TEST(Command, ReportsABareSlashAtAsSetDefaultWithoutAHandle) {
     const Command bare = parse_command("/@");
     EXPECT_EQ(bare.kind, CommandKind::set_default);
@@ -89,7 +100,7 @@ TEST(Command, SeparatesTheDefaultCharacterHandleFromAnArgument) {
 TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
     EXPECT_EQ(
         command_names(),
-        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /characters, /agents, /@Name, /stop, /exit");
+        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /characters, /agents, /@Name, /!Name, /stop, /exit");
 }
 
 } // namespace

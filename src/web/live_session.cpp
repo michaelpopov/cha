@@ -281,6 +281,7 @@ bool LiveSession::open_controller() {
         descriptor_ = std::move(opened.descriptor);
         controller_ = std::move(opened.controller);
         persist_default_character_ = std::move(opened.persist_default_character);
+        persist_default_persona_ = std::move(opened.persist_default_persona);
         return true;
     } catch (const std::bad_alloc&) {
         std::terminate();
@@ -439,7 +440,7 @@ void LiveSession::execute(OwnerCommand command) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) {
             return handle_text_input(
-                controller, descriptor_.forum_default_persona_id, std::move(value.text));
+                controller, controller.view().default_persona_id, std::move(value.text));
         } else if constexpr (std::is_same_v<T, StopCommand>) {
             return {.session = controller.request_stop()};
         } else if constexpr (std::is_same_v<T, SetDefaultCharacterCommand>) {
@@ -473,6 +474,19 @@ void LiveSession::execute(OwnerCommand command) {
             outcome.session.notice =
                 outcome.session.notice.value_or(std::string()) + " (not saved)";
             outcome.persist_default_character_id.reset();
+        }
+    }
+    if (outcome.persist_default_persona_id && persist_default_persona_) {
+        try {
+            persist_default_persona_(*outcome.persist_default_persona_id);
+        } catch (const std::bad_alloc&) {
+            throw;
+        } catch (const std::exception& error) {
+            log_warn(session_log(
+                identity_, "default_persona_not_saved " + std::string(error.what())));
+            outcome.session.notice =
+                outcome.session.notice.value_or(std::string()) + " (not saved)";
+            outcome.persist_default_persona_id.reset();
         }
     }
     const bool presentation_changed = apply_notice(outcome.session.notice);

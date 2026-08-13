@@ -7,7 +7,7 @@ std::string_view embedded_application_guide();
 
 const Persona& builtin_guest() {
     static const Persona guest{.id = std::string(guest_id), .display_name = std::string(guest_name),
-                               .prompt = "The current application user for this forum."};
+                               .prompt = "A special application user active before a forum is selected."};
     return guest;
 }
 

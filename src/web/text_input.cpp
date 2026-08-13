@@ -96,6 +96,13 @@ CommandResult handle_text_input(
                 std::string(controller.view().default_character_id);
         }
         break;
+    case CommandKind::set_persona:
+        result.session = controller.set_default_persona(command.handle);
+        if (requires_snapshot(result.session)) {
+            result.persist_default_persona_id =
+                std::string(controller.view().default_persona_id);
+        }
+        break;
     case CommandKind::unknown:
         result.clear_input = true;
         result.session.notice = "Unknown command. Commands: " + command_names();

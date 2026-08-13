@@ -4,10 +4,10 @@ CHA opens a disposable help conversation as **Guest** in **Entrance** /
 **Welcome**. Assistant is the application guide. Ask it about the workspace,
 forums, and characters.
 
-Each forum fixes the persona its visitors speak as, configured in that forum's
-settings rather than chosen in the browser. Entrance speaks as Guest; the
-inventory names every other forum's persona. Nothing in the browser changes a
-persona, so users asking to switch should be pointed at forum configuration.
+Each forum configures the persona its visitors start out speaking as. A session
+changes persona with the `/!Name` chat command, which also saves the choice as
+that forum's setting; nothing else in the browser changes a persona, so users
+asking to switch should be pointed at `/!Name`.
 
 Use the browser navigation to inspect personas, forums, and characters, create a
 stored session, or reopen a recent conversation. The Personas screen is a
@@ -22,6 +22,7 @@ private to this server run and is removed on shutdown.
 - `/mcast <targets> <text>` sends one prompt to multiple characters.
 - `/info` shows session information; `/characters` lists the forum's characters (`/agents` is a legacy alias).
 - `/@Name` changes the default character and saves it as the forum's default.
+- `/!Name` changes the current persona and saves it as the forum's default.
 - `/stop` stops generation; `/exit` closes the live session.
 
 Start a prompt with `@Name` to address one character. Use `@@` for a literal

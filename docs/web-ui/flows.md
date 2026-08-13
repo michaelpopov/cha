@@ -68,20 +68,21 @@ icon action paired with the sidebar control and never calls the server.
 flowchart LR
     Sidebar["Sidebar"] -->|"Personas"| Personas["Personas: workspace catalog, read-only"]
     Personas -.-> Nothing["Selects nothing; changes no attribution"]
-    Config["Forum config.toml default_persona"] --> Open["Session opens with a one-persona roster"]
-    Open --> Descriptor["SessionDescriptor carries ID and display name"]
-    Descriptor --> Status["Chat status: From"]
-    Submit["Submitted message carries text only"] --> Resolve["Session resolves its own forum persona"]
+    Config["Forum config.toml default_persona"] --> Open["Session opens on that persona"]
+    Open --> Current["Controller holds the current persona"]
+    Command["Chat command /!Name"] --> Current
+    Current --> Status["Chat status: From"]
+    Current --> Save["Saved back to forum config.toml"]
+    Submit["Submitted message carries text only"] --> Resolve["Session resolves its current persona"]
     Resolve --> Session["Session records author"]
 ```
 
-Attribution is settled when the session opens, not per submission: the roster it
-captured holds one persona, so every message in that session has the same
-author. Moving to a forum with a different `default_persona` changes the author
-by opening a session there. The browser supplies neither the ID nor the display
-name that is persisted with the message, and browsing the persona catalog
-changes nothing: the chat status line is the only place the browser reports who
-the active conversation speaks as.
+Attribution is server-side, never per submission: a session opens on its forum's
+`default_persona` and keeps that author until `/!Name` selects another, which
+also saves the choice for the next session in that forum. The browser supplies
+neither the ID nor the display name that is persisted with the message, and
+browsing the persona catalog changes nothing: the chat status line is the only
+place the browser reports who the active conversation speaks as.
 
 ## Chat routing status
 
@@ -102,7 +103,7 @@ flowchart TD
     Target["Target chooser"] -->|"Select character"| Request["Request default-character change"]
     Request --> Snapshot["Snapshot or event confirms default character"]
     Snapshot --> Status["Update read-only To status"]
-    Idle["Generation inactive"] --> Send["Send draft; the forum persona authors it"]
+    Idle["Generation inactive"] --> Send["Send draft; the current persona authors it"]
     Active["Generation active"] --> Stop["Same button becomes Stop"]
     Stop --> Stopping["Request stop; wait for authoritative inactive state"]
 ```

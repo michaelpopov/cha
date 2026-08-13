@@ -36,9 +36,9 @@ enum class ErrorCode {
 
 // The lobby publishes the workspace-wide persona roster for discovery: the
 // browser lists these and reads one persona's Markdown from
-// /api/v1/personas/{id}. Nothing here selects attribution — a session resolves
-// the persona its own forum configures, and a session snapshot deliberately
-// does not carry this roster.
+// /api/v1/personas/{id}. A session starts from its forum configuration and can
+// change its current attribution with /!Name; a session snapshot deliberately
+// does not carry the full roster.
 struct PersonaSummary {
     std::string id;
     std::string display_name;
@@ -92,8 +92,8 @@ struct SessionSnapshot {
     bool operator==(const SessionSnapshot&) const = default;
 };
 
-// Author attribution is not carried here: LiveSession applies the persona its
-// forum configures, so a submitter cannot choose one.
+// Author attribution is not carried here: LiveSession applies its current
+// session persona, so a submitter cannot choose one.
 struct RawCommand {
     std::string text;
 };
@@ -140,6 +140,7 @@ struct CommandResult {
     // A successful default-character command also carries the canonical ID so
     // the session owner can update the forum configuration before publishing.
     std::optional<CharacterId> persist_default_character_id;
+    std::optional<std::string> persist_default_persona_id;
 };
 
 struct CreateSessionSuccess {

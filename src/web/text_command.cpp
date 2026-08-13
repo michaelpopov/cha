@@ -29,6 +29,7 @@ constexpr std::array descriptors{
     // Compatibility alias retained for existing scripts and muscle memory.
     CommandDescriptor{"/agents", CommandKind::characters},
     CommandDescriptor{"/@", CommandKind::set_default, CommandForm::handle_suffix},
+    CommandDescriptor{"/!", CommandKind::set_persona, CommandForm::handle_suffix},
     CommandDescriptor{"/stop", CommandKind::stop},
     CommandDescriptor{"/exit", CommandKind::exit},
 };

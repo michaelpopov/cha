@@ -53,7 +53,7 @@ ID-only reference variants solely to avoid repeating display data.
 
 ## Persona attribution
 
-A persona belongs to a forum, not to the submitter. An input request carries
+A persona belongs to the session, not to the submitter. An input request carries
 text only:
 
 ```json
@@ -63,10 +63,10 @@ text only:
 A body naming a persona is rejected with `400 bad_request`, so a client written
 against an older shape fails visibly rather than being silently reattributed.
 
-The session applies the persona ID from its own `SessionDescriptor`.
+The session applies its own current persona, which starts as the forum's
+configured one and changes only through the `/!Name` chat command.
 `SessionController` resolves it to the server-owned ID and display name against
-the roster captured when the web session opened, which holds that forum's
-configured persona and nothing else.
+the workspace roster, so the browser never names the author.
 
 Persona prompt context may be captured when a session opens. It is model context
 only and never controls message attribution.

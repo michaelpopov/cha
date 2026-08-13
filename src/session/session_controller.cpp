@@ -2,6 +2,7 @@
 
 #include "session/session_label.h"
 #include "util/logging.h"
+#include "util/text.h"
 
 #include <algorithm>
 #include <exception>
@@ -64,12 +65,44 @@ void require_character_count(std::size_t count) {
     }
 }
 
+// An exact ID or display name wins outright; otherwise every prefix match is
+// collected so an ambiguous handle can name its candidates.
+std::vector<const Persona*> matching_personas(
+    const PersonaRoster& personas,
+    std::string_view handle) {
+    for (const Persona& persona : personas) {
+        if (ascii_iequals(persona.id, handle)
+            || ascii_iequals(persona.display_name, handle)) {
+            return {&persona};
+        }
+    }
+    std::vector<const Persona*> matches;
+    for (const Persona& persona : personas) {
+        if (starts_with_folded(persona.id, handle)
+            || starts_with_folded(persona.display_name, handle)
+            || starts_with_name_word(persona.display_name, handle)) {
+            matches.push_back(&persona);
+        }
+    }
+    return matches;
+}
+
+std::string persona_handle_list(const PersonaRoster& personas) {
+    std::string result;
+    for (const Persona& persona : personas) {
+        if (!result.empty()) result += ", ";
+        result += "!" + persona.display_name;
+    }
+    return result;
+}
+
 } // namespace
 
 std::unique_ptr<SessionController> SessionController::from_shared_definitions(
     std::vector<CharacterDefinition> definitions,
     SharedPersonaRoster personas,
     ParticipantId initial_default_character_id,
+    std::string initial_default_persona_id,
     std::filesystem::path database_path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -79,6 +112,7 @@ std::unique_ptr<SessionController> SessionController::from_shared_definitions(
     if (!lease.active()) throw std::invalid_argument("Production session controllers require an active session lease");
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions), std::move(personas), std::move(initial_default_character_id),
+        std::move(initial_default_persona_id),
         std::move(database_path), std::move(lease), notifier, std::move(restored)));
 }
 
@@ -94,6 +128,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
         std::move(definitions),
         std::make_shared<const PersonaRoster>(std::move(personas)),
         std::move(initial_default_character_id),
+        {},
         std::move(database_path),
         SessionLease::inactive_for_testing(),
         notifier,
@@ -113,6 +148,7 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
         std::move(backends),
         std::move(personas),
         std::move(initial_default_character_id),
+        {},
         std::move(database_path),
         notifier,
         std::move(restored),
@@ -123,6 +159,7 @@ SessionController::SessionController(
     std::vector<CharacterDefinition> definitions,
     SharedPersonaRoster personas,
     ParticipantId initial_default_character_id,
+    std::string initial_default_persona_id,
     std::filesystem::path path,
     SessionLease lease,
     WakeNotifier& notifier,
@@ -134,13 +171,14 @@ SessionController::SessionController(
       characters_(make_forum_characters(generation_executor_.runtime_info())),
       personas_(std::move(personas)),
       default_character_id_(std::move(initial_default_character_id)) {
-    initialize(std::move(restored));
+    initialize(std::move(restored), initial_default_persona_id);
 }
 
 SessionController::SessionController(
     std::vector<std::unique_ptr<ModelBackend>> backends,
     PersonaRoster personas,
     ParticipantId initial_default_character_id,
+    std::string initial_default_persona_id,
     std::filesystem::path path,
     WakeNotifier& notifier,
     SessionRestore restored,
@@ -153,7 +191,7 @@ SessionController::SessionController(
       personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
       default_character_id_(std::move(initial_default_character_id)),
       before_activation_(std::move(before_activation)) {
-    initialize(std::move(restored));
+    initialize(std::move(restored), initial_default_persona_id);
 }
 
 SessionController::~SessionController() {
@@ -163,10 +201,28 @@ SessionController::~SessionController() {
     }
 }
 
-void SessionController::initialize(SessionRestore restored) {
+void SessionController::initialize(
+    SessionRestore restored,
+    std::string_view initial_persona_id) {
     if (!characters_.find(default_character_id_)) {
         throw std::invalid_argument(
             "Initial default character ID is not in the forum roster");
+    }
+    if (personas_->empty()) {
+        throw std::invalid_argument("Session controller requires at least one persona");
+    }
+    // Resolved once: the roster never changes, so the current persona is a
+    // borrowed entry rather than an ID looked up again on every read.
+    if (initial_persona_id.empty()) {
+        default_persona_ = &personas_->front();
+    } else {
+        const auto found =
+            std::ranges::find(*personas_, initial_persona_id, &Persona::id);
+        if (found == personas_->end()) {
+            throw std::invalid_argument(
+                "Initial default persona ID is not in the persona roster");
+        }
+        default_persona_ = &*found;
     }
     transcript_.replace_entries(std::move(restored.entries));
     next_request_id_ = restored.next_request_id;
@@ -215,6 +271,8 @@ ControllerView SessionController::view() const noexcept {
     return {
         .characters = characters_.all(),
         .default_character_id = default_character_id_,
+        .default_persona_id = default_persona_->id,
+        .default_persona_display_name = default_persona_->display_name,
         .transcript = transcript_.view(),
         .generation = generation_view(),
     };
@@ -696,6 +754,36 @@ ControllerUpdate SessionController::set_default_character_by_id(std::string_view
     default_character_id_ = character->id;
     require_snapshot(update);
     update.notice = "Default character is now " + character->display_name;
+    return update;
+}
+
+ControllerUpdate SessionController::set_default_persona(std::string_view handle) {
+    if (busy()) {
+        return busy_notice();
+    }
+    ControllerUpdate update{.input_consumed = true};
+    if (handle.empty()) {
+        update.notice = "Usage: /!PersonaName";
+        return update;
+    }
+    const std::vector<const Persona*> matches = matching_personas(*personas_, handle);
+    if (matches.empty()) {
+        update.notice = "Unknown persona !" + std::string(handle)
+            + ". Personas in this workspace: " + persona_handle_list(*personas_);
+        return update;
+    }
+    if (matches.size() > 1) {
+        update.notice = "Ambiguous persona !" + std::string(handle) + ": matches ";
+        for (std::size_t index = 0; index < matches.size(); ++index) {
+            if (index) update.notice->append(", ");
+            update.notice->append("!" + matches[index]->display_name);
+        }
+        update.notice->append(". Type more of the name.");
+        return update;
+    }
+    default_persona_ = matches.front();
+    require_snapshot(update);
+    update.notice = "Current persona is now " + default_persona_->display_name;
     return update;
 }
 

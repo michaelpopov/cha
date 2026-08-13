@@ -31,6 +31,8 @@ struct ControllerGenerationView {
 struct ControllerView {
     std::span<const CharacterMetadata> characters;
     std::string_view default_character_id;
+    std::string_view default_persona_id;
+    std::string_view default_persona_display_name;
     TranscriptView transcript;
     ControllerGenerationView generation;
 };

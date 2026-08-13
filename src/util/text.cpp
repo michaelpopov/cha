@@ -37,4 +37,49 @@ std::string fold_ascii(std::string_view value) {
     return result;
 }
 
+namespace {
+
+char fold_character(char value) {
+    return value >= 'A' && value <= 'Z'
+        ? static_cast<char>(value - 'A' + 'a')
+        : value;
+}
+
+} // namespace
+
+bool ascii_iequals(std::string_view left, std::string_view right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (fold_character(left[index]) != fold_character(right[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool starts_with_folded(std::string_view value, std::string_view prefix) {
+    return value.size() >= prefix.size()
+        && ascii_iequals(value.substr(0, prefix.size()), prefix);
+}
+
+bool starts_with_name_word(std::string_view name, std::string_view handle) {
+    std::size_t start = 0;
+    while (start < name.size()) {
+        while (start < name.size() && is_space(name[start])) {
+            ++start;
+        }
+        const std::size_t end = start;
+        while (start < name.size() && !is_space(name[start])) {
+            ++start;
+        }
+        if (start > end
+            && starts_with_folded(name.substr(end, start - end), handle)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace cha

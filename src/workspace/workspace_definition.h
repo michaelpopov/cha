@@ -72,6 +72,7 @@ public:
     // saved /@ change applies to the next session without a restart. Falls back
     // to the value loaded at startup when the file cannot be used.
     CharacterId forum_default_character(std::string_view forum_id) const;
+    std::string forum_default_persona(std::string_view forum_id) const;
 
     // The only path-bearing values the model publishes, needed once by startup
     // to construct SessionRepository.
@@ -93,6 +94,9 @@ private:
     void persist_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id) const;
+    void persist_forum_default_persona(
+        std::string_view forum_id,
+        std::string_view persona_id) const;
 
     WorkspaceConfig config_;
     SharedPersonaRoster personas_;

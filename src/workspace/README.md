@@ -43,11 +43,11 @@ and the startup-only `ForumSessionDirectory` values used to build
 
 `open_session()` is deliberately small: find the forum, copy its preloaded
 definitions, ask `SessionRepository` to prepare storage, build the
-`SessionDescriptor`, and construct the controller with a roster holding that
-forum's `default_persona` alone. The whole roster is never handed to a session,
-so the persona a forum configures is the only one its transcripts can attribute.
-It also supplies a callback that lets the live-session owner save a changed
-default character without exposing workspace paths to web routes.
+`SessionDescriptor`, and construct the controller with the workspace persona
+roster and that forum's configured current persona. This lets `/!Name` switch
+the live session's attribution while preserving the selected ID in its forum
+config. It also supplies callbacks that let the live-session owner save changed
+character and persona defaults without exposing workspace paths to web routes.
 Entrance and Welcome need no branch — Entrance is an ordinary
 forum in the model and Welcome an ordinary prepared session in the repository.
 

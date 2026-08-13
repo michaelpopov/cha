@@ -18,6 +18,7 @@ struct OpenedSession {
     // thread. Every forum gets one; built-in forums have no config file, so the
     // call fails there and the session reports the change as unsaved.
     std::function<void(std::string_view)> persist_default_character;
+    std::function<void(std::string_view)> persist_default_persona;
 };
 
 } // namespace cha

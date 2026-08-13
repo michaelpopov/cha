@@ -18,10 +18,9 @@ OpenedSession open_session(
     if (forum == nullptr) {
         throw ForumNotFoundError("Forum '" + identity.forum_id + "' does not exist");
     }
-    const Persona* const persona = model.find_persona(forum->default_persona_id);
-    if (persona == nullptr) {
-        throw std::logic_error("Forum default persona is absent from the workspace model");
-    }
+    // Both branches of forum_default_persona() return a persona the workspace
+    // resolved, and the controller rejects one that is not in the roster.
+    const std::string default_persona = model.forum_default_persona(forum->id);
     std::vector<CharacterDefinition> definitions =
         model.copy_definitions_for(forum->id);
     const CharacterId default_character = model.forum_default_character(forum->id);
@@ -33,13 +32,12 @@ OpenedSession open_session(
             .forum_display_name = forum->display_name,
             .session_label = prepared.label,
             .forum_default_character_id = default_character,
-            .forum_default_persona_id = forum->default_persona_id,
-            .forum_default_persona_display_name = persona->display_name,
         },
         .controller = SessionController::from_shared_definitions(
             std::move(definitions),
-            std::make_shared<const PersonaRoster>(PersonaRoster{*persona}),
+            model.personas(),
             default_character,
+            default_persona,
             prepared.database_path,
             std::move(prepared.lease),
             notifier,
@@ -47,6 +45,10 @@ OpenedSession open_session(
         .persist_default_character = [&model, forum_id = forum->id](
                                          std::string_view character_id) {
             model.persist_forum_default_character(forum_id, character_id);
+        },
+        .persist_default_persona = [&model, forum_id = forum->id](
+                                       std::string_view persona_id) {
+            model.persist_forum_default_persona(forum_id, persona_id);
         },
     };
 }

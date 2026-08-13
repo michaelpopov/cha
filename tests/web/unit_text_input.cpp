@@ -170,6 +170,20 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_EQ(set_default.session.notice, "Default character is now Guide");
     EXPECT_EQ(set_default.persist_default_character_id, "guide-id");
 
+    auto persona_controller = test::from_definitions_for_testing(
+        std::vector<CharacterDefinition>{definition()},
+        PersonaRoster{
+            {.id = "reader", .display_name = "Reader"},
+            {.id = "operator", .display_name = "Operator"},
+        },
+        temporary.path,
+        notifier());
+    const CommandResult set_persona =
+        handle_text_input(*persona_controller, "reader", "/!ope");
+    EXPECT_EQ(set_persona.session.notice, "Current persona is now Operator");
+    EXPECT_EQ(set_persona.persist_default_persona_id, "operator");
+    persona_controller->shutdown();
+
     const CommandResult idle_stop =
         handle_text_input(*controller, "operator", "/stop");
     EXPECT_TRUE(idle_stop.clear_input);

@@ -32,6 +32,44 @@ using Json = nlohmann::ordered_json;
 // preserves both updates as complete TOML documents.
 std::mutex forum_config_write_mutex;
 
+// Saves one setting into a forum's config.toml, leaving every other key as the
+// author wrote it. `superseded_key` names an accepted legacy spelling to drop,
+// because retaining both would make the next workspace load reject the file.
+void write_forum_config_setting(
+    const std::filesystem::path& path,
+    std::string_view key,
+    std::string_view value,
+    std::string_view superseded_key = {}) {
+    std::lock_guard lock(forum_config_write_mutex);
+    toml::table table;
+    {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            throw std::runtime_error(
+                "Failed to read forum config '" + utf8_path(path) + "'");
+        }
+        table = toml::parse(input, utf8_path(path));
+    }
+    if (!superseded_key.empty()) table.erase(superseded_key);
+    table.insert_or_assign(key, std::string(value));
+
+    // Written beside the original and renamed over it: an interrupted write
+    // must not leave a config that the next start cannot read. A reader either
+    // sees the whole old document or the whole new one.
+    std::filesystem::path temporary = path;
+    temporary += ".new";
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output << table << '\n';
+        output.flush();
+        if (!output) {
+            throw std::runtime_error(
+                "Failed to write forum config '" + utf8_path(path) + "'");
+        }
+    }
+    std::filesystem::rename(temporary, path);
+}
+
 // A custom forum while it is still being loaded. It keeps the directory only
 // long enough to read prompts and derive the sessions path; the published
 // ForumInfo stays path-free.
@@ -600,12 +638,9 @@ WorkspaceDefinition WorkspaceDefinition::load(
     // Every configured forum is resolved now, so an invalid member override or
     // prompt cannot wait until someone opens that forum to be discovered.
     for (const LoadedForum& forum : forums) {
-        // The default persona was checked against the effective roster above,
-        // so this forum's sole participant is known to resolve.
-        const Persona& persona = *model.find_persona(forum.info.default_persona_id);
         try {
             std::vector<CharacterDefinition> definitions = load_forum_definitions(
-                forum, PersonaRoster{persona}, definitions_directory, model.config_.provider);
+                forum, *model.personas_, definitions_directory, model.config_.provider);
             for (const CharacterDefinition& definition : definitions) {
                 // A character may participate in multiple forums. The detail
                 // endpoint is workspace-wide, so retain the first effective
@@ -759,6 +794,33 @@ CharacterId WorkspaceDefinition::forum_default_character(
     }
 }
 
+std::string WorkspaceDefinition::forum_default_persona(std::string_view forum_id) const {
+    const ForumInfo* const forum = find_forum(forum_id);
+    if (forum == nullptr) {
+        throw ForumNotFoundError("Forum '" + std::string(forum_id) + "' does not exist");
+    }
+    const auto config = forum_config_paths_.find(std::string(forum_id));
+    if (config == forum_config_paths_.end()) return forum->default_persona_id;
+    try {
+        std::ifstream input(config->second, std::ios::binary);
+        if (!input) throw std::runtime_error("Failed to read forum config");
+        const toml::table table = toml::parse(input, utf8_path(config->second));
+        const std::optional<std::string> configured =
+            table["default_persona"].value<std::string>();
+        if (!configured) return forum->default_persona_id;
+        if (find_persona(*configured) == nullptr) {
+            throw std::runtime_error(
+                "default_persona '" + *configured + "' is not in the workspace");
+        }
+        return *configured;
+    } catch (const std::exception& error) {
+        log_warn(
+            "Forum '" + std::string(forum_id) + "' keeps its loaded default persona '"
+            + forum->default_persona_id + "': " + error.what());
+        return forum->default_persona_id;
+    }
+}
+
 void WorkspaceDefinition::persist_forum_default_character(
     std::string_view forum_id,
     std::string_view character_id) const {
@@ -772,37 +834,23 @@ void WorkspaceDefinition::persist_forum_default_character(
         throw std::invalid_argument(
             "Character '" + std::string(character_id) + "' is not a forum member");
     }
+    write_forum_config_setting(
+        config->second, "default_character", character_id, "default_agent");
+}
 
-    std::lock_guard lock(forum_config_write_mutex);
-    toml::table table;
-    {
-        std::ifstream input(config->second, std::ios::binary);
-        if (!input) {
-            throw std::runtime_error(
-                "Failed to read forum config '" + utf8_path(config->second) + "'");
-        }
-        table = toml::parse(input, utf8_path(config->second));
+void WorkspaceDefinition::persist_forum_default_persona(
+    std::string_view forum_id,
+    std::string_view persona_id) const {
+    const auto config = forum_config_paths_.find(std::string(forum_id));
+    if (config == forum_config_paths_.end()) {
+        throw std::runtime_error(
+            "Forum '" + std::string(forum_id) + "' has no writable configuration");
     }
-    // Writing the current spelling also migrates an accepted legacy setting;
-    // retaining both would make the next workspace load reject the file.
-    table.erase("default_agent");
-    table.insert_or_assign("default_character", std::string(character_id));
-
-    // Written beside the original and renamed over it: an interrupted write
-    // must not leave a config that the next start cannot read. A reader either
-    // sees the whole old document or the whole new one.
-    std::filesystem::path temporary = config->second;
-    temporary += ".new";
-    {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        output << table << '\n';
-        output.flush();
-        if (!output) {
-            throw std::runtime_error(
-                "Failed to write forum config '" + utf8_path(config->second) + "'");
-        }
+    if (find_persona(persona_id) == nullptr) {
+        throw std::invalid_argument(
+            "Persona '" + std::string(persona_id) + "' is not in the workspace");
     }
-    std::filesystem::rename(temporary, config->second);
+    write_forum_config_setting(config->second, "default_persona", persona_id);
 }
 
 } // namespace cha

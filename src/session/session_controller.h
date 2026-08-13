@@ -26,8 +26,8 @@
 namespace cha {
 
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
-// halves: read-only session state (transcript, forum characters, default character, generation
-// status) and commands (submit a prompt, clear, stop, switch the default character, drain
+// halves: read-only session state (transcript, forum characters, defaults, generation
+// status) and commands (submit a prompt, clear, stop, switch defaults, drain
 // generation events),
 // each returning a ControllerUpdate instead of touching a frontend. It owns the Transcript,
 // SessionJournal, GenerationExecutor, and the one in-flight GenerationBatch. Command syntax,
@@ -42,6 +42,7 @@ public:
         std::vector<CharacterDefinition> definitions,
         SharedPersonaRoster personas,
         CharacterId initial_default_character_id,
+        std::string initial_default_persona_id,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
@@ -95,6 +96,7 @@ public:
     [[nodiscard]] ControllerUpdate character_information();
     [[nodiscard]] ControllerUpdate set_default_character(std::string_view handle);
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
+    [[nodiscard]] ControllerUpdate set_default_persona(std::string_view handle);
     [[nodiscard]] ControllerUpdate request_stop();
     void rename(std::string_view label);
     [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
@@ -115,6 +117,7 @@ private:
         std::vector<CharacterDefinition> definitions,
         SharedPersonaRoster personas,
         CharacterId initial_default_character_id,
+        std::string initial_default_persona_id,
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
@@ -123,12 +126,13 @@ private:
         std::vector<std::unique_ptr<ModelBackend>> backends,
         PersonaRoster personas,
         CharacterId initial_default_character_id,
+        std::string initial_default_persona_id,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored,
         ActivationHook before_activation);
 
-    void initialize(SessionRestore restored);
+    void initialize(SessionRestore restored, std::string_view initial_persona_id);
     [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
     bool busy() const noexcept;
     ControllerUpdate busy_notice() const;
@@ -182,6 +186,9 @@ private:
     ForumCharacters characters_;
     SharedPersonaRoster personas_;
     CharacterId default_character_id_;
+    // Borrowed from personas_, which is immutable and outlives the controller,
+    // so the view can hand out the persona's own strings.
+    const Persona* default_persona_{};
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;

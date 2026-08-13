@@ -75,7 +75,7 @@ Chat places one compact, read-only status line directly below the prompt compose
 `<Forum>   From: <Persona>   To: <Current default character in the forum>`
 
 - Forum is the active conversation's forum.
-- From is the active conversation's forum persona, taken from the session snapshot.
+- From is the active conversation's current persona, taken from the session snapshot.
 - To is the current default character for the live session.
 - A live change to the session's default character updates To from the authoritative session state.
 - The line is not an editor or navigation control.

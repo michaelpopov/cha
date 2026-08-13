@@ -10,8 +10,9 @@ info:
     routes. Operations on an open session are scoped beneath
     `/s/{forum_id}/{session_id}/api/v1`.
 
-    The API has no authentication mechanism. Each forum's configured persona
-    is used for transcript attribution. JSON mutations that include an `Origin`
+    The API has no authentication mechanism. Transcript attribution uses the
+    session's current persona, which starts as its forum's configured one and
+    changes only through the `/!Name` chat command. JSON mutations that include an `Origin`
     header require that origin's authority to equal `Host`.
 servers:
   - url: http://{host}:{port}

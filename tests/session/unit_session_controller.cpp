@@ -387,6 +387,23 @@ TEST(SessionController, RejectsEmptyCharacterConfigurationWithExecutorMessage) {
     }
 }
 
+TEST(SessionController, RejectsAnEmptyPersonaRoster) {
+    TemporaryJournal temporary;
+
+    try {
+        (void)test::from_backends_for_testing(
+            test::one_backend(std::make_unique<ScriptedBackend>()),
+            PersonaRoster{},
+            temporary.path,
+            notifier());
+        FAIL() << "Expected empty-persona-roster rejection";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_EQ(
+            error.what(),
+            std::string("Session controller requires at least one persona"));
+    }
+}
+
 TEST(SessionController, RejectsUnknownInitialDefaultCharacterID) {
     TemporaryJournal temporary;
 
@@ -1787,6 +1804,37 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
     EXPECT_EQ(
         load_transcript_entries(temporary.path),
         entries_before_agents);
+}
+
+TEST(SessionController, ResolvesCurrentPersonaByIdOrDisplayNamePrefix) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        PersonaRoster{
+            {.id = "michael", .display_name = "Michael"},
+            {.id = "michelle", .display_name = "Michelle"},
+            {.id = "reader", .display_name = "Reader"},
+        },
+        temporary.path,
+        notifier());
+
+    const ControllerUpdate by_name = controller->set_default_persona("Rea");
+    EXPECT_TRUE(by_name.input_consumed);
+    EXPECT_TRUE(requires_snapshot(by_name));
+    EXPECT_EQ(by_name.notice, "Current persona is now Reader");
+    EXPECT_EQ(controller->view().default_persona_id, "reader");
+    EXPECT_EQ(controller->view().default_persona_display_name, "Reader");
+
+    const ControllerUpdate by_id = controller->set_default_persona("MICHAEL");
+    EXPECT_EQ(by_id.notice, "Current persona is now Michael");
+    EXPECT_EQ(controller->view().default_persona_id, "michael");
+
+    EXPECT_EQ(
+        controller->set_default_persona("mic").notice,
+        "Ambiguous persona !mic: matches !Michael, !Michelle. Type more of the name.");
+    EXPECT_EQ(
+        controller->set_default_persona("nobody").notice,
+        "Unknown persona !nobody. Personas in this workspace: !Michael, !Michelle, !Reader");
 }
 
 // Foreign-history addressing is a transcript concern; covered in persona_session/transcript tests.

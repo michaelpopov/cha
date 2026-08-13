@@ -32,6 +32,7 @@ The chat input also accepts these controller-level commands:
 | `/mcast` | Send one prompt to multiple forum characters. |
 | `/info`, `/characters` | Inspect the session and its characters (`/agents` remains an alias). |
 | `/@Name` | Change and save the forum's default character. |
+| `/!Name` | Change and save the forum's current persona. |
 | `/stop` | Stop generation. |
 | `/exit` | Close the live session. |
 
@@ -55,6 +56,11 @@ changes the live session immediately and saves that ID to the forum config, so
 the next session in that forum starts with it. The setting is read when a session
 opens, so editing the file by hand takes effect without a restart; the rest of
 the workspace is still read only at startup.
+
+`/!Name` selects the persona speaking for the current session. It accepts an
+unambiguous, case-insensitive full or partial persona ID or display name, then
+saves the selected ID as `default_persona` in the forum config. Later prompts
+in the session are attributed to that persona.
 
 `workspace.toml` supplies provider and diagnostic logging settings:
 

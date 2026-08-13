@@ -283,7 +283,9 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     auto guide = std::make_shared<test::BackendControls>();
     auto scribe = std::make_shared<test::BackendControls>();
     std::optional<std::string> persisted_default;
-    SessionOpener opener = [path = file.path(), guide, scribe, &persisted_default](
+    std::optional<std::string> persisted_persona;
+    SessionOpener opener = [path = file.path(), guide, scribe, &persisted_default,
+                             &persisted_persona](
                                const SessionIdentity& identity,
                                WakeNotifier& notifier) {
         std::vector<std::unique_ptr<ModelBackend>> backends;
@@ -293,6 +295,9 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
             identity, path, notifier, std::move(backends));
         opened.persist_default_character = [&persisted_default](std::string_view id) {
             persisted_default = std::string(id);
+        };
+        opened.persist_default_persona = [&persisted_persona](std::string_view id) {
+            persisted_persona = std::string(id);
         };
         return opened;
     };
@@ -308,6 +313,10 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(RawCommand{"/@Scribe"}, 2s)));
     EXPECT_EQ(persisted_default, "scribe");
+
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(RawCommand{"/!Rea"}, 2s)));
+    EXPECT_EQ(persisted_persona, "reader");
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(SetDefaultCharacterCommand{"guide"}, 2s)));

@@ -13,31 +13,6 @@
 namespace cha {
 namespace {
 
-bool ascii_iequals(std::string_view left, std::string_view right) {
-    if (left.size() != right.size()) {
-        return false;
-    }
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        char left_character = left[index];
-        char right_character = right[index];
-        if (left_character >= 'A' && left_character <= 'Z') {
-            left_character = static_cast<char>(left_character - 'A' + 'a');
-        }
-        if (right_character >= 'A' && right_character <= 'Z') {
-            right_character = static_cast<char>(right_character - 'A' + 'a');
-        }
-        if (left_character != right_character) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool starts_with_folded(std::string_view value, std::string_view prefix) {
-    return value.size() >= prefix.size()
-        && ascii_iequals(value.substr(0, prefix.size()), prefix);
-}
-
 std::string_view trim_punctuation(std::string_view handle) {
     while (!handle.empty()
            && std::string_view(",.;:!?").find(handle.back())
@@ -59,24 +34,6 @@ bool matches_name_word(std::string_view name, std::string_view handle) {
         }
         if (start > end
             && ascii_iequals(name.substr(end, start - end), handle)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool starts_with_name_word(std::string_view name, std::string_view handle) {
-    std::size_t start = 0;
-    while (start < name.size()) {
-        while (start < name.size() && is_space(name[start])) {
-            ++start;
-        }
-        const std::size_t end = start;
-        while (start < name.size() && !is_space(name[start])) {
-            ++start;
-        }
-        if (start > end
-            && starts_with_folded(name.substr(end, start - end), handle)) {
             return true;
         }
     }

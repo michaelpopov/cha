@@ -19,7 +19,8 @@ HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the s
 a `SessionController`; HTTP workers exchange only owning commands and results
 with it.
 
-A persona is a property of the forum, not of the submitter. `GET
+A persona is a property of the session, not of the submitter. A session starts
+from its forum's configured persona and `/!Name` changes it. `GET
 /api/v1/bootstrap` returns the immutable discovery view, including stable IDs,
 display summaries, built-ins, and Recent; it deliberately exposes no prompt
 text. Each `ForumSummary` carries its `default_persona_id` and
@@ -34,12 +35,11 @@ reading, not selection: neither endpoint takes part in attribution, and
 
 A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
 rejected rather than ignored, so a client written against an older shape fails
-visibly. `LiveSession` supplies the forum's persona ID from its
-`SessionDescriptor`, and `SessionController` resolves it against the roster
-captured when the web session opened — a roster holding that one persona, so a
-session cannot author as anyone else. A live session still serves one browser
-connection at a time, and the persona does not change for the life of the
-session.
+visibly. `LiveSession` supplies the session's current persona ID from the
+controller view, and `SessionController` resolves it against the workspace
+roster, so a submitter still cannot choose who a message is attributed to. A
+live session serves one browser connection at a time, and the persona changes
+only through `/!Name`, which also saves the choice as the forum's default.
 
 ## Chat input grammar
 

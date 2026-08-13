@@ -14,6 +14,8 @@ namespace {
 struct BackingState {
     std::vector<CharacterMetadata> characters;
     std::string default_character_id;
+    std::string default_persona_id{"persona"};
+    std::string default_persona_display_name{"Persona"};
     std::vector<cha::TranscriptEntry> transcript;
     std::string character_id;
     std::string character_display_name;
@@ -23,6 +25,8 @@ struct BackingState {
         return {
             .characters = characters,
             .default_character_id = default_character_id,
+            .default_persona_id = default_persona_id,
+            .default_persona_display_name = default_persona_display_name,
             .transcript = {
                 .entries = transcript,
                 .revision = 42,
@@ -48,6 +52,8 @@ BackingState populated_state() {
             {"guide", "guide", "Explains things"},
         },
         .default_character_id = "reviewer",
+        .default_persona_id = "reviewer-persona",
+        .default_persona_display_name = "Reviewer persona",
         .transcript = {
             {1, EntryKind::human, "persona", "Persona", "guide", "Guide", "Question", EntryStatus::complete, 7},
             {2, EntryKind::character, "guide", "Guide", {}, {}, "Partial", EntryStatus::streaming, 7},
@@ -66,8 +72,6 @@ SessionDescriptor test_descriptor() {
         .forum_display_name = "Forum",
         .session_label = "Label",
         .forum_default_character_id = "guide",
-        .forum_default_persona_id = "persona",
-        .forum_default_persona_display_name = "Persona",
     };
 }
 
@@ -85,7 +89,7 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
     EXPECT_EQ(snapshot, (SessionSnapshot{
         // A session descriptor carries no forum description, so a snapshot's
         // forum leaves it unset. Discovery is where it is read.
-        .forum = {"forum", "Forum", std::nullopt, "guide", "persona", "Persona", {
+        .forum = {"forum", "Forum", std::nullopt, "guide", "reviewer-persona", "Reviewer persona", {
             {"guide", "guide", "Explains things"},
             {"reviewer", "Reviewer", "Checks details"},
         }},

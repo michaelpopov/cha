@@ -235,8 +235,6 @@ inline SessionDescriptor test_descriptor(const SessionIdentity& identity) {
         .identity = identity,
         .forum_display_name = "Test forum " + identity.forum_id,
         .session_label = "Test session " + identity.session_id,
-        .forum_default_persona_id = "reader",
-        .forum_default_persona_display_name = "Reader",
     };
 }
 
@@ -328,6 +326,7 @@ inline OpenedSession open_leased_session(
             {unreachable_definition()},
             std::make_shared<const PersonaRoster>(reader_roster()),
             "guide",
+            "reader",
             database_path,
             std::move(lease),
             notifier,

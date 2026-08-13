@@ -58,7 +58,7 @@ TEST_F(SessionOpenTest, OpensAStoredSessionWithTheLoadedForumDefinitions) {
     EXPECT_EQ(opened.descriptor.forum_display_name, "The Lobby");
     EXPECT_EQ(opened.descriptor.session_label, "Stored");
     EXPECT_EQ(opened.descriptor.forum_default_character_id, "guide");
-    EXPECT_EQ(opened.descriptor.forum_default_persona_id, guest_id);
+    EXPECT_EQ(opened.controller->view().default_persona_id, guest_id);
     ASSERT_EQ(opened.controller->view().characters.size(), 1U);
     EXPECT_EQ(opened.controller->view().characters.front().id, "guide");
     EXPECT_EQ(opened.controller->view().characters.front().display_name, "Guide");
@@ -100,6 +100,42 @@ TEST_F(SessionOpenTest, PersistsAChangedForumDefaultCharacter) {
     EXPECT_EQ(reloaded.find_forum("lobby")->default_character_id, "alpha");
     EXPECT_EQ(reloaded.find_forum("lobby")->display_name, "The Lobby");
     EXPECT_EQ(reloaded.find_forum("lobby")->description, "Where it starts");
+}
+
+TEST_F(SessionOpenTest, PersistsAChangedForumDefaultPersona) {
+    const WorkspaceDefinition model = load_model();
+    const auto sessions = make_repository(model);
+    const StoredSession created = sessions->create("lobby", "Stored");
+    OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+
+    ASSERT_TRUE(opened.persist_default_persona);
+    opened.persist_default_persona("reader");
+    opened.controller->shutdown();
+    opened.controller.reset();
+
+    const WorkspaceDefinition reloaded = load_model();
+    ASSERT_NE(reloaded.find_forum("lobby"), nullptr);
+    EXPECT_EQ(reloaded.find_forum("lobby")->default_persona_id, "reader");
+    const auto reloaded_sessions = make_repository(reloaded);
+    OpenedSession later =
+        open_session(reloaded, *reloaded_sessions, created.identity, notifier_);
+    EXPECT_EQ(later.controller->view().default_persona_id, "reader");
+    later.controller->shutdown();
+}
+
+TEST_F(SessionOpenTest, KeepsTheLoadedPersonaWhenTheConfigNamesAStranger) {
+    const WorkspaceDefinition model = load_model();
+    const auto sessions = make_repository(model);
+    const StoredSession created = sessions->create("lobby", "Stored");
+    // Edited after startup to name a persona this workspace does not define.
+    std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_character = \"guide\"\n"
+        << "default_persona = \"stranger\"\n";
+
+    OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+
+    EXPECT_EQ(opened.controller->view().default_persona_id, guest_id);
+    opened.controller->shutdown();
 }
 
 TEST_F(SessionOpenTest, KeepsTheLoadedDefaultWhenTheConfigNamesAStranger) {
@@ -150,14 +186,14 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePathWithTheAssistantRoster) {
     EXPECT_EQ(opened.descriptor.forum_display_name, entrance_name);
     EXPECT_EQ(opened.descriptor.session_label, welcome_name);
     EXPECT_EQ(opened.descriptor.forum_default_character_id, assistant_id);
-    EXPECT_EQ(opened.descriptor.forum_default_persona_id, guest_id);
+    EXPECT_EQ(opened.controller->view().default_persona_id, guest_id);
     ASSERT_EQ(opened.controller->view().characters.size(), 1U);
     EXPECT_EQ(opened.controller->view().characters.front().id, assistant_id);
     EXPECT_EQ(opened.controller->view().default_character_id, assistant_id);
     opened.controller->shutdown();
 }
 
-TEST_F(SessionOpenTest, GivesEveryControllerOnlyItsForumPersona) {
+TEST_F(SessionOpenTest, GivesEveryControllerTheWorkspacePersonaRoster) {
     const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
@@ -165,19 +201,16 @@ TEST_F(SessionOpenTest, GivesEveryControllerOnlyItsForumPersona) {
     OpenedSession stored = open_session(model, *sessions, created.identity, notifier_);
     OpenedSession entrance = open_session(model, *sessions, welcome(), notifier_);
 
-    // The roster is observable through author resolution: the forum's Guest
-    // persona is known, while another workspace persona is not.
+    // A live session needs every workspace persona so /! can switch among
+    // them, while unknown personas remain rejected.
     for (const OpenedSession& opened : {std::cref(stored), std::cref(entrance)}) {
         SessionController& controller = *opened.controller;
         EXPECT_EQ(
             controller.submit_prompt("outsider", "Hello").notice.value_or(""),
             "Unknown persona ID 'outsider'");
-        EXPECT_EQ(
-            controller.submit_prompt("reader", "Hello").notice.value_or(""),
-            "Unknown persona ID 'reader'");
-        EXPECT_EQ(
-            controller.submit_prompt(guest_id, "Hello").notice.value_or(""),
-            "");
+        EXPECT_EQ(controller.set_default_persona("reader").notice,
+            "Current persona is now Reader");
+        EXPECT_EQ(controller.view().default_persona_id, "reader");
     }
     stored.controller->shutdown();
     entrance.controller->shutdown();
@@ -259,8 +292,6 @@ TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {
                 .forum_display_name = "The Lobby",
                 .session_label = "Browser-ready session",
                 .forum_default_character_id = "guide",
-                .forum_default_persona_id = std::string(guest_id),
-                .forum_default_persona_display_name = std::string(guest_name),
             }));
         opened.controller->shutdown();
     }
