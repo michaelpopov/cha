@@ -24,7 +24,8 @@ public:
           definition_(root_ / "definition" / "character.toml"),
           defaults_(root_ / "forum" / "members" / "character_defaults.toml"),
           member_(root_ / "forum" / "members" / "member" / "character.toml"),
-          providers_(root_ / "system" / "providers") {
+          providers_(root_ / "system" / "providers"),
+          styles_(root_ / "system" / "styles") {
         std::filesystem::create_directories(definition_.parent_path());
         std::filesystem::create_directories(defaults_.parent_path());
         std::filesystem::create_directories(member_.parent_path());
@@ -41,12 +42,18 @@ public:
         std::filesystem::create_directories(path.parent_path());
         write(path, contents);
     }
+    void write_style(std::string_view name, std::string_view contents) const {
+        const std::filesystem::path path = styles_ / std::string(name) / "config.toml";
+        std::filesystem::create_directories(path.parent_path());
+        write(path, contents);
+    }
     // The workspace provider is supplied as an already-resolved layer, exactly
     // as WorkspaceDefinition passes it in.
     CharacterConfigPaths paths(bool defaults = false, bool member = false, bool application = true) const {
         return {.providers = {application ? std::optional{ProviderConfig{
                     .host = "application", .port = 81, .mode = Mode::test}} : std::nullopt,
                 providers_},
+            .styles_directory = styles_,
             .definition = definition_,
             .forum_defaults = defaults ? std::optional{defaults_} : std::nullopt,
             .member_override = member ? std::optional{member_} : std::nullopt};
@@ -56,11 +63,12 @@ public:
     const std::filesystem::path& member() const { return member_; }
     const std::filesystem::path& application() const { return application_; }
     const std::filesystem::path& providers() const { return providers_; }
+    const std::filesystem::path& styles() const { return styles_; }
     std::filesystem::path provider(std::string_view name) const {
         return providers_ / std::string(name) / "config.toml";
     }
 private:
-    std::filesystem::path root_, application_ = root_ / "workspace.toml", definition_, defaults_, member_, providers_;
+    std::filesystem::path root_, application_ = root_ / "workspace.toml", definition_, defaults_, member_, providers_, styles_;
 };
 
 constexpr std::string_view required_definition = "display_name = \"Example\"\n";
@@ -116,6 +124,11 @@ TEST(Config, ReadsEveryProviderSettingFromTheReferencedConfig) {
 TEST(Config, DerivesTheProvidersDirectoryFromTheWorkspaceRoot) {
     EXPECT_EQ(providers_directory("/workspace"),
         std::filesystem::path("/workspace") / "system" / "providers");
+}
+
+TEST(Config, DerivesTheStylesDirectoryFromTheWorkspaceRoot) {
+    EXPECT_EQ(styles_directory("/workspace"),
+        std::filesystem::path("/workspace") / "system" / "styles");
 }
 
 // A provider config is a whole backend. Selecting one must not leave stray
@@ -416,34 +429,48 @@ TEST(Config, DefaultsCharacterAppearanceToTheInterfaceSettings) {
 
 TEST(Config, ReadsEveryCharacterAppearanceFieldAndCarriesItIntoTheEffectiveConfig) {
     ConfigFiles files;
-    files.write(files.definition(),
-        "display_name = \"Seneca\"\n"
-        "[appearance]\n"
+    files.write_style("serif-italic-bold-large",
         "font = \"serif\"\n"
         "style = \"italic\"\n"
         "weight = \"bold\"\n"
         "size = \"large\"\n");
+    files.write(files.definition(),
+        "display_name = \"Seneca\"\n"
+        "style = \"serif-italic-bold-large\"\n");
     const CharacterAppearance expected{CharacterFont::serif, CharacterSlant::italic,
         CharacterWeight::bold, CharacterScale::large};
-    EXPECT_EQ(load_character_metadata(files.definition()).appearance, expected);
+    EXPECT_EQ(load_character_metadata(
+        files.definition(), files.providers(), files.styles()).appearance, expected);
     EXPECT_EQ(load_character_config(files.paths()).character.appearance, expected);
 }
 
-TEST(Config, RejectsUnknownAppearanceFieldsValuesAndPlacements) {
+TEST(Config, RejectsInvalidStyleConfigsAndLegacyAppearance) {
     ConfigFiles files;
     const std::string named = "display_name = \"Example\"\n";
-    files.write(files.definition(), named + "[appearance]\nfont = \"comic\"\n");
-    EXPECT_THROW((void)load_character_metadata(files.definition()), std::runtime_error);
-    files.write(files.definition(), named + "[appearance]\ncolour = \"red\"\n");
-    EXPECT_THROW((void)load_character_metadata(files.definition()), std::runtime_error);
-    files.write(files.definition(), named + "[appearance]\nfont = 3\n");
-    EXPECT_THROW((void)load_character_metadata(files.definition()), std::runtime_error);
-    files.write(files.definition(), named + "appearance = \"serif\"\n");
-    EXPECT_THROW((void)load_character_metadata(files.definition()), std::runtime_error);
-    // Appearance belongs to the character, not to one forum's use of it.
+    files.write_style("invalid-font", "font = \"comic\"\n");
+    files.write(files.definition(), named + "style = \"invalid-font\"\n");
+    EXPECT_THROW((void)load_character_config(files.paths()), std::runtime_error);
+    files.write_style("invalid-field", "colour = \"red\"\n");
+    files.write(files.definition(), named + "style = \"invalid-field\"\n");
+    EXPECT_THROW((void)load_character_config(files.paths()), std::runtime_error);
+    files.write_style("invalid-type", "font = 3\n");
+    files.write(files.definition(), named + "style = \"invalid-type\"\n");
+    EXPECT_THROW((void)load_character_config(files.paths()), std::runtime_error);
+    files.write(files.definition(), named + "[appearance]\nfont = \"serif\"\n");
+    EXPECT_THROW((void)load_character_config(files.paths()), std::runtime_error);
     files.write(files.definition(), named);
-    files.write(files.defaults(), "[appearance]\nfont = \"serif\"\n");
+    files.write(files.defaults(), "style = \"serif\"\n");
     EXPECT_THROW((void)load_character_config(files.paths(true)), std::runtime_error);
+}
+
+TEST(Config, RejectsAStyleReferenceWithoutAConfigFile) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        std::string(required_definition) + "style = \"missing\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths()); },
+        files.definition(),
+        "missing");
 }
 
 TEST(Config, LoadsAndValidatesDefinitionMetadataTags) {

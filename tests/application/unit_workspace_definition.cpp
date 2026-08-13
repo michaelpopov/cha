@@ -129,6 +129,35 @@ TEST(WorkspaceDefinition, FailsStartupForMissingCharacterOrForumProviderReferenc
     }
 }
 
+TEST(WorkspaceDefinition, ResolvesACharacterStyleIntoPublishedMetadata) {
+    test::TestWorkspace fixture;
+    fixture.write_style("serif-bold", "font = \"serif\"\nweight = \"bold\"\n");
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nstyle = \"serif-bold\"\n");
+
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    const std::span<const CharacterMetadata> characters = model.characters();
+    const auto guide = std::ranges::find(characters, "guide", &CharacterMetadata::id);
+    ASSERT_NE(guide, characters.end());
+    EXPECT_EQ(guide->appearance, (CharacterAppearance{
+        CharacterFont::serif, CharacterSlant::normal,
+        CharacterWeight::bold, CharacterScale::normal}));
+}
+
+TEST(WorkspaceDefinition, FailsStartupForMissingCharacterStyleReference) {
+    test::TestWorkspace fixture;
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nstyle = \"missing-style\"\n");
+    try {
+        (void)load_model(fixture.root());
+        FAIL() << "expected a missing character style to stop startup";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("missing-style"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("character.toml"), std::string::npos);
+    }
+}
+
 TEST(WorkspaceDefinition, ReturnsOneSessionDirectoryPerCustomForum) {
     test::TestWorkspace fixture;
     const WorkspaceDefinition model = load_model(fixture.root());
@@ -315,6 +344,7 @@ TEST_F(WorkspaceDefinitionLayoutTest, KeepsBindAndProviderConfigurationDistinct)
            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
     const WorkspaceConfig config = load_workspace_config(root_);
     EXPECT_EQ(config.providers_directory, providers_directory(root_));
+    EXPECT_EQ(config.styles_directory, styles_directory(root_));
     EXPECT_EQ(*config.provider.host, "provider.example");
     EXPECT_EQ(*config.provider.port, 444);
     EXPECT_NO_THROW((void)WorkspaceDefinition::load(root_, config));

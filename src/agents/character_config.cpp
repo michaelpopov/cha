@@ -27,10 +27,10 @@ enum class ConfigLayer { definition, forum_defaults, member_override };
 struct ParsedConfig {
     std::optional<std::string> display_name;
     std::optional<std::string> provider_name;
+    std::optional<std::string> style_name;
     TemplateScope prompt_variables;
     std::vector<std::string> tags;
     std::optional<std::string> description;
-    CharacterAppearance appearance;
 };
 
 // The only fields a provider config may set. Every other configuration file
@@ -75,29 +75,22 @@ std::size_t read_choice(
             if (!names.empty()) names += ", ";
             names += name;
         }
-        throw std::runtime_error("Config file '" + utf8_path(path)
-            + "' [appearance] has unsupported " + std::string(key) + " '" + *value
+        throw std::runtime_error("Style config '" + utf8_path(path)
+            + "' has unsupported " + std::string(key) + " '" + *value
             + "'; expected one of " + names);
     }
     return static_cast<std::size_t>(found - allowed.begin());
 }
 
-CharacterAppearance read_appearance(
+CharacterAppearance read_style_config(
     const toml::table& table,
     const std::filesystem::path& path) {
-    const toml::node* node = table.get("appearance");
-    if (!node) return {};
-    const toml::table* appearance = node->as_table();
-    if (!appearance) {
-        throw std::runtime_error("Config file '" + utf8_path(path)
-            + "' requires 'appearance' to be a table");
-    }
     static constexpr std::string_view fields[]{"font", "style", "weight", "size"};
-    for (const auto& [key, value] : *appearance) {
+    for (const auto& [key, value] : table) {
         (void)value;
         if (std::ranges::find(fields, key.str()) == std::end(fields)) {
-            throw std::runtime_error("Config file '" + utf8_path(path)
-                + "' [appearance] has unsupported field '" + std::string(key.str()) + "'");
+            throw std::runtime_error("Style config '" + utf8_path(path)
+                + "' has unsupported field '" + std::string(key.str()) + "'");
         }
     }
     static constexpr std::string_view fonts[]{"sans", "serif", "mono"};
@@ -105,10 +98,10 @@ CharacterAppearance read_appearance(
     static constexpr std::string_view weights[]{"normal", "bold"};
     static constexpr std::string_view scales[]{"small", "normal", "large"};
     return {
-        .font = static_cast<CharacterFont>(read_choice(*appearance, path, "font", fonts, 0)),
-        .style = static_cast<CharacterSlant>(read_choice(*appearance, path, "style", slants, 0)),
-        .weight = static_cast<CharacterWeight>(read_choice(*appearance, path, "weight", weights, 0)),
-        .size = static_cast<CharacterScale>(read_choice(*appearance, path, "size", scales, 1)),
+        .font = static_cast<CharacterFont>(read_choice(table, path, "font", fonts, 0)),
+        .style = static_cast<CharacterSlant>(read_choice(table, path, "style", slants, 0)),
+        .weight = static_cast<CharacterWeight>(read_choice(table, path, "weight", weights, 0)),
+        .size = static_cast<CharacterScale>(read_choice(table, path, "size", scales, 1)),
     };
 }
 
@@ -202,6 +195,15 @@ std::optional<std::string> read_provider_name(
     const toml::table& table,
     const std::filesystem::path& path) {
     const auto name = read_optional<std::string>(table, path, "provider", "string");
+    if (!name) return std::nullopt;
+    require_path_component(*name, path);
+    return name;
+}
+
+std::optional<std::string> read_style_name(
+    const toml::table& table,
+    const std::filesystem::path& path) {
+    const auto name = read_optional<std::string>(table, path, "style", "string");
     if (!name) return std::nullopt;
     require_path_component(*name, path);
     return name;
@@ -313,6 +315,38 @@ std::optional<ProviderConfig> resolve_provider(
     return load_named_provider(*directory, *provider_name, reference_path);
 }
 
+CharacterAppearance load_named_style(
+    const std::filesystem::path& directory,
+    std::string_view name,
+    const std::filesystem::path& reference_path) {
+    const std::filesystem::path path = directory / path_from_utf8(name) / "config.toml";
+    if (!std::filesystem::is_regular_file(path)) {
+        throw std::runtime_error("Config file '" + utf8_path(reference_path)
+            + "' references style '" + std::string(name)
+            + "' without config file '" + utf8_path(path) + "'");
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("Failed to read style config file '" + utf8_path(path) + "'");
+    }
+    return read_style_config(toml::parse(file, utf8_path(path)), path);
+}
+
+// Styles do not layer, so a definition that names none simply gets the
+// standard appearance rather than inheriting anything.
+CharacterAppearance resolve_style(
+    const std::optional<std::string>& style_name,
+    const std::optional<std::filesystem::path>& directory,
+    const std::filesystem::path& reference_path) {
+    if (!style_name) return {};
+    if (!directory) {
+        throw std::runtime_error("Config file '" + utf8_path(reference_path)
+            + "' references style '" + *style_name
+            + "' but no styles directory was supplied");
+    }
+    return load_named_style(*directory, *style_name, reference_path);
+}
+
 std::vector<std::string> read_tags(
     const toml::table& table,
     const std::filesystem::path& path) {
@@ -376,9 +410,16 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
         throw std::runtime_error("Config file '" + utf8_path(path)
             + "' cannot define definition-only field 'description'");
     }
-    if (!definition && table.contains("appearance")) {
+    // Appearance stays definition-only, so a forum-local layer is told what it
+    // may not do rather than pointed at a field it also may not set.
+    if (!definition && (table.contains("appearance") || table.contains("style"))) {
         throw std::runtime_error("Config file '" + utf8_path(path)
-            + "' cannot define definition-only field 'appearance'");
+            + "' cannot define definition-only field '"
+            + (table.contains("appearance") ? "appearance" : "style") + "'");
+    }
+    if (table.contains("appearance")) {
+        throw std::runtime_error("Config file '" + utf8_path(path)
+            + "' sets legacy 'appearance'; select a system style with 'style'");
     }
     const auto display_name = read_optional<std::string>(table, path, "display_name", "string");
     if (definition && (!display_name || display_name->empty())) {
@@ -391,10 +432,10 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
     return {
         .display_name = display_name,
         .provider_name = read_provider_name(table, path),
+        .style_name = definition ? read_style_name(table, path) : std::nullopt,
         .prompt_variables = template_scope_from_toml(table, prompt_scope_table, utf8_path(path)),
         .tags = definition ? read_tags(table, path) : std::vector<std::string>{},
         .description = description,
-        .appearance = definition ? read_appearance(table, path) : CharacterAppearance{},
     };
 }
 
@@ -408,17 +449,20 @@ void overlay(TemplateScope& effective, TemplateScope upper) {
 
 CharacterMetadata load_character_metadata(
     const std::filesystem::path& definition_path,
-    std::optional<std::filesystem::path> providers_directory) {
+    std::optional<std::filesystem::path> providers_directory,
+    std::optional<std::filesystem::path> styles_directory) {
     const ParsedConfig definition = parse_config(definition_path, ConfigLayer::definition);
     // Metadata needs no backend, but a broken reference should stop startup
     // here rather than when someone first opens a forum.
     (void)resolve_provider(definition.provider_name, providers_directory, definition_path);
+    const CharacterAppearance appearance =
+        resolve_style(definition.style_name, styles_directory, definition_path);
     return {
         .id = utf8_path(definition_path.parent_path().filename()),
         .display_name = *definition.display_name,
         .description = definition.description,
         .tags = definition.tags,
-        .appearance = definition.appearance,
+        .appearance = appearance,
     };
 }
 
@@ -480,8 +524,14 @@ std::filesystem::path providers_directory(const std::filesystem::path& workspace
     return workspace_root / "system" / "providers";
 }
 
+std::filesystem::path styles_directory(const std::filesystem::path& workspace_root) {
+    return workspace_root / "system" / "styles";
+}
+
 LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     const ParsedConfig definition = parse_config(paths.definition, ConfigLayer::definition);
+    const CharacterAppearance appearance =
+        resolve_style(definition.style_name, paths.styles_directory, paths.definition);
     // A provider config is a whole backend, so the highest layer naming one
     // wins outright instead of merging field by field with the layers below.
     std::optional<ProviderConfig> effective = paths.providers.application;
@@ -512,7 +562,7 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
         .display_name = *definition.display_name,
         .description = definition.description,
         .tags = definition.tags,
-        .appearance = definition.appearance,
+        .appearance = appearance,
     };
     return {
         .character = std::move(character),

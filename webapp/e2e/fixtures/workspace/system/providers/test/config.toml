@@ -1,0 +1,4 @@
+host = "test"
+port = 1
+mode = "test"
+model = "fake"

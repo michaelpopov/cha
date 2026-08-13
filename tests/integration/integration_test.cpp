@@ -83,6 +83,7 @@ CharacterDefinition integration_definition(bool stream) {
     LoadedCharacterConfig loaded = load_character_config({
         .providers = {load_provider_config(workspace_directory / "workspace.toml"),
             providers_directory(workspace_directory)},
+        .styles_directory = styles_directory(workspace_directory),
         .definition = workspace_directory / "characters" / "Ismael" / "character.toml",
         .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
     });
@@ -303,7 +304,8 @@ LobbySetup lobby_setup() {
             forum->display_name,
             personas,
             forum_directory / "members" / "character_defaults.toml",
-            {config.provider, config.providers_directory}),
+            {config.provider, config.providers_directory},
+            config.styles_directory),
         .personas = std::move(personas),
     };
 }

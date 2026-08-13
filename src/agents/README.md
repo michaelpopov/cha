@@ -102,6 +102,11 @@ folding while retaining authored casing. The removed `id` and `name` fields are
 rejected. Parsing and validation errors identify the file that supplied the
 invalid value.
 
+Appearance is definition-only. A character definition selects
+`style = "<id>"`, resolved from `system/styles/<id>/config.toml`. The style
+config may contain `font`, `style`, `weight`, and `size`; omitted fields use
+the standard appearance defaults. A missing or invalid style stops startup.
+
 Provider protocol and search fields belong in the provider config:
 
 | TOML field | Values | Default | Notes |

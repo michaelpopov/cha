@@ -2,5 +2,4 @@ display_name = "Ismael"
 description = "An old sailor from a whale voyage."
 provider = "mistral-large"
 
-[appearance]
-font = "mono"
+style = "mono"

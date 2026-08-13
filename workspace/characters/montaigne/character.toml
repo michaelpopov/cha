@@ -2,6 +2,4 @@ display_name = "Michel Montaigne"
 description = "French essayist and Renessaince philosoher."
 provider = "terra"
 
-[appearance]
-font = "serif"
-style = "italic"
+style = "serif-italic"

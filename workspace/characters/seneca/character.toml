@@ -2,5 +2,4 @@ display_name = "Seneca"
 description = "A Roman writer and Stoic adviser."
 provider = "terra"
 
-[appearance]
-font = "serif"
+style = "serif"

@@ -106,6 +106,22 @@ outright rather than merging with it, so each provider config must be complete
 on its own. Configuration is loaded at process startup, so changes take effect
 only after a restart.
 
+Character appearance is selected in the character definition with
+`style = "<id>"`. The matching config lives at
+`system/styles/<id>/config.toml`:
+
+```toml
+# characters/margaret/character.toml
+style = "sans-bold"
+
+# system/styles/sans-bold/config.toml
+font = "sans"
+weight = "bold"
+```
+
+Style configs may contain `font`, `style`, `weight`, and `size`; omitted fields
+use the interface defaults. A style reference must resolve during startup.
+
 `web_search` other than `off` requires `api = "responses"`. With
 `web_search = "auto"`, the model may search when the prompt and turn warrant
 it; `required` forces a search tool call on every generation. To use the Chat

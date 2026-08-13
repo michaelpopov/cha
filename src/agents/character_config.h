@@ -99,6 +99,7 @@ struct ProviderSources {
 // Named configuration inputs prevent callers from confusing the four layer roles.
 struct CharacterConfigPaths {
     ProviderSources providers;
+    std::optional<std::filesystem::path> styles_directory;
     std::filesystem::path definition;
     std::optional<std::filesystem::path> forum_defaults;
     std::optional<std::filesystem::path> member_override;
@@ -106,6 +107,8 @@ struct CharacterConfigPaths {
 
 // Where a workspace keeps one config.toml per named provider.
 std::filesystem::path providers_directory(const std::filesystem::path& workspace_root);
+// Where a workspace keeps one config.toml per named character style.
+std::filesystem::path styles_directory(const std::filesystem::path& workspace_root);
 
 // Resolves the required [provider].provider ID in workspace.toml. The table
 // holds that reference and nothing else; provider settings live in the
@@ -133,7 +136,8 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths);
 // supplied, validates any provider reference while loading metadata.
 CharacterMetadata load_character_metadata(
     const std::filesystem::path& definition_path,
-    std::optional<std::filesystem::path> providers_directory = std::nullopt);
+    std::optional<std::filesystem::path> providers_directory = std::nullopt,
+    std::optional<std::filesystem::path> styles_directory = std::nullopt);
 
 // Validates a forum's optional shared provider reference even when no member
 // configuration would otherwise cause it to be loaded.

@@ -97,10 +97,11 @@ The Characters roster, forum membership, and live session snapshots reuse this
 summary.
 
 `appearance` says how the browser sets this character's words in a transcript,
-so a reader can tell one speaker from another without reading every name. It
-comes from the optional `[appearance]` table in the character's `character.toml`
-and is always present in the response, defaults included, so the browser never
-has to decide what an absent appearance means.
+so a reader can tell one speaker from another without reading every name. The
+character's `character.toml` names a style with `style = "<id>"`, and the fields
+below are read from `system/styles/<id>/config.toml`. Appearance is always
+present in the response, defaults included, so the browser never has to decide
+what an absent appearance means.
 
 | Field    | Values                     | Default  |
 | -------- | -------------------------- | -------- |
