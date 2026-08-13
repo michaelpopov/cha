@@ -18,7 +18,6 @@ TEST(Builtins, GuideAndTrustedValuesHavePublicNames) {
 // leave the ModelBackendConfig defaults in place.
 TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
     const cha::ProviderConfig provider{
-        .source = "workspace.toml",
         .host = "provider.example",
         .port = 8443,
         .base_path = "/api",
@@ -45,11 +44,11 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
     EXPECT_EQ(backend.reasoning_effort, "high");
     EXPECT_EQ(backend.reasoning_format, cha::ReasoningFormat::reasoning);
     EXPECT_TRUE(backend.https);
-    // Workspace [provider] cannot set api_key, so Assistant never gets one.
+    // No configuration file may set api_key, so Assistant never gets one.
     EXPECT_TRUE(backend.api_key.empty());
 
     const auto sparse_definitions = cha::builtin_assistant_definitions(
-        {.source = "workspace.toml", .host = "only.example", .port = 80}, "inventory", {});
+        {.host = "only.example", .port = 80}, "inventory", {});
     ASSERT_FALSE(sparse_definitions.empty());
     const cha::ModelBackendConfig& sparse = sparse_definitions.front().backend;
     const cha::ModelBackendConfig defaults;

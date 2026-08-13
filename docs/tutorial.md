@@ -373,22 +373,29 @@ The public methods expose immutable discovery information. The private
 `copy_definitions_for()` boundary is used by `open_session()` to give a new
 session its own movable backend definitions.
 
-### 8.2 Configuration overlay
+### 8.2 Provider selection
 
-Character provider settings are layered from broad defaults to specific
-overrides:
+Every provider setting lives in one place: `system/providers/<id>/config.toml`.
+Four layers may select one of those configs by ID, from broad default to
+specific override:
 
-1. workspace-level provider configuration from `workspace.toml`;
+1. workspace-level `[provider]` in `workspace.toml`;
 2. the base character definition;
 3. forum-wide character defaults;
 4. the forum member override.
 
-An omitted value inherits. Read
-[agents/character_config.h](../src/agents/character_config.h),
+The highest layer naming a `provider` supplies the whole backend; a layer that
+names none inherits the one below it. Selection replaces rather than merges, so
+a provider config must be complete on its own, and any provider setting written
+directly into one of the four layers is rejected at startup. Only the
+`[prompt]` scope still merges across layers.
+
+Read [agents/character_config.h](../src/agents/character_config.h),
 [agents/character_config.cpp](../src/agents/character_config.cpp), and then
 [agents/character.cpp](../src/agents/character.cpp). Keep `ProviderConfig` and
-`ModelBackendConfig` distinct in your notes: the former is a partial layer; the
-latter is a concrete, validated runtime configuration.
+`ModelBackendConfig` distinct in your notes: the former is one provider config
+as written, with absent fields left absent; the latter is a concrete, validated
+runtime configuration with defaults filled in.
 
 ### 8.3 Prompt construction
 
@@ -1109,7 +1116,7 @@ and before reading all of its implementation.
 | Area | Best starting tests |
 | --- | --- |
 | Transcript invariants | [tests/chat/unit_transcript.cpp](../tests/chat/unit_transcript.cpp) |
-| Configuration overlays | [tests/agents/unit_config_loader.cpp](../tests/agents/unit_config_loader.cpp) |
+| Provider selection and config validation | [tests/agents/unit_config_loader.cpp](../tests/agents/unit_config_loader.cpp) |
 | Context rules | [tests/agents/unit_model_context.cpp](../tests/agents/unit_model_context.cpp) |
 | Batch gate/order/cancel | [tests/agents/unit_generation_batch.cpp](../tests/agents/unit_generation_batch.cpp) |
 | Provider decoding | [tests/agents/unit_provider_response.cpp](../tests/agents/unit_provider_response.cpp) |

@@ -63,14 +63,11 @@ struct ModelBackendConfig {
     WebSearchMode web_search{default_web_search_mode};
 };
 
-// Provider/runtime settings supplied by one configuration layer: workspace
-// [provider], a character definition, forum defaults, or a member override.
-// Which keys a particular file may set is decided by that file's parser, not by
-// this type; workspace [provider] still prohibits api_key. Identity and prompt
-// fields are intentionally absent: they belong to character definitions only.
-// 'source' is the file this layer was read from, for diagnostics.
+// Provider/runtime settings as written in one named provider configuration.
+// Absent values fall back to the ModelBackendConfig defaults, not to another
+// configuration file: a provider config is never merged with a second one.
+// Validation errors are raised where the file is read, so no path is carried.
 struct ProviderConfig {
-    std::filesystem::path source;
     std::optional<std::string> host;
     std::optional<int> port;
     std::optional<std::string> base_path;
@@ -78,7 +75,6 @@ struct ProviderConfig {
     std::optional<std::string> model;
     std::optional<bool> stream;
     std::optional<double> temperature;
-    std::optional<std::string> api_key;
     std::optional<std::string> api_key_env;
     std::optional<std::string> reasoning_effort;
     std::optional<ReasoningFormat> reasoning_format;
@@ -92,15 +88,28 @@ struct ProviderConfig {
 // port values are missing; callers may validate first to provide richer context.
 ModelBackendConfig make_backend_config(const ProviderConfig& effective);
 
-// Named configuration inputs prevent callers from confusing the four overlay roles.
+// The workspace-wide provider inputs every character resolves against: the
+// provider workspace.toml selected, and the directory holding the named
+// provider configs a higher layer may select instead.
+struct ProviderSources {
+    std::optional<ProviderConfig> application;
+    std::optional<std::filesystem::path> directory;
+};
+
+// Named configuration inputs prevent callers from confusing the four layer roles.
 struct CharacterConfigPaths {
-    std::optional<ProviderConfig> application_provider;
+    ProviderSources providers;
     std::filesystem::path definition;
     std::optional<std::filesystem::path> forum_defaults;
     std::optional<std::filesystem::path> member_override;
 };
 
-// Parses the required [provider] table in workspace.toml without creating a client.
+// Where a workspace keeps one config.toml per named provider.
+std::filesystem::path providers_directory(const std::filesystem::path& workspace_root);
+
+// Resolves the required [provider].provider ID in workspace.toml. The table
+// holds that reference and nothing else; provider settings live in the
+// provider config it names.
 ProviderConfig load_provider_config(const std::filesystem::path& workspace_config_path);
 // The same parse against an already-read document, so a caller that needs more
 // than one table out of workspace.toml reads the file only once.
@@ -115,11 +124,21 @@ struct LoadedCharacterConfig {
     TemplateScope prompt_variables;
 };
 
-// Loads application provider, definition, forum defaults, and member override in precedence order.
+// Reads application provider, definition, forum defaults, and member override in
+// precedence order. The highest layer selecting a provider supplies the whole
+// backend; the prompt scope still merges across every layer.
 LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths);
 
-// Loads definition-only identity and tag metadata without requiring provider settings.
+// Loads definition-only identity and tag metadata. When providers_directory is
+// supplied, validates any provider reference while loading metadata.
 CharacterMetadata load_character_metadata(
-    const std::filesystem::path& definition_path);
+    const std::filesystem::path& definition_path,
+    std::optional<std::filesystem::path> providers_directory = std::nullopt);
+
+// Validates a forum's optional shared provider reference even when no member
+// configuration would otherwise cause it to be loaded.
+void validate_forum_provider_defaults(
+    const std::filesystem::path& path,
+    const std::optional<std::filesystem::path>& directory);
 
 } // namespace cha

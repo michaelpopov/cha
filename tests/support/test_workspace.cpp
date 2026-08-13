@@ -17,14 +17,8 @@ TestWorkspace::TestWorkspace()
     std::filesystem::create_directories(definition);
     std::filesystem::create_directories(member);
     std::filesystem::create_directories(root_ / "personas");
-    std::ofstream(root_ / "workspace.toml")
-        << "[provider]\n"
-           "host = \"test\"\n"
-           "port = 1\n"
-           "mode = \"test\"\n"
-           "[logging]\n"
-           "file = \"logs/cha.log\"\n"
-           "level = \"off\"\n";
+    write_provider("test", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
+    write_workspace_config();
     std::filesystem::create_directories(root_ / "web" / "assets");
     std::ofstream(root_ / "web" / "index.html")
         << "<!doctype html><html><head><title>cha</title></head>"
@@ -35,12 +29,7 @@ TestWorkspace::TestWorkspace()
         << "display_name = \"The Lobby\"\n";
     std::ofstream(root_ / "forums" / "lobby" / "FORUM.md")
         << "Forum instructions\n";
-    std::ofstream(
-        root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
-        << "host = \"test\"\n"
-           "port = 1\n"
-           "mode = \"test\"\n"
-           "model = \"fake\"\n";
+    write_character_defaults("# Provider settings are inherited from workspace.toml.\n");
     write_character_config("display_name = \"Guide\"\n");
     std::ofstream(definition / "CHARACTER.md") << "Character instructions\n";
     add_persona("reader", "Reader");
@@ -54,12 +43,19 @@ TestWorkspace::~TestWorkspace() {
 void TestWorkspace::write_workspace_config(std::string_view log_level) const {
     std::ofstream(root_ / "workspace.toml")
         << "[provider]\n"
-           "host = \"test\"\n"
-           "port = 1\n"
-           "mode = \"test\"\n"
+           "provider = \"test\"\n"
            "[logging]\n"
            "file = \"logs/cha.log\"\n"
            "level = \"" << log_level << "\"\n";
+}
+
+void TestWorkspace::write_provider(
+    std::string_view name,
+    std::string_view contents) const {
+    const std::filesystem::path directory =
+        root_ / "system" / "providers" / std::string(name);
+    std::filesystem::create_directories(directory);
+    std::ofstream(directory / "config.toml") << contents;
 }
 
 void TestWorkspace::write_character_config(std::string_view contents) const {

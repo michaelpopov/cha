@@ -1,7 +1,6 @@
 display_name = "Michel Montaigne"
 description = "French essayist and Renessaince philosoher."
-api = "responses"
-web_search = "required"
+provider = "terra"
 
 [appearance]
 font = "serif"

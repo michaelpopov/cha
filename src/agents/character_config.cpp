@@ -22,16 +22,23 @@
 namespace cha {
 namespace {
 
-enum class ConfigLayer { application, definition, forum_defaults, member_override };
+enum class ConfigLayer { definition, forum_defaults, member_override };
 
 struct ParsedConfig {
     std::optional<std::string> display_name;
-    ProviderConfig provider;
+    std::optional<std::string> provider_name;
     TemplateScope prompt_variables;
     std::vector<std::string> tags;
     std::optional<std::string> description;
     CharacterAppearance appearance;
 };
+
+// The only fields a provider config may set. Every other configuration file
+// selects a provider by ID instead of repeating any of these.
+constexpr std::string_view provider_setting_names[]{
+    "host", "port", "base_path", "mode", "model", "stream", "temperature",
+    "api_key", "api_key_env", "reasoning_effort", "reasoning_format", "https",
+    "api", "web_search"};
 
 template<typename Value>
 std::optional<Value> read_optional(
@@ -191,6 +198,121 @@ bool is_valid_base_path(std::string_view base_path) {
             && base_path.find_first_of("?# \t\r\n") == std::string_view::npos);
 }
 
+std::optional<std::string> read_provider_name(
+    const toml::table& table,
+    const std::filesystem::path& path) {
+    const auto name = read_optional<std::string>(table, path, "provider", "string");
+    if (!name) return std::nullopt;
+    require_path_component(*name, path);
+    return name;
+}
+
+// Provider settings are centralized, so any file other than a provider config
+// that still spells one out is reporting a stale configuration rather than
+// quietly losing to the provider it references.
+void reject_provider_settings(
+    const toml::table& table,
+    const std::filesystem::path& path,
+    std::string_view subject) {
+    for (const std::string_view name : provider_setting_names) {
+        if (table.contains(name)) {
+            throw std::runtime_error(std::string(subject) + " '" + utf8_path(path)
+                + "' sets provider setting '" + std::string(name)
+                + "'; provider settings belong in a provider config selected with 'provider'");
+        }
+    }
+}
+
+void validate_provider_config(
+    const ProviderConfig& provider,
+    const std::filesystem::path& path) {
+    if (!provider.host || provider.host->empty() || !provider.port) {
+        throw std::runtime_error("Provider config '" + utf8_path(path)
+            + "' requires non-empty string 'host' and integer 'port'");
+    }
+    if (*provider.port < 1 || *provider.port > 65535) {
+        throw std::runtime_error("Provider config '" + utf8_path(path)
+            + "' requires 'port' between 1 and 65535");
+    }
+    if (provider.temperature && (!std::isfinite(*provider.temperature)
+        || *provider.temperature < 0.0 || *provider.temperature > 2.0)) {
+        throw std::runtime_error("Provider config '" + utf8_path(path)
+            + "' requires 'temperature' between 0 and 2");
+    }
+    if (provider.base_path && !is_valid_base_path(*provider.base_path)) {
+        throw std::runtime_error("Provider config '" + utf8_path(path)
+            + "' requires 'base_path' to start with '/', not end with '/', and contain no query, fragment, or whitespace");
+    }
+    const WebSearchMode search = provider.web_search.value_or(default_web_search_mode);
+    if (search != WebSearchMode::off
+        && provider.api.value_or(default_provider_api) != ProviderApi::responses) {
+        throw std::runtime_error("Provider config '" + utf8_path(path)
+            + "' enables web_search but web search requires api = \"responses\"");
+    }
+}
+
+ProviderConfig load_named_provider(
+    const std::filesystem::path& directory,
+    std::string_view name,
+    const std::filesystem::path& reference_path) {
+    const std::filesystem::path path = directory / path_from_utf8(name) / "config.toml";
+    if (!std::filesystem::is_regular_file(path)) {
+        throw std::runtime_error("Config file '" + utf8_path(reference_path)
+            + "' references provider '" + std::string(name)
+            + "' without config file '" + utf8_path(path) + "'");
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("Failed to read provider config file '" + utf8_path(path) + "'");
+    }
+    const toml::table table = toml::parse(file, utf8_path(path));
+    for (const auto& [key, value] : table) {
+        (void)value;
+        if (std::ranges::find(provider_setting_names, key.str())
+            == std::end(provider_setting_names)) {
+            throw std::runtime_error("Provider config '" + utf8_path(path)
+                + "' has unsupported field '" + std::string(key.str()) + "'");
+        }
+    }
+    // A checked-in provider config is the wrong home for a secret; the key is
+    // named here and read from the environment at request time.
+    if (table.contains("api_key")) {
+        throw std::runtime_error("Provider config '" + utf8_path(path)
+            + "' cannot set 'api_key'; name the variable holding it with 'api_key_env'");
+    }
+    ProviderConfig provider{
+        .host = read_optional<std::string>(table, path, "host", "string"),
+        .port = read_optional<int>(table, path, "port", "integer"),
+        .base_path = read_optional<std::string>(table, path, "base_path", "string"),
+        .mode = read_mode(table, path),
+        .model = read_optional<std::string>(table, path, "model", "string"),
+        .stream = read_optional<bool>(table, path, "stream", "boolean"),
+        .temperature = read_optional<double>(table, path, "temperature", "numeric"),
+        .api_key_env = read_optional<std::string>(table, path, "api_key_env", "string"),
+        .reasoning_effort = read_optional<std::string>(table, path, "reasoning_effort", "string"),
+        .reasoning_format = read_reasoning_format(table, path),
+        .https = read_optional<bool>(table, path, "https", "boolean"),
+        .api = read_provider_api(table, path),
+        .web_search = read_web_search_mode(table, path)};
+    validate_provider_config(provider, path);
+    return provider;
+}
+
+// Nothing when the layer names no provider, so callers can tell "inherit the
+// layer below" apart from "use this backend".
+std::optional<ProviderConfig> resolve_provider(
+    const std::optional<std::string>& provider_name,
+    const std::optional<std::filesystem::path>& directory,
+    const std::filesystem::path& reference_path) {
+    if (!provider_name) return std::nullopt;
+    if (!directory) {
+        throw std::runtime_error("Config file '" + utf8_path(reference_path)
+            + "' references provider '" + *provider_name
+            + "' but no providers directory was supplied");
+    }
+    return load_named_provider(*directory, *provider_name, reference_path);
+}
+
 std::vector<std::string> read_tags(
     const toml::table& table,
     const std::filesystem::path& path) {
@@ -242,9 +364,6 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
             + "'; use the directory name and 'display_name'");
     }
     const bool definition = layer == ConfigLayer::definition;
-    if (layer == ConfigLayer::application) {
-        throw std::logic_error("application provider must be parsed from workspace.toml");
-    }
     if (!definition && table.contains("display_name")) {
         throw std::runtime_error("Config file '" + utf8_path(path)
             + "' cannot define definition-only field 'display_name'");
@@ -268,57 +387,15 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
     }
     const auto description = read_optional<std::string>(table, path, "description", "string");
     if (description) validate_description(*description, "Character", path);
+    reject_provider_settings(table, path, "Config file");
     return {
         .display_name = display_name,
-        .provider = {
-            .source = path,
-            .host = read_optional<std::string>(table, path, "host", "string"),
-            .port = read_optional<int>(table, path, "port", "integer"),
-            .base_path = read_optional<std::string>(table, path, "base_path", "string"),
-            .mode = read_mode(table, path),
-            .model = read_optional<std::string>(table, path, "model", "string"),
-            .stream = read_optional<bool>(table, path, "stream", "boolean"),
-            .temperature = read_optional<double>(table, path, "temperature", "numeric"),
-            .api_key = read_optional<std::string>(table, path, "api_key", "string"),
-            .api_key_env = read_optional<std::string>(table, path, "api_key_env", "string"),
-            .reasoning_effort = read_optional<std::string>(table, path, "reasoning_effort", "string"),
-            .reasoning_format = read_reasoning_format(table, path),
-            .https = read_optional<bool>(table, path, "https", "boolean"),
-            .api = read_provider_api(table, path),
-            .web_search = read_web_search_mode(table, path),
-        },
+        .provider_name = read_provider_name(table, path),
         .prompt_variables = template_scope_from_toml(table, prompt_scope_table, utf8_path(path)),
         .tags = definition ? read_tags(table, path) : std::vector<std::string>{},
         .description = description,
         .appearance = definition ? read_appearance(table, path) : CharacterAppearance{},
     };
-}
-
-template<typename Value>
-void override_with(std::optional<Value>& effective, const std::optional<Value>& upper) {
-    if (upper) {
-        effective = upper;
-    }
-}
-
-// A present upper value replaces the lower one, field by field. 'source' is
-// deliberately not overlaid: no single path describes a mixed configuration, so
-// per-value attribution is tracked by the caller where it is needed.
-void overlay_provider(ProviderConfig& effective, const ProviderConfig& upper) {
-    override_with(effective.host, upper.host);
-    override_with(effective.port, upper.port);
-    override_with(effective.base_path, upper.base_path);
-    override_with(effective.mode, upper.mode);
-    override_with(effective.model, upper.model);
-    override_with(effective.stream, upper.stream);
-    override_with(effective.temperature, upper.temperature);
-    override_with(effective.api_key, upper.api_key);
-    override_with(effective.api_key_env, upper.api_key_env);
-    override_with(effective.reasoning_effort, upper.reasoning_effort);
-    override_with(effective.reasoning_format, upper.reasoning_format);
-    override_with(effective.https, upper.https);
-    override_with(effective.api, upper.api);
-    override_with(effective.web_search, upper.web_search);
 }
 
 void overlay(TemplateScope& effective, TemplateScope upper) {
@@ -327,48 +404,15 @@ void overlay(TemplateScope& effective, TemplateScope upper) {
     }
 }
 
-void validate_effective(
-    const ProviderConfig& effective,
-    const std::filesystem::path& definition,
-    const std::filesystem::path& port_source,
-    const std::filesystem::path& temperature_source,
-    const std::filesystem::path& web_search_source,
-    const std::filesystem::path& base_path_source) {
-    if (!effective.host || !effective.port) {
-        throw std::runtime_error("Effective config for character file '"
-            + utf8_path(definition) + "' requires string 'host' and integer 'port' values");
-    }
-    if (*effective.port < 1 || *effective.port > 65535) {
-        throw std::runtime_error("Config file '"
-            + utf8_path(port_source) + "' requires 'port' between 1 and 65535");
-    }
-    if (effective.temperature
-        && (!std::isfinite(*effective.temperature)
-            || *effective.temperature < 0.0
-            || *effective.temperature > 2.0)) {
-        throw std::runtime_error("Config file '" + utf8_path(temperature_source)
-            + "' requires 'temperature' between 0 and 2");
-    }
-    if (effective.base_path && !is_valid_base_path(*effective.base_path)) {
-        throw std::runtime_error("Config file '" + utf8_path(base_path_source)
-            + "' requires 'base_path' to start with '/', not end with '/', and contain no query, fragment, or whitespace");
-    }
-    const WebSearchMode search =
-        effective.web_search.value_or(default_web_search_mode);
-    if (search != WebSearchMode::off) {
-        const ProviderApi api = effective.api.value_or(default_provider_api);
-        if (api != ProviderApi::responses) {
-            throw std::runtime_error("Config file '" + utf8_path(web_search_source)
-                + "' enables web_search but web search requires api = \"responses\"");
-        }
-    }
-}
-
 } // namespace
 
 CharacterMetadata load_character_metadata(
-    const std::filesystem::path& definition_path) {
+    const std::filesystem::path& definition_path,
+    std::optional<std::filesystem::path> providers_directory) {
     const ParsedConfig definition = parse_config(definition_path, ConfigLayer::definition);
+    // Metadata needs no backend, but a broken reference should stop startup
+    // here rather than when someone first opens a forum.
+    (void)resolve_provider(definition.provider_name, providers_directory, definition_path);
     return {
         .id = utf8_path(definition_path.parent_path().filename()),
         .display_name = *definition.display_name,
@@ -391,7 +435,6 @@ ModelBackendConfig make_backend_config(const ProviderConfig& effective) {
     if (effective.model) backend.model = *effective.model;
     if (effective.stream) backend.stream = *effective.stream;
     if (effective.temperature) backend.temperature = *effective.temperature;
-    if (effective.api_key) backend.api_key = *effective.api_key;
     if (effective.api_key_env) backend.api_key_env = *effective.api_key_env;
     if (effective.reasoning_effort) backend.reasoning_effort = *effective.reasoning_effort;
     if (effective.reasoning_format) backend.reasoning_format = *effective.reasoning_format;
@@ -413,89 +456,57 @@ ProviderConfig load_provider_config(
     const std::filesystem::path& workspace_config_path) {
     const toml::table* table = workspace_config["provider"].as_table();
     if (!table) throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path) + "' requires a [provider] table");
-    static const std::unordered_set<std::string_view> allowed{
-        "host", "port", "base_path", "mode", "model", "stream", "temperature",
-        "api_key_env", "reasoning_effort", "reasoning_format", "https",
-        "api", "web_search"};
+    reject_provider_settings(*table, workspace_config_path, "Workspace config");
     for (const auto& [key, value] : *table) {
         (void)value;
         const std::string_view name = key.str();
-        if (!allowed.contains(name)) {
+        if (name != "provider") {
             throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
                 + "' [provider] has unsupported field '" + std::string(name) + "'");
         }
     }
-    ProviderConfig provider{.source = workspace_config_path,
-        .host = read_optional<std::string>(*table, workspace_config_path, "host", "string"),
-        .port = read_optional<int>(*table, workspace_config_path, "port", "integer"),
-        .base_path = read_optional<std::string>(*table, workspace_config_path, "base_path", "string"),
-        .mode = read_mode(*table, workspace_config_path),
-        .model = read_optional<std::string>(*table, workspace_config_path, "model", "string"),
-        .stream = read_optional<bool>(*table, workspace_config_path, "stream", "boolean"),
-        .temperature = read_optional<double>(*table, workspace_config_path, "temperature", "numeric"),
-        .api_key_env = read_optional<std::string>(*table, workspace_config_path, "api_key_env", "string"),
-        .reasoning_effort = read_optional<std::string>(*table, workspace_config_path, "reasoning_effort", "string"),
-        .reasoning_format = read_reasoning_format(*table, workspace_config_path),
-        .https = read_optional<bool>(*table, workspace_config_path, "https", "boolean"),
-        .api = read_provider_api(*table, workspace_config_path),
-        .web_search = read_web_search_mode(*table, workspace_config_path)};
-    if (!provider.host || provider.host->empty() || !provider.port) {
+    const auto provider_name = read_provider_name(*table, workspace_config_path);
+    if (!provider_name) {
         throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
-            + "' [provider] requires non-empty string 'host' and integer 'port'");
+            + "' [provider] requires a 'provider' name selecting a provider config");
     }
-    if (*provider.port < 1 || *provider.port > 65535) {
-        throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
-            + "' [provider] requires 'port' between 1 and 65535");
-    }
-    if (provider.temperature && (!std::isfinite(*provider.temperature)
-        || *provider.temperature < 0.0 || *provider.temperature > 2.0)) {
-        throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
-            + "' [provider] requires 'temperature' between 0 and 2");
-    }
-    if (provider.base_path && !is_valid_base_path(*provider.base_path)) {
-        throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
-            + "' [provider] requires 'base_path' to start with '/', not end with '/', and contain no query, fragment, or whitespace");
-    }
-    return provider;
+    return load_named_provider(
+        providers_directory(workspace_config_path.parent_path()),
+        *provider_name,
+        workspace_config_path);
+}
+
+std::filesystem::path providers_directory(const std::filesystem::path& workspace_root) {
+    return workspace_root / "system" / "providers";
 }
 
 LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     const ParsedConfig definition = parse_config(paths.definition, ConfigLayer::definition);
-    ProviderConfig effective;
+    // A provider config is a whole backend, so the highest layer naming one
+    // wins outright instead of merging field by field with the layers below.
+    std::optional<ProviderConfig> effective = paths.providers.application;
     TemplateScope prompt_variables = definition.prompt_variables;
-    std::filesystem::path port_source = paths.definition;
-    std::filesystem::path temperature_source = paths.definition;
-    std::filesystem::path web_search_source = paths.definition;
-    std::filesystem::path base_path_source = paths.definition;
-    if (paths.application_provider) {
-        overlay_provider(effective, *paths.application_provider);
-        if (effective.port) port_source = paths.application_provider->source;
-        if (effective.temperature) temperature_source = paths.application_provider->source;
-        if (effective.web_search) web_search_source = paths.application_provider->source;
-        if (effective.base_path) base_path_source = paths.application_provider->source;
+    if (auto named = resolve_provider(
+            definition.provider_name, paths.providers.directory, paths.definition)) {
+        effective = std::move(named);
     }
-    if (definition.provider.port) port_source = paths.definition;
-    if (definition.provider.temperature) temperature_source = paths.definition;
-    if (definition.provider.web_search) web_search_source = paths.definition;
-    if (definition.provider.base_path) base_path_source = paths.definition;
-    overlay_provider(effective, definition.provider);
     const auto apply = [&](const std::optional<std::filesystem::path>& path, ConfigLayer layer) {
         if (!path) {
             return;
         }
         const ParsedConfig parsed = parse_config(*path, layer);
-        if (parsed.provider.port) port_source = *path;
-        if (parsed.provider.temperature) temperature_source = *path;
-        if (parsed.provider.web_search) web_search_source = *path;
-        if (parsed.provider.base_path) base_path_source = *path;
-        overlay_provider(effective, parsed.provider);
+        if (auto named = resolve_provider(
+                parsed.provider_name, paths.providers.directory, *path)) {
+            effective = std::move(named);
+        }
         overlay(prompt_variables, parsed.prompt_variables);
     };
     apply(paths.forum_defaults, ConfigLayer::forum_defaults);
     apply(paths.member_override, ConfigLayer::member_override);
-    validate_effective(
-        effective, paths.definition, port_source, temperature_source, web_search_source,
-        base_path_source);
+    if (!effective) {
+        throw std::runtime_error("Character config file '" + utf8_path(paths.definition)
+            + "' selects no provider and no layer below it supplies one");
+    }
     CharacterMetadata character{
         .id = utf8_path(paths.definition.parent_path().filename()),
         .display_name = *definition.display_name,
@@ -505,9 +516,16 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     };
     return {
         .character = std::move(character),
-        .backend = make_backend_config(effective),
+        .backend = make_backend_config(*effective),
         .prompt_variables = std::move(prompt_variables),
     };
+}
+
+void validate_forum_provider_defaults(
+    const std::filesystem::path& path,
+    const std::optional<std::filesystem::path>& directory) {
+    const ParsedConfig defaults = parse_config(path, ConfigLayer::forum_defaults);
+    (void)resolve_provider(defaults.provider_name, directory, path);
 }
 
 } // namespace cha

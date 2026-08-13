@@ -23,20 +23,30 @@ public:
             + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))),
           definition_(root_ / "definition" / "character.toml"),
           defaults_(root_ / "forum" / "members" / "character_defaults.toml"),
-          member_(root_ / "forum" / "members" / "member" / "character.toml") {
+          member_(root_ / "forum" / "members" / "member" / "character.toml"),
+          providers_(root_ / "system" / "providers") {
         std::filesystem::create_directories(definition_.parent_path());
         std::filesystem::create_directories(defaults_.parent_path());
         std::filesystem::create_directories(member_.parent_path());
-        write(application_, "host = \"application\"\nport = 81\nmode = \"test\"\n");
+        write(application_, "[provider]\nprovider = \"application\"\n");
+        write_provider("application", "host = \"application\"\nport = 81\nmode = \"test\"\n");
     }
     ~ConfigFiles() { std::filesystem::remove_all(root_); }
     void write(const std::filesystem::path& path, std::string_view contents) const {
         std::ofstream file(path);
         file << contents;
     }
-    CharacterConfigPaths paths(bool defaults = false, bool member = false, bool application = false) const {
-        return {.application_provider = application ? std::optional{ProviderConfig{
-                    .source = application_, .host = "application", .port = 81, .mode = Mode::test}} : std::nullopt,
+    void write_provider(std::string_view name, std::string_view contents) const {
+        const std::filesystem::path path = providers_ / std::string(name) / "config.toml";
+        std::filesystem::create_directories(path.parent_path());
+        write(path, contents);
+    }
+    // The workspace provider is supplied as an already-resolved layer, exactly
+    // as WorkspaceDefinition passes it in.
+    CharacterConfigPaths paths(bool defaults = false, bool member = false, bool application = true) const {
+        return {.providers = {application ? std::optional{ProviderConfig{
+                    .host = "application", .port = 81, .mode = Mode::test}} : std::nullopt,
+                providers_},
             .definition = definition_,
             .forum_defaults = defaults ? std::optional{defaults_} : std::nullopt,
             .member_override = member ? std::optional{member_} : std::nullopt};
@@ -45,12 +55,15 @@ public:
     const std::filesystem::path& defaults() const { return defaults_; }
     const std::filesystem::path& member() const { return member_; }
     const std::filesystem::path& application() const { return application_; }
+    const std::filesystem::path& providers() const { return providers_; }
+    std::filesystem::path provider(std::string_view name) const {
+        return providers_ / std::string(name) / "config.toml";
+    }
 private:
-    std::filesystem::path root_, application_ = root_ / "workspace.toml", definition_, defaults_, member_;
+    std::filesystem::path root_, application_ = root_ / "workspace.toml", definition_, defaults_, member_, providers_;
 };
 
-constexpr std::string_view required_definition =
-    "display_name = \"Example\"\nhost = \"definition.example\"\nport = 8080\n";
+constexpr std::string_view required_definition = "display_name = \"Example\"\n";
 
 void expect_error_containing(const std::function<void()>& operation,
     const std::filesystem::path& path, std::string_view field) {
@@ -64,8 +77,12 @@ void expect_error_containing(const std::function<void()>& operation,
     }
 }
 
-void expect_definition_values(const LoadedCharacterConfig& loaded) {
-    const ModelBackendConfig& config = loaded.backend;
+constexpr std::string_view complete_provider =
+    "host = \"definition\"\nport = 80\nmode = \"test\"\nmodel = \"one\"\nstream = true\n"
+    "temperature = 0.1\napi_key_env = \"ONE\"\nreasoning_effort = \"low\"\n"
+    "reasoning_format = \"none\"\nhttps = false\nbase_path = \"/definition\"\n";
+
+void expect_complete_provider_values(const ModelBackendConfig& config) {
     EXPECT_EQ(config.host, "definition");
     EXPECT_EQ(config.port, 80);
     EXPECT_EQ(config.base_path, "/definition");
@@ -73,19 +90,11 @@ void expect_definition_values(const LoadedCharacterConfig& loaded) {
     EXPECT_EQ(config.model, "one");
     EXPECT_TRUE(config.stream);
     EXPECT_DOUBLE_EQ(config.temperature, 0.1);
-    EXPECT_EQ(config.api_key, "one");
     EXPECT_EQ(config.api_key_env, "ONE");
     EXPECT_EQ(config.reasoning_effort, "low");
     EXPECT_EQ(config.reasoning_format, ReasoningFormat::none);
     EXPECT_FALSE(config.https);
-    EXPECT_EQ(loaded.prompt_variables, (TemplateScope{{"value", "definition"}, {"base", "base"}}));
 }
-
-constexpr std::string_view complete_definition =
-    "display_name = \"Example\"\nhost = \"definition\"\nport = 80\nmode = \"test\"\n"
-    "model = \"one\"\nstream = true\ntemperature = 0.1\napi_key = \"one\"\n"
-    "api_key_env = \"ONE\"\nreasoning_effort = \"low\"\nreasoning_format = \"none\"\n"
-    "https = false\nbase_path = \"/definition\"\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n";
 
 TEST(Config, BackendMaterializationRequiresHostAndPort) {
     EXPECT_THROW(
@@ -96,96 +105,214 @@ TEST(Config, BackendMaterializationRequiresHostAndPort) {
         std::invalid_argument);
 }
 
-TEST(Config, SeparatesDefinitionMetadataFromModelBackendConfiguration) {
+TEST(Config, ReadsEveryProviderSettingFromTheReferencedConfig) {
     ConfigFiles files;
+    files.write_provider("complete", complete_provider);
     files.write(files.definition(),
-        std::string(required_definition) + "description = \"Useful character\"\n");
-    const LoadedCharacterConfig loaded = load_character_config(files.paths());
-    EXPECT_EQ(loaded.character.id, "definition");
-    EXPECT_EQ(loaded.character.display_name, "Example");
-    EXPECT_EQ(loaded.character.description, "Useful character");
-    EXPECT_EQ(loaded.backend.host, "definition.example");
-    EXPECT_EQ(loaded.backend.port, 8080);
+        std::string(required_definition) + "provider = \"complete\"\n");
+    expect_complete_provider_values(load_character_config(files.paths()).backend);
 }
 
-TEST(Config, OverlaysEveryRuntimeAndPromptFieldAcrossThreeLayers) {
+TEST(Config, DerivesTheProvidersDirectoryFromTheWorkspaceRoot) {
+    EXPECT_EQ(providers_directory("/workspace"),
+        std::filesystem::path("/workspace") / "system" / "providers");
+}
+
+// A provider config is a whole backend. Selecting one must not leave stray
+// values from the layer below in the effective configuration.
+TEST(Config, AHigherLayerProviderReplacesTheLowerOneOutright) {
     ConfigFiles files;
+    files.write_provider("definition",
+        "host = \"definition.example\"\nport = 443\nmode = \"test\"\nmodel = \"one\"\n"
+        "temperature = 0.5\nreasoning_effort = \"low\"\nbase_path = \"/definition\"\n");
+    files.write_provider("forum",
+        "host = \"forum.example\"\nport = 8443\nmode = \"net\"\nmodel = \"two\"\n");
     files.write(files.definition(),
-        "display_name = \"Example\"\nhost = \"definition\"\nport = 80\nbase_path = \"/definition\"\nmode = \"test\"\nmodel = \"one\"\nstream = false\ntemperature = 0.1\napi_key = \"one\"\napi_key_env = \"ONE\"\nreasoning_effort = \"low\"\nreasoning_format = \"none\"\nhttps = false\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n");
-    files.write(files.defaults(),
-        "host = \"defaults\"\nport = 443\nbase_path = \"/defaults\"\nmode = \"test\"\nmodel = \"two\"\nstream = false\ntemperature = 0.2\napi_key = \"two\"\napi_key_env = \"TWO\"\nreasoning_effort = \"medium\"\nreasoning_format = \"reasoning\"\nhttps = false\n[prompt]\nvalue = \"defaults\"\ndefault = \"default\"\n");
+        std::string(required_definition) + "provider = \"definition\"\n");
+    files.write(files.defaults(), "provider = \"forum\"\n");
+
+    const ModelBackendConfig config =
+        load_character_config(files.paths(true)).backend;
+    EXPECT_EQ(config.host, "forum.example");
+    EXPECT_EQ(config.port, 8443);
+    EXPECT_EQ(config.mode, Mode::net);
+    EXPECT_EQ(config.model, "two");
+    EXPECT_DOUBLE_EQ(config.temperature, 1.0);
+    EXPECT_TRUE(config.reasoning_effort.empty());
+    EXPECT_TRUE(config.base_path.empty());
+}
+
+TEST(Config, EachLayerCanSelectTheProviderAndTheHighestOneWins) {
+    ConfigFiles files;
+    for (const std::string_view name : {"definition", "forum", "member"}) {
+        files.write_provider(name,
+            "host = \"" + std::string(name) + "\"\nport = 443\nmode = \"test\"\n");
+    }
+    files.write(files.definition(), required_definition);
+    EXPECT_EQ(load_character_config(files.paths()).backend.host, "application");
+
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"definition\"\n");
+    EXPECT_EQ(load_character_config(files.paths()).backend.host, "definition");
+
+    files.write(files.defaults(), "provider = \"forum\"\n");
+    EXPECT_EQ(load_character_config(files.paths(true)).backend.host, "forum");
+
+    files.write(files.member(), "provider = \"member\"\n");
+    EXPECT_EQ(load_character_config(files.paths(true, true)).backend.host, "member");
+}
+
+TEST(Config, EmptyAndCommentOnlyOptionalLayersKeepTheProviderBelow) {
+    ConfigFiles files;
+    files.write_provider("complete", complete_provider);
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"complete\"\n");
+    for (const std::string_view contents : {"", "# nothing here\n"}) {
+        files.write(files.defaults(), contents);
+        expect_complete_provider_values(load_character_config(files.paths(true)).backend);
+        files.write(files.member(), contents);
+        expect_complete_provider_values(
+            load_character_config(files.paths(true, true)).backend);
+    }
+}
+
+TEST(Config, MergesThePromptScopeAcrossLayersWhileTheProviderIsReplaced) {
+    ConfigFiles files;
+    files.write_provider("definition", "host = \"definition\"\nport = 80\nmode = \"test\"\n");
+    files.write_provider("member", "host = \"member\"\nport = 8443\nmode = \"net\"\n");
+    files.write(files.definition(),
+        std::string(required_definition)
+            + "provider = \"definition\"\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n");
+    files.write(files.defaults(), "[prompt]\nvalue = \"defaults\"\ndefault = \"default\"\n");
     files.write(files.member(),
-        "host = \"member\"\nport = 8443\nbase_path = \"/member\"\nmode = \"net\"\nmodel = \"three\"\nstream = true\ntemperature = 0.3\napi_key = \"three\"\napi_key_env = \"THREE\"\nreasoning_effort = \"high\"\nreasoning_format = \"reasoning_content\"\nhttps = true\n[prompt]\nvalue = \"member\"\nmember = \"member\"\n");
+        "provider = \"member\"\n[prompt]\nvalue = \"member\"\nmember = \"member\"\n");
+
     const LoadedCharacterConfig loaded = load_character_config(files.paths(true, true));
-    const ModelBackendConfig& effective = loaded.backend;
-    EXPECT_EQ(loaded.character.id, "definition");
-    EXPECT_EQ(loaded.character.display_name, "Example");
-    EXPECT_EQ(effective.host, "member");
-    EXPECT_EQ(effective.port, 8443);
-    EXPECT_EQ(effective.base_path, "/member");
-    EXPECT_EQ(effective.mode, Mode::net);
-    EXPECT_EQ(effective.model, "three");
-    EXPECT_TRUE(effective.stream);
-    EXPECT_DOUBLE_EQ(effective.temperature, 0.3);
-    EXPECT_EQ(effective.api_key, "three");
-    EXPECT_EQ(effective.api_key_env, "THREE");
-    EXPECT_EQ(effective.reasoning_effort, "high");
-    EXPECT_EQ(effective.reasoning_format, ReasoningFormat::reasoning_content);
-    EXPECT_TRUE(effective.https);
+    EXPECT_EQ(loaded.backend.host, "member");
     EXPECT_EQ(loaded.prompt_variables.at("value"), "member");
     EXPECT_EQ(loaded.prompt_variables.at("base"), "base");
     EXPECT_EQ(loaded.prompt_variables.at("default"), "default");
     EXPECT_EQ(loaded.prompt_variables.at("member"), "member");
 }
 
-TEST(Config, ForumDefaultsOverlayDefinitionWhenMemberIsAbsent) {
+TEST(Config, SeparatesDefinitionMetadataFromModelBackendConfiguration) {
     ConfigFiles files;
-    files.write(files.definition(), complete_definition);
-    files.write(files.defaults(), "host = \"defaults\"\nmode = \"net\"\nstream = true\nhttps = true\n[prompt]\nvalue = \"defaults\"\n");
-    const LoadedCharacterConfig loaded = load_character_config(files.paths(true));
-    EXPECT_EQ(loaded.backend.host, "defaults");
-    EXPECT_EQ(loaded.backend.mode, Mode::net);
-    EXPECT_TRUE(loaded.backend.stream);
-    EXPECT_TRUE(loaded.backend.https);
-    EXPECT_EQ(loaded.prompt_variables.at("value"), "defaults");
-    EXPECT_EQ(loaded.backend.model, "one");
-    EXPECT_EQ(loaded.prompt_variables.at("base"), "base");
+    files.write_provider("named", "host = \"named.example\"\nport = 8080\nmode = \"test\"\n");
+    files.write(files.definition(),
+        std::string(required_definition)
+            + "description = \"Useful character\"\nprovider = \"named\"\n");
+    const LoadedCharacterConfig loaded = load_character_config(files.paths());
+    EXPECT_EQ(loaded.character.id, "definition");
+    EXPECT_EQ(loaded.character.display_name, "Example");
+    EXPECT_EQ(loaded.character.description, "Useful character");
+    EXPECT_EQ(loaded.backend.host, "named.example");
+    EXPECT_EQ(loaded.backend.port, 8080);
 }
 
-// A present false is a value, not an absent one, so it must replace a true
-// lower value instead of being skipped as if the layer had said nothing.
-TEST(Config, ExplicitFalseInAHigherLayerOverridesATrueLowerValue) {
+// Provider settings are centralized, so a file that still spells one out is
+// stale configuration rather than a silent no-op.
+TEST(Config, RejectsInlineProviderSettingsInEveryCharacterLayer) {
     ConfigFiles files;
-    files.write(files.definition(), complete_definition);
-    files.write(files.defaults(), "stream = false\nhttps = true\n");
-    const LoadedCharacterConfig defaults_applied = load_character_config(files.paths(true));
-    EXPECT_FALSE(defaults_applied.backend.stream);
-    EXPECT_TRUE(defaults_applied.backend.https);
-    files.write(files.member(), "https = false\n");
-    const LoadedCharacterConfig member_applied = load_character_config(files.paths(true, true));
-    EXPECT_FALSE(member_applied.backend.stream);
-    EXPECT_FALSE(member_applied.backend.https);
-}
-
-TEST(Config, EmptyAndCommentOnlyOptionalLayersAreNoopOverlays) {
-    ConfigFiles files;
-    files.write(files.definition(), complete_definition);
+    for (const std::string_view setting :
+            {"host = \"example\"\n", "port = 80\n", "model = \"one\"\n",
+             "api = \"responses\"\n", "web_search = \"off\"\n", "api_key = \"secret\"\n",
+             "base_path = \"/api\"\n", "temperature = 0.5\n"}) {
+        files.write(files.definition(), std::string(required_definition) + std::string(setting));
+        expect_error_containing(
+            [&] { (void)load_character_config(files.paths()); },
+            files.definition(),
+            "provider setting");
+    }
+    files.write(files.definition(), required_definition);
+    files.write(files.defaults(), "model = \"one\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths(true)); },
+        files.defaults(),
+        "provider setting");
     files.write(files.defaults(), "");
-    expect_definition_values(load_character_config(files.paths(true)));
-    files.write(files.defaults(), "# defaults\n");
-    expect_definition_values(load_character_config(files.paths(true)));
-    files.write(files.member(), "");
-    expect_definition_values(load_character_config(files.paths(false, true)));
-    files.write(files.member(), "# member\n");
-    expect_definition_values(load_character_config(files.paths(false, true)));
+    files.write(files.member(), "host = \"example\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths(true, true)); },
+        files.member(),
+        "provider setting");
+}
+
+TEST(Config, RejectsInlineProviderSettingsInTheWorkspaceTable) {
+    ConfigFiles files;
+    files.write(files.application(),
+        "[provider]\nprovider = \"application\"\nhost = \"elsewhere\"\n");
+    expect_error_containing(
+        [&] { (void)load_provider_config(files.application()); },
+        files.application(),
+        "provider setting");
+    files.write(files.application(), "[provider]\napi_key = \"secret\"\n");
+    expect_error_containing(
+        [&] { (void)load_provider_config(files.application()); },
+        files.application(),
+        "api_key");
+    files.write(files.application(), "[provider]\nhtps = true\n");
+    expect_error_containing(
+        [&] { (void)load_provider_config(files.application()); },
+        files.application(),
+        "htps");
+    files.write(files.application(), "[provider]\n");
+    expect_error_containing(
+        [&] { (void)load_provider_config(files.application()); },
+        files.application(),
+        "requires a 'provider' name");
+}
+
+TEST(Config, RejectsAProviderReferenceWithoutAConfigFile) {
+    ConfigFiles files;
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"missing\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths()); },
+        files.definition(),
+        "missing");
+}
+
+TEST(Config, RejectsAProviderNameThatEscapesTheProvidersDirectory) {
+    ConfigFiles files;
+    for (const std::string_view name : {"../escape", "nested/name", ".."}) {
+        files.write(files.definition(),
+            std::string(required_definition) + "provider = \"" + std::string(name) + "\"\n");
+        expect_error_containing(
+            [&] { (void)load_character_config(files.paths()); },
+            files.definition(),
+            name);
+    }
+}
+
+TEST(Config, RequiresAProviderSomewhereBelowTheCharacter) {
+    ConfigFiles files;
+    files.write(files.definition(), required_definition);
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths(false, false, false)); },
+        files.definition(),
+        "selects no provider");
+}
+
+TEST(Config, ResolvesTheWorkspaceProviderReferenceAndRejectsAMissingOne) {
+    ConfigFiles files;
+    files.write_provider("workspace", "host = \"workspace.example\"\nport = 443\nmode = \"test\"\n");
+    files.write(files.application(), "[provider]\nprovider = \"workspace\"\n");
+    const ProviderConfig provider = load_provider_config(files.application());
+    EXPECT_EQ(provider.host, "workspace.example");
+    EXPECT_EQ(provider.port, 443);
+
+    files.write(files.application(), "[provider]\nprovider = \"missing\"\n");
+    expect_error_containing(
+        [&] { (void)load_provider_config(files.application()); },
+        files.application(),
+        "missing");
 }
 
 TEST(Config, RejectsDefinitionOnlyAndRemovedIdentityFieldsInEveryLayer) {
     ConfigFiles files;
-    files.write(files.definition(), required_definition);
     for (const std::string_view key : {"name", "id"}) {
-        files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 80\n"
-            + std::string(key) + " = \"Wrong\"\n");
+        files.write(files.definition(),
+            std::string(required_definition) + std::string(key) + " = \"Wrong\"\n");
         expect_error_containing([&] { (void)load_character_config(files.paths()); }, files.definition(), key);
     }
     files.write(files.definition(), required_definition);
@@ -213,33 +340,30 @@ TEST(Config, RejectsDefinitionOnlyAndRemovedIdentityFieldsInEveryLayer) {
     }
 }
 
-TEST(Config, AttributesEffectiveValidationToHighestPrecedenceSource) {
+// Every provider value is validated where it is written, so the message names
+// the provider config rather than the character that referenced it.
+TEST(Config, AttributesProviderValidationToTheProviderConfig) {
     ConfigFiles files;
-    files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 65536\n");
-    expect_error_containing([&] { (void)load_character_config(files.paths(false, false, true)); }, files.definition(), "port");
-    files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 80\ntemperature = 2.1\n");
-    expect_error_containing([&] { (void)load_character_config(files.paths(false, false, true)); }, files.definition(), "temperature");
-    files.write(files.definition(), required_definition);
-    files.write(files.defaults(), "port = 65536\n");
-    expect_error_containing([&] { (void)load_character_config(files.paths(true)); }, files.defaults(), "port");
-    files.write(files.defaults(), "temperature = 2.1\n");
-    expect_error_containing([&] { (void)load_character_config(files.paths(true)); }, files.defaults(), "temperature");
-    files.write(files.defaults(), "");
-    files.write(files.member(), "port = 65536\n");
-    expect_error_containing([&] { (void)load_character_config(files.paths(true, true)); }, files.member(), "port");
-    files.write(files.member(), "temperature = 2.1\n");
-    expect_error_containing([&] { (void)load_character_config(files.paths(true, true)); }, files.member(), "temperature");
-}
-
-TEST(Config, InheritsApplicationProviderAndTracksAllFourLayers) {
-    ConfigFiles files;
-    files.write(files.definition(), "display_name = \"Example\"\n");
-    EXPECT_EQ(load_character_config(files.paths(false, false, true)).backend.host, "application");
-    EXPECT_EQ(load_character_config(files.paths(false, false, true)).backend.port, 81);
-    files.write(files.definition(), "display_name = \"Example\"\nhost = \"definition\"\n");
-    files.write(files.defaults(), "host = \"defaults\"\n");
-    files.write(files.member(), "host = \"member\"\n");
-    EXPECT_EQ(load_character_config(files.paths(true, true, true)).backend.host, "member");
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"broken\"\n");
+    const auto expect_provider_error = [&](std::string_view contents, std::string_view field) {
+        files.write_provider("broken", contents);
+        expect_error_containing(
+            [&] { (void)load_character_config(files.paths()); },
+            files.provider("broken"),
+            field);
+    };
+    expect_provider_error("port = 80\n", "host");
+    expect_provider_error("host = \"example\"\n", "port");
+    expect_provider_error("host = \"example\"\nport = 65536\n", "port");
+    expect_provider_error("host = \"example\"\nport = 80\ntemperature = 2.1\n", "temperature");
+    expect_provider_error("host = \"example\"\nport = 80\nbase_path = \"api\"\n", "base_path");
+    expect_provider_error("host = \"example\"\nport = 80\nmode = \"invalid\"\n", "mode");
+    expect_provider_error("host = \"example\"\nport = 80\nreasoning_format = \"invalid\"\n", "reasoning_format");
+    expect_provider_error("host = \"example\"\nport = 80\napi = \"completion\"\n", "api");
+    expect_provider_error("host = \"example\"\nport = 80\nweb_search = \"maybe\"\n", "web_search");
+    expect_provider_error("host = \"example\"\nport = 80\ndisplay_name = \"No\"\n", "display_name");
+    expect_provider_error("host = \"example\"\nport = 80\napi_key = \"secret\"\n", "api_key");
 }
 
 TEST(Config, ValidatesCharacterDescriptionsAndRejectsThemOutsideDefinitions) {
@@ -253,6 +377,32 @@ TEST(Config, ValidatesCharacterDescriptionsAndRejectsThemOutsideDefinitions) {
     EXPECT_THROW((void)load_character_config(files.paths(true)), std::runtime_error);
 }
 
+TEST(Config, ValidatesMetadataProviderReferencesWhenAProvidersDirectoryIsGiven) {
+    ConfigFiles files;
+    files.write_provider("named", "host = \"named.example\"\nport = 8080\nmode = \"test\"\n");
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"named\"\n");
+    EXPECT_EQ(load_character_metadata(files.definition(), files.providers()).display_name, "Example");
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"missing\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_metadata(files.definition(), files.providers()); },
+        files.definition(),
+        "missing");
+}
+
+TEST(Config, ValidatesForumProviderDefaultsWithoutLoadingAnyMember) {
+    ConfigFiles files;
+    files.write_provider("forum", "host = \"forum.example\"\nport = 443\nmode = \"test\"\n");
+    files.write(files.defaults(), "provider = \"forum\"\n");
+    EXPECT_NO_THROW(validate_forum_provider_defaults(files.defaults(), files.providers()));
+    files.write(files.defaults(), "provider = \"missing\"\n");
+    expect_error_containing(
+        [&] { validate_forum_provider_defaults(files.defaults(), files.providers()); },
+        files.defaults(),
+        "missing");
+}
+
 TEST(Config, DefaultsCharacterAppearanceToTheInterfaceSettings) {
     ConfigFiles files;
     files.write(files.definition(), "display_name = \"Example\"\n");
@@ -261,7 +411,7 @@ TEST(Config, DefaultsCharacterAppearanceToTheInterfaceSettings) {
     EXPECT_EQ(appearance, CharacterAppearance{});
     EXPECT_EQ(appearance.font, CharacterFont::sans);
     EXPECT_EQ(appearance.size, CharacterScale::normal);
-    EXPECT_EQ(load_character_config(files.paths(false, false, true)).character.appearance, CharacterAppearance{});
+    EXPECT_EQ(load_character_config(files.paths()).character.appearance, CharacterAppearance{});
 }
 
 TEST(Config, ReadsEveryCharacterAppearanceFieldAndCarriesItIntoTheEffectiveConfig) {
@@ -276,7 +426,7 @@ TEST(Config, ReadsEveryCharacterAppearanceFieldAndCarriesItIntoTheEffectiveConfi
     const CharacterAppearance expected{CharacterFont::serif, CharacterSlant::italic,
         CharacterWeight::bold, CharacterScale::large};
     EXPECT_EQ(load_character_metadata(files.definition()).appearance, expected);
-    EXPECT_EQ(load_character_config(files.paths(false, false, true)).character.appearance, expected);
+    EXPECT_EQ(load_character_config(files.paths()).character.appearance, expected);
 }
 
 TEST(Config, RejectsUnknownAppearanceFieldsValuesAndPlacements) {
@@ -321,23 +471,36 @@ TEST(Config, LoadsAndValidatesDefinitionMetadataTags) {
 
 TEST(Config, RequiresDefinitionDisplayName) {
     ConfigFiles files;
-    files.write(files.definition(), "host = \"example\"\nport = 80\n");
+    files.write(files.definition(), "provider = \"application\"\n");
     expect_error_containing([&] { (void)load_character_config(files.paths()); }, files.definition(), "display_name");
     expect_error_containing([&] { (void)load_character_metadata(files.definition()); }, files.definition(), "display_name");
 }
 
-TEST(Config, PreservesExistingDefaultsAndValidation) {
+TEST(Config, PreservesModelBackendDefaultsForOmittedProviderFields) {
     ConfigFiles files;
     files.write(files.definition(), required_definition);
     const ModelBackendConfig config = load_character_config(files.paths()).backend;
     EXPECT_TRUE(config.model.empty());
+    EXPECT_TRUE(config.base_path.empty());
+    EXPECT_TRUE(config.api_key.empty());
     EXPECT_DOUBLE_EQ(config.temperature, 1.0);
+    EXPECT_TRUE(config.stream);
     EXPECT_EQ(config.reasoning_format, ReasoningFormat::automatic);
+    EXPECT_EQ(config.api, ProviderApi::responses);
+    EXPECT_EQ(config.web_search, WebSearchMode::required);
+}
 
-    files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 80\nmode = \"invalid\"\n");
-    expect_error_containing([&] { (void)load_character_config(files.paths()); }, files.definition(), "mode");
-    files.write(files.definition(), "display_name = \"Example\"\nhost = \"example\"\nport = 80\nreasoning_format = \"invalid\"\n");
-    expect_error_containing([&] { (void)load_character_config(files.paths()); }, files.definition(), "reasoning_format");
+// A present false is a value, not an absent one, so it must survive into the
+// backend rather than being skipped as if the provider had said nothing.
+TEST(Config, ReadsExplicitFalseBooleansFromAProviderConfig) {
+    ConfigFiles files;
+    files.write_provider("flags",
+        "host = \"example\"\nport = 80\nmode = \"test\"\nstream = false\nhttps = false\n");
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"flags\"\n");
+    const ModelBackendConfig config = load_character_config(files.paths()).backend;
+    EXPECT_FALSE(config.stream);
+    EXPECT_FALSE(config.https);
 }
 
 TEST(Config, DerivesIdFromANonAsciiDefinitionDirectory) {
@@ -348,160 +511,64 @@ TEST(Config, DerivesIdFromANonAsciiDefinitionDirectory) {
         std::ofstream file(definition);
         file << required_definition;
     }
-    const LoadedCharacterConfig loaded = load_character_config({.definition = definition});
+    const LoadedCharacterConfig loaded = load_character_config({
+        .providers = {ProviderConfig{.host = "application", .port = 81, .mode = Mode::test}},
+        .definition = definition});
     EXPECT_EQ(loaded.character.id, "caf\xC3\xA9");
     EXPECT_EQ(load_character_metadata(definition).id, "caf\xC3\xA9");
     std::filesystem::remove_all(root);
 }
 
-TEST(Config, DefaultsApiAndWebSearchWhenOmitted) {
-    ConfigFiles files;
-    files.write(files.definition(), required_definition);
-    const ModelBackendConfig config = load_character_config(files.paths()).backend;
-    EXPECT_EQ(config.api, ProviderApi::responses);
-    EXPECT_EQ(config.web_search, WebSearchMode::required);
-}
-
 TEST(Config, ReadsResponsesWithAutomaticAndRequiredWebSearch) {
     ConfigFiles files;
     files.write(files.definition(),
-        std::string(required_definition)
-            + "api = \"responses\"\nweb_search = \"auto\"\n");
+        std::string(required_definition) + "provider = \"search\"\n");
+    files.write_provider("search",
+        "host = \"example\"\nport = 80\nmode = \"test\"\napi = \"responses\"\nweb_search = \"auto\"\n");
     const ModelBackendConfig automatic = load_character_config(files.paths()).backend;
     EXPECT_EQ(automatic.api, ProviderApi::responses);
     EXPECT_EQ(automatic.web_search, WebSearchMode::automatic);
 
-    files.write(files.definition(),
-        std::string(required_definition)
-            + "api = \"responses\"\nweb_search = \"required\"\n");
+    files.write_provider("search",
+        "host = \"example\"\nport = 80\nmode = \"test\"\napi = \"responses\"\nweb_search = \"required\"\n");
     const ModelBackendConfig required = load_character_config(files.paths()).backend;
     EXPECT_EQ(required.api, ProviderApi::responses);
     EXPECT_EQ(required.web_search, WebSearchMode::required);
 }
 
-TEST(Config, HigherLayerCanDisableWebSearch) {
+TEST(Config, AProviderConfigCanDisableWebSearchOnEitherApi) {
     ConfigFiles files;
     files.write(files.definition(),
-        std::string(required_definition)
-            + "api = \"responses\"\nweb_search = \"auto\"\n");
-    files.write(files.member(), "web_search = \"off\"\n");
-    const ModelBackendConfig config =
-        load_character_config(files.paths(false, true)).backend;
-    EXPECT_EQ(config.api, ProviderApi::responses);
-    EXPECT_EQ(config.web_search, WebSearchMode::off);
-}
+        std::string(required_definition) + "provider = \"quiet\"\n");
+    files.write_provider("quiet",
+        "host = \"example\"\nport = 80\nmode = \"test\"\napi = \"responses\"\nweb_search = \"off\"\n");
+    const ModelBackendConfig responses = load_character_config(files.paths()).backend;
+    EXPECT_EQ(responses.api, ProviderApi::responses);
+    EXPECT_EQ(responses.web_search, WebSearchMode::off);
 
-TEST(Config, OverlaysApiAndWebSearchAcrossAllProviderLayers) {
-    ConfigFiles files;
-    files.write(files.definition(),
-        "display_name = \"Example\"\napi = \"chat_completions\"\nweb_search = \"off\"\n");
-    files.write(files.defaults(), "api = \"responses\"\nweb_search = \"auto\"\n");
-    files.write(files.member(), "web_search = \"required\"\n");
-    const ModelBackendConfig config =
-        load_character_config(files.paths(true, true, true)).backend;
-    EXPECT_EQ(config.api, ProviderApi::responses);
-    EXPECT_EQ(config.web_search, WebSearchMode::required);
-}
-
-TEST(Config, RejectsUnknownApiAndWebSearchValuesWithSourceAttribution) {
-    ConfigFiles files;
-    files.write(files.definition(),
-        std::string(required_definition) + "api = \"completion\"\n");
-    expect_error_containing(
-        [&] { (void)load_character_config(files.paths()); },
-        files.definition(),
-        "api");
-    files.write(files.definition(),
-        std::string(required_definition) + "web_search = \"maybe\"\n");
-    expect_error_containing(
-        [&] { (void)load_character_config(files.paths()); },
-        files.definition(),
-        "web_search");
-    files.write(files.definition(), required_definition);
-    files.write(files.defaults(), "api = \"completion\"\n");
-    expect_error_containing(
-        [&] { (void)load_character_config(files.paths(true)); },
-        files.defaults(),
-        "api");
-    files.write(files.defaults(), "web_search = \"maybe\"\n");
-    expect_error_containing(
-        [&] { (void)load_character_config(files.paths(true)); },
-        files.defaults(),
-        "web_search");
-}
-
-TEST(Config, ValidatesBasePathWithSourceAttribution) {
-    ConfigFiles files;
-    files.write(files.definition(),
-        std::string(required_definition) + "base_path = \"api\"\n");
-    expect_error_containing(
-        [&] { (void)load_character_config(files.paths()); },
-        files.definition(),
-        "base_path");
-}
-
-TEST(Config, RejectsWebSearchWithoutResponsesApiAndNamesSearchSource) {
-    ConfigFiles files;
-    files.write(files.definition(),
-        std::string(required_definition)
-            + "api = \"chat_completions\"\nweb_search = \"auto\"\n");
-    expect_error_containing(
-        [&] { (void)load_character_config(files.paths()); },
-        files.definition(),
-        "web_search");
-    files.write(files.definition(),
-        std::string(required_definition) + "api = \"chat_completions\"\n");
-    files.write(files.defaults(), "web_search = \"required\"\n");
-    expect_error_containing(
-        [&] { (void)load_character_config(files.paths(true)); },
-        files.defaults(),
-        "web_search");
+    files.write_provider("quiet",
+        "host = \"example\"\nport = 80\nmode = \"test\"\napi = \"chat_completions\"\nweb_search = \"off\"\n");
+    const ModelBackendConfig chat = load_character_config(files.paths()).backend;
+    EXPECT_EQ(chat.api, ProviderApi::chat_completions);
+    EXPECT_EQ(chat.web_search, WebSearchMode::off);
 }
 
 TEST(Config, ExplicitChatCompletionsMustAlsoDisableMandatorySearch) {
     ConfigFiles files;
     files.write(files.definition(),
-        std::string(required_definition) + "api = \"chat_completions\"\n");
+        std::string(required_definition) + "provider = \"chat\"\n");
+    files.write_provider("chat",
+        "host = \"example\"\nport = 80\nmode = \"test\"\napi = \"chat_completions\"\n");
     expect_error_containing(
         [&] { (void)load_character_config(files.paths()); },
-        files.definition(),
+        files.provider("chat"),
         "web_search");
-
-    files.write(files.definition(),
-        std::string(required_definition)
-            + "api = \"chat_completions\"\nweb_search = \"off\"\n");
-    const ModelBackendConfig config = load_character_config(files.paths()).backend;
-    EXPECT_EQ(config.api, ProviderApi::chat_completions);
-    EXPECT_EQ(config.web_search, WebSearchMode::off);
-}
-
-TEST(Config, AcceptsResponsesWithWebSearchOff) {
-    ConfigFiles files;
-    files.write(files.definition(),
-        std::string(required_definition)
-            + "api = \"responses\"\nweb_search = \"off\"\n");
-    const ModelBackendConfig config = load_character_config(files.paths()).backend;
-    EXPECT_EQ(config.api, ProviderApi::responses);
-    EXPECT_EQ(config.web_search, WebSearchMode::off);
-}
-
-TEST(Config, WorkspaceProviderAcceptsApiAndWebSearchAndRejectsApiKey) {
-    ConfigFiles files;
-    files.write(files.application(),
-        "[provider]\nhost = \"application\"\nport = 81\nmode = \"test\"\n"
-        "base_path = \"/api\"\napi = \"responses\"\nweb_search = \"auto\"\n");
-    const ProviderConfig provider = load_provider_config(files.application());
-    EXPECT_EQ(provider.base_path, "/api");
-    EXPECT_EQ(provider.api, ProviderApi::responses);
-    EXPECT_EQ(provider.web_search, WebSearchMode::automatic);
-
-    files.write(files.application(),
-        "[provider]\nhost = \"application\"\nport = 81\nmode = \"test\"\n"
-        "api_key = \"secret\"\n");
+    files.write_provider("chat",
+        "host = \"example\"\nport = 80\nmode = \"test\"\napi = \"chat_completions\"\nweb_search = \"auto\"\n");
     expect_error_containing(
-        [&] { (void)load_provider_config(files.application()); },
-        files.application(),
-        "api_key");
+        [&] { (void)load_character_config(files.paths()); },
+        files.provider("chat"),
+        "web_search");
 }
 
 } // namespace

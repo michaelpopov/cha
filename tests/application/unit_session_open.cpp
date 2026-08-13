@@ -236,9 +236,10 @@ TEST_F(SessionOpenTest, PropagatesMissingForumsSessionsAndLeaseContention) {
 }
 
 TEST_F(SessionOpenTest, ReleasesTheLeaseWhenControllerConstructionFails) {
-    fixture_.write_character_defaults(
+    fixture_.write_provider("keyless",
         "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n"
         "api_key_env = \"CHA_TEST_UNSET_API_KEY\"\n");
+    fixture_.write_character_defaults("provider = \"keyless\"\n");
     const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
@@ -309,8 +310,7 @@ TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {
 TEST_F(SessionOpenTest, OpensAWorkspaceWithoutSharedCharacterDefaults) {
     std::filesystem::remove(
         fixture_.root() / "forums" / "lobby" / "members" / "character_defaults.toml");
-    fixture_.write_character_config(
-        "display_name = \"Guide\"\nhost = \"127.0.0.1\"\nport = 8080\n");
+    fixture_.write_character_config("display_name = \"Guide\"\n");
     const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "No shared config");

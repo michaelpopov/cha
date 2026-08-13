@@ -864,19 +864,15 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
     provider.start();
 
     test::TestWorkspace workspace;
+    workspace.write_provider("blocking",
+        "host = \"127.0.0.1\"\n"
+        "port = " + std::to_string(provider.port()) + "\n"
+        "mode = \"net\"\n"
+        "model = \"blocking-test-model\"\n"
+        "stream = true\n");
     workspace.write_character_config(
-        "display_name = \"Guide\"\n"
-        "host = \"127.0.0.1\"\n"
-        "port = " + std::to_string(provider.port()) + "\n"
-        "mode = \"net\"\n"
-        "model = \"blocking-test-model\"\n"
-        "stream = true\n");
-    workspace.write_character_defaults(
-        "host = \"127.0.0.1\"\n"
-        "port = " + std::to_string(provider.port()) + "\n"
-        "mode = \"net\"\n"
-        "model = \"blocking-test-model\"\n"
-        "stream = true\n");
+        "display_name = \"Guide\"\nprovider = \"blocking\"\n");
+    workspace.write_character_defaults("provider = \"blocking\"\n");
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
     workspace.write_workspace_config();

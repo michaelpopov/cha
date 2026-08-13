@@ -61,7 +61,7 @@ CharacterDefinition load_definition_files(
     const std::filesystem::path& forum_directory,
     std::string_view forum_display_name,
     std::optional<std::filesystem::path> forum_defaults_path,
-    std::optional<ProviderConfig> application_provider) {
+    ProviderSources providers) {
     const CharacterId character_id = utf8_path(source.definition_directory.filename());
     const std::filesystem::path member_config = source.member_directory / "character.toml";
     const std::filesystem::path member_prompt = source.member_directory / "CHARACTER.md";
@@ -76,7 +76,7 @@ CharacterDefinition load_definition_files(
     LoadedCharacterConfig loaded;
     try {
         loaded = load_character_config(
-            {.application_provider = application_provider,
+            {.providers = providers,
              .definition = source.definition_directory / "character.toml",
              .forum_defaults = forum_defaults_path
                  ? optional_regular_file(*forum_defaults_path) : std::nullopt,
@@ -217,7 +217,7 @@ std::vector<CharacterDefinition> load_character_definitions(
     std::string_view forum_display_name,
     const PersonaRoster& personas,
     std::optional<std::filesystem::path> forum_defaults_path,
-    std::optional<ProviderConfig> application_provider) {
+    ProviderSources providers) {
     std::vector<CharacterDefinition> definitions;
     definitions.reserve(sources.size());
     for (const CharacterDefinitionSource& source : sources) {
@@ -227,7 +227,7 @@ std::vector<CharacterDefinition> load_character_definitions(
                 forum_directory,
                 forum_display_name,
                 forum_defaults_path,
-                application_provider));
+                providers));
     }
     append_standard_prompt_context(definitions, personas);
     return definitions;

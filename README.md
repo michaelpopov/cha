@@ -62,44 +62,55 @@ unambiguous, case-insensitive full or partial persona ID or display name, then
 saves the selected ID as `default_persona` in the forum config. Later prompts
 in the session are attributed to that persona.
 
-`workspace.toml` supplies provider and diagnostic logging settings:
+`workspace.toml` selects the default provider and supplies diagnostic logging
+settings:
 
 ```toml
 [provider]
-host = "api.openai.com"
-port = 443
-https = true
-mode = "net"
-model = "gpt-5.6-terra"
-stream = true
-api_key_env = "OPENAI_API_KEY"
+provider = "terra"
 
 [logging]
 file = "logs/cha.log"
 level = "info"
 ```
 
-Optional provider fields select the OpenAI protocol and hosted web search.
-By default, every character uses the Responses API with mandatory web search:
+Each provider lives in `system/providers/<id>/config.toml`. Its file contains
+the connection, model, protocol, and authentication-environment settings:
 
 ```toml
+host = "api.openai.com"
+port = 443
+https = true
+mode = "net"
+model = "gpt-5.6-terra"
+stream = true
 api = "responses"          # responses | chat_completions
 web_search = "required"    # required | auto | off
+api_key_env = "OPENAI_API_KEY"
 ```
 
 Set `base_path` when a compatible provider exposes its API below a path rather
 than at the host root. For example, OpenRouter uses `base_path = "/api"`, which
 produces `/api/v1/chat/completions`.
 
+A provider config is the only place these settings may appear. Character
+definitions, forum `character_defaults.toml`, and member overrides select one
+with `provider = "<id>"` and nothing else; writing `host`, `model`, or any other
+provider setting into those files is rejected at startup, as is a reference
+whose config file is missing.
+
+Selections are read in order — workspace `[provider]`, character definition,
+forum defaults, member override — and the highest one that names a provider
+supplies the whole backend. Selecting a provider replaces the layer below
+outright rather than merging with it, so each provider config must be complete
+on its own. Configuration is loaded at process startup, so changes take effect
+only after a restart.
+
 `web_search` other than `off` requires `api = "responses"`. With
 `web_search = "auto"`, the model may search when the prompt and turn warrant
-it; `required` forces a search tool call on every generation. These fields
-overlay through workspace `[provider]`, character definitions, forum defaults,
-and member overrides. Configuration is loaded at process startup, so changes
-take effect only after a restart.
-
-To use the legacy Chat Completions path for a character or provider layer, set
-both `api = "chat_completions"` and `web_search = "off"` explicitly.
+it; `required` forces a search tool call on every generation. To use the Chat
+Completions path, set both `api = "chat_completions"` and `web_search = "off"`
+explicitly.
 
 Search queries, progress, retrieved pages, annotations, and tool-call details
 stay inside the provider interaction. Only the character's synthesized answer

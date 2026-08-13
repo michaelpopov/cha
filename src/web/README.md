@@ -1,7 +1,7 @@
 # Web frontend boundary
 
-Workspace characters in the web frontend inherit the shared `[provider]`
-configuration in `workspace.toml`; `host`, `port`, and the workspace path live in
+Workspace characters in the web frontend inherit the provider selected by
+`[provider]` in `workspace.toml`; `host`, `port`, and the workspace path live in
 the application directory's `app.toml` and remain the web server's listener and
 root settings. Web discovery has its own HTTP projection, including
 Guest, Assistant, Entrance, and Welcome, but does not use terminal

@@ -247,7 +247,8 @@ LoadedForum load_forum_metadata(
 }
 
 std::vector<CharacterMetadata> load_definition_metadata(
-    const std::filesystem::path& definitions_directory) {
+    const std::filesystem::path& definitions_directory,
+    const std::filesystem::path& providers_directory) {
     if (!std::filesystem::is_directory(definitions_directory)) {
         throw std::runtime_error("Workspace '" + utf8_path(definitions_directory.parent_path())
             + "' requires a characters/ directory");
@@ -263,7 +264,8 @@ std::vector<CharacterMetadata> load_definition_metadata(
                 throw std::runtime_error("Character '" + id
                     + "' requires regular definition CHARACTER.md");
             }
-            definitions.push_back(load_character_metadata(directory / "character.toml"));
+            definitions.push_back(load_character_metadata(
+                directory / "character.toml", providers_directory));
         } catch (const std::exception& error) {
             throw std::runtime_error("Character '" + id + "' has invalid definition: " + error.what());
         }
@@ -423,7 +425,7 @@ std::vector<CharacterDefinition> load_forum_definitions(
     const LoadedForum& forum,
     const PersonaRoster& personas,
     const std::filesystem::path& definitions_directory,
-    const ProviderConfig& application_provider) {
+    const ProviderSources& providers) {
     log_info(
         "Loading forum character definitions: forum_id=" + forum.info.id
         + " characters=" + std::to_string(forum.info.member_ids.size()));
@@ -441,13 +443,16 @@ std::vector<CharacterDefinition> load_forum_definitions(
         std::filesystem::exists(defaults_candidate)
         ? std::optional<std::filesystem::path>(defaults_candidate)
         : std::nullopt;
+    if (base_config) {
+        validate_forum_provider_defaults(*base_config, providers.directory);
+    }
     std::vector<CharacterDefinition> definitions = load_character_definitions(
         sources,
         forum.directory,
         forum.info.display_name,
         personas,
         base_config,
-        application_provider);
+        providers);
     std::vector<CharacterMetadata> characters;
     characters.reserve(definitions.size());
     for (const CharacterDefinition& definition : definitions) {
@@ -555,6 +560,7 @@ WorkspaceConfig load_workspace_config(const std::filesystem::path& root) {
     return {
         .log_file = std::move(log_path),
         .log_level = *log_level,
+        .providers_directory = providers_directory(root),
         .provider = load_provider_config(table, path),
     };
 }
@@ -572,7 +578,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
     }
     const std::filesystem::path definitions_directory = root / "characters";
     std::vector<CharacterMetadata> characters =
-        load_definition_metadata(definitions_directory);
+        load_definition_metadata(definitions_directory, model.config_.providers_directory);
     const PersonaRoster custom_personas = load_personas(root);
     validate_persona_character_collisions(custom_personas, characters);
 
@@ -640,7 +646,8 @@ WorkspaceDefinition WorkspaceDefinition::load(
     for (const LoadedForum& forum : forums) {
         try {
             std::vector<CharacterDefinition> definitions = load_forum_definitions(
-                forum, *model.personas_, definitions_directory, model.config_.provider);
+                forum, *model.personas_, definitions_directory,
+                {model.config_.provider, model.config_.providers_directory});
             for (const CharacterDefinition& definition : definitions) {
                 // A character may participate in multiple forums. The detail
                 // endpoint is workspace-wide, so retain the first effective

@@ -454,6 +454,8 @@ TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
     EXPECT_EQ(forum->display_name, "The Lobby");
     EXPECT_EQ(forum->member_ids, (std::vector<std::string>{"guide"}));
     const auto config = load_character_config({
+        .providers = {load_provider_config(fixture.root() / "workspace.toml"),
+            providers_directory(fixture.root())},
         .definition = fixture.root()
             / "characters/guide/character.toml",
         .forum_defaults = fixture.root()

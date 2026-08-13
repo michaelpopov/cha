@@ -20,6 +20,7 @@ public:
     void write_workspace_config(std::string_view log_level = "off") const;
     void write_character_config(std::string_view contents) const;
     void write_character_defaults(std::string_view contents) const;
+    void write_provider(std::string_view name, std::string_view contents) const;
     void add_persona(
         std::string_view id,
         std::string_view display_name,

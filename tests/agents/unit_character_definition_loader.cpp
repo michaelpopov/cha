@@ -18,7 +18,7 @@ public:
         std::filesystem::create_directories(definitions / "guide");
         std::filesystem::create_directories(forum / "members" / "guide");
         std::ofstream(definitions / "guide" / "character.toml")
-            << "display_name = \"Guide\"\nhost = \"127.0.0.1\"\nport = 8080\n[prompt]\nvoice = \"base\"\n";
+            << "display_name = \"Guide\"\n[prompt]\nvoice = \"base\"\n";
         std::ofstream(definitions / "guide" / "CHARACTER.md") << "Definition $${voice}";
         std::ofstream(forum / "FORUM.md") << "Forum $${character.display_name}";
     }
@@ -27,20 +27,42 @@ public:
     CharacterDefinitionSource source() const {
         return {.definition_directory = definitions / "guide", .member_directory = forum / "members" / "guide"};
     }
+    // Stands in for the resolved workspace [provider] layer.
+    ProviderConfig provider() const {
+        return {.host = "127.0.0.1", .port = 8080};
+    }
+    std::filesystem::path providers() const { return providers_directory(root); }
+    void write_provider(std::string_view name, std::string_view contents) const {
+        const std::filesystem::path directory = providers() / std::string(name);
+        std::filesystem::create_directories(directory);
+        std::ofstream(directory / "config.toml") << contents;
+    }
     std::filesystem::path root;
     std::filesystem::path definitions;
     std::filesystem::path forum;
 };
 
+// Every call needs the workspace layers that supply the backend, so they are
+// filled in here instead of at each call site.
+std::vector<CharacterDefinition> load_definitions(
+    const CharacterDefinitionFiles& files,
+    std::vector<CharacterDefinitionSource> sources,
+    const PersonaRoster& personas = {},
+    std::optional<std::filesystem::path> defaults = std::nullopt) {
+    return load_character_definitions(
+        std::move(sources), files.forum, "Forum", personas, std::move(defaults),
+        {files.provider(), files.providers()});
+}
+
 TEST(CharacterDefinitions, UsesDefinitionPromptAndThreeLayerConfiguration) {
     CharacterDefinitionFiles files;
+    files.write_provider("forum", "host = \"127.0.0.1\"\nport = 9\n");
     std::ofstream(files.forum / "members" / "character_defaults.toml")
-        << "port = 9\n[prompt]\nvoice = \"forum\"\n";
+        << "provider = \"forum\"\n[prompt]\nvoice = \"forum\"\n";
     std::ofstream(files.forum / "members" / "guide" / "character.toml")
         << "[prompt]\nvoice = \"member\"\n";
 
-    const auto definitions = load_character_definitions(
-        {files.source()}, files.forum, "Forum", {},
+    const auto definitions = load_definitions(files, {files.source()}, {},
         files.forum / "members" / "character_defaults.toml");
 
     ASSERT_EQ(definitions.size(), 1U);
@@ -53,8 +75,7 @@ TEST(CharacterDefinitions, KeepsAllFourPromptSectionsInOrder) {
     CharacterDefinitionFiles files;
     const PersonaRoster personas{{"reader", "Reader", "Persona instructions"}};
 
-    const auto definitions = load_character_definitions(
-        {files.source()}, files.forum, "Forum", personas);
+    const auto definitions = load_definitions(files, {files.source()}, personas);
 
     ASSERT_EQ(definitions.size(), 1U);
     EXPECT_EQ(
@@ -76,7 +97,7 @@ TEST(CharacterDefinitions, KeepsAllFourPromptSectionsInOrder) {
 TEST(CharacterDefinitions, MemberPromptReplacesDefinitionPrompt) {
     CharacterDefinitionFiles files;
     std::ofstream(files.forum / "members" / "guide" / "CHARACTER.md") << "Member prompt";
-    const auto definitions = load_character_definitions({files.source()}, files.forum, "Forum", {});
+    const auto definitions = load_definitions(files, {files.source()});
     ASSERT_EQ(definitions.size(), 1U);
     EXPECT_TRUE(definitions.front().system_prompt.starts_with("Member prompt\n\nForum Guide"));
     EXPECT_EQ(definitions.front().system_prompt.find("Definition"), std::string::npos);
@@ -96,7 +117,7 @@ TEST(CharacterDefinitions, UsesCharacterProfileIncludeForPublicDescription) {
            "$$(profile/PROFILE.md)\n"
            "</character_profile>\n";
 
-    const auto definitions = load_character_definitions({files.source()}, files.forum, "Forum", {});
+    const auto definitions = load_definitions(files, {files.source()});
 
     ASSERT_EQ(definitions.size(), 1U);
     EXPECT_EQ(definitions.front().character_prompt,
@@ -108,47 +129,47 @@ TEST(CharacterDefinitions, UsesLayerSpecificTemplateContainment) {
     CharacterDefinitionFiles files;
     std::ofstream(files.definitions / "shared.md") << "Shared";
     std::ofstream(files.definitions / "guide" / "CHARACTER.md") << "$$(../shared.md)";
-    EXPECT_NO_THROW((void)load_character_definitions({files.source()}, files.forum, "Forum", {}));
+    EXPECT_NO_THROW((void)load_definitions(files, {files.source()}));
 
     std::ofstream(files.definitions / "guide" / "CHARACTER.md") << "$$(../../outside.md)";
-    EXPECT_THROW((void)load_character_definitions({files.source()}, files.forum, "Forum", {}), std::runtime_error);
+    EXPECT_THROW((void)load_definitions(files, {files.source()}), std::runtime_error);
 }
 
 TEST(CharacterDefinitions, ContainsMemberAndForumPromptsToTheForum) {
     CharacterDefinitionFiles files;
     std::ofstream(files.forum / "shared.md") << "Shared";
     std::ofstream(files.forum / "members" / "guide" / "CHARACTER.md") << "$$(../../shared.md)";
-    EXPECT_NO_THROW((void)load_character_definitions({files.source()}, files.forum, "Forum", {}));
+    EXPECT_NO_THROW((void)load_definitions(files, {files.source()}));
 
     std::ofstream(files.forum / "members" / "guide" / "CHARACTER.md") << "$$(../../../outside.md)";
-    EXPECT_THROW((void)load_character_definitions({files.source()}, files.forum, "Forum", {}), std::runtime_error);
+    EXPECT_THROW((void)load_definitions(files, {files.source()}), std::runtime_error);
 
     std::filesystem::remove(files.forum / "members" / "guide" / "CHARACTER.md");
     std::ofstream(files.forum / "FORUM.md") << "$$(../outside.md)";
-    EXPECT_THROW((void)load_character_definitions({files.source()}, files.forum, "Forum", {}), std::runtime_error);
+    EXPECT_THROW((void)load_definitions(files, {files.source()}), std::runtime_error);
 }
 
 TEST(CharacterDefinitions, RequiresDefinitionFiles) {
     CharacterDefinitionFiles files;
     std::filesystem::remove(files.definitions / "guide" / "character.toml");
-    EXPECT_THROW((void)load_character_definitions({files.source()}, files.forum, "Forum", {}), std::runtime_error);
+    EXPECT_THROW((void)load_definitions(files, {files.source()}), std::runtime_error);
 
     std::ofstream(files.definitions / "guide" / "character.toml")
-        << "display_name = \"Guide\"\nhost = \"127.0.0.1\"\nport = 8080\n";
+        << "display_name = \"Guide\"\n";
     std::filesystem::remove(files.definitions / "guide" / "CHARACTER.md");
-    EXPECT_THROW((void)load_character_definitions({files.source()}, files.forum, "Forum", {}), std::runtime_error);
+    EXPECT_THROW((void)load_definitions(files, {files.source()}), std::runtime_error);
 }
 
 TEST(CharacterDefinitions, RejectsOptionalMemberFilesThatAreNotRegular) {
     CharacterDefinitionFiles files;
     std::filesystem::create_directory(files.forum / "members" / "guide" / "character.toml");
-    EXPECT_THROW((void)load_character_definitions({files.source()}, files.forum, "Forum", {}), std::runtime_error);
+    EXPECT_THROW((void)load_definitions(files, {files.source()}), std::runtime_error);
 }
 
 TEST(CharacterDefinitions, RejectsNonRegularOptionalMemberPrompt) {
     CharacterDefinitionFiles files;
     std::filesystem::create_directory(files.forum / "members" / "guide" / "CHARACTER.md");
-    EXPECT_THROW((void)load_character_definitions({files.source()}, files.forum, "Forum", {}), std::runtime_error);
+    EXPECT_THROW((void)load_definitions(files, {files.source()}), std::runtime_error);
 }
 
 TEST(CharacterDefinitions, RejectsNonRegularForumDefaults) {
@@ -157,7 +178,7 @@ TEST(CharacterDefinitions, RejectsNonRegularForumDefaults) {
         files.forum / "members" / "character_defaults.toml";
     std::filesystem::create_directory(defaults);
     try {
-        (void)load_character_definitions({files.source()}, files.forum, "Forum", {}, defaults);
+        (void)load_definitions(files, {files.source()}, {}, defaults);
         FAIL() << "expected non-regular forum defaults rejection";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("guide"), std::string::npos);
@@ -170,11 +191,10 @@ TEST(CharacterDefinitions, RetainsTheSuppliedSourceOrder) {
     std::filesystem::create_directories(files.definitions / "other");
     std::filesystem::create_directories(files.forum / "members" / "other");
     std::ofstream(files.definitions / "other" / "character.toml")
-        << "display_name = \"Other\"\nhost = \"127.0.0.1\"\nport = 9\n";
+        << "display_name = \"Other\"\n";
     std::ofstream(files.definitions / "other" / "CHARACTER.md") << "Other";
-    const auto definitions = load_character_definitions(
-        {{files.definitions / "other", files.forum / "members" / "other"}, files.source()},
-        files.forum, "Forum", {});
+    const auto definitions = load_definitions(files,
+        {{files.definitions / "other", files.forum / "members" / "other"}, files.source()});
     ASSERT_EQ(definitions.size(), 2U);
     EXPECT_EQ(definitions[0].character.id, "other");
     EXPECT_EQ(definitions[1].character.id, "guide");

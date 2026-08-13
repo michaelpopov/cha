@@ -153,16 +153,20 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     std::filesystem::create_directories(forum / "members" / "character");
     std::filesystem::create_directories(root / "personas" / "operator");
     {
+        const std::filesystem::path provider = providers_directory(root) / "test";
+        std::filesystem::create_directories(provider);
+        std::ofstream(provider / "config.toml")
+            << "host = \"127.0.0.1\"\nport = 9\nmode = \"test\"\n"
+            << "model = \"configured-model\"\n";
         std::ofstream file(root / "workspace.toml");
         file << "host = \"127.0.0.1\"\nport = 8080\n[provider]\n"
-             << "host = \"test\"\nport = 1\nmode = \"test\"\n[logging]\n"
+             << "provider = \"test\"\n[logging]\n"
              << "file = \"cha.log\"\nlevel = \"off\"\n";
     }
     std::ofstream(forum / "config.toml") << "display_name = \"Forum\"\n";
     std::ofstream(forum / "FORUM.md") << "Forum prompt";
     std::ofstream(root / "characters" / "character" / "character.toml")
-        << "display_name = \"Worker\"\nhost = \"127.0.0.1\"\nport = 9\n"
-        << "model = \"configured-model\"\n";
+        << "display_name = \"Worker\"\nprovider = \"test\"\n";
     std::ofstream(root / "characters" / "character" / "CHARACTER.md")
         << "System prompt";
     std::ofstream(root / "personas" / "operator" / "persona.toml")

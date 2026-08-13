@@ -1,3 +1,4 @@
-display_name = "The Stoics Forum"
-description = "A discussion among Stoic philosophers."
-default_persona = "michael"
+default_character = 'seneca'
+default_persona = 'michael'
+description = 'A discussion among Stoic philosophers.'
+display_name = 'The Stoics Forum'

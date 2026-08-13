@@ -1,7 +1,6 @@
 display_name = "Margaret Thatcher"
 description = "Prime Minister and Iron Lady."
-api = "responses"
-web_search = "required"
+provider = "terra"
 
 [appearance]
 font = "sans"

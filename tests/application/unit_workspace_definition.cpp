@@ -106,6 +106,29 @@ TEST(WorkspaceDefinition, BuildsAssistantFromAWorkspaceCarryingDescriptionsAndTa
     EXPECT_NO_THROW((void)load_model(fixture.root()));
 }
 
+TEST(WorkspaceDefinition, FailsStartupForMissingCharacterOrForumProviderReferences) {
+    test::TestWorkspace fixture;
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"missing-character\"\n");
+    try {
+        (void)load_model(fixture.root());
+        FAIL() << "expected a missing character provider to stop startup";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("missing-character"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("character.toml"), std::string::npos);
+    }
+
+    fixture.write_character_config("display_name = \"Guide\"\n");
+    fixture.write_character_defaults("provider = \"missing-forum\"\n");
+    try {
+        (void)load_model(fixture.root());
+        FAIL() << "expected a missing forum provider to stop startup";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("missing-forum"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("character_defaults.toml"), std::string::npos);
+    }
+}
+
 TEST(WorkspaceDefinition, ReturnsOneSessionDirectoryPerCustomForum) {
     test::TestWorkspace fixture;
     const WorkspaceDefinition model = load_model(fixture.root());
@@ -235,9 +258,10 @@ protected:
         std::filesystem::create_directories(root_ / "characters" / "guide");
         std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "guide");
         std::filesystem::create_directories(root_ / "personas" / "operator");
+        write_provider("test", "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\n");
         std::ofstream(root_ / "workspace.toml")
             << "[provider]\n"
-               "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\n"
+               "provider = \"test\"\n"
                "[logging]\n"
                "file = \"logs/cha.log\"\n"
                "level = \"off\"\n";
@@ -245,7 +269,7 @@ protected:
             << "display_name = \"The Lobby\"\n";
         std::ofstream(root_ / "forums" / "lobby" / "FORUM.md") << "Forum instructions";
         std::ofstream(root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
-            << "host = \"127.0.0.1\"\nport = 8080\n";
+            << "# Provider settings are inherited from workspace.toml.\n";
         std::ofstream(root_ / "characters" / "guide" / "character.toml")
             << "display_name = \"Guide\"\n";
         std::ofstream(root_ / "characters" / "guide" / "CHARACTER.md")
@@ -257,6 +281,12 @@ protected:
     void TearDown() override { std::filesystem::remove_all(root_); }
 
     WorkspaceDefinition load() const { return load_model(root_); }
+
+    void write_provider(std::string_view name, std::string_view contents) const {
+        const std::filesystem::path directory = providers_directory(root_) / std::string(name);
+        std::filesystem::create_directories(directory);
+        std::ofstream(directory / "config.toml") << contents;
+    }
 
     std::filesystem::path root_;
 };
@@ -271,7 +301,7 @@ TEST_F(WorkspaceDefinitionLayoutTest, ResolvesLoggingSettingsRelativeToTheWorksp
 TEST_F(WorkspaceDefinitionLayoutTest, LeavesAnAbsoluteLogPathUntouched) {
     const std::filesystem::path absolute_log = root_ / "elsewhere" / "cha.log";
     std::ofstream(root_ / "workspace.toml")
-        << "[provider]\nhost = \"test\"\nport = 1\nmode = \"test\"\n"
+        << "[provider]\nprovider = \"test\"\n"
            "[logging]\nfile = \"" << absolute_log.string()
         << "\"\nlevel = \"off\"\n";
 
@@ -279,10 +309,12 @@ TEST_F(WorkspaceDefinitionLayoutTest, LeavesAnAbsoluteLogPathUntouched) {
 }
 
 TEST_F(WorkspaceDefinitionLayoutTest, KeepsBindAndProviderConfigurationDistinct) {
+    write_provider("named", "host = \"provider.example\"\nport = 444\nmode = \"test\"\n");
     std::ofstream(root_ / "workspace.toml")
-        << "[provider]\nhost = \"provider.example\"\nport = 444\nmode = \"test\"\n"
+        << "[provider]\nprovider = \"named\"\n"
            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
     const WorkspaceConfig config = load_workspace_config(root_);
+    EXPECT_EQ(config.providers_directory, providers_directory(root_));
     EXPECT_EQ(*config.provider.host, "provider.example");
     EXPECT_EQ(*config.provider.port, 444);
     EXPECT_NO_THROW((void)WorkspaceDefinition::load(root_, config));
@@ -293,20 +325,15 @@ TEST_F(WorkspaceDefinitionLayoutTest, RequiresValidProviderWithoutAcceptingIdent
         << "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
     EXPECT_THROW((void)load(), std::runtime_error);
 
-    std::ofstream(root_ / "workspace.toml")
-        << "[provider]\ndisplay_name = \"No\"\nhost = \"test\"\nport = 1\n"
-           "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
-    EXPECT_THROW((void)load(), std::runtime_error);
-
-    std::ofstream(root_ / "workspace.toml")
-        << "[provider]\nhost = \"test\"\nport = 1\nhtps = true\n"
-           "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
-    EXPECT_THROW((void)load(), std::runtime_error);
-
-    std::ofstream(root_ / "workspace.toml")
-        << "[provider]\nhost = \"test\"\nport = 1\napi_key = \"secret\"\n"
-           "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
-    EXPECT_THROW((void)load(), std::runtime_error);
+    for (const std::string_view table :
+            {"display_name = \"No\"\nprovider = \"test\"\n", "provider = \"test\"\nhtps = true\n",
+             "provider = \"test\"\napi_key = \"secret\"\n", "host = \"test\"\nport = 1\n",
+             "provider = \"absent\"\n", ""}) {
+        std::ofstream(root_ / "workspace.toml")
+            << "[provider]\n" << table
+            << "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
+        EXPECT_THROW((void)load(), std::runtime_error);
+    }
 }
 
 TEST_F(WorkspaceDefinitionLayoutTest, RequiresWorkspaceConfiguration) {
@@ -322,11 +349,11 @@ TEST_F(WorkspaceDefinitionLayoutTest, RequiresWorkspaceConfiguration) {
 
 TEST_F(WorkspaceDefinitionLayoutTest, RequiresValidLoggingConfiguration) {
     std::ofstream(root_ / "workspace.toml")
-        << "[provider]\nhost = \"test\"\nport = 1\nmode = \"test\"\n";
+        << "[provider]\nprovider = \"test\"\n";
     EXPECT_THROW((void)load_workspace_config(root_), std::runtime_error);
 
     std::ofstream(root_ / "workspace.toml")
-        << "[provider]\nhost = \"test\"\nport = 1\nmode = \"test\"\n"
+        << "[provider]\nprovider = \"test\"\n"
            "[logging]\nfile = \"\"\nlevel = \"off\"\n";
     EXPECT_THROW((void)load_workspace_config(root_), std::runtime_error);
 }
@@ -614,10 +641,11 @@ TEST_F(WorkspaceDefinitionLayoutTest, RejectsPersonaCharacterDisplayNameCollisio
 }
 
 TEST_F(WorkspaceDefinitionLayoutTest, AcceptsDefinitionDefaultsWithAMemberOverride) {
+    write_provider("forum", "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\n");
     std::ofstream(root_ / "characters" / "guide" / "character.toml")
-        << "display_name = \"Guide\"\nhost = \"127.0.0.1\"\n";
+        << "display_name = \"Guide\"\nprovider = \"test\"\n";
     std::ofstream(root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
-        << "port = 8080\n";
+        << "provider = \"forum\"\n";
     std::ofstream(root_ / "forums" / "lobby" / "members" / "guide" / "character.toml")
         << "[prompt]\nvoice = \"member\"\n";
     std::ofstream(root_ / "characters" / "guide" / "CHARACTER.md") << "$${voice}";
@@ -644,9 +672,13 @@ protected:
         std::ofstream(root_ / "characters" / "guide" / "character.toml")
             << "display_name = \"Guide\"\n";
         std::ofstream(root_ / "characters" / "guide" / "CHARACTER.md") << "Guide";
+        const std::filesystem::path provider = providers_directory(root_) / "test";
+        std::filesystem::create_directories(provider);
+        std::ofstream(provider / "config.toml")
+            << "host = \"test\"\nport = 1\nmode = \"test\"\n";
         std::ofstream(root_ / "workspace.toml")
             << "[provider]\n"
-               "host = \"test\"\nport = 1\nmode = \"test\"\n"
+               "provider = \"test\"\n"
                "[logging]\n"
                "file = \"cha.log\"\n"
                "level = \"off\"\n";

@@ -12,7 +12,7 @@ generation pool tasks.
 
 | Source | Responsibility |
 | --- | --- |
-| `character_config.*` | Private `ModelBackendConfig` and `LoadedCharacterConfig` values assembled from TOML overlays with field validation. |
+| `character_config.*` | Private `ModelBackendConfig` and `LoadedCharacterConfig` values assembled from the selected provider config with field validation. |
 | `character.*` | Effective `CharacterDefinition` loading, identity validation, template expansion, and standard prompt assembly. |
 | `model_context.*` | Immutable run input and projection from transcript entries to model-visible messages. |
 | `generation_event.h` | Semantic output deltas and request-correlated progress and terminal events. |
@@ -28,7 +28,8 @@ generation pool tasks.
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
-        app_cfg["workspace.toml [provider]"]
+        app_cfg["workspace.toml [provider]<br/>selects a provider by ID"]
+        providers["system/providers/&lt;id&gt;/config.toml<br/>every provider setting"]
         definition_cfg["characters/X/character.toml"]
         definition_prompt["characters/X/CHARACTER.md"]
         base["forums/R/members/character_defaults.toml<br/>optional forum defaults + [prompt]"]
@@ -39,10 +40,11 @@ flowchart LR
         shared["definition includes under characters/;<br/>member/forum includes under the forum"]
     end
 
-    app_cfg --> load["load_character_config<br/>one parsed overlay"]
+    app_cfg --> load["load_character_config<br/>highest provider selection wins"]
     definition_cfg --> load
     base --> load
     member_cfg --> load
+    providers -->|"resolved reference"| load
     load --> conf["CharacterMetadata + ModelBackendConfig + TemplateScope"]
     conf --> expand["expand_template_file<br/>CHARACTER.md and FORUM.md"]
     definition_prompt --> expand
@@ -82,10 +84,16 @@ on the session's owner thread; a forum check loads synchronously on its
 calling thread. `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
-Configuration is a key-wise overlay, not general inheritance. Built-in defaults
-are applied first, then the application `[provider]`, the character definition, the optional forum
-`members/character_defaults.toml`, and the optional per-member override. An omitted field inherits the
-value below it. The character definition directory name provides the ID, and its
+Configuration selects complete provider configs; it does not overlay provider
+fields. The application `[provider]`, the character definition, the optional
+forum `members/character_defaults.toml`, and the optional per-member override
+are read in that order, and the highest layer naming a `provider` supplies the
+whole backend. A layer that names none inherits the one below it. Each
+reference is read from `system/providers/<id>/config.toml`; a missing config
+stops startup, as does any provider setting written into a layer instead of a
+provider config. Only the `[prompt]` scope still merges across layers.
+
+The character definition directory name provides the ID, and its
 file must define `display_name`; it may also carry an optional one-line
 `description`. Both forum-local layers must not define either field or
 `tags`. `tags` are definition-only optional free-form strings: each is trimmed,
@@ -94,7 +102,7 @@ folding while retaining authored casing. The removed `id` and `name` fields are
 rejected. Parsing and validation errors identify the file that supplied the
 invalid value.
 
-Provider protocol and search fields:
+Provider protocol and search fields belong in the provider config:
 
 | TOML field | Values | Default | Notes |
 | --- | --- | --- | --- |
@@ -103,15 +111,15 @@ Provider protocol and search fields:
 | `base_path` | URL path prefix | empty | Prepended before the API's `/v1` path; for example, OpenRouter uses `/api`. |
 
 The effective defaults are `api = "responses"` and
-`web_search = "required"`, so every character searches unless a higher layer
-overrides the policy. Selecting Chat Completions also requires an explicit
-`web_search = "off"`.
+`web_search = "required"`, so a provider that selects Chat Completions also
+requires an explicit `web_search = "off"`.
 
 `web_search = "auto"` sends `tools: [{type: web_search}]` with `tool_choice: "auto"`.
-`required` uses the same tool with `tool_choice: "required"`. Effective validation
-rejects search on Chat Completions and attributes the error to the highest-
-precedence file that set `web_search`. Workspace `[provider]` accepts both fields
-but still rejects `api_key`.
+`required` uses the same tool with `tool_choice: "required"`. Every provider
+value is validated where it is written, so the error names the provider config
+rather than the character that referenced it. A provider config requires `host`
+and `port`, leaves `ModelBackendConfig` defaults in place for anything it
+omits, and rejects `api_key` in favour of `api_key_env`.
 
 Identity rules, enforced by `validate_character_id` and `validate_character_display_name`:
 

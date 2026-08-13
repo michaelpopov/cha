@@ -1,7 +1,5 @@
 [provider]
-host = "test"
-port = 1
-mode = "test"
+provider = "test"
 
 [logging]
 file = "logs/cha.log"

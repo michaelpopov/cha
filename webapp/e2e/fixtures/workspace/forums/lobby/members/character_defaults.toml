@@ -1,4 +1,1 @@
-host = "test"
-port = 1
-mode = "test"
-model = "fake"
+# Provider settings are inherited from workspace.toml.

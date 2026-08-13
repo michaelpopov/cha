@@ -43,7 +43,7 @@ std::vector<CharacterDefinition> load_character_definitions(
     std::string_view forum_display_name,
     const PersonaRoster& personas,
     std::optional<std::filesystem::path> forum_defaults_path = std::nullopt,
-    std::optional<ProviderConfig> application_provider = std::nullopt);
+    ProviderSources providers = {});
 
 // Adds the standard participant and forum-context sections to definitions
 // assembled by trusted non-filesystem factories.

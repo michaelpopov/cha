@@ -24,6 +24,7 @@ class SessionRepository;
 struct WorkspaceConfig {
     std::filesystem::path log_file;
     std::string log_level;
+    std::filesystem::path providers_directory;
     ProviderConfig provider;
 };
 

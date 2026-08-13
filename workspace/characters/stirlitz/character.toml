@@ -1,7 +1,6 @@
 display_name = "Штирлиц"
 description = "Practical philosopher slash Russian spy."
-api = "responses"
-web_search = "required"
+provider = "terra"
 
 [appearance]
 font = "mono"

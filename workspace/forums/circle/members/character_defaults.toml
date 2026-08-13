@@ -1,4 +1,2 @@
-# Shared Circle defaults. Connection and API settings continue to inherit from
-# workspace.toml unless a member overrides them.
-model = "gpt-5.6-sol"
-reasoning_effort = "xhigh"
+# Shared Circle default provider.
+provider = "sol-high"
