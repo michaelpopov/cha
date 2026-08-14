@@ -42,8 +42,10 @@ live-session API remains the base for Chat.
 
 The server loads and validates discovery data at startup. Its HTTP projection
 contains workspace entities plus Guest, Assistant, and Entrance. The browser
-opens the shared Welcome session immediately. Configuration changes take effect
-after a server restart.
+opens the shared Welcome session immediately. Discovery stays at that startup
+copy. A character's provider and style are rewritten by PATCH and picked up
+when a session next opens; other configuration still takes effect after a
+restart.
 
 Terminal and HTTP discovery are separate projections over the same workspace
 entities. Terminal commands use public names; HTTP routes use stable IDs. The
@@ -156,9 +158,11 @@ Character summaries come from bootstrap. Detail uses:
 GET /api/v1/characters/{character_id}
 ```
 
-The detail response contains the character summary fields plus
-`character_markdown`. For workspace characters this is the
-`<character_profile>` section of the template-expanded
+The detail response contains the character summary fields,
+`character_markdown`, the current `provider` and `style` (null when absent),
+the lists of options that resolve, the display names of forums that override
+the provider, and `writable`. For workspace characters `character_markdown` is
+the `<character_profile>` section of the template-expanded
 `characters/<id>/CHARACTER.md`, using the same effective character scope as
 the agent prompt. If the prompt has no such section, it is the whole
 template-expanded `CHARACTER.md`. Assistant uses the embedded application

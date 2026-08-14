@@ -19,7 +19,7 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - Chat has no title or context header. A compact line below the composer shows `<Forum>   From: <Persona>   To: <current default character>`.
 - The composer's lower-left action chooses the target character. It replaces the unsupported attachment button shown in the original mockup.
 - The composer's trailing action is Send while idle and becomes Stop while generation is active.
-- Characters is informational. It lists workspace characters and opens a read-only rendering of a character's `CHARACTER.md`. Personas works the same way over the persona roster.
+- Characters lists workspace characters and opens a rendering of a character's `CHARACTER.md`. A writable character's top-right chevron opens Settings, where provider and style are edited. Personas works the same way over the persona roster, without a settings screen.
 - Forums list member character names beneath each forum title. Forum descriptions do not exist, and member names are not links.
 - Sessions show names and compact time metadata, never descriptions.
 - Recent contains cross-forum session references. The active session is highlighted.
@@ -31,7 +31,7 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
   including after its live runtime has stopped.
 - There is no Chat shortcut or global New session shortcut in the sidebar.
 - Users cannot create forums, personas, or characters in this version.
-- There is no Settings screen and no gear button. The mockup and the screenshots in this directory still show one at the bottom-right of the sidebar; v1 removes it, and nothing takes its place.
+- There is no sidebar gear and no global Settings screen. The mockup and the screenshots in this directory still show a gear at the bottom-right of the sidebar; v1 removes it. Character settings is a separate screen, reached from Character detail.
 
 ## Screen catalogue
 
@@ -81,6 +81,7 @@ Chat has no title. Navigation screens use one centered title without a subtitle:
 - The inspected persona's display name on Persona detail
 - Characters
 - The inspected character's display name on Character detail
+- Settings
 - Forums
 - Sessions
 - New session
@@ -95,5 +96,5 @@ The Sessions title does not repeat the selected forum. Session rows do not conta
 
 ## Out of scope
 
-- Settings in any form. It is removed from v1 rather than deferred as an entry point.
+- A global Settings screen or sidebar gear. Character provider and style are edited from Character settings.
 - Invalid application state has no separate browser presentation contract.

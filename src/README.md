@@ -37,7 +37,7 @@ model, and diagnostic logging remains available until their teardown finishes.
 | Directory | Responsibility |
 | --- | --- |
 | `web/` | HTTP/SSE transport, chat-input grammar, API DTOs, live-session registry, mailboxes, and lifecycle policy. |
-| `workspace/` | The immutable loaded workspace model, built-ins, and the one controller-opening operation. |
+| `workspace/` | The loaded workspace model, built-ins, and the one controller-opening operation. |
 | `session/` | Session storage, databases and leases, controller state, persistence, and character resolution. |
 | `agents/` | Character configuration, provider clients, model context, generation execution, cancellation, and event delivery. |
 | `chat/` | Stable domain IDs plus presentation-neutral transcript records, validation, and live mutation. |
@@ -74,12 +74,14 @@ are stored and used in routes; display names and labels are presentation data.
 Opening a session validates that its database metadata matches its forum,
 filename, and schema before restoring it.
 
-One `WorkspaceDefinition` holds every static workspace value for the server lifetime,
-and both discovery and newly opened sessions read from it, so the browser and a
-controller cannot disagree. Session listings are read from storage per request,
-so newly created sessions appear without a restart. Changes to personas,
-characters, forums, prompts, or provider configuration require restarting
-`chaweb`.
+One `WorkspaceDefinition` holds discovery for the server lifetime. A session
+open re-resolves that forum's character definitions from disk, so a saved
+provider or style — and a hand edit to `CHARACTER.md`, member configs, or the
+forum context — reach the next session without a restart. Discovery does not:
+the roster and detail Markdown stay at the startup copy. Session listings are
+read from storage per request, so newly created sessions appear without a
+restart. Changes to personas, forum membership, provider config files, or other
+discovery data still require restarting `chaweb`.
 
 ## Build and test map
 

@@ -274,6 +274,8 @@ public:
 struct LobbySetup {
     std::vector<CharacterDefinition> definitions;
     PersonaRoster personas;
+    std::string author_id;
+    std::string author_name;
 };
 
 LobbySetup lobby_setup() {
@@ -306,7 +308,9 @@ LobbySetup lobby_setup() {
             forum_directory / "members" / "character_defaults.toml",
             {config.provider, config.providers_directory},
             config.styles_directory),
-        .personas = std::move(personas),
+        .personas = personas,
+        .author_id = persona->id,
+        .author_name = persona->display_name,
     };
 }
 
@@ -396,14 +400,14 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
             lobby.personas,
             session.path,
             notifier());
-        (void)controller->submit_prompt("reader", "First question");
+        (void)controller->submit_prompt(lobby.author_id, "First question");
         run_until_idle(*controller);
         const std::vector<TranscriptEntry> live =
             copy_entries(controller->view().transcript);
         ASSERT_EQ(live.size(), 2U);
         EXPECT_EQ(live.back().text, "First answer");
 
-        (void)controller->submit_prompt("reader", "Second question");
+        (void)controller->submit_prompt(lobby.author_id, "Second question");
         run_until_idle(*controller);
     }
     server.join();
@@ -440,7 +444,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
         lobby.personas,
         session.path,
         notifier());
-    (void)controller->submit_prompt("reader", "Question");
+    (void)controller->submit_prompt(lobby.author_id, "Question");
     run_until_idle(*controller);
     server.join();
 
@@ -473,13 +477,13 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
             lobby.personas,
             session.path,
             notifier());
-        (void)controller->submit_prompt("reader", "Visible question");
+        (void)controller->submit_prompt(lobby.author_id, "Visible question");
         run_until_idle(*controller);
         EXPECT_TRUE(has_state_update(controller->open_offrecord()));
-        (void)controller->submit_prompt("reader", "Hidden question");
+        (void)controller->submit_prompt(lobby.author_id, "Hidden question");
         run_until_idle(*controller);
         EXPECT_TRUE(has_state_update(controller->extend_offrecord()));
-        (void)controller->submit_prompt("reader", "Current question");
+        (void)controller->submit_prompt(lobby.author_id, "Current question");
         run_until_idle(*controller);
     }
     server.join();
@@ -489,9 +493,9 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
         Json::parse(request_body(server.requests().back()));
     EXPECT_EQ(current_body["messages"], Json::array({
         Json{{"role", "system"}, {"content", system_prompt}},
-        Json{{"role", "user"}, {"content", "from Reader:\nVisible question"}},
+        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nVisible question"}},
         Json{{"role", "assistant"}, {"content", "Visible answer"}},
-        Json{{"role", "user"}, {"content", "from Reader:\nCurrent question"}},
+        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nCurrent question"}},
     }));
 
     const std::vector<TranscriptEntry> restored =
@@ -529,12 +533,12 @@ TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTrans
 
         // No mention: the first character directory in name order answers.
         ControllerUpdate update =
-            controller->submit_prompt("reader", "Who are you?");
+            controller->submit_prompt(lobby.author_id, "Who are you?");
         ASSERT_TRUE(update.input_consumed);
         run_until_idle(*controller);
 
         // An addressed prompt reaches the mentioned character instead.
-        update = controller->submit_prompt("reader", "and you?", "Ismael");
+        update = controller->submit_prompt(lobby.author_id, "and you?", "Ismael");
         ASSERT_TRUE(update.input_consumed);
         run_until_idle(*controller);
     }
@@ -548,7 +552,7 @@ TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTrans
     const Json first = body_of(cheburashka_server);
     EXPECT_EQ(first["messages"], Json::array({
         Json{{"role", "system"}, {"content", cheburashka_prompt}},
-        Json{{"role", "user"}, {"content", "from Reader:\nWho are you?"}},
+        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWho are you?"}},
     }));
 
     // Ismael's own system prompt, and Cheburashka's answer attributed as persona input.
@@ -558,10 +562,11 @@ TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTrans
         Json{{"role", "user"},
              {"content",
               "Shared chat history (JSONL):\n"
-              R"({"kind":"human","speaker":"Reader","addressed_to":"Cheburashka","text":"Who are you?"})"
+              "{\"kind\":\"human\",\"speaker\":\"" + lobby.author_name
+              + "\",\"addressed_to\":\"Cheburashka\",\"text\":\"Who are you?\"}"
               "\n"
               R"({"kind":"character","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
-        Json{{"role", "user"}, {"content", "from Reader:\nand you?"}},
+        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nand you?"}},
     }));
 
     const std::vector<TranscriptEntry> restored =
@@ -601,11 +606,11 @@ TEST(MultiCharacterIntegration, MulticastSendsIndependentBodiesAndRestoresHistor
             std::move(definitions), lobby.personas, session.path,
             notifier());
         const ControllerUpdate multicast = controller->start_multicast(
-            "reader", "What time is it?", {});
+            lobby.author_id, "What time is it?", {});
         ASSERT_TRUE(multicast.input_consumed);
         run_until_idle(*controller);
 
-        (void)controller->submit_prompt("reader", "What did the panel say?");
+        (void)controller->submit_prompt(lobby.author_id, "What did the panel say?");
         run_until_idle(*controller);
     }
     cheburashka_server.join();
@@ -617,13 +622,13 @@ TEST(MultiCharacterIntegration, MulticastSendsIndependentBodiesAndRestoresHistor
         Json::parse(request_body(cheburashka_server.requests()[0]))["messages"],
         Json::array({
             Json{{"role", "system"}, {"content", cheburashka_prompt}},
-        Json{{"role", "user"}, {"content", "from Reader:\nWhat time is it?"}},
+        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWhat time is it?"}},
         }));
     EXPECT_EQ(
         body_of(ismael_server)["messages"],
         Json::array({
             Json{{"role", "system"}, {"content", ismael_prompt}},
-        Json{{"role", "user"}, {"content", "from Reader:\nWhat time is it?"}},
+        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWhat time is it?"}},
         }));
 
     const std::string follow_up =
@@ -658,9 +663,9 @@ TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharact
             lobby.personas,
             session.path,
             notifier());
-        (void)controller->submit_prompt("reader", "Who are you?");
+        (void)controller->submit_prompt(lobby.author_id, "Who are you?");
         run_until_idle(*controller);
-        (void)controller->submit_prompt("reader", "and you?", "Ismael");
+        (void)controller->submit_prompt(lobby.author_id, "and you?", "Ismael");
         run_until_idle(*controller);
     }
     cheburashka_server.join();
@@ -679,10 +684,10 @@ TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharact
     EXPECT_EQ(reopened->view().characters.size(), 1U);
     EXPECT_EQ(
         reopened->submit_prompt(
-            "reader", "are you there?", "Cheburashka").notice,
+            lobby.author_id, "are you there?", "Cheburashka").notice,
         "Unknown character @Cheburashka. Characters in this forum: @Ismael");
 
-    (void)reopened->submit_prompt("reader", "What did he say?");
+    (void)reopened->submit_prompt(lobby.author_id, "What did he say?");
     run_until_idle(*reopened);
     ismael_server.join();
 
@@ -693,12 +698,13 @@ TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharact
         Json{{"role", "user"},
              {"content",
               "Shared chat history (JSONL):\n"
-              R"({"kind":"human","speaker":"Reader","addressed_to":"Cheburashka","text":"Who are you?"})"
+              "{\"kind\":\"human\",\"speaker\":\"" + lobby.author_name
+              + "\",\"addressed_to\":\"Cheburashka\",\"text\":\"Who are you?\"}"
               "\n"
               R"({"kind":"character","speaker":"Cheburashka","text":"I am Cheburashka."})"}},
-        Json{{"role", "user"}, {"content", "from Reader:\nand you?"}},
+        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nand you?"}},
         Json{{"role", "assistant"}, {"content", "Call me Ismael."}},
-        Json{{"role", "user"}, {"content", "from Reader:\nWhat did he say?"}},
+        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWhat did he say?"}},
     }));
 }
 

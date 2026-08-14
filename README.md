@@ -54,8 +54,7 @@ A forum's `config.toml` can name its starting character with
 setting is omitted, the first member ID in lexicographic order is used. `/@Name`
 changes the live session immediately and saves that ID to the forum config, so
 the next session in that forum starts with it. The setting is read when a session
-opens, so editing the file by hand takes effect without a restart; the rest of
-the workspace is still read only at startup.
+opens, so editing the file by hand takes effect without a restart.
 
 `/!Name` selects the persona speaking for the current session. It accepts an
 unambiguous, case-insensitive full or partial persona ID or display name, then
@@ -103,8 +102,15 @@ Selections are read in order — workspace `[provider]`, character definition,
 forum defaults, member override — and the highest one that names a provider
 supplies the whole backend. Selecting a provider replaces the layer below
 outright rather than merging with it, so each provider config must be complete
-on its own. Configuration is loaded at process startup, so changes take effect
-only after a restart.
+on its own. Provider config files themselves are loaded at process startup, so
+edits to host, model, or credentials take effect only after a restart.
+
+A character's chosen `provider` and `style` can be changed from the browser:
+Characters → the character → the top-right chevron → Settings. Save writes
+those keys in `characters/<id>/character.toml` and restarts live sessions the
+change can affect. A forum that sets its own provider is named under the picker
+and is not restarted for a provider-only save. The built-in Assistant has no
+config file and no settings screen.
 
 Character appearance is selected in the character definition with
 `style = "<id>"`. The matching config lives at
@@ -144,10 +150,13 @@ Set `OPENAI_API_KEY` in the process environment before starting it; no `.env`
 file is included. The packaged workspace is also the location for any
 workspace customization and stored sessions.
 
-`chaweb` reads the static workspace once, at startup. Edits to `workspace.toml`,
-personas, characters, forums, member overrides, or prompts take effect only
-after the server is restarted; stored sessions remain dynamic and appear in the
-lobby without a restart.
+`chaweb` loads discovery — the roster, descriptions, and Markdown shown in
+Personas, Characters, and Forums — once at startup. A session open re-resolves
+that forum's character definitions from disk, so a saved provider or style, and
+a hand edit to `CHARACTER.md`, member configs, or the forum context, reach the
+next session without a restart. Discovery does not follow those files: the
+roster and detail Markdown stay at the startup copy until `chaweb` is restarted.
+Stored sessions remain dynamic and appear in the lobby without a restart.
 
 Startup validates every configured forum, not only the ones in use. A forum with
 an invalid default character, member override, or prompt therefore prevents the

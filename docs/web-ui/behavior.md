@@ -7,11 +7,11 @@ The browser keeps these related pieces of UI state:
 | State | Values |
 | --- | --- |
 | Sidebar | Open or closed |
-| Main area | Chat, Personas, Persona detail, Characters, Character detail, Forums, Sessions, or New session |
+| Main area | Chat, Personas, Persona detail, Characters, Character detail, Character settings, Forums, Sessions, or New session |
 | Current context | Forum ID |
 | Active conversation | Forum ID and session ID |
 | Inspected persona | Persona ID, used only by Persona detail |
-| Inspected character | Character ID, used only by Character detail |
+| Inspected character | Character ID, used by Character detail and Character settings |
 | Current default character | Character ID from the active live session |
 
 The Main area is exclusive: Chat and Navigation are never visible together. Opening or closing the sidebar changes layout only; it does not change the Main-area state or any current context.
@@ -51,8 +51,10 @@ Only the two-line button changes sidebar visibility. Every other sidebar action 
 | Persona row | Shows read-only Persona detail | Sidebar state and all conversation context |
 | Persona-detail back row | Returns to Personas | Sidebar state and all conversation context |
 | Characters | Shows Characters | Sidebar state and all conversation context |
-| Character row | Shows read-only Character detail | Sidebar state and all conversation context |
+| Character row | Shows Character detail | Sidebar state and all conversation context |
 | Character-detail back row | Returns to Characters | Sidebar state and all conversation context |
+| Character-detail chevron | Shows Character settings for a writable character | Sidebar state and all conversation context |
+| Character-settings back row or Cancel | Returns to Character detail | Sidebar state and all conversation context |
 | Forums | Shows Forums | Sidebar state and active conversation |
 | Forum row | Sets the current forum and shows Sessions directly | Sidebar state |
 | Recent session | Sets that forum/session as active, opens or reattaches it, and shows Chat | Sidebar state |
@@ -110,15 +112,29 @@ who a message comes from; that follows the forum, as described above.
 
 ## Characters
 
-Characters is a workspace-level, informational navigation area.
+Characters is a workspace-level navigation area.
 
 - The list contains the application-wide character roster, including Assistant.
 - Each row shows the character display name and its short configured description.
 - Selecting a row opens Character detail without changing persona, forum, session, or default character.
 - Character detail renders `CHARACTER.md` as formatted Markdown, including headings, paragraphs, emphasis, lists, and code blocks.
 - Links are not interactive and images are not rendered or fetched.
-- Character detail does not show forum membership or links to forums.
-- Users cannot create or edit characters in this version.
+- Character detail does not show forum membership, the current provider or style, or links to forums.
+- After the detail loads, a writable character shows a top-right chevron titled Character settings. Assistant has no chevron: it has no `character.toml`.
+- Users cannot create characters in this version. Provider and style are edited on Character settings; every other character field stays a hand edit.
+
+## Character settings
+
+Character settings is one form, reached only from a writable Character detail.
+
+- The title is `Settings`. The back row names the character and returns to Character detail.
+- Provider lists the workspace options that resolve, plus Workspace default (`null`, erase the key). Style lists the same way, plus No style.
+- Forums that override the provider are named under that picker. When they are every forum the character belongs to, the note says the picker is currently inert. Style is never overridden.
+- A sample line shows the selected style before save. No style uses the plain default appearance.
+- A fixed line above Save says that saving restarts the sessions using this character and loses any answer being generated.
+- Save is disabled while nothing has changed and while a save is in flight. Cancel returns to Character detail without writing.
+- Failures are reported in place.
+- A successful save stays on the settings screen. Affected live sessions shut down with `reloading`; the existing stream recovery reopens them in the background. The chat shows "Applying character settings…" and no Retry buttons.
 
 ## Forums and sessions
 
@@ -151,6 +167,8 @@ Rules:
 - Cancel returns to Sessions for the same forum.
 - After successful creation, the new session is opened, becomes the active conversation, appears in Recent, and Chat becomes visible.
 - Users cannot create forums, personas, or characters in this version.
+  A character's provider and style are edited from Character settings, not
+  created here.
 
 ## Main-area headers
 
@@ -172,6 +190,7 @@ Rules:
   opens a selected read-only manual-copy field.
 - Navigation screens show one centered title without a subtitle.
 - Persona detail uses the persona's display name as its title, and Character detail the character's.
+- Character settings uses the title `Settings`. The trailing top-bar slot holds the chevron on Character detail when the character is writable; otherwise it stays an empty spacer so the title remains centred.
 - The two-line sidebar control remains at the top-left in every Main-area state.
 - New session actions are inside the New session screen, not in the top bar.
 

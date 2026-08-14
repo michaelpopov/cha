@@ -6,7 +6,7 @@ live-session switching policy.
 
 | Component | Responsibility |
 | --- | --- |
-| `WorkspaceDefinition` | Load and own the process's immutable workspace configuration. |
+| `WorkspaceDefinition` | Load the workspace; keep discovery at the startup copy; re-resolve a forum's character definitions when a session opens. |
 | `open_session()` | Combine a model definition with prepared storage to construct a `SessionController`. |
 | `builtins` | Defines Guest, Assistant, the reserved built-in IDs, and embeds the application guide. |
 

@@ -1,12 +1,11 @@
 # Editing a character's provider and style from the web UI
 
-## What we want
+## What this is
 
-A character's model provider and its visual style are configured in
-`workspace/characters/<id>/character.toml` and can only be changed by hand
-editing that file and restarting CHA. This change lets you read and change both
-from the browser, on a screen reached from the character's description page, and
-makes a saved change take effect in sessions that are already open.
+A character's model provider and visual style live in
+`workspace/characters/<id>/character.toml`. Both can be read and changed from
+the browser, on a screen reached from the character's description page, and a
+saved change takes effect in sessions that are already open.
 
 ## How provider and style are configured today
 
