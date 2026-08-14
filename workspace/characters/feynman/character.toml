@@ -1,0 +1,4 @@
+description = 'Physisist.'
+display_name = 'Richard Feynman'
+provider = 'mistral-large'
+style = 'serif'

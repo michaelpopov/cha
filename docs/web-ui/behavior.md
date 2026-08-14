@@ -120,7 +120,7 @@ Characters is a workspace-level navigation area.
 - Character detail renders `CHARACTER.md` as formatted Markdown, including headings, paragraphs, emphasis, lists, and code blocks.
 - Links are not interactive and images are not rendered or fetched.
 - Character detail does not show forum membership, the current provider or style, or links to forums.
-- After the detail loads, a writable character shows a top-right chevron titled Character settings. Assistant has no chevron: it has no `character.toml`.
+- Character detail shows a header row above the description carrying the character display name, in the shape the Sessions forum header uses. After the detail loads, a writable character's row opens Character settings. Assistant's row is plain text with no chevron: it has no `character.toml`.
 - Users cannot create characters in this version. Provider and style are edited on Character settings; every other character field stays a hand edit.
 
 ## Character settings
@@ -189,8 +189,8 @@ Rules:
   session is opening rather than appearing and disappearing. Clipboard denial
   opens a selected read-only manual-copy field.
 - Navigation screens show one centered title without a subtitle.
-- Persona detail uses the persona's display name as its title, and Character detail the character's.
-- Character settings uses the title `Settings`. The trailing top-bar slot holds the chevron on Character detail when the character is writable; otherwise it stays an empty spacer so the title remains centred.
+- Persona detail uses the persona's display name as its title. Character detail has no title: its own header row names the character, so a title would repeat it.
+- Character settings uses the title `Settings`. The trailing top-bar slot is an empty spacer, present wherever there is a title to keep centred.
 - The two-line sidebar control remains at the top-left in every Main-area state.
 - New session actions are inside the New session screen, not in the top bar.
 

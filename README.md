@@ -106,7 +106,7 @@ on its own. Provider config files themselves are loaded at process startup, so
 edits to host, model, or credentials take effect only after a restart.
 
 A character's chosen `provider` and `style` can be changed from the browser:
-Characters → the character → the top-right chevron → Settings. Save writes
+Characters → the character → the row naming it above the description → Settings. Save writes
 those keys in `characters/<id>/character.toml` and restarts live sessions the
 change can affect. A forum that sets its own provider is named under the picker
 and is not restarted for a provider-only save. The built-in Assistant has no

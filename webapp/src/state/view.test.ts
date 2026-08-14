@@ -169,7 +169,8 @@ describe('application navigation reducer', () => {
     let state = readyState();
     state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
     expect(state.characterSettingsAvailable).toBe(false);
-    expect(navigationTitle(state)).toBe('Guide');
+    // The character's own screen names it in the column, not in the header.
+    expect(navigationTitle(state)).toBeNull();
 
     state = appReducer(state, {
       type: 'character-detail-loaded', characterId: 'guide', writable: true,

@@ -35,7 +35,7 @@ import {
   type AppAction,
   type AppState,
 } from '../state/view';
-import { CheckIcon, ChevronRightIcon, CopyIcon, SidebarIcon } from './Icons';
+import { CheckIcon, CopyIcon, SidebarIcon } from './Icons';
 import {
   CharacterDetailScreen,
   CharacterSettingsScreen,
@@ -917,8 +917,6 @@ export function App({
   const title = navigationTitle(state);
   const ready = state.bootstrapStatus === 'ready';
   const wholeApplication = state.sessionOperation !== 'idle' && state.mainView === 'chat';
-  const showCharacterSettings = state.mainView === 'character-detail'
-    && state.characterSettingsAvailable;
 
   return (
     <div
@@ -960,19 +958,7 @@ export function App({
           <div className="cha-topbar-title">{title && <h1>{title}</h1>}</div>
           {/* Balances the leading controls so a navigation title stays centred.
               Chat has no title to centre, so nothing is reserved there. */}
-          {title && (showCharacterSettings ? (
-            <button
-              aria-label="Character settings"
-              className="cha-icon-action"
-              onClick={() => navigate({ type: 'show-character-settings' })}
-              title="Character settings"
-              type="button"
-            >
-              <ChevronRightIcon />
-            </button>
-          ) : (
-            <div className="cha-topbar-balance" aria-hidden="true" />
-          ))}
+          {title && <div className="cha-topbar-balance" aria-hidden="true" />}
           <span className="cha-copy-status" aria-live="polite">
             {copyStatus === 'copied' ? 'Conversation copied to clipboard.' : ''}
           </span>

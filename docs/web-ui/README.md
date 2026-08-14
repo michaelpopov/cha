@@ -19,7 +19,7 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - Chat has no title or context header. A compact line below the composer shows `<Forum>   From: <Persona>   To: <current default character>`.
 - The composer's lower-left action chooses the target character. It replaces the unsupported attachment button shown in the original mockup.
 - The composer's trailing action is Send while idle and becomes Stop while generation is active.
-- Characters lists workspace characters and opens a rendering of a character's `CHARACTER.md`. A writable character's top-right chevron opens Settings, where provider and style are edited. Personas works the same way over the persona roster, without a settings screen.
+- Characters lists workspace characters and opens a rendering of a character's `CHARACTER.md`. A writable character's name row above the description opens Settings, where provider and style are edited. Personas works the same way over the persona roster, without a settings screen.
 - Forums list member character names beneath each forum title. Forum descriptions do not exist, and member names are not links.
 - Sessions show names and compact time metadata, never descriptions.
 - Recent contains cross-forum session references. The active session is highlighted.

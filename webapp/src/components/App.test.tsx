@@ -218,7 +218,7 @@ it('loads character detail and renders the restricted Markdown presentation', as
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
   expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
   expect(screen.getByText('careful').tagName).toBe('STRONG');
-  expect(screen.getByRole('heading', { name: 'Guide' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Guide settings' })).toHaveTextContent('Guide');
 
   fireEvent.click(within(screen.getByLabelText('Character detail navigation'))
     .getByRole('button', { name: 'Characters' }));
@@ -908,7 +908,7 @@ it('contains the amended chat controls and no Settings entry point', async () =>
   expect(screen.getByRole('button', { name: 'Personas' })).toBeInTheDocument();
 });
 
-it('shows the settings chevron only after a writable character detail loads', async () => {
+it('shows the settings row only after a writable character detail loads', async () => {
   let finish!: (detail: CharacterDetail) => void;
   const getCharacter = vi.fn(() => new Promise<CharacterDetail>((resolve) => {
     finish = resolve;
@@ -918,25 +918,25 @@ it('shows the settings chevron only after a writable character detail loads', as
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
 
   expect(await screen.findByText('Loading character…')).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Character settings' })).not.toBeInTheDocument();
-  expect(document.querySelector('.cha-topbar-balance')).not.toBeNull();
+  expect(screen.queryByRole('button', { name: 'Guide settings' })).not.toBeInTheDocument();
+  expect(document.querySelector('.cha-header-name')).toHaveTextContent('Guide');
 
   await act(async () => { finish(characterDetailFixture); });
-  expect(await screen.findByRole('button', { name: 'Character settings' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Guide settings' })).toBeInTheDocument();
 });
 
-it('omits the settings chevron for a character that is not writable', async () => {
+it('omits the settings row for a character that is not writable', async () => {
   render(<App client={fixtureClient({
     getCharacter: async () => ({ ...characterDetailFixture, writable: false }),
   })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
   expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Character settings' })).not.toBeInTheDocument();
-  expect(document.querySelector('.cha-topbar-balance')).not.toBeNull();
+  expect(screen.queryByRole('button', { name: 'Guide settings' })).not.toBeInTheDocument();
+  expect(document.querySelector('.cha-header-name')).toHaveTextContent('Guide');
 });
 
-it('keeps a late character detail from lending its chevron to the next character', async () => {
+it('keeps a late character detail from lending its settings row to the next character', async () => {
   let finishGuide!: (detail: CharacterDetail) => void;
   const getCharacter = vi.fn((characterId: string) => {
     if (characterId === 'guide') {
@@ -957,8 +957,8 @@ it('keeps a late character detail from lending its chevron to the next character
 
   await act(async () => { finishGuide({ ...characterDetailFixture, writable: true }); });
 
-  expect(document.querySelector('.cha-topbar-title h1')).toHaveTextContent('Assistant');
-  expect(screen.queryByRole('button', { name: 'Character settings' })).not.toBeInTheDocument();
+  expect(document.querySelector('.cha-header-name')).toHaveTextContent('Assistant');
+  expect(screen.queryByRole('button', { name: 'Guide settings' })).not.toBeInTheDocument();
 });
 
 function planningVoiceSnapshot(appearance: CharacterAppearance): SessionSnapshot {
@@ -988,7 +988,7 @@ async function openGuideSettingsFromPlanning(
   act(() => events.handlers[planning].onSnapshot(snapshot));
   fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Character settings' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Guide settings' }));
   expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
   return planning;
 }

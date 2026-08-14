@@ -1,0 +1,4 @@
+display_name = "Brain Trust"
+description = "Brainstorming Team"
+default_persona = "michael"
+default_character = "feynman"

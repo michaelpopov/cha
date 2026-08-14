@@ -1,4 +1,5 @@
 # Build output
+/.vscode/
 /build/
 /Testing/
 /test-results/

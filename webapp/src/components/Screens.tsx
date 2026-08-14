@@ -552,6 +552,30 @@ export function CharactersScreen({ state, dispatch, sessionReport }: NavigationS
   );
 }
 
+// Names the character whose description is on screen, and — when the character
+// has settings to change — opens them. Same row the Sessions list uses to reach
+// its forum: navigation belongs in the reading column, beside what it is about.
+function CharacterHeader({ state, dispatch }: DiscoveryScreenProps) {
+  const name = state.bootstrap?.characters.find(
+    ({ id }) => id === state.inspectedCharacterId,
+  )?.display_name;
+  if (!name) return null;
+  if (!state.characterSettingsAvailable) {
+    return <p className="cha-header-name">{name}</p>;
+  }
+  return (
+    <button
+      aria-label={`${name} settings`}
+      className="cha-header-row"
+      onClick={() => dispatch({ type: 'show-character-settings' })}
+      type="button"
+    >
+      <span className="cha-primary-line">{name}</span>
+      <ChevronRightIcon className="cha-chevron" />
+    </button>
+  );
+}
+
 export function CharacterDetailScreen({
   state,
   dispatch,
@@ -579,6 +603,7 @@ export function CharacterDetailScreen({
       onBack={() => dispatch({ type: 'show-characters' })}
       sessionReport={sessionReport}
       subjectId={state.inspectedCharacterId}
+      subtitle={<CharacterHeader dispatch={dispatch} state={state} />}
     />
   );
 }
@@ -963,7 +988,7 @@ export function SessionsScreen({
           row because that is what it is: the way into the forum's description. */}
       {forum && (
         <button
-          className="cha-forum-header"
+          className="cha-header-row"
           onClick={() => dispatch({ type: 'show-forum-detail' })}
           type="button"
         >

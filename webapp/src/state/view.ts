@@ -316,10 +316,9 @@ export function navigationTitle(state: AppState): string | null {
         ({ id }) => id === state.inspectedPersonaId,
       )?.display_name ?? 'Persona';
     case 'characters': return 'Characters';
-    case 'character-detail':
-      return state.bootstrap?.characters.find(
-        ({ id }) => id === state.inspectedCharacterId,
-      )?.display_name ?? 'Character';
+    // The screen names the character itself, in the row that opens its
+    // settings, so a header repeating the name would only take space.
+    case 'character-detail': return null;
     case 'character-settings': return 'Settings';
     case 'forums': return 'Forums';
     case 'sessions': return 'Sessions';
