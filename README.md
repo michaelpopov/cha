@@ -33,6 +33,7 @@ The chat input also accepts these controller-level commands:
 | `/info`, `/characters` | Inspect the session and its characters (`/agents` remains an alias). |
 | `/@Name` | Change and save the forum's default character. |
 | `/!Name` | Change and save the forum's current persona. |
+| `/provider <name>` | Override the current character's provider for this session only; `/provider` reports the override and `/provider default` restores the configured provider. Nothing is saved. |
 | `/stop` | Stop generation. |
 | `/exit` | Close the live session. |
 

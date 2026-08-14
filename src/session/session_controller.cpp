@@ -106,14 +106,16 @@ std::unique_ptr<SessionController> SessionController::from_shared_definitions(
     std::filesystem::path database_path,
     SessionLease lease,
     WakeNotifier& notifier,
-    SessionRestore restored) {
+    SessionRestore restored,
+    ProviderResolver provider_resolver) {
     require_character_count(definitions.size());
     if (!personas) throw std::invalid_argument("Session controller requires a persona roster");
     if (!lease.active()) throw std::invalid_argument("Production session controllers require an active session lease");
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions), std::move(personas), std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
-        std::move(database_path), std::move(lease), notifier, std::move(restored)));
+        std::move(database_path), std::move(lease), notifier, std::move(restored),
+        std::move(provider_resolver)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
@@ -122,7 +124,9 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
     ParticipantId initial_default_character_id,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
-    SessionRestore restored) {
+    SessionRestore restored,
+    ProviderResolver provider_resolver,
+    GenerationExecutor::BackendFactory backend_factory) {
     require_character_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
@@ -132,7 +136,9 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
         std::move(database_path),
         SessionLease::inactive_for_testing(),
         notifier,
-        std::move(restored)));
+        std::move(restored),
+        std::move(provider_resolver),
+        std::move(backend_factory)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
@@ -163,14 +169,18 @@ SessionController::SessionController(
     std::filesystem::path path,
     SessionLease lease,
     WakeNotifier& notifier,
-    SessionRestore restored)
+    SessionRestore restored,
+    ProviderResolver provider_resolver,
+    GenerationExecutor::BackendFactory backend_factory)
     : lease_(std::move(lease)),
       journal_(std::move(path)),
       worker_pool_(definitions.size()),
-      generation_executor_(std::move(definitions), notifier, worker_pool_),
+      generation_executor_(
+          std::move(definitions), notifier, worker_pool_, std::move(backend_factory)),
       characters_(make_forum_characters(generation_executor_.runtime_info())),
       personas_(std::move(personas)),
-      default_character_id_(std::move(initial_default_character_id)) {
+      default_character_id_(std::move(initial_default_character_id)),
+      provider_resolver_(std::move(provider_resolver)) {
     initialize(std::move(restored), initial_default_persona_id);
 }
 
@@ -784,6 +794,65 @@ ControllerUpdate SessionController::set_default_persona(std::string_view handle)
     default_persona_ = matches.front();
     require_snapshot(update);
     update.notice = "Current persona is now " + default_persona_->display_name;
+    return update;
+}
+
+ControllerUpdate SessionController::set_session_provider(std::string_view name) {
+    if (busy()) {
+        return busy_notice();
+    }
+    ControllerUpdate update{.input_consumed = true};
+    // Validated against the roster at initialize() and on every default
+    // change, so the current default always resolves.
+    const CharacterMetadata* character = characters_.find(default_character_id_);
+    if (!provider_resolver_) {
+        update.notice = "Provider override is not available in this session.";
+        return update;
+    }
+    if (name.empty()) {
+        const auto found = provider_overrides_.find(default_character_id_);
+        update.notice = found == provider_overrides_.end()
+            ? character->display_name
+                + " is using its configured provider for this session."
+            : character->display_name
+                + "'s provider override for this session is '" + found->second + "'.";
+        return update;
+    }
+    // "default" is a reserved word: it never reaches the resolver.
+    if (name == "default") {
+        try {
+            generation_executor_.reset_backend(default_character_id_);
+        } catch (const std::exception& error) {
+            update.notice = error.what();
+            return update;
+        }
+        provider_overrides_.erase(default_character_id_);
+        update.notice = character->display_name
+            + " is back to its configured provider for this session.";
+        return update;
+    }
+    ModelBackendConfig config;
+    // The resolver reports a name it cannot use as std::invalid_argument, but
+    // it reads the filesystem to do so: catch everything, because an escaped
+    // exception here would fail the whole session over one mistyped name.
+    try {
+        config = provider_resolver_(name);
+    } catch (const std::exception& error) {
+        update.notice = error.what();
+        return update;
+    }
+    // Backend construction can throw (unset credentials, failed discovery);
+    // that is a command failure, not a session failure. The executor leaves
+    // the old slot in place on a throw, so nothing here needs rollback.
+    try {
+        generation_executor_.replace_backend(default_character_id_, config);
+    } catch (const std::exception& error) {
+        update.notice = error.what();
+        return update;
+    }
+    provider_overrides_[default_character_id_] = std::string(name);
+    update.notice = character->display_name + " now uses provider '"
+        + std::string(name) + "' for this session.";
     return update;
 }
 

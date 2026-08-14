@@ -126,6 +126,14 @@ public:
     // Forum IDs that contain this character and name a provider of their own.
     std::vector<std::string> forums_overriding_provider(std::string_view id) const;
 
+    // Resolves one named provider config to a complete backend configuration
+    // for a session's runtime provider override. Replacement, not merge:
+    // absent fields fall back to ModelBackendConfig defaults. Throws
+    // std::invalid_argument naming the problem and the available IDs when the
+    // name does not resolve.
+    [[nodiscard]] ModelBackendConfig resolve_session_provider(
+        std::string_view name) const;
+
     // Rejects a character with no readable config file. Compares and writes
     // under one lock, returning the fields the committed document changed.
     // Loads each non-null name before writing, so a selection that cannot run

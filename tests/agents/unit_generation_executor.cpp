@@ -272,5 +272,267 @@ TEST(GenerationExecutor, RollsBackPartialSubmissionAndFreesEveryAcceptedWorker) 
         std::holds_alternative<GenerationCompleted>(next_foreground_event(batch)));
 }
 
+// --- Backend replacement ----------------------------------------------------
+
+CharacterDefinition recipe_definition(
+    std::string id,
+    std::string name,
+    std::string model = "original-model") {
+    return {
+        .character = {
+            .id = std::move(id),
+            .display_name = std::move(name),
+        },
+        .backend = {
+            .host = "127.0.0.1",
+            .port = 1,
+            .model = std::move(model),
+        },
+        .system_prompt = "Test prompt",
+    };
+}
+
+// Shared observation of every backend one factory builds: the configs it was
+// given, and one performed flag per construction so a test can tell which
+// instance served a request even after a slot was swapped.
+struct FactoryObservation {
+    std::vector<ModelBackendConfig> configs;
+    std::vector<std::shared_ptr<std::atomic_bool>> performed;
+};
+
+class FactoryBackend final : public ModelBackend {
+public:
+    FactoryBackend(
+        CharacterDefinition definition,
+        std::shared_ptr<std::atomic_bool> performed)
+        : definition_(std::move(definition)), performed_(std::move(performed)) {
+    }
+
+    RequestPayload prepare(const GenerationRequest& input) override {
+        return {.bytes = input.run.prompt_text};
+    }
+
+    GenerationResult perform(
+        RequestPayload,
+        const GenerationDeltaSink&,
+        const std::atomic_bool&) override {
+        performed_->store(true, std::memory_order_release);
+        return {};
+    }
+
+    ModelBackendInfo info() const override {
+        return {
+            definition_.character,
+            definition_.backend.model,
+            "test://model",
+            true,
+        };
+    }
+
+private:
+    CharacterDefinition definition_;
+    std::shared_ptr<std::atomic_bool> performed_;
+};
+
+GenerationExecutor::BackendFactory recording_factory(
+    const std::shared_ptr<FactoryObservation>& observation) {
+    return [observation](CharacterDefinition definition) {
+        observation->configs.push_back(definition.backend);
+        auto performed = std::make_shared<std::atomic_bool>(false);
+        observation->performed.push_back(performed);
+        return std::unique_ptr<ModelBackend>(
+            new FactoryBackend(std::move(definition), std::move(performed)));
+    };
+}
+
+TEST(GenerationExecutor, BuildsBackendsThroughTheFactoryInOrder) {
+    ThreadPool pool(2);
+    auto observation = std::make_shared<FactoryObservation>();
+    GenerationExecutor executor(
+        std::vector<CharacterDefinition>{
+            recipe_definition("one-id", "One", "model-one"),
+            recipe_definition("two-id", "Two", "model-two"),
+        },
+        notifier(),
+        pool,
+        recording_factory(observation));
+
+    ASSERT_EQ(observation->configs.size(), 2U);
+    EXPECT_EQ(observation->configs[0].model, "model-one");
+    EXPECT_EQ(observation->configs[1].model, "model-two");
+    ASSERT_EQ(executor.runtime_info().size(), 2U);
+    EXPECT_EQ(executor.runtime_info()[0].model, "model-one");
+    pool.stop();
+}
+
+TEST(GenerationExecutor, ReplaceBackendSwapsTheSlotAndRefreshesRuntimeInfo) {
+    Transcript transcript;
+    ThreadPool pool(2);
+    auto observation = std::make_shared<FactoryObservation>();
+    GenerationExecutor executor(
+        std::vector<CharacterDefinition>{
+            recipe_definition("one-id", "One"),
+            recipe_definition("two-id", "Two"),
+        },
+        notifier(),
+        pool,
+        recording_factory(observation));
+
+    ModelBackendConfig override_config{
+        .host = "127.0.0.1",
+        .port = 2,
+        .model = "override-model",
+    };
+    executor.replace_backend("one-id", override_config);
+
+    ASSERT_EQ(observation->configs.size(), 3U);
+    EXPECT_EQ(observation->configs[2].model, "override-model");
+    EXPECT_EQ(observation->configs[2].port, 2);
+    ASSERT_EQ(executor.runtime_info().size(), 2U);
+    EXPECT_EQ(executor.runtime_info()[0].model, "override-model");
+    EXPECT_EQ(executor.runtime_info()[0].character.id, "one-id");
+    EXPECT_EQ(executor.runtime_info()[1].model, "original-model");
+
+    // A staged request reaches the replacement; the replaced backend is gone
+    // and the untouched slot still answers for its own character.
+    expect_one_completed_run(executor, transcript, 1, "one-id", "One");
+    EXPECT_TRUE(observation->performed[2]->load(std::memory_order_acquire));
+    EXPECT_FALSE(observation->performed[0]->load(std::memory_order_acquire));
+    expect_one_completed_run(executor, transcript, 2, "two-id", "Two");
+    EXPECT_TRUE(observation->performed[1]->load(std::memory_order_acquire));
+    pool.stop();
+}
+
+TEST(GenerationExecutor, ResetBackendRebuildsWithTheOriginalConfig) {
+    ThreadPool pool(1);
+    auto observation = std::make_shared<FactoryObservation>();
+    GenerationExecutor executor(
+        std::vector<CharacterDefinition>{
+            recipe_definition("one-id", "One", "original-model"),
+        },
+        notifier(),
+        pool,
+        recording_factory(observation));
+
+    ModelBackendConfig override_config{
+        .host = "127.0.0.1",
+        .port = 2,
+        .model = "override-model",
+    };
+    executor.replace_backend("one-id", override_config);
+    executor.reset_backend("one-id");
+
+    ASSERT_EQ(observation->configs.size(), 3U);
+    EXPECT_EQ(observation->configs[2].model, "original-model");
+    EXPECT_EQ(observation->configs[2].port, 1);
+    EXPECT_EQ(executor.runtime_info()[0].model, "original-model");
+    pool.stop();
+}
+
+TEST(GenerationExecutor, ReplaceBackendRejectsUnknownAndMalformedResults) {
+    ThreadPool pool(1);
+    auto observation = std::make_shared<FactoryObservation>();
+    GenerationExecutor executor(
+        std::vector<CharacterDefinition>{
+            recipe_definition("one-id", "One"),
+        },
+        notifier(),
+        pool,
+        recording_factory(observation));
+
+    EXPECT_THROW(
+        executor.replace_backend("missing-id", {}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        executor.reset_backend("missing-id"),
+        std::invalid_argument);
+
+    // Misbehaving factories are keyed on a marker model so construction
+    // succeeds and only the replacement goes wrong.
+    const ModelBackendConfig marker{
+        .host = "127.0.0.1",
+        .port = 1,
+        .model = "misbehave",
+    };
+
+    GenerationExecutor null_factory_executor(
+        std::vector<CharacterDefinition>{recipe_definition("one-id", "One")},
+        notifier(),
+        pool,
+        [](CharacterDefinition definition) {
+            if (definition.backend.model == "misbehave") {
+                return std::unique_ptr<ModelBackend>();
+            }
+            return std::unique_ptr<ModelBackend>(
+                new RecordingBackend("one-id", "One", ""));
+        });
+    EXPECT_THROW(
+        null_factory_executor.replace_backend("one-id", marker),
+        std::runtime_error);
+    EXPECT_EQ(null_factory_executor.runtime_info()[0].character.id, "one-id");
+
+    GenerationExecutor wrong_id_executor(
+        std::vector<CharacterDefinition>{recipe_definition("one-id", "One")},
+        notifier(),
+        pool,
+        [](CharacterDefinition definition) {
+            if (definition.backend.model == "misbehave") {
+                return std::unique_ptr<ModelBackend>(
+                    new RecordingBackend("other-id", "Other", ""));
+            }
+            return std::unique_ptr<ModelBackend>(
+                new RecordingBackend("one-id", "One", ""));
+        });
+    EXPECT_THROW(
+        wrong_id_executor.replace_backend("one-id", marker),
+        std::runtime_error);
+    EXPECT_EQ(wrong_id_executor.runtime_info()[0].character.id, "one-id");
+    pool.stop();
+}
+
+TEST(GenerationExecutor, AFactoryThrowLeavesTheExistingSlotInPlace) {
+    Transcript transcript;
+    ThreadPool pool(1);
+    auto observation = std::make_shared<FactoryObservation>();
+    auto failing_factory = [observation](CharacterDefinition definition) {
+        if (definition.backend.model == "explode") {
+            throw std::runtime_error("factory exploded");
+        }
+        return recording_factory(observation)(std::move(definition));
+    };
+    GenerationExecutor executor(
+        std::vector<CharacterDefinition>{
+            recipe_definition("one-id", "One"),
+        },
+        notifier(),
+        pool,
+        failing_factory);
+
+    ModelBackendConfig broken{
+        .host = "127.0.0.1",
+        .port = 1,
+        .model = "explode",
+    };
+    EXPECT_THROW(executor.replace_backend("one-id", broken), std::runtime_error);
+    EXPECT_EQ(executor.runtime_info()[0].model, "original-model");
+
+    expect_one_completed_run(executor, transcript, 1, "one-id", "One");
+    EXPECT_TRUE(observation->performed[0]->load(std::memory_order_acquire));
+    pool.stop();
+}
+
+TEST(GenerationExecutor, ReplacementIsUnavailableWithoutDefinitions) {
+    ThreadPool pool(1);
+    GenerationExecutor executor(
+        test::one_backend(std::make_unique<RecordingBackend>(
+            "one-id", "One", "")),
+        notifier(),
+        pool);
+
+    EXPECT_THROW(executor.replace_backend("one-id", {}), std::logic_error);
+    EXPECT_THROW(executor.reset_backend("one-id"), std::logic_error);
+    pool.stop();
+}
+
 } // namespace
 } // namespace cha

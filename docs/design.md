@@ -1,240 +1,330 @@
-# Storing and showing a timestamp for each transcript entry
+# A session-scoped provider override (`/provider`)
 
 ## What this is
 
-Every response CHA receives from a model is journaled into the session's
-SQLite database and rendered in the browser transcript, but nothing records
-*when* it arrived. This change gives each journaled transcript entry a
-wall-clock creation timestamp, persists it in the session database, and shows
-it on each message in the web UI.
+A character's provider can be changed from the browser today (Characters →
+character → Settings), but that is a deliberately heavy operation: it writes
+`character.toml`, then shuts down and restarts every live session the change
+can affect. This change adds the light counterpart: a chat command that swaps
+the provider of the session's current default character **for the running
+session only**.
 
-The two requirements, restated:
+```text
+/provider terra       "Montaigne now uses provider 'terra' for this session."
+/provider             "Montaigne's provider override for this session is 'terra'."
+/provider default     "Montaigne is back to its configured provider for this session."
+```
 
-1. **Store** a timestamp with each model response in the session database, so
-   the record of a conversation includes when each answer was produced.
-2. **Present** a timestamp for each response in the web UI, so the reader can
-   see when a given answer arrived without leaving the conversation.
+The requirements, restated:
+
+1. **Runtime only.** Nothing is written to `character.toml`, forum configs, or
+   the session database. The override lives and dies with the live session.
+2. **Session-scoped and character-scoped.** The command targets whoever the
+   session's current default character is at command time. Other characters,
+   other sessions, and later runs of this session are unaffected.
 
 ## What exists today
 
-There is no per-entry time anywhere in the pipeline:
-
-- The `entries` table (`src/session/session_database.cpp`, `create_schema()`)
-  stores `entry_id, epoch, request_id, kind, participant_id, display_name,
-  addressed_to, addressed_to_name, text, status` — no time column. The
-  `turns` table has none either.
-- `TranscriptEntry` (`src/chat/transcript.h`) has no time field, and the
-  entry factories in `src/chat/transcript.cpp` set none.
-- `transcript_entry_json` (`src/web/protocol.cpp`) serializes no time, and
-  the `TranscriptEntry` schema in `resources/cha.yaml` declares none.
-- The transcript renderer in `webapp/src/components/Screens.tsx` shows the
-  speaker and the text and nothing else.
-
-The only time in the system is **per session**: `StoredSession.updated_at` is
-the database file's modification time, shown in the Sessions and Recent lists
-through the relative `formatSessionTime()` helper ("Now", "5m", "2d"). It
-answers "when was this conversation last touched", not "when was this message
-written".
-
-One constraint shapes the storage work: `load_session_database()` rejects any
-database whose `user_version` is not exactly `session_database_version`
-(currently 2). Adding a column is therefore a schema-version event, and
-existing session databases need a migration story — rejecting them would
-silently strand every stored conversation, which is not acceptable.
+- **Provider configs** live only in `system/providers/<id>/config.toml`.
+  Runtime resolution by name is already a supported operation: the
+  character-settings PATCH validates a save with `require_path_component()` +
+  `load_named_provider()` (`workspace_definition.cpp:1060`), and
+  `make_backend_config()` (`agents/character_config.h:89`) materializes a
+  complete `ModelBackendConfig` from one provider file, filling absent fields
+  with defaults — never merging with another config.
+- **Backends are baked at session open.** `open_session()` re-resolves the
+  forum's `CharacterDefinition`s from disk and hands them to
+  `SessionController::from_shared_definitions()`; `GenerationExecutor` then
+  owns one `ProviderClient` per character for the session's life
+  (`generation_executor.cpp:49`). Batch executions borrow those backends;
+  nothing mutates a backend after construction.
+- **State change and persistence are already separate steps** in the command
+  pipeline. `set_default_character()` mutates controller state and sets a
+  notice; the config-file write is a callback owned by `LiveSession`, wired
+  from `OpenedSession`, invoked only when the session state changed
+  (`live_session.cpp:466`). A runtime-only command needs no such callback —
+  the plumbing has no persistence step to suppress.
+- **Busy discipline.** `SessionController::busy()` covers an active response
+  or batch; commands that cannot run mid-generation (`/clear`, `/@Name`)
+  answer with `busy_notice()`. The web grammar additionally gates every
+  command except `/stop` behind `is_generating()` (`text_input.cpp:43`).
+- **Command grammar.** `web/text_command.cpp` maps slash spellings to typed
+  `CommandKind`s; `handle_text_input()` dispatches them to typed controller
+  methods. `/mcast` is the precedent for a command that takes an argument;
+  `set_default_character()` is the precedent for a controller method that
+  handles its own empty-handle usage notice.
+- **Notices are presentation state.** `ControllerUpdate::notice` reaches the
+  browser as a transient banner and is never durable. That is the whole
+  feedback channel this feature needs: the override appears in no snapshot
+  field, so no snapshot-vs-append question arises.
+- **Layering.** `session/` must not learn the workspace file layout; today the
+  controller receives already-resolved definitions. Resolving a provider name
+  is workspace knowledge and must be injected, not learned.
 
 ## Decisions
 
-### Scope: timestamp every journaled entry, not only responses
+### Scope: a per-character override map, session lifetime
 
-The requirement names model responses, but the column goes on **every**
-journaled entry: the human prompt at `start_turn()`, the character response
-or error entry at its terminal write, and any stored notice.
+The controller holds `std::unordered_map<CharacterId, std::string>
+provider_overrides_` (character ID → provider name, kept for the report form).
+The command applies to the current default character and is keyed to that
+character, so switching default with `/@Name` and back keeps each character's
+override intact, and `/mcast` targets each use their own (possibly overridden)
+provider with no special syntax.
 
-This costs nothing over timestamping responses alone — the schema change, the
-journal write, and the restore read are identical in size either way — and a
-chat view in which answers carry times but the prompts they answer do not
-reads as broken rather than focused. Prompt and response are two halves of
-one exchange; the reader's question "when did this happen" applies to both.
-It also keeps the storage rule stateless: `insert_entry()` never inspects the
-entry kind to decide whether the timestamp matters.
+The map is never cleared during the session: `/clear` advances the history
+epoch and is orthogonal to backend choice, and tying the two would be a rule
+to explain. The override ends exactly when the live session does: `/exit`,
+reopen, a character-settings `reloading` restart (which reverts to file
+truth, consistently), or process shutdown.
 
-Off-record marker entries are never journaled, so they carry a timestamp in
-memory only. They show their time like any other entry — the storage rule is
-stateless, and so is the render rule: no kind check decides whether a time
-appears, on either side.
+### Resolution: complete replacement, validated at command time
 
-### Moment: entry creation time, stamped by the factories
+`WorkspaceDefinition` gains:
 
-`TranscriptEntry` gains `created_at`, a `std::int64_t` of Unix seconds, and
-the existing factories (`make_human_entry`, `make_character_entry`,
-`make_notice_entry`, `make_error_entry`) stamp it from
-`std::chrono::system_clock` at construction. `0` means "unknown" and is what
-pre-migration rows read.
-
-The alternative — stamping inside `insert_entry()` at journal commit — was
-rejected. It would make a response's timestamp mean "when the answer finished
-streaming" rather than "when it started appearing", and it would force the
-live in-memory entry to be re-stamped at completion so that memory and disk
-agree, or else leave the streaming entry with no time until it finishes.
-Creation time keeps one value, set once, that is the same in the live
-transcript, in the database, and after a restore. For ordinary exchanges the
-two moments differ by the streaming duration, and "when this message
-appeared" is the meaning a chat reader expects.
-
-**One entry, two constructions.** Keeping that value single takes one extra
-step, because a character response is built by
-`SessionController::response_entry()` *twice*: once when the first answer
-chunk opens the live streaming entry, and once at completion or cancellation
-to produce the record handed to the journal. Those are separate objects — the
-live one is never journaled, and `finish_entry()` only flips its status — so
-a factory stamp alone would give the live entry the time the answer started
-appearing and the stored entry the time it finished. The displayed time would
-then change silently on the next restore, which is precisely the failure the
-paragraph above rejects `insert_entry()` stamping for.
-
-So the controller captures the stamp when it opens the response entry and
-reuses it afterwards: the active-response state gains `response_created_at`,
-set from the entry the factory just stamped, and `response_entry()` overwrites
-its own fresh stamp with that value on every later call. Human prompts and
-error entries need nothing — each is journaled from the very object the
-transcript holds, so it can only carry one stamp.
-
-A useful consequence: a streaming response already carries its timestamp
-before it is ever journaled, so the UI can show the time of an answer that is
-still arriving.
-
-### Storage: one column, one schema version, a one-shot migration
-
-`entries` gains:
-
-```sql
-created_at INTEGER NOT NULL DEFAULT 0
+```cpp
+[[nodiscard]] ModelBackendConfig resolve_session_provider(std::string_view name) const;
 ```
 
-Unix seconds match the convention `StoredSession.updated_at` already uses
-end to end (the browser multiplies by 1000 for `Date`). `STRICT` tables
-permit `ALTER TABLE … ADD COLUMN` with a constant non-null default, so
-migration needs no table rebuild.
+It validates the name (`require_path_component()`), loads it with
+`load_named_provider()`, and materializes with `make_backend_config()` — the
+same parse the session runtime and the settings PATCH use, so command-time
+and startup-time semantics cannot drift. Resolution is replacement, in line
+with provider layering everywhere else: absent fields in the named config
+fall back to `ModelBackendConfig` defaults, not to the character's previous
+backend.
 
-`session_database_version` becomes 3, and opening an old database migrates it
-exactly once:
+On failure the method throws `std::invalid_argument` whose message names the
+problem and lists the available provider IDs — the user answers an error
+notice at the keyboard, not a failed turn later.
 
-- `validate_database_identity()` accepts versions **2 and 3**. The read-only
-  paths — catalog listing, `inspect()`, route-level `validate()` — keep
-  working against an unmigrated database without writing to it.
-- `SessionRepository::prepare()` runs a new `migrate_session_database()`
-  step after acquiring the lease and before `load_session_database()`: open
-  the database read-write, and if its `user_version` is 2, run the `ALTER`
-  and set 3 **in one transaction**. The lease is already the required
-  exclusion, and opening is already a write-capable moment, so migration
-  adds no new locking or lifecycle. A no-op on version 3 keeps it cheap on
-  every later open.
+### Backend replacement: the executor rebuilds one slot through a factory
 
-  The transaction is not decoration. `ALTER TABLE` and `PRAGMA user_version`
-  are two statements, and a crash between them would leave a database that
-  has the column but still reads version 2. The next open would re-run the
-  `ALTER`, fail with `duplicate column name`, and strand that session
-  permanently. `create_session_database()` already wraps its schema creation
-  the same way.
-- `load_session_database()` keeps its read-only single connection and now
-  reads `created_at` in `build_restore()`. Its contract gains one line: it
-  requires a migrated database, and `prepare()` is what guarantees that.
-  `rename_session_database()` needs no migration of its own — it updates only
-  the `session` row, which exists unchanged in both versions.
+`GenerationExecutor` owns backend lifetime, so replacement belongs there. The
+definitions constructor gains a backend factory and the executor retains a
+copy of the definitions as rebuild recipes:
 
-New databases are created directly at version 3, including the process-local
-Welcome session, so nothing on the creation path changes shape.
+```cpp
+using BackendFactory =
+    std::function<std::unique_ptr<ModelBackend>(CharacterDefinition)>;
 
-The rejected alternatives:
+GenerationExecutor(
+    std::vector<CharacterDefinition> definitions,
+    WakeNotifier& notifier,
+    ThreadPool& worker_pool,
+    BackendFactory backend_factory = {});   // default: ProviderClient
 
-- **Dual-version readers** (accept 2 and 3 forever, select the column
-  conditionally) avoid migration writes but keep two schema shapes in the
-  code permanently — more machinery than a personal application needs.
-- **Rejecting old databases** is the smallest change and strands every
-  existing conversation. Dismissed.
+void replace_backend(CharacterId character_id, const ModelBackendConfig& config);
+void reset_backend(CharacterId character_id);
+```
 
-Timestamps on the `turns` table instead of `entries` were also considered and
-rejected: a turn pairs a prompt with its response, but the UI shows time per
-message, and one row per exchange cannot say when each half appeared.
+`replace_backend()` copies the retained definition, assigns the new backend
+config, runs it through the factory, then swaps the slot and refreshes that
+index's `runtime_info_` from the new backend's `info()`. Construction is
+complete before the swap: a factory throw leaves `backends_` untouched. An
+unknown ID throws, as staging already does for unknown targets.
+`reset_backend()` is the same operation against the retained definition's own
+`backend` config: the recipes live here, so the reset does too and no caller
+needs a second copy of them.
 
-### Protocol: one nullable field, snapshots only
+Construction validates its backends in `build_runtime_info()` — non-null,
+syntactically valid IDs and display names, unique across the forum — and a
+swap must not step around that. Both `characters_` in the controller and
+`backend_index()` here assume a slot's character ID never changes, so
+`replace_backend()` rejects a null factory result and a backend whose
+`info().character.id` differs from the slot's. The remaining checks are
+uniqueness properties the swap cannot disturb: it replaces one slot with a
+backend for the same character.
 
-`transcript_entry_json` emits `created_at` on every entry, as an explicit
-`null` when the value is 0 — an `nlohmann::json(nullptr)`, the same spelling
-the character settings feature uses for absent `provider`/`style`. Not
-`put_optional`, which sits in the same function serializing `request_id` and
-does something different: it omits the key entirely.
+Consequences:
 
-The `TranscriptEntry` schema in `resources/cha.yaml` gains `created_at` as
-`type: [integer, "null"]` and lists it in `required`. The file is OpenAPI
-3.1, which dropped `nullable: true`, and the schema is
-`additionalProperties: false`; required-and-nullable is what `provider` and
-`style` already do, and it is what makes the generated browser type
-`number | null` rather than an optional. The browser's types are regenerated
-from it.
+- **`/info` reflects the change for free.** `format_session_information()`
+  reads `runtime_info()`, and the rebuilt backend reports its new model and
+  API. No new snapshot field, no provider-ID bookkeeping in
+  `ModelBackendInfo`.
+- **Reset is a replacement**, not a restore path: `/provider default` calls
+  `reset_backend()`, which re-materializes the retained definition's original
+  `backend` config, i.e. the open-time effective backend, forum overrides
+  included. The controller keeps no copy of those configs. `default` is a
+  reserved word, intercepted before the resolver runs; a provider config
+  actually named `default` is unreachable through the command (see
+  limitations).
+- **Safety comes from the existing discipline, not new locking.** Commands
+  run on the owner thread; workers borrow backends only inside a live batch,
+  and a live batch is exactly what `busy()` reports. The controller rejects
+  the command while busy, so the swap can never race a generation. Destroying
+  the old `ProviderClient` on the owner thread is therefore destruction of an
+  idle object.
 
-The append path needs nothing. `created_at` never changes after an entry
-exists, and every new entry — prompt, opened response, finished response —
-already reaches the browser through `SnapshotRequired`, which carries full
-entries. Only pure text growth rides the append events, and text growth does
-not touch the timestamp.
+The factory seam is what keeps the executor testable: unit tests pass a
+factory returning fake backends recording their configs and observe the swap
+directly. The default factory preserves today's `build_backends()` semantics,
+including its error wrapping.
 
-### Presentation: absolute local time on every message
+### Controller: one typed method behind an injected resolver
 
-The transcript renderer in `Screens.tsx` adds a subdued `<time>` element to
-each `cha-message` article, following the pattern the Sessions screen already
-uses (`<time dateTime={…}>` with a formatted label). Entries whose
-`created_at` is `null` render no element at all — pre-migration history
-simply has no times, and the UI does not apologize for it.
+```cpp
+using ProviderResolver = std::function<ModelBackendConfig(std::string_view)>;
 
-The label is **absolute**, in the browser's local timezone: the date and
-the time on every message, carrying the year only outside the current one,
-with the full timestamp in the element's `title`. The existing relative `formatSessionTime()` is
-deliberately not reused: it is built for lists that reload, and on a
-transcript that sits open its "5m" labels silently go stale because nothing
-re-renders them. An absolute time is correct from the moment it is painted.
+[[nodiscard]] ControllerUpdate set_session_provider(std::string_view name);
+```
 
-Placement must work for human entries, which have no speaker line (the
-speaker row renders only for non-human kinds), so the timestamp goes on its
-own subdued line under the message text — the same slot the existing
-`Stopped` / `Failed` status lines use — rather than beside the speaker name.
+The resolver is a constructor argument on the production constructor,
+`from_shared_definitions()`, and the definitions-based test constructor,
+defaulted to empty on all three and placed after the existing defaulted
+`restored` (the same slot `from_backends_for_testing()` already uses for
+`ActivationHook`). An absent resolver yields a fixed notice ("Provider
+override is not available in this session.") and is what keeps every existing
+call site compiling — both `session_open.cpp:35` and
+`tests/support/test_live_session.h:325` pass `restored` as the last
+positional argument. Session open supplies the real closure; the test helper
+does not need one.
 
-### What the timestamp never touches
+The method handles its own argument forms, following the
+`set_default_character()` precedent:
 
-- **Model context.** `project_model_context()` is unchanged. Timestamps are
-  presentation and record-keeping data; a provider never sees them, and the
-  shared-history JSONL encoding keeps its current shape.
-- **Copy conversation.** `conversationText()` keeps its deterministic
-  plain-text format. Whether copied transcripts should include times is a
-  separate decision, not bundled into this one.
-- **Update classification.** Timestamps introduce no new controller mutation
-  at finish time, so `ControllerUpdate` classification is untouched.
-- **Recent / Sessions lists.** They keep ordering by `updated_at` exactly as
-  today.
+- **busy** → `busy_notice()`.
+- **empty name** → a report notice: whether the default character has an
+  override, and which. It reports the *override*, not the baseline —
+  `ModelBackendConfig` retains no provider ID by design (resolution forgets
+  which layer won), so "the configured provider" has no name to print.
+- **`default`** → call `reset_backend()` first; only on success erase the
+  override and notice. A failed rebuild must not report "configured
+  provider" while the override backend is still in the slot.
+- **otherwise** → run the resolver; an `invalid_argument` becomes the error
+  notice unchanged. Then `replace_backend()`. Catch `std::exception` around
+  that call (and around `reset_backend()`): `ProviderClient` construction
+  throws `std::runtime_error` when `api_key_env` is unset
+  (`provider_client.cpp:287`), the default factory rewraps it the way
+  `build_backends()` already does (`generation_executor.cpp:59`), and
+  `LiveSession::owner_loop` maps an uncaught exception to
+  `ShutdownReason::session_failed` (`live_session.cpp:395`). Turn the
+  message into the error notice and do not record the override. On success,
+  record the override and notice.
+
+The four notice strings are fixed here so the tests, the command table and
+`application-guide.md` cannot drift apart:
+
+```text
+set       "<Name> now uses provider '<id>' for this session."
+report    "<Name>'s provider override for this session is '<id>'."
+report    "<Name> is using its configured provider for this session."   (no override)
+reset     "<Name> is back to its configured provider for this session."
+```
+
+Every form sets `input_consumed` and returns a **notice-only** update — the
+same shape `/info` uses. The override appears in no snapshot, so
+`SnapshotRequired` has nothing to carry, and no append classification is
+involved.
+
+Unlike `/@Name` and `/!Name`, nothing here persists. The notice says "for
+this session" precisely because its sibling commands silently save; the
+asymmetry must be audible in the feedback.
+
+### Wiring: the workspace hands the controller a function, not a path
+
+`session_open.cpp` builds the resolver as a closure over
+`WorkspaceDefinition` (which owns `providers_directory`):
+
+```cpp
+[&model](std::string_view name) {
+    return model.resolve_session_provider(name);
+}
+```
+
+passed as the new last positional argument to `from_shared_definitions()`,
+after `restored`. `OpenedSession` gains nothing — the resolver goes into the
+controller and is reachable only through the command. The `session/` layer
+sees only a `std::function`; workspace file layout stays in `workspace/`.
+
+The closure outlives `open_session()`: the controller stores it and calls it
+every time `/provider` runs, so the captured reference must outlive the session.
+It does — `WorkspaceDefinition` is the authoritative workspace for one server
+process, loaded at startup and outliving every session opened against it,
+which is the same borrow `persist_default_character` already takes. Calling it
+from the session's owner thread is safe for a second reason:
+`resolve_session_provider()` only reads a file under `providers_directory`,
+so it never touches the document lock the character-settings PATCH holds.
+
+### Web grammar: one argument-carrying exact command
+
+- `text_command.*`: `CommandKind::session_provider`, descriptor
+  `{"/provider", CommandKind::session_provider}` in the `exact` form — the
+  argument arrives in `command.argument` like `/mcast`'s.
+- `text_input.cpp`: dispatch before the generic argument rejection, mirroring
+  the multicast branch:
+
+  ```cpp
+  if (command.kind == CommandKind::session_provider) {
+      result.clear_input = true;
+      result.session = controller.set_session_provider(command.argument);
+      return result;
+  }
+  ```
+
+  The `switch` on `CommandKind` (`text_input.cpp:69`) is exhaustive under
+  `-Wswitch`; `/mcast` has both the early branch and a dummy
+  `case CommandKind::mcast: return result;` (`text_input.cpp:78`). The new
+  enumerator needs the same dummy case.
+
+  The generating gate above it already answers mid-generation attempts with
+  the in-progress notice; the controller's own `busy()` guard keeps the typed
+  action safe independent of the grammar.
+- No persist callback, no `CommandResult` field, no route, no
+  `resources/cha.yaml`, no generated browser types, no webapp change.
+  `command_names()` picks the new spelling up automatically for the
+  unknown-command notice.
+
+### What the command never touches
+
+- **Configuration files.** `character.toml` and forum configs are not read
+  for selection and never written. The only file read at command time is the
+  provider config being resolved.
+- **Persistence schema.** No journal write, no `turns`/`entries` row, no
+  history-epoch interaction. The SQLite database cannot observe that an
+  override ever existed; a restored session starts from configured truth.
+- **Protocol and snapshot.** No DTO, OpenAPI, or browser change.
+- **Model context.** `project_model_context()` is untouched; the provider
+  switch changes where the next request goes, never what it contains.
+- **The roster.** `ForumCharacters`, display names, styles, and mention
+  resolution are unaffected.
 
 ## What we are deliberately not doing
 
-- **Not recording completion time separately.** One timestamp per entry,
-  meaning creation. Duration or finish time is derivable from nothing we
-  store and is not needed for the stated requirements.
-- **Not backfilling old entries.** Pre-migration rows keep `0` and show no
-  time. Inferring times from entry order or file mtimes would manufacture
-  data we do not have.
-- **Not timestamping turns.** See "Storage".
-- **Not changing the copy format or model context.** See above.
+- **No `/style` command.** Appearance is presentation data living in the
+  roster and snapshot — a different mechanism (no backend, `SnapshotRequired`,
+  a browser-visible field). A natural follow-up, not bundled.
+- **No save variant.** Persisting a provider change already exists as the
+  Settings screen with its documented restart semantics; a command that
+  sometimes wrote config would blur exactly the line this feature draws.
+- **No mid-generation switch.** Busy rejection only. Interrupting a live
+  answer to reroute it is `/stop` plus a new prompt, which the user can
+  already do.
+- **No provider name in `/info` or the composer line.**
+  `ModelBackendInfo` reports the new backend's model and API after a swap;
+  carrying the provider ID into the snapshot would duplicate resolution
+  knowledge for one display line.
+- **No per-target override syntax for multicast.** Targets keep their own
+  per-character overrides; that composition needs no grammar.
 
 ## Known limitations
 
-- Entries written before the migration show no timestamp in the UI. Their
-  stored `0` is honest — the information was never recorded.
-- The timestamp is the server wall clock at entry creation. It is not
-  monotonic, not timezone-labelled in storage, and not a guarantee about
-  provider-side timing; it records when CHA saw the message.
-- Tests that compare whole `TranscriptEntry` values now compare `created_at`
-  too. Factory-stamped values at second resolution make same-second
-  comparisons pass, but any test building an expected entry literal must set
-  the field deliberately rather than relying on a default. A test that
-  factory-builds an expected entry and compares it against one built earlier
-  in the same test can also straddle a second boundary; those should compare
-  the fields they care about, or zero `created_at` on both sides, rather than
-  relying on the clock.
+- A provider config whose ID is literally `default` cannot be selected
+  through the command (the word is the reset spelling). The Settings screen
+  is unaffected.
+- The bare report form can name an override but not the baseline provider,
+  because resolution deliberately retains no winning-layer ID. It can only
+  say "its configured provider".
+- A provider file that parses but whose backend cannot be constructed (unset
+  `api_key_env`, failed model discovery) fails at command time: the factory
+  throw becomes the error notice and the old backend stays. A backend that
+  constructs but cannot serve (bad credentials, dead host) still fails at
+  generation as an ordinary turn error — the same split Settings has between
+  a failed reload and a later turn error.
+- In `Mode::net` with an empty model, `ProviderClient` construction may
+  perform HTTP model discovery on the owner thread (up to ~10s), the same
+  work session open already does. The command is rejected while busy, so
+  this only stalls the owner loop when idle.
+- As with `reloading`-based restarts, the override is process-local: a second
+  `chaweb` process holding a session of the same forum never sees it. That is
+  the lease model's existing shape, not new state to manage.

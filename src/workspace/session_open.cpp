@@ -40,7 +40,13 @@ OpenedSession open_session(
             prepared.database_path,
             std::move(prepared.lease),
             notifier,
-            std::move(prepared.restore)),
+            std::move(prepared.restore),
+            // Borrowed for the session's life: the model is process-lived and
+            // outlives every session opened against it, the same borrow the
+            // persist callbacks below take.
+            [&model](std::string_view name) {
+                return model.resolve_session_provider(name);
+            }),
         .persist_default_character = [&model, forum_id = forum->id](
                                          std::string_view character_id) {
             model.persist_forum_default_character(forum_id, character_id);

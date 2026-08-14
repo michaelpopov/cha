@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace cha {
@@ -38,6 +39,13 @@ public:
     // but before durable state changes.
     using ActivationHook = std::function<void(std::size_t)>;
 
+    // Resolves a provider name to a complete backend configuration for a
+    // runtime provider override. Session open injects the workspace's named
+    // provider loading through this seam so the controller never learns the
+    // workspace file layout. Throws std::invalid_argument when the name does
+    // not resolve.
+    using ProviderResolver = std::function<ModelBackendConfig(std::string_view)>;
+
     [[nodiscard]] static std::unique_ptr<SessionController> from_shared_definitions(
         std::vector<CharacterDefinition> definitions,
         SharedPersonaRoster personas,
@@ -46,7 +54,8 @@ public:
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
-        SessionRestore restored = {});
+        SessionRestore restored = {},
+        ProviderResolver provider_resolver = {});
     // Test-only counterpart for controller tests that intentionally do not
     // claim a fixture database's production lease.
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
@@ -55,7 +64,9 @@ public:
         CharacterId initial_default_character_id,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
-        SessionRestore restored = {});
+        SessionRestore restored = {},
+        ProviderResolver provider_resolver = {},
+        GenerationExecutor::BackendFactory backend_factory = {});
     // Test-only construction and activation fault injection. These seams live
     // here because the otherwise private controller owns both dependencies.
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
@@ -97,6 +108,11 @@ public:
     [[nodiscard]] ControllerUpdate set_default_character(std::string_view handle);
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
     [[nodiscard]] ControllerUpdate set_default_persona(std::string_view handle);
+    // Runtime provider override for the current default character: an empty
+    // name reports the override state, "default" restores the configured
+    // backend, anything else is resolved and swapped in. Session-scoped only;
+    // nothing is persisted.
+    [[nodiscard]] ControllerUpdate set_session_provider(std::string_view name);
     [[nodiscard]] ControllerUpdate request_stop();
     void rename(std::string_view label);
     [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
@@ -124,7 +140,9 @@ private:
         std::filesystem::path database_path,
         SessionLease lease,
         WakeNotifier& notifier,
-        SessionRestore restored);
+        SessionRestore restored,
+        ProviderResolver provider_resolver = {},
+        GenerationExecutor::BackendFactory backend_factory = {});
     SessionController(
         std::vector<std::unique_ptr<ModelBackend>> backends,
         PersonaRoster personas,
@@ -192,6 +210,11 @@ private:
     // Borrowed from personas_, which is immutable and outlives the controller,
     // so the view can hand out the persona's own strings.
     const Persona* default_persona_{};
+    // Runtime provider overrides: the resolver (empty when the session cannot
+    // change providers) and one provider name per overridden character, kept
+    // for the report form. Session-scoped; never persisted.
+    ProviderResolver provider_resolver_;
+    std::unordered_map<CharacterId, std::string> provider_overrides_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;

@@ -2280,5 +2280,335 @@ TEST(SessionController, ReportsSemanticStateAndInputConsumptionIndependently) {
     EXPECT_EQ(undispatchable.notice, "Request could not be dispatched");
 }
 
+// --- Runtime provider override -----------------------------------------------
+
+CharacterDefinition provider_test_definition(
+    std::string id,
+    std::string name,
+    std::string model = "configured-model") {
+    return {
+        .character = {
+            .id = std::move(id),
+            .display_name = std::move(name),
+        },
+        .backend = {
+            .host = "127.0.0.1",
+            .port = 1,
+            .model = std::move(model),
+        },
+        .system_prompt = "Test prompt",
+    };
+}
+
+// Shared observation of every backend one factory builds: the configs it was
+// given, plus optional gates for the busy and factory-failure tests.
+struct ProviderFactoryObservation {
+    std::vector<ModelBackendConfig> configs;
+    std::atomic_bool hold_perform{};
+    std::atomic_bool entered_perform{};
+    std::atomic_bool fail_next{};
+};
+
+// Answers with its configured model name, so the transcript says which
+// backend served a prompt.
+class ProviderFactoryBackend final : public ModelBackend {
+public:
+    ProviderFactoryBackend(
+        CharacterDefinition definition,
+        std::shared_ptr<ProviderFactoryObservation> observation)
+        : definition_(std::move(definition)), observation_(std::move(observation)) {
+    }
+
+    RequestPayload prepare(const GenerationRequest& input) override {
+        return {.bytes = input.run.prompt_text};
+    }
+
+    GenerationResult perform(
+        RequestPayload,
+        const GenerationDeltaSink& on_delta,
+        const std::atomic_bool& cancellation) override {
+        observation_->entered_perform.store(true, std::memory_order_release);
+        while (observation_->hold_perform.load(std::memory_order_acquire)
+               && !cancellation.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        on_delta({GenerationDeltaKind::answer, "answer-" + definition_.backend.model});
+        return {};
+    }
+
+    ModelBackendInfo info() const override {
+        return {
+            definition_.character,
+            definition_.backend.model,
+            "test://model",
+            true,
+        };
+    }
+
+private:
+    CharacterDefinition definition_;
+    std::shared_ptr<ProviderFactoryObservation> observation_;
+};
+
+GenerationExecutor::BackendFactory provider_recording_factory(
+    const std::shared_ptr<ProviderFactoryObservation>& observation) {
+    return [observation](CharacterDefinition definition) {
+        if (observation->fail_next.exchange(false)) {
+            throw std::runtime_error("backend construction failed");
+        }
+        observation->configs.push_back(definition.backend);
+        return std::unique_ptr<ModelBackend>(
+            new ProviderFactoryBackend(std::move(definition), observation));
+    };
+}
+
+SessionController::ProviderResolver provider_stub_resolver() {
+    return [](std::string_view name) -> ModelBackendConfig {
+        if (name == "override") {
+            return {
+                .host = "127.0.0.1",
+                .port = 9,
+                .model = "override-model",
+            };
+        }
+        throw std::invalid_argument(
+            "Provider '" + std::string(name)
+            + "' is not usable: unknown provider. Available providers: override");
+    };
+}
+
+std::unique_ptr<SessionController> provider_test_controller(
+    const std::filesystem::path& database_path,
+    std::vector<CharacterDefinition> definitions,
+    const std::shared_ptr<ProviderFactoryObservation>& observation) {
+    return SessionController::from_definitions_for_testing(
+        std::move(definitions),
+        test::operator_roster(),
+        "guide-id",
+        database_path,
+        notifier(),
+        {},
+        provider_stub_resolver(),
+        provider_recording_factory(observation));
+}
+
+TEST(SessionController, ProviderOverrideAnswersThroughTheReplacementBackend) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = provider_test_controller(
+        temporary.path,
+        {provider_test_definition("guide-id", "Guide")},
+        observation);
+
+    const ControllerUpdate update = controller->set_session_provider("override");
+    EXPECT_TRUE(update.input_consumed);
+    EXPECT_FALSE(requires_snapshot(update));
+    EXPECT_EQ(
+        update.notice,
+        "Guide now uses provider 'override' for this session.");
+    ASSERT_EQ(observation->configs.size(), 2U);
+    EXPECT_EQ(observation->configs[1].model, "override-model");
+    EXPECT_EQ(observation->configs[1].port, 9);
+
+    (void)controller->submit_prompt("operator", "Question");
+    (void)receive_until_idle(*controller);
+    const std::vector<TranscriptEntry> entries = copy_entries(controller->view().transcript);
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries.back().text, "answer-override-model");
+}
+
+TEST(SessionController, ProviderOverrideReportsAndResets) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = provider_test_controller(
+        temporary.path,
+        {provider_test_definition("guide-id", "Guide")},
+        observation);
+
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Guide is using its configured provider for this session.");
+
+    (void)controller->set_session_provider("override");
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Guide's provider override for this session is 'override'.");
+
+    const ControllerUpdate reset = controller->set_session_provider("default");
+    EXPECT_EQ(
+        reset.notice,
+        "Guide is back to its configured provider for this session.");
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Guide is using its configured provider for this session.");
+
+    (void)controller->submit_prompt("operator", "Question");
+    (void)receive_until_idle(*controller);
+    const std::vector<TranscriptEntry> entries = copy_entries(controller->view().transcript);
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries.back().text, "answer-configured-model");
+}
+
+TEST(SessionController, ProviderOverrideFollowsTheCharacterNotTheDefaultSlot) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = provider_test_controller(
+        temporary.path,
+        {
+            provider_test_definition("guide-id", "Guide"),
+            provider_test_definition("other-id", "Other"),
+        },
+        observation);
+
+    (void)controller->set_session_provider("override");
+    (void)controller->set_default_character("Other");
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Other is using its configured provider for this session.");
+
+    (void)controller->set_default_character("Guide");
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Guide's provider override for this session is 'override'.");
+}
+
+TEST(SessionController, ProviderOverrideIsRejectedWhileGenerating) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    observation->hold_perform.store(true);
+    auto controller = provider_test_controller(
+        temporary.path,
+        {provider_test_definition("guide-id", "Guide")},
+        observation);
+
+    (void)controller->submit_prompt("operator", "Question");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!observation->entered_perform.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_TRUE(observation->entered_perform.load(std::memory_order_acquire));
+
+    const ControllerUpdate update = controller->set_session_provider("override");
+    EXPECT_EQ(update.notice, generation_in_progress_notice);
+
+    observation->hold_perform.store(false);
+    (void)receive_until_idle(*controller);
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Guide is using its configured provider for this session.");
+}
+
+TEST(SessionController, ProviderOverrideFailureLeavesTheBackendAlone) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = provider_test_controller(
+        temporary.path,
+        {provider_test_definition("guide-id", "Guide")},
+        observation);
+
+    const ControllerUpdate unknown = controller->set_session_provider("unknown");
+    EXPECT_EQ(
+        unknown.notice,
+        "Provider 'unknown' is not usable: unknown provider. Available providers: override");
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Guide is using its configured provider for this session.");
+
+    // The resolver reads the filesystem, so it can fail in ways its own
+    // contract does not name. One mistyped provider must still not fail the
+    // session.
+    auto throwing = SessionController::from_definitions_for_testing(
+        std::vector<CharacterDefinition>{provider_test_definition("guide-id", "Guide")},
+        test::operator_roster(),
+        "guide-id",
+        temporary.path,
+        notifier(),
+        {},
+        [](std::string_view) -> ModelBackendConfig {
+            throw std::runtime_error("providers directory is unreadable");
+        },
+        provider_recording_factory(observation));
+    EXPECT_EQ(
+        throwing->set_session_provider("override").notice,
+        "providers directory is unreadable");
+    throwing->shutdown();
+
+    // A backend-construction failure is a command failure, not a session
+    // failure: the message becomes the notice and the old backend stays.
+    observation->fail_next.store(true);
+    const ControllerUpdate broken = controller->set_session_provider("override");
+    EXPECT_EQ(broken.notice, "backend construction failed");
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Guide is using its configured provider for this session.");
+
+    (void)controller->submit_prompt("operator", "Question");
+    (void)receive_until_idle(*controller);
+    const std::vector<TranscriptEntry> entries = copy_entries(controller->view().transcript);
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries.back().text, "answer-configured-model");
+}
+
+TEST(SessionController, AFailedResetKeepsTheOverride) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = provider_test_controller(
+        temporary.path,
+        {provider_test_definition("guide-id", "Guide")},
+        observation);
+
+    (void)controller->set_session_provider("override");
+    observation->fail_next.store(true);
+    const ControllerUpdate reset = controller->set_session_provider("default");
+    EXPECT_EQ(reset.notice, "backend construction failed");
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Guide's provider override for this session is 'override'.");
+
+    (void)controller->submit_prompt("operator", "Question");
+    (void)receive_until_idle(*controller);
+    const std::vector<TranscriptEntry> entries = copy_entries(controller->view().transcript);
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries.back().text, "answer-override-model");
+}
+
+TEST(SessionController, ProviderOverrideNeedsAResolver) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    const ControllerUpdate update = controller->set_session_provider("override");
+    EXPECT_TRUE(update.input_consumed);
+    EXPECT_EQ(
+        update.notice,
+        "Provider override is not available in this session.");
+}
+
+TEST(SessionController, ClearingTheTranscriptKeepsTheProviderOverride) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = provider_test_controller(
+        temporary.path,
+        {provider_test_definition("guide-id", "Guide")},
+        observation);
+
+    (void)controller->set_session_provider("override");
+    (void)controller->submit_prompt("operator", "First question");
+    (void)receive_until_idle(*controller);
+    (void)controller->clear_transcript();
+
+    (void)controller->submit_prompt("operator", "Second question");
+    (void)receive_until_idle(*controller);
+    const std::vector<TranscriptEntry> entries = copy_entries(controller->view().transcript);
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries.back().text, "answer-override-model");
+    EXPECT_EQ(
+        controller->set_session_provider("").notice,
+        "Guide's provider override for this session is 'override'.");
+}
+
 } // namespace
 } // namespace cha

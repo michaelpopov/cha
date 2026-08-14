@@ -66,6 +66,24 @@ TEST(Command, ParsesTheDefaultCharacterCommandHandle) {
     EXPECT_EQ(punctuated.handle, "Ismael,");
 }
 
+TEST(Command, ParsesTheProviderCommandArgument) {
+    const Command named = parse_command("/provider terra");
+    EXPECT_EQ(named.kind, CommandKind::session_provider);
+    EXPECT_EQ(named.argument, "terra");
+    EXPECT_TRUE(named.handle.empty());
+
+    const Command bare = parse_command("/provider");
+    EXPECT_EQ(bare.kind, CommandKind::session_provider);
+    EXPECT_TRUE(bare.argument.empty());
+
+    const Command reset = parse_command("/provider default");
+    EXPECT_EQ(reset.kind, CommandKind::session_provider);
+    EXPECT_EQ(reset.argument, "default");
+
+    // The exact form does not reach into a longer word.
+    EXPECT_EQ(parse_command("/providerx").kind, CommandKind::unknown);
+}
+
 TEST(Command, ParsesThePersonaCommandHandle) {
     const Command named = parse_command("/!Reader");
     EXPECT_EQ(named.kind, CommandKind::set_persona);
@@ -100,7 +118,7 @@ TEST(Command, SeparatesTheDefaultCharacterHandleFromAnArgument) {
 TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
     EXPECT_EQ(
         command_names(),
-        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /characters, /agents, /@Name, /!Name, /stop, /exit");
+        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /characters, /agents, /@Name, /!Name, /provider, /stop, /exit");
 }
 
 } // namespace

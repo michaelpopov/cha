@@ -781,7 +781,11 @@ Parsing is divided among:
 
 The parser belongs in `web` because it adapts one input protocol. The
 controller exposes typed actions and remains usable without slash-command
-syntax.
+syntax. `/provider` is the one command that swaps session machinery rather
+than session state: it reaches `SessionController::set_session_provider()`,
+which resolves the name through a workspace-injected `ProviderResolver` and
+has the executor rebuild that character's backend in place — runtime-only,
+so unlike `/@Name` and `/!Name` it wires no persistence callback.
 
 ### 12.4 The owner loop
 

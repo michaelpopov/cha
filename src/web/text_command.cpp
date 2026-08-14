@@ -30,6 +30,7 @@ constexpr std::array descriptors{
     CommandDescriptor{"/agents", CommandKind::characters},
     CommandDescriptor{"/@", CommandKind::set_default, CommandForm::handle_suffix},
     CommandDescriptor{"/!", CommandKind::set_persona, CommandForm::handle_suffix},
+    CommandDescriptor{"/provider", CommandKind::session_provider},
     CommandDescriptor{"/stop", CommandKind::stop},
     CommandDescriptor{"/exit", CommandKind::exit},
 };

@@ -61,6 +61,11 @@ CommandResult handle_text_input(
     if (command.kind == CommandKind::mcast) {
         return handle_multicast_input(controller, author_id, command.argument);
     }
+    if (command.kind == CommandKind::session_provider) {
+        result.clear_input = true;
+        result.session = controller.set_session_provider(command.argument);
+        return result;
+    }
     if (!command.argument.empty() && command.kind != CommandKind::unknown) {
         result.clear_input = true;
         result.session.notice = "Command does not accept arguments";
@@ -76,6 +81,8 @@ CommandResult handle_text_input(
     case CommandKind::hide_off:
         result.session = controller.restore_offrecord(); break;
     case CommandKind::mcast:
+        return result;
+    case CommandKind::session_provider:
         return result;
     case CommandKind::info:
         result.session = controller.session_information(); break;

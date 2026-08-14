@@ -32,6 +32,7 @@ has no Settings screen — it is built in and has no `character.toml`.
 - `/info` shows session information; `/characters` lists the forum's characters (`/agents` is a legacy alias).
 - `/@Name` changes the default character and saves it as the forum's default.
 - `/!Name` changes the current persona and saves it as the forum's default.
+- `/provider <name>` switches the current character's provider for this session only; `/provider` reports the override and `/provider default` restores the configured provider. Nothing is saved.
 - `/stop` stops generation; `/exit` closes the live session.
 
 Start a prompt with `@Name` to address one character. Use `@@` for a literal

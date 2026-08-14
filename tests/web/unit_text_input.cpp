@@ -365,5 +365,72 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
     EXPECT_FALSE(undispatchable.clear_input);
 }
 
+TEST(TextInput, DispatchesTheProviderCommandWithoutPersisting) {
+    TemporaryTextSession temporary;
+    auto controller = SessionController::from_definitions_for_testing(
+        std::vector<CharacterDefinition>{definition()},
+        test::operator_roster(),
+        "guide-id",
+        temporary.path,
+        notifier(),
+        {},
+        [](std::string_view name) -> ModelBackendConfig {
+            if (name == "terra") {
+                return {.host = "127.0.0.1", .port = 1, .model = "terra-model"};
+            }
+            throw std::invalid_argument(
+                "Provider '" + std::string(name) + "' is not usable");
+        });
+
+    const CommandResult set =
+        handle_text_input(*controller, "operator", "/provider terra");
+    EXPECT_TRUE(set.clear_input);
+    EXPECT_EQ(
+        set.session.notice,
+        "Guide now uses provider 'terra' for this session.");
+    // A runtime override never triggers the persistence callbacks.
+    EXPECT_FALSE(set.persist_default_character_id);
+    EXPECT_FALSE(set.persist_default_persona_id);
+
+    const CommandResult report =
+        handle_text_input(*controller, "operator", "/provider");
+    EXPECT_TRUE(report.clear_input);
+    EXPECT_EQ(
+        report.session.notice,
+        "Guide's provider override for this session is 'terra'.");
+
+    const CommandResult unknown =
+        handle_text_input(*controller, "operator", "/provider unknown");
+    EXPECT_TRUE(unknown.clear_input);
+    EXPECT_EQ(unknown.session.notice, "Provider 'unknown' is not usable");
+
+    const CommandResult reset =
+        handle_text_input(*controller, "operator", "/provider default");
+    EXPECT_TRUE(reset.clear_input);
+    EXPECT_EQ(
+        reset.session.notice,
+        "Guide is back to its configured provider for this session.");
+
+    controller->shutdown();
+}
+
+TEST(TextInput, RejectsTheProviderCommandDuringGeneration) {
+    TemporaryTextSession temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<BlockingBackend>()),
+        temporary.path,
+        notifier());
+
+    (void)handle_text_input(*controller, "operator", "Question");
+    const CommandResult blocked =
+        handle_text_input(*controller, "operator", "/provider terra");
+    EXPECT_FALSE(blocked.clear_input);
+    EXPECT_EQ(
+        blocked.session.notice,
+        "Generation in progress; use /stop, Esc, or Ctrl-C");
+
+    controller->shutdown();
+}
+
 } // namespace
 } // namespace cha::web

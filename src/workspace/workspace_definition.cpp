@@ -576,6 +576,28 @@ std::vector<std::string> named_config_ids(const std::filesystem::path& directory
     return ids;
 }
 
+// The ", Available providers: ..." tail of a failed name resolution, or an
+// empty string when there is nothing to list. It runs while building an error
+// message, so a directory it cannot read costs the list rather than replacing
+// the failure being reported with a second one.
+std::string available_providers_note(const std::filesystem::path& directory) {
+    std::vector<std::string> available;
+    try {
+        available = named_config_ids(directory);
+    } catch (const std::exception&) {
+        return {};
+    }
+    if (available.empty()) return {};
+    // Directory order is unspecified; the reader gets a stable list.
+    std::ranges::sort(available);
+    std::string note = ". Available providers: ";
+    for (std::size_t index = 0; index < available.size(); ++index) {
+        if (index != 0) note += ", ";
+        note += available[index];
+    }
+    return note;
+}
+
 // One character-layer setting as written. A key of the wrong type is a broken
 // file rather than an absent setting, so it is refused here exactly as the
 // definition loader refuses it, instead of quietly reading as "not set".
@@ -1103,6 +1125,28 @@ CharacterSettingsChange WorkspaceDefinition::write_character_settings(
         return true;
     });
     return change;
+}
+
+ModelBackendConfig WorkspaceDefinition::resolve_session_provider(
+    std::string_view name) const {
+    try {
+        require_path_component(name, config_.providers_directory);
+        const std::filesystem::path path =
+            config_.providers_directory / path_from_utf8(name) / "config.toml";
+        // load_named_provider's reference path names the file that points at
+        // the provider. Nothing points at this one -- the name came from the
+        // keyboard -- so an absent config is reported here, rather than as a
+        // file that references itself.
+        if (!std::filesystem::is_regular_file(path)) {
+            throw std::runtime_error("no provider config is installed under this name");
+        }
+        return make_backend_config(
+            load_named_provider(config_.providers_directory, name, path));
+    } catch (const std::exception& error) {
+        throw std::invalid_argument(
+            "Provider '" + std::string(name) + "' is not usable: " + error.what()
+            + available_providers_note(config_.providers_directory));
+    }
 }
 
 std::vector<std::string> WorkspaceDefinition::forums_overriding_provider(

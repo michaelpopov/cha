@@ -342,6 +342,55 @@ TEST(WorkspaceDefinition, ListsOnlyProvidersAndStylesThatResolveAndDerivesLabels
         CharacterWeight::normal, CharacterScale::normal}));
 }
 
+TEST(WorkspaceDefinition, ResolvesASessionProviderAsACompleteReplacement) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("sol-high", "host = \"elsewhere\"\nport = 8443\nhttps = true\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    const ModelBackendConfig config = model.resolve_session_provider("sol-high");
+    EXPECT_EQ(config.host, "elsewhere");
+    EXPECT_EQ(config.port, 8443);
+    EXPECT_TRUE(config.https);
+    // Absent fields are ModelBackendConfig defaults, not the workspace
+    // default provider's values: the workspace provider names model "fake".
+    EXPECT_EQ(config.mode, Mode::test);
+    EXPECT_TRUE(config.model.empty());
+    EXPECT_TRUE(config.stream);
+}
+
+TEST(WorkspaceDefinition, SessionProviderFailuresListTheAvailableProviders) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("sol-high", "host = \"elsewhere\"\nport = 8443\n");
+    fixture.write_provider("broken", "this is not a usable provider\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    // A name nothing is installed under is the common mistake, so it reads as
+    // one plain sentence: no filesystem path, and no config file described as
+    // referencing itself.
+    try {
+        (void)model.resolve_session_provider("missing");
+        FAIL() << "Expected an unknown provider to be rejected";
+    } catch (const std::invalid_argument& error) {
+        const std::string message = error.what();
+        EXPECT_EQ(
+            message,
+            "Provider 'missing' is not usable: no provider config is installed"
+            " under this name. Available providers: broken, sol-high, test");
+    }
+
+    EXPECT_THROW(
+        (void)model.resolve_session_provider("../sol-high"),
+        std::invalid_argument);
+
+    try {
+        (void)model.resolve_session_provider("broken");
+        FAIL() << "Expected a malformed provider to be rejected";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_NE(
+            std::string(error.what()).find("broken"), std::string::npos);
+    }
+}
+
 TEST(WorkspaceDefinition, ReportsForumsThatOverrideACharactersProvider) {
     test::TestWorkspace fixture;
     fixture.write_provider(

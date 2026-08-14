@@ -157,9 +157,12 @@ field and unprefixed text.
 This split exists so slow providers never block the UI, and so that two
 different lifetimes stay in two different types. `GenerationExecutor` lives as
 long as the session: it owns one backend per forum character and borrows the
-session's fixed-size `ThreadPool`. `GenerationBatch` lives as long as one
-submitted operation: it owns that operation's ordered execution slots, their
-shared start gate, the foreground position, and cancellation state.
+session's fixed-size `ThreadPool`. A slot can be rebuilt while idle — a
+runtime provider override (`/provider`) replaces one character's backend from
+its retained definition without touching the others. `GenerationBatch` lives
+as long as one submitted operation: it owns that operation's ordered execution
+slots, their shared start gate, the foreground position, and cancellation
+state.
 
 Each slot owns the one `GenerationRequest` its backend uses — including its
 `RunSpec` — plus its own cancellation flag and event queue. The queue buffers
