@@ -27,7 +27,7 @@ LiveSessionOpenResult map_start_result(LiveSessionStartResult result) {
     case LiveSessionStartResult::failed:
         return LiveSessionOpenFailure::internal_error;
     case LiveSessionStartResult::shutting_down:
-        return LiveSessionOpenFailure::manager_stopping;
+        return LiveSessionOpenFailure::stopping;
     }
     return LiveSessionOpenFailure::internal_error;
 }
@@ -182,6 +182,10 @@ LiveSessionOpenResult LiveSessionManager::open(
             ? LiveSessionOpenResult{LiveSessionOpenFailure::manager_stopping}
             : LiveSessionOpenResult{LiveSessionOpenFailure::open_timeout};
     }
+    if (*outcome == LiveSessionStartResult::shutting_down) {
+        std::lock_guard lock(mutex_);
+        if (stopping_) return LiveSessionOpenFailure::manager_stopping;
+    }
     if (*outcome == LiveSessionStartResult::ready) {
         std::lock_guard lock(mutex_);
         if (stopping_) return LiveSessionOpenFailure::manager_stopping;
@@ -252,6 +256,25 @@ LiveSessionManagerSnapshot LiveSessionManager::snapshot() {
         for (const auto& [key, session] : sessions_) {
             if (session->lifecycle() == LiveSessionState::running) {
                 result.running_sessions.push_back(key);
+            }
+        }
+    }
+    reap(std::move(retired));
+    return result;
+}
+
+std::vector<LiveSessionHandle> LiveSessionManager::active_sessions() {
+    RetiredSessions retired;
+    std::vector<LiveSessionHandle> result;
+    {
+        std::lock_guard lock(mutex_);
+        retired = sweep_locked();
+        for (const auto& [key, session] : sessions_) {
+            (void)key;
+            const LiveSessionState state = session->lifecycle();
+            if (state == LiveSessionState::starting
+                || state == LiveSessionState::running) {
+                result.push_back(session);
             }
         }
     }

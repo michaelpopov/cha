@@ -77,11 +77,11 @@ bool parse_route_json_body(
     return false;
 }
 
-void set_route_not_found(httplib::Response& response) {
+void set_route_not_found(httplib::Response& response, std::string_view message) {
     set_error_response(
         response,
         404,
-        {ErrorCode::not_found, "That forum or session was not found."});
+        {ErrorCode::not_found, std::string(message)});
 }
 
 } // namespace cha::web

@@ -32,6 +32,27 @@ Bootstrap also carries the workspace persona roster as summaries, and `GET
 /api/v1/characters/{id}` serves a character definition. That is discovery for
 reading, not selection: neither endpoint takes part in attribution, and
 `persona_markdown` is empty for a persona that configures no `PERSONA.md`.
+Character detail also carries the character's current provider and style names
+(null when the key is absent), the lists of options that resolve, the display
+names of forums that override the provider, and `writable`, which is false for
+the built-in Assistant. A provider option is only an id and a label — never
+host, model, or credential — so the response stays discovery-safe.
+
+`PATCH /api/v1/characters/{id}` takes both names (`null` erases a key), writes
+the file, and asks live sessions the change can actually affect to shut down
+with `reloading`. A provider-only save skips forums that override the provider,
+so saving Montaigne's provider does not tear down Circle. The server does not
+reopen anything: the browser's existing stream-recovery ladder does that.
+`reloading` is ranked above `browser_disconnected` in
+`shutdown_reason_priority()`, or the reason never reaches the wire.
+
+The fan-out runs over `LiveSessionManager::active_sessions()`, not over
+`snapshot()`'s `running_sessions`. A session reads its definitions while it is
+still Starting, so one that is opening when the save commits already holds the
+old settings and has to be reloaded like any other; both `running_sessions` and
+`lookup()` admit only Running actors, which is why that method exists and why it
+returns actors rather than identities. The write commits before the fan-out, so
+an actor that appears in neither is one that has yet to read the file at all.
 
 A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
 rejected rather than ignored, so a client written against an older shape fails

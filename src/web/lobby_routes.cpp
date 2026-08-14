@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -109,6 +110,69 @@ void set_command_error(httplib::Response& response, ErrorCode code) {
 
 CharacterSummary character_summary(const CharacterMetadata& character) {
     return {character.id, character.display_name, character.description, character.appearance};
+}
+
+CharacterDetail character_detail(
+    const WorkspaceDefinition& model, const CharacterMetadata& character) {
+    CharacterDetail detail{
+        character_summary(character),
+        std::string(model.character_markdown(character.id)),
+    };
+    // One read answers both questions: settings that cannot be read leave the
+    // character read-only rather than being published as unset.
+    const std::optional<CharacterSettings> settings =
+        model.character_settings(character.id);
+    if (settings) {
+        detail.provider = settings->provider;
+        detail.style = settings->style;
+    }
+    detail.writable = settings.has_value();
+    for (const AvailableProvider& option : model.available_providers()) {
+        detail.available_providers.push_back({option.id, option.label});
+    }
+    for (const AvailableStyle& option : model.available_styles()) {
+        detail.available_styles.push_back({option.id, option.label, option.appearance});
+    }
+    for (const std::string& forum_id : model.forums_overriding_provider(character.id)) {
+        const ForumInfo* const forum = model.find_forum(forum_id);
+        if (forum != nullptr) {
+            detail.provider_overridden_by.push_back(forum->display_name);
+        }
+    }
+    return detail;
+}
+
+std::vector<std::string> forums_affected_by_save(
+    const WorkspaceDefinition& model,
+    std::string_view character_id,
+    bool style_changed,
+    bool provider_changed) {
+    if (!style_changed && !provider_changed) return {};
+    const std::vector<std::string> overridden =
+        model.forums_overriding_provider(character_id);
+    std::vector<std::string> result;
+    for (const ForumInfo& forum : model.forums()) {
+        if (!std::ranges::binary_search(forum.member_ids, character_id)) continue;
+        if (!style_changed
+            && std::ranges::find(overridden, forum.id) != overridden.end()) {
+            continue;
+        }
+        result.push_back(forum.id);
+    }
+    return result;
+}
+
+// Called only after the write has committed. Sessions still starting are
+// included because they may already have read their definitions; an actor that
+// appears only afterwards will read the new settings when it opens.
+void request_reload(
+    LiveSessionManager& live_sessions,
+    const std::vector<std::string>& forum_ids) {
+    for (const LiveSessionHandle& live : live_sessions.active_sessions()) {
+        const SessionIdentity& key = live->identity();
+        if (std::ranges::find(forum_ids, key.forum_id) == forum_ids.end()) continue;
+        live->request_shutdown(ShutdownReason::reloading);
+    }
 }
 
 ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& model) {
@@ -208,19 +272,61 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     server.Get(R"(/api/v1/characters/([^/]+))", [model](const httplib::Request& request, httplib::Response& response) {
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id)) return set_route_not_found(response);
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That character was not found.");
+        }
         const CharacterMetadata* character = model->find_character(id);
-        if (character == nullptr) return set_route_not_found(response);
-        set_json_response(response, 200, nlohmann::json(CharacterDetail{
-            character_summary(*character),
-            std::string(model->character_markdown(id))}));
+        if (character == nullptr) {
+            return set_route_not_found(response, "That character was not found.");
+        }
+        set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
+    });
+
+    server.Patch(R"(/api/v1/characters/([^/]+))",
+        [model, live_sessions, settings](const httplib::Request& request,
+                                         httplib::Response& response) {
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That character was not found.");
+        }
+        const CharacterMetadata* character = model->find_character(id);
+        if (character == nullptr) {
+            return set_route_not_found(response, "That character was not found.");
+        }
+        const std::optional<CharacterSettings> current = model->character_settings(id);
+        if (!current) return set_route_not_found(response, "That character was not found.");
+        if (!validate_json_mutation(request, response)) return;
+        CharacterSettingsUpdate update;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&update](const nlohmann::json& json) {
+                    update = parse_character_settings_update(json);
+                })) return;
+        CharacterSettingsChange change;
+        try {
+            change = model->write_character_settings(id, update.provider, update.style);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid provider or style."});
+        }
+        if (change.any()) {
+            request_reload(
+                *live_sessions,
+                forums_affected_by_save(
+                    *model, id, change.style_changed, change.provider_changed));
+        }
+        set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
     });
 
     server.Get(R"(/api/v1/personas/([^/]+))", [model](const httplib::Request& request, httplib::Response& response) {
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id)) return set_route_not_found(response);
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That persona was not found.");
+        }
         const Persona* const persona = model->find_persona(id);
-        if (persona == nullptr) return set_route_not_found(response);
+        if (persona == nullptr) {
+            return set_route_not_found(response, "That persona was not found.");
+        }
         set_json_response(response, 200, nlohmann::json(PersonaDetail{
             {persona->id, persona->display_name, persona->description}, persona->prompt}));
     });

@@ -304,14 +304,31 @@ settings.
    ladder dispatches `session-snapshot` instead, which leaves `mainView` alone.
    See the design section "Close the affected live sessions after a save".
 
-8. **Tests.** `webapp/src/components/App.test.tsx` for the chevron's presence
+8. **Fix the 404 message these screens now show.** This one step is server-side
+   despite living in the UI block, because the string only becomes visible here.
+   `set_route_not_found()` in `src/web/route_support.cpp` answers every 404 with
+   "That forum or session was not found." That has always been wrong for
+   `GET /api/v1/characters/{id}` and `GET /api/v1/personas/{id}`, and the new
+   PATCH now shows it in the two cases a user is most likely to hit: the
+   built-in Assistant, and a character whose `character.toml` cannot be read.
+   The settings screen would report a character problem as a missing forum.
+
+   Give `set_route_not_found()` an optional message parameter defaulting to the
+   current text, and pass a specific one from the character and persona
+   handlers in `src/web/lobby_routes.cpp`. Leave the forum and session call
+   sites alone — the existing wording is correct there, and there are 26 call
+   sites in total, so do not rewrite them all. Cover the character 404s in
+   `tests/web/unit_lobby_routes.cpp`; `expect_error()` already takes the
+   expected message.
+
+9. **Tests.** `webapp/src/components/App.test.tsx` for the chevron's presence
    and absence, a new screen test for the form and its save, and
    `webapp/src/state/view.test.ts` for the reducer additions. Extend
    `webapp/src/test/fixtures.ts` with the new detail fields. Add a
    `LiveChat.test.tsx` case asserting that a snapshot with `reloading` shows the
    applying message and **no** recovery buttons.
 
-9. **End-to-end test of the client half**, in
+10. **End-to-end test of the client half**, in
    `webapp/src/components/App.test.tsx`. `App` already takes `client`,
    `connectSessionEvents` and `retryDelays` props, so the whole sequence runs
    deterministically with near-zero delays and a fake stream. Starting on the

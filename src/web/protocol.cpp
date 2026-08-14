@@ -59,6 +59,15 @@ nlohmann::json generation_json(const GenerationStatus& value) {
     return json;
 }
 
+nlohmann::json appearance_json(const CharacterAppearance& value) {
+    return {
+        {"font", to_string(value.font)},
+        {"style", to_string(value.style)},
+        {"weight", to_string(value.weight)},
+        {"size", to_string(value.size)},
+    };
+}
+
 nlohmann::json append_target_json(const TextTarget& value) {
     return std::visit([](const auto& target) {
         using Target = std::decay_t<decltype(target)>;
@@ -126,6 +135,7 @@ std::string_view to_string(ShutdownReason value) {
         value,
         {
             {ShutdownReason::browser_disconnected, "browser_disconnected"},
+            {ShutdownReason::reloading, "reloading"},
             {ShutdownReason::session_failed, "session_failed"},
             {ShutdownReason::session_deleted, "session_deleted"},
             {ShutdownReason::server_stopping, "server_stopping"},
@@ -206,12 +216,7 @@ void to_json(nlohmann::json& json, const CharacterSummary& value) {
     json = {
         {"id", value.id},
         {"display_name", value.display_name},
-        {"appearance", {
-            {"font", to_string(value.appearance.font)},
-            {"style", to_string(value.appearance.style)},
-            {"weight", to_string(value.appearance.weight)},
-            {"size", to_string(value.appearance.size)},
-        }},
+        {"appearance", appearance_json(value.appearance)},
     };
     put_optional(json, "description", value.description);
 }
@@ -269,9 +274,27 @@ void to_json(nlohmann::json& json, const Bootstrap& value) {
             {"recent_sessions", value.recent_sessions}};
 }
 
+void to_json(nlohmann::json& json, const ProviderOption& value) {
+    json = {{"id", value.id}, {"label", value.label}};
+}
+
+void to_json(nlohmann::json& json, const StyleOption& value) {
+    json = {
+        {"id", value.id},
+        {"label", value.label},
+        {"appearance", appearance_json(value.appearance)},
+    };
+}
+
 void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json = nlohmann::json(value.summary);
     json["character_markdown"] = value.character_markdown;
+    json["provider"] = value.provider ? nlohmann::json(*value.provider) : nlohmann::json(nullptr);
+    json["style"] = value.style ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
+    json["available_providers"] = value.available_providers;
+    json["available_styles"] = value.available_styles;
+    json["provider_overridden_by"] = value.provider_overridden_by;
+    json["writable"] = value.writable;
 }
 
 void to_json(nlohmann::json& json, const PersonaDetail& value) {

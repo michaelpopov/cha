@@ -9,9 +9,10 @@ namespace cha {
 class SessionRepository;
 class WakeNotifier;
 
-// The one production path that creates a SessionController. It combines the
-// definitions the model loaded at startup with storage the repository prepares
-// now, so a session always opens with the values discovery already showed.
+// The one production path that creates a SessionController. It re-resolves
+// the forum's character definitions from disk and combines them with storage
+// the repository prepares now. A definition that no longer loads falls back to
+// the startup copy and reports that on the opened session.
 // Entrance and Welcome need no special case: Entrance is an ordinary forum in
 // the model and Welcome an ordinary prepared session in the repository.
 //

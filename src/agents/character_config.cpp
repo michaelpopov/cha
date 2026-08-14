@@ -253,6 +253,8 @@ void validate_provider_config(
     }
 }
 
+} // namespace
+
 ProviderConfig load_named_provider(
     const std::filesystem::path& directory,
     std::string_view name,
@@ -300,21 +302,6 @@ ProviderConfig load_named_provider(
     return provider;
 }
 
-// Nothing when the layer names no provider, so callers can tell "inherit the
-// layer below" apart from "use this backend".
-std::optional<ProviderConfig> resolve_provider(
-    const std::optional<std::string>& provider_name,
-    const std::optional<std::filesystem::path>& directory,
-    const std::filesystem::path& reference_path) {
-    if (!provider_name) return std::nullopt;
-    if (!directory) {
-        throw std::runtime_error("Config file '" + utf8_path(reference_path)
-            + "' references provider '" + *provider_name
-            + "' but no providers directory was supplied");
-    }
-    return load_named_provider(*directory, *provider_name, reference_path);
-}
-
 CharacterAppearance load_named_style(
     const std::filesystem::path& directory,
     std::string_view name,
@@ -330,6 +317,23 @@ CharacterAppearance load_named_style(
         throw std::runtime_error("Failed to read style config file '" + utf8_path(path) + "'");
     }
     return read_style_config(toml::parse(file, utf8_path(path)), path);
+}
+
+namespace {
+
+// Nothing when the layer names no provider, so callers can tell "inherit the
+// layer below" apart from "use this backend".
+std::optional<ProviderConfig> resolve_provider(
+    const std::optional<std::string>& provider_name,
+    const std::optional<std::filesystem::path>& directory,
+    const std::filesystem::path& reference_path) {
+    if (!provider_name) return std::nullopt;
+    if (!directory) {
+        throw std::runtime_error("Config file '" + utf8_path(reference_path)
+            + "' references provider '" + *provider_name
+            + "' but no providers directory was supplied");
+    }
+    return load_named_provider(*directory, *provider_name, reference_path);
 }
 
 // Styles do not layer, so a definition that names none simply gets the

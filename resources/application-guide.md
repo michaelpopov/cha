@@ -15,6 +15,14 @@ read-only catalog of the workspace personas and their descriptions; opening one
 does not change who anyone speaks as. Workspace sessions persist; Welcome is
 private to this server run and is removed on shutdown.
 
+A workspace character's model provider and visual style are edited from that
+character's Settings screen: Characters → the character → the top-right chevron.
+The first picker entry is Workspace default or No style, which clears the
+setting. Saving restarts conversations that use the character and loses any
+answer being generated. A forum that sets its own provider is named under the
+picker; changing the character's provider does not affect that forum. Assistant
+has no Settings screen — it is built in and has no `character.toml`.
+
 ## Commands
 
 - `/clear` clears the transcript.

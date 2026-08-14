@@ -7,6 +7,7 @@ export type MainView =
   | 'persona-detail'
   | 'characters'
   | 'character-detail'
+  | 'character-settings'
   | 'forums'
   | 'sessions'
   | 'forum-detail'
@@ -35,6 +36,7 @@ export interface AppState {
   currentForumId: string | null;
   activeConversation: ActiveConversation | null;
   inspectedCharacterId: string | null;
+  characterSettingsAvailable: boolean;
   inspectedPersonaId: string | null;
   currentDefaultCharacterId: string | null;
   sessionOperation: 'idle' | 'pending' | 'failed';
@@ -55,6 +57,7 @@ export const initialAppState: AppState = {
   currentForumId: null,
   activeConversation: null,
   inspectedCharacterId: null,
+  characterSettingsAvailable: false,
   inspectedPersonaId: null,
   currentDefaultCharacterId: null,
   sessionOperation: 'idle',
@@ -76,6 +79,8 @@ export type AppAction =
   | { type: 'inspect-persona'; personaId: string }
   | { type: 'show-characters' }
   | { type: 'inspect-character'; characterId: string }
+  | { type: 'character-detail-loaded'; characterId: string; writable: boolean }
+  | { type: 'show-character-settings' }
   | { type: 'show-forums' }
   | { type: 'select-forum'; forumId: string }
   | { type: 'show-sessions' }
@@ -188,6 +193,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'characters',
         inspectedCharacterId: null,
+        characterSettingsAvailable: false,
         ...idleSessionOperation(),
       };
     case 'inspect-character':
@@ -195,8 +201,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'character-detail',
         inspectedCharacterId: action.characterId,
+        characterSettingsAvailable: action.characterId === state.inspectedCharacterId
+          ? state.characterSettingsAvailable
+          : false,
         ...idleSessionOperation(),
       };
+    case 'character-detail-loaded':
+      // A reply for a character the reader has already left must not decide
+      // whether the one now on screen offers its settings.
+      if (action.characterId !== state.inspectedCharacterId) return state;
+      return { ...state, characterSettingsAvailable: action.writable };
+    case 'show-character-settings':
+      return { ...state, mainView: 'character-settings', ...idleSessionOperation() };
     case 'show-forums':
       return { ...state, mainView: 'forums', ...idleSessionOperation() };
     case 'select-forum':
@@ -304,6 +320,7 @@ export function navigationTitle(state: AppState): string | null {
       return state.bootstrap?.characters.find(
         ({ id }) => id === state.inspectedCharacterId,
       )?.display_name ?? 'Character';
+    case 'character-settings': return 'Settings';
     case 'forums': return 'Forums';
     case 'sessions': return 'Sessions';
     case 'forum-detail':

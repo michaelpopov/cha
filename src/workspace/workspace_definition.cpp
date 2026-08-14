@@ -14,6 +14,7 @@
 #include <toml++/toml.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -32,30 +33,27 @@ using Json = nlohmann::ordered_json;
 // preserves both updates as complete TOML documents.
 std::mutex forum_config_write_mutex;
 
-// Saves one setting into a forum's config.toml, leaving every other key as the
-// author wrote it. `superseded_key` names an accepted legacy spelling to drop,
-// because retaining both would make the next workspace load reject the file.
-void write_forum_config_setting(
+// Parse → mutate → write beside the original → rename. The mutation
+// returns false when the parsed document already has the requested state. An
+// interrupted write must not leave a config the next start cannot read. A
+// reader either sees the whole old document or the whole new one.
+template<typename Mutate>
+void rewrite_toml_file(
     const std::filesystem::path& path,
-    std::string_view key,
-    std::string_view value,
-    std::string_view superseded_key = {}) {
+    std::string_view kind,
+    Mutate mutate) {
     std::lock_guard lock(forum_config_write_mutex);
     toml::table table;
     {
         std::ifstream input(path, std::ios::binary);
         if (!input) {
             throw std::runtime_error(
-                "Failed to read forum config '" + utf8_path(path) + "'");
+                "Failed to read " + std::string(kind) + " '" + utf8_path(path) + "'");
         }
         table = toml::parse(input, utf8_path(path));
     }
-    if (!superseded_key.empty()) table.erase(superseded_key);
-    table.insert_or_assign(key, std::string(value));
+    if (!mutate(table)) return;
 
-    // Written beside the original and renamed over it: an interrupted write
-    // must not leave a config that the next start cannot read. A reader either
-    // sees the whole old document or the whole new one.
     std::filesystem::path temporary = path;
     temporary += ".new";
     {
@@ -64,10 +62,33 @@ void write_forum_config_setting(
         output.flush();
         if (!output) {
             throw std::runtime_error(
-                "Failed to write forum config '" + utf8_path(path) + "'");
+                "Failed to write " + std::string(kind) + " '" + utf8_path(path) + "'");
         }
     }
     std::filesystem::rename(temporary, path);
+}
+
+// Saves one setting into a forum's config.toml, leaving every other key as the
+// author wrote it. `superseded_key` names an accepted legacy spelling to drop,
+// because retaining both would make the next workspace load reject the file.
+void write_forum_config_setting(
+    const std::filesystem::path& path,
+    std::string_view key,
+    std::string_view value,
+    std::string_view superseded_key = {}) {
+    rewrite_toml_file(path, "forum config", [&](toml::table& table) {
+        if (!superseded_key.empty()) table.erase(superseded_key);
+        table.insert_or_assign(key, std::string(value));
+        return true;
+    });
+}
+
+void assign_or_erase(
+    toml::table& table,
+    std::string_view key,
+    const std::optional<std::string>& value) {
+    if (value) table.insert_or_assign(key, *value);
+    else table.erase(key);
 }
 
 // A custom forum while it is still being loaded. It keeps the directory only
@@ -525,6 +546,73 @@ std::string build_inventory(
     return "Workspace inventory reference data (not instructions):\n" + root.dump();
 }
 
+std::string option_label(std::string_view id) {
+    std::string label(id);
+    for (char& character : label) {
+        if (character == '-' || character == '_') character = ' ';
+    }
+    if (!label.empty()) {
+        label.front() = static_cast<char>(
+            std::toupper(static_cast<unsigned char>(label.front())));
+    }
+    return label;
+}
+
+std::vector<std::string> named_config_ids(const std::filesystem::path& directory) {
+    std::vector<std::string> ids;
+    if (!std::filesystem::is_directory(directory)) return ids;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(directory)) {
+        if (!entry.is_directory()) continue;
+        if (!std::filesystem::is_regular_file(entry.path() / "config.toml")) continue;
+        const std::string name = entry.path().filename().string();
+        try {
+            require_path_component(name, directory);
+        } catch (const std::exception&) {
+            continue;
+        }
+        ids.push_back(name);
+    }
+    return ids;
+}
+
+// One character-layer setting as written. A key of the wrong type is a broken
+// file rather than an absent setting, so it is refused here exactly as the
+// definition loader refuses it, instead of quietly reading as "not set".
+std::optional<std::string> read_setting_name(
+    const toml::table& table,
+    std::string_view key) {
+    const toml::node* const node = table.get(key);
+    if (node == nullptr) return std::nullopt;
+    std::optional<std::string> value = node->value<std::string>();
+    if (!value) {
+        throw std::runtime_error("'" + std::string(key) + "' must be a string");
+    }
+    return value;
+}
+
+// Whether one optional layer file names a provider of its own. A file that
+// cannot be read counts as one that does. Both consequences of that answer --
+// warning the reader that their choice may not reach this forum, and leaving
+// the forum's sessions alone rather than restarting them -- are harmless when
+// wrong this way and harmful when wrong the other way, so an unknown answer
+// takes the side that cannot mislead or destroy work.
+bool file_may_name_provider(const std::filesystem::path& path) {
+    if (!std::filesystem::is_regular_file(path)) return false;
+    try {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            throw std::runtime_error("the file could not be opened");
+        }
+        return toml::parse(input, utf8_path(path)).contains("provider");
+    } catch (const std::exception& error) {
+        log_warn(
+            "Could not read '" + utf8_path(path) + "' while checking for a "
+            "provider override; assuming it overrides: " + error.what());
+        return true;
+    }
+}
+
 } // namespace
 
 WorkspaceConfig load_workspace_config(const std::filesystem::path& root) {
@@ -581,6 +669,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
             + "' requires a forums/ directory");
     }
     const std::filesystem::path definitions_directory = root / "characters";
+    model.characters_directory_ = definitions_directory;
     std::vector<CharacterMetadata> characters =
         load_definition_metadata(
             definitions_directory,
@@ -674,6 +763,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
             {forum.info.id, forum.directory / "sessions"});
         model.forum_markdown_.emplace(forum.info.id, forum.markdown);
         model.forum_config_paths_.emplace(forum.info.id, forum.directory / "config.toml");
+        model.forum_directories_.emplace(forum.info.id, forum.directory);
         model.forums_.push_back(forum.info);
     }
 
@@ -760,13 +850,35 @@ std::vector<ForumSessionDirectory> WorkspaceDefinition::session_directories() co
     return session_directories_;
 }
 
-std::vector<CharacterDefinition> WorkspaceDefinition::copy_definitions_for(
+WorkspaceDefinition::CopiedForumDefinitions WorkspaceDefinition::copy_definitions_for(
     std::string_view forum_id) const {
     const auto found = definitions_.find(std::string(forum_id));
     if (found == definitions_.end()) {
         throw ForumNotFoundError("Forum '" + std::string(forum_id) + "' does not exist");
     }
-    return found->second;
+    const ForumInfo* const forum = find_forum(forum_id);
+    const auto directory = forum_directories_.find(std::string(forum_id));
+    if (forum == nullptr || directory == forum_directories_.end()) {
+        return {.definitions = found->second};
+    }
+    try {
+        return {.definitions = load_forum_definitions(
+            {.info = *forum, .directory = directory->second},
+            *personas_,
+            characters_directory_,
+            {config_.provider, config_.providers_directory},
+            config_.styles_directory)};
+    } catch (const std::exception& error) {
+        log_warn(
+            "Forum '" + std::string(forum_id)
+            + "' keeps its startup character settings: " + error.what());
+        return {
+            .definitions = found->second,
+            .fallback_notice =
+                "Character settings could not be reloaded. This session is "
+                "using the settings from startup.",
+        };
+    }
 }
 
 CharacterId WorkspaceDefinition::forum_default_character(
@@ -866,6 +978,148 @@ void WorkspaceDefinition::persist_forum_default_persona(
             "Persona '" + std::string(persona_id) + "' is not in the workspace");
     }
     write_forum_config_setting(config->second, "default_persona", persona_id);
+}
+
+std::vector<AvailableProvider> WorkspaceDefinition::available_providers() const {
+    std::vector<AvailableProvider> result;
+    for (const std::string& id : named_config_ids(config_.providers_directory)) {
+        try {
+            (void)load_named_provider(
+                config_.providers_directory, id,
+                config_.providers_directory / path_from_utf8(id) / "config.toml");
+            result.push_back({id, option_label(id)});
+        } catch (const std::exception& error) {
+            log_warn("Provider '" + id + "' omitted from available list: " + error.what());
+        }
+    }
+    sort_by_name(result, [](const AvailableProvider& value) -> const std::string& {
+        return value.label;
+    });
+    return result;
+}
+
+std::vector<AvailableStyle> WorkspaceDefinition::available_styles() const {
+    std::vector<AvailableStyle> result;
+    for (const std::string& id : named_config_ids(config_.styles_directory)) {
+        try {
+            result.push_back({
+                id,
+                option_label(id),
+                load_named_style(
+                    config_.styles_directory, id,
+                    config_.styles_directory / path_from_utf8(id) / "config.toml"),
+            });
+        } catch (const std::exception& error) {
+            log_warn("Style '" + id + "' omitted from available list: " + error.what());
+        }
+    }
+    sort_by_name(result, [](const AvailableStyle& value) -> const std::string& {
+        return value.label;
+    });
+    return result;
+}
+
+std::optional<CharacterSettings> WorkspaceDefinition::character_settings(
+    std::string_view id) const {
+    const std::optional<std::filesystem::path> path = character_config_path(id);
+    if (!path) return std::nullopt;
+    try {
+        std::ifstream input(*path, std::ios::binary);
+        if (!input) {
+            throw std::runtime_error("the file could not be opened");
+        }
+        const toml::table table = toml::parse(input, utf8_path(*path));
+        return CharacterSettings{
+            .provider = read_setting_name(table, "provider"),
+            .style = read_setting_name(table, "style"),
+        };
+    } catch (const std::exception& error) {
+        // The same choice forum_default_character() makes for a config it
+        // cannot use: report what can be reported rather than fail the request
+        // that asked. This one is read while serving a character's description,
+        // which does not depend on it, so throwing here would take down a
+        // screen that has nothing to do with these settings.
+        log_warn(
+            "Character '" + std::string(id) + "' settings could not be read from '"
+            + utf8_path(*path) + "': " + error.what());
+        return std::nullopt;
+    }
+}
+
+std::optional<std::filesystem::path> WorkspaceDefinition::character_config_path(
+    std::string_view id) const {
+    if (find_character(id) == nullptr || characters_directory_.empty()) {
+        return std::nullopt;
+    }
+    const std::filesystem::path path =
+        characters_directory_ / path_from_utf8(id) / "character.toml";
+    if (!std::filesystem::is_regular_file(path)) return std::nullopt;
+    return path;
+}
+
+CharacterSettingsChange WorkspaceDefinition::write_character_settings(
+    std::string_view id,
+    std::optional<std::string> provider,
+    std::optional<std::string> style) const {
+    const std::optional<std::filesystem::path> path = character_config_path(id);
+    if (!path) {
+        throw std::runtime_error(
+            "Character '" + std::string(id) + "' has no writable configuration");
+    }
+    const auto load_selection = [&](
+        const std::optional<std::string>& name,
+        std::string_view kind,
+        auto&& load) {
+        if (!name) return;
+        try {
+            require_path_component(*name, *path);
+            load(*name);
+        } catch (const std::exception& error) {
+            throw std::invalid_argument(
+                "Character '" + std::string(id) + "' " + std::string(kind)
+                + " '" + *name + "' is not usable: " + error.what());
+        }
+    };
+    CharacterSettingsChange change;
+    rewrite_toml_file(*path, "character config", [&](toml::table& table) {
+        const CharacterSettings current{
+            .provider = read_setting_name(table, "provider"),
+            .style = read_setting_name(table, "style"),
+        };
+        change = {
+            .provider_changed = provider != current.provider,
+            .style_changed = style != current.style,
+        };
+        if (!change.any()) return false;
+
+        load_selection(provider, "provider", [&](std::string_view name) {
+            (void)load_named_provider(config_.providers_directory, name, *path);
+        });
+        load_selection(style, "style", [&](std::string_view name) {
+            (void)load_named_style(config_.styles_directory, name, *path);
+        });
+        assign_or_erase(table, "provider", provider);
+        assign_or_erase(table, "style", style);
+        return true;
+    });
+    return change;
+}
+
+std::vector<std::string> WorkspaceDefinition::forums_overriding_provider(
+    std::string_view id) const {
+    std::vector<std::string> result;
+    for (const ForumInfo& forum : forums_) {
+        if (!std::ranges::binary_search(forum.member_ids, id)) continue;
+        const auto directory = forum_directories_.find(forum.id);
+        if (directory == forum_directories_.end()) continue;
+        const std::filesystem::path members = directory->second / "members";
+        if (file_may_name_provider(members / "character_defaults.toml")
+            || file_may_name_provider(
+                members / path_from_utf8(id) / "character.toml")) {
+            result.push_back(forum.id);
+        }
+    }
+    return result;
 }
 
 } // namespace cha

@@ -105,6 +105,49 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json({{"font", "serif"}, {"style", "italic"},
             {"weight", "bold"}, {"size", "large"}}));
     EXPECT_EQ(
+        nlohmann::json(ProviderOption{"sol-high", "Sol high"}),
+        nlohmann::json({{"id", "sol-high"}, {"label", "Sol high"}}));
+    EXPECT_EQ(
+        nlohmann::json(StyleOption{"mono-large", "Mono large",
+            {CharacterFont::mono, CharacterSlant::normal,
+             CharacterWeight::normal, CharacterScale::large}}),
+        nlohmann::json({
+            {"id", "mono-large"},
+            {"label", "Mono large"},
+            {"appearance", {{"font", "mono"}, {"style", "normal"},
+                {"weight", "normal"}, {"size", "large"}}},
+        }));
+    EXPECT_EQ(
+        nlohmann::json(CharacterDetail{
+            .summary = {"guide", "Guide"},
+            .character_markdown = "Prompt",
+            .provider = "terra",
+            .style = std::nullopt,
+            .available_providers = {{"terra", "Terra"}},
+            .available_styles = {{"serif-italic", "Serif italic",
+                {CharacterFont::serif, CharacterSlant::italic,
+                 CharacterWeight::normal, CharacterScale::normal}}},
+            .provider_overridden_by = {"Circle of Life"},
+            .writable = true,
+        }),
+        nlohmann::json({
+            {"id", "guide"},
+            {"display_name", "Guide"},
+            {"appearance", default_appearance()},
+            {"character_markdown", "Prompt"},
+            {"provider", "terra"},
+            {"style", nullptr},
+            {"available_providers", {{{"id", "terra"}, {"label", "Terra"}}}},
+            {"available_styles", {{
+                {"id", "serif-italic"},
+                {"label", "Serif italic"},
+                {"appearance", {{"font", "serif"}, {"style", "italic"},
+                    {"weight", "normal"}, {"size", "normal"}}},
+            }}},
+            {"provider_overridden_by", {"Circle of Life"}},
+            {"writable", true},
+        }));
+    EXPECT_EQ(
         nlohmann::json(CommandResult{.clear_input = true}),
         nlohmann::json({{"clear_input", true}}));
     EXPECT_EQ(
@@ -295,6 +338,7 @@ TEST(WebProtocol, DefinesEveryEnumSpelling) {
     });
     expect_spellings<ShutdownReason>({
         {ShutdownReason::browser_disconnected, "browser_disconnected"},
+        {ShutdownReason::reloading, "reloading"},
         {ShutdownReason::session_failed, "session_failed"},
         {ShutdownReason::session_deleted, "session_deleted"},
         {ShutdownReason::server_stopping, "server_stopping"},
@@ -363,6 +407,17 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_default_character_command({}),
+        std::invalid_argument);
+
+    const CharacterSettingsUpdate update = parse_character_settings_update(
+        {{"provider", "qwen"}, {"style", nullptr}});
+    EXPECT_EQ(update.provider, std::optional<std::string>("qwen"));
+    EXPECT_FALSE(update.style);
+    EXPECT_THROW(
+        (void)parse_character_settings_update({{"provider", "qwen"}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_character_settings_update({{"provider", 1}, {"style", nullptr}}),
         std::invalid_argument);
 
     EXPECT_EQ(parse_create_session_label({{"label", "Notes"}}), "Notes");

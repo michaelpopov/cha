@@ -101,6 +101,17 @@ public:
     // stopping actors count against the bound but only running actors are
     // returned as reattachable sessions.
     [[nodiscard]] LiveSessionManagerSnapshot snapshot();
+    // Every actor a workspace change could still reach: those already running,
+    // and those still opening. A starting actor may already have read its
+    // definitions, so leaving it out could let it come up on settings that were
+    // overwritten while it opened.
+    //
+    // It hands back the actors themselves rather than their identities because
+    // both of the ordinary ways to reach one -- snapshot()'s running_sessions
+    // and lookup() -- deliberately admit only Running actors, so an identity
+    // returned here could not be resolved back into anything to act on.
+    // Retaining the handles also keeps each actor alive for the caller's use.
+    [[nodiscard]] std::vector<LiveSessionHandle> active_sessions();
     // Reserves one identity against open/reattach and waits for any actor to
     // finish, releasing its lease. Filesystem work happens only after this
     // returns and therefore never under the manager mutex.

@@ -16,16 +16,20 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace cha::web {
 namespace {
@@ -132,6 +136,15 @@ std::string create_session(TestServer& server, std::string_view label = "Notes")
     return json.at("id").get<std::string>();
 }
 
+bool session_is_live(LiveSessionManager& manager, const SessionIdentity& key) {
+    const LiveSessionManagerSnapshot snapshot = manager.snapshot();
+    return std::find(
+               snapshot.running_sessions.begin(),
+               snapshot.running_sessions.end(),
+               key)
+        != snapshot.running_sessions.end();
+}
+
 bool listed_not_live(TestServer& server, std::string_view id) {
     const auto listed = server.client().Get("/api/v1/forums/lobby/sessions");
     if (!listed || listed->status != 200) return false;
@@ -219,17 +232,29 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     const nlohmann::json workspace_character_body = body(workspace_character);
     EXPECT_EQ(workspace_character_body["character_markdown"], "Profile Guide");
     EXPECT_EQ(workspace_character_body["appearance"], (*guide)["appearance"]);
+    EXPECT_TRUE(workspace_character_body["provider"].is_null());
+    EXPECT_TRUE(workspace_character_body["style"].is_null());
+    EXPECT_EQ(workspace_character_body["writable"], true);
 
     const auto assistant_character = server.client().Get("/api/v1/characters/builtin-assistant");
     ASSERT_TRUE(assistant_character);
     ASSERT_EQ(assistant_character->status, 200);
-    EXPECT_FALSE(body(assistant_character)["character_markdown"].get<std::string>().empty());
+    const nlohmann::json assistant_body = body(assistant_character);
+    EXPECT_FALSE(assistant_body["character_markdown"].get<std::string>().empty());
+    EXPECT_EQ(assistant_body["writable"], false);
+    EXPECT_TRUE(assistant_body["provider"].is_null());
+    EXPECT_TRUE(assistant_body["style"].is_null());
 
     const auto reader_persona = server.client().Get("/api/v1/personas/reader");
     ASSERT_TRUE(reader_persona);
     ASSERT_EQ(reader_persona->status, 200);
     EXPECT_EQ(body(reader_persona)["persona_markdown"], "");
-    expect_error(server.client().Get("/api/v1/personas/missing"), 404, "not_found");
+    expect_error(
+        server.client().Get("/api/v1/characters/missing"),
+        404, "not_found", "That character was not found.");
+    expect_error(
+        server.client().Get("/api/v1/personas/missing"),
+        404, "not_found", "That persona was not found.");
 
     const auto lobby_forum = server.client().Get("/api/v1/forums/lobby");
     ASSERT_TRUE(lobby_forum);
@@ -259,6 +284,289 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ(sessions[0]["label"], "Welcome");
     EXPECT_FALSE(sessions[0]["live"]);
     EXPECT_GT(sessions[0]["updated_at"].get<std::int64_t>(), 0);
+}
+
+TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderConfig) {
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "sol-high", "host = \"secret.example\"\nport = 9\nmode = \"test\"\nmodel = \"fake\"\n");
+    fixture.write_provider("broken", "this is not a usable provider\n");
+    fixture.write_style("mono-large", "font = \"mono\"\nsize = \"large\"\n");
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    fixture.write_style("broken", "font = \"comic\"\n");
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"test\"\nstyle = \"serif-italic\"\n");
+    const auto montaigne = fixture.root() / "characters" / "montaigne";
+    std::filesystem::create_directories(montaigne);
+    std::ofstream(montaigne / "character.toml")
+        << "display_name = \"Montaigne\"\nprovider = \"test\"\nstyle = \"serif-italic\"\n";
+    std::ofstream(montaigne / "CHARACTER.md") << "Prompt\n";
+    const auto circle = fixture.root() / "forums" / "circle";
+    std::filesystem::create_directories(circle / "members" / "montaigne");
+    std::ofstream(circle / "config.toml") << "display_name = \"Circle of Life\"\n";
+    std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+    std::ofstream(circle / "members" / "character_defaults.toml")
+        << "provider = \"sol-high\"\n";
+
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const auto guide = server.client().Get("/api/v1/characters/guide");
+    ASSERT_TRUE(guide);
+    ASSERT_EQ(guide->status, 200);
+    const nlohmann::json guide_body = body(guide);
+    EXPECT_EQ(guide_body["provider"], "test");
+    EXPECT_EQ(guide_body["style"], "serif-italic");
+    EXPECT_EQ(guide_body["writable"], true);
+    EXPECT_TRUE(guide_body["provider_overridden_by"].empty());
+
+    std::vector<std::string> provider_ids;
+    for (const auto& option : guide_body["available_providers"]) {
+        ASSERT_EQ(option.size(), 2);
+        EXPECT_TRUE(option.contains("id"));
+        EXPECT_TRUE(option.contains("label"));
+        EXPECT_FALSE(option.contains("host"));
+        EXPECT_FALSE(option.contains("port"));
+        EXPECT_FALSE(option.contains("model"));
+        provider_ids.push_back(option["id"].get<std::string>());
+    }
+    EXPECT_EQ(provider_ids, (std::vector<std::string>{"sol-high", "test"}));
+
+    const auto styles = guide_body["available_styles"];
+    const auto mono_large = std::find_if(
+        styles.begin(), styles.end(),
+        [](const nlohmann::json& option) { return option["id"] == "mono-large"; });
+    ASSERT_NE(mono_large, styles.end());
+    EXPECT_EQ((*mono_large)["label"], "Mono large");
+    EXPECT_EQ((*mono_large)["appearance"], nlohmann::json({
+        {"font", "mono"}, {"style", "normal"}, {"weight", "normal"}, {"size", "large"}}));
+    for (const auto& option : styles) {
+        EXPECT_NE(option["id"], "broken");
+    }
+    for (const auto& option : guide_body["available_providers"]) {
+        EXPECT_NE(option["id"], "broken");
+    }
+
+    const auto montaigne_detail = server.client().Get("/api/v1/characters/montaigne");
+    ASSERT_TRUE(montaigne_detail);
+    ASSERT_EQ(montaigne_detail->status, 200);
+    EXPECT_EQ(body(montaigne_detail)["provider_overridden_by"],
+        nlohmann::json::array({"Circle of Life"}));
+
+    // The description is served from what startup read and does not depend on
+    // these settings, so a character.toml edited into an unreadable state must
+    // not take the screen down with it. It reports no settings and no write.
+    fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
+    const auto damaged = server.client().Get("/api/v1/characters/guide");
+    ASSERT_TRUE(damaged);
+    ASSERT_EQ(damaged->status, 200);
+    const nlohmann::json damaged_body = body(damaged);
+    EXPECT_EQ(damaged_body["character_markdown"], guide_body["character_markdown"]);
+    EXPECT_TRUE(damaged_body["provider"].is_null());
+    EXPECT_TRUE(damaged_body["style"].is_null());
+    EXPECT_EQ(damaged_body["writable"], false);
+}
+
+// A session reads its definitions on the way up, so one that is still opening
+// when the save commits may already hold the old settings. The manager publishes
+// it as running only once it has finished, so a fan-out driven by running
+// sessions alone could leave it live on values the file no longer has.
+TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
+    test::TestWorkspace fixture;
+    fixture.write_style("mono-large", "font = \"mono\"\nsize = \"large\"\n");
+    const LobbyGraph graph(fixture.root());
+
+    std::mutex mutex;
+    std::condition_variable gate;
+    bool opening = false;
+    bool released = false;
+    LiveSessionManager manager(
+        lobby_settings(2),
+        [open = graph.opener(), &mutex, &gate, &opening, &released](
+            const SessionIdentity& key, WakeNotifier& notifier) {
+            {
+                std::unique_lock lock(mutex);
+                opening = true;
+                gate.notify_all();
+                gate.wait(lock, [&released] { return released; });
+            }
+            return open(key, notifier);
+        });
+    TestServer server(graph, manager);
+    const std::string id = create_session(server, "Opening");
+    ASSERT_FALSE(id.empty());
+
+    int opening_status = -1;
+    std::string opening_body;
+    std::thread opening_request([&server, &id, &opening_status, &opening_body] {
+        const auto response = server.client().Post(
+            "/api/v1/forums/lobby/sessions/" + id + "/open", "{}", "application/json");
+        if (!response) return;
+        opening_status = response->status;
+        opening_body = response->body;
+    });
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(gate.wait_for(lock, 5s, [&opening] { return opening; }));
+    }
+    // The actor is registered and starting, so it is deliberately absent from
+    // the running sessions a listing would report.
+    EXPECT_FALSE(session_is_live(manager, {"lobby", id}));
+
+    const auto patched = server.client().Patch(
+        "/api/v1/characters/guide",
+        R"({"provider":null,"style":"mono-large"})",
+        "application/json");
+    ASSERT_TRUE(patched);
+    ASSERT_EQ(patched->status, 200) << patched->body;
+
+    {
+        std::lock_guard lock(mutex);
+        released = true;
+    }
+    gate.notify_all();
+    opening_request.join();
+
+    ASSERT_EQ(opening_status, 409);
+    EXPECT_EQ(
+        nlohmann::json::parse(opening_body)["error"]["code"],
+        "session_stopping");
+
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (manager.snapshot().live_session_count != 0
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_EQ(manager.snapshot().live_session_count, 0U)
+        << "a session that was opening when the save landed stayed live even "
+           "though it may have read settings before the write";
+}
+
+std::string read_bytes(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+httplib::Result patch_character(
+    TestServer& server,
+    std::string_view id,
+    const nlohmann::json& body) {
+    return server.client().Patch(
+        "/api/v1/characters/" + std::string(id),
+        body.dump(),
+        "application/json");
+}
+
+TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
+    test::TestWorkspace fixture;
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    fixture.write_provider("broken", "this is not a usable provider\n");
+    const auto path = fixture.root() / "characters" / "guide" / "character.toml";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const auto saved = patch_character(
+        server, "guide", {{"provider", "test"}, {"style", "serif-italic"}});
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200);
+    EXPECT_EQ(body(saved)["provider"], "test");
+    EXPECT_EQ(body(saved)["style"], "serif-italic");
+    EXPECT_EQ(body(saved)["writable"], true);
+
+    const auto cleared = patch_character(
+        server, "guide", {{"provider", nullptr}, {"style", nullptr}});
+    ASSERT_TRUE(cleared);
+    ASSERT_EQ(cleared->status, 200);
+    EXPECT_TRUE(body(cleared)["provider"].is_null());
+    EXPECT_TRUE(body(cleared)["style"].is_null());
+
+    const std::string before = read_bytes(path);
+    expect_error(
+        patch_character(server, "guide", {{"provider", "broken"}, {"style", nullptr}}),
+        400, "bad_request", "Invalid provider or style.");
+    EXPECT_EQ(read_bytes(path), before);
+
+    expect_error(
+        patch_character(
+            server, "builtin-assistant", {{"provider", "test"}, {"style", nullptr}}),
+        404, "not_found", "That character was not found.");
+    expect_error(
+        patch_character(server, "missing", {{"provider", "test"}, {"style", nullptr}}),
+        404, "not_found", "That character was not found.");
+    expect_error(
+        patch_character(server, "guide", {{"provider", "test"}}),
+        400, "bad_request");
+
+    fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
+    expect_error(
+        patch_character(server, "guide", {{"provider", nullptr}, {"style", nullptr}}),
+        404, "not_found", "That character was not found.");
+}
+
+TEST(LobbyRoutes, ReloadsOnlySessionsASaveCanChange) {
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "sol-high", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    const auto montaigne = fixture.root() / "characters" / "montaigne";
+    std::filesystem::create_directories(montaigne);
+    std::ofstream(montaigne / "character.toml")
+        << "display_name = \"Montaigne\"\nprovider = \"test\"\n";
+    std::ofstream(montaigne / "CHARACTER.md") << "Prompt\n";
+    const auto circle = fixture.root() / "forums" / "circle";
+    std::filesystem::create_directories(circle / "members" / "montaigne");
+    std::ofstream(circle / "config.toml") << "display_name = \"Circle of Life\"\n";
+    std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+    std::ofstream(circle / "members" / "character_defaults.toml")
+        << "provider = \"sol-high\"\n";
+
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(4), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const std::string lobby_id = create_session(server);
+    ASSERT_FALSE(lobby_id.empty());
+    ASSERT_EQ(
+        server.client().Post(
+            "/api/v1/forums/lobby/sessions/" + lobby_id + "/open",
+            "{}", "application/json")->status,
+        200);
+    const auto circle_created = server.client().Post(
+        "/api/v1/forums/circle/sessions",
+        R"({"label":"Circle"})",
+        "application/json");
+    ASSERT_TRUE(circle_created);
+    ASSERT_EQ(circle_created->status, 201);
+    const std::string circle_id = body(circle_created)["id"];
+    ASSERT_EQ(
+        server.client().Post(
+            "/api/v1/forums/circle/sessions/" + circle_id + "/open",
+            "{}", "application/json")->status,
+        200);
+    EXPECT_EQ(manager.snapshot().live_session_count, 2);
+
+    // Provider-only save for a character every forum overrides: no restart.
+    const auto provider_only = patch_character(
+        server, "montaigne", {{"provider", "sol-high"}, {"style", nullptr}});
+    ASSERT_TRUE(provider_only);
+    ASSERT_EQ(provider_only->status, 200);
+    EXPECT_EQ(manager.snapshot().live_session_count, 2);
+    EXPECT_TRUE(session_is_live(manager, {"circle", circle_id}));
+
+    // Style changes every forum that contains the character.
+    const auto style_save = patch_character(
+        server, "guide", {{"provider", nullptr}, {"style", "serif-italic"}});
+    ASSERT_TRUE(style_save);
+    ASSERT_EQ(style_save->status, 200);
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (session_is_live(manager, {"lobby", lobby_id})
+        && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_FALSE(session_is_live(manager, {"lobby", lobby_id}));
+    EXPECT_TRUE(session_is_live(manager, {"circle", circle_id}));
 }
 
 TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {

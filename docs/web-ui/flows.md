@@ -16,6 +16,8 @@ flowchart TD
     PersonaDetail -->|"Personas back row"| Personas
     Characters -->|"Select character"| Detail["Character detail"]
     Detail -->|"Characters back row"| Characters
+    Detail -->|"Writable chevron"| Settings["Character settings"]
+    Settings -->|"Back or Cancel"| Detail
     Forums -->|"Select forum"| Sessions["Sessions"]
     Open --> Chat["Chat"]
 ```
@@ -33,12 +35,30 @@ flowchart LR
     Sidebar -->|"Characters"| List["Workspace character list<br/>name + short description"]
     List -->|"Select row"| Detail["Character detail<br/>render CHARACTER.md"]
     Detail -->|"Back"| List
+    Detail -->|"Writable chevron"| Settings["Character settings<br/>provider and style"]
+    Settings -->|"Back or Cancel"| Detail
     PersonaDetail -.-> Unchanged["Persona, forum, session, and default character unchanged"]
     Detail -.-> Unchanged
 ```
 
-Both details are informational. Neither contains a forum list, and neither
-changes chat routing or who a submission is attributed to.
+Persona detail is informational. Character detail is too, except for the
+chevron into Settings. Neither contains a forum list, and neither changes chat
+routing or who a submission is attributed to.
+
+## Character settings
+
+```mermaid
+flowchart TD
+    Detail["Character detail"] -->|"Top-right chevron"| Form["Settings: provider and style"]
+    Form -->|"Cancel or back"| Detail
+    Form -->|"Save"| Patch["PATCH character"]
+    Patch -->|"Write succeeds"| Reload["Affected live sessions shut down as reloading"]
+    Reload --> Ladder["Existing stream recovery reopens them"]
+    Ladder --> Form
+```
+
+Save stays on Settings. Recovery reports `session-snapshot`, so it does not
+force Chat. A provider-only save skips forums that override the provider.
 
 ## Forum and session navigation
 

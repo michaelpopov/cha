@@ -34,6 +34,39 @@ struct WorkspaceConfig {
 WorkspaceConfig load_workspace_config(
     const std::filesystem::path& root = ".");
 
+// A named provider the settings screen may offer. It carries no backend
+// fields: those are private to the provider config.
+struct AvailableProvider {
+    std::string id;
+    std::string label;
+};
+
+// A named style plus the appearance the sample line has to render.
+struct AvailableStyle {
+    std::string id;
+    std::string label;
+    CharacterAppearance appearance;
+};
+
+// The two optional keys in a character's own character.toml, as they stand
+// on disk right now. Absence is meaningful: it is not a defaulted value.
+struct CharacterSettings {
+    std::optional<std::string> provider;
+    std::optional<std::string> style;
+    bool operator==(const CharacterSettings&) const = default;
+};
+
+// What one character-settings write actually changed relative to the document
+// it replaced. The comparison and write happen under the same lock.
+struct CharacterSettingsChange {
+    bool provider_changed{};
+    bool style_changed{};
+    [[nodiscard]] bool any() const noexcept {
+        return provider_changed || style_changed;
+    }
+    bool operator==(const CharacterSettingsChange&) const = default;
+};
+
 // One forum as the browser sees it. It deliberately carries no filesystem
 // path: routes should not learn the workspace layout.
 struct ForumInfo {
@@ -80,6 +113,28 @@ public:
     // to construct SessionRepository.
     std::vector<ForumSessionDirectory> session_directories() const;
 
+    std::vector<AvailableProvider> available_providers() const;
+    std::vector<AvailableStyle> available_styles() const;
+    // Nothing when the character has no config file, and nothing when it has
+    // one this call cannot read: a file whose settings cannot be reported is
+    // also one a save must not overwrite, so the two collapse to the same
+    // answer rather than reporting an unreadable file as "nothing is set".
+    std::optional<CharacterSettings> character_settings(std::string_view id) const;
+    // Empty for the built-in Assistant, which has no character.toml to write.
+    std::optional<std::filesystem::path> character_config_path(
+        std::string_view id) const;
+    // Forum IDs that contain this character and name a provider of their own.
+    std::vector<std::string> forums_overriding_provider(std::string_view id) const;
+
+    // Rejects a character with no readable config file. Compares and writes
+    // under one lock, returning the fields the committed document changed.
+    // Loads each non-null name before writing, so a selection that cannot run
+    // is never recorded. nullopt erases the key.
+    CharacterSettingsChange write_character_settings(
+        std::string_view id,
+        std::optional<std::string> provider,
+        std::optional<std::string> style) const;
+
 private:
     WorkspaceDefinition() = default;
 
@@ -91,8 +146,11 @@ private:
         const SessionIdentity&,
         WakeNotifier&);
 
-    std::vector<CharacterDefinition> copy_definitions_for(
-        std::string_view forum_id) const;
+    struct CopiedForumDefinitions {
+        std::vector<CharacterDefinition> definitions;
+        std::optional<std::string> fallback_notice;
+    };
+    CopiedForumDefinitions copy_definitions_for(std::string_view forum_id) const;
     void persist_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id) const;
@@ -101,6 +159,8 @@ private:
         std::string_view persona_id) const;
 
     WorkspaceConfig config_;
+    std::filesystem::path characters_directory_;
+    std::unordered_map<std::string, std::filesystem::path> forum_directories_;
     SharedPersonaRoster personas_;
     std::vector<CharacterMetadata> characters_;
     std::vector<ForumInfo> forums_;

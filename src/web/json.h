@@ -15,6 +15,7 @@ RawCommand parse_input_command(const nlohmann::json& json);
 SetDefaultCharacterCommand parse_default_character_command(const nlohmann::json& json);
 std::string parse_create_session_label(const nlohmann::json& json);
 std::string parse_rename_session_label(const nlohmann::json& json);
+CharacterSettingsUpdate parse_character_settings_update(const nlohmann::json& json);
 void parse_empty_object(const nlohmann::json& json);
 
 } // namespace cha::web

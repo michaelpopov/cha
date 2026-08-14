@@ -21,8 +21,7 @@ OpenedSession open_session(
     // Both branches of forum_default_persona() return a persona the workspace
     // resolved, and the controller rejects one that is not in the roster.
     const std::string default_persona = model.forum_default_persona(forum->id);
-    std::vector<CharacterDefinition> definitions =
-        model.copy_definitions_for(forum->id);
+    auto copied = model.copy_definitions_for(forum->id);
     const CharacterId default_character = model.forum_default_character(forum->id);
     PreparedSession prepared = sessions.prepare(identity);
     log_info("Session opened");
@@ -34,7 +33,7 @@ OpenedSession open_session(
             .forum_default_character_id = default_character,
         },
         .controller = SessionController::from_shared_definitions(
-            std::move(definitions),
+            std::move(copied.definitions),
             model.personas(),
             default_character,
             default_persona,
@@ -50,6 +49,7 @@ OpenedSession open_session(
                                        std::string_view persona_id) {
             model.persist_forum_default_persona(forum_id, persona_id);
         },
+        .notice = std::move(copied.fallback_notice),
     };
 }
 

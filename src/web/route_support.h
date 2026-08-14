@@ -24,6 +24,8 @@ using RouteBodyParser = std::function<void(const nlohmann::json&)>;
     httplib::Response& response,
     std::size_t maximum_bytes,
     const RouteBodyParser& parser);
-void set_route_not_found(httplib::Response& response);
+void set_route_not_found(
+    httplib::Response& response,
+    std::string_view message = "That forum or session was not found.");
 
 } // namespace cha::web

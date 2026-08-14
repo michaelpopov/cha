@@ -950,6 +950,13 @@ select:disabled {
   gap: 0.5rem;
 }
 
+.cha-style-sample {
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--input);
+  border-radius: 0.75rem;
+}
+
 .cha-button {
   min-height: 2rem;
   padding: 0 0.7rem;

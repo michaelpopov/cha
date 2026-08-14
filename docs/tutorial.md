@@ -47,8 +47,9 @@ HTTP API, and streams session changes with server-sent events (SSE).
 
 The most useful high-level model is:
 
-- `WorkspaceDefinition` is the immutable catalog of personas, characters, forums,
-  prompts, and effective provider configuration loaded at process startup.
+- `WorkspaceDefinition` is the workspace catalog loaded at process startup.
+  Discovery stays at that copy. A session open re-resolves that forum's
+  character definitions from disk.
 - `SessionRepository` is the dynamic storage gateway. It lists, creates,
   validates, leases, and restores SQLite session databases.
 - `LiveSessionManager` owns the process's live-session registry.
@@ -91,13 +92,16 @@ flowchart LR
 
 There are two kinds of long-lived information:
 
-- Static workspace information is read once, validated as a whole, and then
-  shared immutably.
+- Discovery — the roster, descriptions, and Markdown the browser lists — is
+  read once, validated as a whole, and then shared immutably.
+- A forum's character definitions are re-resolved from disk when a session
+  opens, so a saved provider or style (and a hand edit to the files that loader
+  reads) reach the next session without a restart.
 - Conversation state is dynamic. A live controller owns an in-memory view and
   writes durable turn transitions to one SQLite database.
 
-This split explains why editing a character or forum requires a restart while
-creating a session appears immediately.
+This split explains why the Characters roster can disagree with a newly opened
+session after a hand edit, while creating a session appears immediately.
 
 ## 3. Build graph and dependency direction
 
@@ -369,9 +373,11 @@ All forums are resolved at startup, including unused ones. This turns an
 invalid member override or prompt into a deterministic startup error rather
 than a delayed failure when someone opens that forum.
 
-The public methods expose immutable discovery information. The private
-`copy_definitions_for()` boundary is used by `open_session()` to give a new
-session its own movable backend definitions.
+The public methods expose discovery information from the startup copy. The
+private `copy_definitions_for()` boundary is used by `open_session()` to
+re-resolve that forum's character definitions from disk and give the new
+session its own movable backend definitions. A broken hand edit falls back to
+the startup copy and sets a notice on `OpenedSession`.
 
 ### 8.2 Provider selection
 
@@ -479,7 +485,8 @@ directory when the repository is destroyed.
 `workspace/session_open.cpp` performs a short but crucial composition:
 
 1. find the immutable forum;
-2. copy its prevalidated definitions;
+2. re-resolve its character definitions from disk (or take the startup copy
+   and a notice if that load throws);
 3. prepare and lease the stored session;
 4. create the public `SessionDescriptor`;
 5. construct a `SessionController`, transferring the database path, restore
@@ -822,13 +829,14 @@ keyed by `SessionIdentity`.
 - A caller timing out while an actor starts does not cancel shared startup.
 
 Lobby routes provide health, bootstrap, public character, persona and forum
-detail, session listing/creation, and open. Session routes operate only on a
-live actor:
+detail, character provider/style updates, session listing/creation, and open.
+Session routes operate only on a live actor:
 
 ```text
 GET  /health
 GET  /api/v1/bootstrap
 GET  /api/v1/characters/{character}
+PATCH /api/v1/characters/{character}
 GET  /api/v1/personas/{persona}
 GET  /api/v1/forums/{forum}
 GET  /api/v1/forums/{forum}/sessions
@@ -940,7 +948,36 @@ turns, not interleaved token streams.
 7. Once all executions finish, the controller releases the batch and the UI
    receives terminal state.
 
-### 13.5 Clear
+### 13.5 Changing a character's provider or style
+
+From the browser:
+
+1. Open Characters, select a workspace character, and follow the top-right
+   chevron into Settings. Assistant has no chevron: it has no `character.toml`.
+2. Choose a provider and a style. The first picker entries are Workspace
+   default and No style, which erase the keys. The sample line uses the
+   selected style's appearance. Forums that override the provider are named
+   under that picker.
+3. Save writes both values. The screen warns that sessions using the character
+   will restart and that an answer being generated is lost.
+
+On the server:
+
+4. `PATCH /api/v1/characters/{id}` validates the names through
+   `load_named_provider()` / `load_named_style()`, writes `character.toml`, and
+   asks affected live sessions to shut down with `reloading`. A provider-only
+   save skips forums that override the provider.
+5. The stream drops. The browser's existing recovery ladder probes, sees
+   `session_not_live`, opens again, and reattaches. It reports `session-snapshot`,
+   so the settings screen stays in view. The chat shows "Applying character
+   settings…" and no Retry buttons.
+6. `open_session()` re-resolves the forum's definitions from disk, so the
+   reopened session runs the new provider and style.
+
+Do not add an explicit `openConversation()` for `reloading`: that dispatch
+would force the main view back to Chat.
+
+### 13.6 Clear
 
 1. `/clear` is rejected while the controller is busy.
 2. `SessionJournal::clear()` verifies no turn is started and increments the

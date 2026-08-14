@@ -106,6 +106,9 @@ Appearance is definition-only. A character definition selects
 `style = "<id>"`, resolved from `system/styles/<id>/config.toml`. The style
 config may contain `font`, `style`, `weight`, and `size`; omitted fields use
 the standard appearance defaults. A missing or invalid style stops startup.
+`load_named_provider()` and `load_named_style()` are the one-name loaders
+behind that resolution; they are also how the workspace lists only options
+that actually parse.
 
 Provider protocol and search fields belong in the provider config:
 

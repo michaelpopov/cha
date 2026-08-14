@@ -9,8 +9,12 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <iterator>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cha {
@@ -30,6 +34,32 @@ std::vector<std::string> display_names(std::span<const ForumInfo> values) {
     std::vector<std::string> names;
     for (const ForumInfo& value : values) names.push_back(value.display_name);
     return names;
+}
+
+void add_character(
+    const test::TestWorkspace& fixture,
+    std::string_view id,
+    std::string_view display_name,
+    std::string_view extra_config = {}) {
+    const auto directory = fixture.root() / "characters" / std::string(id);
+    std::filesystem::create_directories(directory);
+    std::ofstream(directory / "character.toml")
+        << "display_name = \"" << display_name << "\"\n" << extra_config;
+    std::ofstream(directory / "CHARACTER.md") << "Prompt\n";
+}
+
+void add_forum(
+    const test::TestWorkspace& fixture,
+    std::string_view id,
+    std::string_view display_name,
+    std::initializer_list<std::string_view> members) {
+    const auto directory = fixture.root() / "forums" / std::string(id);
+    for (std::string_view member : members) {
+        std::filesystem::create_directories(directory / "members" / std::string(member));
+    }
+    std::ofstream(directory / "config.toml")
+        << "display_name = \"" << display_name << "\"\n";
+    std::ofstream(directory / "FORUM.md") << "Forum instructions\n";
 }
 
 // The workspace personas the model published, without the built-in Guest it
@@ -143,6 +173,221 @@ TEST(WorkspaceDefinition, ResolvesACharacterStyleIntoPublishedMetadata) {
     EXPECT_EQ(guide->appearance, (CharacterAppearance{
         CharacterFont::serif, CharacterSlant::normal,
         CharacterWeight::bold, CharacterScale::normal}));
+}
+
+TEST(WorkspaceDefinition, ReadsCharacterSettingsFromDiskAndTreatsAbsenceAsUnset) {
+    test::TestWorkspace fixture;
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    const std::optional<CharacterSettings> unset = model.character_settings("guide");
+    ASSERT_TRUE(unset);
+    EXPECT_FALSE(unset->provider);
+    EXPECT_FALSE(unset->style);
+    EXPECT_TRUE(model.character_config_path("guide"));
+    EXPECT_FALSE(model.character_config_path(assistant_id));
+    EXPECT_FALSE(model.character_settings(assistant_id));
+
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"test\"\nstyle = \"serif-bold\"\n");
+    fixture.write_style("serif-bold", "font = \"serif\"\nweight = \"bold\"\n");
+    const std::optional<CharacterSettings> after_edit = model.character_settings("guide");
+    ASSERT_TRUE(after_edit);
+    EXPECT_EQ(after_edit->provider, std::optional<std::string>("test"));
+    EXPECT_EQ(after_edit->style, std::optional<std::string>("serif-bold"));
+}
+
+// A character.toml edited into an unreadable state must not be reported as one
+// that simply sets nothing: that would invite a save to overwrite a file this
+// process cannot parse, and it would claim as fact something never read.
+TEST(WorkspaceDefinition, ReportsNoCharacterSettingsForAConfigItCannotRead) {
+    test::TestWorkspace fixture;
+    const WorkspaceDefinition model = load_model(fixture.root());
+    ASSERT_TRUE(model.character_settings("guide"));
+
+    fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
+    EXPECT_FALSE(model.character_settings("guide"));
+
+    // A key of the wrong type is a broken file too, not an absent setting.
+    fixture.write_character_config("display_name = \"Guide\"\nprovider = 12\n");
+    EXPECT_FALSE(model.character_settings("guide"));
+
+    fixture.write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");
+    const std::optional<CharacterSettings> repaired = model.character_settings("guide");
+    ASSERT_TRUE(repaired);
+    EXPECT_EQ(repaired->provider, std::optional<std::string>("test"));
+}
+
+std::string file_bytes(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+TEST(WorkspaceDefinition, WritesAndErasesCharacterProviderAndStyle) {
+    test::TestWorkspace fixture;
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    EXPECT_EQ(
+        model.write_character_settings("guide", "test", "serif-italic"),
+        (CharacterSettingsChange{true, true}));
+    EXPECT_EQ(
+        model.character_settings("guide"),
+        (CharacterSettings{"test", "serif-italic"}));
+
+    EXPECT_EQ(
+        model.write_character_settings("guide", "test", "serif-italic"),
+        CharacterSettingsChange{});
+
+    EXPECT_EQ(
+        model.write_character_settings("guide", std::nullopt, "serif-italic"),
+        (CharacterSettingsChange{true, false}));
+    EXPECT_EQ(
+        model.character_settings("guide"),
+        (CharacterSettings{std::nullopt, "serif-italic"}));
+
+    EXPECT_EQ(
+        model.write_character_settings("guide", "test", std::nullopt),
+        (CharacterSettingsChange{true, true}));
+    EXPECT_EQ(
+        model.character_settings("guide"),
+        (CharacterSettings{"test", std::nullopt}));
+
+    EXPECT_EQ(
+        model.write_character_settings("guide", std::nullopt, std::nullopt),
+        (CharacterSettingsChange{true, false}));
+    EXPECT_EQ(model.character_settings("guide"), CharacterSettings{});
+}
+
+TEST(WorkspaceDefinition, ComparesAStaleSaveWithTheDocumentItActuallyReplaces) {
+    test::TestWorkspace fixture;
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+    const std::optional<CharacterSettings> stale = model.character_settings("guide");
+    ASSERT_TRUE(stale);
+
+    EXPECT_EQ(
+        model.write_character_settings("guide", stale->provider, "serif-italic"),
+        (CharacterSettingsChange{false, true}));
+
+    // This is the full form body a second browser prepared before the style
+    // save above. Its provider changed relative to that old view, but its old
+    // style also changes the document it now replaces and must be reported.
+    EXPECT_EQ(
+        model.write_character_settings("guide", "test", stale->style),
+        (CharacterSettingsChange{true, true}));
+}
+
+TEST(WorkspaceDefinition, RejectsAnUnusableSelectionWithoutTouchingTheFile) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("broken", "this is not a usable provider\n");
+    fixture.write_style("broken", "font = \"comic\"\n");
+    fixture.write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+    const auto path = fixture.root() / "characters" / "guide" / "character.toml";
+    const std::string before = file_bytes(path);
+
+    EXPECT_THROW(
+        model.write_character_settings("guide", "broken", std::nullopt),
+        std::invalid_argument);
+    EXPECT_THROW(
+        model.write_character_settings("guide", std::nullopt, "broken"),
+        std::invalid_argument);
+    EXPECT_THROW(
+        model.write_character_settings(assistant_id, "test", std::nullopt),
+        std::runtime_error);
+    EXPECT_EQ(file_bytes(path), before);
+
+    fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
+    EXPECT_THROW(
+        model.write_character_settings("guide", "test", std::nullopt),
+        std::runtime_error);
+    EXPECT_EQ(
+        file_bytes(path),
+        "display_name = \"Guide\"\nstyle = \n");
+}
+
+TEST(WorkspaceDefinition, ListsOnlyProvidersAndStylesThatResolveAndDerivesLabels) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("sol-high", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
+    fixture.write_provider("mistral-large", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
+    fixture.write_provider("broken", "this is not a usable provider\n");
+    fixture.write_style("mono-large", "font = \"mono\"\nsize = \"large\"\n");
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    fixture.write_style("broken", "font = \"comic\"\n");
+    std::filesystem::create_directories(
+        fixture.root() / "system" / "providers" / "empty-dir");
+
+    const WorkspaceDefinition model = load_model(fixture.root());
+    const std::vector<AvailableProvider> providers = model.available_providers();
+    std::vector<std::string> provider_ids;
+    std::vector<std::string> provider_labels;
+    for (const AvailableProvider& option : providers) {
+        provider_ids.push_back(option.id);
+        provider_labels.push_back(option.label);
+    }
+    EXPECT_EQ(provider_ids, (std::vector<std::string>{"mistral-large", "sol-high", "test"}));
+    EXPECT_EQ(provider_labels, (std::vector<std::string>{"Mistral large", "Sol high", "Test"}));
+
+    const std::vector<AvailableStyle> styles = model.available_styles();
+    ASSERT_EQ(styles.size(), 2U);
+    EXPECT_EQ(styles[0].id, "mono-large");
+    EXPECT_EQ(styles[0].label, "Mono large");
+    EXPECT_EQ(styles[0].appearance, (CharacterAppearance{
+        CharacterFont::mono, CharacterSlant::normal,
+        CharacterWeight::normal, CharacterScale::large}));
+    EXPECT_EQ(styles[1].id, "serif-italic");
+    EXPECT_EQ(styles[1].label, "Serif italic");
+    EXPECT_EQ(styles[1].appearance, (CharacterAppearance{
+        CharacterFont::serif, CharacterSlant::italic,
+        CharacterWeight::normal, CharacterScale::normal}));
+}
+
+TEST(WorkspaceDefinition, ReportsForumsThatOverrideACharactersProvider) {
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "sol-high", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
+    add_character(fixture, "montaigne", "Montaigne", "provider = \"test\"\n");
+    add_character(fixture, "orphan", "Orphan");
+    add_forum(fixture, "circle", "Circle of Life", {"montaigne"});
+    std::ofstream(
+        fixture.root() / "forums" / "circle" / "members" / "character_defaults.toml")
+        << "provider = \"sol-high\"\n";
+
+    const WorkspaceDefinition model = load_model(fixture.root());
+    EXPECT_EQ(
+        model.forums_overriding_provider("montaigne"),
+        (std::vector<std::string>{"circle"}));
+    EXPECT_TRUE(model.forums_overriding_provider("guide").empty());
+    EXPECT_TRUE(model.forums_overriding_provider("orphan").empty());
+    EXPECT_TRUE(model.forums_overriding_provider(assistant_id).empty());
+}
+
+// Guessing "no override" for a file it cannot read would tell the reader their
+// provider choice applies where it may not, and would hand that forum's live
+// sessions to a restart they gain nothing from.
+TEST(WorkspaceDefinition, TreatsAnUnreadableOverrideFileAsAnOverride) {
+    test::TestWorkspace fixture;
+    const WorkspaceDefinition model = load_model(fixture.root());
+    ASSERT_TRUE(model.forums_overriding_provider("guide").empty());
+
+    const auto defaults =
+        fixture.root() / "forums" / "lobby" / "members" / "character_defaults.toml";
+    std::ofstream(defaults) << "provider = \n";
+    EXPECT_EQ(
+        model.forums_overriding_provider("guide"),
+        (std::vector<std::string>{"lobby"}));
+}
+
+TEST(WorkspaceDefinition, TreatsAMemberProviderAsAnOverride) {
+    test::TestWorkspace fixture;
+    std::ofstream(
+        fixture.root() / "forums" / "lobby" / "members" / "guide" / "character.toml")
+        << "provider = \"test\"\n";
+
+    const WorkspaceDefinition model = load_model(fixture.root());
+    EXPECT_EQ(
+        model.forums_overriding_provider("guide"),
+        (std::vector<std::string>{"lobby"}));
 }
 
 TEST(WorkspaceDefinition, FailsStartupForMissingCharacterStyleReference) {

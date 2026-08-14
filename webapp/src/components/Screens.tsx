@@ -16,6 +16,7 @@ import {
   publicErrorMessage,
   type ChaClient,
   type CharacterAppearance,
+  type CharacterDetail,
   type CommandResult,
   type ForumSummary,
   type SessionListing,
@@ -92,6 +93,8 @@ function endedMessage(snapshot: SessionSnapshot): string {
       return 'This session stopped after a failure. Its conversation is saved.';
     case 'session_deleted':
       return 'This session was deleted.';
+    case 'reloading':
+      return 'Applying character settings…';
     case 'browser_disconnected':
       return 'This session was released because the browser disconnected.';
     default:
@@ -232,9 +235,15 @@ export function ChatScreen({
   // While the stream is down its own narration is the more useful message, so
   // the ended notice speaks only for a session whose end arrived intact.
   const liveMessage = state.streamStatus === 'connected' ? ended : state.streamMessage;
+  // A settings reload ends the session deliberately and the ladder reopens it,
+  // so that one final snapshot narrates itself instead of offering recovery.
+  // Only that snapshot is exempt: a ladder that has given up still needs its
+  // buttons, and its stale reason must not take them away.
   const showRecoveryActions = state.streamStatus === 'retry'
     || state.streamStatus === 'other-window'
-    || (state.streamStatus === 'connected' && ended !== null);
+    || (state.streamStatus === 'connected'
+      && ended !== null
+      && snapshot?.shutdown_reason !== 'reloading');
 
   return (
     <section className="cha-screen cha-chat" aria-label="Chat area">
@@ -550,9 +559,11 @@ export function CharacterDetailScreen({
   sessionReport,
 }: RosterDetailProps) {
   const load = useCallback(
-    (characterId: string) => client.getCharacter(characterId)
-      .then((detail) => detail.character_markdown),
-    [client],
+    (characterId: string) => client.getCharacter(characterId).then((detail) => {
+      dispatch({ type: 'character-detail-loaded', characterId, writable: detail.writable });
+      return detail.character_markdown;
+    }),
+    [client, dispatch],
   );
   return (
     <RosterDetailScreen
@@ -569,6 +580,209 @@ export function CharacterDetailScreen({
       sessionReport={sessionReport}
       subjectId={state.inspectedCharacterId}
     />
+  );
+}
+
+// The lists hold only names the workspace could resolve, so a saved name it no
+// longer can would match no option and read as though nothing were set. It is
+// still what the file says — and still what a save resubmits — so it is listed,
+// marked, and left selectable.
+function unresolvedOption(
+  options: readonly { id: string; label: string }[],
+  saved: string | null,
+): { id: string; label: string } | null {
+  if (saved === null || options.some(({ id }) => id === saved)) return null;
+  return { id: saved, label: `${saved} (not available)` };
+}
+
+function providerOverrideNote(
+  overriddenBy: readonly string[],
+  characterName: string,
+  everyForumOverrides: boolean,
+): string | null {
+  if (overriddenBy.length === 0) return null;
+  const listed = overriddenBy.join(', ');
+  if (overriddenBy.length === 1) {
+    return everyForumOverrides
+      ? `${listed} uses its own provider for this character, and it is the only forum ${characterName} belongs to.`
+      : `${listed} uses its own provider for this character.`;
+  }
+  return everyForumOverrides
+    ? `${listed} use their own providers for this character, and they are the only forums ${characterName} belongs to.`
+    : `${listed} use their own providers for this character.`;
+}
+
+export function CharacterSettingsScreen({
+  state,
+  dispatch,
+  client,
+  sessionReport,
+}: RosterDetailProps) {
+  const characterId = state.inspectedCharacterId;
+  const character = state.bootstrap?.characters.find(({ id }) => id === characterId);
+  const [detail, setDetail] = useState<CharacterDetail | null>(null);
+  const [provider, setProvider] = useState<string | null>(null);
+  const [style, setStyle] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [requestVersion, setRequestVersion] = useState(0);
+
+  useEffect(() => {
+    if (!characterId) return;
+    let current = true;
+    setDetail(null);
+    setError(null);
+    void client.getCharacter(characterId).then(
+      (loaded) => {
+        if (!current) return;
+        setDetail(loaded);
+        setProvider(loaded.provider);
+        setStyle(loaded.style);
+      },
+      (failure: unknown) => {
+        if (current) {
+          setError(publicErrorMessage(failure, 'Character settings could not be loaded.'));
+        }
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [characterId, client, requestVersion]);
+
+  function closeSettings() {
+    if (characterId) dispatch({ type: 'inspect-character', characterId });
+    else dispatch({ type: 'show-characters' });
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!characterId || !detail || saving) return;
+    if (provider === detail.provider && style === detail.style) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await client.updateCharacter(characterId, { provider, style });
+      setDetail(saved);
+      setProvider(saved.provider);
+      setStyle(saved.style);
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Character settings could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const selectedStyle = detail?.available_styles.find(({ id }) => id === style);
+  const unresolvedProvider = detail
+    && unresolvedOption(detail.available_providers, detail.provider);
+  const unresolvedStyle = detail
+    && unresolvedOption(detail.available_styles, detail.style);
+  const memberForums = state.bootstrap?.forums.filter(
+    (forum) => forum.members.some(({ id }) => id === characterId),
+  ) ?? [];
+  const overrideNote = detail
+    ? providerOverrideNote(
+        detail.provider_overridden_by,
+        character?.display_name ?? 'this character',
+        memberForums.length > 0
+          && memberForums.every((forum) => (
+            detail.provider_overridden_by.includes(forum.display_name)
+          )),
+      )
+    : null;
+  const dirty = detail !== null
+    && (provider !== detail.provider || style !== detail.style);
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Character settings">
+      <button className="cha-back-row" onClick={closeSettings} type="button">
+        <ChevronLeftIcon />
+        <span>{character?.display_name ?? 'Character'}</span>
+      </button>
+      {sessionReport}
+      {!characterId && <p className="cha-state-message">No character is selected.</p>}
+      {characterId && detail === null && !error && (
+        <p className="cha-state-message" role="status">Loading character settings…</p>
+      )}
+      {error && (
+        <div className="cha-state-message cha-error-message" role="alert">
+          <p>{error}</p>
+          {detail === null && (
+            <button
+              className="cha-button cha-button-ghost"
+              onClick={() => setRequestVersion((version) => version + 1)}
+              type="button"
+            >
+              Try again
+            </button>
+          )}
+        </div>
+      )}
+      {detail && (
+        <form className="cha-new-session" onSubmit={(event) => void save(event)}>
+          <label htmlFor="cha-character-provider">Provider</label>
+          <select
+            className="cha-form-control"
+            disabled={saving}
+            id="cha-character-provider"
+            onChange={(event) => {
+              setProvider(event.target.value === '' ? null : event.target.value);
+            }}
+            value={provider ?? ''}
+          >
+            <option value="">Workspace default</option>
+            {detail.available_providers.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+            {unresolvedProvider && (
+              <option value={unresolvedProvider.id}>{unresolvedProvider.label}</option>
+            )}
+          </select>
+          {overrideNote && <p>{overrideNote}</p>}
+          <label htmlFor="cha-character-style">Style</label>
+          <select
+            className="cha-form-control"
+            disabled={saving}
+            id="cha-character-style"
+            onChange={(event) => {
+              setStyle(event.target.value === '' ? null : event.target.value);
+            }}
+            value={style ?? ''}
+          >
+            <option value="">No style</option>
+            {detail.available_styles.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+            {unresolvedStyle && (
+              <option value={unresolvedStyle.id}>{unresolvedStyle.label}</option>
+            )}
+          </select>
+          <p className={`cha-style-sample cha-message-text${voiceClasses(selectedStyle?.appearance)}`}>
+            The chief task in life is this…
+          </p>
+          <p>
+            Saving restarts the sessions using this character and loses any answer being generated.
+          </p>
+          <div className="cha-new-session-actions">
+            <button
+              className="cha-button cha-button-ghost"
+              onClick={closeSettings}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              className="cha-button cha-button-primary"
+              disabled={!dirty || saving}
+              type="submit"
+            >
+              Save
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 

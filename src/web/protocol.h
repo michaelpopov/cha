@@ -22,6 +22,7 @@ class SseMailbox;
 enum class SessionLifecycle { starting, running, stopping };
 enum class ShutdownReason {
     browser_disconnected,
+    reloading,
     session_failed,
     session_deleted,
     server_stopping,
@@ -174,9 +175,33 @@ struct Bootstrap {
     std::vector<RecentSession> recent_sessions;
 };
 
+struct ProviderOption {
+    std::string id;
+    std::string label;
+    bool operator==(const ProviderOption&) const = default;
+};
+
+struct StyleOption {
+    std::string id;
+    std::string label;
+    CharacterAppearance appearance;
+    bool operator==(const StyleOption&) const = default;
+};
+
+struct CharacterSettingsUpdate {
+    std::optional<std::string> provider;
+    std::optional<std::string> style;
+};
+
 struct CharacterDetail {
     CharacterSummary summary;
     std::string character_markdown;
+    std::optional<std::string> provider;
+    std::optional<std::string> style;
+    std::vector<ProviderOption> available_providers;
+    std::vector<StyleOption> available_styles;
+    std::vector<std::string> provider_overridden_by;
+    bool writable{};
 };
 
 struct PersonaDetail {
@@ -238,6 +263,8 @@ void to_json(nlohmann::json& json, const SessionLabelResult& value);
 void to_json(nlohmann::json& json, const OpenSessionSuccess& value);
 void to_json(nlohmann::json& json, const RecentSession& value);
 void to_json(nlohmann::json& json, const Bootstrap& value);
+void to_json(nlohmann::json& json, const ProviderOption& value);
+void to_json(nlohmann::json& json, const StyleOption& value);
 void to_json(nlohmann::json& json, const CharacterDetail& value);
 void to_json(nlohmann::json& json, const PersonaDetail& value);
 void to_json(nlohmann::json& json, const ForumDetail& value);

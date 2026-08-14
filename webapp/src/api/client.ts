@@ -2,6 +2,7 @@ import type { components } from './schema';
 
 export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
+export type UpdateCharacterRequest = components['schemas']['UpdateCharacterRequest'];
 export type PersonaDetail = components['schemas']['PersonaDetail'];
 export type ForumDetail = components['schemas']['ForumDetail'];
 export type ForumSummary = components['schemas']['ForumSummary'];
@@ -82,6 +83,7 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 export interface ChaClient {
   getBootstrap(): Promise<Bootstrap>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
+  updateCharacter(characterId: string, settings: UpdateCharacterRequest): Promise<CharacterDetail>;
   getPersona(personaId: string): Promise<PersonaDetail>;
   getForum(forumId: string): Promise<ForumDetail>;
   listSessions(forumId: string): Promise<SessionListing[]>;
@@ -219,6 +221,12 @@ export function createChaClient(
     getCharacter: (characterId) => requestJson<CharacterDetail>(
       fetcher,
       `/api/v1/characters/${component(characterId)}`,
+    ),
+
+    updateCharacter: (characterId, settings) => requestJson<CharacterDetail>(
+      fetcher,
+      `/api/v1/characters/${component(characterId)}`,
+      jsonMutation(settings, 'PATCH'),
     ),
 
     getPersona: (personaId) => requestJson<PersonaDetail>(
