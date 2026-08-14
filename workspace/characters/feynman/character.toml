@@ -1,4 +1,4 @@
 description = 'Physisist.'
 display_name = 'Richard Feynman'
-provider = 'mistral-large'
+provider = 'qwen'
 style = 'serif'

@@ -1,4 +1,4 @@
-display_name = "Brain Trust"
-description = "Brainstorming Team"
-default_persona = "michael"
-default_character = "feynman"
+default_character = 'stirlitz'
+default_persona = 'employee'
+description = 'Brainstorming Team'
+display_name = 'Brain Trust'

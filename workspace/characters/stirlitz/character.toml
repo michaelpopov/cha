@@ -1,5 +1,4 @@
-display_name = "Штирлиц"
-description = "Practical philosopher slash Russian spy."
-provider = "terra"
-
-style = "mono-large"
+description = 'Practical philosopher slash Russian spy.'
+display_name = 'Штирлиц'
+provider = 'sol-high'
+style = 'mono-large'
