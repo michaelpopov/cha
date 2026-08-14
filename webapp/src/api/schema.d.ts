@@ -111,9 +111,10 @@ export interface paths {
         };
         /**
          * Get character details
-         * @description Returns the character summary and its template-expanded Markdown
-         *     definition. The built-in Assistant returns the embedded application
-         *     guide.
+         * @description Returns the character summary, its template-expanded Markdown
+         *     definition, and the provider/style settings the editor needs. The
+         *     built-in Assistant returns the embedded application guide and is not
+         *     writable.
          */
         get: operations["getCharacter"];
         put?: never;
@@ -121,7 +122,19 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update a character's provider and style
+         * @description Rewrites `provider` and `style` in the character's `character.toml`.
+         *     `null` erases the key. A name whose config does not load is `400` and
+         *     leaves the file untouched. The built-in Assistant, a missing character,
+         *     and a character whose file cannot be read are `404`.
+         *
+         *     After a write that actually changes a value, the server asks live
+         *     sessions the change can affect to shut down with `reloading`. A
+         *     provider-only save does not restart sessions in forums that override
+         *     the provider. The server does not reopen anything.
+         */
+        patch: operations["updateCharacter"];
         trace?: never;
     };
     "/api/v1/personas/{persona_id}": {
@@ -425,7 +438,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Change the session's default character */
+        /** Change and save the forum's default character */
         post: operations["setDefaultCharacter"];
         delete?: never;
         options?: never;
@@ -503,12 +516,31 @@ export interface components {
             /** @description All sessions ordered by `updated_at` descending. */
             recent_sessions: components["schemas"]["RecentSession"][];
         };
+        ProviderOption: {
+            id: components["schemas"]["Identifier"];
+            label: string;
+        };
+        StyleOption: {
+            id: components["schemas"]["Identifier"];
+            label: string;
+            appearance: components["schemas"]["CharacterAppearance"];
+        };
         CharacterDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;
             description?: string;
             appearance: components["schemas"]["CharacterAppearance"];
             character_markdown: string;
+            provider: string | null;
+            style: string | null;
+            available_providers: components["schemas"]["ProviderOption"][];
+            available_styles: components["schemas"]["StyleOption"][];
+            provider_overridden_by: string[];
+            writable: boolean;
+        };
+        UpdateCharacterRequest: {
+            provider: string | null;
+            style: string | null;
         };
         PersonaDetail: {
             id: components["schemas"]["Identifier"];
@@ -589,7 +621,7 @@ export interface components {
             /** @enum {string} */
             lifecycle: "starting" | "running" | "stopping";
             /** @enum {string} */
-            shutdown_reason?: "browser_disconnected" | "session_failed" | "session_deleted" | "server_stopping";
+            shutdown_reason?: "browser_disconnected" | "reloading" | "session_failed" | "session_deleted" | "server_stopping";
         };
         AppendTargetEntry: {
             /**
@@ -847,6 +879,38 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateCharacter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCharacterRequest"];
+            };
+        };
+        responses: {
+            /** @description Character details after the write. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CharacterDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };
     };

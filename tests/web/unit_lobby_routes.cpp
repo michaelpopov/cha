@@ -249,7 +249,12 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_TRUE(reader_persona);
     ASSERT_EQ(reader_persona->status, 200);
     EXPECT_EQ(body(reader_persona)["persona_markdown"], "");
-    expect_error(server.client().Get("/api/v1/personas/missing"), 404, "not_found");
+    expect_error(
+        server.client().Get("/api/v1/characters/missing"),
+        404, "not_found", "That character was not found.");
+    expect_error(
+        server.client().Get("/api/v1/personas/missing"),
+        404, "not_found", "That persona was not found.");
 
     const auto lobby_forum = server.client().Get("/api/v1/forums/lobby");
     ASSERT_TRUE(lobby_forum);
@@ -476,13 +481,18 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
     expect_error(
         patch_character(
             server, "builtin-assistant", {{"provider", "test"}, {"style", nullptr}}),
-        404, "not_found");
+        404, "not_found", "That character was not found.");
     expect_error(
         patch_character(server, "missing", {{"provider", "test"}, {"style", nullptr}}),
-        404, "not_found");
+        404, "not_found", "That character was not found.");
     expect_error(
         patch_character(server, "guide", {{"provider", "test"}}),
         400, "bad_request");
+
+    fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
+    expect_error(
+        patch_character(server, "guide", {{"provider", nullptr}, {"style", nullptr}}),
+        404, "not_found", "That character was not found.");
 }
 
 TEST(LobbyRoutes, ReloadsOnlySessionsASaveCanChange) {

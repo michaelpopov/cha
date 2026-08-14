@@ -504,6 +504,55 @@ describe('live chat', () => {
     expect(screen.getByText('Still here')).toBeInTheDocument();
   });
 
+  it('explains a settings reload without offering recovery actions', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+
+    act(() => events.handlers[0].onSnapshot({
+      ...transcriptSnapshot(),
+      generation: snapshotFixture.generation,
+      lifecycle: 'stopping',
+      shutdown_reason: 'reloading',
+    }));
+
+    expect(screen.getByRole('status')).toHaveTextContent('Applying character settings');
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Browse sessions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Return to Welcome' })).not.toBeInTheDocument();
+  });
+
+  it('offers recovery actions when a settings reload never reopens', async () => {
+    const events = drivableEvents();
+    let snapshots = 0;
+    const getSessionSnapshot = vi.fn(async () => {
+      snapshots += 1;
+      if (snapshots === 1) return transcriptSnapshot();
+      throw new ChaError(500, 'internal_error', 'The request could not be completed.');
+    });
+    render(<App
+      client={fixtureClient({ getSessionSnapshot })}
+      connectSessionEvents={events.connect}
+      retryDelays={[0]}
+    />);
+    await attachInitial(events, transcriptSnapshot());
+
+    act(() => events.handlers[0].onSnapshot({
+      ...transcriptSnapshot(),
+      lifecycle: 'stopping',
+      shutdown_reason: 'reloading',
+    }));
+    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+
+    // The ladder gives up while the last snapshot still says `reloading`, and
+    // that stale reason must not withhold the only way back.
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Live updates could not be restored.',
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
+  });
+
   it('keeps Stop visible until authoritative generation state becomes inactive', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();

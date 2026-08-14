@@ -3,13 +3,23 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ChaError, ChaUnavailableError, type Bootstrap } from '../api/client';
+import {
+  ChaError,
+  ChaUnavailableError,
+  type Bootstrap,
+  type CharacterAppearance,
+  type CharacterDetail,
+  type SessionSnapshot,
+} from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import {
   bootstrapFixture,
+  characterDetailFixture,
   fixtureClient,
   forumDetailFixture,
+  monoLargeVoice,
   personaDetailFixture,
+  serifItalicVoice,
   snapshotFixture,
 } from '../test/fixtures';
 import { App } from './App';
@@ -219,9 +229,7 @@ it('retries a failed character-detail request without exposing implementation de
   const getCharacter = vi.fn()
     .mockRejectedValueOnce(new ChaUnavailableError())
     .mockResolvedValueOnce({
-      id: 'guide',
-      display_name: 'Guide',
-      description: 'A deterministic test character',
+      ...characterDetailFixture,
       character_markdown: '# Guide dossier',
     });
   render(<App client={fixtureClient({ getCharacter })} />);
@@ -898,4 +906,205 @@ it('contains the amended chat controls and no Settings entry point', async () =>
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Personas' })).toBeInTheDocument();
+});
+
+it('shows the settings chevron only after a writable character detail loads', async () => {
+  let finish!: (detail: CharacterDetail) => void;
+  const getCharacter = vi.fn(() => new Promise<CharacterDetail>((resolve) => {
+    finish = resolve;
+  }));
+  render(<App client={fixtureClient({ getCharacter })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
+  fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
+
+  expect(await screen.findByText('Loading character…')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Character settings' })).not.toBeInTheDocument();
+  expect(document.querySelector('.cha-topbar-balance')).not.toBeNull();
+
+  await act(async () => { finish(characterDetailFixture); });
+  expect(await screen.findByRole('button', { name: 'Character settings' })).toBeInTheDocument();
+});
+
+it('omits the settings chevron for a character that is not writable', async () => {
+  render(<App client={fixtureClient({
+    getCharacter: async () => ({ ...characterDetailFixture, writable: false }),
+  })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
+  fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
+  expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Character settings' })).not.toBeInTheDocument();
+  expect(document.querySelector('.cha-topbar-balance')).not.toBeNull();
+});
+
+it('keeps a late character detail from lending its chevron to the next character', async () => {
+  let finishGuide!: (detail: CharacterDetail) => void;
+  const getCharacter = vi.fn((characterId: string) => {
+    if (characterId === 'guide') {
+      return new Promise<CharacterDetail>((resolve) => { finishGuide = resolve; });
+    }
+    // The built-in Assistant is the character this feature must never offer.
+    return Promise.resolve({
+      ...characterDetailFixture, id: 'assistant', display_name: 'Assistant', writable: false,
+    });
+  });
+  render(<App client={fixtureClient({ getCharacter })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
+
+  fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
+  fireEvent.click(document.querySelector('.cha-back-row') as HTMLElement);
+  fireEvent.click(screen.getByRole('button', { name: /Assistant/ }));
+  expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
+
+  await act(async () => { finishGuide({ ...characterDetailFixture, writable: true }); });
+
+  expect(document.querySelector('.cha-topbar-title h1')).toHaveTextContent('Assistant');
+  expect(screen.queryByRole('button', { name: 'Character settings' })).not.toBeInTheDocument();
+});
+
+function planningVoiceSnapshot(appearance: CharacterAppearance): SessionSnapshot {
+  return {
+    ...lobbySnapshot(),
+    characters: [{ ...bootstrapFixture.characters[1], appearance }],
+    transcript: [{
+      id: 1,
+      kind: 'character',
+      participant_id: 'guide',
+      display_name: 'Guide',
+      addressed_to: 'guest',
+      addressed_to_name: 'Guest',
+      text: 'A considered answer',
+      status: 'complete',
+    }],
+  };
+}
+
+async function openGuideSettingsFromPlanning(
+  events: ReturnType<typeof drivableSessionEvents>,
+  snapshot: SessionSnapshot,
+) {
+  await openPlanningFromTheLobby();
+  await waitFor(() => expect(events.connections.some(({ key }) => key === 'lobby/planning')).toBe(true));
+  const planning = events.connections.findIndex(({ key }) => key === 'lobby/planning');
+  act(() => events.handlers[planning].onSnapshot(snapshot));
+  fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
+  fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Character settings' }));
+  expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+  return planning;
+}
+
+it('reopens a live conversation after a settings save without leaving the settings screen', async () => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  const previous = planningVoiceSnapshot(serifItalicVoice);
+  const next = planningVoiceSnapshot(monoLargeVoice);
+  let lobbySnapshots = 0;
+  const getSessionSnapshot = vi.fn(async (forumId: string) => {
+    if (forumId !== 'lobby') return snapshotFixture;
+    lobbySnapshots += 1;
+    if (lobbySnapshots === 1) return previous;
+    if (lobbySnapshots === 2) {
+      throw new ChaError(409, 'session_not_live', 'Session is not live.');
+    }
+    return next;
+  });
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
+    forum_id: forumId,
+    session_id: sessionId,
+  }));
+  const updateCharacter = vi.fn(async () => ({
+    ...characterDetailFixture,
+    style: 'mono-large',
+  }));
+  render(<App
+    client={storedPlanningClient({ getSessionSnapshot, openSession, updateCharacter })}
+    connectSessionEvents={events.connect}
+    retryDelays={[0]}
+  />);
+
+  const planning = await openGuideSettingsFromPlanning(events, previous);
+  await user.selectOptions(await screen.findByLabelText('Style'), 'mono-large');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(updateCharacter).toHaveBeenCalledWith('guide', {
+    provider: 'terra',
+    style: 'mono-large',
+  }));
+
+  act(() => events.handlers[planning].onSnapshot({
+    ...previous,
+    lifecycle: 'stopping',
+    shutdown_reason: 'reloading',
+  }));
+  expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+  act(() => events.handlers[planning].onError({ kind: 'stream_failure' }));
+
+  await waitFor(() => expect(
+    events.connections.filter(({ key }) => key === 'lobby/planning'),
+  ).toHaveLength(2));
+  const reattached = events.connections.findIndex((connection, index) => (
+    index > planning && connection.key === 'lobby/planning'
+  ));
+  act(() => events.handlers[reattached].onSnapshot(next));
+
+  expect(document.querySelector('main')).toHaveAttribute('data-view', 'character-settings');
+  expect(openSession.mock.calls.filter(([, sessionId]) => sessionId === 'planning')).toHaveLength(2);
+
+  fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
+  expect(screen.getByText('A considered answer')).toHaveClass(
+    'cha-message-text', 'cha-font-mono', 'cha-scale-large',
+  );
+});
+
+it('retries a settings reload when the first reopen meets a stopping session', async () => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  const previous = planningVoiceSnapshot(serifItalicVoice);
+  const next = planningVoiceSnapshot(monoLargeVoice);
+  let planningOpens = 0;
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => {
+    if (sessionId === 'planning') {
+      planningOpens += 1;
+      if (planningOpens === 2) {
+        throw new ChaError(409, 'session_stopping', 'Session is stopping.');
+      }
+    }
+    return { forum_id: forumId, session_id: sessionId };
+  });
+  let lobbySnapshots = 0;
+  const getSessionSnapshot = vi.fn(async (forumId: string) => {
+    if (forumId !== 'lobby') return snapshotFixture;
+    lobbySnapshots += 1;
+    if (lobbySnapshots === 1) return previous;
+    if (lobbySnapshots === 2 || lobbySnapshots === 3) {
+      throw new ChaError(409, 'session_not_live', 'Session is not live.');
+    }
+    return next;
+  });
+  render(<App
+    client={storedPlanningClient({
+      getSessionSnapshot,
+      openSession,
+      updateCharacter: async () => ({ ...characterDetailFixture, style: 'mono-large' }),
+    })}
+    connectSessionEvents={events.connect}
+    retryDelays={[0, 0]}
+  />);
+
+  const planning = await openGuideSettingsFromPlanning(events, previous);
+  await user.selectOptions(await screen.findByLabelText('Style'), 'mono-large');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
+
+  act(() => events.handlers[planning].onSnapshot({
+    ...previous,
+    lifecycle: 'stopping',
+    shutdown_reason: 'reloading',
+  }));
+  act(() => events.handlers[planning].onError({ kind: 'stream_failure' }));
+
+  await waitFor(() => expect(
+    events.connections.filter(({ key }) => key === 'lobby/planning'),
+  ).toHaveLength(2));
+  expect(openSession.mock.calls.filter(([, sessionId]) => sessionId === 'planning')).toHaveLength(3);
+  expect(document.querySelector('main')).toHaveAttribute('data-view', 'character-settings');
 });

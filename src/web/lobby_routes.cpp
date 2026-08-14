@@ -273,9 +273,13 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     server.Get(R"(/api/v1/characters/([^/]+))", [model](const httplib::Request& request, httplib::Response& response) {
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id)) return set_route_not_found(response);
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That character was not found.");
+        }
         const CharacterMetadata* character = model->find_character(id);
-        if (character == nullptr) return set_route_not_found(response);
+        if (character == nullptr) {
+            return set_route_not_found(response, "That character was not found.");
+        }
         set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
     });
 
@@ -283,11 +287,15 @@ void LobbyRoutes::install(httplib::Server& server) const {
         [model, live_sessions, settings](const httplib::Request& request,
                                          httplib::Response& response) {
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id)) return set_route_not_found(response);
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That character was not found.");
+        }
         const CharacterMetadata* character = model->find_character(id);
-        if (character == nullptr) return set_route_not_found(response);
+        if (character == nullptr) {
+            return set_route_not_found(response, "That character was not found.");
+        }
         const std::optional<CharacterSettings> current = model->character_settings(id);
-        if (!current) return set_route_not_found(response);
+        if (!current) return set_route_not_found(response, "That character was not found.");
         if (!validate_json_mutation(request, response)) return;
         CharacterSettingsUpdate update;
         if (!parse_route_json_body(
@@ -313,9 +321,13 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     server.Get(R"(/api/v1/personas/([^/]+))", [model](const httplib::Request& request, httplib::Response& response) {
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id)) return set_route_not_found(response);
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That persona was not found.");
+        }
         const Persona* const persona = model->find_persona(id);
-        if (persona == nullptr) return set_route_not_found(response);
+        if (persona == nullptr) {
+            return set_route_not_found(response, "That persona was not found.");
+        }
         set_json_response(response, 200, nlohmann::json(PersonaDetail{
             {persona->id, persona->display_name, persona->description}, persona->prompt}));
     });

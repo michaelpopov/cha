@@ -60,12 +60,32 @@ export const bootstrapFixture: Bootstrap = {
   ],
 };
 
+export const serifItalicVoice: CharacterAppearance = {
+  font: 'serif', style: 'italic', weight: 'normal', size: 'normal',
+};
+
+export const monoLargeVoice: CharacterAppearance = {
+  font: 'mono', style: 'normal', weight: 'normal', size: 'large',
+};
+
 export const characterDetailFixture: CharacterDetail = {
   id: 'guide',
   display_name: 'Guide',
   description: 'A deterministic test character',
-  appearance: plainVoice,
+  appearance: serifItalicVoice,
   character_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
+  provider: 'terra',
+  style: 'serif-italic',
+  available_providers: [
+    { id: 'sol-high', label: 'Sol high' },
+    { id: 'terra', label: 'Terra' },
+  ],
+  available_styles: [
+    { id: 'mono-large', label: 'Mono large', appearance: monoLargeVoice },
+    { id: 'serif-italic', label: 'Serif italic', appearance: serifItalicVoice },
+  ],
+  provider_overridden_by: [],
+  writable: true,
 };
 
 // The Markdown heading deliberately differs from the display name the topbar
@@ -112,6 +132,10 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
   return {
     getBootstrap: async () => bootstrapFixture,
     getCharacter: async () => characterDetailFixture,
+    updateCharacter: async (_characterId, settings) => ({
+      ...characterDetailFixture,
+      ...settings,
+    }),
     getPersona: async () => personaDetailFixture,
     getForum: async () => forumDetailFixture,
     listSessions: async () => [],

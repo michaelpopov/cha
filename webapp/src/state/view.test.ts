@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { bootstrapFixture, snapshotFixture } from '../test/fixtures';
-import { appReducer, initialAppState, type AppAction, type AppState } from './view';
+import {
+  appReducer,
+  initialAppState,
+  navigationTitle,
+  type AppAction,
+  type AppState,
+} from './view';
 
 function readyState(): AppState {
   return appReducer(initialAppState, { type: 'bootstrap-loaded', bootstrap: bootstrapFixture });
@@ -157,5 +163,46 @@ describe('application navigation reducer', () => {
     expect(state.activeConversation).toEqual({ forumId: 'entrance', sessionId: 'welcome' });
     expect(state.currentForumId).toBe('entrance');
     expect(state.mainView).toBe('chat');
+  });
+
+  it('tracks character-settings availability only for the inspected character', () => {
+    let state = readyState();
+    state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
+    expect(state.characterSettingsAvailable).toBe(false);
+    expect(navigationTitle(state)).toBe('Guide');
+
+    state = appReducer(state, {
+      type: 'character-detail-loaded', characterId: 'guide', writable: true,
+    });
+    expect(state.characterSettingsAvailable).toBe(true);
+
+    state = appReducer(state, { type: 'show-character-settings' });
+    expect(state.mainView).toBe('character-settings');
+    expect(navigationTitle(state)).toBe('Settings');
+    expect(state.characterSettingsAvailable).toBe(true);
+
+    state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
+    expect(state.mainView).toBe('character-detail');
+    expect(state.characterSettingsAvailable).toBe(true);
+
+    state = appReducer(state, { type: 'inspect-character', characterId: 'assistant' });
+    expect(state.characterSettingsAvailable).toBe(false);
+    expect(state.inspectedCharacterId).toBe('assistant');
+
+    state = appReducer(state, {
+      type: 'character-detail-loaded', characterId: 'assistant', writable: false,
+    });
+    expect(state.characterSettingsAvailable).toBe(false);
+  });
+
+  it('ignores a character detail that finished loading after the reader left it', () => {
+    let state = readyState();
+    state = appReducer(state, { type: 'inspect-character', characterId: 'assistant' });
+
+    // Guide's slower request lands while the Assistant is the one on screen.
+    state = appReducer(state, {
+      type: 'character-detail-loaded', characterId: 'guide', writable: true,
+    });
+    expect(state.characterSettingsAvailable).toBe(false);
   });
 });
