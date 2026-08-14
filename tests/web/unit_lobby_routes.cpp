@@ -369,9 +369,9 @@ TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderC
 }
 
 // A session reads its definitions on the way up, so one that is still opening
-// when the save commits is already holding the old settings. The manager
-// publishes it as running only once it has finished, so a fan-out driven by
-// running sessions alone would leave it live on values the file no longer has.
+// when the save commits may already hold the old settings. The manager publishes
+// it as running only once it has finished, so a fan-out driven by running
+// sessions alone could leave it live on values the file no longer has.
 TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
     test::TestWorkspace fixture;
     fixture.write_style("mono-large", "font = \"mono\"\nsize = \"large\"\n");
@@ -397,9 +397,14 @@ TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
     const std::string id = create_session(server, "Opening");
     ASSERT_FALSE(id.empty());
 
-    std::thread opening_request([&server, &id] {
-        (void)server.client().Post(
+    int opening_status = -1;
+    std::string opening_body;
+    std::thread opening_request([&server, &id, &opening_status, &opening_body] {
+        const auto response = server.client().Post(
             "/api/v1/forums/lobby/sessions/" + id + "/open", "{}", "application/json");
+        if (!response) return;
+        opening_status = response->status;
+        opening_body = response->body;
     });
     {
         std::unique_lock lock(mutex);
@@ -423,14 +428,19 @@ TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
     gate.notify_all();
     opening_request.join();
 
+    ASSERT_EQ(opening_status, 409);
+    EXPECT_EQ(
+        nlohmann::json::parse(opening_body)["error"]["code"],
+        "session_stopping");
+
     const auto deadline = std::chrono::steady_clock::now() + 5s;
     while (manager.snapshot().live_session_count != 0
            && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(10ms);
     }
     EXPECT_EQ(manager.snapshot().live_session_count, 0U)
-        << "a session that was opening when the save landed stayed live on the "
-           "settings it read before the write";
+        << "a session that was opening when the save landed stayed live even "
+           "though it may have read settings before the write";
 }
 
 std::string read_bytes(const std::filesystem::path& path) {

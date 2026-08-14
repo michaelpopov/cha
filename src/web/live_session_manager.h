@@ -102,9 +102,9 @@ public:
     // returned as reattachable sessions.
     [[nodiscard]] LiveSessionManagerSnapshot snapshot();
     // Every actor a workspace change could still reach: those already running,
-    // and those still opening. An actor that is only starting has nonetheless
-    // read its definitions already, so leaving it out would let it come up on
-    // settings that were overwritten while it opened.
+    // and those still opening. A starting actor may already have read its
+    // definitions, so leaving it out could let it come up on settings that were
+    // overwritten while it opened.
     //
     // It hands back the actors themselves rather than their identities because
     // both of the ordinary ways to reach one -- snapshot()'s running_sessions

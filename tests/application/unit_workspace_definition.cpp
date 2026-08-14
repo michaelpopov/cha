@@ -227,23 +227,54 @@ TEST(WorkspaceDefinition, WritesAndErasesCharacterProviderAndStyle) {
     fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
     const WorkspaceDefinition model = load_model(fixture.root());
 
-    model.write_character_settings("guide", "test", "serif-italic");
+    EXPECT_EQ(
+        model.write_character_settings("guide", "test", "serif-italic"),
+        (CharacterSettingsChange{true, true}));
     EXPECT_EQ(
         model.character_settings("guide"),
         (CharacterSettings{"test", "serif-italic"}));
 
-    model.write_character_settings("guide", std::nullopt, "serif-italic");
+    EXPECT_EQ(
+        model.write_character_settings("guide", "test", "serif-italic"),
+        CharacterSettingsChange{});
+
+    EXPECT_EQ(
+        model.write_character_settings("guide", std::nullopt, "serif-italic"),
+        (CharacterSettingsChange{true, false}));
     EXPECT_EQ(
         model.character_settings("guide"),
         (CharacterSettings{std::nullopt, "serif-italic"}));
 
-    model.write_character_settings("guide", "test", std::nullopt);
+    EXPECT_EQ(
+        model.write_character_settings("guide", "test", std::nullopt),
+        (CharacterSettingsChange{true, true}));
     EXPECT_EQ(
         model.character_settings("guide"),
         (CharacterSettings{"test", std::nullopt}));
 
-    model.write_character_settings("guide", std::nullopt, std::nullopt);
+    EXPECT_EQ(
+        model.write_character_settings("guide", std::nullopt, std::nullopt),
+        (CharacterSettingsChange{true, false}));
     EXPECT_EQ(model.character_settings("guide"), CharacterSettings{});
+}
+
+TEST(WorkspaceDefinition, ComparesAStaleSaveWithTheDocumentItActuallyReplaces) {
+    test::TestWorkspace fixture;
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+    const std::optional<CharacterSettings> stale = model.character_settings("guide");
+    ASSERT_TRUE(stale);
+
+    EXPECT_EQ(
+        model.write_character_settings("guide", stale->provider, "serif-italic"),
+        (CharacterSettingsChange{false, true}));
+
+    // This is the full form body a second browser prepared before the style
+    // save above. Its provider changed relative to that old view, but its old
+    // style also changes the document it now replaces and must be reported.
+    EXPECT_EQ(
+        model.write_character_settings("guide", "test", stale->style),
+        (CharacterSettingsChange{true, true}));
 }
 
 TEST(WorkspaceDefinition, RejectsAnUnusableSelectionWithoutTouchingTheFile) {

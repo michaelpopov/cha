@@ -33,9 +33,10 @@ using Json = nlohmann::ordered_json;
 // preserves both updates as complete TOML documents.
 std::mutex forum_config_write_mutex;
 
-// Parse → mutate → write beside the original → rename. An interrupted write
-// must not leave a config the next start cannot read. A reader either sees
-// the whole old document or the whole new one.
+// Parse → mutate → write beside the original → rename. The mutation
+// returns false when the parsed document already has the requested state. An
+// interrupted write must not leave a config the next start cannot read. A
+// reader either sees the whole old document or the whole new one.
 template<typename Mutate>
 void rewrite_toml_file(
     const std::filesystem::path& path,
@@ -51,7 +52,7 @@ void rewrite_toml_file(
         }
         table = toml::parse(input, utf8_path(path));
     }
-    mutate(table);
+    if (!mutate(table)) return;
 
     std::filesystem::path temporary = path;
     temporary += ".new";
@@ -78,6 +79,7 @@ void write_forum_config_setting(
     rewrite_toml_file(path, "forum config", [&](toml::table& table) {
         if (!superseded_key.empty()) table.erase(superseded_key);
         table.insert_or_assign(key, std::string(value));
+        return true;
     });
 }
 
@@ -1055,12 +1057,12 @@ std::optional<std::filesystem::path> WorkspaceDefinition::character_config_path(
     return path;
 }
 
-void WorkspaceDefinition::write_character_settings(
+CharacterSettingsChange WorkspaceDefinition::write_character_settings(
     std::string_view id,
     std::optional<std::string> provider,
     std::optional<std::string> style) const {
     const std::optional<std::filesystem::path> path = character_config_path(id);
-    if (!path || !character_settings(id)) {
+    if (!path) {
         throw std::runtime_error(
             "Character '" + std::string(id) + "' has no writable configuration");
     }
@@ -1078,16 +1080,29 @@ void WorkspaceDefinition::write_character_settings(
                 + " '" + *name + "' is not usable: " + error.what());
         }
     };
-    load_selection(provider, "provider", [&](std::string_view name) {
-        (void)load_named_provider(config_.providers_directory, name, *path);
-    });
-    load_selection(style, "style", [&](std::string_view name) {
-        (void)load_named_style(config_.styles_directory, name, *path);
-    });
+    CharacterSettingsChange change;
     rewrite_toml_file(*path, "character config", [&](toml::table& table) {
+        const CharacterSettings current{
+            .provider = read_setting_name(table, "provider"),
+            .style = read_setting_name(table, "style"),
+        };
+        change = {
+            .provider_changed = provider != current.provider,
+            .style_changed = style != current.style,
+        };
+        if (!change.any()) return false;
+
+        load_selection(provider, "provider", [&](std::string_view name) {
+            (void)load_named_provider(config_.providers_directory, name, *path);
+        });
+        load_selection(style, "style", [&](std::string_view name) {
+            (void)load_named_style(config_.styles_directory, name, *path);
+        });
         assign_or_erase(table, "provider", provider);
         assign_or_erase(table, "style", style);
+        return true;
     });
+    return change;
 }
 
 std::vector<std::string> WorkspaceDefinition::forums_overriding_provider(

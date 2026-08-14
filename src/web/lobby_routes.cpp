@@ -162,10 +162,9 @@ std::vector<std::string> forums_affected_by_save(
     return result;
 }
 
-// Called only after the write has committed, so an actor that appears here
-// either read the old settings and must be reloaded, or is not here yet and
-// will read the new ones when it opens. Sessions still starting are included
-// for that reason: they have already read their definitions.
+// Called only after the write has committed. Sessions still starting are
+// included because they may already have read their definitions; an actor that
+// appears only afterwards will read the new settings when it opens.
 void request_reload(
     LiveSessionManager& live_sessions,
     const std::vector<std::string>& forum_ids) {
@@ -303,18 +302,18 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&update](const nlohmann::json& json) {
                     update = parse_character_settings_update(json);
                 })) return;
-        const bool provider_changed = update.provider != current->provider;
-        const bool style_changed = update.style != current->style;
-        if (provider_changed || style_changed) {
-            try {
-                model->write_character_settings(id, update.provider, update.style);
-            } catch (const std::invalid_argument&) {
-                return set_error_response(response, 400,
-                    {ErrorCode::bad_request, "Invalid provider or style."});
-            }
+        CharacterSettingsChange change;
+        try {
+            change = model->write_character_settings(id, update.provider, update.style);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid provider or style."});
+        }
+        if (change.any()) {
             request_reload(
                 *live_sessions,
-                forums_affected_by_save(*model, id, style_changed, provider_changed));
+                forums_affected_by_save(
+                    *model, id, change.style_changed, change.provider_changed));
         }
         set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
     });

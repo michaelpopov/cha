@@ -27,7 +27,7 @@ LiveSessionOpenResult map_start_result(LiveSessionStartResult result) {
     case LiveSessionStartResult::failed:
         return LiveSessionOpenFailure::internal_error;
     case LiveSessionStartResult::shutting_down:
-        return LiveSessionOpenFailure::manager_stopping;
+        return LiveSessionOpenFailure::stopping;
     }
     return LiveSessionOpenFailure::internal_error;
 }
@@ -181,6 +181,10 @@ LiveSessionOpenResult LiveSessionManager::open(
         return stopping_
             ? LiveSessionOpenResult{LiveSessionOpenFailure::manager_stopping}
             : LiveSessionOpenResult{LiveSessionOpenFailure::open_timeout};
+    }
+    if (*outcome == LiveSessionStartResult::shutting_down) {
+        std::lock_guard lock(mutex_);
+        if (stopping_) return LiveSessionOpenFailure::manager_stopping;
     }
     if (*outcome == LiveSessionStartResult::ready) {
         std::lock_guard lock(mutex_);

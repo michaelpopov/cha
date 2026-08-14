@@ -56,6 +56,17 @@ struct CharacterSettings {
     bool operator==(const CharacterSettings&) const = default;
 };
 
+// What one character-settings write actually changed relative to the document
+// it replaced. The comparison and write happen under the same lock.
+struct CharacterSettingsChange {
+    bool provider_changed{};
+    bool style_changed{};
+    [[nodiscard]] bool any() const noexcept {
+        return provider_changed || style_changed;
+    }
+    bool operator==(const CharacterSettingsChange&) const = default;
+};
+
 // One forum as the browser sees it. It deliberately carries no filesystem
 // path: routes should not learn the workspace layout.
 struct ForumInfo {
@@ -115,10 +126,11 @@ public:
     // Forum IDs that contain this character and name a provider of their own.
     std::vector<std::string> forums_overriding_provider(std::string_view id) const;
 
-    // Rejects a character with no readable config file. Loads each non-null
-    // name before touching the file, so a selection that cannot run is never
-    // recorded. nullopt erases the key.
-    void write_character_settings(
+    // Rejects a character with no readable config file. Compares and writes
+    // under one lock, returning the fields the committed document changed.
+    // Loads each non-null name before writing, so a selection that cannot run
+    // is never recorded. nullopt erases the key.
+    CharacterSettingsChange write_character_settings(
         std::string_view id,
         std::optional<std::string> provider,
         std::optional<std::string> style) const;

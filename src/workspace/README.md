@@ -49,9 +49,10 @@ only over-warns and leaves sessions alone, while the opposite guess would tell a
 reader their choice applies where it does not. `character_config_path()` is empty
 for the built-in Assistant.
 
-`write_character_settings()` rewrites `provider` and `style` in one parse-write
-cycle under the same mutex as the forum-config writes. It loads each non-null
-name first, so a config that cannot run is never recorded and the file is left
+`write_character_settings()` compares and rewrites `provider` and `style` in one
+parse-write cycle under the same mutex as the forum-config writes, and reports
+which fields that document actually changed. It loads each non-null name before
+writing, so a config that cannot run is never recorded and the file is left
 untouched. `nullopt` erases the key. A character with no readable config is
 rejected rather than created or overwritten.
 
