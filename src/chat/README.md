@@ -30,6 +30,7 @@ separates four things that are easy to conflate:
 | `participant_id`, `display_name` | Who produced it — stable identity versus the label shown. |
 | `addressed_to`, `addressed_to_name` | Who a human prompt was sent to. Only human entries carry this. |
 | `text` | Persona text, character answer text, or system/error text. |
+| `created_at` | Unix-seconds wall-clock creation time, stamped by the factories; `0` means unknown and is what rows stored before the timestamp schema read back as. |
 
 Four kinds and four statuses combine only in these ways:
 

@@ -183,6 +183,10 @@ PreparedSession SessionRepository::prepare(const SessionIdentity& identity) cons
         throw missing_session_error(identity.session_id);
     }
     SessionLease lease = SessionLease::acquire(database_path);
+    // Opening is the one write-capable moment every stored session passes
+    // through, still behind its lease, so a schema-migration step here migrates
+    // every database exactly once and leaves the restore read itself read-only.
+    migrate_session_database(database_path);
     // Nothing observed before the lease is trusted: the one authoritative read
     // of this database happens here, behind it. A file that was leased first
     // therefore reports busy even if it would also have proved invalid.

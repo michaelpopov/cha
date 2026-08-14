@@ -1,9 +1,18 @@
 #include "chat/transcript.h"
 
+#include <chrono>
 #include <stdexcept>
 #include <utility>
 
 namespace cha {
+namespace {
+
+std::int64_t unix_now() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+} // namespace
 
 TranscriptEntry make_human_entry(HumanEntrySpec spec) {
     return {
@@ -16,6 +25,7 @@ TranscriptEntry make_human_entry(HumanEntrySpec spec) {
         .text = std::move(spec.text),
         .status = EntryStatus::complete,
         .request_id = spec.request_id,
+        .created_at = unix_now(),
     };
 }
 
@@ -34,6 +44,7 @@ TranscriptEntry make_character_entry(
         .text = std::move(text),
         .status = status,
         .request_id = request_id,
+        .created_at = unix_now(),
     };
 }
 
@@ -43,6 +54,7 @@ TranscriptEntry make_notice_entry(EntryId id, std::string text) {
         .kind = EntryKind::notice,
         .display_name = std::string(notice_display_name),
         .text = std::move(text),
+        .created_at = unix_now(),
     };
 }
 
@@ -53,6 +65,7 @@ TranscriptEntry make_marker_entry(EntryId id, std::string display_name) {
         .id = id,
         .kind = EntryKind::notice,
         .display_name = std::move(display_name),
+        .created_at = unix_now(),
     };
 }
 
@@ -83,6 +96,7 @@ TranscriptEntry make_error_entry(
         .text = std::move(text),
         .status = EntryStatus::failed,
         .request_id = request_id,
+        .created_at = unix_now(),
     };
 }
 

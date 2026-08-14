@@ -21,7 +21,11 @@ namespace cha {
 namespace {
 
 constexpr int session_application_id = 0x43484131; // "CHA1"
-constexpr int session_database_version = 2;
+constexpr int session_database_version = 3;
+// The version before entries.created_at existed. Read-only paths accept it so
+// an unmigrated database can still be listed and inspected; prepare()
+// migrates it before any restore read.
+constexpr int session_database_version_without_timestamps = 2;
 
 static_assert(static_cast<std::int64_t>(EntryKind::human) == 0);
 static_assert(static_cast<std::int64_t>(EntryKind::character) == 1);
@@ -374,6 +378,7 @@ void create_schema(Database& database) {
             addressed_to_name TEXT NOT NULL DEFAULT '',
             text TEXT NOT NULL,
             status INTEGER NOT NULL CHECK (status IN (0, 2, 3)),
+            created_at INTEGER NOT NULL DEFAULT 0,
             CHECK (kind NOT IN (0, 1) OR participant_id <> ''),
             CHECK (kind <> 0 OR (addressed_to <> '' AND addressed_to_name <> '')),
             CHECK (kind = 0 OR (addressed_to = '' AND addressed_to_name = '')),
@@ -428,8 +433,10 @@ DurableState read_state(Database& database) {
 }
 
 void validate_database_identity(Database& database) {
+    const std::int64_t version = database.pragma_integer("user_version");
     if (database.pragma_integer("application_id") != session_application_id
-        || database.pragma_integer("user_version") != session_database_version) {
+        || (version != session_database_version
+            && version != session_database_version_without_timestamps)) {
         throw std::runtime_error(
             "Unsupported session database '" + database.path() + "'");
     }
@@ -564,8 +571,8 @@ void insert_entry(
         : std::nullopt;
     Statement statement = database.prepare(
         "INSERT INTO entries ("
-        "entry_id, epoch, request_id, kind, participant_id, display_name, addressed_to, addressed_to_name, text, status"
-        ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "entry_id, epoch, request_id, kind, participant_id, display_name, addressed_to, addressed_to_name, text, status, created_at"
+        ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         sqlite_id(entry.id, "Transcript entry ID"),
         epoch,
         request_id,
@@ -575,7 +582,8 @@ void insert_entry(
         std::string_view(entry.addressed_to),
         std::string_view(entry.addressed_to_name),
         std::string_view(entry.text),
-        static_cast<std::int64_t>(entry.status));
+        static_cast<std::int64_t>(entry.status),
+        entry.created_at);
     statement.run();
 }
 
@@ -589,6 +597,7 @@ TranscriptEntry read_entry(Statement& statement) {
         .addressed_to_name = statement.text(6),
         .text = statement.text(7),
         .status = parse_status(statement.integer(8)),
+        .created_at = statement.integer(9),
     };
     if (!statement.is_null(1)) {
         entry.request_id = unsigned_id(statement.integer(1), "request ID");
@@ -685,7 +694,7 @@ SessionRestore build_restore(Database& database) {
     };
 
     Statement entries = database.prepare(
-        "SELECT entry_id, request_id, kind, participant_id, display_name, addressed_to, addressed_to_name, text, status "
+        "SELECT entry_id, request_id, kind, participant_id, display_name, addressed_to, addressed_to_name, text, status, created_at "
         "FROM entries WHERE epoch = ?1 ORDER BY entry_id",
         state.epoch);
     while (entries.step()) {
@@ -823,6 +832,27 @@ LoadedSessionDatabase load_session_database(
         .metadata = std::move(metadata),
         .restore = build_restore(database),
     };
+}
+
+void migrate_session_database(const std::filesystem::path& path) {
+    Database database(path, Database::Mode::read_write);
+    const std::int64_t version = database.pragma_integer("user_version");
+    if (version == session_database_version) {
+        return;
+    }
+    if (version != session_database_version_without_timestamps) {
+        throw std::runtime_error(
+            "Unsupported session database '" + database.path() + "'");
+    }
+    // The ALTER and the version bump are one transaction: a crash between
+    // them would leave a database that has the column but still claims the
+    // old version, and the next open would re-run the ALTER and fail.
+    Transaction transaction(database);
+    database.execute(
+        "ALTER TABLE entries ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0");
+    database.execute(
+        "PRAGMA user_version = " + std::to_string(session_database_version));
+    transaction.commit();
 }
 
 void rename_session_database(

@@ -278,6 +278,15 @@ export function ChatScreen({
             </div>
             {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
             {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
+            {entry.created_at !== null && (
+              <time
+                className="cha-message-time"
+                dateTime={new Date(entry.created_at * 1000).toISOString()}
+                title={new Date(entry.created_at * 1000).toLocaleString()}
+              >
+                {formatEntryTime(entry.created_at)}
+              </time>
+            )}
           </article>
         ))}
         {generation?.active && (
@@ -920,6 +929,19 @@ export function SessionOperationReport({
       )}
     </div>
   );
+}
+
+// Relative session-list labels go stale on an open transcript.
+export function formatEntryTime(createdAt: number, now = Date.now()): string {
+  const date = new Date(createdAt * 1000);
+  const current = new Date(now);
+  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const day = date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(date.getFullYear() === current.getFullYear() ? {} : { year: 'numeric' as const }),
+  });
+  return `${day}, ${time}`;
 }
 
 export function formatSessionTime(updatedAt: number, now = Date.now()): string {

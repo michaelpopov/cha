@@ -90,6 +90,16 @@ std::vector<TranscriptEntry> copy_entries(TranscriptView transcript) {
     return {entries.begin(), entries.end()};
 }
 
+void wait_until_next_unix_second() {
+    const auto started = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch());
+    while (std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+           == started) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
 // Removes one temporary session database when a controller test leaves scope.
 class TemporaryJournal {
 public:
@@ -167,6 +177,12 @@ public:
         for (const GenerationDelta& delta : deltas_) {
             on_delta(delta);
         }
+        if (hold_after_deltas != nullptr) {
+            while (!hold_after_deltas->load(std::memory_order_acquire)
+                   && !cancellation.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+        }
         if (wait_for_cancellation_) {
             while (!cancellation.load(std::memory_order_acquire)) {
                 std::this_thread::yield();
@@ -191,6 +207,7 @@ public:
     std::vector<GenerationRequest> inputs;
     std::vector<std::vector<ModelMessage>> model_contexts;
     std::string system_prompt;
+    std::atomic_bool* hold_after_deltas = nullptr;
 
 private:
     std::string id_{"guide-id"};
@@ -346,6 +363,20 @@ ControllerUpdate receive_until_idle(SessionController& controller) {
         }
     }
     return combined;
+}
+
+void receive_until_entry_count(
+    SessionController& controller, std::size_t count) {
+    while (controller.view().transcript.entries.size() < count) {
+        const std::size_t observed = notifier().wake_count();
+        (void)test::receive_all_events(controller);
+        if (controller.view().transcript.entries.size() >= count) {
+            return;
+        }
+        if (!notifier().wait_for_wake(observed)) {
+            throw std::runtime_error("Timed out waiting for transcript entry");
+        }
+    }
 }
 
 ControllerUpdate receive_when_ready(SessionController& controller) {
@@ -719,6 +750,71 @@ TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
         restored.back().status,
         EntryStatus::cancelled);
     EXPECT_EQ(restored.back().text, "Partial");
+}
+
+TEST(SessionController, StoresTheEntryCreationTimeItDisplayed) {
+    TemporaryJournal temporary;
+    std::atomic_bool release{false};
+    auto backend = std::make_unique<ScriptedBackend>(
+        GenerationResult{}, std::vector<std::string>{"Hello"});
+    backend->hold_after_deltas = &release;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    receive_until_entry_count(*controller, 2);
+    const std::int64_t opened_at =
+        copy_entries(controller->view().transcript).back().created_at;
+    ASSERT_NE(opened_at, 0);
+
+    // Force the journal record onto the next second so a reused stamp is the
+    // only way the stored value can still match the live entry.
+    wait_until_next_unix_second();
+    release.store(true, std::memory_order_release);
+    (void)receive_until_idle(*controller);
+
+    const auto live = copy_entries(controller->view().transcript);
+    const std::vector<TranscriptEntry> stored =
+        load_transcript_entries(temporary.path);
+    ASSERT_EQ(stored.size(), 2U);
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().created_at, opened_at);
+    EXPECT_EQ(stored.back().created_at, opened_at);
+    EXPECT_EQ(stored.front().created_at, live.front().created_at);
+}
+
+TEST(SessionController, StoresTheDisplayedCreationTimeForACancelledResponse) {
+    TemporaryJournal temporary;
+    std::atomic_bool release{false};
+    auto backend = std::make_unique<ScriptedBackend>(
+        GenerationResult{GenerationOutcome::cancelled, {}},
+        std::vector<std::string>{"Partial"});
+    backend->hold_after_deltas = &release;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::move(backend)),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    receive_until_entry_count(*controller, 2);
+    const std::int64_t opened_at =
+        copy_entries(controller->view().transcript).back().created_at;
+    ASSERT_NE(opened_at, 0);
+
+    wait_until_next_unix_second();
+    release.store(true, std::memory_order_release);
+    (void)receive_until_idle(*controller);
+
+    const auto live = copy_entries(controller->view().transcript);
+    const std::vector<TranscriptEntry> stored =
+        load_transcript_entries(temporary.path);
+    ASSERT_EQ(stored.size(), 2U);
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().status, EntryStatus::cancelled);
+    EXPECT_EQ(live.back().created_at, opened_at);
+    EXPECT_EQ(stored.back().created_at, opened_at);
 }
 
 TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {

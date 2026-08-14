@@ -599,6 +599,8 @@ export interface components {
             /** @enum {string} */
             status: "complete" | "streaming" | "cancelled" | "failed";
             request_id?: components["schemas"]["UnsignedInteger"];
+            /** @description Unix seconds when the entry was created; null when unknown (rows stored before schema version 3). */
+            created_at: number | null;
         };
         GenerationState: {
             active: boolean;

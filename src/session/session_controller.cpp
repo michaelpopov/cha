@@ -834,7 +834,9 @@ void SessionController::apply(const GenerationEventDelta& event, ControllerUpdat
         // an already-answering entry is a pure append.
         const bool structural = active_->phase != ResponsePhase::answering;
         if (structural) {
-            transcript_.begin_entry(response_entry(EntryStatus::streaming));
+            TranscriptEntry opened = response_entry(EntryStatus::streaming);
+            active_->response_created_at = opened.created_at;
+            transcript_.begin_entry(std::move(opened));
         }
         // Capture the target before the text moves into transcript storage.
         const EntryId entry_id = active_->response_entry_id;
@@ -964,13 +966,19 @@ TranscriptEntry SessionController::response_entry(EntryStatus status) const {
     if (active_->phase == ResponsePhase::answering) {
         text = transcript_.open_entry_text(active_->response_entry_id);
     }
-    return make_character_entry(
+    TranscriptEntry entry = make_character_entry(
         active_->response_entry_id,
         active_->character_id,
         active_->character_display_name,
         std::move(text),
         status,
         active_->request_id);
+    // The record the journal stores must carry the stamp the live streaming
+    // entry opened with, not the time this terminal record was built.
+    if (active_->response_created_at != 0) {
+        entry.created_at = active_->response_created_at;
+    }
+    return entry;
 }
 
 bool SessionController::matches(RequestId request_id) const {

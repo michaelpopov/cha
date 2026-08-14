@@ -1110,6 +1110,7 @@ components:
         - addressed_to_name
         - text
         - status
+        - created_at
       properties:
         id:
           $ref: "#/components/schemas/UnsignedInteger"
@@ -1131,6 +1132,9 @@ components:
           enum: [complete, streaming, cancelled, failed]
         request_id:
           $ref: "#/components/schemas/UnsignedInteger"
+        created_at:
+          description: Unix seconds when the entry was created; null when unknown (rows stored before schema version 3).
+          type: [integer, "null"]
 
     GenerationState:
       type: object

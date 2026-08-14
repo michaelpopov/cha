@@ -8,6 +8,7 @@
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <algorithm>
 #include <atomic>
@@ -164,6 +165,44 @@ TEST_F(SessionRepositoryTest, DeletesCorruptDatabasesAndNeverReplacesAnArchive) 
         repository.move_to_deleted(conflict.identity),
         SessionDeleteConflictError);
     EXPECT_TRUE(std::filesystem::exists(conflict.database_path));
+}
+
+TEST_F(SessionRepositoryTest, PrepareMigratesAVersionTwoSessionDatabase) {
+    const SessionRepository repository = make_repository();
+    const StoredSession created = repository.create("lobby", "Old");
+
+    // Reshape the database into its version-2 form: no created_at column.
+    const std::string path_string = created.database_path.string();
+    sqlite3* handle = nullptr;
+    ASSERT_EQ(sqlite3_open(path_string.c_str(), &handle), SQLITE_OK);
+    ASSERT_EQ(
+        sqlite3_exec(
+            handle,
+            "ALTER TABLE entries DROP COLUMN created_at; PRAGMA user_version = 2",
+            nullptr,
+            nullptr,
+            nullptr),
+        SQLITE_OK);
+    sqlite3_close(handle);
+
+    // Read-only paths accept the unmigrated database.
+    EXPECT_NO_THROW(repository.validate(created.identity));
+
+    // Preparing migrates the database in place before the restore read.
+    const PreparedSession prepared = repository.prepare(created.identity);
+    EXPECT_TRUE(prepared.restore.entries.empty());
+
+    std::int64_t version = 0;
+    ASSERT_EQ(sqlite3_open(path_string.c_str(), &handle), SQLITE_OK);
+    sqlite3_stmt* statement = nullptr;
+    ASSERT_EQ(
+        sqlite3_prepare_v2(handle, "PRAGMA user_version", -1, &statement, nullptr),
+        SQLITE_OK);
+    ASSERT_EQ(sqlite3_step(statement), SQLITE_ROW);
+    version = sqlite3_column_int64(statement, 0);
+    sqlite3_finalize(statement);
+    sqlite3_close(handle);
+    EXPECT_EQ(version, 3);
 }
 
 TEST_F(SessionRepositoryTest, RenameAndDeleteRejectBusyAndTemporarySessions) {

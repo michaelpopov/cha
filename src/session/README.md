@@ -233,7 +233,17 @@ the lock file cannot be deleted or renamed while its controller is alive.
 ## Persistence
 
 One session is one self-contained SQLite file. Its `application_id` and
-`user_version` are checked before anything else is read.
+`user_version` are checked before anything else is read. Read-only paths —
+catalog listing, inspect, and route-level validation — accept the current
+version and the immediately previous one; `SessionRepository::prepare()`
+migrates a previous-version database behind the session lease before the
+restore read, so that read always sees the current schema. The version-3
+migration adds `entries.created_at`, the Unix-seconds wall-clock creation
+time of each entry; rows stored before it honestly read `0`, which front
+ends render as no timestamp at all. Every entry creation time is stamped by
+the `chat/` factories, and a character response carries the stamp its live
+streaming entry opened with, because the journal record is built separately
+from it at completion or cancellation.
 
 Opening a database initializes the SQLite library once, under `std::call_once`,
 before the first connection is created. SQLite performs that setup lazily on
@@ -271,6 +281,7 @@ erDiagram
         text addressed_to_name
         text text
         int status
+        int created_at "Unix seconds; 0 predates timestamps"
     }
     turns ||--o{ entries : "prompt and response"
 ```

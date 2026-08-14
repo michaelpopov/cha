@@ -99,6 +99,14 @@ square icon. Stop requests cancellation and remains visible until authoritative
 session state reports that generation is inactive. A failed Send preserves the
 draft. Target selection and Stop never change sidebar visibility.
 
+## Chat transcript
+
+Each message shows its creation time on a subdued line beneath its text: the
+date and the time, carrying the year only outside the current one, with the
+full local timestamp as the element's tooltip. The time is absolute rather
+than relative, so it stays correct while a conversation sits open. Entries
+stored before timestamps existed show no time at all.
+
 ## Personas
 
 Personas is a workspace-level, informational navigation area. It never changes

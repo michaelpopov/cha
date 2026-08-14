@@ -7,6 +7,7 @@ import type { SessionEventHandlers } from '../api/events';
 import { conversationText } from '../state/conversationText';
 import { bootstrapFixture, fixtureClient, plainVoice, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
+import { formatEntryTime } from './Screens';
 
 function drivableEvents() {
   const handlers: SessionEventHandlers[] = [];
@@ -45,6 +46,7 @@ function transcriptSnapshot(): SessionSnapshot {
       text: 'Still here',
       status: 'streaming',
       request_id: 7,
+      created_at: null,
     }],
     generation: {
       active: true,
@@ -127,6 +129,35 @@ describe('live chat', () => {
     }));
     expect(screen.getByText('Still here with you')).toBeInTheDocument();
     expect(screen.getByText('Checking again')).toBeInTheDocument();
+  });
+
+  it('shows the creation time under timestamped entries and nothing for unknown times', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [
+        {
+          id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+          addressed_to: 'assistant', addressed_to_name: 'Assistant',
+          text: 'Question', status: 'complete', created_at: 1_700_000_000,
+        },
+        {
+          id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+          addressed_to: '', addressed_to_name: '',
+          text: 'Old answer', status: 'complete', created_at: null,
+        },
+      ],
+    });
+
+    const articles = document.querySelectorAll('.cha-message');
+    expect(articles).toHaveLength(2);
+    const stamped = articles[0].querySelector('.cha-message-time');
+    expect(stamped).not.toBeNull();
+    expect(stamped?.getAttribute('dateTime'))
+      .toBe(new Date(1_700_000_000 * 1000).toISOString());
+    expect(stamped?.textContent).toBe(formatEntryTime(1_700_000_000));
+    expect(articles[1].querySelector('.cha-message-time')).toBeNull();
   });
 
   it('keeps the copy action icon-only beside the sidebar toggle', async () => {
@@ -396,17 +427,17 @@ describe('live chat', () => {
         {
           id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
           addressed_to: 'seneca', addressed_to_name: 'Seneca',
-          text: 'A question', status: 'complete',
+          text: 'A question', status: 'complete', created_at: null,
         },
         {
           id: 2, kind: 'character', participant_id: 'seneca', display_name: 'Seneca',
           addressed_to: 'guest', addressed_to_name: 'Guest',
-          text: 'A considered answer', status: 'complete',
+          text: 'A considered answer', status: 'complete', created_at: null,
         },
         {
           id: 3, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
           addressed_to: 'guest', addressed_to_name: 'Guest',
-          text: 'A plain answer', status: 'complete',
+          text: 'A plain answer', status: 'complete', created_at: null,
         },
       ],
     });

@@ -734,6 +734,13 @@ select:disabled {
   font-weight: 500;
 }
 
+.cha-message-time {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
 .cha-message-text,
 .cha-reasoning-text {
   overflow-wrap: anywhere;

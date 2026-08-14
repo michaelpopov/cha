@@ -12,20 +12,22 @@ describe('conversationText', () => {
         {
           id: 1, kind: 'notice' as const, participant_id: '', display_name: '',
           addressed_to: '', addressed_to_name: '', text: 'Off-record boundary',
-          status: 'complete' as const,
+          status: 'complete' as const, created_at: null,
         },
         {
           id: 2, kind: 'human' as const, participant_id: 'guest', display_name: 'Guest',
           addressed_to: 'guide', addressed_to_name: 'Epictetus', text: 'Hello\r\nthere',
-          status: 'complete' as const,
+          status: 'complete' as const, created_at: null,
         },
         {
           id: 3, kind: 'character' as const, participant_id: 'guide', display_name: 'Epictetus',
           addressed_to: '', addressed_to_name: '', text: 'Working', status: 'streaming' as const,
+          created_at: null,
         },
         {
           id: 4, kind: 'error' as const, participant_id: '', display_name: '',
           addressed_to: '', addressed_to_name: '', text: 'Interrupted', status: 'cancelled' as const,
+          created_at: null,
         },
       ],
     };
@@ -45,7 +47,7 @@ describe('conversationText', () => {
       ...snapshotFixture,
       transcript: [{
         id: 1, kind: 'notice', participant_id: '', display_name: '', addressed_to: '',
-        addressed_to_name: '', text: 'Boundary', status: 'complete',
+        addressed_to_name: '', text: 'Boundary', status: 'complete', created_at: null,
       }],
     })).toBe(false);
   });

@@ -81,6 +81,7 @@ describe('application navigation reducer', () => {
         text: 'Hello',
         status: 'streaming' as const,
         request_id: 7,
+        created_at: null,
       }],
       generation: {
         active: true,
@@ -127,6 +128,7 @@ describe('application navigation reducer', () => {
         text: 'Unchanged',
         status: 'streaming' as const,
         request_id: 7,
+        created_at: null,
       }],
     };
     let state = appReducer(readyState(), { type: 'conversation-opened', snapshot });

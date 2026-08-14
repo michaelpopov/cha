@@ -111,6 +111,9 @@ private:
         std::string character_display_name;
         ResponsePhase phase{ResponsePhase::waiting};
         std::string reasoning_text;
+        // The stamp of the live streaming entry, captured when it opens so the
+        // record later handed to the journal carries the same created_at.
+        std::int64_t response_created_at{};
     };
 
     SessionController(

@@ -21,15 +21,20 @@
 namespace cha {
 namespace {
 
+void expect_same_entry(TranscriptEntry actual, TranscriptEntry expected) {
+    // Factory-rebuilt expected values can straddle a second boundary.
+    actual.created_at = 0;
+    expected.created_at = 0;
+    EXPECT_EQ(actual, expected);
+}
+
 void expect_entries(
     std::span<const TranscriptEntry> actual,
     const std::vector<TranscriptEntry>& expected) {
     ASSERT_EQ(actual.size(), expected.size());
-    EXPECT_TRUE(std::equal(
-        actual.begin(),
-        actual.end(),
-        expected.begin(),
-        expected.end()));
+    for (std::size_t index = 0; index < actual.size(); ++index) {
+        expect_same_entry(actual[index], expected[index]);
+    }
 }
 
 // Runs one statement directly against a session database and returns its SQLite code.
@@ -235,7 +240,7 @@ TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
 
     EXPECT_TRUE(transcript.restore_offrecord(5));
     EXPECT_EQ(transcript.model_history().offrecord_span, OffrecordSpan{});
-    EXPECT_EQ(transcript.view().entries.back(), make_hide_off_marker(5));
+    expect_same_entry(transcript.view().entries.back(), make_hide_off_marker(5));
     transcript.clear();
     EXPECT_EQ(transcript.model_history().offrecord_span, OffrecordSpan{});
 }
@@ -374,9 +379,9 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     journal->complete_turn(1, make_character_entry(
         2, "reviewer-id", "Reviewer", "Hello back", EntryStatus::complete, 1));
 
-    EXPECT_EQ(
+    expect_entries(
         load_transcript_entries(path),
-        (std::vector<TranscriptEntry>{
+        {
             human(1, "Hello", 1),
             make_character_entry(
                 2,
@@ -385,7 +390,7 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
                 "Hello back",
                 EntryStatus::complete,
                 1),
-        }));
+        });
     const SessionDatabaseMetadata metadata =
         read_session_database_metadata(path);
     EXPECT_EQ(metadata.id, utf8_path(path.stem()));
@@ -484,7 +489,7 @@ TEST(SessionJournal, RollsBackAnInvalidTerminalTransition) {
 
     const SessionRestore restored = load_session_state(path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
-    EXPECT_EQ(restored.entries.front(), human(1, "Question", 1));
+    expect_same_entry(restored.entries.front(), human(1, "Question", 1));
     journal.reset();
     std::filesystem::remove(path);
 }
@@ -503,14 +508,14 @@ TEST(SessionJournal, ReplaysIdentifiedTypedTurnOutcomes) {
     EXPECT_EQ(restored.next_request_id, 9U);
     EXPECT_EQ(restored.next_entry_id, 5U);
     EXPECT_TRUE(restored.interrupted_turns.empty());
-    EXPECT_EQ(
+    expect_entries(
         restored.entries,
-        (std::vector<TranscriptEntry>{
+        {
             human(1, "First", 7),
             make_character_entry(2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7),
             human(3, "Second", 8),
             make_error_entry(4, "Unavailable", 8, "guide-id"),
-        }));
+        });
     journal.reset();
     std::filesystem::remove(path);
 }
@@ -659,6 +664,73 @@ TEST(SessionDatabase, RefusesAVersionOneDatabase) {
     }
     EXPECT_THROW(SessionJournal journal(path), std::runtime_error);
     EXPECT_THROW((void)read_session_database_metadata(path), std::runtime_error);
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, StoresAndRestoresEntryCreationTimes) {
+    const auto path = temporary_path("cha_created_at_");
+    create_test_database(path);
+    const TranscriptEntry prompt = human(1, "Question", 1);
+    const TranscriptEntry answer = make_character_entry(
+        2, "reviewer-id", "Reviewer", "Answer", EntryStatus::complete, 1);
+    ASSERT_NE(prompt.created_at, 0);
+    ASSERT_NE(answer.created_at, 0);
+    {
+        SessionJournal journal(path);
+        journal.start_turn(1, prompt);
+        journal.complete_turn(1, answer);
+    }
+
+    EXPECT_EQ(
+        load_transcript_entries(path),
+        (std::vector<TranscriptEntry>{prompt, answer}));
+    std::filesystem::remove(path);
+}
+
+TEST(SessionDatabase, MigratesAVersionTwoDatabase) {
+    const auto path = temporary_path("cha_migrate_");
+    create_test_database(path);
+    {
+        SessionJournal journal(path);
+        journal.start_turn(1, human(1, "Hello", 1));
+        journal.complete_turn(1, make_character_entry(
+            2, "reviewer-id", "Reviewer", "Hi", EntryStatus::complete, 1));
+    }
+    // Reshape the database into its version-2 form: no created_at column.
+    ASSERT_EQ(
+        raw_execute(path, "ALTER TABLE entries DROP COLUMN created_at"),
+        SQLITE_OK);
+    ASSERT_EQ(raw_execute(path, "PRAGMA user_version = 2"), SQLITE_OK);
+
+    // Read-only paths accept the unmigrated database; restore reads do not
+    // happen before migration.
+    EXPECT_NO_THROW((void)read_session_database_metadata(path));
+
+    migrate_session_database(path);
+
+    const std::vector<std::string> columns = table_columns(path, "entries");
+    EXPECT_NE(
+        std::find(columns.begin(), columns.end(), "created_at"),
+        columns.end());
+
+    // Rows written before the migration honestly report no recorded time.
+    std::vector<TranscriptEntry> restored = load_transcript_entries(path);
+    ASSERT_EQ(restored.size(), 2U);
+    EXPECT_EQ(restored[0].created_at, 0);
+    EXPECT_EQ(restored[1].created_at, 0);
+
+    // Writes after the migration store real timestamps.
+    {
+        SessionJournal journal(path);
+        journal.start_turn(2, human(3, "Again", 2));
+    }
+    restored = load_transcript_entries(path);
+    ASSERT_EQ(restored.size(), 3U);
+    EXPECT_NE(restored.back().created_at, 0);
+
+    // Migrating a current database is a no-op.
+    migrate_session_database(path);
+    EXPECT_EQ(load_transcript_entries(path).size(), 3U);
     std::filesystem::remove(path);
 }
 

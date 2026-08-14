@@ -1,0 +1,11 @@
+host = "generativelanguage.googleapis.com"
+port = 443
+base_path = "/v1beta/openai"
+https = true
+mode = "net"
+model = "gemini-3.7-flash"
+reasoning_effort = "medium"
+stream = true
+api = "chat_completions"
+web_search = "off"
+api_key_env = "GEMINI_API_KEY"

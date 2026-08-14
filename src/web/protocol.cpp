@@ -44,6 +44,9 @@ nlohmann::json transcript_entry_json(const cha::TranscriptEntry& value) {
         {"status", to_string(value.status)},
     };
     put_optional(json, "request_id", value.request_id);
+    json["created_at"] = value.created_at != 0
+        ? nlohmann::json(value.created_at)
+        : nlohmann::json(nullptr);
     return json;
 }
 

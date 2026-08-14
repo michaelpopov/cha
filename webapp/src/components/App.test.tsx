@@ -974,6 +974,7 @@ function planningVoiceSnapshot(appearance: CharacterAppearance): SessionSnapshot
       addressed_to_name: 'Guest',
       text: 'A considered answer',
       status: 'complete',
+      created_at: null,
     }],
   };
 }

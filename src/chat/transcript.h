@@ -53,7 +53,9 @@ enum class EntryStatus : std::int64_t {
 // The one transcript record every layer agrees on: rendering, persistence, and model-context
 // projection all read this type. It keeps semantic kind and participant identity separate from
 // the display label, records who a message was addressed to, and tracks whether the record is
-// final or still being streamed.
+// final or still being streamed. created_at is the Unix-seconds wall-clock
+// time at which the entry was created; 0 means unknown and is what rows
+// stored before the timestamp schema read back as.
 struct TranscriptEntry {
     EntryId id{};
     EntryKind kind{EntryKind::notice};
@@ -64,6 +66,7 @@ struct TranscriptEntry {
     std::string text;
     EntryStatus status{EntryStatus::complete};
     std::optional<RequestId> request_id;
+    std::int64_t created_at{};
 
     bool operator==(const TranscriptEntry&) const = default;
 };

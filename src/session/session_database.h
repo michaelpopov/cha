@@ -61,11 +61,19 @@ void validate_session_database_identity(
 // Just enough to list a session, in one lightweight read.
 SessionDatabaseMetadata read_session_database_metadata(
     const std::filesystem::path& path);
+// Restores one database's durable state. Like load_session_database(), it
+// reads the current schema and requires a migrated database.
 SessionRestore load_session_state(
     const std::filesystem::path& path);
+// Brings a stored database to the current schema version. The caller must
+// hold the session's lease. A no-op on a current database; unknown versions
+// are rejected like any other failed identity check.
+void migrate_session_database(const std::filesystem::path& path);
 // The authoritative read for opening: metadata and restore state through one
 // connection, with the identity checked before the transcript is touched. The
-// caller must already hold the session's lease.
+// caller must already hold the session's lease and must have migrated the
+// database to the current schema version — SessionRepository::prepare()
+// performs that migration immediately before this read.
 LoadedSessionDatabase load_session_database(
     const std::filesystem::path& path,
     const SessionIdentity& expected_identity);
