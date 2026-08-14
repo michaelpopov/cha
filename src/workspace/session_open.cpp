@@ -46,6 +46,10 @@ OpenedSession open_session(
             // persist callbacks below take.
             [&model](std::string_view name) {
                 return model.resolve_session_provider(name);
+            },
+            // Same process-lived borrow as the provider resolver above.
+            [&model](std::string_view name) {
+                return model.resolve_session_style(name);
             }),
         .persist_default_character = [&model, forum_id = forum->id](
                                          std::string_view character_id) {

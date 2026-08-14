@@ -67,7 +67,7 @@ only through `/!Name`, which also saves the choice as the forum's default.
 The raw-input owner path recognizes optional leading character mentions and
 the commands `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/mcast`, `/info`,
 `/characters` (`/agents` is a legacy alias), `/@Name`, `/!Name`, `/provider`,
-`/stop`, and `/exit`. Mentions and multicast recipient
+`/style`, `/stop`, and `/exit`. Mentions and multicast recipient
 handles remain unresolved until `SessionController` applies the forum's
 authoritative character rules. While generation is active, only a bare
 `/stop` is dispatched; other input remains in the browser editor.

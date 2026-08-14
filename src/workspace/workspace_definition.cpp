@@ -598,6 +598,25 @@ std::string available_providers_note(const std::filesystem::path& directory) {
     return note;
 }
 
+// The style counterpart of available_providers_note; see it for why a directory
+// it cannot read costs the list rather than replacing the reported failure.
+std::string available_styles_note(const std::filesystem::path& directory) {
+    std::vector<std::string> available;
+    try {
+        available = named_config_ids(directory);
+    } catch (const std::exception&) {
+        return {};
+    }
+    if (available.empty()) return {};
+    std::ranges::sort(available);
+    std::string note = ". Available styles: ";
+    for (std::size_t index = 0; index < available.size(); ++index) {
+        if (index != 0) note += ", ";
+        note += available[index];
+    }
+    return note;
+}
+
 // One character-layer setting as written. A key of the wrong type is a broken
 // file rather than an absent setting, so it is refused here exactly as the
 // definition loader refuses it, instead of quietly reading as "not set".
@@ -1146,6 +1165,27 @@ ModelBackendConfig WorkspaceDefinition::resolve_session_provider(
         throw std::invalid_argument(
             "Provider '" + std::string(name) + "' is not usable: " + error.what()
             + available_providers_note(config_.providers_directory));
+    }
+}
+
+CharacterAppearance WorkspaceDefinition::resolve_session_style(
+    std::string_view name) const {
+    try {
+        require_path_component(name, config_.styles_directory);
+        const std::filesystem::path path =
+            config_.styles_directory / path_from_utf8(name) / "config.toml";
+        // load_named_style's reference path names the file that points at the
+        // style. Nothing points at this one -- the name came from the keyboard
+        // -- so an absent config is reported here as a missing install, rather
+        // than as a file that references itself.
+        if (!std::filesystem::is_regular_file(path)) {
+            throw std::runtime_error("no style config is installed under this name");
+        }
+        return load_named_style(config_.styles_directory, name, path);
+    } catch (const std::exception& error) {
+        throw std::invalid_argument(
+            "Style '" + std::string(name) + "' is not usable: " + error.what()
+            + available_styles_note(config_.styles_directory));
     }
 }
 

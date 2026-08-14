@@ -391,6 +391,48 @@ TEST(WorkspaceDefinition, SessionProviderFailuresListTheAvailableProviders) {
     }
 }
 
+TEST(WorkspaceDefinition, ResolvesASessionStyleIntoACompleteAppearance) {
+    test::TestWorkspace fixture;
+    fixture.write_style("serif-bold", "font = \"serif\"\nweight = \"bold\"\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    const CharacterAppearance appearance = model.resolve_session_style("serif-bold");
+    EXPECT_EQ(appearance, (CharacterAppearance{
+        CharacterFont::serif, CharacterSlant::normal,
+        CharacterWeight::bold, CharacterScale::normal}));
+}
+
+TEST(WorkspaceDefinition, SessionStyleFailuresListTheAvailableStyles) {
+    test::TestWorkspace fixture;
+    fixture.write_style("serif-bold", "font = \"serif\"\nweight = \"bold\"\n");
+    fixture.write_style("broken", "font = \"comic\"\n");
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    // A name nothing is installed under reads as one plain sentence: no
+    // filesystem path, and no config file described as referencing itself.
+    try {
+        (void)model.resolve_session_style("missing");
+        FAIL() << "Expected an unknown style to be rejected";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_EQ(
+            std::string(error.what()),
+            "Style 'missing' is not usable: no style config is installed"
+            " under this name. Available styles: broken, serif-bold");
+    }
+
+    EXPECT_THROW(
+        (void)model.resolve_session_style("../serif-bold"),
+        std::invalid_argument);
+
+    try {
+        (void)model.resolve_session_style("broken");
+        FAIL() << "Expected a malformed style to be rejected";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_NE(
+            std::string(error.what()).find("broken"), std::string::npos);
+    }
+}
+
 TEST(WorkspaceDefinition, ReportsForumsThatOverrideACharactersProvider) {
     test::TestWorkspace fixture;
     fixture.write_provider(

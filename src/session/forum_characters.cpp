@@ -78,6 +78,17 @@ const CharacterMetadata* ForumCharacters::find(std::string_view id) const {
     return found == characters_.end() ? nullptr : &*found;
 }
 
+bool ForumCharacters::set_appearance(
+    std::string_view id, const CharacterAppearance& appearance) {
+    const auto found = std::find_if(
+        characters_.begin(),
+        characters_.end(),
+        [id](const CharacterMetadata& character) { return character.id == id; });
+    if (found == characters_.end()) return false;
+    found->appearance = appearance;
+    return true;
+}
+
 HandleResolution ForumCharacters::resolve_handle(std::string_view handle) const {
     if (handle.empty()) {
         return {};

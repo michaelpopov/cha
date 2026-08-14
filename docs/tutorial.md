@@ -785,7 +785,12 @@ syntax. `/provider` is the one command that swaps session machinery rather
 than session state: it reaches `SessionController::set_session_provider()`,
 which resolves the name through a workspace-injected `ProviderResolver` and
 has the executor rebuild that character's backend in place — runtime-only,
-so unlike `/@Name` and `/!Name` it wires no persistence callback.
+so unlike `/@Name` and `/!Name` it wires no persistence callback. `/style` is
+its presentation counterpart: `set_session_style()` resolves the name through
+a workspace-injected `StyleResolver` and mutates that character's appearance
+in the roster, so the next snapshot repaints its messages — no backend, no
+resolver hazard, so no busy guard, but the change is browser-visible where the
+provider swap is not, so its mutating forms carry a snapshot. Also runtime-only.
 
 ### 12.4 The owner loop
 

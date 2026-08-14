@@ -2610,5 +2610,226 @@ TEST(SessionController, ClearingTheTranscriptKeepsTheProviderOverride) {
         "Guide's provider override for this session is 'override'.");
 }
 
+// --- Runtime style override --------------------------------------------------
+
+CharacterAppearance bold_appearance() {
+    return {CharacterFont::sans, CharacterSlant::normal, CharacterWeight::bold,
+            CharacterScale::normal};
+}
+
+// The distinct configured appearance every style_test_definition carries, so a
+// reset is observable as a return to it rather than to the plain default.
+CharacterAppearance style_configured_appearance() {
+    return {CharacterFont::mono, CharacterSlant::italic, CharacterWeight::normal,
+            CharacterScale::small};
+}
+
+SessionController::StyleResolver style_stub_resolver() {
+    return [](std::string_view name) -> CharacterAppearance {
+        if (name == "bold") return bold_appearance();
+        throw std::invalid_argument(
+            "Style '" + std::string(name)
+            + "' is not usable: no style config is installed under this name. "
+              "Available styles: bold");
+    };
+}
+
+CharacterDefinition style_test_definition(std::string id, std::string name) {
+    CharacterDefinition definition =
+        provider_test_definition(std::move(id), std::move(name));
+    definition.character.appearance = style_configured_appearance();
+    return definition;
+}
+
+std::unique_ptr<SessionController> style_test_controller(
+    const std::filesystem::path& database_path,
+    std::vector<CharacterDefinition> definitions,
+    const std::shared_ptr<ProviderFactoryObservation>& observation) {
+    return SessionController::from_definitions_for_testing(
+        std::move(definitions),
+        test::operator_roster(),
+        "guide-id",
+        database_path,
+        notifier(),
+        {},
+        {},
+        provider_recording_factory(observation),
+        style_stub_resolver());
+}
+
+CharacterAppearance appearance_in_view(
+    SessionController& controller, std::string_view id) {
+    for (const CharacterMetadata& character : controller.view().characters) {
+        if (character.id == id) return character.appearance;
+    }
+    ADD_FAILURE() << "character not in view: " << id;
+    return {};
+}
+
+TEST(SessionController, StyleOverrideSetsTheAppearanceForOneCharacterAndSnapshots) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = style_test_controller(
+        temporary.path,
+        {
+            style_test_definition("guide-id", "Guide"),
+            style_test_definition("other-id", "Other"),
+        },
+        observation);
+
+    const ControllerUpdate update = controller->set_session_style("bold");
+    EXPECT_TRUE(update.input_consumed);
+    EXPECT_TRUE(requires_snapshot(update));
+    EXPECT_EQ(update.notice, "Guide now uses style 'bold' for this session.");
+    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), bold_appearance());
+    EXPECT_EQ(appearance_in_view(*controller, "other-id"), style_configured_appearance())
+        << "only the default character's appearance changes";
+}
+
+TEST(SessionController, StyleOverrideReportsAndResets) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = style_test_controller(
+        temporary.path,
+        {style_test_definition("guide-id", "Guide")},
+        observation);
+
+    const ControllerUpdate report = controller->set_session_style("");
+    EXPECT_FALSE(requires_snapshot(report)) << "the report form is notice-only";
+    EXPECT_EQ(report.notice, "Guide is using its configured style for this session.");
+
+    (void)controller->set_session_style("bold");
+    EXPECT_EQ(
+        controller->set_session_style("").notice,
+        "Guide's style override for this session is 'bold'.");
+
+    const ControllerUpdate reset = controller->set_session_style("default");
+    EXPECT_TRUE(requires_snapshot(reset));
+    EXPECT_EQ(reset.notice, "Guide is back to its configured style for this session.");
+    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), style_configured_appearance());
+    EXPECT_EQ(
+        controller->set_session_style("").notice,
+        "Guide is using its configured style for this session.");
+}
+
+TEST(SessionController, StyleOverrideFollowsTheCharacterNotTheDefaultSlot) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = style_test_controller(
+        temporary.path,
+        {
+            style_test_definition("guide-id", "Guide"),
+            style_test_definition("other-id", "Other"),
+        },
+        observation);
+
+    (void)controller->set_session_style("bold");
+    (void)controller->set_default_character("Other");
+    EXPECT_EQ(
+        controller->set_session_style("").notice,
+        "Other is using its configured style for this session.");
+
+    (void)controller->set_default_character("Guide");
+    EXPECT_EQ(
+        controller->set_session_style("").notice,
+        "Guide's style override for this session is 'bold'.");
+    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), bold_appearance());
+}
+
+TEST(SessionController, StyleResolverFailureLeavesTheAppearanceAlone) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = style_test_controller(
+        temporary.path,
+        {style_test_definition("guide-id", "Guide")},
+        observation);
+
+    const ControllerUpdate unknown = controller->set_session_style("nope");
+    EXPECT_FALSE(requires_snapshot(unknown));
+    EXPECT_EQ(
+        unknown.notice,
+        "Style 'nope' is not usable: no style config is installed under this name. "
+        "Available styles: bold");
+    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), style_configured_appearance());
+    EXPECT_EQ(
+        controller->set_session_style("").notice,
+        "Guide is using its configured style for this session.");
+
+    // The resolver reads the filesystem, so it can fail in ways its own contract
+    // does not name. One mistyped style must still not fail the session.
+    auto throwing = SessionController::from_definitions_for_testing(
+        std::vector<CharacterDefinition>{style_test_definition("guide-id", "Guide")},
+        test::operator_roster(),
+        "guide-id",
+        temporary.path,
+        notifier(),
+        {},
+        {},
+        provider_recording_factory(observation),
+        [](std::string_view) -> CharacterAppearance {
+            throw std::runtime_error("styles directory is unreadable");
+        });
+    EXPECT_EQ(
+        throwing->set_session_style("bold").notice,
+        "styles directory is unreadable");
+    throwing->shutdown();
+}
+
+TEST(SessionController, StyleOverrideNeedsAResolver) {
+    TemporaryJournal temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    const ControllerUpdate update = controller->set_session_style("bold");
+    EXPECT_TRUE(update.input_consumed);
+    EXPECT_EQ(update.notice, "Style override is not available in this session.");
+}
+
+TEST(SessionController, ClearingTheTranscriptKeepsTheStyleOverride) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    auto controller = style_test_controller(
+        temporary.path,
+        {style_test_definition("guide-id", "Guide")},
+        observation);
+
+    (void)controller->set_session_style("bold");
+    (void)controller->clear_transcript();
+    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), bold_appearance());
+    EXPECT_EQ(
+        controller->set_session_style("").notice,
+        "Guide's style override for this session is 'bold'.");
+}
+
+TEST(SessionController, StyleOverrideSucceedsWhileGenerating) {
+    TemporaryJournal temporary;
+    auto observation = std::make_shared<ProviderFactoryObservation>();
+    observation->hold_perform.store(true);
+    auto controller = style_test_controller(
+        temporary.path,
+        {style_test_definition("guide-id", "Guide")},
+        observation);
+
+    (void)controller->submit_prompt("operator", "Question");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!observation->entered_perform.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_TRUE(observation->entered_perform.load(std::memory_order_acquire));
+
+    // No busy guard here: the web grammar's gate is what rejects the command
+    // mid-generation. The typed action itself succeeds.
+    const ControllerUpdate update = controller->set_session_style("bold");
+    EXPECT_TRUE(requires_snapshot(update));
+    EXPECT_EQ(update.notice, "Guide now uses style 'bold' for this session.");
+    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), bold_appearance());
+
+    observation->hold_perform.store(false);
+    (void)receive_until_idle(*controller);
+}
+
 } // namespace
 } // namespace cha

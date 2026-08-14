@@ -432,5 +432,69 @@ TEST(TextInput, RejectsTheProviderCommandDuringGeneration) {
     controller->shutdown();
 }
 
+TEST(TextInput, DispatchesTheStyleCommandWithoutPersisting) {
+    TemporaryTextSession temporary;
+    auto controller = SessionController::from_definitions_for_testing(
+        std::vector<CharacterDefinition>{definition()},
+        test::operator_roster(),
+        "guide-id",
+        temporary.path,
+        notifier(),
+        {},
+        {},
+        {},
+        [](std::string_view name) -> CharacterAppearance {
+            if (name == "sans-bold") {
+                return {CharacterFont::sans, CharacterSlant::normal,
+                        CharacterWeight::bold, CharacterScale::normal};
+            }
+            throw std::invalid_argument(
+                "Style '" + std::string(name) + "' is not usable");
+        });
+
+    const CommandResult set =
+        handle_text_input(*controller, "operator", "/style sans-bold");
+    EXPECT_TRUE(set.clear_input);
+    EXPECT_TRUE(requires_snapshot(set.session));
+    EXPECT_EQ(
+        set.session.notice,
+        "Guide now uses style 'sans-bold' for this session.");
+    // A runtime override never triggers the persistence callbacks.
+    EXPECT_FALSE(set.persist_default_character_id);
+    EXPECT_FALSE(set.persist_default_persona_id);
+
+    const CommandResult report =
+        handle_text_input(*controller, "operator", "/style");
+    EXPECT_TRUE(report.clear_input);
+    EXPECT_EQ(
+        report.session.notice,
+        "Guide's style override for this session is 'sans-bold'.");
+
+    const CommandResult unknown =
+        handle_text_input(*controller, "operator", "/style nope");
+    EXPECT_TRUE(unknown.clear_input);
+    EXPECT_EQ(unknown.session.notice, "Style 'nope' is not usable");
+
+    controller->shutdown();
+}
+
+TEST(TextInput, RejectsTheStyleCommandDuringGeneration) {
+    TemporaryTextSession temporary;
+    auto controller = test::from_backends_for_testing(
+        test::one_backend(std::make_unique<BlockingBackend>()),
+        temporary.path,
+        notifier());
+
+    (void)handle_text_input(*controller, "operator", "Question");
+    const CommandResult blocked =
+        handle_text_input(*controller, "operator", "/style sans-bold");
+    EXPECT_FALSE(blocked.clear_input);
+    EXPECT_EQ(
+        blocked.session.notice,
+        "Generation in progress; use /stop, Esc, or Ctrl-C");
+
+    controller->shutdown();
+}
+
 } // namespace
 } // namespace cha::web

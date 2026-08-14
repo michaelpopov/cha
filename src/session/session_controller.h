@@ -46,6 +46,14 @@ public:
     // not resolve.
     using ProviderResolver = std::function<ModelBackendConfig(std::string_view)>;
 
+    // Resolves a style name to a complete appearance for a runtime style
+    // override. Session open injects the workspace's named style loading through
+    // this seam so the controller never learns the workspace file layout.
+    // Throws std::invalid_argument when the name does not resolve. Unlike a
+    // provider, a resolved appearance is inert data with no construction phase,
+    // so the swap itself cannot fail.
+    using StyleResolver = std::function<CharacterAppearance(std::string_view)>;
+
     [[nodiscard]] static std::unique_ptr<SessionController> from_shared_definitions(
         std::vector<CharacterDefinition> definitions,
         SharedPersonaRoster personas,
@@ -55,7 +63,8 @@ public:
         SessionLease lease,
         WakeNotifier& notifier,
         SessionRestore restored = {},
-        ProviderResolver provider_resolver = {});
+        ProviderResolver provider_resolver = {},
+        StyleResolver style_resolver = {});
     // Test-only counterpart for controller tests that intentionally do not
     // claim a fixture database's production lease.
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
@@ -66,7 +75,8 @@ public:
         WakeNotifier& notifier,
         SessionRestore restored = {},
         ProviderResolver provider_resolver = {},
-        GenerationExecutor::BackendFactory backend_factory = {});
+        GenerationExecutor::BackendFactory backend_factory = {},
+        StyleResolver style_resolver = {});
     // Test-only construction and activation fault injection. These seams live
     // here because the otherwise private controller owns both dependencies.
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
@@ -113,6 +123,12 @@ public:
     // backend, anything else is resolved and swapped in. Session-scoped only;
     // nothing is persisted.
     [[nodiscard]] ControllerUpdate set_session_provider(std::string_view name);
+    // Runtime appearance override for the current default character: an empty
+    // name reports the override state, "default" restores the configured style,
+    // anything else is resolved and swapped in. Session-scoped only; nothing is
+    // persisted. Unlike the provider override the change is browser-visible, so
+    // the mutating forms carry a snapshot.
+    [[nodiscard]] ControllerUpdate set_session_style(std::string_view name);
     [[nodiscard]] ControllerUpdate request_stop();
     void rename(std::string_view label);
     [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
@@ -142,7 +158,8 @@ private:
         WakeNotifier& notifier,
         SessionRestore restored,
         ProviderResolver provider_resolver = {},
-        GenerationExecutor::BackendFactory backend_factory = {});
+        GenerationExecutor::BackendFactory backend_factory = {},
+        StyleResolver style_resolver = {});
     SessionController(
         std::vector<std::unique_ptr<ModelBackend>> backends,
         PersonaRoster personas,
@@ -215,6 +232,13 @@ private:
     // for the report form. Session-scoped; never persisted.
     ProviderResolver provider_resolver_;
     std::unordered_map<CharacterId, std::string> provider_overrides_;
+    // Runtime style overrides: the resolver (empty when the session cannot
+    // change styles) and one style name per overridden character, kept for the
+    // report form. Session-scoped; never persisted. The reset source is the
+    // executor's runtime info, which holds the configured appearance, so no
+    // baseline appearance is stored here.
+    StyleResolver style_resolver_;
+    std::unordered_map<CharacterId, std::string> style_overrides_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;

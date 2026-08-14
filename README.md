@@ -34,6 +34,7 @@ The chat input also accepts these controller-level commands:
 | `/@Name` | Change and save the forum's default character. |
 | `/!Name` | Change and save the forum's current persona. |
 | `/provider <name>` | Override the current character's provider for this session only; `/provider` reports the override and `/provider default` restores the configured provider. Nothing is saved. |
+| `/style <name>` | Override the current character's appearance (font, slant, weight, size) for this session only; `/style` reports the override and `/style default` restores the configured style. Nothing is saved. |
 | `/stop` | Stop generation. |
 | `/exit` | Close the live session. |
 

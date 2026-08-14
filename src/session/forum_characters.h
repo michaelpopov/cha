@@ -48,6 +48,11 @@ public:
 
     const std::vector<CharacterMetadata>& all() const noexcept;
     const CharacterMetadata* find(std::string_view id) const;
+    // Replaces one character's appearance in place for a session-scoped style
+    // override; returns false for an unknown ID. Only the appearance field is
+    // reachable, so the construction invariants (non-empty, unique IDs, unique
+    // folded names, ID/name syntax) all hold by inspection.
+    bool set_appearance(std::string_view id, const CharacterAppearance& appearance);
     HandleResolution resolve_handle(std::string_view handle) const;
     std::string handle_list() const;
 

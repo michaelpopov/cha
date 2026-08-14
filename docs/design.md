@@ -1,18 +1,16 @@
-# A session-scoped provider override (`/provider`)
+# A session-scoped style override (`/style`)
 
 ## What this is
 
-A character's provider can be changed from the browser today (Characters →
-character → Settings), but that is a deliberately heavy operation: it writes
-`character.toml`, then shuts down and restarts every live session the change
-can affect. This change adds the light counterpart: a chat command that swaps
-the provider of the session's current default character **for the running
-session only**.
+`/provider` gave a session a runtime-only way to swap its current character's
+model backend. This change adds the presentation counterpart: a chat command
+that swaps the current default character's **appearance** — font, slant,
+weight, size — **for the running session only**.
 
 ```text
-/provider terra       "Montaigne now uses provider 'terra' for this session."
-/provider             "Montaigne's provider override for this session is 'terra'."
-/provider default     "Montaigne is back to its configured provider for this session."
+/style sans-bold      "Montaigne now uses style 'sans-bold' for this session."
+/style                "Montaigne's style override for this session is 'sans-bold'."
+/style default        "Montaigne is back to its configured style for this session."
 ```
 
 The requirements, restated:
@@ -23,199 +21,152 @@ The requirements, restated:
    session's current default character is at command time. Other characters,
    other sessions, and later runs of this session are unaffected.
 
+The feature is deliberately much smaller than `/provider`: appearance is
+presentation data, so there is no backend to rebuild, no worker thread to
+avoid, and no browser change to make. The one way it is *larger* is that the
+result is visible, so the update must carry a snapshot where `/provider`
+needed only a notice.
+
 ## What exists today
 
-- **Provider configs** live only in `system/providers/<id>/config.toml`.
-  Runtime resolution by name is already a supported operation: the
-  character-settings PATCH validates a save with `require_path_component()` +
-  `load_named_provider()` (`workspace_definition.cpp:1060`), and
-  `make_backend_config()` (`agents/character_config.h:89`) materializes a
-  complete `ModelBackendConfig` from one provider file, filling absent fields
-  with defaults — never merging with another config.
-- **Backends are baked at session open.** `open_session()` re-resolves the
-  forum's `CharacterDefinition`s from disk and hands them to
-  `SessionController::from_shared_definitions()`; `GenerationExecutor` then
-  owns one `ProviderClient` per character for the session's life
-  (`generation_executor.cpp:49`). Batch executions borrow those backends;
-  nothing mutates a backend after construction.
-- **State change and persistence are already separate steps** in the command
-  pipeline. `set_default_character()` mutates controller state and sets a
-  notice; the config-file write is a callback owned by `LiveSession`, wired
-  from `OpenedSession`, invoked only when the session state changed
-  (`live_session.cpp:466`). A runtime-only command needs no such callback —
-  the plumbing has no persistence step to suppress.
-- **Busy discipline.** `SessionController::busy()` covers an active response
-  or batch; commands that cannot run mid-generation (`/clear`, `/@Name`)
-  answer with `busy_notice()`. The web grammar additionally gates every
-  command except `/stop` behind `is_generating()` (`text_input.cpp:43`).
-- **Command grammar.** `web/text_command.cpp` maps slash spellings to typed
-  `CommandKind`s; `handle_text_input()` dispatches them to typed controller
-  methods. `/mcast` is the precedent for a command that takes an argument;
-  `set_default_character()` is the precedent for a controller method that
-  handles its own empty-handle usage notice.
-- **Notices are presentation state.** `ControllerUpdate::notice` reaches the
-  browser as a transient banner and is never durable. That is the whole
-  feedback channel this feature needs: the override appears in no snapshot
-  field, so no snapshot-vs-append question arises.
-- **Layering.** `session/` must not learn the workspace file layout; today the
-  controller receives already-resolved definitions. Resolving a provider name
-  is workspace knowledge and must be injected, not learned.
+- **Style configs** live in `system/styles/<id>/config.toml` and load through
+  `load_named_style()` (`agents/character_config.h:154`) into a plain
+  `CharacterAppearance` value (`chat/character.h:19`) — the same parse the
+  Settings screen validates with. An appearance is inert data: it cannot fail
+  to "construct" the way a backend can.
+- **Appearance reaches the browser through the roster and the snapshot.**
+  `SessionController::view()` borrows `characters_.all()` directly
+  (`session_controller.cpp:282`); `to_snapshot()` copies each character's
+  `appearance` (`session_projection.cpp:47`); the browser's voices map applies
+  it to every message of that character at render time. Nothing in `session/`
+  reads appearance, and no transcript entry or journal row carries it.
+- **The browser already re-renders from the snapshot.** A `SnapshotRequired`
+  delivers the entire visual change — past and future messages alike — with
+  no webapp, protocol, or OpenAPI change. The client side of this feature
+  already exists.
+- **`/provider` built the command chassis.** `CommandKind` +
+  argument-carrying `exact` descriptor + early dispatch branch
+  (`text_input.cpp`), a typed controller method handling its own report /
+  `default` / set forms, a workspace resolver injected through the
+  constructor's trailing defaulted slot, and the sibling commands' "for this
+  session" feedback convention are all established patterns this command
+  reuses.
+- **The executor retains open-time metadata.** `runtime_info_` is built from
+  the retained definitions, and `/provider`'s `replace_backend()` rebuilds it
+  from the same recipes — so it always holds the *configured* appearance.
+  That makes it the reset source: the controller keeps no second copy, the
+  same decision `/provider` made for backend configs.
+- **The generating gate** (`text_input.cpp:43`) rejects every command except
+  `/stop` while a generation runs, so the command's behavior mid-generation
+  is already decided without any new rule.
 
 ## Decisions
 
 ### Scope: a per-character override map, session lifetime
 
 The controller holds `std::unordered_map<CharacterId, std::string>
-provider_overrides_` (character ID → provider name, kept for the report form).
-The command applies to the current default character and is keyed to that
+style_overrides_` (character ID → style name, kept for the report form). The
+command applies to the current default character and is keyed to that
 character, so switching default with `/@Name` and back keeps each character's
-override intact, and `/mcast` targets each use their own (possibly overridden)
-provider with no special syntax.
+override intact.
 
 The map is never cleared during the session: `/clear` advances the history
-epoch and is orthogonal to backend choice, and tying the two would be a rule
-to explain. The override ends exactly when the live session does: `/exit`,
-reopen, a character-settings `reloading` restart (which reverts to file
-truth, consistently), or process shutdown.
+epoch and is orthogonal to presentation. The override ends exactly when the
+live session does: `/exit`, reopen, a character-settings `reloading` restart
+(which reverts to file truth, consistently), or process shutdown.
 
-### Resolution: complete replacement, validated at command time
+The override applies to **all** of the character's messages, including ones
+already on screen. That is what a style change means; scoping it to future
+messages would be a rule to explain and a harder render path.
+
+### Resolution: complete, validated at command time
 
 `WorkspaceDefinition` gains:
 
 ```cpp
-[[nodiscard]] ModelBackendConfig resolve_session_provider(std::string_view name) const;
+[[nodiscard]] CharacterAppearance resolve_session_style(std::string_view name) const;
 ```
 
-It validates the name (`require_path_component()`), loads it with
-`load_named_provider()`, and materializes with `make_backend_config()` — the
-same parse the session runtime and the settings PATCH use, so command-time
-and startup-time semantics cannot drift. Resolution is replacement, in line
-with provider layering everywhere else: absent fields in the named config
-fall back to `ModelBackendConfig` defaults, not to the character's previous
-backend.
+It validates the name (`require_path_component()`) and loads it with
+`load_named_style()` — the same parse startup and the Settings screen use, so
+command-time and startup-time semantics cannot drift. On failure it throws
+`std::invalid_argument` whose message names the problem and lists the
+available style IDs. Unlike a provider, a resolved style has no construction
+phase: a config that parses is the whole value, so the swap itself cannot
+fail.
 
-On failure the method throws `std::invalid_argument` whose message names the
-problem and lists the available provider IDs — the user answers an error
-notice at the keyboard, not a failed turn later.
+### Presentation: one roster mutator, snapshot-carried
 
-### Backend replacement: the executor rebuilds one slot through a factory
-
-`GenerationExecutor` owns backend lifetime, so replacement belongs there. The
-definitions constructor gains a backend factory and the executor retains a
-copy of the definitions as rebuild recipes:
+`ForumCharacters` gains:
 
 ```cpp
-using BackendFactory =
-    std::function<std::unique_ptr<ModelBackend>(CharacterDefinition)>;
-
-GenerationExecutor(
-    std::vector<CharacterDefinition> definitions,
-    WakeNotifier& notifier,
-    ThreadPool& worker_pool,
-    BackendFactory backend_factory = {});   // default: ProviderClient
-
-void replace_backend(CharacterId character_id, const ModelBackendConfig& config);
-void reset_backend(CharacterId character_id);
+bool set_appearance(std::string_view id, const CharacterAppearance& appearance);
 ```
 
-`replace_backend()` copies the retained definition, assigns the new backend
-config, runs it through the factory, then swaps the slot and refreshes that
-index's `runtime_info_` from the new backend's `info()`. Construction is
-complete before the swap: a factory throw leaves `backends_` untouched. An
-unknown ID throws, as staging already does for unknown targets.
-`reset_backend()` is the same operation against the retained definition's own
-`backend` config: the recipes live here, so the reset does too and no caller
-needs a second copy of them.
+It mutates the stored `CharacterMetadata` in place and returns false for an
+unknown ID. Construction invariants are untouched: the mutator cannot reach
+the ID or display name, so uniqueness and syntax guarantees hold by
+inspection. Because `view()` borrows the roster directly, the next snapshot
+carries the new appearance with **no projection change** — the borrowed-view
+model and its "nothing here allocates" invariant stay intact.
 
-Construction validates its backends in `build_runtime_info()` — non-null,
-syntactically valid IDs and display names, unique across the forum — and a
-swap must not step around that. Both `characters_` in the controller and
-`backend_index()` here assume a slot's character ID never changes, so
-`replace_backend()` rejects a null factory result and a backend whose
-`info().character.id` differs from the slot's. The remaining checks are
-uniqueness properties the swap cannot disturb: it replaces one slot with a
-backend for the same character.
+The rejected alternative — keeping the roster immutable and merging overrides
+at view/projection time — would need a mutable materialized cache rebuilt on
+every mutation, which is more machinery than the mutator it avoids.
 
-Consequences:
-
-- **`/info` reflects the change for free.** `format_session_information()`
-  reads `runtime_info()`, and the rebuilt backend reports its new model and
-  API. No new snapshot field, no provider-ID bookkeeping in
-  `ModelBackendInfo`.
-- **Reset is a replacement**, not a restore path: `/provider default` calls
-  `reset_backend()`, which re-materializes the retained definition's original
-  `backend` config, i.e. the open-time effective backend, forum overrides
-  included. The controller keeps no copy of those configs. `default` is a
-  reserved word, intercepted before the resolver runs; a provider config
-  actually named `default` is unreachable through the command (see
-  limitations).
-- **Safety comes from the existing discipline, not new locking.** Commands
-  run on the owner thread; workers borrow backends only inside a live batch,
-  and a live batch is exactly what `busy()` reports. The controller rejects
-  the command while busy, so the swap can never race a generation. Destroying
-  the old `ProviderClient` on the owner thread is therefore destruction of an
-  idle object.
-
-The factory seam is what keeps the executor testable: unit tests pass a
-factory returning fake backends recording their configs and observe the swap
-directly. The default factory preserves today's `build_backends()` semantics,
-including its error wrapping.
+**Reset comes from the executor's runtime info.** `/style default` restores
+the open-time appearance found in `generation_executor_.runtime_info()` for
+that character. The recipes live in the executor, so the configured truth
+does too; the controller stores no appearance copies. `default` is a reserved
+word, intercepted before the resolver runs; a style config actually named
+`default` is unreachable through the command (see limitations).
 
 ### Controller: one typed method behind an injected resolver
 
 ```cpp
-using ProviderResolver = std::function<ModelBackendConfig(std::string_view)>;
+using StyleResolver = std::function<CharacterAppearance(std::string_view)>;
 
-[[nodiscard]] ControllerUpdate set_session_provider(std::string_view name);
+[[nodiscard]] ControllerUpdate set_session_style(std::string_view name);
 ```
 
 The resolver is a constructor argument on the production constructor,
 `from_shared_definitions()`, and the definitions-based test constructor,
-defaulted to empty on all three and placed after the existing defaulted
-`restored` (the same slot `from_backends_for_testing()` already uses for
-`ActivationHook`). An absent resolver yields a fixed notice ("Provider
-override is not available in this session.") and is what keeps every existing
-call site compiling — both `session_open.cpp:35` and
-`tests/support/test_live_session.h:325` pass `restored` as the last
-positional argument. Session open supplies the real closure; the test helper
-does not need one.
+defaulted to empty and appended after the `provider_resolver` slot added by
+`/provider`. An absent resolver yields a fixed notice ("Style override is not
+available in this session.") and keeps every existing call site compiling.
 
-The method handles its own argument forms, following the
-`set_default_character()` precedent:
+The method mirrors `set_session_provider()`'s forms:
 
-- **busy** → `busy_notice()`.
+- **no busy guard.** `/provider` rejects while generating because swapping a
+  backend under a live batch is a real hazard; appearance touches no
+  generation machinery, so the typed action is safe at any time. The web
+  grammar's generating gate still rejects the command mid-generation, so the
+  user-visible behavior matches `/provider` without a rule here.
 - **empty name** → a report notice: whether the default character has an
-  override, and which. It reports the *override*, not the baseline —
-  `ModelBackendConfig` retains no provider ID by design (resolution forgets
-  which layer won), so "the configured provider" has no name to print.
-- **`default`** → call `reset_backend()` first; only on success erase the
-  override and notice. A failed rebuild must not report "configured
-  provider" while the override backend is still in the slot.
+  override, and which. It reports the *override*, not the baseline — the
+  configured style's name is not retained in `CharacterMetadata`, so "the
+  configured style" has no name to print.
+- **`default`** → restore the open-time appearance from `runtime_info()`,
+  erase the override, snapshot, notice. The restore cannot fail: the default
+  character is always in the roster and in runtime info.
 - **otherwise** → run the resolver; an `invalid_argument` becomes the error
-  notice unchanged. Then `replace_backend()`. Catch `std::exception` around
-  that call (and around `reset_backend()`): `ProviderClient` construction
-  throws `std::runtime_error` when `api_key_env` is unset
-  (`provider_client.cpp:287`), the default factory rewraps it the way
-  `build_backends()` already does (`generation_executor.cpp:59`), and
-  `LiveSession::owner_loop` maps an uncaught exception to
-  `ShutdownReason::session_failed` (`live_session.cpp:395`). Turn the
-  message into the error notice and do not record the override. On success,
-  record the override and notice.
+  notice unchanged. On success, mutate the roster, record the override,
+  snapshot, notice.
 
 The four notice strings are fixed here so the tests, the command table and
 `application-guide.md` cannot drift apart:
 
 ```text
-set       "<Name> now uses provider '<id>' for this session."
-report    "<Name>'s provider override for this session is '<id>'."
-report    "<Name> is using its configured provider for this session."   (no override)
-reset     "<Name> is back to its configured provider for this session."
+set       "<Name> now uses style '<id>' for this session."
+report    "<Name>'s style override for this session is '<id>'."
+report    "<Name> is using its configured style for this session."   (no override)
+reset     "<Name> is back to its configured style for this session."
 ```
 
-Every form sets `input_consumed` and returns a **notice-only** update — the
-same shape `/info` uses. The override appears in no snapshot, so
-`SnapshotRequired` has nothing to carry, and no append classification is
-involved.
+Every form sets `input_consumed`. The mutating forms (`default`, set) call
+`require_snapshot()` — unlike `/provider`, the change is browser-visible, so
+the update is notice **and** snapshot, the same shape
+`set_default_character()` returns. The report form is notice-only.
 
 Unlike `/@Name` and `/!Name`, nothing here persists. The notice says "for
 this session" precisely because its sibling commands silently save; the
@@ -224,107 +175,79 @@ asymmetry must be audible in the feedback.
 ### Wiring: the workspace hands the controller a function, not a path
 
 `session_open.cpp` builds the resolver as a closure over
-`WorkspaceDefinition` (which owns `providers_directory`):
+`WorkspaceDefinition` (which owns `styles_directory`), passed as the new last
+positional argument to `from_shared_definitions()`:
 
 ```cpp
 [&model](std::string_view name) {
-    return model.resolve_session_provider(name);
+    return model.resolve_session_style(name);
 }
 ```
 
-passed as the new last positional argument to `from_shared_definitions()`,
-after `restored`. `OpenedSession` gains nothing — the resolver goes into the
-controller and is reachable only through the command. The `session/` layer
-sees only a `std::function`; workspace file layout stays in `workspace/`.
-
-The closure outlives `open_session()`: the controller stores it and calls it
-every time `/provider` runs, so the captured reference must outlive the session.
-It does — `WorkspaceDefinition` is the authoritative workspace for one server
-process, loaded at startup and outliving every session opened against it,
-which is the same borrow `persist_default_character` already takes. Calling it
-from the session's owner thread is safe for a second reason:
-`resolve_session_provider()` only reads a file under `providers_directory`,
-so it never touches the document lock the character-settings PATCH holds.
+`OpenedSession` gains nothing. The closure borrows the process-lived model
+for the session's life — the same borrow the provider resolver and the
+persist callbacks already take — and `resolve_session_style()` only reads a
+file under `styles_directory`, so it never touches the document lock the
+character-settings PATCH holds.
 
 ### Web grammar: one argument-carrying exact command
 
-- `text_command.*`: `CommandKind::session_provider`, descriptor
-  `{"/provider", CommandKind::session_provider}` in the `exact` form — the
-  argument arrives in `command.argument` like `/mcast`'s.
+- `text_command.*`: `CommandKind::session_style`, descriptor
+  `{"/style", CommandKind::session_style}` in the `exact` form — the argument
+  arrives in `command.argument` like `/provider`'s.
 - `text_input.cpp`: dispatch before the generic argument rejection, mirroring
-  the multicast branch:
+  the provider branch:
 
   ```cpp
-  if (command.kind == CommandKind::session_provider) {
+  if (command.kind == CommandKind::session_style) {
       result.clear_input = true;
-      result.session = controller.set_session_provider(command.argument);
+      result.session = controller.set_session_style(command.argument);
       return result;
   }
   ```
 
-  The `switch` on `CommandKind` (`text_input.cpp:69`) is exhaustive under
-  `-Wswitch`; `/mcast` has both the early branch and a dummy
-  `case CommandKind::mcast: return result;` (`text_input.cpp:78`). The new
-  enumerator needs the same dummy case.
-
-  The generating gate above it already answers mid-generation attempts with
-  the in-progress notice; the controller's own `busy()` guard keeps the typed
-  action safe independent of the grammar.
+  The `switch` on `CommandKind` is exhaustive under `-Wswitch`; the new
+  enumerator needs the same dummy case `/mcast` and `/provider` have.
 - No persist callback, no `CommandResult` field, no route, no
   `resources/cha.yaml`, no generated browser types, no webapp change.
-  `command_names()` picks the new spelling up automatically for the
-  unknown-command notice.
+  `command_names()` picks the new spelling up automatically.
 
 ### What the command never touches
 
+- **Generation.** No backend, executor, batch, or worker interaction; the
+  provider override machinery is entirely uninvolved. A `/provider` override
+  and a `/style` override on the same character are independent.
 - **Configuration files.** `character.toml` and forum configs are not read
   for selection and never written. The only file read at command time is the
-  provider config being resolved.
-- **Persistence schema.** No journal write, no `turns`/`entries` row, no
-  history-epoch interaction. The SQLite database cannot observe that an
-  override ever existed; a restored session starts from configured truth.
-- **Protocol and snapshot.** No DTO, OpenAPI, or browser change.
-- **Model context.** `project_model_context()` is untouched; the provider
-  switch changes where the next request goes, never what it contains.
-- **The roster.** `ForumCharacters`, display names, styles, and mention
-  resolution are unaffected.
+  style config being resolved.
+- **Persistence schema.** No journal write, no history-epoch interaction; a
+  restored session starts from configured truth.
+- **Protocol shape.** `appearance` is already a snapshot field; no DTO,
+  OpenAPI, or browser change.
+- **Model context.** Appearance never reaches a provider request.
+- **`/info` and `/characters` output.** Those notices report model and API,
+  not appearance; they are unchanged.
 
 ## What we are deliberately not doing
 
-- **No `/style` command.** Appearance is presentation data living in the
-  roster and snapshot — a different mechanism (no backend, `SnapshotRequired`,
-  a browser-visible field). A natural follow-up, not bundled.
-- **No save variant.** Persisting a provider change already exists as the
-  Settings screen with its documented restart semantics; a command that
-  sometimes wrote config would blur exactly the line this feature draws.
-- **No mid-generation switch.** Busy rejection only. Interrupting a live
-  answer to reroute it is `/stop` plus a new prompt, which the user can
-  already do.
-- **No provider name in `/info` or the composer line.**
-  `ModelBackendInfo` reports the new backend's model and API after a swap;
-  carrying the provider ID into the snapshot would duplicate resolution
-  knowledge for one display line.
+- **No save variant.** Persisting a style already exists as the Settings
+  screen with its documented restart semantics.
+- **No mid-generation exemption at the web gate.** The command could safely
+  run during a generation, but exempting it from the gate is new grammar
+  machinery for a marginal convenience; wait-for-finish matches `/provider`.
+- **No style name in `/info` or the composer line.** The visible change is
+  its own confirmation; the report form covers the rest.
 - **No per-target override syntax for multicast.** Targets keep their own
   per-character overrides; that composition needs no grammar.
 
 ## Known limitations
 
-- A provider config whose ID is literally `default` cannot be selected
-  through the command (the word is the reset spelling). The Settings screen
-  is unaffected.
-- The bare report form can name an override but not the baseline provider,
-  because resolution deliberately retains no winning-layer ID. It can only
-  say "its configured provider".
-- A provider file that parses but whose backend cannot be constructed (unset
-  `api_key_env`, failed model discovery) fails at command time: the factory
-  throw becomes the error notice and the old backend stays. A backend that
-  constructs but cannot serve (bad credentials, dead host) still fails at
-  generation as an ordinary turn error — the same split Settings has between
-  a failed reload and a later turn error.
-- In `Mode::net` with an empty model, `ProviderClient` construction may
-  perform HTTP model discovery on the owner thread (up to ~10s), the same
-  work session open already does. The command is rejected while busy, so
-  this only stalls the owner loop when idle.
-- As with `reloading`-based restarts, the override is process-local: a second
-  `chaweb` process holding a session of the same forum never sees it. That is
-  the lease model's existing shape, not new state to manage.
+- A style config whose ID is literally `default` cannot be selected through
+  the command (the word is the reset spelling). The Settings screen is
+  unaffected.
+- The bare report form can name an override but not the baseline style,
+  because `CharacterMetadata` retains an appearance, not the style ID it came
+  from. It can only say "its configured style".
+- As with `/provider`, the override is process-local: a second `chaweb`
+  process holding a session of the same forum never sees it. That is the
+  lease model's existing shape, not new state to manage.

@@ -84,6 +84,20 @@ TEST(Command, ParsesTheProviderCommandArgument) {
     EXPECT_EQ(parse_command("/providerx").kind, CommandKind::unknown);
 }
 
+TEST(Command, ParsesTheStyleCommandArgument) {
+    const Command named = parse_command("/style sans-bold");
+    EXPECT_EQ(named.kind, CommandKind::session_style);
+    EXPECT_EQ(named.argument, "sans-bold");
+    EXPECT_TRUE(named.handle.empty());
+
+    const Command bare = parse_command("/style");
+    EXPECT_EQ(bare.kind, CommandKind::session_style);
+    EXPECT_TRUE(bare.argument.empty());
+
+    // The exact form does not reach into a longer word.
+    EXPECT_EQ(parse_command("/stylex").kind, CommandKind::unknown);
+}
+
 TEST(Command, ParsesThePersonaCommandHandle) {
     const Command named = parse_command("/!Reader");
     EXPECT_EQ(named.kind, CommandKind::set_persona);
@@ -118,7 +132,7 @@ TEST(Command, SeparatesTheDefaultCharacterHandleFromAnArgument) {
 TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
     EXPECT_EQ(
         command_names(),
-        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /characters, /agents, /@Name, /!Name, /provider, /stop, /exit");
+        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /characters, /agents, /@Name, /!Name, /provider, /style, /stop, /exit");
 }
 
 } // namespace

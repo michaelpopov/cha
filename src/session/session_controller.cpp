@@ -107,7 +107,8 @@ std::unique_ptr<SessionController> SessionController::from_shared_definitions(
     SessionLease lease,
     WakeNotifier& notifier,
     SessionRestore restored,
-    ProviderResolver provider_resolver) {
+    ProviderResolver provider_resolver,
+    StyleResolver style_resolver) {
     require_character_count(definitions.size());
     if (!personas) throw std::invalid_argument("Session controller requires a persona roster");
     if (!lease.active()) throw std::invalid_argument("Production session controllers require an active session lease");
@@ -115,7 +116,7 @@ std::unique_ptr<SessionController> SessionController::from_shared_definitions(
         std::move(definitions), std::move(personas), std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
         std::move(database_path), std::move(lease), notifier, std::move(restored),
-        std::move(provider_resolver)));
+        std::move(provider_resolver), {}, std::move(style_resolver)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
@@ -126,7 +127,8 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
     WakeNotifier& notifier,
     SessionRestore restored,
     ProviderResolver provider_resolver,
-    GenerationExecutor::BackendFactory backend_factory) {
+    GenerationExecutor::BackendFactory backend_factory,
+    StyleResolver style_resolver) {
     require_character_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
@@ -138,7 +140,8 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
         notifier,
         std::move(restored),
         std::move(provider_resolver),
-        std::move(backend_factory)));
+        std::move(backend_factory),
+        std::move(style_resolver)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
@@ -171,7 +174,8 @@ SessionController::SessionController(
     WakeNotifier& notifier,
     SessionRestore restored,
     ProviderResolver provider_resolver,
-    GenerationExecutor::BackendFactory backend_factory)
+    GenerationExecutor::BackendFactory backend_factory,
+    StyleResolver style_resolver)
     : lease_(std::move(lease)),
       journal_(std::move(path)),
       worker_pool_(definitions.size()),
@@ -180,7 +184,8 @@ SessionController::SessionController(
       characters_(make_forum_characters(generation_executor_.runtime_info())),
       personas_(std::move(personas)),
       default_character_id_(std::move(initial_default_character_id)),
-      provider_resolver_(std::move(provider_resolver)) {
+      provider_resolver_(std::move(provider_resolver)),
+      style_resolver_(std::move(style_resolver)) {
     initialize(std::move(restored), initial_default_persona_id);
 }
 
@@ -853,6 +858,64 @@ ControllerUpdate SessionController::set_session_provider(std::string_view name) 
     provider_overrides_[default_character_id_] = std::string(name);
     update.notice = character->display_name + " now uses provider '"
         + std::string(name) + "' for this session.";
+    return update;
+}
+
+ControllerUpdate SessionController::set_session_style(std::string_view name) {
+    // No busy() guard: appearance touches no generation machinery, so the typed
+    // action is safe at any time. The web grammar's generating gate still
+    // rejects the command mid-generation, matching /provider's user-visible
+    // behavior without a rule here.
+    ControllerUpdate update{.input_consumed = true};
+    // Validated against the roster at initialize() and on every default change,
+    // so the current default always resolves.
+    const CharacterMetadata* character = characters_.find(default_character_id_);
+    if (!style_resolver_) {
+        update.notice = "Style override is not available in this session.";
+        return update;
+    }
+    if (name.empty()) {
+        const auto found = style_overrides_.find(default_character_id_);
+        update.notice = found == style_overrides_.end()
+            ? character->display_name
+                + " is using its configured style for this session."
+            : character->display_name
+                + "'s style override for this session is '" + found->second + "'.";
+        return update;
+    }
+    // "default" is a reserved word: it never reaches the resolver. The
+    // configured appearance lives in the executor's runtime info, the same
+    // reset source /provider uses.
+    if (name == "default") {
+        for (const ModelBackendInfo& backend :
+             generation_executor_.runtime_info()) {
+            if (backend.character.id == default_character_id_) {
+                characters_.set_appearance(
+                    default_character_id_, backend.character.appearance);
+                break;
+            }
+        }
+        style_overrides_.erase(default_character_id_);
+        update.notice = character->display_name
+            + " is back to its configured style for this session.";
+        require_snapshot(update);
+        return update;
+    }
+    CharacterAppearance appearance;
+    // The resolver reports a name it cannot use as std::invalid_argument, but it
+    // reads the filesystem to do so: catch everything, because an escaped
+    // exception here would fail the whole session over one mistyped name.
+    try {
+        appearance = style_resolver_(name);
+    } catch (const std::exception& error) {
+        update.notice = error.what();
+        return update;
+    }
+    characters_.set_appearance(default_character_id_, appearance);
+    style_overrides_[default_character_id_] = std::string(name);
+    update.notice = character->display_name + " now uses style '"
+        + std::string(name) + "' for this session.";
+    require_snapshot(update);
     return update;
 }
 

@@ -134,6 +134,13 @@ public:
     [[nodiscard]] ModelBackendConfig resolve_session_provider(
         std::string_view name) const;
 
+    // Resolves one named style config to a complete appearance for a session's
+    // runtime style override. Throws std::invalid_argument naming the problem
+    // and the available IDs when the name does not resolve. A style is inert
+    // data, so a config that parses is the whole value.
+    [[nodiscard]] CharacterAppearance resolve_session_style(
+        std::string_view name) const;
+
     // Rejects a character with no readable config file. Compares and writes
     // under one lock, returning the fields the committed document changed.
     // Loads each non-null name before writing, so a selection that cannot run

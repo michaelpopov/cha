@@ -120,6 +120,51 @@ TEST(ForumCharacters, ExposesTheFirstCharacterAndLooksUpImmutableIds) {
     EXPECT_EQ(characters.find(""), nullptr);
 }
 
+TEST(ForumCharacters, SetsOneCharactersAppearanceInPlace) {
+    ForumCharacters characters({
+        character("ada", "Ada"),
+        character("grace", "Grace"),
+    });
+    const CharacterAppearance styled{
+        CharacterFont::sans, CharacterSlant::normal, CharacterWeight::bold,
+        CharacterScale::normal};
+
+    EXPECT_TRUE(characters.set_appearance("grace", styled));
+    ASSERT_NE(characters.find("grace"), nullptr);
+    EXPECT_EQ(characters.find("grace")->appearance, styled);
+    EXPECT_EQ(characters.all().back().appearance, styled);
+    EXPECT_EQ(characters.find("ada")->appearance, CharacterAppearance{})
+        << "other characters are untouched";
+}
+
+TEST(ForumCharacters, RejectsAnAppearanceChangeForAnUnknownId) {
+    ForumCharacters characters({character("ada", "Ada")});
+    const CharacterAppearance styled{
+        CharacterFont::serif, CharacterSlant::italic, CharacterWeight::normal,
+        CharacterScale::large};
+
+    EXPECT_FALSE(characters.set_appearance("nobody", styled));
+    EXPECT_EQ(characters.find("ada")->appearance, CharacterAppearance{})
+        << "an unknown ID changes nothing";
+}
+
+TEST(ForumCharacters, LeavesIdentityAndResolutionIntactAcrossAnAppearanceChange) {
+    ForumCharacters characters({
+        character("churchill", "Winston Churchill"),
+        character("roosevelt", "Franklin Roosevelt"),
+    });
+    const CharacterAppearance styled{
+        CharacterFont::mono, CharacterSlant::normal, CharacterWeight::normal,
+        CharacterScale::small};
+
+    ASSERT_TRUE(characters.set_appearance("churchill", styled));
+    EXPECT_EQ(characters.all().size(), 2U);
+    EXPECT_EQ(characters.all().front().id, "churchill");
+    EXPECT_EQ(characters.all().front().display_name, "Winston Churchill");
+    EXPECT_EQ(characters.resolve_handle("Winston").character->id, "churchill");
+    EXPECT_EQ(characters.resolve_handle("Roose").character->id, "roosevelt");
+}
+
 TEST(ForumCharacters, KeepsAPunctuatedNameReachableWhileStillRetryingTrailingPunctuation) {
     // The ordering that justifies the retry design: verbatim wins over trimmed.
     const ForumCharacters characters({
