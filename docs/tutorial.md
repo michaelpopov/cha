@@ -409,7 +409,7 @@ runtime configuration with defaults filled in.
 
 - the character definition prompt;
 - forum prompt/context;
-- the workspace personas and their `PERSONA.md` prompts;
+- the forum's default persona and its `PERSONA.md` prompt;
 - standard generated context;
 - effective model backend settings.
 

@@ -160,6 +160,7 @@ private:
         const SessionRepository&,
         const SessionIdentity&,
         WakeNotifier&);
+    friend struct WorkspaceDefinitionTestAccess;
 
     struct CopiedForumDefinitions {
         std::vector<CharacterDefinition> definitions;

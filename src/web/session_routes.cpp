@@ -157,7 +157,13 @@ void SessionRoutes::install(httplib::Server& server) const {
         }
         LiveSessionHandle session = live_sessions->lookup(*key);
         if (!session) return set_not_live(response);
-        set_command_result(response, session->submit(std::move(command), settings.command_deadline));
+        CommandSubmitResult result =
+            session->submit(std::move(command), settings.command_deadline);
+        if (const auto* completed = std::get_if<CommandResult>(&result);
+            completed && completed->persist_default_persona_id) {
+            request_reload(*live_sessions, {key->forum_id});
+        }
+        set_command_result(response, std::move(result));
     });
     server.Post(std::string(base) + R"(/api/v1/actions/stop)", [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
         const std::optional<SessionIdentity> key = validate_key(request, response);

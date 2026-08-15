@@ -796,9 +796,15 @@ ControllerUpdate SessionController::set_default_persona(std::string_view handle)
         update.notice->append(". Type more of the name.");
         return update;
     }
-    default_persona_ = matches.front();
-    require_snapshot(update);
-    update.notice = "Current persona is now " + default_persona_->display_name;
+    const Persona* const selected = matches.front();
+    // Re-selecting the current persona is a no-op: skip the snapshot so the
+    // input route neither re-persists the forum default nor reloads the
+    // forum's live sessions for a change that did not happen.
+    if (selected != default_persona_) {
+        default_persona_ = selected;
+        require_snapshot(update);
+    }
+    update.notice = "Current persona is now " + selected->display_name;
     return update;
 }
 

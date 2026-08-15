@@ -1,253 +1,149 @@
-# A session-scoped style override (`/style`)
+# Design: forum-scoped persona in agent system prompts
 
-## What this is
+## Problem
 
-`/provider` gave a session a runtime-only way to swap its current character's
-model backend. This change adds the presentation counterpart: a chat command
-that swaps the current default character's **appearance** — font, slant,
-weight, size — **for the running session only**.
+Today every agent's system prompt embeds the **entire workspace persona
+roster**: `append_participant_roster()` (`src/agents/character.cpp:190`)
+appends a `## Participants` section with every persona's display name and full
+`PERSONA.md` text to every character definition, for every forum.
 
-```text
-/style sans-bold      "Montaigne now uses style 'sans-bold' for this session."
-/style                "Montaigne's style override for this session is 'sans-bold'."
-/style default        "Montaigne is back to its configured style for this session."
-```
+Each forum already has a configured `default_persona` in its `config.toml`.
+The goal: a session's agents should carry **only that one persona's**
+description in their system prompts, and a `/!Name` persona switch must take
+effect **immediately**, not just for the next session.
 
-The requirements, restated:
+## Current behavior (relevant facts)
 
-1. **Runtime only.** Nothing is written to `character.toml`, forum configs, or
-   the session database. The override lives and dies with the live session.
-2. **Session-scoped and character-scoped.** The command targets whoever the
-   session's current default character is at command time. Other characters,
-   other sessions, and later runs of this session are unaffected.
+- Prompt assembly: `load_character_definitions()` builds
+  `CHARACTER.md` + `FORUM.md`, then `append_standard_prompt_context()` appends
+  the participant roster and the generated forum-context section.
+- Definitions are assembled **twice**: at workspace load
+  (`WorkspaceDefinition::load` → `load_forum_definitions`,
+  `src/workspace/workspace_definition.cpp:472`) and again at **every session
+  open** via `copy_definitions_for()` (same file, line 894), which re-reads
+  the forum's files from disk and falls back to the startup copy (with a user
+  notice) if the reload throws.
+- The session's starting persona is resolved at open time by
+  `forum_default_persona()`, which re-reads `default_persona` from the forum's
+  `config.toml` for currency, validates it against the workspace roster, and
+  falls back to the startup-loaded value with a log warning.
+- `/!Name` (`SessionController::set_default_persona`,
+  `src/session/session_controller.cpp:775`) resolves the handle against the
+  controller's **full** roster, switches the session's current persona, and —
+  on success — the new persona ID is persisted to the forum's `config.toml`
+  (`persist_default_persona`, wired in `src/workspace/session_open.cpp:58`,
+  executed in `src/web/live_session.cpp:481` before the command reply
+  completes). So `/!Name` is already a durable forum-default change, not a
+  session-local one.
+- The built-in Entrance forum already loads with a single-persona roster
+  (`PersonaRoster{builtin_guest()}`) — the proposed behavior is precedent, not
+  novelty.
+- There is an existing **reload fan-out** for character-settings saves:
+  `request_reload()` (`src/web/lobby_routes.cpp:169`) shuts down every live
+  session of the affected forums with `ShutdownReason::reloading` via
+  `LiveSessionManager::active_sessions()` (which deliberately includes
+  still-Starting actors). The server never reopens anything; the browser's
+  stream-recovery ladder reopens sessions automatically, showing "Applying
+  character settings…". On reopen the transcript is restored from the session
+  journal — no history loss.
 
-The feature is deliberately much smaller than `/provider`: appearance is
-presentation data, so there is no backend to rebuild, no worker thread to
-avoid, and no browser change to make. The one way it is *larger* is that the
-result is visible, so the update must carry a snapshot where `/provider`
-needed only a notice.
+## Proposed design
 
-## What exists today
+### 1. Prompt assembly: filter the roster to the forum's default persona
 
-- **Style configs** live in `system/styles/<id>/config.toml` and load through
-  `load_named_style()` (`agents/character_config.h:154`) into a plain
-  `CharacterAppearance` value (`chat/character.h:19`) — the same parse the
-  Settings screen validates with. An appearance is inert data: it cannot fail
-  to "construct" the way a backend can.
-- **Appearance reaches the browser through the roster and the snapshot.**
-  `SessionController::view()` borrows `characters_.all()` directly
-  (`session_controller.cpp:282`); `to_snapshot()` copies each character's
-  `appearance` (`session_projection.cpp:47`); the browser's voices map applies
-  it to every message of that character at render time. Nothing in `session/`
-  reads appearance, and no transcript entry or journal row carries it.
-- **The browser already re-renders from the snapshot.** A `SnapshotRequired`
-  delivers the entire visual change — past and future messages alike — with
-  no webapp, protocol, or OpenAPI change. The client side of this feature
-  already exists.
-- **`/provider` built the command chassis.** `CommandKind` +
-  argument-carrying `exact` descriptor + early dispatch branch
-  (`text_input.cpp`), a typed controller method handling its own report /
-  `default` / set forms, a workspace resolver injected through the
-  constructor's trailing defaulted slot, and the sibling commands' "for this
-  session" feedback convention are all established patterns this command
-  reuses.
-- **The executor retains open-time metadata.** `runtime_info_` is built from
-  the retained definitions, and `/provider`'s `replace_backend()` rebuilds it
-  from the same recipes — so it always holds the *configured* appearance.
-  That makes it the reset source: the controller keeps no second copy, the
-  same decision `/provider` made for backend configs.
-- **The generating gate** (`text_input.cpp:43`) rejects every command except
-  `/stop` while a generation runs, so the command's behavior mid-generation
-  is already decided without any new rule.
+At both definition-load points, pass a **one-element `PersonaRoster`**
+containing the forum's default persona instead of the full workspace roster:
 
-## Decisions
+- **Startup** (`WorkspaceDefinition::load`): resolve
+  `forum.info.default_persona_id` (already validated at load) via
+  `find_persona()` and pass `{*persona}` to `load_forum_definitions()`.
+- **Session open** (`copy_definitions_for()`): resolve
+  `forum_default_persona(forum_id)` — the disk-current value, the same
+  resolution `open_session()` uses for the session's starting persona — and
+  pass that single persona. Prompt persona and session persona therefore
+  always agree.
+- **Fallback path**: if the session-open reload throws, the startup copy is
+  used, embedding the startup-time default persona; the existing
+  "settings from startup" notice already covers this degraded mode.
 
-### Scope: a per-character override map, session lifetime
+The `agents/` layer (`load_character_definitions`,
+`append_participant_roster`) is untouched — it already accepts any roster.
+The `## Participants` section simply contains one entry. This matches the
+Entrance forum's existing shape.
 
-The controller holds `std::unordered_map<CharacterId, std::string>
-style_overrides_` (character ID → style name, kept for the report form). The
-command applies to the current default character and is keyed to that
-character, so switching default with `/@Name` and back keeps each character's
-override intact.
+### 2. `/!Name`: persist, then reload the forum's live sessions
 
-The map is never cleared during the session: `/clear` advances the history
-epoch and is orthogonal to presentation. The override ends exactly when the
-live session does: `/exit`, reopen, a character-settings `reloading` restart
-(which reverts to file truth, consistently), or process shutdown.
+Reuse the character-settings reload path so the switch takes effect
+immediately:
 
-The override applies to **all** of the character's messages, including ones
-already on screen. That is what a style change means; scoping it to future
-messages would be a rule to explain and a harder render path.
+1. The owner thread persists the new default persona to `config.toml`
+   (existing behavior). On failure the `persist_default_persona_id` flag is
+   reset and the notice gains `"(not saved)"` — **no reload happens** in that
+   case.
+2. In the input route (`POST /api/v1/input`, `src/web/session_routes.cpp`),
+   when the completed `CommandResult` still carries
+   `persist_default_persona_id` (i.e. the write committed), fan out
+   `request_shutdown(ShutdownReason::reloading)` to all live sessions of that
+   forum — including the current one and any still Starting.
+3. The browser's existing stream recovery reopens each session. Reopen runs
+   `open_session()` → `copy_definitions_for()` → prompts rebuilt with the new
+   persona, and the session starts on that persona. Transcript restores from
+   the journal.
 
-### Resolution: complete, validated at command time
+The fan-out runs on the HTTP route thread, preserving the one-way lock
+relationship (manager → actor; actors never call into the manager).
 
-`WorkspaceDefinition` gains:
+### Resulting semantics
 
-```cpp
-[[nodiscard]] CharacterAppearance resolve_session_style(std::string_view name) const;
-```
+- `/!Name` = switch speaker, persist forum default, restart the forum's live
+  sessions. The user sees a brief "Applying settings…" and the conversation
+  continues with agents that carry the new persona's description.
+- Prompt persona, session starting persona, and persisted forum default can
+  never diverge through normal use.
 
-It validates the name (`require_path_component()`) and loads it with
-`load_named_style()` — the same parse startup and the Settings screen use, so
-command-time and startup-time semantics cannot drift. On failure it throws
-`std::invalid_argument` whose message names the problem and lists the
-available style IDs. Unlike a provider, a resolved style has no construction
-phase: a config that parses is the whole value, so the swap itself cannot
-fail.
+### Edge cases (all follow existing patterns)
 
-### Presentation: one roster mutator, snapshot-carried
+- **Busy session**: `set_default_persona` already refuses while generating;
+  no persist, no reload. *Sibling* sessions on the forum may be torn down
+  mid-generation — the same accepted tradeoff as character-save reloads.
+- **Re-selecting the current persona**: `set_default_persona` skips the
+  snapshot when `/!Name` names the persona already in effect, so
+  `persist_default_persona_id` stays empty and no persist or reload happens —
+  the confirming notice is still shown. This mirrors the character-settings
+  path, which reloads only when the saved values actually change.
+- **Persist failure**: no reload; session continues with old prompts and the
+  `"(not saved)"` notice.
+- **Sessions opened after the write** read the new config naturally; sessions
+  still Starting are included in the fan-out because they may already have
+  read their definitions (this is why `active_sessions()` exists).
+- **Runtime-only state is lost on reload**: session-scoped `/provider`
+  overrides revert to configuration; in-flight background multicast output is
+  volatile (already documented).
+- **`reloading` reason** outranks `browser_disconnected`, so it reaches the
+  wire and suppresses Retry buttons.
 
-`ForumCharacters` gains:
+### What does not change
 
-```cpp
-bool set_appearance(std::string_view id, const CharacterAppearance& appearance);
-```
+- The controller's runtime persona roster stays the full workspace roster:
+  handle resolution, ambiguity errors, message attribution, and the
+  `/api/v1/personas` endpoints are unaffected.
+- `validate_persona_character_collisions()` still runs against the full
+  roster at startup.
+- `append_participant_roster()` and the `## Participants` section format.
+- `/@Name` (default character): no prompt content depends on it, so no
+  reload — unchanged.
 
-It mutates the stored `CharacterMetadata` in place and returns false for an
-unknown ID. Construction invariants are untouched: the mutator cannot reach
-the ID or display name, so uniqueness and syntax guarantees hold by
-inspection. Because `view()` borrows the roster directly, the next snapshot
-carries the new appearance with **no projection change** — the borrowed-view
-model and its "nothing here allocates" invariant stay intact.
+### Alternatives considered
 
-The rejected alternative — keeping the roster immutable and merging overrides
-at view/projection time — would need a mutable materialized cache rebuilt on
-every mutation, which is more machinery than the mutator it avoids.
-
-**Reset comes from the executor's runtime info.** `/style default` restores
-the open-time appearance found in `generation_executor_.runtime_info()` for
-that character. The recipes live in the executor, so the configured truth
-does too; the controller stores no appearance copies. `default` is a reserved
-word, intercepted before the resolver runs; a style config actually named
-`default` is unreachable through the command (see limitations).
-
-### Controller: one typed method behind an injected resolver
-
-```cpp
-using StyleResolver = std::function<CharacterAppearance(std::string_view)>;
-
-[[nodiscard]] ControllerUpdate set_session_style(std::string_view name);
-```
-
-The resolver is a constructor argument on the production constructor,
-`from_shared_definitions()`, and the definitions-based test constructor,
-defaulted to empty and appended after the `provider_resolver` slot added by
-`/provider`. An absent resolver yields a fixed notice ("Style override is not
-available in this session.") and keeps every existing call site compiling.
-
-The method mirrors `set_session_provider()`'s forms:
-
-- **no busy guard.** `/provider` rejects while generating because swapping a
-  backend under a live batch is a real hazard; appearance touches no
-  generation machinery, so the typed action is safe at any time. The web
-  grammar's generating gate still rejects the command mid-generation, so the
-  user-visible behavior matches `/provider` without a rule here.
-- **empty name** → a report notice: whether the default character has an
-  override, and which. It reports the *override*, not the baseline — the
-  configured style's name is not retained in `CharacterMetadata`, so "the
-  configured style" has no name to print.
-- **`default`** → restore the open-time appearance from `runtime_info()`,
-  erase the override, snapshot, notice. The restore cannot fail: the default
-  character is always in the roster and in runtime info.
-- **otherwise** → run the resolver; an `invalid_argument` becomes the error
-  notice unchanged. On success, mutate the roster, record the override,
-  snapshot, notice.
-
-The four notice strings are fixed here so the tests, the command table and
-`application-guide.md` cannot drift apart:
-
-```text
-set       "<Name> now uses style '<id>' for this session."
-report    "<Name>'s style override for this session is '<id>'."
-report    "<Name> is using its configured style for this session."   (no override)
-reset     "<Name> is back to its configured style for this session."
-```
-
-Every form sets `input_consumed`. The mutating forms (`default`, set) call
-`require_snapshot()` — unlike `/provider`, the change is browser-visible, so
-the update is notice **and** snapshot, the same shape
-`set_default_character()` returns. The report form is notice-only.
-
-Unlike `/@Name` and `/!Name`, nothing here persists. The notice says "for
-this session" precisely because its sibling commands silently save; the
-asymmetry must be audible in the feedback.
-
-### Wiring: the workspace hands the controller a function, not a path
-
-`session_open.cpp` builds the resolver as a closure over
-`WorkspaceDefinition` (which owns `styles_directory`), passed as the new last
-positional argument to `from_shared_definitions()`:
-
-```cpp
-[&model](std::string_view name) {
-    return model.resolve_session_style(name);
-}
-```
-
-`OpenedSession` gains nothing. The closure borrows the process-lived model
-for the session's life — the same borrow the provider resolver and the
-persist callbacks already take — and `resolve_session_style()` only reads a
-file under `styles_directory`, so it never touches the document lock the
-character-settings PATCH holds.
-
-### Web grammar: one argument-carrying exact command
-
-- `text_command.*`: `CommandKind::session_style`, descriptor
-  `{"/style", CommandKind::session_style}` in the `exact` form — the argument
-  arrives in `command.argument` like `/provider`'s.
-- `text_input.cpp`: dispatch before the generic argument rejection, mirroring
-  the provider branch:
-
-  ```cpp
-  if (command.kind == CommandKind::session_style) {
-      result.clear_input = true;
-      result.session = controller.set_session_style(command.argument);
-      return result;
-  }
-  ```
-
-  The `switch` on `CommandKind` is exhaustive under `-Wswitch`; the new
-  enumerator needs the same dummy case `/mcast` and `/provider` have.
-- No persist callback, no `CommandResult` field, no route, no
-  `resources/cha.yaml`, no generated browser types, no webapp change.
-  `command_names()` picks the new spelling up automatically.
-
-### What the command never touches
-
-- **Generation.** No backend, executor, batch, or worker interaction; the
-  provider override machinery is entirely uninvolved. A `/provider` override
-  and a `/style` override on the same character are independent.
-- **Configuration files.** `character.toml` and forum configs are not read
-  for selection and never written. The only file read at command time is the
-  style config being resolved.
-- **Persistence schema.** No journal write, no history-epoch interaction; a
-  restored session starts from configured truth.
-- **Protocol shape.** `appearance` is already a snapshot field; no DTO,
-  OpenAPI, or browser change.
-- **Model context.** Appearance never reaches a provider request.
-- **`/info` and `/characters` output.** Those notices report model and API,
-  not appearance; they are unchanged.
-
-## What we are deliberately not doing
-
-- **No save variant.** Persisting a style already exists as the Settings
-  screen with its documented restart semantics.
-- **No mid-generation exemption at the web gate.** The command could safely
-  run during a generation, but exempting it from the gate is new grammar
-  machinery for a marginal convenience; wait-for-finish matches `/provider`.
-- **No style name in `/info` or the composer line.** The visible change is
-  its own confirmation; the report form covers the rest.
-- **No per-target override syntax for multicast.** Targets keep their own
-  per-character overrides; that composition needs no grammar.
-
-## Known limitations
-
-- A style config whose ID is literally `default` cannot be selected through
-  the command (the word is the reset spelling). The Settings screen is
-  unaffected.
-- The bare report form can name an override but not the baseline style,
-  because `CharacterMetadata` retains an appearance, not the style ID it came
-  from. It can only say "its configured style".
-- As with `/provider`, the override is process-local: a second `chaweb`
-  process holding a session of the same forum never sees it. That is the
-  lease model's existing shape, not new state to manage.
+- **Defer roster appending to session open** (assemble prompts without the
+  roster at load, append in `open_session`): removes the fallback-path
+  staleness but splits prompt assembly across `agents/` and `workspace/`,
+  breaking the "session/ decides *which* directories, agents/ decides *how*"
+  boundary. Rejected as more machinery for a marginal gain.
+- **Names for all personas, full text only for the default**: keeps agents
+  aware of other speakers, but other speakers' names already appear via
+  `from <Name>:` prefixes and shared-history JSONL. Rejected as two policies
+  where one suffices.
+- **Rebuild system prompts mid-session on persona switch**: busts provider
+  prompt caches and adds real machinery. Rejected; the reload fan-out
+  achieves the same effect through an existing, tested path.

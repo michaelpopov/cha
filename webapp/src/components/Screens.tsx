@@ -94,7 +94,7 @@ function endedMessage(snapshot: SessionSnapshot): string {
     case 'session_deleted':
       return 'This session was deleted.';
     case 'reloading':
-      return 'Applying character settings…';
+      return 'Applying settings…';
     case 'browser_disconnected':
       return 'This session was released because the browser disconnected.';
     default:

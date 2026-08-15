@@ -1131,5 +1131,64 @@ TEST(WebServerProcess, DoesNotReloadASessionWhoseForumOverridesTheProvider) {
         "running");
 }
 
+TEST(WebServerProcess, ReloadsAForumsLiveSessionsAfterAPersonaSwitch) {
+    test::TestWorkspace workspace;
+    const auto circle = workspace.root() / "forums" / "circle";
+    std::filesystem::create_directories(circle / "members" / "guide");
+    std::ofstream(circle / "config.toml") << "display_name = \"The Circle\"\n";
+    std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(workspace.root(), port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    httplib::Client client = web_client(port);
+    const std::string first_id = create_session(client, "First");
+    const std::string second_id = create_session(client, "Second");
+    ASSERT_FALSE(first_id.empty());
+    ASSERT_FALSE(second_id.empty());
+    const std::string first_path = open_session(client, first_id);
+    const std::string second_path = open_session(client, second_id);
+    ASSERT_FALSE(first_path.empty());
+    ASSERT_FALSE(second_path.empty());
+    StreamingRequest first_stream(port, first_path + "api/v1/events");
+    StreamingRequest second_stream(port, second_path + "api/v1/events");
+    ASSERT_TRUE(first_stream.wait_for_snapshot());
+    ASSERT_TRUE(second_stream.wait_for_snapshot());
+
+    const auto created = client.Post(
+        "/api/v1/forums/circle/sessions",
+        R"({"label":"Other"})",
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+    const std::string other_id = nlohmann::json::parse(created->body).at("id");
+    const auto opened = client.Post(
+        "/api/v1/forums/circle/sessions/" + other_id + "/open",
+        "{}", "application/json");
+    ASSERT_TRUE(opened);
+    ASSERT_EQ(opened->status, 200) << opened->body;
+    const std::string other_path = "/s/circle/" + other_id + "/";
+    StreamingRequest other_stream(port, other_path + "api/v1/events");
+    ASSERT_TRUE(other_stream.wait_for_snapshot());
+
+    const auto switched = client.Post(
+        first_path + "api/v1/input",
+        R"({"text":"/!Reader"})",
+        "application/json");
+    ASSERT_TRUE(switched);
+    ASSERT_EQ(switched->status, 200) << switched->body;
+    ASSERT_TRUE(first_stream.wait_for_shutdown_reason("reloading"));
+    ASSERT_TRUE(second_stream.wait_for_shutdown_reason("reloading"));
+    EXPECT_FALSE(other_stream.wait_for_shutdown_reason("reloading", 200ms));
+    const auto other_live = client.Get(other_path + "api/v1/session");
+    ASSERT_TRUE(other_live);
+    EXPECT_EQ(other_live->status, 200) << other_live->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(other_live->body).at("lifecycle"),
+        "running");
+}
+
 } // namespace
 } // namespace cha::web

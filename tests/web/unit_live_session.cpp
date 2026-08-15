@@ -291,8 +291,14 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
         std::vector<std::unique_ptr<ModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
+        // Two personas so the session starts on Operator and /!Rea is a real
+        // switch that persists, rather than a no-op re-selection.
         OpenedSession opened = test::open_scripted_session(
-            identity, path, notifier, std::move(backends));
+            identity, path, notifier, std::move(backends), {},
+            PersonaRoster{
+                {.id = "operator", .display_name = "Operator"},
+                {.id = "reader", .display_name = "Reader"},
+            });
         opened.persist_default_character = [&persisted_default](std::string_view id) {
             persisted_default = std::string(id);
         };

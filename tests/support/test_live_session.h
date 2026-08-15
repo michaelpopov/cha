@@ -246,12 +246,13 @@ inline OpenedSession open_scripted_session(
     const std::filesystem::path& database_path,
     WakeNotifier& notifier,
     std::vector<std::unique_ptr<ModelBackend>> backends,
-    SessionController::ActivationHook before_activation = {}) {
+    SessionController::ActivationHook before_activation = {},
+    PersonaRoster personas = reader_roster()) {
     return {
         .descriptor = test_descriptor(identity),
         .controller = from_backends_for_testing(
             std::move(backends),
-            reader_roster(),
+            std::move(personas),
             database_path,
             notifier,
             load_session_state(database_path),

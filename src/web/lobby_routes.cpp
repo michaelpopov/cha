@@ -162,19 +162,6 @@ std::vector<std::string> forums_affected_by_save(
     return result;
 }
 
-// Called only after the write has committed. Sessions still starting are
-// included because they may already have read their definitions; an actor that
-// appears only afterwards will read the new settings when it opens.
-void request_reload(
-    LiveSessionManager& live_sessions,
-    const std::vector<std::string>& forum_ids) {
-    for (const LiveSessionHandle& live : live_sessions.active_sessions()) {
-        const SessionIdentity& key = live->identity();
-        if (std::ranges::find(forum_ids, key.forum_id) == forum_ids.end()) continue;
-        live->request_shutdown(ShutdownReason::reloading);
-    }
-}
-
 ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& model) {
     const Persona* const persona = model.find_persona(forum.default_persona_id);
     if (persona == nullptr) throw std::runtime_error("Forum default persona is absent from the workspace model");

@@ -1,224 +1,117 @@
-# Implementation plan — session style override (`/style`)
+# Plan: forum-scoped persona in agent system prompts
 
-Read `docs/design.md` first. It explains what is being built and why each
-choice was made; this file is only the sequence.
+Implements `~/design.md`. Two changes: (A) load only the forum's default
+persona into agent system prompts, (B) reload a forum's live sessions when
+`/!Name` commits a new default persona.
 
-The work is split into four blocks. Each block ends with a green build and
-leaves the tree in a committable state. Run them in order — B depends on A,
-C supplies the resolver B defaulted, D depends on all three.
+## Step 1 — One-persona roster at definition load
 
-Verification commands, from the repository root:
+File: `src/workspace/workspace_definition.cpp`
 
-```bash
-cmake --build --preset ninja
-ctest --test-dir build/ninja -j8 --output-on-failure
+1. In `WorkspaceDefinition::load()` (forum loop near line 784): resolve the
+   forum's default persona with `find_persona(forum.info.default_persona_id)`
+   (validated earlier in load, so it cannot be absent) and pass a one-element
+   `PersonaRoster` to `load_forum_definitions()` instead of `*model.personas_`.
+2. In `copy_definitions_for()` (near line 894): resolve the disk-current
+   persona with the existing `forum_default_persona(forum_id)`, look it up
+   with `find_persona()`, and pass the one-element roster to the reload call.
+   `forum_default_persona()` already validates and falls back to the
+   startup-loaded value, so the lookup cannot fail.
+3. Keep `load_forum_definitions()`'s signature (`const PersonaRoster&`)
+   unchanged — the filtering happens at the two call sites. The `agents/`
+   layer needs no changes.
+
+No change to `builtin_assistant_definitions()` — the Entrance already gets
+`{builtin_guest()}`.
+
+## Step 2 — Reload fan-out after `/!Name` persist
+
+Files: `src/web/lobby_routes.cpp`, `src/web/route_support.h`,
+`src/web/route_support.cpp`, `src/web/session_routes.cpp`
+
+1. Move `request_reload()` (currently a static in `lobby_routes.cpp:169`)
+   into `route_support` so both route modules share it. Keep its exact
+   behavior: iterate `LiveSessionManager::active_sessions()`, filter by
+   forum ID, `request_shutdown(ShutdownReason::reloading)`.
+2. In the `POST /api/v1/input` handler (`session_routes.cpp:144`): capture
+   the `CommandSubmitResult` from `submit()`; if it holds a `CommandResult`
+   whose `persist_default_persona_id` is set (present ⇒ the `config.toml`
+   write committed on the owner thread; reset ⇒ "(not saved)"), call
+   `request_reload(*live_sessions, {key->forum_id})`, then
+   `set_command_result(...)` as before.
+   - This covers the current session and all siblings on the forum,
+     including still-Starting actors.
+   - The fan-out runs on the route thread, preserving the manager→actor
+     lock direction.
+   - No new `ShutdownReason`; `reloading` already has the right wire
+     priority and browser treatment.
+
+## Step 3 — Webapp wording
+
+File: `webapp/src/components/Screens.tsx` (line ~97)
+
+Generalize the `reloading` message from `'Applying character settings…'` to
+`'Applying settings…'` (persona switches now trigger the same path). Update
+the matching assertion in `webapp/src/components/LiveChat.test.tsx`.
+
+## Step 4 — Tests
+
+1. `tests/application/unit_workspace_definition.cpp`: assert that a forum's
+   loaded definitions contain the forum's default persona's `PERSONA.md`
+   text under `## Participants` and **not** another workspace persona's.
+   Cover two forums with different default personas if the fixture allows.
+2. `tests/application/unit_session_open.cpp` (or the workspace test): after
+   `persist_forum_default_persona()` to a different persona,
+   `copy_definitions_for()` (via opening a session) yields prompts containing
+   the new persona.
+3. `tests/web/process_web_server.cpp`: mirror the existing character-PATCH
+   reload test (line ~1066 asserts `shutdown_reason == "reloading"`): submit
+   `/!Name` through the input endpoint and assert the session's stream
+   reports `reloading`; assert a second live session on the same forum is
+   also shut down, and a session on a *different* forum is not (compare
+   line ~1125).
+4. Existing tests that must keep passing unchanged:
+   `tests/agents/unit_character_definition_loader.cpp` (roster agnostic),
+   `tests/application/unit_builtins.cpp` (Entrance single-persona roster).
+
+## Step 5 — Documentation
+
+1. `src/agents/README.md`: the "four sections" paragraph and the sentence
+   "The roster a forum's characters receive is the whole workspace roster,
+   because `/!Name`…" — replace with: the roster is the forum's configured
+   default persona only; `/!Name` persists the choice and reloads the
+   forum's live sessions, so prompts always match the session's persona.
+   The diagram's `roster` node already reads
+   `personas/<forum default_persona>/` — verify it still matches.
+2. `docs/tutorial.md` §8.3 ("the workspace personas and their `PERSONA.md`
+   prompts") → the forum's default persona only.
+3. `src/web/README.md`: note that `/!Name` saves the forum default and
+   reloads the forum's live sessions (extend the existing "persona changes
+   only through `/!Name`" passage).
+4. `docs/web-ui/api-requirements.md`: persona-attribution section — a
+   successful `/!Name` shuts the forum's live sessions down with
+   `shutdown_reason: "reloading"`; the browser's stream recovery reopens
+   them.
+5. `docs/web-ui/behavior.md`: the `reloading` chat message is now
+   "Applying settings…" and also appears after a persona switch.
+6. `docs/web-ui/flows.md`: persona-attribution flow gains the reload edge.
+
+## Step 6 — Build and verify
+
+```sh
+make test          # builds and runs the C++ suite
+make web-check     # webapp typecheck/tests
 ```
 
-```bash
-make web-check
-```
+Manual smoke: `make run`, open a forum session, `/!<other persona>` → chat
+shows "Applying settings…", session returns with history intact, status line
+shows the new persona, and agents answer with knowledge of only that
+persona's description.
 
----
+## Out of scope / accepted tradeoffs
 
-## Block A — roster appearance mutator
-
-**Goal:** `ForumCharacters` can change one character's appearance in place.
-Nothing else changes; the snapshot path picks it up unchanged.
-
-### Steps
-
-1. **`set_appearance()`** in `src/session/forum_characters.h` / `.cpp`:
-
-   ```cpp
-   bool set_appearance(std::string_view id, const CharacterAppearance& appearance);
-   ```
-
-   Find by ID, assign `appearance` on the stored `CharacterMetadata`, return
-   true; unknown ID returns false. No other field is reachable, so the
-   construction invariants (non-empty, unique IDs, unique folded names,
-   syntax) hold by inspection — say so in a comment.
-
-2. **Tests** (`tests/session/unit_forum_characters.cpp`, extending the
-   existing roster tests):
-   - Set: `find(id)->appearance` reports the new value; `all()` reflects it.
-   - Unknown ID returns false and changes nothing.
-   - IDs, display names, ordering, and handle resolution are untouched by a
-     mutation.
-
----
-
-## Block B — controller command
-
-**Goal:** `SessionController::set_session_style()` implements the whole
-command semantics — report, reset, set — behind an injected resolver, with
-snapshot-carrying updates.
-
-### Steps
-
-1. **Resolver type and members** in `src/session/session_controller.h`:
-   - `using StyleResolver = std::function<CharacterAppearance(std::string_view)>;`
-   - Members `StyleResolver style_resolver_;` and
-     `std::unordered_map<CharacterId, std::string> style_overrides_;`
-     (character ID → style name, for the report form), beside the provider
-     override state.
-
-2. **Constructor plumbing.** The production constructor,
-   `from_shared_definitions()`, and the definitions-based test constructor
-   each gain a `StyleResolver style_resolver = {}` parameter, appended after
-   the `provider_resolver` slot (after `backend_factory` on the test
-   constructor). Defaulted, so the two existing `from_shared_definitions()`
-   call sites (`workspace/session_open.cpp`,
-   `tests/support/test_live_session.h`) and all test call sites keep
-   compiling; production sessions answer "not available" until Block C passes
-   the real closure.
-
-3. **`set_session_style(std::string_view name)`** in
-   `session_controller.cpp`, mirroring `set_session_provider()` with the
-   differences the design fixes:
-   - **No `busy()` check** — appearance touches no generation machinery; the
-     web gate owns mid-generation behavior.
-   - Always `input_consumed = true`. The mutating forms call
-     `require_snapshot(update)`; the report form is notice-only.
-   - Empty name → report the default character's override state (or absence),
-     using the design doc's notice strings verbatim.
-   - `"default"` → restore the open-time appearance: find the character in
-     `generation_executor_.runtime_info()` and apply its
-     `character.appearance` through `characters_.set_appearance()`. Intercept
-     the word **before** the resolver runs. The restore cannot fail (the
-     default is always in both collections), but tolerate a false return by
-     still reporting the configured state.
-   - Otherwise → resolve through `style_resolver_`; catch
-     `std::invalid_argument` and turn it into the notice unchanged. On
-     success: `characters_.set_appearance()`, record `style_overrides_`,
-     snapshot, notice `"<Name> now uses style '<id>' for this session."`
-   - Absent resolver → the fixed "Style override is not available in this
-     session." notice.
-
-4. **Tests** (`tests/session/unit_session_controller.cpp`), built on
-   `from_definitions_for_testing()` with a stub resolver (a name→appearance
-   map, or a throwing one):
-   - Set: notice text, `requires_snapshot(update)` is true, and
-     `view().characters` shows the new appearance for that character only.
-   - Bare report with and without an override names it or says "configured
-     style"; report is notice-only (no snapshot).
-   - Reset: restores the open-time appearance in the view, clears the
-     override, snapshot required.
-   - Per-character: override follows the character, not the default slot —
-     set on A, `/@B`, report on B shows no override, `/@A` again shows A's.
-   - Resolver failure → the thrown message becomes the notice; appearance
-     and override map unchanged.
-   - Absent resolver (`from_backends_for_testing` path) → "not available"
-     notice.
-   - `/clear` leaves the override in effect (view still shows it).
-   - Mid-generation: with a blocking fake backend and a prompt in flight,
-     the typed call succeeds — this pins the deliberate absence of a busy
-     guard (the web gate is what rejects the command during generation).
-
----
-
-## Block C — workspace resolver and open wiring
-
-**Goal:** the workspace exposes named-style resolution as a value-returning
-helper, and session open injects it. No controller changes.
-
-### Steps
-
-1. **`WorkspaceDefinition::resolve_session_style(std::string_view name)`**
-   in `src/workspace/workspace_definition.cpp`, beside
-   `resolve_session_provider()`, mirroring its structure exactly:
-   - `require_path_component(name, config_.styles_directory)`, then construct
-     the path (`config_.styles_directory / path_from_utf8(name) / "config.toml"`)
-     and check `is_regular_file` **before** calling `load_named_style`. Do not
-     call `load_named_style` on a missing config: its absent-file message is
-     framed around a *reference path* ("Config file '<X>' references style
-     '<name>' without config file …"), but the name came from the keyboard and
-     nothing references it. Throw a keyboard-appropriate message here instead
-     ("no style config is installed under this name"), the same reason and
-     shape the provider helper uses (see its comment at
-     `workspace_definition.cpp` around the `is_regular_file` check). Only on a
-     present file call `load_named_style(config_.styles_directory, name, path)`,
-     passing the constructed `path` as the reference path.
-   - Wrap any failure in `std::invalid_argument` with the same try/catch shape
-     as the provider helper — catch `std::exception`, so `require_path_component`
-     abuse (`../x`) flows through too — whose message names the style and lists
-     the available IDs via `named_config_ids(config_.styles_directory)`,
-     mirroring the provider helper's phrasing ("Style '<name>' is not
-     usable: … Available styles: …").
-   - Declaration in `workspace_definition.h` beside the provider one.
-
-2. **Wire at open** in `src/workspace/session_open.cpp`: pass
-   `[&model](std::string_view name) { return model.resolve_session_style(name); }`
-   as the new last positional argument to `from_shared_definitions()`.
-   `OpenedSession` is unchanged; the closure is the same process-lived borrow
-   as the provider resolver one line above.
-
-3. **Tests** (`tests/application/unit_workspace_definition.cpp`), beside the
-   provider-resolution tests:
-   - A known style name resolves to the configured `CharacterAppearance`.
-   - Unknown name, path-component abuse (`../x`), and a malformed style file
-     each throw `invalid_argument` with a message that lists available IDs.
-
----
-
-## Block D — web grammar and documentation
-
-**Goal:** `/style` parses, dispatches, and reads correctly everywhere a user
-can meet it. No protocol or browser change.
-
-### Steps
-
-1. **Parser** (`src/web/text_command.h` / `.cpp`): add
-   `CommandKind::session_style` and descriptor
-   `{"/style", CommandKind::session_style}` in the `exact` form.
-   `command_names()` lists it automatically.
-
-2. **Dispatch** (`src/web/text_input.cpp`): before the generic
-   "Command does not accept arguments" rule, beside the provider branch:
-
-   ```cpp
-   if (command.kind == CommandKind::session_style) {
-       result.clear_input = true;
-       result.session = controller.set_session_style(command.argument);
-       return result;
-   }
-   ```
-
-   Add `case CommandKind::session_style: return result;` to the exhaustive
-   `switch`, same shape as the `/mcast` and `/provider` dummy cases.
-
-3. **Tests**:
-   - `tests/web/unit_text_command.cpp`: `"/style sans-bold"` → kind +
-     argument; `"/style"` → kind + empty argument; `"/stylex"` is not the
-     command. Update the `command_names()` list assertion — it names every
-     accepted command and will fail until `/style` is added.
-   - `tests/web/unit_text_input.cpp`: dispatch passes the argument through
-     and sets no persist fields; while generating, the input gets the
-     in-progress notice and the controller is untouched; input is consumed
-     on all forms.
-   - No route test additions: the input route is unchanged and already
-     generic over commands.
-
-4. **Documentation**:
-   - Root `README.md`: command table row for `/style`.
-   - `resources/application-guide.md`: commands list row, including the
-     "for this session" phrasing so Assistant quotes it correctly.
-   - `src/web/README.md`: add `/style` to the chat-grammar command list.
-   - `docs/tutorial.md`: extend the §12.3 `/provider` sentence with the
-     style counterpart (roster mutation + snapshot, no resolver hazard).
-   - `docs/web-ui/behavior.md`: only if it enumerates chat commands; check
-     before editing. (`grep -rn "/provider" --include='*.md' .` lists the
-     files that document the command set.)
-
-5. **Final verification**: full `ctest` run, `make web-check`, and a manual
-   smoke against `make run`: open a session, `/style` (report),
-   `/style <id>` (notice + visible font change on the character's messages,
-   past ones included), `/@` to another character and back (override kept),
-   `/style default` (reset), `/exit` + reopen (override gone).
-
----
-
-## Out of scope (per `docs/design.md`)
-
-- Persistence, mid-generation gate exemption, style names in `/info` or the
-  composer line, per-target multicast syntax, protocol/OpenAPI/browser
-  changes, e2e additions.
+- Sessions torn down mid-generation lose the in-flight answer (same as
+  character-settings saves).
+- Session-scoped `/provider` overrides revert on reload.
+- Startup-fallback path (reload throws at session open) embeds the
+  startup-time persona; covered by the existing fallback notice.

@@ -64,9 +64,9 @@ flowchart LR
 The effective system prompt has four sections in this exact order: expanded
 character `CHARACTER.md`, expanded forum `FORUM.md`, the persona roster (each
 `PERSONA.md` verbatim under its display-name heading), and generated forum context.
-The roster a forum's characters receive is the whole workspace roster, because
-`/!Name` lets a session speak as any of them and a system prompt is fixed when
-the workspace loads.
+The roster a forum's characters receive is that forum's configured default
+persona only. `/!Name` persists the choice and reloads the forum's live
+sessions, so the assembled prompts always match the session's persona.
 It is model reference context only, not forum/session membership and not an
 authorization list. Persona authorship is resolved independently at the
 frontend/application input boundary.

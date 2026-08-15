@@ -1925,6 +1925,13 @@ TEST(SessionController, ResolvesCurrentPersonaByIdOrDisplayNamePrefix) {
     EXPECT_EQ(by_id.notice, "Current persona is now Michael");
     EXPECT_EQ(controller->view().default_persona_id, "michael");
 
+    // Re-selecting the current persona confirms it but requests no snapshot, so
+    // the input route neither re-persists nor reloads for a non-change.
+    const ControllerUpdate unchanged = controller->set_default_persona("michael");
+    EXPECT_EQ(unchanged.notice, "Current persona is now Michael");
+    EXPECT_FALSE(requires_snapshot(unchanged));
+    EXPECT_EQ(controller->view().default_persona_id, "michael");
+
     EXPECT_EQ(
         controller->set_default_persona("mic").notice,
         "Ambiguous persona !mic: matches !Michael, !Michelle. Type more of the name.");

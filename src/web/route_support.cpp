@@ -2,11 +2,13 @@
 
 #include "web/http_response.h"
 #include "web/json.h"
+#include "web/live_session_manager.h"
 #include "util/path_name.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -82,6 +84,16 @@ void set_route_not_found(httplib::Response& response, std::string_view message) 
         response,
         404,
         {ErrorCode::not_found, std::string(message)});
+}
+
+void request_reload(
+    LiveSessionManager& live_sessions,
+    const std::vector<std::string>& forum_ids) {
+    for (const LiveSessionHandle& live : live_sessions.active_sessions()) {
+        const SessionIdentity& key = live->identity();
+        if (std::ranges::find(forum_ids, key.forum_id) == forum_ids.end()) continue;
+        live->request_shutdown(ShutdownReason::reloading);
+    }
 }
 
 } // namespace cha::web

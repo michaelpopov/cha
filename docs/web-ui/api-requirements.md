@@ -72,7 +72,9 @@ configured one and changes only through the `/!Name` chat command.
 the workspace roster, so the browser never names the author.
 
 Persona prompt context may be captured when a session opens. It is model context
-only and never controls message attribution.
+only and never controls message attribution. A successful `/!Name` shuts the
+forum's live sessions down with `shutdown_reason: "reloading"`; the browser's
+stream recovery reopens them.
 
 ## Reusable summaries
 

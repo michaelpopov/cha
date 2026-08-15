@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <functional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -12,6 +14,8 @@ struct Response;
 }
 
 namespace cha::web {
+
+class LiveSessionManager;
 
 using RouteBodyParser = std::function<void(const nlohmann::json&)>;
 
@@ -27,5 +31,12 @@ using RouteBodyParser = std::function<void(const nlohmann::json&)>;
 void set_route_not_found(
     httplib::Response& response,
     std::string_view message = "That forum or session was not found.");
+
+// Called only after a settings write has committed. Sessions still starting
+// are included because they may already have read their definitions; an actor
+// that appears only afterwards will read the new settings when it opens.
+void request_reload(
+    LiveSessionManager& live_sessions,
+    const std::vector<std::string>& forum_ids);
 
 } // namespace cha::web

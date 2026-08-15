@@ -18,6 +18,26 @@
 #include <vector>
 
 namespace cha {
+
+struct WorkspaceDefinitionTestAccess {
+    static const std::vector<CharacterDefinition>& loaded(
+        const WorkspaceDefinition& model, std::string_view forum_id) {
+        return model.definitions_.at(std::string(forum_id));
+    }
+
+    static std::vector<CharacterDefinition> copy(
+        const WorkspaceDefinition& model, std::string_view forum_id) {
+        return model.copy_definitions_for(forum_id).definitions;
+    }
+
+    static void persist_persona(
+        const WorkspaceDefinition& model,
+        std::string_view forum_id,
+        std::string_view persona_id) {
+        model.persist_forum_default_persona(forum_id, persona_id);
+    }
+};
+
 namespace {
 
 WorkspaceDefinition load_model(const std::filesystem::path& root) {
@@ -115,6 +135,58 @@ TEST(WorkspaceDefinition, ReportsForumMembershipAndDefaultsWithoutAPath) {
     EXPECT_EQ(entrance->member_ids, (std::vector<std::string>{std::string(assistant_id)}));
     EXPECT_EQ(entrance->default_character_id, assistant_id);
     EXPECT_EQ(entrance->default_persona_id, guest_id);
+}
+
+void expect_prompt_contains_only(
+    const std::vector<CharacterDefinition>& definitions,
+    std::string_view included,
+    std::string_view excluded) {
+    ASSERT_FALSE(definitions.empty());
+    const std::string& prompt = definitions.front().system_prompt;
+    EXPECT_NE(prompt.find("## Participants"), std::string::npos);
+    EXPECT_NE(prompt.find(included), std::string::npos);
+    EXPECT_EQ(prompt.find(excluded), std::string::npos);
+}
+
+TEST(WorkspaceDefinition, EmbedsOnlyTheForumDefaultPersonaInCharacterPrompts) {
+    test::TestWorkspace fixture;
+    fixture.add_persona("reader", "Reader", "READER_PERSONA_BODY");
+    fixture.add_persona("author", "Author", "AUTHOR_PERSONA_BODY");
+    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_persona = \"reader\"\n";
+    add_forum(fixture, "circle", "The Circle", {"guide"});
+    std::ofstream(fixture.root() / "forums" / "circle" / "config.toml")
+        << "display_name = \"The Circle\"\ndefault_persona = \"author\"\n";
+
+    const WorkspaceDefinition model = load_model(fixture.root());
+    expect_prompt_contains_only(
+        WorkspaceDefinitionTestAccess::loaded(model, "lobby"),
+        "READER_PERSONA_BODY",
+        "AUTHOR_PERSONA_BODY");
+    expect_prompt_contains_only(
+        WorkspaceDefinitionTestAccess::loaded(model, "circle"),
+        "AUTHOR_PERSONA_BODY",
+        "READER_PERSONA_BODY");
+}
+
+TEST(WorkspaceDefinition, ReloadsPromptsFromThePersistedForumDefaultPersona) {
+    test::TestWorkspace fixture;
+    fixture.add_persona("reader", "Reader", "READER_PERSONA_BODY");
+    fixture.add_persona("author", "Author", "AUTHOR_PERSONA_BODY");
+    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_persona = \"reader\"\n";
+
+    const WorkspaceDefinition model = load_model(fixture.root());
+    expect_prompt_contains_only(
+        WorkspaceDefinitionTestAccess::loaded(model, "lobby"),
+        "READER_PERSONA_BODY",
+        "AUTHOR_PERSONA_BODY");
+
+    WorkspaceDefinitionTestAccess::persist_persona(model, "lobby", "author");
+    expect_prompt_contains_only(
+        WorkspaceDefinitionTestAccess::copy(model, "lobby"),
+        "AUTHOR_PERSONA_BODY",
+        "READER_PERSONA_BODY");
 }
 
 TEST(WorkspaceDefinition, ServesAssistantDetailFromTheEmbeddedApplicationGuide) {

@@ -91,6 +91,8 @@ flowchart LR
     Config["Forum config.toml default_persona"] --> Open["Session opens on that persona"]
     Open --> Current["Controller holds the current persona"]
     Command["Chat command /!Name"] --> Current
+    Command --> Reload["Forum live sessions shut down as reloading"]
+    Reload --> Open
     Current --> Status["Chat status: From"]
     Current --> Save["Saved back to forum config.toml"]
     Submit["Submitted message carries text only"] --> Resolve["Session resolves its current persona"]

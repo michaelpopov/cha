@@ -547,7 +547,7 @@ describe('live chat', () => {
       shutdown_reason: 'reloading',
     }));
 
-    expect(screen.getByRole('status')).toHaveTextContent('Applying character settings');
+    expect(screen.getByRole('status')).toHaveTextContent('Applying settings');
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Browse sessions' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Return to Welcome' })).not.toBeInTheDocument();

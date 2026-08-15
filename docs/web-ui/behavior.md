@@ -142,7 +142,7 @@ Character settings is one form, reached only from a writable Character detail.
 - A fixed line above Save says that saving restarts the sessions using this character and loses any answer being generated.
 - Save is disabled while nothing has changed and while a save is in flight. Cancel returns to Character detail without writing.
 - Failures are reported in place.
-- A successful save stays on the settings screen. Affected live sessions shut down with `reloading`; the existing stream recovery reopens them in the background. The chat shows "Applying character settings…" and no Retry buttons.
+- A successful save stays on the settings screen. Affected live sessions shut down with `reloading`; the existing stream recovery reopens them in the background. The chat shows "Applying settings…" and no Retry buttons. The same message appears after a `/!Name` persona switch, which also reloads the forum's live sessions.
 
 ## Forums and sessions
 

@@ -60,7 +60,8 @@ visibly. `LiveSession` supplies the session's current persona ID from the
 controller view, and `SessionController` resolves it against the workspace
 roster, so a submitter still cannot choose who a message is attributed to. A
 live session serves one browser connection at a time, and the persona changes
-only through `/!Name`, which also saves the choice as the forum's default.
+only through `/!Name`, which also saves the choice as the forum's default and
+reloads the forum's live sessions so agent prompts carry that persona.
 
 ## Chat input grammar
 

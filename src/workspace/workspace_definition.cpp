@@ -782,8 +782,10 @@ WorkspaceDefinition WorkspaceDefinition::load(
     // prompt cannot wait until someone opens that forum to be discovered.
     for (const LoadedForum& forum : forums) {
         try {
+            const Persona* const persona =
+                model.find_persona(forum.info.default_persona_id);
             std::vector<CharacterDefinition> definitions = load_forum_definitions(
-                forum, *model.personas_, definitions_directory,
+                forum, PersonaRoster{*persona}, definitions_directory,
                 {model.config_.provider, model.config_.providers_directory},
                 model.config_.styles_directory);
             for (const CharacterDefinition& definition : definitions) {
@@ -903,9 +905,10 @@ WorkspaceDefinition::CopiedForumDefinitions WorkspaceDefinition::copy_definition
         return {.definitions = found->second};
     }
     try {
+        const Persona* const persona = find_persona(forum_default_persona(forum_id));
         return {.definitions = load_forum_definitions(
             {.info = *forum, .directory = directory->second},
-            *personas_,
+            PersonaRoster{*persona},
             characters_directory_,
             {config_.provider, config_.providers_directory},
             config_.styles_directory)};
