@@ -4,19 +4,14 @@ Status: Proposed
 
 ## Purpose
 
-This document defines session renaming, recoverable deletion, and copying an
-open conversation to the system clipboard. It extends the existing named-session
-workflow without changing session identity or exposing internal model context.
+This document defines session renaming and recoverable deletion. It extends the
+existing named-session workflow without changing session identity.
 
-The design has three user-facing outcomes:
+The design has two user-facing outcomes:
 
 - A stored session can be renamed without changing its stable ID or URL.
 - Deleting a stored session removes it from CHA but retains its database in a
   per-forum `deleted/` directory.
-- An open conversation has a `Copy` action that copies a plain-text transcript
-  to the system clipboard.
-
-Export to Markdown or PDF is not part of this design.
 
 ## Terms
 
@@ -29,8 +24,6 @@ Export to Markdown or PDF is not part of this design.
 - **Deleted session** is a database moved out of the ordinary catalog into the
   forum's session deletion directory. It is retained on disk but cannot be
   listed or opened through the normal API.
-- **Conversation copy** is a plain-text projection of the user-visible human,
-  character, and error entries. It is not the prompt context sent to a model.
 
 ## Scope
 
@@ -43,7 +36,6 @@ This change includes:
 - Actor-aware mutation of a live session's label.
 - Coordinated shutdown before deleting a live session.
 - Recoverable database relocation instead of file removal.
-- A `Copy` action available while viewing an open conversation.
 - Browser, API, storage, actor, and end-to-end tests for these behaviors.
 
 This change does not include:
@@ -51,10 +43,6 @@ This change does not include:
 - Permanent database erasure.
 - Listing, opening, or restoring deleted sessions in the browser.
 - Bulk rename or delete.
-- Copying hidden prompts, persona instructions, reasoning text, or the exact
-  model request payload.
-- Rich clipboard formats such as HTML.
-- Markdown or PDF export.
 
 ## Storage layout
 
@@ -514,91 +502,6 @@ On success:
   navigate to Welcome, and replace the current browser history entry with `/`.
 - If another session is active, preserve it and the current main view.
 
-## Copy conversation
-
-### Placement and availability
-
-The Chat top bar uses its currently empty trailing action slot for a text button
-named `Copy`. Navigation screens continue to have no trailing action.
-
-Copy is available when:
-
-- Chat is the main view.
-- `sessionSnapshot` matches the active forum and session.
-- At least one copyable transcript entry has non-empty text.
-
-Lifecycle is deliberately not a condition. A stopped session still renders its
-whole transcript, and gating on `running` would withdraw Copy at exactly the
-moment nothing else can be done with the conversation. Copy is a pure function
-of a snapshot the browser already holds, so it also does not require a healthy
-SSE connection once a matching snapshot has been received. The copied value is
-the point-in-time browser snapshot when the user activates the button.
-
-### Copied format
-
-The browser owns one pure `conversationText(snapshot)` serializer. It emits
-plain UTF-8 text with `\n` line endings and this structure:
-
-```text
-Session: Architecture review
-Forum: The Stoics Forum
-
-Guest -> Epictetus:
-How should we structure this?
-
-Epictetus:
-Begin by separating identity from presentation.
-```
-
-Formatting rules are deterministic:
-
-- Preserve transcript order.
-- Include human entries with
-  `<display_name> -> <addressed_to_name>:`.
-- Include character entries with `<display_name>:`.
-- Include error entries with `Error:`.
-- Exclude notice entries, including hide markers and routine session notices.
-- Exclude `generation.reasoning_text`, the input draft, the transient notice
-  banner, character appearance, IDs, and request IDs.
-- Preserve entry text exactly except for normalizing line endings to `\n`.
-- Append ` [stopped]` to the speaker line for a cancelled character entry.
-- Append ` [in progress]` to the speaker line for a streaming character entry.
-- Separate entries with one blank line and end the document with one newline.
-
-These rules cover every state a copyable entry can be in. Transcript
-invariants already guarantee that human entries are always complete, that error
-entries are always failed, and that character entries are never failed, so
-complete, streaming, and cancelled exhaust the character cases.
-
-The format is deterministic, not unambiguous: entry text is reproduced exactly,
-so a message whose own content contains a line like `Epictetus:` reads as a
-speaker line. That is accepted. Escaping or fencing entry text would corrupt
-the thing the user asked to copy, and the alternative — a machine-parseable
-envelope — is the export format this design excludes.
-
-This is deliberately a conversation transcript, not a serialization of
-`ModelHistory` or provider input. Copy must never expose workspace prompts,
-persona instructions, character instructions, off-record boundaries, or
-provider metadata. Messages remain copyable when they are visible in the
-browser even if an off-record command excluded them from a model request.
-
-### Clipboard interaction
-
-The click handler calls `navigator.clipboard.writeText()` directly from the
-user activation. On success:
-
-- Change the button label to `Copied` briefly.
-- Announce `Conversation copied to clipboard` through a polite live region.
-- Restore the `Copy` label without moving focus.
-
-Clipboard access can be absent or denied when CHA is reached outside a secure
-browser context. On failure, open a modal dialog containing the generated text
-in a selected read-only textarea and instruct the user to use the platform copy
-shortcut. Do not use deprecated `document.execCommand('copy')` as the fallback.
-
-The mobile top-bar layout retains a trailing column for Copy instead of hiding
-the current empty action slot.
-
 ## Browser state and invalidation
 
 The existing bootstrap refresh updates Recent but does not invalidate the local
@@ -633,7 +536,6 @@ the same identity must not run concurrently in one browser page.
   is successful even if the following sidecar move fails.
 - An abandoned browser request does not cancel an actor command whose outcome
   may already have committed. A subsequent bootstrap refresh reconciles the UI.
-- Copy never performs server I/O and cannot alter session state.
 
 ## Logging
 
@@ -644,8 +546,6 @@ conversation content. Add events for:
 - `delete_requested`, `delete_shutdown_requested`, `delete_moved`, and
   `delete_failed`.
 
-Clipboard success or copied content is not logged by the server. The browser
-does not log clipboard text.
 
 ## Test plan
 
@@ -704,11 +604,6 @@ does not log clipboard text.
 - Delete requires confirmation and reports pending state.
 - Successful mutations refresh Recent and invalidate forum sessions.
 - Deleting the active session replaces history and returns to Welcome.
-- Conversation serialization covers every included kind and status and excludes
-  notices and reasoning.
-- Copy success, temporary feedback, denial, and manual-copy fallback work.
-- Copy is hidden or disabled for a mismatched or empty snapshot, and remains
-  available for a stopped one.
 
 ### End-to-end tests
 
@@ -723,8 +618,6 @@ currently publishes nowhere; export it alongside the API target.
 - Delete a closed session and verify it can no longer be listed or opened while
   its database exists under `deleted/`.
 - Delete the active session and verify navigation returns to Welcome.
-- Copy a multi-speaker conversation and verify the clipboard text where the
-  browser test environment grants clipboard permission.
 
 ## Implementation order
 
@@ -737,11 +630,6 @@ currently publishes nowhere; export it alongside the API target.
 4. Add protocol values, routes, OpenAPI declarations, and client methods.
 5. Add catalog invalidation and active-session deletion handling in `App`.
 6. Add the reusable sidebar action menu and rename/delete dialogs.
-7. Add conversation serialization, Copy feedback, and manual fallback.
-8. Complete route, browser, and end-to-end coverage.
-9. Update the `docs/web-ui/` contract and the `session/` and `web/` module
+7. Complete route, browser, and end-to-end coverage.
+8. Update the `docs/web-ui/` contract and the `session/` and `web/` module
    READMEs to match what shipped.
-
-Copy is independent of rename and delete: it adds no endpoint, touches no
-storage, and step 7 can move earlier or ship separately if the server work
-slips.

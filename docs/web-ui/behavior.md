@@ -181,21 +181,6 @@ Rules:
 ## Main-area headers
 
 - Chat has no title, session name, forum, persona, or character in its header.
-- Chat adds an icon-only Copy conversation action to the two-line sidebar
-  control's cluster, so both conversation-level controls sit together. Copy
-  stacks directly beneath the sidebar control, on the same vertical axis. The
-  pair stands in the transcript's left gutter rather than in a header row of its
-  own, so the transcript begins level with the top of the sidebar control; where
-  the column would not leave a wide enough gutter by itself, it is indented to
-  make one. Only a phone-width panel gives up and puts the pair side by side in
-  a header row above the conversation. The measure is the width of the main
-  panel, not the window: an open sidebar takes width away from it. It copies the
-  open snapshot's
-  visible human, character, and error entries as plain text, including a
-  session/forum header. Notices and reasoning are omitted. Copy remains
-  available after the session stops, and stays in place but disabled while a
-  session is opening rather than appearing and disappearing. Clipboard denial
-  opens a selected read-only manual-copy field.
 - Navigation screens show one centered title without a subtitle.
 - Persona detail uses the persona's display name as its title. Character detail has no title: its own header row names the character, so a title would repeat it.
 - Character settings uses the title `Settings`. The trailing top-bar slot is an empty spacer, present wherever there is a title to keep centred.

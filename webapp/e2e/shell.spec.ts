@@ -161,28 +161,6 @@ test('deleting the active session returns the browser to Welcome', async ({ page
   await expect(page.getByRole('button', { name: `Actions for ${label}` })).toHaveCount(0);
 });
 
-test('copies a multi-speaker conversation to the system clipboard', async ({ page, context }) => {
-  const label = `Copy browser test ${Date.now()}`;
-  const prompt = 'Copy this deterministic exchange.';
-  await startLobbySession(page, label);
-  await page.getByRole('textbox', { name: 'Message' }).fill(prompt);
-  await page.getByRole('button', { name: 'Send message' }).click();
-  await expect(page.locator('.cha-message.is-character').last()).toContainText(prompt);
-  await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible();
-
-  await context.grantPermissions(
-    ['clipboard-read', 'clipboard-write'],
-    { origin: new URL(page.url()).origin },
-  );
-  await page.getByRole('button', { name: 'Copy conversation' }).click();
-  await expect(page.getByRole('button', { name: 'Conversation copied' })).toBeVisible();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-    `Session: ${label}\nForum: The Lobby\n\n`
-    + `Reader -> Guide:\n${prompt}\n\n`
-    + `Guide:\nfrom Reader:\n${prompt}\n`,
-  );
-});
-
 test.describe('touch session actions', () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
 
@@ -335,76 +313,6 @@ test('lays every screen out inside the visible panel', async ({ page }) => {
           .map((element) => element.className);
       });
       expect(escaped).toEqual([]);
-    }).toPass();
-  }
-});
-
-// The chat controls stand in the transcript's left gutter, which exists only
-// when the panel is wide enough — and the sidebar can take that width away
-// without the window changing size at all. Both outcomes are checked at both
-// panel widths: the gutter version must not push the conversation down the
-// screen, and neither version may put a control on top of it.
-test('stands the chat controls beside the conversation without covering it', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 844 });
-  await page.goto('/');
-  await expect(page.getByLabel('Current chat context')).toBeVisible();
-  const app = page.locator('.cha-app');
-
-  // 900 with the sidebar open is the case a window-width rule reads as roomy
-  // while the panel behind the sidebar is 620px. 700 covers the range where the
-  // column has to be indented to leave the controls a gutter, and 500 the phone
-  // panel that gives up and puts them in a header row.
-  const arrangements = [
-    { width: 1280, sidebar: 'closed', stacked: true },
-    { width: 1280, sidebar: 'open', stacked: true },
-    { width: 900, sidebar: 'closed', stacked: true },
-    { width: 900, sidebar: 'open', stacked: true },
-    { width: 700, sidebar: 'closed', stacked: true },
-    { width: 500, sidebar: 'closed', stacked: false },
-  ] as const;
-
-  for (const arrangement of arrangements) {
-    await page.setViewportSize({ width: arrangement.width, height: 844 });
-    if (await app.getAttribute('data-sidebar') !== arrangement.sidebar) {
-      await page.getByRole('button', { name: /sidebar/i }).click();
-    }
-    await expect(app).toHaveAttribute('data-sidebar', arrangement.sidebar);
-    await expect(async () => {
-      const layout = await page.evaluate(() => {
-        const box = (selector: string) => document
-          .querySelector(selector)
-          ?.getBoundingClientRect() ?? null;
-        const copy = box('.cha-topbar-copy');
-        const covered = copy === null ? -1 : [
-          ...document.querySelectorAll('.cha-transcript, .cha-message, .cha-composer'),
-        ]
-          .map((element) => element.getBoundingClientRect())
-          .filter((target) => copy.left < target.right && copy.right > target.left
-            && copy.top < target.bottom && copy.bottom > target.top).length;
-        return {
-          covered,
-          stacked: copy !== null && copy.top > (box('.cha-topbar-lead .cha-icon-action')
-            ?.top ?? 0) + 1,
-          panelLeft: box('.cha-main')?.left ?? -1,
-          settledLeft: document.querySelector('.cha-app')?.classList
-            .contains('is-sidebar-open')
-            ? box('.cha-sidebar')?.width ?? -1
-            : 0,
-          toggleTop: box('.cha-topbar-lead .cha-icon-action')?.top ?? -1,
-          transcriptTop: box('.cha-transcript')?.top ?? -1,
-        };
-      });
-      // The panel slides for 220ms. Measured part-way through, a narrow panel
-      // still looks like a wide one and every assertion below passes for the
-      // wrong reason, which `toPass` would then accept and stop retrying.
-      expect(layout.panelLeft).toBeCloseTo(layout.settledLeft, 0);
-      expect(layout.covered).toBe(0);
-      expect(layout.stacked).toBe(arrangement.stacked);
-      // Only the stacked arrangement reclaims the header row; side by side, the
-      // controls legitimately sit above the conversation.
-      if (arrangement.stacked) {
-        expect(layout.transcriptTop).toBeCloseTo(layout.toggleTop, 0);
-      }
     }).toPass();
   }
 });

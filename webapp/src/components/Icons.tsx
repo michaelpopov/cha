@@ -33,23 +33,6 @@ export function SidebarIcon(props: IconProps) {
   );
 }
 
-export function CopyIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <rect height="12" rx="2" width="12" x="9" y="9" {...stroke} />
-      <path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" {...stroke} />
-    </Icon>
-  );
-}
-
-export function CheckIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="m5 12 4 4L19 6" {...stroke} />
-    </Icon>
-  );
-}
-
 export function PersonasIcon(props: IconProps) {
   return (
     <Icon {...props}>
