@@ -17,6 +17,7 @@ interface SidebarProps {
   state: AppState;
   dispatch: Dispatch<AppAction>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
+  onDownloadSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onRenameSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onDeleteSession(forumId: string, sessionId: string): Promise<void>;
 }
@@ -132,6 +133,7 @@ function SessionDialog({
 export function Sidebar({
   state,
   dispatch,
+  onDownloadSession,
   onOpenSession,
   onRenameSession,
   onDeleteSession,
@@ -260,9 +262,22 @@ export function Sidebar({
           role="menu"
           style={{
             left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - 104)),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - 140)),
           }}
         >
+          <button
+            onClick={() => {
+              const selected = menu;
+              closeMenu(false);
+              void onDownloadSession(
+                selected.forumId, selected.sessionId, selected.label,
+              ).finally(() => {
+                if (selected.restoreFocus?.isConnected) selected.restoreFocus.focus();
+              });
+            }}
+            role="menuitem"
+            type="button"
+          >Download</button>
           <button onClick={() => { setDialog({ kind: 'rename', ...menu }); closeMenu(false); }} role="menuitem" type="button">Rename…</button>
           <button onClick={() => { setDialog({ kind: 'delete', ...menu }); closeMenu(false); }} role="menuitem" type="button">Delete…</button>
         </div>,

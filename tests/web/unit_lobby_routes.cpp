@@ -723,6 +723,57 @@ TEST(LobbyRoutes, RenamesAndRecoverablyDeletesStoredSessions) {
             / (id + ".sqlite3")));
 }
 
+TEST(LobbyRoutes, DownloadsStoredAndLiveSessionsAsMarkdown) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const std::string id = create_session(server, "Review notes");
+    {
+        PreparedSession prepared = graph.sessions->prepare({"lobby", id});
+        SessionJournal journal(prepared.database_path);
+        const TranscriptEntry prompt = make_human_entry({
+            .id = 1,
+            .author = {"reader", "Reader"},
+            .addressed_to = {"guide", "Guide"},
+            .text = "Review **this**",
+            .request_id = 1,
+        });
+        journal.start_turn(1, prompt);
+        journal.complete_turn(1, make_character_entry(
+            2, "guide", "Guide", "Looks good.", EntryStatus::complete, 1));
+    }
+
+    const auto downloaded = server.client().Get(
+        "/api/v1/forums/lobby/sessions/" + id + "/download");
+    ASSERT_TRUE(downloaded);
+    EXPECT_EQ(downloaded->status, 200);
+    EXPECT_EQ(downloaded->get_header_value("Content-Type"),
+        "text/markdown; charset=utf-8");
+    EXPECT_EQ(downloaded->get_header_value("Cache-Control"), "no-store");
+    EXPECT_EQ(downloaded->body,
+        "# Review notes\n"
+        "\n## Reader\n\n"
+        "Review **this**\n"
+        "\n## Guide\n\n"
+        "Looks good.\n");
+
+    const std::string route = "/api/v1/forums/lobby/sessions/" + id;
+    ASSERT_EQ(server.client().Post(
+        route + "/open", "{}", "application/json")->status, 200);
+    ASSERT_EQ(server.client().Patch(
+        route, R"({"label":"Live review"})", "application/json")->status, 200);
+    const auto live_download = server.client().Get(route + "/download");
+    ASSERT_TRUE(live_download);
+    EXPECT_EQ(live_download->status, 200);
+    EXPECT_EQ(live_download->body,
+        "# Live review\n"
+        "\n## Reader\n\n"
+        "Review **this**\n"
+        "\n## Guide\n\n"
+        "Looks good.\n");
+}
+
 TEST(LobbyRoutes, RenamesAndDeletesAnOpenSessionThroughItsOwner) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());

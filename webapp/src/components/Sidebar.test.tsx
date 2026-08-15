@@ -15,12 +15,13 @@ function readyState() {
 }
 
 describe('Sidebar session actions', () => {
-  it('offers the same rename/delete menu by right-click and ellipsis but not for Welcome', async () => {
+  it('offers Download, Rename, and Delete in order by right-click and ellipsis but not for Welcome', async () => {
     const user = userEvent.setup();
     render(
       <Sidebar
         dispatch={vi.fn()}
         onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
         state={readyState()}
@@ -29,14 +30,36 @@ describe('Sidebar session actions', () => {
 
     expect(screen.queryByLabelText('Actions for Welcome')).not.toBeInTheDocument();
     await user.pointer({ keys: '[MouseRight]', target: screen.getByText('Planning') });
-    expect(screen.getByRole('menuitem', { name: 'Rename…' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Delete…' })).toBeInTheDocument();
+    expect(screen.getAllByRole('menuitem').map(({ textContent }) => textContent)).toEqual([
+      'Download', 'Rename…', 'Delete…',
+    ]);
     await user.keyboard('{Escape}');
 
     await user.click(screen.getByLabelText('Actions for Planning'));
     await user.click(screen.getByRole('menuitem', { name: 'Rename…' }));
     expect(screen.getByRole('heading', { name: 'Rename session' })).toBeInTheDocument();
     expect(screen.getByLabelText('Session name')).toHaveValue('Planning');
+  });
+
+  it('downloads the selected session without opening it', async () => {
+    const user = userEvent.setup();
+    const onDownload = vi.fn(async () => undefined);
+    const onOpen = vi.fn(async () => true);
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={onDownload}
+        onOpenSession={onOpen}
+        onRenameSession={vi.fn(async () => undefined)}
+        state={readyState()}
+      />,
+    );
+
+    await user.click(screen.getByLabelText('Actions for Planning'));
+    await user.click(screen.getByRole('menuitem', { name: 'Download' }));
+    expect(onDownload).toHaveBeenCalledWith('lobby', 'planning', 'Planning');
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it('confirms deletion before invoking it', async () => {
@@ -46,6 +69,7 @@ describe('Sidebar session actions', () => {
       <Sidebar
         dispatch={vi.fn()}
         onDeleteSession={onDelete}
+        onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
         state={readyState()}
@@ -66,6 +90,7 @@ describe('Sidebar session actions', () => {
       <Sidebar
         dispatch={vi.fn()}
         onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
         state={readyState()}
@@ -76,17 +101,18 @@ describe('Sidebar session actions', () => {
     expect(actions).toHaveAttribute('aria-expanded', 'false');
     await user.click(actions);
     expect(actions).toHaveAttribute('aria-expanded', 'true');
+    const download = screen.getByRole('menuitem', { name: 'Download' });
     const rename = screen.getByRole('menuitem', { name: 'Rename…' });
     const remove = screen.getByRole('menuitem', { name: 'Delete…' });
-    expect(rename).toHaveFocus();
+    expect(download).toHaveFocus();
     await user.keyboard('{ArrowDown}');
-    expect(remove).toHaveFocus();
-    await user.keyboard('{Home}');
     expect(rename).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(download).toHaveFocus();
     await user.keyboard('{End}');
     expect(remove).toHaveFocus();
     await user.keyboard('{ArrowDown}');
-    expect(rename).toHaveFocus();
+    expect(download).toHaveFocus();
     await user.keyboard('{ArrowUp}');
     expect(remove).toHaveFocus();
     await user.keyboard('{Escape}');
@@ -101,6 +127,7 @@ describe('Sidebar session actions', () => {
       <Sidebar
         dispatch={vi.fn()}
         onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
         state={readyState()}
@@ -119,6 +146,7 @@ describe('Sidebar session actions', () => {
       <Sidebar
         dispatch={vi.fn()}
         onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
         state={readyState()}
@@ -143,6 +171,7 @@ describe('Sidebar session actions', () => {
       <Sidebar
         dispatch={vi.fn()}
         onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={onRename}
         state={readyState()}
@@ -170,6 +199,7 @@ describe('Sidebar session actions', () => {
       <Sidebar
         dispatch={vi.fn()}
         onDeleteSession={() => pending}
+        onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
         state={readyState()}

@@ -10,6 +10,7 @@
 #include "web/json.h"
 #include "web/protocol.h"
 #include "web/route_support.h"
+#include "web/session_markdown.h"
 #include "web/live_session_manager.h"
 #include "util/text.h"
 #include "util/logging.h"
@@ -363,6 +364,46 @@ void LobbyRoutes::install(httplib::Server& server) const {
         } catch (const std::invalid_argument&) {
             set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid session label."});
+        }
+    });
+
+    server.Get(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/download)",
+        [sessions, live_sessions, settings](const httplib::Request& request,
+                                             httplib::Response& response) {
+        const SessionIdentity key{request.matches[1], request.matches[2]};
+        if (!is_valid_route_component(key.forum_id)
+            || !is_valid_route_component(key.session_id)) {
+            return set_route_not_found(response);
+        }
+        try {
+            std::string markdown;
+            if (const LiveSessionHandle live = live_sessions->lookup(key)) {
+                CommandSubmitResult result = live->snapshot(settings.command_deadline);
+                if (const auto* snapshot = std::get_if<SessionSnapshot>(&result)) {
+                    markdown = session_markdown(
+                        snapshot->session_label, snapshot->transcript);
+                } else if (const auto* error = std::get_if<ErrorCode>(&result)) {
+                    return set_command_error(response, *error);
+                } else {
+                    return set_error_response(response, 500,
+                        {ErrorCode::internal_error,
+                         "The session could not be downloaded."});
+                }
+            } else {
+                PreparedSession prepared = sessions->prepare(key);
+                markdown = session_markdown(
+                    prepared.label, prepared.restore.entries);
+            }
+            response.status = 200;
+            response.set_header("Cache-Control", "no-store");
+            response.set_content(markdown, "text/markdown; charset=utf-8");
+        } catch (const ForumNotFoundError&) {
+            set_route_not_found(response);
+        } catch (const SessionNotFoundError&) {
+            set_route_not_found(response);
+        } catch (const SessionBusyError&) {
+            set_error_response(response, 409,
+                {ErrorCode::session_busy, "Session is busy."});
         }
     });
 

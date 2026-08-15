@@ -1,5 +1,4 @@
-display_name = "Circle of Life"
+default_character = 'montaigne'
+default_persona = 'michael'
 description = "Michael's support circle"
-default_persona = "michael"
-default_character = "montaigne"
-
+display_name = 'Circle of Life'

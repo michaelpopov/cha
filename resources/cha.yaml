@@ -330,6 +330,42 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/forums/{forum_id}/sessions/{session_id}/download:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [Stored sessions]
+      operationId: downloadSession
+      summary: Download a session transcript as Markdown
+      description: |
+        Returns the current transcript of a stored or live session. A live
+        session is read through its owner so the export includes its latest
+        in-memory content without changing which session the browser has open.
+      responses:
+        "200":
+          description: Markdown session transcript.
+          content:
+            text/markdown:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The stored session is busy or the live session stopped.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: The session command timed out or its queue was full.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/forums/{forum_id}/sessions/{session_id}:
     parameters:
       - $ref: "#/components/parameters/ForumId"

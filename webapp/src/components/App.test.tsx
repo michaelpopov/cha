@@ -473,6 +473,32 @@ it('refreshes Recent and an open forum catalog after a sidebar rename', async ()
   expect(sessionRow(/^Architecture review/)).toBeInTheDocument();
 });
 
+it('opens a save dialog and downloads the selected recent session', async () => {
+  const user = userEvent.setup();
+  const write = vi.fn(async () => undefined);
+  const picker = vi.fn(async () => ({
+    createWritable: async () => ({ write, close: async () => undefined }),
+  }));
+  Object.defineProperty(window, 'showSaveFilePicker', {
+    configurable: true,
+    value: picker,
+  });
+  const downloadSession = vi.fn(async () => '# Planning\n');
+  render(<App
+    client={fixtureClient({ downloadSession })}
+    connectSessionEvents={inertSessionEvents}
+  />);
+
+  await screen.findByLabelText('Actions for Planning');
+  await user.click(screen.getByLabelText('Actions for Planning'));
+  await user.click(screen.getByRole('menuitem', { name: 'Download' }));
+
+  await waitFor(() => expect(downloadSession).toHaveBeenCalledWith('lobby', 'planning'));
+  expect(picker).toHaveBeenCalledWith(expect.objectContaining({ suggestedName: 'Planning.md' }));
+  expect(write).toHaveBeenCalledWith('# Planning\n');
+  Reflect.deleteProperty(window, 'showSaveFilePicker');
+});
+
 it('deleting the active session replaces its URL and returns to Welcome', async () => {
   const user = userEvent.setup();
   const events = drivableSessionEvents();

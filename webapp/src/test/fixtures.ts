@@ -142,6 +142,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     createSession: async (_forumId, label) => ({ id: 'created', label }),
     renameSession: async (_forumId, sessionId, label) => ({ id: sessionId, label }),
     deleteSession: async () => undefined,
+    downloadSession: async () => '# Session\n',
     openSession: async (forumId, sessionId) => ({ forum_id: forumId, session_id: sessionId }),
     getSessionSnapshot: async () => snapshotFixture,
     submitInput: async () => ({ clear_input: true }),

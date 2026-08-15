@@ -20,6 +20,7 @@ import {
   type SessionEventHandlers,
 } from '../api/events';
 import { validateBootstrap } from '../state/bootstrap';
+import { saveMarkdownDownload } from '../download';
 import { parseAppRoute, sessionRoute } from '../state/route';
 import {
   isSessionLimit,
@@ -758,6 +759,21 @@ export function App({
     setCatalogRevision((revision) => revision + 1);
   }, [client, refreshBootstrap, runMutation]);
 
+  const downloadSession = useCallback(async (
+    forumId: string,
+    sessionId: string,
+    label: string,
+  ) => {
+    try {
+      await saveMarkdownDownload(
+        label,
+        () => client.downloadSession(forumId, sessionId),
+      );
+    } catch (failure: unknown) {
+      window.alert(publicErrorMessage(failure, 'The session could not be downloaded.'));
+    }
+  }, [client]);
+
   const deleteSession = useCallback(async (forumId: string, sessionId: string) => {
     await runMutation({ forumId, sessionId }, 'catalog', () => (
       client.deleteSession(forumId, sessionId)
@@ -861,6 +877,7 @@ export function App({
       <Sidebar
         dispatch={navigate}
         onDeleteSession={deleteSession}
+        onDownloadSession={downloadSession}
         onOpenSession={openConversation}
         onRenameSession={renameSession}
         state={state}

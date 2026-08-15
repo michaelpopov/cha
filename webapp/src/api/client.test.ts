@@ -21,7 +21,9 @@ describe('CHA API client', () => {
       input: RequestInfo | URL,
       init?: RequestInit,
     ) => Promise<Response>>(async (input) => (
-      String(input).endsWith('/api/v1/session')
+      String(input).endsWith('/download')
+        ? new Response('# Session\n', { headers: { 'Content-Type': 'text/markdown' } })
+        : String(input).endsWith('/api/v1/session')
         ? jsonResponse(snapshotFixture)
         : jsonResponse({})
     ));
@@ -34,6 +36,7 @@ describe('CHA API client', () => {
     await client.createSession('forum', 'Review');
     await client.renameSession('forum', 'session', 'Renamed');
     await client.deleteSession('forum', 'session');
+    expect(await client.downloadSession('f/one', 's two')).toBe('# Session\n');
     await client.openSession('forum', 'session');
     await client.getSessionSnapshot('forum', 'session');
     await client.submitInput('forum', 'session', { text: 'Hello' });
@@ -49,6 +52,7 @@ describe('CHA API client', () => {
       '/api/v1/forums/forum/sessions',
       '/api/v1/forums/forum/sessions/session',
       '/api/v1/forums/forum/sessions/session',
+      '/api/v1/forums/f%2Fone/sessions/s%20two/download',
       '/api/v1/forums/forum/sessions/session/open',
       '/s/forum/session/api/v1/session',
       '/s/forum/session/api/v1/input',
@@ -67,12 +71,13 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[5][1]?.body).toBe('{"label":"Renamed"}');
     expect(fetcher.mock.calls[6][1]?.method).toBe('DELETE');
     expect(fetcher.mock.calls[6][1]?.body).toBe('{}');
-    expect(fetcher.mock.calls[7][1]?.body).toBe('{}');
-    expect(fetcher.mock.calls[9][1]?.body).toBe('{"text":"Hello"}');
-    expect(fetcher.mock.calls[10][1]?.body).toBe('{}');
-    expect(fetcher.mock.calls[11][1]?.body).toBe('{"character_id":"guide"}');
-    expect(fetcher.mock.calls[12][1]?.method).toBe('PATCH');
-    expect(fetcher.mock.calls[12][1]?.body).toBe('{"provider":"terra","style":null}');
+    expect(new Headers(fetcher.mock.calls[7][1]?.headers).get('Accept')).toBe('text/markdown');
+    expect(fetcher.mock.calls[8][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[10][1]?.body).toBe('{"text":"Hello"}');
+    expect(fetcher.mock.calls[11][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[12][1]?.body).toBe('{"character_id":"guide"}');
+    expect(fetcher.mock.calls[13][1]?.method).toBe('PATCH');
+    expect(fetcher.mock.calls[13][1]?.body).toBe('{"provider":"terra","style":null}');
     expect(sessionEventsUrl('f one', 's/two')).toBe('/s/f%20one/s%2Ftwo/api/v1/events');
   });
 

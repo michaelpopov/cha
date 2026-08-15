@@ -255,6 +255,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/forums/{forum_id}/sessions/{session_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Download a session transcript as Markdown
+         * @description Returns the current transcript of a stored or live session. A live
+         *     session is read through its owner so the export includes its latest
+         *     in-memory content without changing which session the browser has open.
+         */
+        get: operations["downloadSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/forums/{forum_id}/sessions/{session_id}": {
         parameters: {
             query?: never;
@@ -1073,6 +1100,51 @@ export interface operations {
              *     `server_stopping`. On `session_open_timeout` the session may still
              *     finish opening, so the request can be retried.
              */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    downloadSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Markdown session transcript. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description The stored session is busy or the live session stopped. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+            /** @description The session command timed out or its queue was full. */
             503: {
                 headers: {
                     [name: string]: unknown;

@@ -90,6 +90,7 @@ export interface ChaClient {
   createSession(forumId: string, label: string): Promise<CreateSessionResult>;
   renameSession(forumId: string, sessionId: string, label: string): Promise<SessionLabelResult>;
   deleteSession(forumId: string, sessionId: string): Promise<void>;
+  downloadSession(forumId: string, sessionId: string): Promise<string>;
   openSession(forumId: string, sessionId: string): Promise<OpenSessionResult>;
   getSessionSnapshot(forumId: string, sessionId: string): Promise<SessionSnapshot>;
   submitInput(forumId: string, sessionId: string, input: InputRequest): Promise<CommandResult>;
@@ -192,6 +193,23 @@ async function requestEmpty(
   throw errorFrom(response.status, payload);
 }
 
+async function requestText(fetcher: Fetcher, url: string): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetcher(url, { headers: { Accept: 'text/markdown' } });
+  } catch {
+    throw new ChaUnavailableError();
+  }
+  if (response.ok) return response.text();
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = undefined;
+  }
+  throw errorFrom(response.status, payload);
+}
+
 function component(value: string): string {
   return encodeURIComponent(value);
 }
@@ -260,6 +278,11 @@ export function createChaClient(
       fetcher,
       `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}`,
       jsonMutation({}, 'DELETE'),
+    ),
+
+    downloadSession: (forumId, sessionId) => requestText(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}/download`,
     ),
 
     openSession: (forumId, sessionId) => requestJson<OpenSessionResult>(
