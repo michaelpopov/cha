@@ -429,16 +429,17 @@ TEST(Config, DefaultsCharacterAppearanceToTheInterfaceSettings) {
 
 TEST(Config, ReadsEveryCharacterAppearanceFieldAndCarriesItIntoTheEffectiveConfig) {
     ConfigFiles files;
-    files.write_style("serif-italic-bold-large",
+    files.write_style("serif-italic-semibold-large-accent",
         "font = \"serif\"\n"
         "style = \"italic\"\n"
-        "weight = \"bold\"\n"
-        "size = \"large\"\n");
+        "weight = \"semibold\"\n"
+        "size = \"large\"\n"
+        "text_color = \"accent\"\n");
     files.write(files.definition(),
         "display_name = \"Seneca\"\n"
-        "style = \"serif-italic-bold-large\"\n");
+        "style = \"serif-italic-semibold-large-accent\"\n");
     const CharacterAppearance expected{CharacterFont::serif, CharacterSlant::italic,
-        CharacterWeight::bold, CharacterScale::large};
+        CharacterWeight::semibold, CharacterScale::large, CharacterTextColor::accent};
     EXPECT_EQ(load_character_metadata(
         files.definition(), files.providers(), files.styles()).appearance, expected);
     EXPECT_EQ(load_character_config(files.paths()).character.appearance, expected);
@@ -455,6 +456,9 @@ TEST(Config, RejectsInvalidStyleConfigsAndLegacyAppearance) {
     EXPECT_THROW((void)load_character_config(files.paths()), std::runtime_error);
     files.write_style("invalid-type", "font = 3\n");
     files.write(files.definition(), named + "style = \"invalid-type\"\n");
+    EXPECT_THROW((void)load_character_config(files.paths()), std::runtime_error);
+    files.write_style("invalid-text-color", "text_color = \"violet\"\n");
+    files.write(files.definition(), named + "style = \"invalid-text-color\"\n");
     EXPECT_THROW((void)load_character_config(files.paths()), std::runtime_error);
     files.write(files.definition(), named + "[appearance]\nfont = \"serif\"\n");
     EXPECT_THROW((void)load_character_config(files.paths()), std::runtime_error);

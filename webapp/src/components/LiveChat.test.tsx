@@ -419,7 +419,9 @@ describe('live chat', () => {
         {
           id: 'seneca',
           display_name: 'Seneca',
-          appearance: { font: 'serif', style: 'italic', weight: 'normal', size: 'large' },
+          appearance: {
+            font: 'serif', style: 'italic', weight: 'semibold', size: 'large', text_color: 'accent',
+          },
         },
         { id: 'assistant', display_name: 'Assistant', appearance: plainVoice },
       ],
@@ -443,7 +445,8 @@ describe('live chat', () => {
     });
 
     expect(screen.getByText('A considered answer')).toHaveClass(
-      'cha-message-text', 'cha-font-serif', 'cha-slant-italic', 'cha-scale-large',
+      'cha-message-text', 'cha-font-serif', 'cha-slant-italic', 'cha-weight-semibold',
+      'cha-scale-large', 'cha-color-accent',
     );
     expect(screen.getByText('A considered answer')).not.toHaveClass('cha-weight-bold');
     expect(screen.getByText('A plain answer').className).toBe('cha-message-text');

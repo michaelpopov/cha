@@ -85,7 +85,7 @@ std::size_t read_choice(
 CharacterAppearance read_style_config(
     const toml::table& table,
     const std::filesystem::path& path) {
-    static constexpr std::string_view fields[]{"font", "style", "weight", "size"};
+    static constexpr std::string_view fields[]{"font", "style", "weight", "size", "text_color"};
     for (const auto& [key, value] : table) {
         (void)value;
         if (std::ranges::find(fields, key.str()) == std::end(fields)) {
@@ -95,13 +95,16 @@ CharacterAppearance read_style_config(
     }
     static constexpr std::string_view fonts[]{"sans", "serif", "mono"};
     static constexpr std::string_view slants[]{"normal", "italic"};
-    static constexpr std::string_view weights[]{"normal", "bold"};
+    static constexpr std::string_view weights[]{"light", "normal", "medium", "semibold", "bold"};
     static constexpr std::string_view scales[]{"small", "normal", "large"};
+    static constexpr std::string_view text_colors[]{"normal", "muted", "accent"};
     return {
         .font = static_cast<CharacterFont>(read_choice(table, path, "font", fonts, 0)),
         .style = static_cast<CharacterSlant>(read_choice(table, path, "style", slants, 0)),
-        .weight = static_cast<CharacterWeight>(read_choice(table, path, "weight", weights, 0)),
+        .weight = static_cast<CharacterWeight>(read_choice(table, path, "weight", weights, 1)),
         .size = static_cast<CharacterScale>(read_choice(table, path, "size", scales, 1)),
+        .text_color = static_cast<CharacterTextColor>(
+            read_choice(table, path, "text_color", text_colors, 0)),
     };
 }
 

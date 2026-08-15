@@ -223,7 +223,7 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ((*entrance)["members"], nlohmann::json::array({{
         {"id", "builtin-assistant"}, {"display_name", "Assistant"},
         {"appearance", {{"font", "sans"}, {"style", "normal"},
-            {"weight", "normal"}, {"size", "normal"}}},
+            {"weight", "normal"}, {"size", "normal"}, {"text_color", "normal"}}},
     }}));
 
     const auto workspace_character = server.client().Get("/api/v1/characters/guide");
@@ -340,7 +340,8 @@ TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderC
     ASSERT_NE(mono_large, styles.end());
     EXPECT_EQ((*mono_large)["label"], "Mono large");
     EXPECT_EQ((*mono_large)["appearance"], nlohmann::json({
-        {"font", "mono"}, {"style", "normal"}, {"weight", "normal"}, {"size", "large"}}));
+        {"font", "mono"}, {"style", "normal"}, {"weight", "normal"},
+        {"size", "large"}, {"text_color", "normal"}}));
     for (const auto& option : styles) {
         EXPECT_NE(option["id"], "broken");
     }

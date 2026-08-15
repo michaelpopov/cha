@@ -1075,7 +1075,7 @@ TEST(WebServerProcess, ReloadsALiveSessionAfterAStyleSave) {
     ASSERT_FALSE(characters.empty());
     EXPECT_EQ(characters.front().at("appearance"), nlohmann::json({
         {"font", "mono"}, {"style", "normal"},
-        {"weight", "normal"}, {"size", "large"}}));
+        {"weight", "normal"}, {"size", "large"}, {"text_color", "normal"}}));
 }
 
 TEST(WebServerProcess, DoesNotReloadASessionWhoseForumOverridesTheProvider) {

@@ -26,7 +26,13 @@ namespace {
 // A character that says nothing about its appearance still carries one on the
 // wire, so every expectation below names the defaults rather than omitting them.
 nlohmann::json default_appearance() {
-    return {{"font", "sans"}, {"style", "normal"}, {"weight", "normal"}, {"size", "normal"}};
+    return {
+        {"font", "sans"},
+        {"style", "normal"},
+        {"weight", "normal"},
+        {"size", "normal"},
+        {"text_color", "normal"},
+    };
 }
 
 template<typename Enum>
@@ -101,21 +107,21 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
     EXPECT_EQ(
         nlohmann::json(CharacterSummary{"seneca", "Seneca", std::nullopt,
             {CharacterFont::serif, CharacterSlant::italic,
-             CharacterWeight::bold, CharacterScale::large}})["appearance"],
+             CharacterWeight::semibold, CharacterScale::large, CharacterTextColor::accent}})["appearance"],
         nlohmann::json({{"font", "serif"}, {"style", "italic"},
-            {"weight", "bold"}, {"size", "large"}}));
+            {"weight", "semibold"}, {"size", "large"}, {"text_color", "accent"}}));
     EXPECT_EQ(
         nlohmann::json(ProviderOption{"sol-high", "Sol high"}),
         nlohmann::json({{"id", "sol-high"}, {"label", "Sol high"}}));
     EXPECT_EQ(
         nlohmann::json(StyleOption{"mono-large", "Mono large",
             {CharacterFont::mono, CharacterSlant::normal,
-             CharacterWeight::normal, CharacterScale::large}}),
+             CharacterWeight::light, CharacterScale::large, CharacterTextColor::muted}}),
         nlohmann::json({
             {"id", "mono-large"},
             {"label", "Mono large"},
             {"appearance", {{"font", "mono"}, {"style", "normal"},
-                {"weight", "normal"}, {"size", "large"}}},
+                {"weight", "light"}, {"size", "large"}, {"text_color", "muted"}}},
         }));
     EXPECT_EQ(
         nlohmann::json(CharacterDetail{
@@ -142,7 +148,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
                 {"id", "serif-italic"},
                 {"label", "Serif italic"},
                 {"appearance", {{"font", "serif"}, {"style", "italic"},
-                    {"weight", "normal"}, {"size", "normal"}}},
+                    {"weight", "normal"}, {"size", "normal"}, {"text_color", "normal"}}},
             }}},
             {"provider_overridden_by", {"Circle of Life"}},
             {"writable", true},

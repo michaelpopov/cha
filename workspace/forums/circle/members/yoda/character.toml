@@ -1,0 +1,2 @@
+# Keep Yoda on the character's Gemini provider instead of Circle's shared default.
+provider = "gemini-high"

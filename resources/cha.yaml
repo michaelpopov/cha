@@ -792,10 +792,10 @@ components:
       description: |
         How the browser sets this character's words, so a reader can tell one
         speaker from another without reading every name. A closed vocabulary:
-        the browser owns the actual typefaces and sizes and pairs each choice
+        the browser owns the actual typefaces, sizes, and colors and pairs each choice
         with a dark-mode variant, and a workspace cannot supply styling of its
         own. Always present, defaults included.
-      required: [font, style, weight, size]
+      required: [font, style, weight, size, text_color]
       properties:
         font:
           type: string
@@ -805,10 +805,13 @@ components:
           enum: [normal, italic]
         weight:
           type: string
-          enum: [normal, bold]
+          enum: [light, normal, medium, semibold, bold]
         size:
           type: string
           enum: [small, normal, large]
+        text_color:
+          type: string
+          enum: [normal, muted, accent]
 
     CharacterSummary:
       type: object

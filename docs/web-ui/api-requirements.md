@@ -112,8 +112,9 @@ what an absent appearance means.
 | -------- | -------------------------- | -------- |
 | `font`   | `sans`, `serif`, `mono`    | `sans`   |
 | `style`  | `normal`, `italic`         | `normal` |
-| `weight` | `normal`, `bold`           | `normal` |
+| `weight` | `light`, `normal`, `medium`, `semibold`, `bold` | `normal` |
 | `size`   | `small`, `normal`, `large` | `normal` |
+| `text_color` | `normal`, `muted`, `accent` | `normal` |
 
 Each field is a closed vocabulary rather than free CSS, for three reasons: the
 browser has to pair every choice with a dark-mode variant, its

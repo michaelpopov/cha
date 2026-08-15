@@ -16,7 +16,14 @@ std::string_view to_string(CharacterSlant value) {
 }
 
 std::string_view to_string(CharacterWeight value) {
-    return value == CharacterWeight::bold ? "bold" : "normal";
+    switch (value) {
+        case CharacterWeight::light: return "light";
+        case CharacterWeight::normal: return "normal";
+        case CharacterWeight::medium: return "medium";
+        case CharacterWeight::semibold: return "semibold";
+        case CharacterWeight::bold: return "bold";
+    }
+    return "normal";
 }
 
 std::string_view to_string(CharacterScale value) {
@@ -24,6 +31,15 @@ std::string_view to_string(CharacterScale value) {
         case CharacterScale::small: return "small";
         case CharacterScale::normal: return "normal";
         case CharacterScale::large: return "large";
+    }
+    return "normal";
+}
+
+std::string_view to_string(CharacterTextColor value) {
+    switch (value) {
+        case CharacterTextColor::normal: return "normal";
+        case CharacterTextColor::muted: return "muted";
+        case CharacterTextColor::accent: return "accent";
     }
     return "normal";
 }

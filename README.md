@@ -127,8 +127,8 @@ font = "sans"
 weight = "bold"
 ```
 
-Style configs may contain `font`, `style`, `weight`, and `size`; omitted fields
-use the interface defaults. A style reference must resolve during startup.
+Style configs may contain `font`, `style`, `weight`, `size`, and `text_color`;
+omitted fields use the interface defaults. A style reference must resolve during startup.
 
 `web_search` other than `off` requires `api = "responses"`. With
 `web_search = "auto"`, the model may search when the prompt and turn warrant

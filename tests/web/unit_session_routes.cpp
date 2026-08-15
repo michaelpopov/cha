@@ -442,7 +442,7 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
         {"display_name", "Guide"},
         {"description", "Explains the workspace"},
         {"appearance", {{"font", "sans"}, {"style", "normal"},
-            {"weight", "normal"}, {"size", "normal"}}},
+            {"weight", "normal"}, {"size", "normal"}, {"text_color", "normal"}}},
     }}));
     EXPECT_EQ(body["characters"], body["forum"].at("members"));
     EXPECT_EQ(body["session_id"], stored.identity.session_id);

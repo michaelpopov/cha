@@ -68,6 +68,7 @@ nlohmann::json appearance_json(const CharacterAppearance& value) {
         {"style", to_string(value.style)},
         {"weight", to_string(value.weight)},
         {"size", to_string(value.size)},
+        {"text_color", to_string(value.text_color)},
     };
 }
 

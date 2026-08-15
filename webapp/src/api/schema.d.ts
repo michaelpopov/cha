@@ -466,7 +466,7 @@ export interface components {
         /**
          * @description How the browser sets this character's words, so a reader can tell one
          *     speaker from another without reading every name. A closed vocabulary:
-         *     the browser owns the actual typefaces and sizes and pairs each choice
+         *     the browser owns the actual typefaces, sizes, and colors and pairs each choice
          *     with a dark-mode variant, and a workspace cannot supply styling of its
          *     own. Always present, defaults included.
          */
@@ -476,9 +476,11 @@ export interface components {
             /** @enum {string} */
             style: "normal" | "italic";
             /** @enum {string} */
-            weight: "normal" | "bold";
+            weight: "light" | "normal" | "medium" | "semibold" | "bold";
             /** @enum {string} */
             size: "small" | "normal" | "large";
+            /** @enum {string} */
+            text_color: "normal" | "muted" | "accent";
         };
         CharacterSummary: {
             id: components["schemas"]["Identifier"];

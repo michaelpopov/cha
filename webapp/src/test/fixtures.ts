@@ -10,7 +10,7 @@ import type {
 
 // A character that configures nothing still carries an appearance on the wire.
 export const plainVoice: CharacterAppearance = {
-  font: 'sans', style: 'normal', weight: 'normal', size: 'normal',
+  font: 'sans', style: 'normal', weight: 'normal', size: 'normal', text_color: 'normal',
 };
 
 export const bootstrapFixture: Bootstrap = {
@@ -61,11 +61,11 @@ export const bootstrapFixture: Bootstrap = {
 };
 
 export const serifItalicVoice: CharacterAppearance = {
-  font: 'serif', style: 'italic', weight: 'normal', size: 'normal',
+  font: 'serif', style: 'italic', weight: 'normal', size: 'normal', text_color: 'normal',
 };
 
 export const monoLargeVoice: CharacterAppearance = {
-  font: 'mono', style: 'normal', weight: 'normal', size: 'large',
+  font: 'mono', style: 'normal', weight: 'normal', size: 'large', text_color: 'normal',
 };
 
 export const characterDetailFixture: CharacterDetail = {

@@ -1,0 +1,3 @@
+display_name = "Yoda"
+description = "An ancient Jedi Master and thoughtful personal correspondent."
+provider = "gemini-high"

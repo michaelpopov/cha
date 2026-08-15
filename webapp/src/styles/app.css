@@ -767,9 +767,10 @@ select:disabled {
   font-style: italic;
 }
 
-.cha-message-text.cha-weight-bold {
-  font-weight: 600;
-}
+.cha-message-text.cha-weight-light { font-weight: 300; }
+.cha-message-text.cha-weight-medium { font-weight: 500; }
+.cha-message-text.cha-weight-semibold { font-weight: 600; }
+.cha-message-text.cha-weight-bold { font-weight: 700; }
 
 .cha-message-text.cha-scale-small {
   font-size: 0.9em;
@@ -778,6 +779,9 @@ select:disabled {
 .cha-message-text.cha-scale-large {
   font-size: 1.14em;
 }
+
+.cha-message-text.cha-color-muted { color: var(--muted-foreground); }
+.cha-message-text.cha-color-accent { color: var(--accent-foreground); }
 
 /* A scale and a font both set font-size, so the pairs state the combination
    rather than leaving the cascade to pick by source order. */
