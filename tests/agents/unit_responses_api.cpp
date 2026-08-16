@@ -176,6 +176,21 @@ TEST(ResponsesApi, DecodesTwoTextDeltasThenCompletion) {
     EXPECT_EQ(output.deltas().size(), 2U);
 }
 
+TEST(ResponsesApi, ReadsUsageFromTheCompletionEvent) {
+    Output output;
+    ResponsesStreamDecoder decoder(output.sink());
+    decoder.consume(
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Answer\"}\n\n"
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5}}}\n\n");
+    const StreamDecodeResult result = decoder.finish();
+
+    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
+    ASSERT_TRUE(result.result.usage.input_tokens);
+    ASSERT_TRUE(result.result.usage.output_tokens);
+    EXPECT_EQ(*result.result.usage.input_tokens, 12U);
+    EXPECT_EQ(*result.result.usage.output_tokens, 5U);
+}
+
 TEST(ResponsesApi, KeepsSearchAnnotationsAndReasoningEventsPrivate) {
     Output output;
     ResponsesStreamDecoder decoder(output.sink());
@@ -321,6 +336,7 @@ TEST(ResponsesApi, IgnoresNonStreamingSearchAndAnnotationMetadata) {
     Output output;
     const std::string body = R"({
         "status": "completed",
+        "usage": {"input_tokens": 12, "output_tokens": 5},
         "output": [
             {"type": "reasoning", "summary": []},
             {
@@ -353,6 +369,10 @@ TEST(ResponsesApi, IgnoresNonStreamingSearchAndAnnotationMetadata) {
     EXPECT_EQ(result.outcome, GenerationOutcome::completed);
     EXPECT_EQ(output.answer(), "Public answer[source]");
     EXPECT_EQ(output.deltas().size(), 1U);
+    ASSERT_TRUE(result.usage.input_tokens);
+    ASSERT_TRUE(result.usage.output_tokens);
+    EXPECT_EQ(*result.usage.input_tokens, 12U);
+    EXPECT_EQ(*result.usage.output_tokens, 5U);
 }
 
 TEST(ResponsesApi, DecodesNonStreamingRefusalAsAnswer) {

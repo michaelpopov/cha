@@ -246,6 +246,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     const Json body = Json::parse(request_body(mock.requests().front()));
     EXPECT_EQ(body["model"], "configured-model");
     EXPECT_TRUE(body["stream"]);
+    EXPECT_TRUE(body["stream_options"]["include_usage"]);
     EXPECT_DOUBLE_EQ(body["temperature"], 0.25);
     EXPECT_EQ(body["reasoning_effort"], "medium");
     EXPECT_EQ(body["messages"], Json::array({
@@ -322,7 +323,7 @@ TEST(ProviderClient, HandlesNonStreamingProviderResponse) {
 
 TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     const std::string response_body =
-        R"({"choices":[{"message":{"content":"private response"}}]})";
+        R"({"choices":[{"message":{"content":"private response"}}],"usage":{"prompt_tokens":12,"completion_tokens":5}})";
     MockHttpServer mock({http_response("application/json", response_body)});
     mock.start();
     DiagnosticLogFile log;
@@ -350,6 +351,8 @@ TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     EXPECT_NE(output.find("request_bytes="), std::string::npos);
     EXPECT_NE(output.find("response_bytes="), std::string::npos);
     EXPECT_NE(output.find("duration_ms="), std::string::npos);
+    EXPECT_NE(output.find("input_tokens=12"), std::string::npos);
+    EXPECT_NE(output.find("output_tokens=5"), std::string::npos);
     EXPECT_EQ(output.find("private prompt"), std::string::npos);
     EXPECT_EQ(output.find("private response"), std::string::npos);
 }

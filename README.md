@@ -75,6 +75,12 @@ file = "logs/cha.log"
 level = "info"
 ```
 
+Each completed provider request writes its HTTP metadata and the provider's
+`input_tokens` and `output_tokens` to this diagnostic log. Chat Completions
+streaming requests ask for the final usage block explicitly; Responses includes
+usage in its completion object. A compatible provider that omits either field
+is logged as `unreported` rather than estimated locally.
+
 Each provider lives in `system/providers/<id>/config.toml`. Its file contains
 the connection, model, protocol, and authentication-environment settings:
 

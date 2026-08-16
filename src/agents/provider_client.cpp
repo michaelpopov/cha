@@ -204,14 +204,20 @@ std::string http_event(
     std::string_view content_type,
     std::size_t request_bytes,
     std::size_t response_bytes,
-    double duration_ms) {
+    double duration_ms,
+    const GenerationTokenUsage& usage = {}) {
+    const auto token_count = [](const std::optional<std::size_t>& count) {
+        return count ? std::to_string(*count) : "unreported";
+    };
     return "HTTP " + std::string(event)
         + ": endpoint=" + std::string(endpoint)
         + " status=" + std::to_string(status)
         + " content_type=" + sanitize_content_type(content_type)
         + " request_bytes=" + std::to_string(request_bytes)
         + " response_bytes=" + std::to_string(response_bytes)
-        + " duration_ms=" + std::to_string(duration_ms);
+        + " duration_ms=" + std::to_string(duration_ms)
+        + " input_tokens=" + token_count(usage.input_tokens)
+        + " output_tokens=" + token_count(usage.output_tokens);
 }
 
 std::string streaming_metadata(
@@ -265,6 +271,9 @@ std::string build_chat_completions_request_body(
         {"messages", std::move(messages)},
     };
     body["temperature"] = config.temperature;
+    if (config.stream) {
+        body["stream_options"] = Json{{"include_usage", true}};
+    }
     if (!config.reasoning_effort.empty()) {
         body["reasoning_effort"] = config.reasoning_effort;
     }
@@ -462,7 +471,8 @@ GenerationResult ProviderClient::perform(
             content_type,
             request_body.size(),
             response.received_bytes,
-            elapsed_milliseconds(started_at));
+            elapsed_milliseconds(started_at),
+            result.usage);
         if (result.outcome == GenerationOutcome::completed) {
             log_info(message);
         } else if (result.outcome == GenerationOutcome::cancelled) {

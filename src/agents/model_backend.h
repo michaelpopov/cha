@@ -5,7 +5,9 @@
 #include "chat/character.h"
 
 #include <atomic>
+#include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace cha {
@@ -27,11 +29,19 @@ enum class GenerationOutcome {
     transport_error,
 };
 
+// Token counts reported by a provider for one completed generation. A provider
+// may omit either count, especially when a request did not finish normally.
+struct GenerationTokenUsage {
+    std::optional<std::size_t> input_tokens;
+    std::optional<std::size_t> output_tokens;
+};
+
 // How one call to ModelBackend::perform() ended. The message explains the failure outcomes
 // and is meant to reach the persona unchanged.
 struct GenerationResult {
     GenerationOutcome outcome{GenerationOutcome::completed};
     std::string message;
+    GenerationTokenUsage usage;
 };
 
 // The request a backend built for itself, opaque to its caller. Preparation

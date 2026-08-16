@@ -75,6 +75,23 @@ TEST(ProviderResponse, DecodesSeveralEventsInOneChunk) {
     EXPECT_EQ(output.answer(), "Hello world");
 }
 
+TEST(ProviderResponse, ReadsUsageFromTheFinalStreamingChunk) {
+    Output output;
+    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+
+    decoder.consume(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\n"
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5}}\n\n"
+        "data: [DONE]\n\n");
+    const StreamDecodeResult result = decoder.finish();
+
+    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
+    ASSERT_TRUE(result.result.usage.input_tokens);
+    ASSERT_TRUE(result.result.usage.output_tokens);
+    EXPECT_EQ(*result.result.usage.input_tokens, 12U);
+    EXPECT_EQ(*result.result.usage.output_tokens, 5U);
+}
+
 TEST(ProviderResponse, DecodesTheSameStreamOneByteAtATime) {
     Output output;
     ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());

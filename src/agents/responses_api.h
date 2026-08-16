@@ -43,6 +43,7 @@ private:
     bool completed_successfully_{};
     bool received_answer_{};
     bool describe_response_{true};
+    GenerationTokenUsage usage_;
 };
 
 // Decodes one complete non-streaming Responses body into answer/refusal text.

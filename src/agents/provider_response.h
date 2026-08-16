@@ -67,6 +67,7 @@ private:
     bool done_{};
     bool received_reasoning_{};
     bool received_answer_{};
+    GenerationTokenUsage usage_;
 };
 
 // Decodes one complete non-streaming response body, reporting its reasoning and

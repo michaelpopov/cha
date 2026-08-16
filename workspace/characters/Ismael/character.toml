@@ -1,5 +1,4 @@
-display_name = "Ismael"
-description = "An old sailor from a whale voyage."
-provider = "mistral-large"
-
-style = "mono"
+description = 'An old sailor from a whale voyage.'
+display_name = 'Ismael'
+provider = 'terra'
+style = 'serif-bold'

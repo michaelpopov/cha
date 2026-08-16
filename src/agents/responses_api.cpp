@@ -5,6 +5,8 @@
 #include <nlohmann/json.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -15,6 +17,31 @@ namespace cha {
 namespace {
 
 using Json = nlohmann::json;
+
+std::optional<std::size_t> token_count(
+    const Json& usage,
+    std::string_view field) {
+    const auto value = usage.find(field);
+    if (value == usage.end() || !value->is_number_unsigned()) {
+        return std::nullopt;
+    }
+    const auto count = value->get<std::uint64_t>();
+    if (count > std::numeric_limits<std::size_t>::max()) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(count);
+}
+
+GenerationTokenUsage responses_token_usage(const Json& response) {
+    const auto usage = response.find("usage");
+    if (usage == response.end() || !usage->is_object()) {
+        return {};
+    }
+    return {
+        .input_tokens = token_count(*usage, "input_tokens"),
+        .output_tokens = token_count(*usage, "output_tokens"),
+    };
+}
 
 void normalize_newlines(std::string& text) {
     std::size_t index = 0;
@@ -139,7 +166,7 @@ StreamDecodeResult ResponsesStreamDecoder::finish() {
     }
 
     if (!protocol_error_.empty()) {
-        return {{GenerationOutcome::protocol_error, protocol_error_}, describe_response_};
+        return {{GenerationOutcome::protocol_error, protocol_error_, usage_}, describe_response_};
     }
     if (!completed_successfully_) {
         return {{
@@ -147,15 +174,17 @@ StreamDecodeResult ResponsesStreamDecoder::finish() {
             received_answer_
                 ? "Streaming response ended before response.completed"
                 : "Streaming response was not valid Responses SSE",
+            usage_,
         }, true};
     }
     if (!received_answer_) {
         return {{
             GenerationOutcome::protocol_error,
             "Streaming response completed without answer content",
+            usage_,
         }, false};
     }
-    return {{GenerationOutcome::completed, {}}, false};
+    return {{GenerationOutcome::completed, {}, usage_}, false};
 }
 
 void ResponsesStreamDecoder::read_event(std::string_view event) {
@@ -228,6 +257,7 @@ void ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         done_ = true;
         const auto response = value.find("response");
         if (response != value.end() && response->is_object()) {
+            usage_ = responses_token_usage(*response);
             const std::string status = first_string_field(*response, "status");
             if (!is_successful_completed_status(status)) {
                 if (protocol_error_.empty()) {
@@ -355,6 +385,7 @@ GenerationResult decode_responses_response(
     }
 
     const std::string status = first_string_field(value, "status");
+    const GenerationTokenUsage usage = responses_token_usage(value);
     if (!status.empty() && status != "completed") {
         if (status == "incomplete") {
             std::string reason;
@@ -453,7 +484,7 @@ GenerationResult decode_responses_response(
             "Response completed without answer content",
         };
     }
-    return {GenerationOutcome::completed, {}};
+    return {GenerationOutcome::completed, {}, usage};
 }
 
 } // namespace cha

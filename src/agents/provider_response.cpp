@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -12,6 +14,31 @@ namespace cha {
 namespace {
 
 using Json = nlohmann::json;
+
+std::optional<std::size_t> token_count(
+    const Json& usage,
+    std::string_view field) {
+    const auto value = usage.find(field);
+    if (value == usage.end() || !value->is_number_unsigned()) {
+        return std::nullopt;
+    }
+    const auto count = value->get<std::uint64_t>();
+    if (count > std::numeric_limits<std::size_t>::max()) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(count);
+}
+
+GenerationTokenUsage chat_token_usage(const Json& response) {
+    const auto usage = response.find("usage");
+    if (usage == response.end() || !usage->is_object()) {
+        return {};
+    }
+    return {
+        .input_tokens = token_count(*usage, "prompt_tokens"),
+        .output_tokens = token_count(*usage, "completion_tokens"),
+    };
+}
 
 void normalize_newlines(std::string& text) {
     std::size_t index = 0;
@@ -114,7 +141,7 @@ StreamDecodeResult ProviderStreamDecoder::finish() {
     }
 
     if (!protocol_error_.empty()) {
-        return {{GenerationOutcome::protocol_error, protocol_error_}, true};
+        return {{GenerationOutcome::protocol_error, protocol_error_, usage_}, true};
     }
     if (!done_) {
         return {{
@@ -122,15 +149,17 @@ StreamDecodeResult ProviderStreamDecoder::finish() {
             received_output()
                 ? "Streaming response ended before [DONE]"
                 : "Streaming response was not valid SSE",
+            usage_,
         }, true};
     }
     if (!received_answer_) {
         return {{
             GenerationOutcome::protocol_error,
             "Streaming response completed without answer content",
+            usage_,
         }, false};
     }
-    return {{GenerationOutcome::completed, {}}, false};
+    return {{GenerationOutcome::completed, {}, usage_}, false};
 }
 
 void ProviderStreamDecoder::read_event(std::string_view event) {
@@ -157,6 +186,9 @@ void ProviderStreamDecoder::read_event(std::string_view event) {
             if (!data.empty()) {
                 try {
                     const Json value = Json::parse(data);
+                    if (value.contains("usage")) {
+                        usage_ = chat_token_usage(value);
+                    }
                     const Json::json_pointer choices_pointer("/choices");
                     const Json::json_pointer delta_pointer(
                         "/choices/0/delta");
@@ -228,6 +260,7 @@ GenerationResult decode_provider_response(
     }
 
     bool received_answer = false;
+    const GenerationTokenUsage usage = chat_token_usage(value);
     const std::string protocol_error = process_response_object(
         value.at(message_pointer),
         format,
@@ -249,7 +282,7 @@ GenerationResult decode_provider_response(
             "Response completed without answer content",
         };
     }
-    return {GenerationOutcome::completed, {}};
+    return {GenerationOutcome::completed, {}, usage};
 }
 
 } // namespace cha
