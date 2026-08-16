@@ -1,6 +1,7 @@
 #include "agents/character.h"
 
 #include "agents/model_context.h"
+#include "chat/transcript.h"
 #include "agents/character_config.h"
 #include "util/logging.h"
 #include "util/json_serialization.h"
@@ -267,6 +268,10 @@ void validate_character_id(std::string_view id) {
     if (id.empty()) {
         throw std::invalid_argument("Character ID cannot be empty");
     }
+    if (id == null_agent_handle) {
+        throw std::invalid_argument(
+            "Character ID '-' is reserved for the null agent");
+    }
     for (const unsigned char character : id) {
         const bool ascii_letter = (character >= 'a' && character <= 'z')
             || (character >= 'A' && character <= 'Z');
@@ -283,6 +288,10 @@ void validate_character_display_name_syntax(std::string_view display_name) {
         validate_public_name(display_name, "Character display name", "character.toml", true);
     } catch (const std::runtime_error& error) {
         throw std::invalid_argument(error.what());
+    }
+    if (display_name == null_agent_name) {
+        throw std::invalid_argument(
+            "Character display name '-' is reserved for the null agent");
     }
 }
 

@@ -32,6 +32,7 @@ The chat input also accepts these controller-level commands:
 | `/mcast` | Send one prompt to multiple forum characters. |
 | `/info`, `/characters` | Inspect the session and its characters (`/agents` remains an alias). |
 | `/@Name` | Change and save the forum's default character. |
+| `/@-` | Enter recording mode: plain messages are saved to the transcript but not sent to a model. Session-local — `-` is never saved as the forum default. |
 | `/!Name` | Change and save the forum's current persona. |
 | `/provider <name>` | Override the current character's provider for this session only; `/provider` reports the override and `/provider default` restores the configured provider. Nothing is saved. |
 | `/style <name>` | Override the current character's appearance (font, slant, weight, size) for this session only; `/style` reports the override and `/style default` restores the configured style. Nothing is saved. |
@@ -42,6 +43,13 @@ Leading `@Name` addresses a prompt to one character. `@@` starts literal text
 with an at-sign. A handle may be a display name, an unambiguous part of one, or
 the character's ID — useful when the display name is spelled differently or
 written in another script.
+
+The reserved handle `-` is the null target: `@- <text>` records one message in
+the transcript without calling a model or producing a reply, and `/@-` switches
+the session into recording mode so plain messages are recorded the same way
+until `/@Name` or the target selector switches back. Recorded messages are
+durable and reach a later character as shared conversation history, never as a
+message addressed to it.
 
 ## Workspace configuration
 

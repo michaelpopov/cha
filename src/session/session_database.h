@@ -100,6 +100,9 @@ public:
     void start_turn(
         RequestId request_id,
         const TranscriptEntry& prompt);
+    // Stores one terminal entry that belongs to no turn (a null-request
+    // monologue recorded for the reserved `-` target).
+    void record_entry(const TranscriptEntry& entry);
     void complete_turn(RequestId request_id, const TranscriptEntry& response);
     void cancel_turn(RequestId request_id, std::optional<TranscriptEntry> response);
     void fail_turn(RequestId request_id, const TranscriptEntry& error);

@@ -105,7 +105,9 @@ CommandResult handle_text_input(
         result.session = controller.character_information(); break;
     case CommandKind::set_default:
         result.session = controller.set_default_character(command.handle);
-        if (requires_snapshot(result.session)) {
+        // `-` is session-local and must not be written to config.
+        if (requires_snapshot(result.session)
+            && controller.view().default_character_id != null_agent_handle) {
             result.persist_default_character_id =
                 std::string(controller.view().default_character_id);
         }

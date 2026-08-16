@@ -1,149 +1,266 @@
-# Design: forum-scoped persona in agent system prompts
+# Design: the Null agent (`-`) — record-only monologue
 
 ## Problem
 
-Today every agent's system prompt embeds the **entire workspace persona
-roster**: `append_participant_roster()` (`src/agents/character.cpp:190`)
-appends a `## Participants` section with every persona's display name and full
-`PERSONA.md` text to every character definition, for every forum.
+Sometimes the user wants to think out loud across several messages *before*
+asking a character anything — notes, framing, half-formed thoughts — and have
+those messages become part of the conversation the next character sees, without
+spending a model round-trip on each one and without a reply cluttering the
+chat.
 
-Each forum already has a configured `default_persona` in its `config.toml`.
-The goal: a session's agents should carry **only that one persona's**
-description in their system prompts, and a `/!Name` persona switch must take
-effect **immediately**, not just for the next session.
+The goal: a pseudo-participant addressed as `-` that behaves like any other
+character for the two addressing commands —
+
+- `@- <text>` records one message, and
+- `/@-` switches the session to it so plain (unprefixed) messages are recorded —
+
+while it
+
+- records each message to the transcript and shows it in the web UI like any
+  other human message;
+- does **not** call any model and produces **no** reply;
+- later reaches a real character as ordinary **shared conversation**, not as a
+  message addressed to that character.
 
 ## Current behavior (relevant facts)
 
-- Prompt assembly: `load_character_definitions()` builds
-  `CHARACTER.md` + `FORUM.md`, then `append_standard_prompt_context()` appends
-  the participant roster and the generated forum-context section.
-- Definitions are assembled **twice**: at workspace load
-  (`WorkspaceDefinition::load` → `load_forum_definitions`,
-  `src/workspace/workspace_definition.cpp:472`) and again at **every session
-  open** via `copy_definitions_for()` (same file, line 894), which re-reads
-  the forum's files from disk and falls back to the startup copy (with a user
-  notice) if the reload throws.
-- The session's starting persona is resolved at open time by
-  `forum_default_persona()`, which re-reads `default_persona` from the forum's
-  `config.toml` for currency, validates it against the workspace roster, and
-  falls back to the startup-loaded value with a log warning.
-- `/!Name` (`SessionController::set_default_persona`,
-  `src/session/session_controller.cpp:775`) resolves the handle against the
-  controller's **full** roster, switches the session's current persona, and —
-  on success — the new persona ID is persisted to the forum's `config.toml`
-  (`persist_default_persona`, wired in `src/workspace/session_open.cpp:58`,
-  executed in `src/web/live_session.cpp:481` before the command reply
-  completes). So `/!Name` is already a durable forum-default change, not a
-  session-local one.
-- The built-in Entrance forum already loads with a single-persona roster
-  (`PersonaRoster{builtin_guest()}`) — the proposed behavior is precedent, not
-  novelty.
-- There is an existing **reload fan-out** for character-settings saves:
-  `request_reload()` (`src/web/lobby_routes.cpp:169`) shuts down every live
-  session of the affected forums with `ShutdownReason::reloading` via
-  `LiveSessionManager::active_sessions()` (which deliberately includes
-  still-Starting actors). The server never reopens anything; the browser's
-  stream-recovery ladder reopens sessions automatically, showing "Applying
-  character settings…". On reopen the transcript is restored from the session
-  journal — no history loss.
+- **Addressing grammar.** `parse_addressed_prompt()`
+  (`src/web/text_mention.cpp:7`) reads a leading `@Handle`; a doubled `@@`
+  escapes a literal leading at-sign (line 16). `@- text` parses as handle `-`,
+  body `text`, and `/@-` is read by `parse_command` as set-default with handle
+  `-` — neither disturbs the `@@` escape. `-` was chosen precisely to leave the
+  escape alone.
+- **Prompt dispatch.** `SessionController::submit_prompt()`
+  (`src/session/session_controller.cpp:321`) resolves the handle (or, for an
+  empty handle, the session default via `characters_.find(default_character_id_)`
+  at line 335), builds a human `TranscriptEntry`, stages a `GenerationBatch`,
+  and streams the reply. Human entry and response are persisted together as one
+  *turn*.
+- **Switching the default.** `set_default_character()`
+  (`src/session/session_controller.cpp:747`) resolves the handle and, on
+  success, the web layer persists the new id to the forum's `config.toml`
+  (`text_input.cpp:106` sets `persist_default_character_id` when the update
+  carries a snapshot). The default is validated when a session opens
+  (`session_controller.cpp:222`). By contrast, `/provider` and `/style` are
+  **session-scoped and never saved** (`README.md`) — the precedent the null
+  agent's `/@-` follows.
+- **The forum's characters are backend-derived.** `characters_` is built from
+  `generation_executor_.runtime_info()` (`make_forum_characters`,
+  `src/session/session_controller.cpp:184`) — one entry per model backend. A
+  participant with no backend cannot be a `ForumCharacters` member, and
+  `resolve_handle()` would never find it.
+- **Human entries must name an addressee.** `validate_transcript_entry()`
+  rejects a human entry whose `addressed_to` / `addressed_to_name` is empty
+  (`src/chat/transcript.cpp:114`). A recorded message must be addressed to
+  *something*.
+- **Model-context projection is per-entry, and already emits shared history.**
+  `project_model_context()` (`src/agents/model_context.cpp:38`) walks entries
+  one at a time; a human entry projects on its own with no matching response
+  required (line 61). An entry whose `addressed_to` is not the current
+  character is bundled into the `Shared chat history (JSONL):` block
+  (`src/agents/model_context.cpp:71`, heading at `src/agents/model_context.h:15`)
+  rather than shown as a first-person message. **There is no user/assistant
+  alternation requirement**, so a run of consecutive human messages is
+  well-formed.
+- **Persistence does not require a turn.** `entries.request_id` is nullable
+  (`src/session/session_database.cpp:373`); the `one_prompt_per_turn` index
+  only covers rows with a non-null `request_id` (line 394). `insert_entry()`
+  (line 555) stores any storable entry and advances the persisted
+  `next_entry_id`. A lone human entry with no turn is a legal, restorable row —
+  there is just no journal method that writes one today.
 
 ## Proposed design
 
-### 1. Prompt assembly: filter the roster to the forum's default persona
+`-` is a **reserved null-target sentinel**, not a `ForumCharacters` member. It
+is recognised in `submit_prompt()` and `set_default_character()`, and
+everywhere short-circuits before any model machinery is touched. `/@-` is a
+**session-local** switch: it does not save the default-character setting, while
+the messages recorded through it remain durable. A real character may not use
+`-` as either its stable id or display name; otherwise the sentinel could
+silently intercept prompts intended for that character.
 
-At both definition-load points, pass a **one-element `PersonaRoster`**
-containing the forum's default persona instead of the full workspace roster:
+### Constants
 
-- **Startup** (`WorkspaceDefinition::load`): resolve
-  `forum.info.default_persona_id` (already validated at load) via
-  `find_persona()` and pass `{*persona}` to `load_forum_definitions()`.
-- **Session open** (`copy_definitions_for()`): resolve
-  `forum_default_persona(forum_id)` — the disk-current value, the same
-  resolution `open_session()` uses for the session's starting persona — and
-  pass that single persona. Prompt persona and session persona therefore
-  always agree.
-- **Fallback path**: if the session-open reload throws, the startup copy is
-  used, embedding the startup-time default persona; the existing
-  "settings from startup" notice already covers this degraded mode.
+Define alongside the existing well-known participant names in
+`src/chat/transcript.h:17` (next to `notice_display_name`):
 
-The `agents/` layer (`load_character_definitions`,
-`append_participant_roster`) is untouched — it already accepts any roster.
-The `## Participants` section simply contains one entry. This matches the
-Entrance forum's existing shape.
+```cpp
+inline constexpr std::string_view null_agent_handle = "-";
+inline constexpr std::string_view null_agent_name   = "-";
+```
 
-### 2. `/!Name`: persist, then reload the forum's live sessions
+They are visible to both the controller and the C++ web layer (which includes
+the transcript header transitively), so those layers do not hard-code the
+literal `"-"`. The React client uses the literal once when interpreting the
+wire value because it cannot share the C++ constant.
 
-Reuse the character-settings reload path so the switch takes effect
-immediately:
+Although the current character validators accept `-`, the sentinel must be
+unambiguous at every construction path. Update `validate_character_id()` and
+`validate_character_display_name_syntax()` (`src/agents/character.cpp`) to
+reject the exact value `-` using these constants. Checking the syntax-level
+display-name validator matters because trusted/built-in construction paths may
+bypass the workspace-only reserved-name check. Existing workspace characters
+named or identified as `-` become invalid with a clear “reserved for the null
+agent” error rather than changing behaviour silently.
 
-1. The owner thread persists the new default persona to `config.toml`
-   (existing behavior). On failure the `persist_default_persona_id` flag is
-   reset and the notice gains `"(not saved)"` — **no reload happens** in that
-   case.
-2. In the input route (`POST /api/v1/input`, `src/web/session_routes.cpp`),
-   when the completed `CommandResult` still carries
-   `persist_default_persona_id` (i.e. the write committed), fan out
-   `request_shutdown(ShutdownReason::reloading)` to all live sessions of that
-   forum — including the current one and any still Starting.
-3. The browser's existing stream recovery reopens each session. Reopen runs
-   `open_session()` → `copy_definitions_for()` → prompts rebuilt with the new
-   persona, and the session starts on that persona. Transcript restores from
-   the journal.
+### 1. Recording a message: `record_monologue`
 
-The fan-out runs on the HTTP route thread, preserving the one-way lock
-relationship (manager → actor; actors never call into the manager).
+A new private helper does the whole job:
 
-### Resulting semantics
+```cpp
+void SessionController::record_monologue(
+    std::string_view author_id, std::string text, ControllerUpdate& update) {
+    if (text.empty()) { update.notice = "Message to @- is empty"; return; }
+    std::optional<EntryIdentity> author = resolve_author(author_id, update);
+    if (!author) return;
+    TranscriptEntry entry = make_human_entry({
+        .id = next_entry_id_++,
+        .author = std::move(*author),
+        .addressed_to = {std::string(null_agent_handle),
+                         std::string(null_agent_name)},
+        .text = std::move(text),
+    });                                   // no request_id
+    journal_.record_entry(entry);         // persist first (see §4)
+    transcript_.add_entry(entry);
+    update.input_consumed = true;
+    update.notice = "";                    // clear any stale frontend notice
+    require_snapshot(update);
+}
+```
 
-- `/!Name` = switch speaker, persist forum default, restart the forum's live
-  sessions. The user sees a brief "Applying settings…" and the conversation
-  continues with agents that carry the new persona's description.
-- Prompt persona, session starting persona, and persisted forum default can
-  never diverge through normal use.
+No `GenerationBatch`, no `ActiveResponse`, no worker thread, no reply. It reuses
+the same human-entry construction the normal path uses (`make_human_entry`,
+`src/chat/transcript.cpp:17`), and the persist-before-transcript order of
+`activate_current_run` (`session_controller.cpp:437`). `addressed_to = -`
+satisfies the addressee-required invariant. The explicit empty-string notice
+clears a previous success or error notice just as normal prompt activation
+does. In recording mode this also clears the mode-switch notice after the first
+recorded message; the composer remains the persistent indication of the mode.
 
-### Edge cases (all follow existing patterns)
+### 2. Two entry points in `submit_prompt`
 
-- **Busy session**: `set_default_persona` already refuses while generating;
-  no persist, no reload. *Sibling* sessions on the forum may be torn down
-  mid-generation — the same accepted tradeoff as character-save reloads.
-- **Re-selecting the current persona**: `set_default_persona` skips the
-  snapshot when `/!Name` names the persona already in effect, so
-  `persist_default_persona_id` stays empty and no persist or reload happens —
-  the confirming notice is still shown. This mirrors the character-settings
-  path, which reloads only when the saved values actually change.
-- **Persist failure**: no reload; session continues with old prompts and the
-  `"(not saved)"` notice.
-- **Sessions opened after the write** read the new config naturally; sessions
-  still Starting are included in the fan-out because they may already have
-  read their definitions (this is why `active_sessions()` exists).
-- **Runtime-only state is lost on reload**: session-scoped `/provider`
-  overrides revert to configuration; in-flight background multicast output is
-  volatile (already documented).
-- **`reloading` reason** outranks `browser_disconnected`, so it reaches the
-  wire and suppresses Retry buttons.
+- **Inline `@- text`.** In the non-empty-handle branch, before
+  `resolve_handle()` (`session_controller.cpp:337`):
+  `if (handle == null_agent_handle) { record_monologue(...); return update; }`.
+- **Default is `-`.** In the empty-handle branch (line 334), before
+  `characters_.find(default_character_id_)`:
+  `if (default_character_id_ == null_agent_handle) { record_monologue(...);
+  return update; }` — so plain messages record while in recording mode instead
+  of hitting the "default character not found" `logic_error` (line 345).
 
-### What does not change
+The existing `busy()` guard and the existing early return for an entirely empty
+plain submission stay in force. Consequently `@-` with no body reaches
+`record_monologue` and reports an empty-message notice, while an empty plain
+submission in recording mode remains the same silent no-op it is in normal
+mode (and the web input layer already discards an empty input before dispatch).
 
-- The controller's runtime persona roster stays the full workspace roster:
-  handle resolution, ambiguity errors, message attribution, and the
-  `/api/v1/personas` endpoints are unaffected.
-- `validate_persona_character_collisions()` still runs against the full
-  roster at startup.
-- `append_participant_roster()` and the `## Participants` section format.
-- `/@Name` (default character): no prompt content depends on it, so no
-  reload — unchanged.
+### 3. `/@-`: session-local recording mode
 
-### Alternatives considered
+- `set_default_character()` (`session_controller.cpp:747`): before
+  `resolve_handle()`, `if (handle == null_agent_handle)` set
+  `default_character_id_ = std::string(null_agent_handle)`, produce a snapshot,
+  and set a notice such as *"Recording to @- — messages are saved to the
+  transcript but not sent to a model. Use /@<name> to resume."*
+- The web layer must **not** persist this. In `text_input.cpp`'s `set_default`
+  case (line 106), guard the persist with
+  `controller.view().default_character_id != null_agent_handle`, so `-` is never
+  written to `config.toml`.
+- Because `-` is never persisted, a reopened session's default comes from
+  `config.toml` as before — a real character. `initialize`'s open-time
+  validation (`session_controller.cpp:222`) never sees `-` and needs no change.
 
-- **Defer roster appending to session open** (assemble prompts without the
-  roster at load, append in `open_session`): removes the fallback-path
-  staleness but splits prompt assembly across `agents/` and `workspace/`,
-  breaking the "session/ decides *which* directories, agents/ decides *how*"
-  boundary. Rejected as more machinery for a marginal gain.
-- **Names for all personas, full text only for the default**: keeps agents
-  aware of other speakers, but other speakers' names already appear via
-  `from <Name>:` prefixes and shared-history JSONL. Rejected as two policies
-  where one suffices.
-- **Rebuild system prompts mid-session on persona switch**: busts provider
-  prompt caches and adds real machinery. Rejected; the reload fan-out
-  achieves the same effect through an existing, tested path.
+### 4. New journal method: `record_entry`
+
+Add to `SessionJournal` (`src/session/session_database.h:100`):
+
+```cpp
+void SessionJournal::record_entry(const TranscriptEntry& entry) {
+    Transaction transaction(impl_->database);
+    insert_entry(impl_->database, current_epoch(impl_->database), entry);
+    transaction.commit();
+}
+```
+
+Mirrors `finish_turn`'s entry write without a turn. `insert_entry` validates
+storability and advances `next_entry_id`; the null `request_id` is exempt from
+`one_prompt_per_turn`. No schema change.
+
+### 5. Webapp: show recording mode
+
+While `default_character_id === '-'` (`Screens.tsx:128`), the composer already
+degrades to "Message character" and the character `<select>` (line 350) has no
+matching option — functional but opaque. Small touch: render the composer
+placeholder as the recording state (e.g. *"Recording — saved, not sent"*) and,
+**only while the current default is `-`**, render a selected option such as
+`<option value="-">Recording</option>`. It exists only to represent the current
+controlled-select value. It is absent for a real default, so the dropdown cannot
+enter recording mode; `/@-` remains the only mode switch. From recording mode,
+choosing any real character follows the existing typed `set_default_character_by_id`
+path, leaves recording mode, and persists that real character normally. No
+sentinel support or persistence guard is added to the typed path.
+
+## Resulting semantics
+
+- `@- <text>` records one message and returns immediately, no reply.
+- `/@-` enters recording mode for the session; every plain message is recorded
+  the same way until `/@<name>` or the character selector switches back. The
+  real character selected on exit is persisted exactly as it is today. The
+  temporary `-` default is not saved; the recorded transcript entries are.
+- To a real character addressed later, each recorded message appears inside the
+  `Shared chat history (JSONL):` block as
+  `{"kind":"human","speaker":"<persona>","addressed_to":"-","text":"…"}` —
+  shared context, never a first-person prompt. This is the "part of the shared
+  conversation, not addressed to a specific character" behaviour, straight out
+  of the existing projection.
+- Recorded entries persist and restore like any other; a reopened session shows
+  them and still feeds them to the next character.
+
+## Edge cases
+
+- **Generating.** `record_monologue` keeps the `busy()` guard; no recording
+  while a reply streams.
+- **Empty message.** `@-` alone is a notice, not an entry. An empty plain input
+  in recording mode is a silent no-op, matching normal mode and the web input
+  layer's existing empty-input handling.
+- **`/info` / `/characters` while recording.** `format_characters_notice`
+  (`session_controller.cpp:733`) marks the default with `*` by matching a
+  backend id; `-` matches none, so nothing is marked. Harmless; an optional
+  "(recording)" note could be added.
+- **Stored addressee.** A recorded message renders as a normal human message;
+  its snapshot and model-context data retain `addressed_to = -`. Optional later
+  polish: `encode_shared_entry` (`src/agents/model_context.cpp:15`) could omit
+  `addressed_to` for the null agent so the JSONL reads as pure ambient talk.
+- **`/mcast`, multicast.** Unchanged; `-` is not a resolvable character, so a
+  stray `-` there falls through to the existing "unknown character" notice.
+
+## What does not change
+
+- The `@@` literal-at escape (`src/web/text_mention.cpp:16`) — the reason `-`
+  was chosen.
+- Command grammar (`src/web/text_command.cpp` already parses `/@-`), the
+  generation executor, `ForumCharacters`, model backends, `runtime_info`. `-`
+  never becomes a member and never acquires a backend.
+- `config.toml` semantics and open-time default validation
+  (`session_controller.cpp:222`): only real characters are ever persisted, so
+  a stored default is always resolvable.
+- `to_snapshot` / the SSE broadcast: a recorded entry is an ordinary human
+  entry and flows through the existing snapshot path.
+
+## Alternatives considered
+
+- **`/@-` persisted like `/@Name`.** Would make `-` a forum's saved default so
+  every new session starts in recording mode — a legitimate "journaling forum"
+  use — but requires open-time validation and the UI to represent a
+  null-agent default, and risks a forum left silently in recording mode.
+  Deferred; **session-local chosen**, matching the session-scoped `/provider`
+  and `/style` precedent with far less plumbing.
+- **`-` as a real `ForumCharacters` member with a dummy backend.** Would force
+  a fake entry through `runtime_info`, `format_characters_notice`, and the
+  executor — machinery for a participant that never generates. Rejected;
+  contradicts the smallest-change rule.
+- **A hidden `"Ok."` reply to keep request/response pairs.** The original
+  instinct, based on the belief that models require alternation. They do not
+  (projection is per-entry; shared history already emits consecutive same-role
+  messages), the DB does not (null-`request_id` entries are legal), and a real
+  `"Ok."` would pollute the next character's shared history with junk. Rejected
+  — no reply is created at all.

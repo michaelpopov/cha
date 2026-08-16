@@ -15,7 +15,7 @@ project.
 | `ids.h` | `ForumId`, `CharacterId`, and `SessionId` aliases used across workspace, generation, session, and web boundaries. |
 | `character.*` | Discovery-safe `CharacterMetadata`, including the closed appearance vocabulary used by frontends. |
 | `persona.h` | `Persona` and the immutable/shared roster forms used for human authorship and prompt context. |
-| `transcript.h` | Entry and request IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, the non-owning `TranscriptView`, `ModelHistory`, and the `Transcript` container. |
+| `transcript.h` | Entry and request IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, the non-owning `TranscriptView`, `ModelHistory`, the reserved null-target `-` handle/name constants, and the `Transcript` container. |
 | `transcript.cpp` | Factory construction, validation rules, and live-state mutation and read operations. |
 
 ## The entry model

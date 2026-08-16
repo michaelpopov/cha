@@ -17,6 +17,12 @@ using ParticipantId = std::string;
 inline constexpr std::string_view notice_display_name = "System";
 inline constexpr std::string_view error_display_name = "Error";
 
+// The reserved null-target sentinel: a human message addressed to it is
+// recorded in the transcript without any model call or reply. No real
+// character may claim it as ID or display name.
+inline constexpr std::string_view null_agent_handle = "-";
+inline constexpr std::string_view null_agent_name = "-";
+
 // The stored identity of the party who authored or received a transcript entry.
 struct EntryIdentity {
     ParticipantId id;

@@ -496,6 +496,42 @@ TEST(SessionJournal, ReplaysIdentifiedTypedTurnOutcomes) {
     std::filesystem::remove(path);
 }
 
+TEST(TranscriptValidation, AcceptsAHumanEntryAddressedToTheNullAgentWithoutATurn) {
+    const TranscriptEntry monologue =
+        test::human_entry(1, {"human", "You"}, {"-", "-"}, "Thinking out loud");
+    EXPECT_EQ(monologue.addressed_to, null_agent_handle);
+    EXPECT_FALSE(monologue.request_id.has_value());
+    EXPECT_NO_THROW(validate_transcript_entry(monologue));
+    EXPECT_NO_THROW(require_storable_transcript_entry(monologue));
+
+    Transcript transcript;
+    EXPECT_NO_THROW(transcript.add_entry(monologue));
+}
+
+TEST(SessionJournal, RecordsATurnlessEntryForTheNullAgent) {
+    const auto path = temporary_path("cha_record_entry_journal_");
+    create_test_database(path);
+    auto journal = std::make_unique<SessionJournal>(path);
+    const TranscriptEntry monologue =
+        test::human_entry(1, {"human", "You"}, {"-", "-"}, "Thinking out loud");
+    journal->record_entry(monologue);
+
+    const SessionRestore restored = load_session_state(path);
+    EXPECT_TRUE(restored.interrupted_turns.empty());
+    EXPECT_EQ(restored.next_entry_id, 2U);
+    EXPECT_EQ(restored.next_request_id, 1U);
+    expect_entries(restored.entries, {monologue});
+    EXPECT_FALSE(restored.entries.front().request_id.has_value());
+
+    // A later ordinary turn continues after the recorded entry.
+    journal->start_turn(1, human(2, "Question", 1));
+    expect_entries(
+        load_transcript_entries(path),
+        {monologue, human(2, "Question", 1)});
+    journal.reset();
+    std::filesystem::remove(path);
+}
+
 TEST(SessionJournal, RejectsEntriesThatDoNotMatchTheirTurnRecords) {
     const auto path = temporary_path("cha_invalid_turn_entry_");
     create_test_database(path);

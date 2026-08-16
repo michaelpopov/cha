@@ -127,6 +127,7 @@ export function ChatScreen({
   const character = snapshot?.characters.find(
     ({ id }) => id === state.currentDefaultCharacterId,
   ) ?? state.bootstrap?.characters.find(({ id }) => id === state.currentDefaultCharacterId);
+  const recording = state.currentDefaultCharacterId === '-';
   const ended = snapshot && snapshot.lifecycle !== 'running' ? endedMessage(snapshot) : null;
   const connected = state.streamStatus === 'connected' && snapshot !== null && !ended;
   const generationActive = generation?.active === true;
@@ -349,6 +350,7 @@ export function ChatScreen({
               onChange={(event) => void chooseTarget(event.target.value)}
               value={state.currentDefaultCharacterId ?? ''}
             >
+              {recording && <option value="-">Recording</option>}
               {snapshot?.characters.map((member) => (
                 <option key={member.id} value={member.id}>{member.display_name}</option>
               ))}
@@ -360,7 +362,9 @@ export function ChatScreen({
             disabled={!sessionAvailable}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={submitOnEnter}
-            placeholder={`Message ${character?.display_name ?? 'character'}`}
+            placeholder={recording
+              ? 'Recording — saved, not sent'
+              : `Message ${character?.display_name ?? 'character'}`}
             ref={composerInput}
             rows={1}
             value={draft}
@@ -380,7 +384,7 @@ export function ChatScreen({
         <div className="cha-chat-status" aria-label="Current chat context">
           <span>{forum?.display_name ?? 'Unknown forum'}</span>
           <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
-          <span>To: {character?.display_name ?? 'Unknown character'}</span>
+          <span>To: {recording ? 'Recording' : (character?.display_name ?? 'Unknown character')}</span>
         </div>
       </div>
     </section>

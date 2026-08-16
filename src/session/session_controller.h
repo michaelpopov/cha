@@ -177,6 +177,13 @@ private:
     [[nodiscard]] std::optional<EntryIdentity> resolve_author(
         std::string_view author_id,
         ControllerUpdate& update) const;
+    // Records one human message addressed to the reserved null target `-`:
+    // persisted and shown like any other message, but no model is called and
+    // no reply is produced.
+    void record_monologue(
+        std::string_view author_id,
+        std::string text,
+        ControllerUpdate& update);
     void start_batch(
         EntryIdentity author,
         std::string text,

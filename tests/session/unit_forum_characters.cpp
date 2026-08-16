@@ -73,6 +73,21 @@ TEST(ForumCharacters, RejectsAmbiguousPrefixAndUnusableNames) {
         std::invalid_argument);
 }
 
+TEST(ForumCharacters, ReservesTheNullAgentSentinelForEveryConstructionPath) {
+    // `-` is the null-target sentinel: no character may claim it as ID or
+    // display name, including through the trusted syntax-only path.
+    EXPECT_THROW(ForumCharacters({character("-", "Dash")}), std::invalid_argument);
+    EXPECT_THROW(ForumCharacters({character("dash", "-")}), std::invalid_argument);
+    EXPECT_THROW(ForumCharacters({character("-", "Dash")}, true), std::invalid_argument);
+    EXPECT_THROW(ForumCharacters({character("dash", "-")}, true), std::invalid_argument);
+    try {
+        (void)ForumCharacters({character("dash", "-")});
+        FAIL() << "Expected the reserved sentinel to be rejected";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_NE(std::string(error.what()).find("null agent"), std::string::npos);
+    }
+}
+
 TEST(ForumCharacters, RejectsDuplicateAndInvalidCharacterIdentity) {
     EXPECT_THROW(ForumCharacters(std::vector<CharacterMetadata>{}), std::invalid_argument);
     EXPECT_THROW(

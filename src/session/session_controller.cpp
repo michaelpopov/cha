@@ -318,6 +318,32 @@ std::optional<EntryIdentity> SessionController::resolve_author(
     return EntryIdentity{author->id, author->display_name};
 }
 
+void SessionController::record_monologue(
+    std::string_view author_id,
+    std::string text,
+    ControllerUpdate& update) {
+    if (text.empty()) {
+        update.notice = "Message to @- is empty";
+        return;
+    }
+    std::optional<EntryIdentity> author = resolve_author(author_id, update);
+    if (!author) return;
+    TranscriptEntry entry = make_human_entry({
+        .id = next_entry_id_++,
+        .author = std::move(*author),
+        .addressed_to = {std::string(null_agent_handle),
+                         std::string(null_agent_name)},
+        .text = std::move(text),
+    });
+    persist(
+        "record a message addressed to @-",
+        [this, &entry] { journal_.record_entry(entry); });
+    transcript_.add_entry(entry);
+    update.input_consumed = true;
+    update.notice = "";
+    require_snapshot(update);
+}
+
 ControllerUpdate SessionController::submit_prompt(
     std::string_view author_id,
     std::string text,
@@ -332,8 +358,16 @@ ControllerUpdate SessionController::submit_prompt(
     ControllerUpdate update;
     const CharacterMetadata* target = nullptr;
     if (handle.empty()) {
+        if (default_character_id_ == null_agent_handle) {
+            record_monologue(author_id, std::move(text), update);
+            return update;
+        }
         target = characters_.find(default_character_id_);
     } else {
+        if (handle == null_agent_handle) {
+            record_monologue(author_id, std::move(text), update);
+            return update;
+        }
         const HandleResolution resolution = characters_.resolve_handle(handle);
         if (resolution.match != HandleMatch::resolved) {
             update.notice = format_handle_resolution_notice(
@@ -744,6 +778,14 @@ ControllerUpdate SessionController::set_default_character(std::string_view handl
         update.notice = "Usage: /@CharacterName";
         return update;
     }
+    if (handle == null_agent_handle) {
+        default_character_id_ = std::string(null_agent_handle);
+        require_snapshot(update);
+        update.notice =
+            "Recording to @- — messages are saved to the transcript but not"
+            " sent to a model. Use /@<name> to resume.";
+        return update;
+    }
     const HandleResolution result = characters_.resolve_handle(handle);
     if (result.match != HandleMatch::resolved) {
         update.notice = format_handle_resolution_notice(handle, result, characters_);
@@ -813,7 +855,12 @@ ControllerUpdate SessionController::set_session_provider(std::string_view name) 
         return busy_notice();
     }
     ControllerUpdate update{.input_consumed = true};
-    // Validated against the roster at initialize() and on every default
+    if (default_character_id_ == null_agent_handle) {
+        update.notice =
+            "No character is selected while recording. Use /@<name> to resume.";
+        return update;
+    }
+    // Validated against the roster at initialize() and on every real default
     // change, so the current default always resolves.
     const CharacterMetadata* character = characters_.find(default_character_id_);
     if (!provider_resolver_) {
@@ -873,8 +920,13 @@ ControllerUpdate SessionController::set_session_style(std::string_view name) {
     // rejects the command mid-generation, matching /provider's user-visible
     // behavior without a rule here.
     ControllerUpdate update{.input_consumed = true};
-    // Validated against the roster at initialize() and on every default change,
-    // so the current default always resolves.
+    if (default_character_id_ == null_agent_handle) {
+        update.notice =
+            "No character is selected while recording. Use /@<name> to resume.";
+        return update;
+    }
+    // Validated against the roster at initialize() and on every real default
+    // change, so the current default always resolves.
     const CharacterMetadata* character = characters_.find(default_character_id_);
     if (!style_resolver_) {
         update.notice = "Style override is not available in this session.";

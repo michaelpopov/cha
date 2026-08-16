@@ -15,7 +15,7 @@ web frontend and tests drive the same code.
 | `session_archive.*` | Move one session file into `deleted/` without ever replacing what is already there, including the hard-link fallback for mounts that reject a no-replace rename. |
 | `stored_session.h` | `StoredSession`: one unleased observation of a stored database — identity, label, path, timestamp, and validation error. |
 | `session_lease.*` | Acquire and own the cross-process companion-file lock for one live session. |
-| `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`. |
+| `session_database.*` | Create and validate a session database, restore a transcript, and journal turn transitions through `SessionJournal`, including the turn-less `record_entry` used for null-target monologues. |
 | `forum_characters.*` | The ordered character identities in a forum, including validation, lookup, handle resolution, and the wording of every session notice built from them. |
 | `session_identity.h` / `opened_session.h` | Stable `SessionIdentity`, presentation-safe `SessionDescriptor`, and the owner-thread-only `OpenedSession` result. |
 | `controller_update.h/.cpp` | The transport-neutral outcome of one controller operation: the `ControllerStateUpdate` variant, its text targets and owning append, `ControllerUpdate`, the bounded event-drain result, and the one merge rule. |
@@ -387,6 +387,14 @@ never tells a widget to clear itself or to navigate away.
 | `request_stop()` | Calls `GenerationBatch::cancel()` and starts non-blocking cleanup while retaining the foreground event channel, or says there is no active generation. It never waits for an execution. | Immediate stopping notice, followed by the final stop notice after cleanup. |
 | `receive_events(max_events)` | Boundedly drains the foreground channel, advances to already-buffered children in the same controller turn, and polls abort cleanup. | Merged semantic changes; after shutdown drains its batch, `session_ended` is true. |
 | `shutdown()` | Cancels the batch and waits until no execution can reach a backend, commits the retained foreground terminal state, releases the batch, then joins the session pool — including on the persistence-exception path. | — |
+
+The reserved null target `-` is not a forum character: `submit_prompt` with
+handle `-`, or any plain prompt while `default_character_id_` is `-`, records a
+human entry with no turn through `SessionJournal::record_entry` and starts no
+generation, and `set_default_character("-")` switches to that recording mode
+session-scoped only (like `/provider`), so the web layer never persists `-` as
+the forum default. A recorded entry later projects into another character's
+model context as shared history.
 
 Every command except `request_stop()` and `receive_events()` is refused while a turn or
 multicast is active, with the shared in-progress notice. Session notices —

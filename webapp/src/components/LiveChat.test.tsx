@@ -368,6 +368,45 @@ describe('live chat', () => {
     expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Guide');
   });
 
+  it('shows the recording state while the default is the null target', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const setDefaultCharacter = vi.fn(async () => ({ clear_input: false }));
+    const snapshot: SessionSnapshot = {
+      ...snapshotFixture,
+      characters: bootstrapFixture.characters,
+      default_character_id: '-',
+    };
+    render(
+      <App
+        client={fixtureClient({ setDefaultCharacter })}
+        connectSessionEvents={events.connect}
+      />,
+    );
+    await attachInitial(events, snapshot);
+
+    const chooser = screen.getByRole('combobox', { name: 'Choose target character' });
+    expect(chooser).toHaveValue('-');
+    expect(within(chooser).getByRole('option', { name: 'Recording' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Message' }))
+      .toHaveAttribute('placeholder', 'Recording — saved, not sent');
+    expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Recording');
+
+    // Choosing a real character leaves recording mode through the typed setter.
+    await user.selectOptions(chooser, 'guide');
+    await waitFor(() => expect(setDefaultCharacter).toHaveBeenCalledWith(
+      'entrance', 'welcome', 'guide',
+    ));
+
+    // With a real default the sentinel option is absent again.
+    act(() => events.handlers[0].onSnapshot({ ...snapshot, default_character_id: 'guide' }));
+    await waitFor(() => expect(chooser).toHaveValue('guide'));
+    expect(within(chooser).queryByRole('option', { name: 'Recording' })).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Message' }))
+      .toHaveAttribute('placeholder', 'Message Guide');
+    expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Guide');
+  });
+
   it('follows new text only while the reader is at the end of the transcript', async () => {
     const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {

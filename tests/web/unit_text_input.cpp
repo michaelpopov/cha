@@ -216,6 +216,45 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
     controller->shutdown();
 }
 
+TEST(TextInput, RecordsNullAgentMessagesAndNeverPersistsTheSentinelDefault) {
+    TemporaryTextSession temporary;
+    auto controller = test::from_definitions_for_testing(
+        std::vector<CharacterDefinition>{definition()},
+        temporary.path,
+        notifier());
+
+    // `@- text` records one message with no reply and clears the input.
+    const CommandResult recorded =
+        handle_text_input(*controller, "operator", "@- thinking out loud");
+    EXPECT_TRUE(recorded.clear_input);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
+    EXPECT_EQ(
+        controller->view().transcript.entries.front().addressed_to, "-");
+    EXPECT_EQ(
+        controller->view().transcript.entries.front().text,
+        "thinking out loud");
+
+    // `/@-` enters session-local recording mode; `-` is not persisted.
+    const CommandResult mode =
+        handle_text_input(*controller, "operator", "/@-");
+    EXPECT_TRUE(mode.clear_input);
+    EXPECT_FALSE(mode.persist_default_character_id.has_value());
+    ASSERT_TRUE(mode.session.notice);
+    EXPECT_NE(mode.session.notice->find("Recording"), std::string::npos);
+
+    // Plain messages record while the mode is active.
+    const CommandResult plain =
+        handle_text_input(*controller, "operator", "another thought");
+    EXPECT_TRUE(plain.clear_input);
+    EXPECT_EQ(controller->view().transcript.entries.size(), 2U);
+
+    // Switching back to a real character persists it exactly as before.
+    const CommandResult resumed =
+        handle_text_input(*controller, "operator", "/@Guide");
+    EXPECT_EQ(resumed.persist_default_character_id, "guide-id");
+    controller->shutdown();
+}
+
 TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
     TemporaryTextSession ordinary_temporary;
     auto ordinary_controller = test::from_backends_for_testing(

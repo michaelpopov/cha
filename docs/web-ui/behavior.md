@@ -93,6 +93,13 @@ Selecting a character calls the default-character action; the `To` status does
 not change until an authoritative snapshot or event confirms the new
 `default_character_id`.
 
+A message sent as `@- …`, or any plain message while the session is in
+recording mode (entered with `/@-`), is saved to the transcript as an ordinary
+human entry addressed to `-` with no reply. While `default_character_id` is
+`-`, the composer placeholder reads `Recording — saved, not sent` and the
+target chooser shows a selected `Recording` option in place of a character;
+choosing a real character leaves recording mode.
+
 The trailing composer action is Send while generation is inactive. While
 `generation.active` is true, the same location and button become Stop with a
 square icon. Stop requests cancellation and remains visible until authoritative

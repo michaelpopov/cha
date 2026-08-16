@@ -358,6 +358,28 @@ ModelHistory lobby_transcript() {
     };
 }
 
+TEST(ModelContext, ProjectsNullAgentMonologueAsConsecutiveSharedHistory) {
+    const ModelHistory transcript{
+        .entries = {
+            test::human_entry(1, {"you", "You"}, {"-", "-"}, "First thought"),
+            test::human_entry(2, {"you", "You"}, {"-", "-"}, "Second thought"),
+        },
+    };
+
+    // Messages recorded against the null target are never first-person
+    // prompts; they land in one shared-history block for any character.
+    EXPECT_EQ(
+        context(transcript, "Cheburashka system", "cheburashka"),
+        (std::vector<ModelMessage>{
+            {ModelRole::system, "Cheburashka system"},
+            {ModelRole::persona,
+             "Shared chat history (JSONL):\n"
+             R"({"kind":"human","speaker":"You","addressed_to":"-","text":"First thought"})"
+             "\n"
+             R"({"kind":"human","speaker":"You","addressed_to":"-","text":"Second thought"})"},
+        }));
+}
+
 TEST(ModelContext, ProjectsTheSharedTranscriptForTheAddressedCharacter) {
     EXPECT_EQ(
         context(lobby_transcript(), "Cheburashka system", "cheburashka"),
