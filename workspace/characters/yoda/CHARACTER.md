@@ -1,5 +1,5 @@
 $$(../character-voice.md)
 
 <character_profile>
-$$(../YODA.md)
+$$(YODA.md)
 </character_profile>
