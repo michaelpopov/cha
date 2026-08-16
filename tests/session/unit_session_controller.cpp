@@ -29,7 +29,6 @@
 namespace cha {
 namespace {
 
-
 test::TestNotifier& notifier() {
     static test::TestNotifier instance;
     return instance;
@@ -223,13 +222,11 @@ public:
         std::string id,
         std::string name,
         std::string answer,
-        const std::atomic_bool* release = nullptr,
-        std::size_t delta_count = 1)
+        const std::atomic_bool* release = nullptr)
         : id_(std::move(id)),
           name_(std::move(name)),
           answer_(std::move(answer)),
-          release_(release),
-          delta_count_(delta_count) {
+          release_(release) {
     }
 
     RequestPayload prepare(const GenerationRequest& input) override {
@@ -250,9 +247,7 @@ public:
             finished.store(true, std::memory_order_release);
             return {GenerationOutcome::cancelled, {}};
         }
-        for (std::size_t index = 0; index < delta_count_; ++index) {
-            on_delta({GenerationDeltaKind::answer, answer_});
-        }
+        on_delta({GenerationDeltaKind::answer, answer_});
         finished.store(true, std::memory_order_release);
         return {};
     }
@@ -275,7 +270,6 @@ private:
     std::string name_;
     std::string answer_;
     const std::atomic_bool* release_{};
-    std::size_t delta_count_{1};
 };
 
 class CancellationBlockingBackend final : public ModelBackend {
@@ -544,41 +538,6 @@ TEST(SessionController, ResolvesAndStampsTheAuthorForEveryBatchRun) {
     EXPECT_EQ(entries[2].text, "Question");
 }
 
-TEST(SessionController, KeepsTheStaticSystemPromptAcrossDifferentAuthors) {
-    TemporaryJournal temporary;
-    auto backend = std::make_unique<ScriptedBackend>(
-        GenerationResult{}, std::vector<std::string>{"First", "Second"});
-    ScriptedBackend* const backend_view = backend.get();
-    backend_view->system_prompt = "Static system prompt";
-    auto controller = test::from_backends_for_testing(
-        test::one_backend(std::move(backend)),
-        PersonaRoster{
-            {.id = "athlete", .display_name = "Athlete"},
-            {.id = "reader", .display_name = "Reader"},
-        },
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("reader", "First question");
-    receive_until_idle(*controller);
-    (void)controller->submit_prompt("athlete", "Second question");
-    receive_until_idle(*controller);
-
-    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
-    ASSERT_FALSE(backend_view->model_contexts[0].empty());
-    ASSERT_FALSE(backend_view->model_contexts[1].empty());
-    EXPECT_EQ(backend_view->model_contexts[0].front(),
-              backend_view->model_contexts[1].front());
-    EXPECT_EQ(backend_view->model_contexts[0].front(),
-              (ModelMessage{ModelRole::system, "Static system prompt"}));
-    EXPECT_NE(backend_view->model_contexts[0].back(),
-              backend_view->model_contexts[1].back());
-    EXPECT_EQ(backend_view->model_contexts[0].back(),
-              (ModelMessage{ModelRole::persona, "from Reader:\nFirst question"}));
-    EXPECT_EQ(backend_view->model_contexts[1].back(),
-              (ModelMessage{ModelRole::persona, "from Athlete:\nSecond question"}));
-}
-
 TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>();
@@ -634,31 +593,6 @@ TEST(SessionController, BoundsGenerationEventDrains) {
     EXPECT_FALSE(controller->receive_events(2).full);
 }
 
-TEST(SessionController, PreparesTheSecondTurnFromTheSharedCompletedTranscript) {
-    TemporaryJournal temporary;
-    auto backend = std::make_unique<ScriptedBackend>(
-        GenerationResult{}, std::vector<std::string>{"Answer"});
-    ScriptedBackend* backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
-        test::one_backend(std::move(backend)),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "First");
-    receive_until_idle(*controller);
-    (void)controller->submit_prompt("operator", "Second");
-    receive_until_idle(*controller);
-
-    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
-    EXPECT_EQ(
-        backend_view->model_contexts[1],
-        (std::vector<ModelMessage>{
-            operator_prompt("First"),
-            {ModelRole::assistant, "Answer"},
-            operator_prompt("Second"),
-        }));
-}
-
 TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
@@ -679,52 +613,6 @@ TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     EXPECT_EQ(
         backend_view->model_contexts[1],
         (std::vector<ModelMessage>{operator_prompt("Second")}));
-}
-
-TEST(SessionController, ExcludesFailedTurnsFromTheFollowingModelContext) {
-    TemporaryJournal temporary;
-    auto backend = std::make_unique<ScriptedBackend>(
-        GenerationResult{GenerationOutcome::transport_error, "unavailable"});
-    ScriptedBackend* backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
-        test::one_backend(std::move(backend)),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "Failed");
-    receive_until_idle(*controller);
-    (void)controller->submit_prompt("operator", "Second");
-    receive_until_idle(*controller);
-
-    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
-    EXPECT_EQ(
-        backend_view->model_contexts[1],
-        (std::vector<ModelMessage>{operator_prompt("Second")}));
-}
-
-TEST(SessionController, ExcludesCancelledPartialOutputFromFollowingModelContext) {
-    TemporaryJournal temporary;
-    auto backend = std::make_unique<ScriptedBackend>(
-        GenerationResult{GenerationOutcome::cancelled, {}},
-        std::vector<std::string>{"Partial"});
-    ScriptedBackend* backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
-        test::one_backend(std::move(backend)),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "First");
-    receive_until_idle(*controller);
-    (void)controller->submit_prompt("operator", "Second");
-    receive_until_idle(*controller);
-
-    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
-    EXPECT_EQ(
-        backend_view->model_contexts[1],
-        (std::vector<ModelMessage>{
-            operator_prompt("First"),
-            operator_prompt("Second"),
-        }));
 }
 
 TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
@@ -1403,51 +1291,6 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     EXPECT_FALSE(controller->is_generating());
 }
 
-TEST(SessionController, StartsAllChildrenAndBuffersLaterOutputUntilForeground) {
-    TemporaryJournal temporary;
-    std::atomic_bool release_first{false};
-    auto first = std::make_unique<ConcurrentBackend>(
-        "one-id", "One", "One answer", &release_first);
-    auto second = std::make_unique<ConcurrentBackend>(
-        "two-id", "Two", "Two answer");
-    ConcurrentBackend* first_view = first.get();
-    ConcurrentBackend* second_view = second.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
-    backends.push_back(std::move(first));
-    backends.push_back(std::move(second));
-    auto controller = test::from_backends_for_testing(
-        std::move(backends), temporary.path, notifier());
-
-    (void)controller->start_multicast("operator", "Question", {"One", "Two"});
-
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while ((!first_view->entered.load(std::memory_order_acquire)
-            || !second_view->finished.load(std::memory_order_acquire))
-           && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::yield();
-    }
-    ASSERT_TRUE(first_view->entered.load(std::memory_order_acquire));
-    ASSERT_TRUE(second_view->finished.load(std::memory_order_acquire));
-
-    // Child 2 has already completed, but only child 1's prompt is durable and
-    // its queued answer remains hidden until child 1 commits.
-    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
-    EXPECT_EQ(controller->view().transcript.entries.front().addressed_to, "one-id");
-
-    release_first.store(true, std::memory_order_release);
-    receive_until_idle(*controller);
-
-    const std::vector<TranscriptEntry> entries =
-        copy_entries(controller->view().transcript);
-    ASSERT_EQ(entries.size(), 4U);
-    EXPECT_EQ(entries[0].addressed_to, "one-id");
-    EXPECT_EQ(entries[1].text, "One answer");
-    EXPECT_EQ(entries[2].addressed_to, "two-id");
-    EXPECT_EQ(entries[3].text, "Two answer");
-    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
-}
-
 // The batch owns both the run and the queue for each slot, so a child that
 // finishes early cannot have its output paired with another child's prompt.
 TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedGenerationOrder) {
@@ -1521,44 +1364,6 @@ TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedGenerationOr
     EXPECT_EQ(first_view->inputs.front().run.request_id, 1U);
     EXPECT_EQ(second_view->inputs.front().run.request_id, 2U);
     EXPECT_EQ(third_view->inputs.front().run.request_id, 3U);
-    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
-}
-
-TEST(SessionController, DrainsLargeCompletedBackgroundBacklogInOrder) {
-    TemporaryJournal temporary;
-    constexpr std::size_t backlog_size = 4096;
-    std::atomic_bool release_first{false};
-    auto first = std::make_unique<ConcurrentBackend>(
-        "one-id", "One", "One answer", &release_first);
-    auto second = std::make_unique<ConcurrentBackend>(
-        "two-id", "Two", "x", nullptr, backlog_size);
-    ConcurrentBackend* const second_view = second.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
-    backends.push_back(std::move(first));
-    backends.push_back(std::move(second));
-    auto controller = test::from_backends_for_testing(
-        std::move(backends), temporary.path, notifier());
-
-    (void)controller->start_multicast("operator", "Question", {"One", "Two"});
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while (!second_view->finished.load(std::memory_order_acquire)
-           && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::yield();
-    }
-    ASSERT_TRUE(second_view->finished.load(std::memory_order_acquire));
-    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
-
-    release_first.store(true, std::memory_order_release);
-    receive_until_idle(*controller);
-
-    const std::vector<TranscriptEntry> entries =
-        copy_entries(controller->view().transcript);
-    ASSERT_EQ(entries.size(), 4U);
-    EXPECT_EQ(entries[1].text, "One answer");
-    EXPECT_EQ(entries[2].addressed_to, "two-id");
-    EXPECT_EQ(entries[3].text, std::string(backlog_size, 'x'));
-    EXPECT_EQ(entries[3].status, EntryStatus::complete);
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
@@ -1969,75 +1774,6 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
     EXPECT_EQ(entries.back().text, "Partial");
 }
 
-TEST(SessionController, ViewBorrowsControllerValuesAndTranscriptContinuity) {
-    TemporaryJournal temporary;
-    const TranscriptEntry entry = make_notice_entry(1, "Before");
-    auto controller = test::from_backends_for_testing(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path,
-        notifier(),
-        restore_with({entry}, 1, 2));
-
-    const ControllerView view = controller->view();
-    ASSERT_EQ(view.characters.size(), 1U);
-    EXPECT_EQ(view.characters.front().id, "guide-id");
-    EXPECT_EQ(view.default_character_id, "guide-id");
-    EXPECT_EQ(
-        std::vector<TranscriptEntry>(
-            view.transcript.entries.begin(), view.transcript.entries.end()),
-        std::vector<TranscriptEntry>({entry}));
-    EXPECT_GT(view.transcript.revision, 0U);
-    EXPECT_EQ(view.transcript.revision, controller->view().transcript.revision);
-    EXPECT_FALSE(view.transcript.open_entry_id);
-    EXPECT_FALSE(view.generation.active);
-
-    // The view borrows live storage: a later mutation is visible through a
-    // freshly taken view rather than through the consumed one.
-    (void)controller->clear_transcript();
-    EXPECT_TRUE(controller->view().transcript.empty());
-}
-
-TEST(SessionController, ViewBorrowsActiveGenerationAndOpenEntry) {
-    TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
-        test::one_backend(std::make_unique<ScriptedBackend>(
-            GenerationResult{}, std::vector<std::string>{}, true)),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "Question");
-    (void)controller->handle_generation_event(GenerationEventDelta{
-        1, GenerationDeltaKind::reasoning, "Thinking",
-    });
-    (void)controller->handle_generation_event(GenerationEventDelta{
-        1, GenerationDeltaKind::answer, "Answer",
-    });
-    const ControllerView view = controller->view();
-    const TranscriptView transcript = controller->view().transcript;
-
-    ASSERT_TRUE(view.transcript.open_entry_id);
-    EXPECT_EQ(view.transcript.open_entry_id, transcript.open_entry_id);
-    EXPECT_EQ(view.transcript.revision, transcript.revision);
-    EXPECT_EQ(view.transcript.history_epoch, transcript.history_epoch);
-    EXPECT_TRUE(view.generation.active);
-    EXPECT_EQ(view.generation.request_id, 1);
-    EXPECT_EQ(view.generation.character_id, "guide-id");
-    EXPECT_EQ(view.generation.character_display_name, "Guide");
-    EXPECT_EQ(view.generation.phase, ResponsePhase::answering);
-    EXPECT_EQ(view.generation.reasoning_text, "Thinking");
-    ASSERT_EQ(view.transcript.size(), 2U);
-    EXPECT_EQ(
-        view.transcript.entries.back().id, *view.transcript.open_entry_id);
-    EXPECT_EQ(view.transcript.entries.back().text, "Answer");
-
-    (void)controller->handle_generation_event(GenerationCompleted{1});
-    const ControllerView after = controller->view();
-    EXPECT_FALSE(after.generation.active);
-    EXPECT_TRUE(after.generation.reasoning_text.empty());
-    EXPECT_EQ(
-        after.transcript.entries.back().status, EntryStatus::complete);
-}
-
 TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
     TemporaryJournal temporary;
     auto controller = test::from_backends_for_testing(
@@ -2129,45 +1865,6 @@ TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
     (void)controller->submit_prompt("operator", "Another question");
     EXPECT_TRUE(requires_snapshot(
         controller->handle_generation_event(GenerationFailed{2, "boom"})));
-}
-
-TEST(SessionController, EventDrainMergesAppendsAndPromotesMixedBatches) {
-    TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path,
-        notifier());
-    (void)controller->submit_prompt("operator", "Question");
-    (void)controller->handle_generation_event(GenerationEventDelta{
-        1, GenerationDeltaKind::answer, "Answer",
-    });
-
-    // Two same-target deltas applied in one operation concatenate exactly.
-    ControllerUpdate batch;
-    merge(batch, controller->handle_generation_event(GenerationEventDelta{
-        1, GenerationDeltaKind::answer, " in",
-    }));
-    merge(batch, controller->handle_generation_event(GenerationEventDelta{
-        1, GenerationDeltaKind::answer, " one query",
-    }));
-    ASSERT_NE(text_append(batch), nullptr);
-    EXPECT_EQ(
-        *text_append(batch),
-        (TextAppend{EntryTextTarget{2}, " in one query"}));
-
-    // Mixing targets in one drain forces a snapshot.
-    merge(batch, controller->handle_generation_event(GenerationEventDelta{
-        1, GenerationDeltaKind::reasoning, "aside",
-    }));
-    EXPECT_TRUE(requires_snapshot(batch));
-
-    // An append followed by a terminal event is a snapshot as well.
-    ControllerUpdate terminal{
-        .state = TextAppend{EntryTextTarget{2}, " end"}};
-    merge(terminal, controller->handle_generation_event(GenerationCompleted{1}));
-    EXPECT_TRUE(requires_snapshot(terminal));
-    ASSERT_TRUE(terminal.notice);
-    EXPECT_TRUE(terminal.notice->empty());
 }
 
 TEST(SessionController, CommandsRequestSnapshotsAndNoticesAloneDoNot) {

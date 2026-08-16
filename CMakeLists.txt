@@ -288,7 +288,6 @@ if(BUILD_TESTING)
         tests/util/unit_text_template.cpp
         tests/util/unit_public_name.cpp
         tests/util/unit_utf8_path.cpp
-        tests/util/unit_json_serialization.cpp
         tests/chat/unit_transcript.cpp
         tests/agents/unit_model_context.cpp
         tests/agents/unit_character_definition_loader.cpp

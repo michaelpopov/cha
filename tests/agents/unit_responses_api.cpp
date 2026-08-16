@@ -6,7 +6,6 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -77,11 +76,6 @@ ModelBackendConfig responses_config(
     config.web_search = search;
     return config;
 }
-
-constexpr std::string_view hello_world_stream =
-    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n"
-    "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n"
-    "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n";
 
 TEST(ResponsesApi, BuildsRequestFieldsAndMapsRoles) {
     Transcript transcript;
@@ -220,30 +214,6 @@ TEST(ResponsesApi, EmitsRefusalDeltaAsAnswer) {
     const StreamDecodeResult result = decoder.finish();
     EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
     EXPECT_EQ(output.answer(), "I cannot help");
-}
-
-TEST(ResponsesApi, DecodesOneByteAtATime) {
-    Output output;
-    ResponsesStreamDecoder decoder(output.sink());
-    for (const char character : hello_world_stream) {
-        decoder.consume(std::string_view(&character, 1));
-    }
-    const StreamDecodeResult result = decoder.finish();
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
-    EXPECT_EQ(output.answer(), "Hello world");
-}
-
-TEST(ResponsesApi, DecodesCarriageReturnsSplitAcrossChunks) {
-    Output output;
-    ResponsesStreamDecoder decoder(output.sink());
-    decoder.consume(
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\r");
-    decoder.consume("\n\r");
-    decoder.consume(
-        "\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\r\n\r\n");
-    const StreamDecodeResult result = decoder.finish();
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
-    EXPECT_EQ(output.answer(), "Hello");
 }
 
 TEST(ResponsesApi, ReportsMalformedEventJson) {

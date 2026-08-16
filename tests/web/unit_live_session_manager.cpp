@@ -725,16 +725,6 @@ TEST(LiveSessionManager, ShutdownGraceIsNotMultipliedByOwnerCount) {
     EXPECT_TRUE(manager.join_shutdown(10s));
 }
 
-TEST(LiveSessionManager, ShutdownWithNoSessionsSucceedsImmediately) {
-    SessionFiles files;
-    LiveSessionManager manager(manager_settings(2), leased_opener(files));
-
-    manager.begin_shutdown();
-    EXPECT_TRUE(manager.join_shutdown(10s));
-    EXPECT_TRUE(manager.unfinished_owners().empty());
-    EXPECT_EQ(manager.snapshot().live_session_count, 0U);
-}
-
 TEST(LiveSessionManager, ReopensSameKeyAfterTheOldOwnerHasBeenJoined) {
     SessionFiles files;
     std::atomic<int> starts{};

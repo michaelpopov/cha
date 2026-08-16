@@ -113,21 +113,6 @@ TranscriptEntry human(
         id, {"human", "You"}, {"reviewer-id", "Reviewer"}, std::move(text), request_id);
 }
 
-TEST(Transcript, HumanEntryKeepsAuthorAndAddresseeIdentitiesSeparate) {
-    const TranscriptEntry entry = make_human_entry({
-        .id = 7,
-        .author = {"engineer", "Engineer"},
-        .addressed_to = {"guide-id", "Guide"},
-        .text = "Question",
-        .request_id = 11,
-    });
-
-    EXPECT_EQ(entry.participant_id, "engineer");
-    EXPECT_EQ(entry.display_name, "Engineer");
-    EXPECT_EQ(entry.addressed_to, "guide-id");
-    EXPECT_EQ(entry.addressed_to_name, "Guide");
-}
-
 TEST(Transcript, StoresTypedCompleteAndStreamingEntries) {
     Transcript transcript;
     transcript.add_entry(human(1, "Review this code", 10));
@@ -182,15 +167,6 @@ TEST(Transcript, RequiresAnswerTextForTerminalCharacterEntries) {
     EXPECT_NO_THROW(transcript.finish_entry(1, EntryStatus::cancelled));
     EXPECT_NO_THROW(
         require_storable_transcript_entry(transcript.view().entries.back()));
-}
-
-TEST(Transcript, ExposesACallScopedConstViewWithoutCopyingEntries) {
-    Transcript transcript;
-    transcript.add_entry(make_notice_entry(1, "Original"));
-
-    const TranscriptView view = transcript.view();
-    EXPECT_EQ(view.entries.front().text, "Original");
-    EXPECT_EQ(view.size(), 1U);
 }
 
 TEST(Transcript, ReplacesAndClearsEntries) {

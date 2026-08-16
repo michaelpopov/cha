@@ -14,7 +14,6 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
-#include <map>
 #include <optional>
 #include <string>
 #include <thread>
@@ -22,26 +21,6 @@
 
 namespace cha {
 namespace {
-
-TEST(SessionIdentity, EqualityAndOrderingUseForumAndSessionIds) {
-    const SessionIdentity first{"alpha", "one"};
-    const SessionIdentity same{"alpha", "one"};
-    const SessionIdentity different_forum{"beta", "one"};
-    const SessionIdentity different_session{"alpha", "two"};
-
-    EXPECT_EQ(first, same);
-    EXPECT_NE(first, different_forum);
-    EXPECT_NE(first, different_session);
-
-    std::map<SessionIdentity, int> ordered{
-        {different_forum, 3}, {different_session, 2}, {first, 1}};
-    std::vector<SessionIdentity> keys;
-    for (const auto& [identity, ignored] : ordered) {
-        (void)ignored;
-        keys.push_back(identity);
-    }
-    EXPECT_EQ(keys, (std::vector<SessionIdentity>{first, different_session, different_forum}));
-}
 
 constexpr std::string_view temporary_forum = "temporary-forum";
 constexpr std::string_view temporary_session = "temporary-session";

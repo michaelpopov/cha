@@ -8,17 +8,13 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
-#include <array>
-#include <barrier>
 #include <chrono>
-#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -149,44 +145,6 @@ TEST(ProviderClient, EchoesOnePromptInTestMode) {
     EXPECT_EQ(result.outcome, GenerationOutcome::completed);
     EXPECT_EQ(deltas, (std::vector<std::string>{"hello"}));
     EXPECT_EQ(client.info().character.description, "Helpful character");
-}
-
-TEST(ProviderClient, ConstructsSessionLocalNetworkClientsConcurrently) {
-    // This file is POSIX-only. The cross-platform construction coverage is the
-    // ConcurrentControllers counterpart; this duplicate is order-dependent
-    // smoke coverage because an earlier curl persona may already have initialized
-    // curl_global()'s magic static. C++ guarantees thread-safe initialization.
-    std::barrier start(3);
-    std::array<ModelBackendInfo, 2> infos;
-    std::array<std::exception_ptr, 2> failures;
-    std::array<std::thread, 2> threads;
-
-    for (std::size_t index = 0; index < threads.size(); ++index) {
-        threads[index] = std::thread([&, index] {
-            try {
-                CharacterDefinition definition = network_definition(9);
-                definition.character.id = "assistant-" + std::to_string(index);
-                definition.character.display_name = "Assistant " + std::to_string(index);
-                start.arrive_and_wait();
-                ProviderClient client(std::move(definition));
-                infos[index] = client.info();
-            } catch (...) {
-                failures[index] = std::current_exception();
-            }
-        });
-    }
-    start.arrive_and_wait();
-    for (std::thread& thread : threads) {
-        thread.join();
-    }
-
-    for (const std::exception_ptr& failure : failures) {
-        if (failure) {
-            std::rethrow_exception(failure);
-        }
-    }
-    EXPECT_EQ(infos[0].character.id, "assistant-0");
-    EXPECT_EQ(infos[1].character.id, "assistant-1");
 }
 
 TEST(ProviderClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {

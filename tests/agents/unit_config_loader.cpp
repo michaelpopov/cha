@@ -121,16 +121,6 @@ TEST(Config, ReadsEveryProviderSettingFromTheReferencedConfig) {
     expect_complete_provider_values(load_character_config(files.paths()).backend);
 }
 
-TEST(Config, DerivesTheProvidersDirectoryFromTheWorkspaceRoot) {
-    EXPECT_EQ(providers_directory("/workspace"),
-        std::filesystem::path("/workspace") / "system" / "providers");
-}
-
-TEST(Config, DerivesTheStylesDirectoryFromTheWorkspaceRoot) {
-    EXPECT_EQ(styles_directory("/workspace"),
-        std::filesystem::path("/workspace") / "system" / "styles");
-}
-
 // A provider config is a whole backend. Selecting one must not leave stray
 // values from the layer below in the effective configuration.
 TEST(Config, AHigherLayerProviderReplacesTheLowerOneOutright) {

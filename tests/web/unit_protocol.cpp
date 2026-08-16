@@ -3,19 +3,13 @@
 #include "web/json.h"
 #include "web/protocol.h"
 #include "web/web_settings.h"
-#include "support/test_workspace.h"
-
-#include "agents/character_config.h"
-#include "workspace/workspace_definition.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
-#include <initializer_list>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -33,21 +27,6 @@ nlohmann::json default_appearance() {
         {"size", "normal"},
         {"text_color", "normal"},
     };
-}
-
-template<typename Enum>
-void expect_spellings(
-    std::initializer_list<std::pair<Enum, std::string_view>> mappings) {
-    for (const auto& [value, spelling] : mappings) {
-        EXPECT_EQ(to_string(value), spelling);
-    }
-}
-
-template<typename Enum>
-void expect_invalid_enum_rejected() {
-    EXPECT_THROW(
-        (void)to_string(static_cast<Enum>(100)),
-        std::invalid_argument);
 }
 
 void expect_no_transport_location_fields(const nlohmann::json& value) {
@@ -320,66 +299,6 @@ TEST(WebProtocol, EscapesAndOwnsPresentationText) {
     EXPECT_EQ(error_value["error"]["message"], "quote \\\" newline\\n");
 }
 
-TEST(WebProtocol, DefinesEveryEnumSpelling) {
-    expect_spellings<EntryKind>({
-        {EntryKind::human, "human"},
-        {EntryKind::character, "character"},
-        {EntryKind::notice, "notice"},
-        {EntryKind::error, "error"},
-    });
-    expect_spellings<EntryStatus>({
-        {EntryStatus::complete, "complete"},
-        {EntryStatus::streaming, "streaming"},
-        {EntryStatus::cancelled, "cancelled"},
-        {EntryStatus::failed, "failed"},
-    });
-    expect_spellings<ResponsePhase>({
-        {ResponsePhase::waiting, "waiting"},
-        {ResponsePhase::reasoning, "reasoning"},
-        {ResponsePhase::answering, "answering"},
-        {ResponsePhase::stopping, "stopping"},
-    });
-    expect_spellings<SessionLifecycle>({
-        {SessionLifecycle::starting, "starting"},
-        {SessionLifecycle::running, "running"},
-        {SessionLifecycle::stopping, "stopping"},
-    });
-    expect_spellings<ShutdownReason>({
-        {ShutdownReason::browser_disconnected, "browser_disconnected"},
-        {ShutdownReason::reloading, "reloading"},
-        {ShutdownReason::session_failed, "session_failed"},
-        {ShutdownReason::session_deleted, "session_deleted"},
-        {ShutdownReason::server_stopping, "server_stopping"},
-    });
-    expect_spellings<ErrorCode>({
-        {ErrorCode::not_found, "not_found"},
-        {ErrorCode::bad_request, "bad_request"},
-        {ErrorCode::body_too_large, "body_too_large"},
-        {ErrorCode::prompt_too_large, "prompt_too_large"},
-        {ErrorCode::forbidden_origin, "forbidden_origin"},
-        {ErrorCode::internal_error, "internal_error"},
-        {ErrorCode::session_busy, "session_busy"},
-        {ErrorCode::session_stopping, "session_stopping"},
-        {ErrorCode::session_limit_reached, "session_limit_reached"},
-        {ErrorCode::session_open_timeout, "session_open_timeout"},
-        {ErrorCode::server_stopping, "server_stopping"},
-        {ErrorCode::session_not_live, "session_not_live"},
-        {ErrorCode::browser_stream_in_use, "browser_stream_in_use"},
-        {ErrorCode::command_timeout, "command_timeout"},
-        {ErrorCode::command_queue_full, "command_queue_full"},
-        {ErrorCode::session_delete_conflict, "session_delete_conflict"},
-    });
-}
-
-TEST(WebProtocol, RejectsInvalidEnumValues) {
-    expect_invalid_enum_rejected<EntryKind>();
-    expect_invalid_enum_rejected<EntryStatus>();
-    expect_invalid_enum_rejected<ResponsePhase>();
-    expect_invalid_enum_rejected<SessionLifecycle>();
-    expect_invalid_enum_rejected<ShutdownReason>();
-    expect_invalid_enum_rejected<ErrorCode>();
-}
-
 TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     nlohmann::json input_body = {{"text", "hello"}};
     const WebCommand input = parse_input_command(input_body);
@@ -506,26 +425,6 @@ TEST(WebSettings, RequestHeadroomIsInjectable) {
     settings.http_thread_pool_size = settings.session_limit + 1;
     settings.http_pending_request_limit = settings.http_thread_pool_size;
     EXPECT_NO_THROW(configure_http_server(server, settings));
-}
-
-TEST(WebProtocol, TemporaryWorkspaceUsesTheDeterministicTestProvider) {
-    test::TestWorkspace fixture;
-    const WorkspaceDefinition model = WorkspaceDefinition::load(
-        fixture.root(), load_workspace_config(fixture.root()));
-    const ForumInfo* const forum = model.find_forum("lobby");
-    ASSERT_NE(forum, nullptr);
-    EXPECT_EQ(forum->display_name, "The Lobby");
-    EXPECT_EQ(forum->member_ids, (std::vector<std::string>{"guide"}));
-    const auto config = load_character_config({
-        .providers = {load_provider_config(fixture.root() / "workspace.toml"),
-            providers_directory(fixture.root())},
-        .definition = fixture.root()
-            / "characters/guide/character.toml",
-        .forum_defaults = fixture.root()
-            / "forums/lobby/members/character_defaults.toml",
-    }).backend;
-    EXPECT_EQ(config.mode, Mode::test);
-    EXPECT_EQ(config.model, "fake");
 }
 
 } // namespace

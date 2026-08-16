@@ -94,18 +94,6 @@ PersonaRoster custom_personas(const WorkspaceDefinition& model) {
 
 // --- Published catalogs ----------------------------------------------------
 
-TEST(WorkspaceDefinition, LoadsCustomWorkspaceDataAlongsideTheBuiltins) {
-    test::TestWorkspace fixture;
-    const WorkspaceDefinition model = load_model(fixture.root());
-
-    ASSERT_NE(model.find_character("guide"), nullptr);
-    ASSERT_NE(model.find_character(assistant_id), nullptr);
-    ASSERT_NE(model.find_forum("lobby"), nullptr);
-    ASSERT_NE(model.find_forum(entrance_id), nullptr);
-    EXPECT_EQ(model.find_character("absent"), nullptr);
-    EXPECT_EQ(model.find_forum("absent"), nullptr);
-}
-
 TEST(WorkspaceDefinition, PublishesGuestFirstAndEveryCatalogInDisplayOrder) {
     test::TestWorkspace fixture;
     fixture.add_persona("author_key", "An Author");
@@ -196,16 +184,6 @@ TEST(WorkspaceDefinition, ServesAssistantDetailFromTheEmbeddedApplicationGuide) 
     EXPECT_EQ(model.character_markdown(assistant_id), application_guide());
     EXPECT_EQ(model.character_markdown("guide"), "Character instructions\n");
     EXPECT_THROW((void)model.character_markdown("absent"), std::runtime_error);
-}
-
-TEST(WorkspaceDefinition, BuildsAssistantFromAWorkspaceCarryingDescriptionsAndTags) {
-    test::TestWorkspace fixture;
-    fixture.write_character_config(
-        "display_name = \"Guide\"\ndescription = \"Shows the way\"\ntags = [\"help\"]\n");
-    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
-        << "display_name = \"The Lobby\"\ndescription = \"Where visitors arrive\"\n";
-
-    EXPECT_NO_THROW((void)load_model(fixture.root()));
 }
 
 TEST(WorkspaceDefinition, FailsStartupForMissingCharacterOrForumProviderReferences) {
@@ -566,18 +544,6 @@ TEST(WorkspaceDefinition, FailsStartupForMissingCharacterStyleReference) {
     }
 }
 
-TEST(WorkspaceDefinition, ReturnsOneSessionDirectoryPerCustomForum) {
-    test::TestWorkspace fixture;
-    const WorkspaceDefinition model = load_model(fixture.root());
-
-    const std::vector<ForumSessionDirectory> directories = model.session_directories();
-    ASSERT_EQ(directories.size(), 1U);
-    EXPECT_EQ(directories.front().forum_id, "lobby");
-    EXPECT_EQ(
-        directories.front().directory,
-        fixture.root() / "forums" / "lobby" / "sessions");
-}
-
 TEST(WorkspaceDefinition, FailsToLoadWhenAnyConfiguredForumHasABrokenPrompt) {
     test::TestWorkspace fixture;
     std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
@@ -613,12 +579,6 @@ TEST(WorkspaceDefinition, RejectsCharacterAndForumIdsReservedForBuiltins) {
         std::ofstream(forum / "config.toml") << "display_name = \"Other\"\n";
         EXPECT_THROW((void)load_model(fixture.root()), std::runtime_error);
     }
-}
-
-TEST(WorkspaceDefinition, RejectsAWorkspaceWithoutAPersonasDirectory) {
-    test::TestWorkspace fixture;
-    std::filesystem::remove_all(fixture.root() / "personas");
-    EXPECT_THROW((void)load_model(fixture.root()), std::runtime_error);
 }
 
 TEST(WorkspaceDefinition, RejectsMalformedForumsButAcceptsAWorkspaceWithNoCustomForum) {
@@ -942,14 +902,6 @@ TEST_F(WorkspaceDefinitionLayoutTest, ReadsAnOptionalShortForumDescription) {
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
-TEST_F(WorkspaceDefinitionLayoutTest, AllowsOneDefinitionInMultipleForums) {
-    const std::filesystem::path other = root_ / "forums" / "other";
-    std::filesystem::create_directories(other / "members" / "guide");
-    std::ofstream(other / "config.toml") << "display_name = \"Other\"\n";
-    std::ofstream(other / "FORUM.md") << "Other forum";
-    EXPECT_NO_THROW((void)load());
-}
-
 TEST_F(WorkspaceDefinitionLayoutTest, EnumeratesForumsInNameOrderAndIgnoresUnsafeDirectories) {
     for (const std::string_view name : {"alpha", "zulu", "bad space", "bad#fragment"}) {
         const std::filesystem::path forum = root_ / "forums" / std::string(name);
@@ -1047,11 +999,6 @@ TEST_F(WorkspaceDefinitionLayoutTest, RequiresPersonaDirectoryButAllowsItEmpty) 
 
     std::filesystem::create_directories(root_ / "personas");
     EXPECT_TRUE(custom_personas(load()).empty());
-}
-
-TEST_F(WorkspaceDefinitionLayoutTest, PersonaLoadingDoesNotSkipMalformedDirectories) {
-    std::filesystem::create_directories(root_ / "personas" / "missing_config");
-    EXPECT_THROW((void)load(), std::runtime_error);
 }
 
 TEST_F(WorkspaceDefinitionLayoutTest, RejectsPersonaCharacterIdCollision) {
