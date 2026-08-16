@@ -113,11 +113,11 @@ void expect_error(
     ASSERT_TRUE(json.contains("error"));
     ASSERT_TRUE(json["error"].is_object());
     EXPECT_EQ(json["error"].size(), 2);
-    EXPECT_EQ(json["error"]["code"], code);
+    EXPECT_EQ(json["error"]["code"].get<std::string>(), code);
     EXPECT_TRUE(json["error"]["code"].is_string());
     EXPECT_TRUE(json["error"]["message"].is_string());
     if (!message.empty()) {
-        EXPECT_EQ(json["error"]["message"], message);
+        EXPECT_EQ(json["error"]["message"].get<std::string>(), message);
     }
 }
 
@@ -149,7 +149,7 @@ bool listed_not_live(TestServer& server, std::string_view id) {
     const auto listed = server.client().Get("/api/v1/forums/lobby/sessions");
     if (!listed || listed->status != 200) return false;
     for (const auto& session : body(listed)) {
-        if (session["id"] == id) return !session["live"].get<bool>();
+        if (session["id"].get<std::string>() == id) return !session["live"].get<bool>();
     }
     return false;
 }

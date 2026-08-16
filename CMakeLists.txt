@@ -145,7 +145,7 @@ function(cha_enable_warnings target)
                 -Wpedantic
                 -Wno-missing-field-initializers)
     elseif(MSVC)
-        target_compile_options(${target} PRIVATE /W4)
+        target_compile_options(${target} PRIVATE /W4 /EHsc)
     endif()
 endfunction()
 

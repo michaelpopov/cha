@@ -8,6 +8,7 @@
 # one file here that is written by hand, so it stays tracked.
 /bin/*
 !/bin/start-cha.sh
+!/bin/start-cha.bat
 
 # Browser build and test output
 /webapp/node_modules/

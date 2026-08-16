@@ -138,7 +138,7 @@ void expect_error(const httplib::Result& result, int status, std::string_view co
     const nlohmann::json body = json_body(result);
     ASSERT_TRUE(body.contains("error"));
     EXPECT_EQ(body["error"].size(), 2);
-    EXPECT_EQ(body["error"]["code"], code);
+    EXPECT_EQ(body["error"]["code"].get<std::string>(), code);
 }
 
 WebSettings route_settings(std::size_t session_limit = 1) {
