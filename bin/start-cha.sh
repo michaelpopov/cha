@@ -44,11 +44,17 @@ url_host=$HOST
 case "$url_host" in
     *:*) url_host="[$url_host]" ;;
 esac
-echo "CHA: http://$url_host:$PORT/"
-echo "Press Ctrl+C to stop."
-
-exec "$here/chaweb" \
+# Started with nohup in the background so the server keeps running after the
+# terminal that launched it is closed. Output goes to the log beside it.
+log="$here/chaweb.log"
+nohup "$here/chaweb" \
     --root "$here" \
     --workspace "$workspace" \
     --host "$HOST" \
-    --port "$PORT"
+    --port "$PORT" \
+    >>"$log" 2>&1 &
+server_pid=$!
+
+echo "CHA: http://$url_host:$PORT/"
+echo "Running in the background as PID $server_pid; log: $log"
+echo "Stop it with: kill $server_pid"

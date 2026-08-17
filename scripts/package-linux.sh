@@ -114,4 +114,10 @@ fi
 mv "$temporary" "$destination"
 trap - EXIT HUP INT TERM
 
+# Unpacks to cha-linux-<version>/, so the archive and the directory beside it
+# hold the same tree. Writing the archive truncates any older one.
+echo "==> Writing the distribution archive"
+tar -czf "$destination.tar.gz" -C "$output_parent" "cha-linux-$version"
+
 echo "Linux application package: $destination"
+echo "Linux distribution archive: $destination.tar.gz"

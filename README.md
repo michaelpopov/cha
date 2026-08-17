@@ -162,6 +162,9 @@ the application directory. `chaweb` reads listener and workspace settings from
 Linux deployment packages include a minimal `workspace/` directory containing
 the default provider and logging settings. The packaged `start-cha.sh` uses it
 automatically, so the application can be started immediately after unpacking.
+It starts `chaweb` in the background on port 8086 and returns, so the server
+outlives the terminal session; it prints the PID to stop it with and writes
+`chaweb.log` beside the executable.
 Set `OPENAI_API_KEY` in the process environment before starting it; no `.env`
 file is included. The packaged workspace is also the location for any
 workspace customization and stored sessions.

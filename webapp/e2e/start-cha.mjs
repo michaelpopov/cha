@@ -88,45 +88,18 @@ await new Promise((resolveListen, reject) => {
   modelServer.listen(modelPort, '127.0.0.1', resolveListen);
 });
 
-const provider = `[provider]
-host = "127.0.0.1"
+// The mock server's port is the one setting that cannot be committed, and
+// provider settings live in exactly one file, so this is the only fixture the
+// harness rewrites. workspace.toml already selects this provider by name, and
+// the character and forum defaults inherit it.
+await writeFile(
+  resolve(workspace, 'system/providers/test/config.toml'),
+  `host = "127.0.0.1"
 port = ${modelPort}
 mode = "net"
 model = "browser-test"
 api = "chat_completions"
 web_search = "off"
-stream = true
-https = false
-
-[logging]
-file = "logs/cha.log"
-level = "off"
-`;
-await writeFile(resolve(workspace, 'workspace.toml'), provider);
-await writeFile(
-  resolve(workspace, 'characters/guide/character.toml'),
-  `display_name = "Guide"
-description = "A deterministic test character"
-host = "127.0.0.1"
-port = ${modelPort}
-mode = "net"
-model = "browser-test"
-stream = true
-https = false
-
-# Gives the browser tests a character whose words are set apart from the
-# reader's, so the whole path from workspace file to rendered class is covered.
-[appearance]
-font = "serif"
-style = "italic"
-`,
-);
-await writeFile(
-  resolve(workspace, 'forums/lobby/members/character_defaults.toml'),
-  `host = "127.0.0.1"
-port = ${modelPort}
-mode = "net"
-model = "browser-test"
 stream = true
 https = false
 `,

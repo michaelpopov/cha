@@ -57,7 +57,7 @@ for required_directory in characters forums personas; do
 done
 
 workspace_entries=$(find "$application/workspace" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
-expected_workspace_entries=$(printf '%s\n' characters forums personas workspace.toml | LC_ALL=C sort)
+expected_workspace_entries=$(printf '%s\n' characters forums personas system workspace.toml | LC_ALL=C sort)
 if [ "$workspace_entries" != "$expected_workspace_entries" ]; then
     echo "package check: default workspace contains unexpected top-level entries" >&2
     printf '%s\n' "$workspace_entries" >&2
