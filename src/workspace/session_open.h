@@ -12,7 +12,9 @@ class WakeNotifier;
 // The one production path that creates a SessionController. It re-resolves
 // the forum's character definitions from disk and combines them with storage
 // the repository prepares now. A definition that no longer loads falls back to
-// the startup copy and reports that on the opened session.
+// the generation's copy and reports that on the opened session. The controller
+// borrows `model` for the session's whole life, so the caller must keep it
+// alive at least that long.
 // Entrance and Welcome need no special case: Entrance is an ordinary forum in
 // the model and Welcome an ordinary prepared session in the repository.
 //

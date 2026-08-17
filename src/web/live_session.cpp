@@ -29,9 +29,10 @@ int shutdown_reason_priority(ShutdownReason reason) {
     switch (reason) {
     case ShutdownReason::browser_disconnected: return 0;
     case ShutdownReason::reloading: return 1;
-    case ShutdownReason::session_failed: return 2;
-    case ShutdownReason::session_deleted: return 3;
-    case ShutdownReason::server_stopping: return 4;
+    case ShutdownReason::workspace_reloading: return 2;
+    case ShutdownReason::session_failed: return 3;
+    case ShutdownReason::session_deleted: return 4;
+    case ShutdownReason::server_stopping: return 5;
     }
     return 0;
 }
@@ -283,6 +284,7 @@ bool LiveSession::open_controller() {
         controller_ = std::move(opened.controller);
         persist_default_character_ = std::move(opened.persist_default_character);
         persist_default_persona_ = std::move(opened.persist_default_persona);
+        workspace_lifetime_ = std::move(opened.lifetime);
         (void)apply_notice(opened.notice);
         return true;
     } catch (const std::bad_alloc&) {
@@ -676,6 +678,9 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
         // and cross-process lease before this actor publishes Finished, which
         // is what lets a same-identity actor start immediately afterwards.
         controller_.reset();
+        persist_default_character_ = {};
+        persist_default_persona_ = {};
+        workspace_lifetime_.reset();
         log_event("lease_released_owner_finished");
     }
     publish_finished();

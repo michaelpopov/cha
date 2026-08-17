@@ -118,8 +118,8 @@ Selections are read in order — workspace `[provider]`, character definition,
 forum defaults, member override — and the highest one that names a provider
 supplies the whole backend. Selecting a provider replaces the layer below
 outright rather than merging with it, so each provider config must be complete
-on its own. Provider config files themselves are loaded at process startup, so
-edits to host, model, or credentials take effect only after a restart.
+on its own. Provider config files are loaded with each workspace generation, so
+edits to host, model, or credentials take effect after a workspace reload.
 
 A character's chosen `provider` and `style` can be changed from the browser:
 Characters → the character → the row naming it above the description → Settings. Save writes
@@ -170,12 +170,16 @@ file is included. The packaged workspace is also the location for any
 workspace customization and stored sessions.
 
 `chaweb` loads discovery — the roster, descriptions, and Markdown shown in
-Personas, Characters, and Forums — once at startup. A session open re-resolves
-that forum's character definitions from disk, so a saved provider or style, and
-a hand edit to `CHARACTER.md`, member configs, or the forum context, reach the
-next session without a restart. Discovery does not follow those files: the
-roster and detail Markdown stay at the startup copy until `chaweb` is restarted.
-Stored sessions remain dynamic and appear in the lobby without a restart.
+Personas, Characters, and Forums — as one validated workspace generation. A
+session open re-resolves that forum's character definitions from disk, so a
+saved provider or style, and a hand edit to `CHARACTER.md`, member configs, or
+the forum context, reach the next session without a reload. To publish added or
+removed characters, personas, and forums, send `POST /api/v1/workspace/reload`
+with an empty JSON object. It validates and atomically publishes a complete new
+generation, then restarts every live session; stored sessions remain on disk.
+The Welcome session is temporary and belongs to the generation that created it,
+so a reload starts it empty. An invalid workspace leaves the running generation
+and its sessions unchanged.
 
 Startup validates every configured forum, not only the ones in use. A forum with
 an invalid default character, member override, or prompt therefore prevents the

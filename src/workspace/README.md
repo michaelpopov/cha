@@ -6,21 +6,30 @@ live-session switching policy.
 
 | Component | Responsibility |
 | --- | --- |
-| `WorkspaceDefinition` | Load the workspace; keep discovery at the startup copy; re-resolve a forum's character definitions when a session opens. |
+| `WorkspaceDefinition` | One immutable workspace discovery snapshot; re-resolve a forum's character definitions when a session opens. |
+| `WorkspaceRuntime` | Build, publish, and retain complete workspace generations for chaweb reloads. |
 | `open_session()` | Combine a model definition with prepared storage to construct a `SessionController`. |
 | `builtins` | Defines Guest, Assistant, the reserved built-in IDs, and embeds the application guide. |
 
-`WorkspaceDefinition::load()` performs one all-or-nothing startup pass: it validates
+`WorkspaceDefinition::load()` performs one all-or-nothing generation pass: it validates
 the workspace layout, loads personas, character metadata and Markdown, and forum
 membership, builds the Guest-inclusive persona roster and Assistant's inventory,
 checks that each forum's default character and `default_persona` name forum
 members and personas respectively,
 resolves every configured forum's effective `CharacterDefinition` values, and adds
 Assistant and Entrance to the public catalogs. Discovery catalogs stay at that
-startup copy. A forum's character definitions are re-resolved from disk when a
+generation copy. A forum's character definitions are re-resolved from disk when a
 session opens, so a saved provider or style — and any other file that loader
 reads — reaches the next open. The characters directory and each forum directory
 are retained so those later reads can find the files.
+
+`WorkspaceRuntime` owns the current immutable generation. Its `reload()` builds
+a replacement definition and repository while the previous generation remains
+available, then publishes the replacement only after both succeed. An
+application route shuts down the existing live sessions after publication; their
+opened-session lifetime retains the generation their controller borrows until
+the controller has released it. This is why an invalid workspace reload has no
+effect on current discovery or live sessions.
 
 A forum's default character is the one setting that stays live.
 `forum_default_character()` re-reads it from the forum's retained `config.toml`

@@ -196,6 +196,7 @@ add_library(cha_core STATIC
     src/session/session_lease.cpp
     src/session/session_repository.cpp
     src/workspace/workspace_definition.cpp
+    src/workspace/workspace_runtime.cpp
     src/workspace/session_open.cpp
     src/workspace/builtins.cpp
 )
@@ -305,6 +306,7 @@ if(BUILD_TESTING)
         tests/session/unit_session_repository.cpp
         tests/session/unit_controller_update.cpp
         tests/application/unit_workspace_definition.cpp
+        tests/application/unit_workspace_runtime.cpp
         tests/application/unit_session_open.cpp
         tests/application/unit_builtins.cpp
         tests/support/test_workspace.cpp

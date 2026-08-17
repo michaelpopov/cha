@@ -9,11 +9,12 @@ presentation result types.
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and
 live-session coordination, including the textual grammar accepted by the
-browser's chat box. The composition root builds one immutable `WorkspaceDefinition`
-and one `SessionRepository`; routes read discovery from the model and storage
-from the repository, and the `SessionOpener` opens every session — including the
-built-in Welcome — through `open_session()` with the persona that session's forum
-configures. It depends on core `SessionIdentity`, `SessionDescriptor`,
+browser's chat box. The composition root builds a `WorkspaceRuntime`, whose
+current immutable generation contains a `WorkspaceDefinition` and matching
+`SessionRepository`; routes take one generation per request, and the
+`SessionOpener` opens every session — including the built-in Welcome — through
+`open_session()` with the persona that session's forum configures. It depends on
+core `SessionIdentity`, `SessionDescriptor`,
 `OpenedSession`, `ControllerView`, and `ControllerUpdate`, but puts no
 HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
 a `SessionController`; HTTP workers exchange only owning commands and results
@@ -53,6 +54,12 @@ old settings and has to be reloaded like any other; both `running_sessions` and
 `lookup()` admit only Running actors, which is why that method exists and why it
 returns actors rather than identities. The write commits before the fan-out, so
 an actor that appears in neither is one that has yet to read the file at all.
+
+`POST /api/v1/workspace/reload` is the equivalent whole-workspace operation. It
+requires the same empty JSON body and origin policy as other mutations. On
+success it returns the new bootstrap payload and shuts every starting or running
+session down with `workspace_reloading`; on validation failure it returns
+`422 workspace_reload_failed` and leaves the current generation alone.
 
 A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
 rejected rather than ignored, so a client written against an older shape fails

@@ -41,13 +41,14 @@ OpenedSession open_session(
             std::move(prepared.lease),
             notifier,
             std::move(prepared.restore),
-            // Borrowed for the session's life: the model is process-lived and
-            // outlives every session opened against it, the same borrow the
-            // persist callbacks below take.
+            // Borrowed for the session's life, the same borrow the persist
+            // callbacks below take. The caller must keep the model alive for at
+            // least that long: a caller that can replace it publishes each one
+            // as a generation and retains it in OpenedSession::lifetime.
             [&model](std::string_view name) {
                 return model.resolve_session_provider(name);
             },
-            // Same process-lived borrow as the provider resolver above.
+            // Same borrow as the provider resolver above.
             [&model](std::string_view name) {
                 return model.resolve_session_style(name);
             }),

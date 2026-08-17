@@ -958,7 +958,7 @@ TEST(ServerShutdownCoordinatorProcess, BlockedOwnerForcesExitAndLogsIdentity) {
 TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerCommits) {
     test::TestWorkspace fixture;
     const test::WebGraph graph(fixture.root());
-    const StoredSession stored = graph.sessions->create("lobby", "Opening");
+    const StoredSession stored = graph.sessions()->create("lobby", "Opening");
     OpeningGate gate;
     WebSettings settings;
     settings.open_deadline = 5s;
@@ -972,7 +972,7 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;
     LobbyRoutes(
-        graph.model, graph.sessions, test::WebGraph::initial_selection(),
+        graph.runtime, test::WebGraph::initial_selection(),
         live_sessions, settings).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
@@ -1076,6 +1076,38 @@ TEST(WebServerProcess, ReloadsALiveSessionAfterAStyleSave) {
     EXPECT_EQ(characters.front().at("appearance"), nlohmann::json({
         {"font", "mono"}, {"style", "normal"},
         {"weight", "normal"}, {"size", "large"}, {"text_color", "normal"}}));
+}
+
+TEST(WebServerProcess, ReloadsTheWorkspaceThroughTheApi) {
+    test::TestWorkspace workspace;
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(workspace.root(), port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    httplib::Client client = web_client(port);
+    const std::string id = create_session(client, "Workspace reload");
+    ASSERT_FALSE(id.empty());
+    const std::string path = open_session(client, id);
+    ASSERT_FALSE(path.empty());
+    StreamingRequest stream(port, path + "api/v1/events");
+    ASSERT_TRUE(stream.wait_for_snapshot());
+
+    workspace.write_character_config("display_name = \"Reloaded Guide\"\n");
+    const auto reloaded = client.Post(
+        "/api/v1/workspace/reload", "{}", "application/json");
+    ASSERT_TRUE(reloaded);
+    ASSERT_EQ(reloaded->status, 200) << reloaded->body;
+    const nlohmann::json bootstrap = nlohmann::json::parse(reloaded->body);
+    const auto guide = std::find_if(
+        bootstrap.at("characters").begin(), bootstrap.at("characters").end(),
+        [](const nlohmann::json& character) { return character.at("id") == "guide"; });
+    ASSERT_NE(guide, bootstrap.at("characters").end());
+    EXPECT_EQ(guide->at("display_name"), "Reloaded Guide");
+
+    ASSERT_TRUE(stream.wait_for_shutdown_reason("workspace_reloading"));
+    ASSERT_TRUE(stream.wait_for_end(5s));
+    ASSERT_TRUE(open_after_reload(client, "lobby", id));
 }
 
 TEST(WebServerProcess, DoesNotReloadASessionWhoseForumOverridesTheProvider) {

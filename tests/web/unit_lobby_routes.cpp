@@ -68,7 +68,7 @@ public:
         Installer installer = {}) {
         AssetHandler(graph.root() / "web").install(server_);
         LobbyRoutes(
-            graph.model, graph.sessions, LobbyGraph::initial_selection(),
+            graph.runtime, LobbyGraph::initial_selection(),
             live_sessions, settings).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
@@ -152,6 +152,11 @@ bool listed_not_live(TestServer& server, std::string_view id) {
         if (session["id"].get<std::string>() == id) return !session["live"].get<bool>();
     }
     return false;
+}
+
+void add_writer_forum(const test::TestWorkspace& fixture) {
+    fixture.add_character("writer", "Writer");
+    fixture.add_forum("writers", "Writers", "writer");
 }
 
 TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
@@ -284,6 +289,78 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ(sessions[0]["label"], "Welcome");
     EXPECT_FALSE(sessions[0]["live"]);
     EXPECT_GT(sessions[0]["updated_at"].get<std::int64_t>(), 0);
+}
+
+TEST(LobbyRoutes, ReloadsWorkspaceDiscoveryAndRestartsEveryLiveSession) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const std::string id = create_session(server, "Reloaded");
+    ASSERT_FALSE(id.empty());
+    ASSERT_EQ(
+        server.client().Post(
+            "/api/v1/forums/lobby/sessions/" + id + "/open",
+            "{}", "application/json")->status,
+        200);
+    ASSERT_TRUE(session_is_live(manager, {"lobby", id}));
+
+    fixture.add_persona("writer_persona", "Writer Persona");
+    add_writer_forum(fixture);
+    const auto reloaded = server.client().Post(
+        "/api/v1/workspace/reload", "{}", "application/json");
+    ASSERT_TRUE(reloaded);
+    ASSERT_EQ(reloaded->status, 200) << reloaded->body;
+    const nlohmann::json bootstrap = body(reloaded);
+    EXPECT_TRUE(std::ranges::any_of(bootstrap["personas"], [](const nlohmann::json& persona) {
+        return persona["id"] == "writer_persona";
+    }));
+    EXPECT_TRUE(std::ranges::any_of(bootstrap["characters"], [](const nlohmann::json& character) {
+        return character["id"] == "writer";
+    }));
+    EXPECT_TRUE(std::ranges::any_of(bootstrap["forums"], [](const nlohmann::json& forum) {
+        return forum["id"] == "writers";
+    }));
+
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (manager.snapshot().live_session_count != 0
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_EQ(manager.snapshot().live_session_count, 0U);
+
+    const auto created = server.client().Post(
+        "/api/v1/forums/writers/sessions", R"({"label":"Draft"})", "application/json");
+    ASSERT_TRUE(created);
+    EXPECT_EQ(created->status, 201) << created->body;
+}
+
+TEST(LobbyRoutes, KeepsThePublishedWorkspaceAndSessionsWhenReloadFails) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const std::string id = create_session(server, "Unchanged");
+    ASSERT_FALSE(id.empty());
+    ASSERT_EQ(
+        server.client().Post(
+            "/api/v1/forums/lobby/sessions/" + id + "/open",
+            "{}", "application/json")->status,
+        200);
+    ASSERT_TRUE(session_is_live(manager, {"lobby", id}));
+
+    fixture.write_character_config("display_name =\n");
+    expect_error(
+        server.client().Post("/api/v1/workspace/reload", "{}", "application/json"),
+        422, "workspace_reload_failed");
+
+    EXPECT_TRUE(session_is_live(manager, {"lobby", id}));
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    EXPECT_TRUE(std::ranges::any_of(body(bootstrap)["characters"], [](const nlohmann::json& character) {
+        return character["id"] == "guide";
+    }));
 }
 
 TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderConfig) {
@@ -691,7 +768,7 @@ TEST(LobbyRoutes, RenamesAndRecoverablyDeletesStoredSessions) {
     ASSERT_TRUE(renamed);
     EXPECT_EQ(renamed->status, 200);
     EXPECT_EQ(body(renamed), nlohmann::json({{"id", id}, {"label", "After"}}));
-    EXPECT_EQ(graph.sessions->prepare({"lobby", id}).label, "After");
+    EXPECT_EQ(graph.sessions()->prepare({"lobby", id}).label, "After");
 
     const std::vector<std::string> invalid_labels{
         "",
@@ -717,7 +794,7 @@ TEST(LobbyRoutes, RenamesAndRecoverablyDeletesStoredSessions) {
     ASSERT_TRUE(deleted);
     EXPECT_EQ(deleted->status, 204);
     EXPECT_TRUE(deleted->body.empty());
-    EXPECT_TRUE(graph.sessions->list("lobby").empty());
+    EXPECT_TRUE(graph.sessions()->list("lobby").empty());
     EXPECT_TRUE(std::filesystem::exists(
         fixture.root() / "forums" / "lobby" / "sessions" / "deleted"
             / (id + ".sqlite3")));
@@ -730,7 +807,7 @@ TEST(LobbyRoutes, DownloadsStoredAndLiveSessionsAsMarkdown) {
     TestServer server(graph, manager);
     const std::string id = create_session(server, "Review notes");
     {
-        PreparedSession prepared = graph.sessions->prepare({"lobby", id});
+        PreparedSession prepared = graph.sessions()->prepare({"lobby", id});
         SessionJournal journal(prepared.database_path);
         const TranscriptEntry prompt = make_human_entry({
             .id = 1,
@@ -828,8 +905,8 @@ TEST(LobbyRoutes, WelcomeCannotBeRenamedOrDeletedWhileLive) {
     CommandSubmitResult snapshot_result = live->snapshot(5s);
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(snapshot_result));
     EXPECT_EQ(std::get<SessionSnapshot>(snapshot_result).session_label, "Welcome");
-    ASSERT_EQ(graph.sessions->list(welcome.forum_id).size(), 1U);
-    EXPECT_EQ(graph.sessions->list(welcome.forum_id).front().label, "Welcome");
+    ASSERT_EQ(graph.sessions()->list(welcome.forum_id).size(), 1U);
+    EXPECT_EQ(graph.sessions()->list(welcome.forum_id).front().label, "Welcome");
 
     expect_error(
         server.client().Delete(route, "{}", "application/json"),
@@ -926,7 +1003,7 @@ TEST(LobbyRoutes, AcceptsDnsHostOnReadsAndMutations) {
         "application/json");
     ASSERT_TRUE(mutation);
     EXPECT_EQ(mutation->status, 201);
-    EXPECT_EQ(graph.sessions->list("lobby").size(), 1U);
+    EXPECT_EQ(graph.sessions()->list("lobby").size(), 1U);
 }
 
 TEST(LobbyRoutes, ValidatesMissingIdentifiersMethodsAndOriginWithoutOrigin) {
@@ -1034,8 +1111,8 @@ TEST(LobbyRoutes, ReattachesFromTheLiveSessionMapWithoutReadingStorageAgain) {
 TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleasesCapacity) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    const StoredSession deleted = graph.sessions->create("lobby", "Deleted");
-    const StoredSession survivor = graph.sessions->create("lobby", "Survivor");
+    const StoredSession deleted = graph.sessions()->create("lobby", "Deleted");
+    const StoredSession survivor = graph.sessions()->create("lobby", "Survivor");
     const std::filesystem::path deleted_database =
         fixture.root() / "forums" / "lobby" / "sessions"
         / (deleted.identity.session_id + ".sqlite3");
@@ -1075,7 +1152,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
 TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
-    const StoredSession stored = graph.sessions->create("lobby", "Deleted forum");
+    const StoredSession stored = graph.sessions()->create("lobby", "Deleted forum");
     const std::filesystem::path forum_directory =
         fixture.root() / "forums" / "lobby";
     const WebSettings settings = lobby_settings(1);

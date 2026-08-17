@@ -23,6 +23,7 @@ enum class SessionLifecycle { starting, running, stopping };
 enum class ShutdownReason {
     browser_disconnected,
     reloading,
+    workspace_reloading,
     session_failed,
     session_deleted,
     server_stopping,
@@ -33,6 +34,7 @@ enum class ErrorCode {
     session_limit_reached, session_open_timeout, server_stopping,
     session_not_live, browser_stream_in_use, command_timeout,
     command_queue_full, session_delete_conflict,
+    workspace_reload_failed,
 };
 
 // The lobby publishes the workspace-wide persona roster for discovery: the

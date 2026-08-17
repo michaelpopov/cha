@@ -177,6 +177,9 @@ private:
 
     // Owner thread only. Snapshot construction and controller access must stay
     // on that thread; none of this needs the lifecycle mutex.
+    // Declared before everything that borrows the workspace generation, so that
+    // it is destroyed after them even if teardown() never ran.
+    std::shared_ptr<const void> workspace_lifetime_;
     std::unique_ptr<SessionController> controller_;
     SessionDescriptor descriptor_;
     std::function<void(std::string_view)> persist_default_character_;

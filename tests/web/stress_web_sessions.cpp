@@ -369,7 +369,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     std::atomic<std::size_t> list_calls{};
     auto listing = std::async(std::launch::async, [&] {
         do {
-            (void)graph.sessions->list("lobby");
+            (void)graph.sessions()->list("lobby");
             ++list_calls;
         } while (creating);
     });
@@ -378,7 +378,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     creations.reserve(session_count);
     for (std::size_t index = 0; index != session_count; ++index) {
         creations.push_back(std::async(std::launch::async, [&, index] {
-            return graph.sessions->create(
+            return graph.sessions()->create(
                 "lobby", "Load " + std::to_string(index));
         }));
     }
@@ -388,7 +388,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     creating = false;
     listing.get();
     EXPECT_GT(list_calls, 0U);
-    EXPECT_EQ(graph.sessions->list("lobby").size(), session_count);
+    EXPECT_EQ(graph.sessions()->list("lobby").size(), session_count);
 
     WebSettings settings;
     settings.session_limit = session_count;

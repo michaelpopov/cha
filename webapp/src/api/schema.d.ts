@@ -85,14 +85,48 @@ export interface paths {
          * @description Returns the initial forum and character rosters, including each forum's
          *     fixed persona, and all recent sessions ordered newest first.
          *
-         *     The character and forum rosters are loaded once at server startup, so
-         *     workspace configuration changes require a restart. Sessions
-         *     are read from storage on every request, so `recent_sessions` includes
-         *     sessions created since startup.
+         *     The character and forum rosters come from the published workspace
+         *     generation, so added or removed characters, personas, and forums appear
+         *     only after `POST /api/v1/workspace/reload`. Sessions are read from
+         *     storage on every request, so `recent_sessions` includes sessions created
+         *     since that generation was published.
          */
         get: operations["getBootstrap"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-read the workspace and publish a new generation
+         * @description Re-reads the whole workspace from disk and publishes it as a new
+         *     generation, which is how added or removed characters, personas, and
+         *     forums — and edited provider config files — reach discovery.
+         *
+         *     The replacement is built and validated in full before it is published,
+         *     so a workspace that does not load answers `422` with
+         *     `workspace_reload_failed` and leaves the current generation and its live
+         *     sessions untouched.
+         *
+         *     After a successful publish the server asks every starting or running
+         *     session to shut down with `workspace_reloading`; it does not reopen
+         *     anything. The temporary Welcome session belongs to the generation that
+         *     created it, so its conversation does not survive a reload. Stored
+         *     sessions are untouched on disk.
+         */
+        post: operations["reloadWorkspace"];
         delete?: never;
         options?: never;
         head?: never;
@@ -652,7 +686,7 @@ export interface components {
             /** @enum {string} */
             lifecycle: "starting" | "running" | "stopping";
             /** @enum {string} */
-            shutdown_reason?: "browser_disconnected" | "reloading" | "session_failed" | "session_deleted" | "server_stopping";
+            shutdown_reason?: "browser_disconnected" | "reloading" | "workspace_reloading" | "session_failed" | "session_deleted" | "server_stopping";
         };
         AppendTargetEntry: {
             /**
@@ -679,7 +713,7 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "browser_stream_in_use" | "command_timeout" | "command_queue_full" | "session_delete_conflict";
+                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "browser_stream_in_use" | "command_timeout" | "command_queue_full" | "session_delete_conflict" | "workspace_reload_failed";
                 message: string;
             };
         };
@@ -883,6 +917,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Bootstrap"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    reloadWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description Bootstrap state of the newly published generation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bootstrap"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            /**
+             * @description The workspace could not be loaded. `error.code` is
+             *     `workspace_reload_failed` and `error.message` carries the validation
+             *     failure. The published generation is unchanged.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             500: components["responses"]["InternalError"];

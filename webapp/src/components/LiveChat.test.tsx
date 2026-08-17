@@ -476,6 +476,24 @@ describe('live chat', () => {
     expect(screen.queryByRole('button', { name: 'Return to Welcome' })).not.toBeInTheDocument();
   });
 
+  it('explains a workspace reload without offering recovery actions', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+
+    act(() => events.handlers[0].onSnapshot({
+      ...transcriptSnapshot(),
+      generation: snapshotFixture.generation,
+      lifecycle: 'stopping',
+      shutdown_reason: 'workspace_reloading',
+    }));
+
+    expect(screen.getByRole('status')).toHaveTextContent('Reloading the workspace');
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Browse sessions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Return to Welcome' })).not.toBeInTheDocument();
+  });
+
   it('offers recovery actions when a settings reload never reopens', async () => {
     const events = drivableEvents();
     let snapshots = 0;

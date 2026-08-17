@@ -1,7 +1,5 @@
 #include "workspace/builtins.h"
-#include "workspace/session_open.h"
-#include "workspace/workspace_definition.h"
-#include "session/session_repository.h"
+#include "workspace/workspace_runtime.h"
 #include "web/application_config.h"
 #include "web/asset_handler.h"
 #include "web/http_server.h"
@@ -25,14 +23,12 @@
 
 using namespace cha;
 using namespace web;
-using WsDef = WorkspaceDefinition;
 
 static int prepare_and_run(int argc, const char* argv[]);
 static int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
-    const std::shared_ptr<const WsDef>& ws_def,
-    const std::shared_ptr<const SessionRepository>& sessions,
+    const std::shared_ptr<WorkspaceRuntime>& workspace,
     LiveSessionManager& live_sessions,
     const WebSettings& settings);
 static void log_web_server_startup(const WebSettings& settings);
@@ -57,24 +53,21 @@ int prepare_and_run(int argc, const char* argv[]) {
     const WorkspaceConfig workspace_config = load_workspace_config(app.workspace);
     initialize_diagnostic_logging(workspace_config.log_file, workspace_config.log_level);
 
-    const auto ws_def = std::make_shared<const WsDef>(WsDef::load(app.workspace, workspace_config));
-
     const auto seed = TemporarySessionSeed{{std::string(entrance_id), std::string(welcome_id)}, std::string(welcome_name)};
-    const auto sessions = std::make_shared<const SessionRepository>(ws_def->session_directories(), seed);
+    const auto workspace = std::make_shared<WorkspaceRuntime>(app.workspace, seed);
 
-    auto opener = [ws_def, sessions](const SessionIdentity& identity, WakeNotifier& notifier) {
-        return open_session(*ws_def, *sessions, identity, notifier);
+    auto opener = [workspace](const SessionIdentity& identity, WakeNotifier& notifier) {
+        return workspace->open_session(identity, notifier);
     };
     LiveSessionManager live_sessions(settings, opener);
 
-    return run_web_server(app.host, app.port, app.root, ws_def, sessions, live_sessions, settings);
+    return run_web_server(app.host, app.port, app.root, workspace, live_sessions, settings);
 }
 
 int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
-    const std::shared_ptr<const WsDef>& ws_def,
-    const std::shared_ptr<const SessionRepository>& sessions,
+    const std::shared_ptr<WorkspaceRuntime>& workspace,
     LiveSessionManager& live_sessions,
     const WebSettings& settings) {
 
@@ -85,7 +78,7 @@ int run_web_server(
     assets.install(server);
 
     const InitialSelection initial{{std::string(entrance_id), std::string(welcome_id)}};
-    LobbyRoutes(ws_def, sessions, initial, live_sessions, settings).install(server);
+    LobbyRoutes(workspace, initial, live_sessions, settings).install(server);
     SessionRoutes(live_sessions, settings, assets).install(server);
 
     log_web_server_startup(settings);

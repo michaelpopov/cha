@@ -90,4 +90,27 @@ void TestWorkspace::add_persona(
     if (!prompt.empty()) std::ofstream(directory / "PERSONA.md") << prompt;
 }
 
+void TestWorkspace::add_character(
+    std::string_view id,
+    std::string_view display_name) const {
+    const std::filesystem::path directory = root_ / "characters" / std::string(id);
+    std::filesystem::create_directories(directory);
+    std::ofstream(directory / "character.toml")
+        << "display_name = \"" << display_name << "\"\n";
+    std::ofstream(directory / "CHARACTER.md") << display_name << " instructions\n";
+}
+
+void TestWorkspace::add_forum(
+    std::string_view id,
+    std::string_view display_name,
+    std::string_view member) const {
+    const std::filesystem::path directory = root_ / "forums" / std::string(id);
+    std::filesystem::create_directories(directory / "members" / std::string(member));
+    std::ofstream(directory / "config.toml")
+        << "display_name = \"" << display_name << "\"\n";
+    std::ofstream(directory / "FORUM.md") << display_name << " forum instructions\n";
+    std::ofstream(directory / "members" / "character_defaults.toml")
+        << "# Provider settings are inherited from workspace.toml.\n";
+}
+
 } // namespace cha::test

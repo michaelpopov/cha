@@ -36,6 +36,7 @@ const knownErrorCodes = {
   command_timeout: true,
   command_queue_full: true,
   session_delete_conflict: true,
+  workspace_reload_failed: true,
 } satisfies Record<ErrorCode, true>;
 
 function isErrorCode(value: unknown): value is ErrorCode {

@@ -38,5 +38,7 @@ void set_route_not_found(
 void request_reload(
     LiveSessionManager& live_sessions,
     const std::vector<std::string>& forum_ids);
+// Reloads every active session after a complete workspace generation swap.
+void request_workspace_reload(LiveSessionManager& live_sessions);
 
 } // namespace cha::web

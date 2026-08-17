@@ -26,6 +26,12 @@ public:
         std::string_view id,
         std::string_view display_name,
         std::string_view prompt = "") const;
+    void add_character(std::string_view id, std::string_view display_name) const;
+    // Adds a forum whose only member is `member`, which must already exist.
+    void add_forum(
+        std::string_view id,
+        std::string_view display_name,
+        std::string_view member) const;
 
 private:
     std::filesystem::path root_;

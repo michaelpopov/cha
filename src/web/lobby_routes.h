@@ -11,8 +11,7 @@ class Server;
 }
 
 namespace cha {
-class WorkspaceDefinition;
-class SessionRepository;
+class WorkspaceRuntime;
 }
 
 namespace cha::web {
@@ -28,8 +27,7 @@ struct InitialSelection {
 class LobbyRoutes {
 public:
     LobbyRoutes(
-        std::shared_ptr<const WorkspaceDefinition> model,
-        std::shared_ptr<const SessionRepository> sessions,
+        std::shared_ptr<WorkspaceRuntime> workspace,
         InitialSelection initial,
         LiveSessionManager& live_sessions,
         WebSettings settings);
@@ -37,8 +35,7 @@ public:
     void install(httplib::Server& server) const;
 
 private:
-    std::shared_ptr<const WorkspaceDefinition> model_;
-    std::shared_ptr<const SessionRepository> sessions_;
+    std::shared_ptr<WorkspaceRuntime> workspace_;
     InitialSelection initial_;
     LiveSessionManager& live_sessions_;
     WebSettings settings_;

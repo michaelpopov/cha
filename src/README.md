@@ -23,14 +23,14 @@ commands to a registry-owned session thread.
 ## Composition root
 
 `web_main.cpp` owns only process wiring and top-level error handling. It loads
-configuration, assembles the workspace model, session repository, live-session
-manager, routes, assets, HTTP listener, and shutdown coordinator, then starts
-the server. Reusable workspace policy remains in `workspace/`, and HTTP/SSE
-policy remains in `web/`.
+configuration, assembles the reloadable workspace runtime, live-session manager,
+routes, assets, HTTP listener, and shutdown coordinator, then starts the
+server. Reusable workspace policy remains in `workspace/`, and HTTP/SSE policy
+remains in `web/`.
 
 Declaration order in the composition root also defines shutdown order: the HTTP
-server and live-session owners are released before the repository and workspace
-model, and diagnostic logging remains available until their teardown finishes.
+server and live-session owners are released before the workspace runtime, and
+diagnostic logging remains available until their teardown finishes.
 
 ## Directories
 
@@ -74,14 +74,14 @@ are stored and used in routes; display names and labels are presentation data.
 Opening a session validates that its database metadata matches its forum,
 filename, and schema before restoring it.
 
-One `WorkspaceDefinition` holds discovery for the server lifetime. A session
-open re-resolves that forum's character definitions from disk, so a saved
-provider or style — and a hand edit to `CHARACTER.md`, member configs, or the
-forum context — reach the next session without a restart. Discovery does not:
-the roster and detail Markdown stay at the startup copy. Session listings are
-read from storage per request, so newly created sessions appear without a
-restart. Changes to personas, forum membership, provider config files, or other
-discovery data still require restarting `chaweb`.
+One `WorkspaceGeneration` holds an immutable definition and matching session
+repository. `POST /api/v1/workspace/reload` builds a new generation and replaces
+the current one only after full validation succeeds, then shuts down live
+sessions with `workspace_reloading`. A session open re-resolves that forum's
+character definitions from disk, so a saved provider or style — and a hand edit
+to `CHARACTER.md`, member configs, or the forum context — reach the next session
+without a workspace reload. Session listings are read from storage per request,
+so newly created sessions appear without a reload.
 
 ## Build and test map
 

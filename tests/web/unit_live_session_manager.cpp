@@ -212,7 +212,7 @@ TEST(LiveSessionManager, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSess
     EXPECT_EQ(attributed_welcome->transcript.front().participant_id, guest_id);
     EXPECT_EQ(attributed_welcome->transcript.front().display_name, guest_name);
 
-    const StoredSession stored = graph.sessions->create("lobby", "Guest session");
+    const StoredSession stored = graph.sessions()->create("lobby", "Guest session");
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
         manager.open(stored.identity, 5s)));
     LiveSessionHandle ordinary = manager.lookup(stored.identity);
