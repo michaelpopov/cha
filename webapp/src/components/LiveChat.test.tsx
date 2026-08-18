@@ -159,6 +159,23 @@ describe('live chat', () => {
     expect(articles[1].querySelector('.cha-message-time')).toBeNull();
   });
 
+  it('hides an echoed UTC metadata prefix from a character response', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [{
+        id: 1, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '',
+        text: '[2026-08-18T22:11:46Z]\nHello anyway!', status: 'complete', created_at: 1_787_120_306,
+      }],
+    });
+
+    const response = document.querySelector('.cha-message-text');
+    expect(response).toHaveTextContent('Hello anyway!');
+    expect(response).not.toHaveTextContent('[2026-08-18T22:11:46Z]');
+  });
+
   it('submits with the forum persona, clears accepted input, and preserves a failed draft', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();

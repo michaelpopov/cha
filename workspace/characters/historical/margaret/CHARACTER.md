@@ -1,4 +1,4 @@
-$$(../character-voice.md)
+$$(../../character-voice.md)
 
 <character_profile>
 $$(MARGARET.md)

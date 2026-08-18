@@ -641,6 +641,11 @@ select:disabled {
   background: var(--secondary);
 }
 
+.cha-message.is-human .cha-message-text {
+  font-size: 1.14em;
+  font-weight: 700;
+}
+
 .cha-message.is-notice,
 .cha-message.is-error {
   max-width: 100%;
@@ -860,6 +865,8 @@ select:disabled {
   outline: 0;
   color: inherit;
   background: transparent;
+  font-size: 1.14em;
+  font-weight: 700;
   line-height: inherit;
   overflow-y: auto;
   resize: none;

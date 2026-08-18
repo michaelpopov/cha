@@ -69,6 +69,15 @@ function actionMessage(failure: unknown): string {
 // first time it scrolled itself.
 const followSlack = 24;
 
+// Entry creation time already has its own UI below a message. A model can echo
+// the UTC metadata it receives as a leading line, but that is not response text
+// for the reader to see.
+const echoedTimestampPrefix = /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\]\s*/;
+
+function visibleEntryText(kind: string, text: string): string {
+  return kind === 'character' ? text.replace(echoedTimestampPrefix, '') : text;
+}
+
 // A character speaks in its own hand so a reader can tell one voice from another
 // without reading every name. Only the departures from the interface's own
 // settings are named, so an unstyled character adds no classes at all, and the
@@ -305,7 +314,7 @@ export function ChatScreen({
                 ? voiceClasses(voices.get(entry.participant_id))
                 : ''}`}
             >
-              {entry.text}
+              {visibleEntryText(entry.kind, entry.text)}
             </div>
             {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
             {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
