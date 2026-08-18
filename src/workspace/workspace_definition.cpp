@@ -102,6 +102,14 @@ struct LoadedForum {
     std::string markdown;
 };
 
+// A discovered character's directory must survive metadata discovery: forums
+// refer to characters by ID, while their definitions may live below grouping
+// directories under characters/.
+struct LoadedCharacterMetadata {
+    CharacterMetadata metadata;
+    std::filesystem::path directory;
+};
+
 enum class SubdirectoryNameKind { path_component, url_identifier };
 
 std::vector<std::string> subdirectory_names(
@@ -267,7 +275,7 @@ LoadedForum load_forum_metadata(
     };
 }
 
-std::vector<CharacterMetadata> load_definition_metadata(
+std::vector<LoadedCharacterMetadata> load_definition_metadata(
     const std::filesystem::path& definitions_directory,
     const std::filesystem::path& providers_directory,
     const std::filesystem::path& styles_directory) {
@@ -275,35 +283,54 @@ std::vector<CharacterMetadata> load_definition_metadata(
         throw std::runtime_error("Workspace '" + utf8_path(definitions_directory.parent_path())
             + "' requires a characters/ directory");
     }
-    std::vector<CharacterMetadata> definitions;
-    for (const std::string& id : subdirectory_names(
-             definitions_directory, SubdirectoryNameKind::path_component)) {
+    std::vector<std::filesystem::path> directories;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::recursive_directory_iterator(definitions_directory)) {
+        if (entry.is_directory()) directories.push_back(entry.path());
+    }
+    std::sort(directories.begin(), directories.end());
+
+    std::vector<LoadedCharacterMetadata> definitions;
+    for (const std::filesystem::path& directory : directories) {
+        const std::filesystem::path config = directory / "character.toml";
+        const std::filesystem::path prompt = directory / "CHARACTER.md";
+        // Directories without either definition file are grouping directories.
+        if (!std::filesystem::exists(config) && !std::filesystem::exists(prompt)) continue;
+        const std::string id = utf8_path(directory.filename());
         try {
             validate_character_id(id);
-            const std::filesystem::path directory = definitions_directory / path_from_utf8(id);
-            const std::filesystem::path prompt = directory / "CHARACTER.md";
             if (!std::filesystem::is_regular_file(prompt)) {
                 throw std::runtime_error("Character '" + id
                     + "' requires regular definition CHARACTER.md");
             }
-            definitions.push_back(load_character_metadata(
-                directory / "character.toml", providers_directory, styles_directory));
+            definitions.push_back({
+                .metadata = load_character_metadata(config, providers_directory, styles_directory),
+                .directory = directory,
+            });
         } catch (const std::exception& error) {
             throw std::runtime_error("Character '" + id + "' has invalid definition: " + error.what());
         }
     }
     std::unordered_map<std::string, std::string> display_names;
-    for (const CharacterMetadata& definition : definitions) {
+    std::unordered_map<std::string, std::filesystem::path> ids;
+    for (const LoadedCharacterMetadata& definition : definitions) {
         try {
-            validate_character_display_name(definition.display_name);
+            validate_character_display_name(definition.metadata.display_name);
         } catch (const std::exception& error) {
-            throw std::runtime_error("Character '" + definition.id + "' has invalid definition: " + error.what());
+            throw std::runtime_error("Character '" + definition.metadata.id
+                + "' has invalid definition: " + error.what());
         }
         const auto [existing, inserted] = display_names.emplace(
-            fold_ascii(definition.display_name), definition.id);
+            fold_ascii(definition.metadata.display_name), definition.metadata.id);
         if (!inserted) {
-            throw std::runtime_error("Character public name '" + definition.display_name
+            throw std::runtime_error("Character public name '" + definition.metadata.display_name
                 + "' is not unique");
+        }
+        const auto [first, unique] = ids.emplace(definition.metadata.id, definition.directory);
+        if (!unique) {
+            throw std::runtime_error("Character ID '" + definition.metadata.id
+                + "' is defined by both '" + utf8_path(first->second)
+                + "' and '" + utf8_path(definition.directory) + "'");
         }
     }
     return definitions;
@@ -446,6 +473,7 @@ const std::string& forum_display_name(const ForumInfo& value) {
 std::vector<CharacterDefinition> load_forum_definitions(
     const LoadedForum& forum,
     const PersonaRoster& personas,
+    const std::unordered_map<std::string, std::filesystem::path>& character_directories,
     const std::filesystem::path& definitions_directory,
     const ProviderSources& providers,
     const std::filesystem::path& styles_directory) {
@@ -455,9 +483,14 @@ std::vector<CharacterDefinition> load_forum_definitions(
     std::vector<CharacterDefinitionSource> sources;
     sources.reserve(forum.info.member_ids.size());
     for (const std::string& member_id : forum.info.member_ids) {
+        const auto directory = character_directories.find(member_id);
+        if (directory == character_directories.end()) {
+            throw std::runtime_error("Character '" + member_id + "' has no definition directory");
+        }
         sources.push_back({
-            .definition_directory = definitions_directory / path_from_utf8(member_id),
+            .definition_directory = directory->second,
             .member_directory = forum.directory / "members" / path_from_utf8(member_id),
+            .definition_containment_root = definitions_directory,
         });
     }
     const std::filesystem::path defaults_candidate =
@@ -711,11 +744,17 @@ WorkspaceDefinition WorkspaceDefinition::load(
     }
     const std::filesystem::path definitions_directory = root / "characters";
     model.characters_directory_ = definitions_directory;
-    std::vector<CharacterMetadata> characters =
+    std::vector<LoadedCharacterMetadata> loaded_characters =
         load_definition_metadata(
             definitions_directory,
             model.config_.providers_directory,
             model.config_.styles_directory);
+    std::vector<CharacterMetadata> characters;
+    characters.reserve(loaded_characters.size());
+    for (LoadedCharacterMetadata& character : loaded_characters) {
+        model.character_directories_.emplace(character.metadata.id, character.directory);
+        characters.push_back(std::move(character.metadata));
+    }
     const PersonaRoster custom_personas = load_personas(root);
     validate_persona_character_collisions(custom_personas, characters);
 
@@ -785,7 +824,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
             const Persona* const persona =
                 model.find_persona(forum.info.default_persona_id);
             std::vector<CharacterDefinition> definitions = load_forum_definitions(
-                forum, PersonaRoster{*persona}, definitions_directory,
+                forum, PersonaRoster{*persona}, model.character_directories_, definitions_directory,
                 {model.config_.provider, model.config_.providers_directory},
                 model.config_.styles_directory);
             for (const CharacterDefinition& definition : definitions) {
@@ -814,10 +853,15 @@ WorkspaceDefinition WorkspaceDefinition::load(
     // prompt, so there is nothing to expand against until they are assigned.
     for (const CharacterMetadata& character : characters) {
         if (!model.character_markdown_.contains(character.id)) {
+            const auto directory = model.character_directories_.find(character.id);
+            if (directory == model.character_directories_.end()) {
+                throw std::runtime_error(
+                    "Character '" + character.id + "' has no definition directory");
+            }
             model.character_markdown_.emplace(
                 character.id,
                 read_text_file(
-                    definitions_directory / path_from_utf8(character.id) / "CHARACTER.md",
+                    directory->second / "CHARACTER.md",
                     "character definition"));
         }
     }
@@ -909,6 +953,7 @@ WorkspaceDefinition::CopiedForumDefinitions WorkspaceDefinition::copy_definition
         return {.definitions = load_forum_definitions(
             {.info = *forum, .directory = directory->second},
             PersonaRoster{*persona},
+            character_directories_,
             characters_directory_,
             {config_.provider, config_.providers_directory},
             config_.styles_directory)};
@@ -1092,11 +1137,9 @@ std::optional<CharacterSettings> WorkspaceDefinition::character_settings(
 
 std::optional<std::filesystem::path> WorkspaceDefinition::character_config_path(
     std::string_view id) const {
-    if (find_character(id) == nullptr || characters_directory_.empty()) {
-        return std::nullopt;
-    }
-    const std::filesystem::path path =
-        characters_directory_ / path_from_utf8(id) / "character.toml";
+    const auto directory = character_directories_.find(std::string(id));
+    if (directory == character_directories_.end()) return std::nullopt;
+    const std::filesystem::path path = directory->second / "character.toml";
     if (!std::filesystem::is_regular_file(path)) return std::nullopt;
     return path;
 }

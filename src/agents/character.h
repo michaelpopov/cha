@@ -34,6 +34,9 @@ struct CharacterDefinition {
 struct CharacterDefinitionSource {
     std::filesystem::path definition_directory;
     std::filesystem::path member_directory;
+    // The workspace characters/ directory. Empty keeps the legacy behavior
+    // for callers that provide only a standalone definition directory.
+    std::filesystem::path definition_containment_root;
 };
 
 // Loads the forum's character configurations in order and assembles each effective system prompt.

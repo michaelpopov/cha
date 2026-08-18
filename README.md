@@ -123,7 +123,8 @@ edits to host, model, or credentials take effect after a workspace reload.
 
 A character's chosen `provider` and `style` can be changed from the browser:
 Characters → the character → the row naming it above the description → Settings. Save writes
-those keys in `characters/<id>/character.toml` and restarts live sessions the
+those keys in the character's `character.toml` (under `characters/`, including
+through any grouping directories) and restarts live sessions the
 change can affect. A forum that sets its own provider is named under the picker
 and is not restarted for a provider-only save. The built-in Assistant has no
 config file and no settings screen.

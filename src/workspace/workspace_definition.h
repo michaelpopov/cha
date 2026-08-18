@@ -176,6 +176,7 @@ private:
 
     WorkspaceConfig config_;
     std::filesystem::path characters_directory_;
+    std::unordered_map<std::string, std::filesystem::path> character_directories_;
     std::unordered_map<std::string, std::filesystem::path> forum_directories_;
     SharedPersonaRoster personas_;
     std::vector<CharacterMetadata> characters_;

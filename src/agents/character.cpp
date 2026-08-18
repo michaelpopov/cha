@@ -111,7 +111,10 @@ CharacterDefinition load_definition_files(
         selected_member_prompt ? *selected_member_prompt : definition_prompt;
     TemplateOptions character_options{
         .containment_root = selected_member_prompt
-            ? forum_directory : source.definition_directory.parent_path(),
+            ? forum_directory
+            : (source.definition_containment_root.empty()
+                ? source.definition_directory.parent_path()
+                : source.definition_containment_root),
         .scope_table_name = std::string(prompt_scope_table),
         .reserved =
             {

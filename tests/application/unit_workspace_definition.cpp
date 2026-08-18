@@ -825,6 +825,22 @@ TEST_F(WorkspaceDefinitionLayoutTest, ValidatesRequiredDefinitionFiles) {
     EXPECT_THROW((void)load(), std::runtime_error);
 }
 
+TEST_F(WorkspaceDefinitionLayoutTest, LoadsCharactersFromNestedGroupingDirectories) {
+    const std::filesystem::path group = root_ / "characters" / "1" / "AAA";
+    const std::filesystem::path guide = group / "guide";
+    const std::filesystem::path begemot = group / "begemot";
+    std::filesystem::create_directories(group);
+    std::filesystem::rename(root_ / "characters" / "guide", guide);
+    std::filesystem::create_directories(begemot);
+    std::ofstream(begemot / "character.toml") << "display_name = \"Begemot\"\n";
+    std::ofstream(begemot / "CHARACTER.md") << "Character instructions";
+
+    const WorkspaceDefinition model = load();
+    EXPECT_NE(model.find_character("guide"), nullptr);
+    EXPECT_NE(model.find_character("begemot"), nullptr);
+    EXPECT_EQ(model.character_config_path("guide"), guide / "character.toml");
+}
+
 TEST_F(WorkspaceDefinitionLayoutTest, RejectsMalformedDefinition) {
     std::ofstream(root_ / "characters" / "guide" / "character.toml")
         << "display_name = [\"Guide\"]\n";
