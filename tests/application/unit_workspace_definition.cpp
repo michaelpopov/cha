@@ -1131,8 +1131,25 @@ TEST_F(WorkspaceDefinitionPersonaTest, LoadsOptionalDescriptionAndRejectsMalform
 }
 
 TEST_F(WorkspaceDefinitionPersonaTest, RequiresAPersonaTomlForEveryPersonaDirectory) {
-    std::filesystem::create_directories(root_ / "personas" / "missing");
+    const std::filesystem::path directory = root_ / "personas" / "missing";
+    std::filesystem::create_directories(directory);
+    std::ofstream(directory / "PERSONA.md") << "Prompt";
     EXPECT_THROW((void)load_model(root_), std::runtime_error);
+}
+
+TEST_F(WorkspaceDefinitionPersonaTest, LoadsPersonasFromNestedGroupingDirectories) {
+    add_persona("ada", "Ada");
+    const std::filesystem::path group = root_ / "personas" / "1" / "AAA";
+    std::filesystem::create_directories(group);
+    std::filesystem::rename(root_ / "personas" / "ada", group / "ada");
+    const std::filesystem::path beatrice = group / "beatrice";
+    std::filesystem::create_directories(beatrice);
+    std::ofstream(beatrice / "persona.toml") << "display_name = \"Beatrice\"\n";
+
+    const PersonaRoster roster = personas();
+    ASSERT_EQ(roster.size(), 2U);
+    EXPECT_EQ(roster[0].id, "ada");
+    EXPECT_EQ(roster[1].id, "beatrice");
 }
 
 TEST_F(WorkspaceDefinitionPersonaTest, RequiresPersonaPromptToBeARegularFile) {

@@ -431,15 +431,29 @@ PersonaRoster load_personas(const std::filesystem::path& root) {
             + "' does not exist; create personas/<id>/persona.toml");
     }
     PersonaRoster personas;
+    std::vector<std::filesystem::path> directories;
     for (const std::filesystem::directory_entry& entry :
-         std::filesystem::directory_iterator(personas_directory)) {
-        if (entry.is_directory()) personas.push_back(load_persona(entry.path()));
+         std::filesystem::recursive_directory_iterator(personas_directory)) {
+        if (entry.is_directory()) directories.push_back(entry.path());
+    }
+    std::sort(directories.begin(), directories.end());
+    for (const std::filesystem::path& directory : directories) {
+        // Directories without either definition file are grouping directories.
+        if (!std::filesystem::exists(directory / "persona.toml")
+            && !std::filesystem::exists(directory / "PERSONA.md")) {
+            continue;
+        }
+        personas.push_back(load_persona(directory));
     }
     std::sort(personas.begin(), personas.end(), [](const Persona& left, const Persona& right) {
         return left.id < right.id;
     });
+    std::unordered_set<std::string> ids;
     std::unordered_map<std::string, std::string> display_names;
     for (const Persona& persona : personas) {
+        if (!ids.insert(persona.id).second) {
+            throw std::runtime_error("Persona ID '" + persona.id + "' is not unique");
+        }
         const std::string folded = fold_ascii(persona.display_name);
         const auto [existing, inserted] = display_names.emplace(folded, persona.id);
         if (!inserted) {

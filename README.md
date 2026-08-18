@@ -54,7 +54,9 @@ message addressed to it.
 ## Workspace configuration
 
 A workspace contains `workspace.toml`, `characters/`, `forums/`, and
-`personas/`. The `personas/` directory may be empty because the built-in Guest
+`personas/`. `characters/` and `personas/` may use nested grouping directories;
+the directory containing a definition file supplies that character or persona's ID.
+The `personas/` directory may be empty because the built-in Guest
 persona is always available, and is what a forum that names no `default_persona`
 speaks as. Persona, character, and forum definitions have a public
 `display_name` and may have a one-line `description`.
