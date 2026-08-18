@@ -38,6 +38,13 @@ ModelMessage operator_prompt(std::string_view text) {
     return {ModelRole::persona, "from Operator:\n" + std::string(text)};
 }
 
+std::vector<ModelMessage> context_without_timestamp_metadata(
+    GenerationRequest input,
+    std::string_view system_prompt) {
+    input.run.created_at = 0;
+    return project_model_context(input, system_prompt);
+}
+
 // Blocks the execution's final wake. This makes `execution_finished` true
 // while the worker task is still live, so shutdown must join the pool rather
 // than treating the batch's backend-safety barrier as full quiescence.
@@ -479,10 +486,11 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(request.run.request_id, 17U);
     EXPECT_EQ(request.run.target.id, "guide-id");
     EXPECT_EQ(request.run.prompt_text, "Current");
+    EXPECT_NE(request.run.created_at, 0);
     ASSERT_EQ(request.history->entries.size(), 1U);
     EXPECT_EQ(request.history->entries.front(), earlier);
     EXPECT_EQ(
-        backend_view->model_contexts.front(),
+        context_without_timestamp_metadata(request, backend_view->system_prompt),
         (std::vector<ModelMessage>{
             {ModelRole::persona, "from You:\nEarlier"},
             operator_prompt("Current"),
@@ -491,6 +499,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
 
     const auto entries = copy_entries(controller->view().transcript);
     ASSERT_EQ(entries.size(), 3U);
+    EXPECT_EQ(entries[1].created_at, request.run.created_at);
     const TranscriptEntry& response = entries.back();
     EXPECT_EQ(response.kind, EntryKind::character);
     EXPECT_EQ(response.participant_id, "guide-id");
@@ -611,7 +620,8 @@ TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
 
     ASSERT_EQ(backend_view->model_contexts.size(), 2U);
     EXPECT_EQ(
-        backend_view->model_contexts[1],
+        context_without_timestamp_metadata(
+            backend_view->inputs[1], backend_view->system_prompt),
         (std::vector<ModelMessage>{operator_prompt("Second")}));
 }
 
@@ -980,7 +990,8 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
 
     ASSERT_EQ(backend_view->model_contexts.size(), 3U);
     EXPECT_EQ(
-        backend_view->model_contexts[2],
+        context_without_timestamp_metadata(
+            backend_view->inputs[2], backend_view->system_prompt),
         (std::vector<ModelMessage>{
             operator_prompt("Visible"),
             {ModelRole::assistant, "Answer"},
@@ -993,7 +1004,8 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
 
     ASSERT_EQ(backend_view->model_contexts.size(), 4U);
     EXPECT_EQ(
-        backend_view->model_contexts[3],
+        context_without_timestamp_metadata(
+            backend_view->inputs[3], backend_view->system_prompt),
         (std::vector<ModelMessage>{
             operator_prompt("Visible"),
             {ModelRole::assistant, "Answer"},
@@ -1063,10 +1075,12 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     EXPECT_EQ(two_view->inputs.front().run.target.id, "two-id");
     EXPECT_EQ(one_view->inputs.front().history, two_view->inputs.front().history);
     EXPECT_EQ(
-        one_view->model_contexts.front(),
+        context_without_timestamp_metadata(
+            one_view->inputs.front(), one_view->system_prompt),
         (std::vector<ModelMessage>{operator_prompt("What time is it?")}));
     EXPECT_EQ(
-        two_view->model_contexts.front(),
+        context_without_timestamp_metadata(
+            two_view->inputs.front(), two_view->system_prompt),
         (std::vector<ModelMessage>{operator_prompt("What time is it?")}));
 
     const std::vector<TranscriptEntry> multicast_entries =
@@ -1286,7 +1300,8 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     ASSERT_EQ(cancelled_view->inputs.size(), 1U);
     ASSERT_EQ(complete_view->inputs.size(), 1U);
     EXPECT_EQ(
-        complete_view->model_contexts.front(),
+        context_without_timestamp_metadata(
+            complete_view->inputs.front(), complete_view->system_prompt),
         (std::vector<ModelMessage>{operator_prompt("Question")}));
     EXPECT_FALSE(controller->is_generating());
 }

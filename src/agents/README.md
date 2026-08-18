@@ -369,7 +369,9 @@ statements whose first-person claims belong to their named speakers. JSON
 escaping prevents embedded newlines, quotes, or label-like text from creating
 false entry boundaries. A human prompt addressed to the requesting character is
 always emitted outside the preceding shared-history block. Plain single-character
-history retains its ordinary persona/assistant wire shape, and reasoning text is
+history retains its ordinary persona/assistant wire shape. When a run has a
+submission timestamp, the request also gives the model a UTC reference time and
+includes UTC timestamps on historical and current messages; reasoning text is
 never included.
 
 The predicate is a conjunction, so the off-record rule needs no ordering against

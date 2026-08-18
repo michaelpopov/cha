@@ -5,6 +5,7 @@
 #include "util/text.h"
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <limits>
 #include <stdexcept>
@@ -14,6 +15,11 @@
 
 namespace cha {
 namespace {
+
+std::int64_t unix_now() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
 
 void log_persistence_failure(
     const std::string& action,
@@ -422,6 +428,7 @@ void SessionController::start_batch(
                 .target = std::move(target),
                 .author = author,
                 .prompt_text = text,
+                .created_at = unix_now(),
             },
         });
     }
@@ -456,6 +463,7 @@ void SessionController::activate_current_run(ControllerUpdate& update) {
         .addressed_to = {run.target.id, run.target.display_name},
         .text = run.prompt_text,
         .request_id = run.request_id,
+        .created_at = run.created_at,
     });
     ActiveResponse response{
         .request_id = run.request_id,

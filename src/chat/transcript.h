@@ -38,6 +38,9 @@ struct HumanEntrySpec {
     EntryIdentity addressed_to;
     std::string text;
     std::optional<RequestId> request_id;
+    // A caller that already owns the request timestamp may preserve it when
+    // the prompt becomes durable. Otherwise the factory stamps it now.
+    std::optional<std::int64_t> created_at;
 };
 
 // Classifies transcript semantics independently of the label rendered to the persona.

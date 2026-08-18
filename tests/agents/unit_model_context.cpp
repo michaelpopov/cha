@@ -210,6 +210,52 @@ TEST(ModelContext, PrefixesBothReplayedAndLivePromptsWithTheirOwnAuthors) {
         }));
 }
 
+TEST(ModelContext, ProjectsUtcTimestampsWhenRunHasSubmissionTime) {
+    TranscriptEntry earlier_question = test::human_entry(
+        1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier question", 1);
+    earlier_question.created_at = 1'700'000'000;
+    TranscriptEntry earlier_answer = make_character_entry(
+        2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 1);
+    earlier_answer.created_at = 1'700'000'001;
+    TranscriptEntry shared_question = test::human_entry(
+        3, {"human", "You"}, {"other", "Other"}, "Other question", 2);
+    shared_question.created_at = 1'700'000'002;
+
+    const GenerationRequest input{
+        .history = std::make_shared<const ModelHistory>(ModelHistory{
+            .entries = {
+                std::move(earlier_question),
+                std::move(earlier_answer),
+                std::move(shared_question),
+            },
+        }),
+        .run = {
+            .request_id = 3,
+            .target = {"assistant", "Assistant"},
+            .author = {"human", "You"},
+            .prompt_text = "Current question",
+            .created_at = 1'700'000'003,
+        },
+    };
+
+    EXPECT_EQ(
+        project_model_context(input, "System"),
+        (std::vector<ModelMessage>{
+            {ModelRole::system,
+             "System\n\nConversation timestamps are in UTC. The current prompt was "
+             "submitted at 2023-11-14T22:13:23Z."},
+            {ModelRole::persona,
+             "from You at 2023-11-14T22:13:20Z:\nEarlier question"},
+            {ModelRole::assistant,
+             "[2023-11-14T22:13:21Z]\nEarlier answer"},
+            {ModelRole::persona,
+             "Shared chat history (JSONL):\n"
+             R"({"kind":"human","speaker":"You","addressed_to":"Other","created_at":"2023-11-14T22:13:22Z","text":"Other question"})"},
+            {ModelRole::persona,
+             "from You at 2023-11-14T22:13:23Z:\nCurrent question"},
+        }));
+}
+
 TEST(ModelContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"other", "Other"}, "First question", 1),

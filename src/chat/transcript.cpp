@@ -25,7 +25,7 @@ TranscriptEntry make_human_entry(HumanEntrySpec spec) {
         .text = std::move(spec.text),
         .status = EntryStatus::complete,
         .request_id = spec.request_id,
-        .created_at = unix_now(),
+        .created_at = spec.created_at.value_or(unix_now()),
     };
 }
 

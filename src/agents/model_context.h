@@ -24,6 +24,9 @@ struct RunSpec {
     CharacterMetadata target;
     EntryIdentity author;
     std::string prompt_text;
+    // The prompt's UTC Unix-seconds timestamp. It is copied into the durable
+    // transcript entry when this run becomes active.
+    std::int64_t created_at{};
 };
 
 // Complete immutable input for backend preparation. Ordinary requests and
