@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 
 import { publicErrorMessage } from '../api/client';
 import type { AppAction, AppState, MainView } from '../state/view';
-import { CharacterIcon, ForumsIcon, MoreIcon, PersonasIcon } from './Icons';
+import { CharacterIcon, ForumsIcon, MoreIcon, PersonasIcon, ReloadIcon } from './Icons';
 
 interface SidebarProps {
   state: AppState;
@@ -20,6 +20,7 @@ interface SidebarProps {
   onDownloadSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onRenameSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onDeleteSession(forumId: string, sessionId: string): Promise<void>;
+  onReloadWorkspace(): Promise<void>;
 }
 
 interface SelectedSession {
@@ -137,12 +138,28 @@ export function Sidebar({
   onOpenSession,
   onRenameSession,
   onDeleteSession,
+  onReloadWorkspace,
 }: SidebarProps) {
   const forums = new Map(state.bootstrap?.forums.map((forum) => [forum.id, forum]));
   const recents = state.bootstrap?.recent_sessions;
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [reloading, setReloading] = useState(false);
+  const [reloadError, setReloadError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  async function reloadWorkspace() {
+    if (reloading) return;
+    setReloading(true);
+    setReloadError(null);
+    try {
+      await onReloadWorkspace();
+    } catch (failure: unknown) {
+      setReloadError(publicErrorMessage(failure, 'The workspace could not be reloaded.'));
+    } finally {
+      setReloading(false);
+    }
+  }
 
   function closeMenu(restore = true) {
     if (restore) menu?.restoreFocus?.focus();
@@ -253,6 +270,18 @@ export function Sidebar({
             </div>
           );
         })}
+      </div>
+      <div className="cha-sidebar-footer">
+        <button
+          className="cha-side-action"
+          disabled={state.bootstrapStatus !== 'ready' || reloading}
+          onClick={() => void reloadWorkspace()}
+          type="button"
+        >
+          <ReloadIcon />
+          <span>Reload workspace</span>
+        </button>
+        {reloadError && <p className="cha-error-message" role="alert">{reloadError}</p>}
       </div>
       {menu && createPortal(
         <div

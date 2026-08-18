@@ -1,0 +1,2 @@
+# Keep Arsen on the character's Mistral provider instead of Circle's shared default.
+provider = "mistral-large"

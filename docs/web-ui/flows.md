@@ -12,6 +12,7 @@ flowchart TD
     Sidebar -->|"Forums"| Forums["Forums"]
     Sidebar -->|"Recent session"| Open["Open or reattach selected session"]
     Sidebar -->|"Recent actions / right-click"| Maintain["Rename or confirm delete"]
+    Sidebar -->|"Reload workspace"| Reload["Publish a new workspace generation;<br/>restart live sessions"]
     Personas -->|"Select persona"| PersonaDetail["Persona detail"]
     PersonaDetail -->|"Personas back row"| Personas
     Characters -->|"Select character"| Detail["Character detail"]

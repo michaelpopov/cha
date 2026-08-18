@@ -89,6 +89,9 @@ function Screen({
     />
   );
 
+  // The detail screens read their Markdown from the server once per mount, so a
+  // workspace reload under an open one would leave the retired generation's copy
+  // on screen. Keying them on the catalog revision refetches instead.
   switch (state.mainView) {
     case 'chat': return (
       <ChatScreen
@@ -106,6 +109,7 @@ function Screen({
     );
     case 'persona-detail': return (
       <PersonaDetailScreen
+        key={catalogRevision}
         client={client}
         dispatch={dispatch}
         sessionReport={sessionReport}
@@ -117,6 +121,7 @@ function Screen({
     );
     case 'character-detail': return (
       <CharacterDetailScreen
+        key={catalogRevision}
         client={client}
         dispatch={dispatch}
         sessionReport={sessionReport}
@@ -146,6 +151,7 @@ function Screen({
     );
     case 'forum-detail': return (
       <ForumDetailScreen
+        key={catalogRevision}
         client={client}
         dispatch={dispatch}
         sessionReport={sessionReport}
@@ -358,6 +364,12 @@ export function App({
     } catch {
       // The live snapshot remains usable. Discovery refresh is non-critical.
     }
+  }, [client]);
+
+  const reloadWorkspace = useCallback(async () => {
+    const bootstrap = validateBootstrap(await client.reloadWorkspace());
+    dispatch({ type: 'bootstrap-refreshed', bootstrap });
+    setCatalogRevision((revision) => revision + 1);
   }, [client]);
 
   // Every navigation intent goes through here so the ref and the rendered copy
@@ -880,6 +892,7 @@ export function App({
         onDownloadSession={downloadSession}
         onOpenSession={openConversation}
         onRenameSession={renameSession}
+        onReloadWorkspace={reloadWorkspace}
         state={state}
       />
       <main className="cha-main" data-view={state.mainView}>

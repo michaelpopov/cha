@@ -30,6 +30,7 @@ describe('CHA API client', () => {
     const client = createChaClient(fetcher);
 
     await client.getBootstrap();
+    await client.reloadWorkspace();
     await client.getCharacter('a b');
     await client.getPersona('read er');
     await client.listSessions('f/one');
@@ -46,6 +47,7 @@ describe('CHA API client', () => {
 
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/bootstrap',
+      '/api/v1/workspace/reload',
       '/api/v1/characters/a%20b',
       '/api/v1/personas/read%20er',
       '/api/v1/forums/f%2Fone/sessions',
@@ -63,21 +65,23 @@ describe('CHA API client', () => {
 
     expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();
     expect(new Headers(fetcher.mock.calls[0][1]?.headers).get('Accept')).toBe('application/json');
-    expect(fetcher.mock.calls[4][1]?.method).toBe('POST');
-    expect(new Headers(fetcher.mock.calls[4][1]?.headers).get('Content-Type'))
+    expect(fetcher.mock.calls[1][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[1][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[5][1]?.method).toBe('POST');
+    expect(new Headers(fetcher.mock.calls[5][1]?.headers).get('Content-Type'))
       .toBe('application/json');
-    expect(fetcher.mock.calls[4][1]?.body).toBe('{"label":"Review"}');
-    expect(fetcher.mock.calls[5][1]?.method).toBe('PATCH');
-    expect(fetcher.mock.calls[5][1]?.body).toBe('{"label":"Renamed"}');
-    expect(fetcher.mock.calls[6][1]?.method).toBe('DELETE');
-    expect(fetcher.mock.calls[6][1]?.body).toBe('{}');
-    expect(new Headers(fetcher.mock.calls[7][1]?.headers).get('Accept')).toBe('text/markdown');
-    expect(fetcher.mock.calls[8][1]?.body).toBe('{}');
-    expect(fetcher.mock.calls[10][1]?.body).toBe('{"text":"Hello"}');
-    expect(fetcher.mock.calls[11][1]?.body).toBe('{}');
-    expect(fetcher.mock.calls[12][1]?.body).toBe('{"character_id":"guide"}');
-    expect(fetcher.mock.calls[13][1]?.method).toBe('PATCH');
-    expect(fetcher.mock.calls[13][1]?.body).toBe('{"provider":"terra","style":null}');
+    expect(fetcher.mock.calls[5][1]?.body).toBe('{"label":"Review"}');
+    expect(fetcher.mock.calls[6][1]?.method).toBe('PATCH');
+    expect(fetcher.mock.calls[6][1]?.body).toBe('{"label":"Renamed"}');
+    expect(fetcher.mock.calls[7][1]?.method).toBe('DELETE');
+    expect(fetcher.mock.calls[7][1]?.body).toBe('{}');
+    expect(new Headers(fetcher.mock.calls[8][1]?.headers).get('Accept')).toBe('text/markdown');
+    expect(fetcher.mock.calls[9][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[11][1]?.body).toBe('{"text":"Hello"}');
+    expect(fetcher.mock.calls[12][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[13][1]?.body).toBe('{"character_id":"guide"}');
+    expect(fetcher.mock.calls[14][1]?.method).toBe('PATCH');
+    expect(fetcher.mock.calls[14][1]?.body).toBe('{"provider":"terra","style":null}');
     expect(sessionEventsUrl('f one', 's/two')).toBe('/s/f%20one/s%2Ftwo/api/v1/events');
   });
 

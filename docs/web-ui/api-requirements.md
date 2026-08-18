@@ -10,6 +10,7 @@ require recovery-specific API models.
 | UI need | API |
 | --- | --- |
 | Load startup and discovery data | `GET /api/v1/bootstrap` |
+| Republish the workspace after a hand edit | `POST /api/v1/workspace/reload` |
 | Read character detail | `GET /api/v1/characters/{character_id}` |
 | Update a character's provider and style | `PATCH /api/v1/characters/{character_id}` |
 | List one forum's sessions | `GET /api/v1/forums/{forum}/sessions` |
@@ -40,12 +41,21 @@ live-session API remains the base for Chat.
 }
 ```
 
-The server loads and validates discovery data at startup. Its HTTP projection
-contains workspace entities plus Guest, Assistant, and Entrance. The browser
-opens the shared Welcome session immediately. Discovery stays at that startup
-copy. A character's provider and style are rewritten by PATCH and picked up
-when a session next opens; other configuration still takes effect after a
-restart.
+The server loads and validates discovery data as one workspace generation. Its
+HTTP projection contains workspace entities plus Guest, Assistant, and Entrance.
+The browser opens the shared Welcome session immediately. Discovery stays at that
+generation's copy. A character's provider and style are rewritten by PATCH and
+picked up when a session next opens; other configuration takes effect when a new
+generation is published.
+
+`POST /api/v1/workspace/reload` publishes that new generation. It takes an empty
+JSON object, returns the same `Bootstrap` body as `GET /api/v1/bootstrap` so the
+browser needs no second request, and shuts every live session down with
+`workspace_reloading`. A workspace that fails validation answers `422` with
+`workspace_reload_failed` and leaves the published generation and its sessions
+untouched, so the browser reports the failure and keeps the state it has. Because
+the response replaces discovery wholesale, any detail screen open over the
+retired generation refetches.
 
 Terminal and HTTP discovery are separate projections over the same workspace
 entities. Terminal commands use public names; HTTP routes use stable IDs. The

@@ -83,6 +83,7 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 
 export interface ChaClient {
   getBootstrap(): Promise<Bootstrap>;
+  reloadWorkspace(): Promise<Bootstrap>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
   updateCharacter(characterId: string, settings: UpdateCharacterRequest): Promise<CharacterDetail>;
   getPersona(personaId: string): Promise<PersonaDetail>;
@@ -236,6 +237,12 @@ export function createChaClient(
 ): ChaClient {
   return {
     getBootstrap: () => requestJson<Bootstrap>(fetcher, '/api/v1/bootstrap'),
+
+    reloadWorkspace: () => requestJson<Bootstrap>(
+      fetcher,
+      '/api/v1/workspace/reload',
+      jsonMutation({}, 'POST'),
+    ),
 
     getCharacter: (characterId) => requestJson<CharacterDetail>(
       fetcher,

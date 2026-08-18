@@ -13,7 +13,7 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
 - The round two-line button is the only control that changes whether the sidebar is open.
 - Sidebar references change the main-area state without closing or opening the sidebar.
 - The main surface displays either Chat or one Navigation state, never both.
-- The sidebar contains Personas, Characters, Forums, and Recent session references. It does not show the current persona or forum.
+- The sidebar contains Personas, Characters, Forums, Recent session references, and a Reload workspace footer. It does not show the current persona or forum.
 - The browser starts in the shared Welcome session in Entrance, which speaks as Guest, with Assistant as the current target.
 - A persona is configured per forum and is never chosen in the browser. Personas is read-only and informational: it catalogs the workspace personas and opens a read-only rendering of a persona's `PERSONA.md`. Personas remain authors, never forum or session members.
 - Chat has no title or context header. A compact line below the composer shows `<Forum>   From: <Persona>   To: <current default character>`.
@@ -31,14 +31,15 @@ Open [mockup.html](mockup.html) in a browser to exercise the design. Its control
   including after its live runtime has stopped.
 - There is no Chat shortcut or global New session shortcut in the sidebar.
 - Users cannot create forums, personas, or characters in this version.
-- There is no sidebar gear and no global Settings screen. The mockup and the screenshots in this directory still show a gear at the bottom-right of the sidebar; v1 removes it. Character settings is a separate screen, reached from Character detail.
+- There is no sidebar gear and no global Settings screen. The mockup and the screenshots in this directory still show a gear at the bottom-right of the sidebar; v1 removes it. Character settings is a separate screen, reached from Character detail. The Reload workspace footer is not that gear: it edits nothing and opens no screen, it republishes the workspace the server already reads from disk.
 
 ## Screen catalogue
 
 The screen images and interactive mockup predate the target-character amendment:
 where they show an attachment `+`, the production UI shows the target chooser.
 Their Send state remains the correct idle state; the same button shows Stop only
-while generation is active.
+while generation is active. They also predate the Reload workspace footer, which
+no sidebar image shows.
 
 ### Chat
 

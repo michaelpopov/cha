@@ -108,6 +108,52 @@ function renderAt(width: number) {
   return render(<App client={fixtureClient()} />);
 }
 
+it('uses the reload result to refresh workspace navigation', async () => {
+  const user = userEvent.setup();
+  const reloaded: Bootstrap = {
+    ...bootstrapFixture,
+    characters: [
+      ...bootstrapFixture.characters,
+      { ...bootstrapFixture.characters[0], id: 'new-guide', display_name: 'New Guide' },
+    ],
+  };
+  const reloadWorkspace = vi.fn(async () => reloaded);
+  render(<App client={fixtureClient({ reloadWorkspace })} connectSessionEvents={inertSessionEvents} />);
+
+  await user.click(await screen.findByRole('button', { name: 'Reload workspace' }));
+  await waitFor(() => expect(reloadWorkspace).toHaveBeenCalledOnce());
+  await user.click(screen.getByRole('button', { name: 'Characters' }));
+  expect(await screen.findByRole('button', { name: /New Guide/ })).toBeInTheDocument();
+});
+
+it('refetches an open character detail after a workspace reload', async () => {
+  const user = userEvent.setup();
+  let markdown = 'Guide before the reload';
+  const getCharacter = vi.fn(async () => ({
+    ...characterDetailFixture,
+    character_markdown: markdown,
+  }));
+  const reloadWorkspace = vi.fn(async () => {
+    markdown = 'Guide after the reload';
+    return bootstrapFixture;
+  });
+  render(<App
+    client={fixtureClient({ getCharacter, reloadWorkspace })}
+    connectSessionEvents={inertSessionEvents}
+  />);
+
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(await screen.findByRole('button', { name: /Guide/ }));
+  expect(await screen.findByText('Guide before the reload')).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+
+  // The retired generation's copy must not stay on screen under the detail the
+  // reload was pressed to publish.
+  expect(await screen.findByText('Guide after the reload')).toBeInTheDocument();
+  expect(screen.queryByText('Guide before the reload')).not.toBeInTheDocument();
+});
+
 describe.each([
   ['desktop', 1280],
   ['iPhone', 390],

@@ -15,6 +15,82 @@ function readyState() {
 }
 
 describe('Sidebar session actions', () => {
+  it('reloads the workspace from the sidebar footer', async () => {
+    const user = userEvent.setup();
+    const onReloadWorkspace = vi.fn(async () => undefined);
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onReloadWorkspace={onReloadWorkspace}
+        onRenameSession={vi.fn(async () => undefined)}
+        state={readyState()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    expect(onReloadWorkspace).toHaveBeenCalledOnce();
+  });
+
+  // A hand edit that does not validate is the expected way this fails, and the
+  // server names the problem. Reporting it is most of what the button is for.
+  it('reports a rejected reload and stays available for another attempt', async () => {
+    const user = userEvent.setup();
+    const onReloadWorkspace = vi.fn(async () => {
+      throw new ChaError(
+        422,
+        'workspace_reload_failed',
+        'Workspace reload failed: forums/writers/config.toml is invalid.',
+      );
+    });
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onReloadWorkspace={onReloadWorkspace}
+        onRenameSession={vi.fn(async () => undefined)}
+        state={readyState()}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: 'Reload workspace' });
+    await user.click(button);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'forums/writers/config.toml is invalid.',
+    );
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(onReloadWorkspace).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to a fixed message when a reload fails without a public one', async () => {
+    const user = userEvent.setup();
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onReloadWorkspace={vi.fn(async () => {
+          throw new Error('TypeError: undefined is not a function');
+        })}
+        onRenameSession={vi.fn(async () => undefined)}
+        state={readyState()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The workspace could not be reloaded.');
+    expect(alert).not.toHaveTextContent('TypeError');
+  });
+
   it('offers Download, Rename, and Delete in order by right-click and ellipsis but not for Welcome', async () => {
     const user = userEvent.setup();
     render(
@@ -24,6 +100,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onReloadWorkspace={vi.fn(async () => undefined)}
         state={readyState()}
       />,
     );
@@ -52,6 +129,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={onDownload}
         onOpenSession={onOpen}
         onRenameSession={vi.fn(async () => undefined)}
+        onReloadWorkspace={vi.fn(async () => undefined)}
         state={readyState()}
       />,
     );
@@ -72,6 +150,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onReloadWorkspace={vi.fn(async () => undefined)}
         state={readyState()}
       />,
     );
@@ -93,6 +172,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onReloadWorkspace={vi.fn(async () => undefined)}
         state={readyState()}
       />,
     );
@@ -130,6 +210,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onReloadWorkspace={vi.fn(async () => undefined)}
         state={readyState()}
       />,
     );
@@ -149,6 +230,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onReloadWorkspace={vi.fn(async () => undefined)}
         state={readyState()}
       />,
     );
@@ -174,6 +256,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={onRename}
+        onReloadWorkspace={vi.fn(async () => undefined)}
         state={readyState()}
       />,
     );
@@ -202,6 +285,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onReloadWorkspace={vi.fn(async () => undefined)}
         state={readyState()}
       />,
     );
