@@ -122,6 +122,7 @@ select:disabled {
 .cha-header-row,
 .cha-icon-action,
 .cha-composer-action,
+.cha-transliteration-toggle,
 .cha-back-row,
 .cha-button {
   appearance: none;
@@ -781,6 +782,31 @@ select:disabled {
   background: var(--secondary);
 }
 
+/* Sized to the context line it sits on rather than to the composer: it is the
+   tallest thing on that row and sets its height, so keep it close to the text.
+   `auto` margin holds it at the right edge while the context text ellipsizes
+   into whatever space is left. */
+.cha-transliteration-toggle {
+  height: 1.4rem;
+  flex: none;
+  margin-left: auto;
+  padding: 0 0.45rem;
+  border-radius: 0.7rem;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.cha-transliteration-toggle:hover {
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+
+.cha-transliteration-toggle[aria-pressed='true'] {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
 .cha-composer-action {
   display: grid;
   width: 2rem;
@@ -857,6 +883,7 @@ select:disabled {
   display: flex;
   width: 100%;
   min-width: 0;
+  align-items: center;
   gap: 0.8rem;
   margin: 0.35rem 0 0;
   padding: 0 0.55rem;

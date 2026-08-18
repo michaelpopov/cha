@@ -216,6 +216,32 @@ describe('live chat', () => {
     ));
   });
 
+  it('transliterates Latin typing to Russian when the composer mode is enabled', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    render(
+      <App
+        client={fixtureClient()}
+        connectSessionEvents={events.connect}
+      />,
+    );
+    await attachInitial(events);
+
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    const toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await user.type(input, "Privet, shhuka mozhet s+hodit' v raj+on.");
+    expect(input).toHaveValue('Привет, щука может сходить в район.');
+
+    await user.clear(input);
+    await user.click(toggle);
+    await user.type(input, 'Latin stays Latin');
+    expect(input).toHaveValue('Latin stays Latin');
+  });
+
   it('keeps a draft typed while the previous send was still in flight', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();

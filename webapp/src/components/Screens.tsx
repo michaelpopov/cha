@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type Dispatch,
   type FormEvent,
   type KeyboardEvent,
@@ -24,6 +25,7 @@ import {
 } from '../api/client';
 import { sessionOperationState, type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
+import { transliterateRussianChange } from './transliteration';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -115,10 +117,12 @@ export function ChatScreen({
   onSubmitInput,
 }: ChatScreenProps) {
   const [draft, setDraft] = useState('');
+  const [transliterationEnabled, setTransliterationEnabled] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<'send' | 'stop' | 'target' | null>(null);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const composerInput = useRef<HTMLTextAreaElement | null>(null);
+  const pendingComposerSelection = useRef<number | null>(null);
   const followingLatest = useRef(true);
   const snapshot = state.sessionSnapshot;
   const generation = snapshot?.generation;
@@ -164,6 +168,10 @@ export function ChatScreen({
     if (!input) return;
     input.style.height = 'auto';
     input.style.height = `${input.scrollHeight}px`;
+    if (pendingComposerSelection.current !== null && document.activeElement === input) {
+      input.setSelectionRange(pendingComposerSelection.current, pendingComposerSelection.current);
+    }
+    pendingComposerSelection.current = null;
   }, [draft]);
 
   // Growing the transcript moves the end away without moving the viewport, so
@@ -172,6 +180,24 @@ export function ChatScreen({
   function noteReadingPosition(event: UIEvent<HTMLDivElement>) {
     const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
     followingLatest.current = scrollHeight - scrollTop - clientHeight <= followSlack;
+  }
+
+  function updateDraft(event: ChangeEvent<HTMLTextAreaElement>) {
+    const next = event.target.value;
+    const composing = 'isComposing' in event.nativeEvent && event.nativeEvent.isComposing === true;
+    if (!transliterationEnabled || composing) {
+      pendingComposerSelection.current = null;
+      setDraft(next);
+      return;
+    }
+
+    const change = transliterateRussianChange(
+      draft,
+      next,
+      event.target.selectionStart ?? next.length,
+    );
+    pendingComposerSelection.current = change.selection;
+    setDraft(change.value);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -363,7 +389,7 @@ export function ChatScreen({
             aria-label="Message"
             autoComplete="off"
             disabled={!sessionAvailable}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={updateDraft}
             onKeyDown={submitOnEnter}
             placeholder={recording
               ? 'Recording — saved, not sent'
@@ -384,10 +410,27 @@ export function ChatScreen({
             {generationActive ? <StopIcon /> : <SendIcon />}
           </button>
         </form>
+        {/* The composer's own row is worth more to the draft than to a mode
+            switch, so the toggle rides the context line already under it,
+            trading a column of the composer for a few pixels of that row. */}
         <div className="cha-chat-status" aria-label="Current chat context">
           <span>{forum?.display_name ?? 'Unknown forum'}</span>
           <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
           <span>To: {recording ? 'Recording' : (character?.display_name ?? 'Unknown character')}</span>
+          <button
+            aria-label="Latin to Russian transliteration"
+            aria-pressed={transliterationEnabled}
+            className="cha-transliteration-toggle"
+            disabled={!sessionAvailable}
+            onClick={() => {
+              setTransliterationEnabled((enabled) => !enabled);
+              composerInput.current?.focus();
+            }}
+            title={`${transliterationEnabled ? 'Disable' : 'Enable'} Latin to Russian transliteration`}
+            type="button"
+          >
+            A→Я
+          </button>
         </div>
       </div>
     </section>
