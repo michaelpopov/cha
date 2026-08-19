@@ -47,6 +47,7 @@ private:
     int output_fd_{-1};
     int error_fd_{-1};
     int port_{};
+    std::filesystem::path backup_home_;
     std::string output_;
     std::string errors_;
 };

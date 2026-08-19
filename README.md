@@ -160,7 +160,10 @@ text enters the transcript.
 Provider secrets belong in the environment or the workspace `.env`, never in
 the application directory. `chaweb` reads listener and workspace settings from
 `app.toml` beside the executable; `--host`, `--port`, `--workspace`, and
-`--root` override them.
+`--root` override them. On Reload workspace, chaweb writes a
+`chaweb-YYYY-MM-DD-HH-MM.tar.gz` archive before loading the replacement
+workspace. Set `backup_dir` in `app.toml` to choose its destination; omitted,
+it defaults to the user's home directory.
 
 Linux deployment packages include a minimal `workspace/` directory containing
 the default provider and logging settings. The packaged `start-cha.sh` uses it

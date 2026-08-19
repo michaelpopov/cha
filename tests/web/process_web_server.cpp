@@ -561,6 +561,14 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     // SessionController::shutdown(), which is the exact state the coordinator
     // must report rather than joining.
     test::TemporarySessionFile database("blocked_shutdown");
+    const auto remove_database = [&database] {
+        std::error_code error;
+        std::filesystem::remove(database.path(), error);
+        std::filesystem::remove(SessionLease::companion_path(database.path()), error);
+        std::filesystem::remove(database.path().string() + "-journal", error);
+        std::filesystem::remove(database.path().string() + "-shm", error);
+        std::filesystem::remove(database.path().string() + "-wal", error);
+    };
     auto controls = std::make_shared<test::BackendControls>();
     controls->ignore_cancellation();
     WebSettings settings;
@@ -574,6 +582,7 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     const SessionIdentity key{"blocked-forum", "blocked-session"};
     if (!std::holds_alternative<LiveSessionReady>(
             live_sessions.open(key, 5s))) {
+        remove_database();
         _exit(2);
     }
     LiveSessionHandle session = live_sessions.lookup(key);
@@ -581,11 +590,15 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
         || !std::holds_alternative<CommandResult>(
             session->submit(RawCommand{"Question"}, 5s))
         || !controls->wait_until_running()) {
+        remove_database();
         _exit(4);
     }
     httplib::Server server;
     ServerShutdownCoordinator coordinator(live_sessions, server);
     std::thread listener;
+    // shutdown_now deliberately calls _exit when the wedged owner outlives
+    // its grace period, so destructors cannot clean this test database.
+    remove_database();
     coordinator.shutdown_now(listener, 20ms);
     _exit(3);
 }
@@ -973,7 +986,7 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     httplib::Server server;
     LobbyRoutes(
         graph.runtime, test::WebGraph::initial_selection(),
-        live_sessions, settings).install(server);
+        live_sessions, graph.root() / "backups", settings).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
     configure_http_server(server, settings);

@@ -96,10 +96,4 @@ void request_reload(
     }
 }
 
-void request_workspace_reload(LiveSessionManager& live_sessions) {
-    for (const LiveSessionHandle& live : live_sessions.active_sessions()) {
-        live->request_shutdown(ShutdownReason::workspace_reloading);
-    }
-}
-
 } // namespace cha::web

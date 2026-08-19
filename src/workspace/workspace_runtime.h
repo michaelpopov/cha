@@ -32,6 +32,7 @@ public:
     WorkspaceRuntime& operator=(const WorkspaceRuntime&) = delete;
 
     [[nodiscard]] std::shared_ptr<const WorkspaceGeneration> snapshot() const;
+    [[nodiscard]] const std::filesystem::path& root() const noexcept { return root_; }
 
     // Re-reads the workspace configuration and publishes a fresh generation.
     // Throws when the candidate cannot be loaded; the current generation is

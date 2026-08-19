@@ -13,6 +13,7 @@
 #include "web/route_support.h"
 #include "web/session_markdown.h"
 #include "web/live_session_manager.h"
+#include "web/workspace_backup.h"
 #include "util/text.h"
 #include "util/logging.h"
 
@@ -247,9 +248,11 @@ LobbyRoutes::LobbyRoutes(
     std::shared_ptr<WorkspaceRuntime> workspace,
     InitialSelection initial,
     LiveSessionManager& live_sessions,
+    std::filesystem::path backup_dir,
     WebSettings settings)
     : workspace_(std::move(workspace)),
       initial_(std::move(initial)), live_sessions_(live_sessions),
+      backup_dir_(std::move(backup_dir)),
       settings_(std::move(settings)) {
     if (!workspace_) throw std::invalid_argument("Lobby routes need a workspace runtime");
 }
@@ -258,6 +261,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     const auto workspace = workspace_;
     const InitialSelection initial = initial_;
     LiveSessionManager* const live_sessions = &live_sessions_;
+    const std::filesystem::path backup_dir = backup_dir_;
     const WebSettings settings = settings_;
     server.Get("/health", [live_sessions](const httplib::Request&, httplib::Response& response) {
         const LiveSessionManagerSnapshot snapshot = live_sessions->snapshot();
@@ -272,13 +276,21 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Post("/api/v1/workspace/reload",
-        [workspace, initial, live_sessions, settings](
+        [workspace, initial, live_sessions, backup_dir, settings](
             const httplib::Request& request, httplib::Response& response) {
         if (!validate_json_mutation(request, response)) return;
         if (!parse_route_json_body(
                 request, response, settings.request_body_limit,
                 [](const nlohmann::json& json) { parse_empty_object(json); })) return;
+        WorkspaceReloadResult reload =
+            live_sessions->reserve_workspace_reload(settings.shutdown_grace);
+        if (!std::holds_alternative<WorkspaceReloadReservation>(reload)) {
+            return set_error_response(response, 503,
+                {ErrorCode::workspace_reload_failed,
+                 "Workspace reload failed: active sessions did not close."});
+        }
         try {
+            (void)backup_workspace(workspace->root(), backup_dir);
             workspace->reload();
         } catch (const std::bad_alloc&) {
             throw;
@@ -288,7 +300,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 {ErrorCode::workspace_reload_failed,
                  "Workspace reload failed: " + std::string(error.what())});
         }
-        request_workspace_reload(*live_sessions);
         const auto current = workspace->snapshot();
         set_json_response(response, 200, nlohmann::json(
             bootstrap_for(*current->model, *current->sessions, initial)));

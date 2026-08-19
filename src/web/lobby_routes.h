@@ -4,6 +4,7 @@
 #include "web/web_settings.h"
 
 #include <memory>
+#include <filesystem>
 #include <string>
 
 namespace httplib {
@@ -30,6 +31,7 @@ public:
         std::shared_ptr<WorkspaceRuntime> workspace,
         InitialSelection initial,
         LiveSessionManager& live_sessions,
+        std::filesystem::path backup_dir,
         WebSettings settings);
 
     void install(httplib::Server& server) const;
@@ -38,6 +40,7 @@ private:
     std::shared_ptr<WorkspaceRuntime> workspace_;
     InitialSelection initial_;
     LiveSessionManager& live_sessions_;
+    std::filesystem::path backup_dir_;
     WebSettings settings_;
 };
 

@@ -16,6 +16,7 @@
 #include <sys/wait.h>
 
 #include <array>
+#include <chrono>
 
 namespace cha::test {
 namespace {
@@ -109,6 +110,12 @@ WebServerProcess::WebServerProcess(
     const std::string root_text = application_root.string();
     const std::string workspace_text = workspace.string();
     const std::string port_text = std::to_string(port);
+    backup_home_ = workspace.parent_path()
+        / ("cha_web_process_backup_"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(backup_home_);
+    const std::string backup_home_text = backup_home_.string();
     int output_pipe[2]{-1, -1};
     int error_pipe[2]{-1, -1};
     if (::pipe(output_pipe) == -1 || ::pipe(error_pipe) == -1) {
@@ -145,6 +152,7 @@ WebServerProcess::WebServerProcess(
         close_descriptor(error_pipe[0]);
         close_descriptor(error_pipe[1]);
         reset_child_signals();
+        if (::setenv("HOME", backup_home_text.c_str(), 1) != 0) _exit(126);
         if (::chdir("/") != 0) _exit(126);
         ::execl(
             CHA_WEB_BINARY,
@@ -173,6 +181,8 @@ WebServerProcess::~WebServerProcess() {
     drain_output();
     close_descriptor(output_fd_);
     close_descriptor(error_fd_);
+    std::error_code error;
+    std::filesystem::remove_all(backup_home_, error);
 }
 
 bool WebServerProcess::wait_until_ready(std::chrono::milliseconds timeout) {

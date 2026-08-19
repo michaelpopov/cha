@@ -28,6 +28,7 @@ static int prepare_and_run(int argc, const char* argv[]);
 static int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
+    const std::filesystem::path& backup_dir,
     const std::shared_ptr<WorkspaceRuntime>& workspace,
     LiveSessionManager& live_sessions,
     const WebSettings& settings);
@@ -61,12 +62,14 @@ int prepare_and_run(int argc, const char* argv[]) {
     };
     LiveSessionManager live_sessions(settings, opener);
 
-    return run_web_server(app.host, app.port, app.root, workspace, live_sessions, settings);
+    return run_web_server(
+        app.host, app.port, app.root, app.backup_dir, workspace, live_sessions, settings);
 }
 
 int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
+    const std::filesystem::path& backup_dir,
     const std::shared_ptr<WorkspaceRuntime>& workspace,
     LiveSessionManager& live_sessions,
     const WebSettings& settings) {
@@ -78,7 +81,7 @@ int run_web_server(
     assets.install(server);
 
     const InitialSelection initial{{std::string(entrance_id), std::string(welcome_id)}};
-    LobbyRoutes(workspace, initial, live_sessions, settings).install(server);
+    LobbyRoutes(workspace, initial, live_sessions, backup_dir, settings).install(server);
     SessionRoutes(live_sessions, settings, assets).install(server);
 
     log_web_server_startup(settings);

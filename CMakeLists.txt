@@ -254,6 +254,7 @@ add_library(cha_web STATIC
     src/web/text_input.cpp
     src/web/text_mention.cpp
     src/web/text_multicast.cpp
+    src/web/workspace_backup.cpp
     src/web/owner_wake_signal.cpp
 )
 target_compile_features(cha_web PUBLIC cxx_std_20)
@@ -362,6 +363,7 @@ if(BUILD_TESTING)
         tests/web/unit_text_input.cpp
         tests/web/unit_text_mention.cpp
         tests/web/unit_text_multicast.cpp
+        tests/web/unit_workspace_backup.cpp
         tests/web/unit_live_session.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(

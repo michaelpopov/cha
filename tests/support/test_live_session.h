@@ -50,6 +50,9 @@ public:
         std::error_code ignored;
         std::filesystem::remove(path_, ignored);
         std::filesystem::remove(SessionLease::companion_path(path_), ignored);
+        std::filesystem::remove(path_.string() + "-journal", ignored);
+        std::filesystem::remove(path_.string() + "-shm", ignored);
+        std::filesystem::remove(path_.string() + "-wal", ignored);
     }
     TemporarySessionFile(const TemporarySessionFile&) = delete;
     TemporarySessionFile& operator=(const TemporarySessionFile&) = delete;

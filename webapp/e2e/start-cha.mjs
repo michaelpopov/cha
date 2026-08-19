@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import { cp, lstat, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -22,6 +23,18 @@ if (publishedWorkspace) {
   await mkdir(dirname(publishedWorkspace), { recursive: true });
 }
 const temporary = await mkdtemp(resolve(tmpdir(), 'cha-webapp-e2e-'));
+let child;
+let cleaned = false;
+function cleanupFiles() {
+  if (cleaned) return;
+  cleaned = true;
+  if (publishedWorkspace) rmSync(publishedWorkspace, { recursive: true, force: true });
+  rmSync(temporary, { recursive: true, force: true });
+}
+process.once('exit', () => {
+  if (child?.exitCode === null) child.kill('SIGTERM');
+  cleanupFiles();
+});
 const packagedApplication = process.env.CHA_E2E_APPLICATION_ROOT
   ? resolve(process.env.CHA_E2E_APPLICATION_ROOT)
   : null;
@@ -126,7 +139,7 @@ if (packagedApplication) {
   await cp(bundle, resolve(application, 'web'), { recursive: true });
 }
 
-const child = spawn(executable, [
+child = spawn(executable, [
   '--root', application,
   '--workspace', workspace,
   '--host', '127.0.0.1',
@@ -155,8 +168,7 @@ const exitCode = await new Promise((resolveExit, reject) => {
 });
 
 await new Promise((resolveClose) => modelServer.close(resolveClose));
-if (publishedWorkspace) {
-  await rm(publishedWorkspace, { recursive: true, force: true });
-}
+if (publishedWorkspace) await rm(publishedWorkspace, { recursive: true, force: true });
 await rm(temporary, { recursive: true, force: true });
+cleaned = true;
 process.exitCode = exitCode;

@@ -65,6 +65,33 @@ void LiveSessionMaintenanceReservation::release() noexcept {
     }
 }
 
+WorkspaceReloadReservation::WorkspaceReloadReservation(
+    LiveSessionManager& manager)
+    : manager_(&manager) {}
+
+WorkspaceReloadReservation::~WorkspaceReloadReservation() {
+    release();
+}
+
+WorkspaceReloadReservation::WorkspaceReloadReservation(
+    WorkspaceReloadReservation&& other) noexcept
+    : manager_(std::exchange(other.manager_, nullptr)) {}
+
+WorkspaceReloadReservation& WorkspaceReloadReservation::operator=(
+    WorkspaceReloadReservation&& other) noexcept {
+    if (this != &other) {
+        release();
+        manager_ = std::exchange(other.manager_, nullptr);
+    }
+    return *this;
+}
+
+void WorkspaceReloadReservation::release() noexcept {
+    if (LiveSessionManager* const manager = std::exchange(manager_, nullptr)) {
+        manager->release_workspace_reload();
+    }
+}
+
 LiveSessionManager::LiveSessionManager(
     WebSettings settings,
     SessionOpener opener,
@@ -111,7 +138,7 @@ LiveSessionOpenResult LiveSessionManager::open(
             reap(std::move(retired));
             return LiveSessionOpenFailure::manager_stopping;
         }
-        if (maintenance_.contains(key)) {
+        if (workspace_reloading_ || maintenance_.contains(key)) {
             lock.unlock();
             reap(std::move(retired));
             return LiveSessionOpenFailure::stopping;
@@ -189,7 +216,9 @@ LiveSessionOpenResult LiveSessionManager::open(
     if (*outcome == LiveSessionStartResult::ready) {
         std::lock_guard lock(mutex_);
         if (stopping_) return LiveSessionOpenFailure::manager_stopping;
-        if (maintenance_.contains(key)) return LiveSessionOpenFailure::stopping;
+        if (workspace_reloading_ || maintenance_.contains(key)) {
+            return LiveSessionOpenFailure::stopping;
+        }
         const auto found = sessions_.find(key);
         if (found == sessions_.end()
             || found->second != starting
@@ -209,7 +238,7 @@ std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(
         retired = sweep_locked();
         if (stopping_) {
             result = LiveSessionOpenFailure::manager_stopping;
-        } else if (maintenance_.contains(key)) {
+        } else if (workspace_reloading_ || maintenance_.contains(key)) {
             result = LiveSessionOpenFailure::stopping;
         } else {
             const auto found = sessions_.find(key);
@@ -282,6 +311,42 @@ std::vector<LiveSessionHandle> LiveSessionManager::active_sessions() {
     return result;
 }
 
+WorkspaceReloadResult LiveSessionManager::reserve_workspace_reload(
+    std::chrono::milliseconds grace) {
+    RetiredSessions retired;
+    RetiredSessions live;
+    std::optional<MaintenanceFailure> failure;
+    {
+        std::lock_guard lock(mutex_);
+        retired = sweep_locked();
+        if (stopping_) {
+            failure = MaintenanceFailure::manager_stopping;
+        } else if (workspace_reloading_) {
+            failure = MaintenanceFailure::stopping;
+        } else {
+            workspace_reloading_ = true;
+            for (const auto& [key, session] : sessions_) {
+                (void)key;
+                live.push_back(session);
+            }
+        }
+    }
+    reap(std::move(retired));
+    if (failure) return *failure;
+    for (const LiveSessionHandle& session : live) {
+        session->request_shutdown(ShutdownReason::workspace_reloading);
+    }
+    const auto deadline = std::chrono::steady_clock::now() + grace;
+    for (const LiveSessionHandle& session : live) {
+        if (!session->wait_until_finished(deadline)) {
+            release_workspace_reload();
+            return MaintenanceFailure::stopping;
+        }
+    }
+    sweep();
+    return WorkspaceReloadReservation(*this);
+}
+
 MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
     const SessionIdentity& key,
     std::chrono::milliseconds deadline) {
@@ -293,7 +358,7 @@ MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
         retired = sweep_locked();
         if (stopping_) {
             failure = MaintenanceFailure::manager_stopping;
-        } else if (maintenance_.contains(key)) {
+        } else if (workspace_reloading_ || maintenance_.contains(key)) {
             failure = MaintenanceFailure::stopping;
         } else {
             maintenance_.insert(key);
@@ -409,6 +474,11 @@ void LiveSessionManager::reap(RetiredSessions retired) {
         // and every call now returns the not-live/stopping result.
         log_info(session_log(session->identity(), "registry_sweep_joined"));
     }
+}
+
+void LiveSessionManager::release_workspace_reload() noexcept {
+    std::lock_guard lock(mutex_);
+    workspace_reloading_ = false;
 }
 
 void LiveSessionManager::release_maintenance(

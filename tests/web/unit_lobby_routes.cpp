@@ -69,7 +69,7 @@ public:
         AssetHandler(graph.root() / "web").install(server_);
         LobbyRoutes(
             graph.runtime, LobbyGraph::initial_selection(),
-            live_sessions, settings).install(server_);
+            live_sessions, graph.root() / "backups", settings).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
@@ -321,6 +321,9 @@ TEST(LobbyRoutes, ReloadsWorkspaceDiscoveryAndRestartsEveryLiveSession) {
     EXPECT_TRUE(std::ranges::any_of(bootstrap["forums"], [](const nlohmann::json& forum) {
         return forum["id"] == "writers";
     }));
+    const std::filesystem::directory_iterator backups(graph.root() / "backups");
+    ASSERT_NE(backups, std::filesystem::directory_iterator{});
+    EXPECT_TRUE(std::filesystem::is_regular_file(backups->path()));
 
     const auto deadline = std::chrono::steady_clock::now() + 2s;
     while (manager.snapshot().live_session_count != 0
@@ -335,7 +338,7 @@ TEST(LobbyRoutes, ReloadsWorkspaceDiscoveryAndRestartsEveryLiveSession) {
     EXPECT_EQ(created->status, 201) << created->body;
 }
 
-TEST(LobbyRoutes, KeepsThePublishedWorkspaceAndSessionsWhenReloadFails) {
+TEST(LobbyRoutes, KeepsThePublishedWorkspaceWhenReloadFailsAfterBackup) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
@@ -354,7 +357,7 @@ TEST(LobbyRoutes, KeepsThePublishedWorkspaceAndSessionsWhenReloadFails) {
         server.client().Post("/api/v1/workspace/reload", "{}", "application/json"),
         422, "workspace_reload_failed");
 
-    EXPECT_TRUE(session_is_live(manager, {"lobby", id}));
+    EXPECT_FALSE(session_is_live(manager, {"lobby", id}));
     const auto bootstrap = server.client().Get("/api/v1/bootstrap");
     ASSERT_TRUE(bootstrap);
     ASSERT_EQ(bootstrap->status, 200);
