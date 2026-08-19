@@ -91,11 +91,13 @@ std::string status_response(
     int status,
     std::string_view reason,
     std::string_view content_type,
-    const std::string& body) {
+    const std::string& body,
+    std::string_view extra_headers = {}) {
     return "HTTP/1.1 " + std::to_string(status) + " " + std::string(reason)
         + "\r\nContent-Type: " + std::string(content_type)
         + "\r\nContent-Length: " + std::to_string(body.size())
-        + "\r\nConnection: close\r\n\r\n" + body;
+        + "\r\n" + std::string(extra_headers)
+        + "Connection: close\r\n\r\n" + body;
 }
 
 class DiagnosticLogFile {
@@ -173,6 +175,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
 
     CharacterDefinition definition = network_definition(mock.port());
     definition.backend.temperature = 0.25;
+    definition.backend.max_tokens = 200;
     definition.backend.reasoning_effort = "medium";
     definition.backend.api_key = "test-key";
     definition.system_prompt = "Be concise.";
@@ -206,6 +209,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     EXPECT_TRUE(body["stream"]);
     EXPECT_TRUE(body["stream_options"]["include_usage"]);
     EXPECT_DOUBLE_EQ(body["temperature"], 0.25);
+    EXPECT_EQ(body["max_tokens"], 200);
     EXPECT_EQ(body["reasoning_effort"], "medium");
     EXPECT_EQ(body["messages"], Json::array({
         {{"role", "system"}, {"content", "Be concise."}},
@@ -236,7 +240,8 @@ TEST(ProviderClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
     EXPECT_EQ(result.outcome, GenerationOutcome::completed);
     mock.join();
     const Json body = Json::parse(request_body(mock.requests().front()));
-    EXPECT_DOUBLE_EQ(body["temperature"], 1.0);
+    EXPECT_FALSE(body.contains("temperature"));
+    EXPECT_FALSE(body.contains("max_tokens"));
     ASSERT_EQ(body["messages"].size(), 1U);
     EXPECT_EQ(body["messages"][0]["role"], "user");
     EXPECT_EQ(body["messages"][0]["content"], "from You:\n" + prompt);
@@ -394,6 +399,263 @@ TEST(ProviderClient, ReportsProviderHttpFailure) {
     mock.join();
 }
 
+TEST(ProviderClient, ClassifiesActionableProviderFailures) {
+    struct Case {
+        int status;
+        std::string_view reason;
+        std::string body;
+        std::string_view expected;
+    };
+    const std::vector<Case> cases{
+        {429, "Too Many Requests",
+         R"({"error":{"code":"insufficient_quota","message":"quota exceeded"}})",
+         "Provider quota or billing limit exceeded."},
+        {429, "Too Many Requests",
+         R"({"error":{"message":"rate limit reached"}})",
+         "Provider rate limit exceeded."},
+        {401, "Unauthorized",
+         R"({"error":{"message":"invalid API key"}})",
+         "Provider authentication or permission was rejected."},
+        {400, "Bad Request",
+         R"({"error":{"message":"maximum context length exceeded"}})",
+         "Prompt exceeds the model's context window."},
+        {400, "Bad Request",
+         R"({"error":{"message":"bad request"}})",
+         "Prompt exceeds the model's context window."},
+        {413, "Payload Too Large", "", "Prompt exceeds the model's context window."},
+        // Rate-limit and authentication errors often link to a billing page,
+        // which must not turn them into a quota verdict.
+        {429, "Too Many Requests",
+         R"({"error":{"message":"Rate limit reached. See https://example.test/account/billing."}})",
+         "Provider rate limit exceeded."},
+        {402, "Payment Required",
+         R"({"error":{"message":"Add credits in your billing settings."}})",
+         "Provider quota or billing limit exceeded."},
+    };
+
+    for (const Case& test_case : cases) {
+        SCOPED_TRACE(test_case.status);
+        MockHttpServer mock({status_response(
+            test_case.status,
+            test_case.reason,
+            "application/json",
+            test_case.body)});
+        mock.start();
+        std::atomic_bool cancellation{false};
+        ProviderClient client(network_definition(mock.port(), false));
+        Transcript transcript;
+        const GenerationRequest request = client_request(transcript, 92, "Question");
+
+        const GenerationResult result = complete(
+            client, request, transcript, [](GenerationDelta) {}, cancellation);
+
+        EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_EQ(result.message, test_case.expected);
+        mock.join();
+    }
+}
+
+TEST(ProviderClient, ClassifiesProviderErrorsInsideSuccessfulResponses) {
+    struct Case {
+        CharacterDefinition definition;
+        std::string content_type;
+        std::string body;
+        std::string_view expected;
+    };
+    std::vector<Case> cases;
+    cases.push_back({
+        responses_network_definition(0),
+        "text/event-stream",
+        "data: {\"type\":\"error\",\"message\":\"quota exceeded\"}\n\n",
+        "Provider quota or billing limit exceeded.",
+    });
+    cases.push_back({
+        network_definition(0, false),
+        "application/json",
+        R"({"error":{"message":"invalid API key"}})",
+        "Provider authentication or permission was rejected.",
+    });
+
+    for (Case& test_case : cases) {
+        MockHttpServer mock({http_response(test_case.content_type, test_case.body)});
+        mock.start();
+        test_case.definition.backend.port = mock.port();
+        std::atomic_bool cancellation{false};
+        ProviderClient client(std::move(test_case.definition));
+        Transcript transcript;
+        const GenerationRequest request = client_request(transcript, 95, "Question");
+
+        const GenerationResult result = complete(
+            client, request, transcript, [](GenerationDelta) {}, cancellation);
+
+        EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_EQ(result.message, test_case.expected);
+        mock.join();
+    }
+}
+
+TEST(ProviderClient, KeepsStreamDiagnosisWhenModelOutputResemblesAProviderError) {
+    // The answer text names a provider failure the request did not have. Only
+    // the decoder knows what actually went wrong with this stream.
+    const std::string stream =
+        "data: {\"choices\":[{\"delta\":{\"content\":"
+        "\"Your rate limit is per-organization.\"}}]}\n\n";
+    MockHttpServer mock({http_response("text/event-stream", stream)});
+    mock.start();
+    std::atomic_bool cancellation{false};
+    ProviderClient client(network_definition(mock.port()));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 97, "Question");
+
+    const GenerationResult result = complete(
+        client, request, transcript, [](GenerationDelta) {}, cancellation);
+    mock.join();
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+    EXPECT_NE(result.message.find("[DONE]"), std::string::npos);
+    EXPECT_EQ(result.message.find("rate limit"), std::string::npos);
+}
+
+TEST(ProviderClient, BoundsProviderErrorInsideSuccessfulResponse) {
+    const std::string provider_message(10'000, 'x');
+    const std::string body =
+        "data: {\"type\":\"error\",\"message\":\"" + provider_message
+        + "\"}\n\n";
+    MockHttpServer mock({http_response("text/event-stream", body)});
+    mock.start();
+    std::atomic_bool cancellation{false};
+    ProviderClient client(responses_network_definition(mock.port()));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 96, "Question");
+
+    const GenerationResult result = complete(
+        client, request, transcript, [](GenerationDelta) {}, cancellation);
+    mock.join();
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+    EXPECT_LE(result.message.size(), 512U);
+}
+
+TEST(ProviderClient, BoundsProviderErrorsInResultsAndDiagnostics) {
+    const std::string body = std::string(10'000, 'x') + "UNRETAINED_TAIL";
+    MockHttpServer mock({status_response(
+        503, "Service Unavailable", "text/plain", body)});
+    mock.start();
+    DiagnosticLogFile log;
+    std::atomic_bool cancellation{false};
+    ProviderClient client(network_definition(mock.port(), false));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 93, "Question");
+
+    const GenerationResult result = complete(
+        client, request, transcript, [](GenerationDelta) {}, cancellation);
+    mock.join();
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+    EXPECT_LT(result.message.size(), 600U);
+    EXPECT_EQ(result.message.find("UNRETAINED_TAIL"), std::string::npos);
+    const std::string output = log.contents();
+    EXPECT_NE(output.find("Provider HTTP error details"), std::string::npos);
+    EXPECT_EQ(output.find("UNRETAINED_TAIL"), std::string::npos);
+}
+
+TEST(ProviderClient, LogsTheHighestPriorityProviderRequestId) {
+    const std::string body =
+        R"({"choices":[{"message":{"content":"Answer"}}]})";
+    MockHttpServer mock({status_response(
+        200,
+        "OK",
+        "application/json",
+        body,
+        "cf-ray: fallback-id\r\nX-Request-Id: preferred-id\r\n")});
+    mock.start();
+    DiagnosticLogFile log;
+    std::atomic_bool cancellation{false};
+    ProviderClient client(network_definition(mock.port(), false));
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 94, "Question");
+
+    const GenerationResult result = complete(
+        client, request, transcript, [](GenerationDelta) {}, cancellation);
+    mock.join();
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    EXPECT_NE(
+        log.contents().find("provider_request_id=preferred-id"),
+        std::string::npos);
+}
+
+TEST(ProviderClient, BoundsOverallAndIdleGenerationTime) {
+    struct Case {
+        int timeout_s;
+        int idle_timeout_s;
+        std::chrono::milliseconds maximum_elapsed;
+        std::string_view expected_message;
+    };
+    for (const Case test_case : std::vector<Case>{
+             {1, 5, std::chrono::milliseconds(1800), "Timeout"},
+             {5, 1, std::chrono::milliseconds(1800), "idle timeout"}}) {
+        SCOPED_TRACE(
+            "timeout=" + std::to_string(test_case.timeout_s)
+            + " idle=" + std::to_string(test_case.idle_timeout_s));
+        const std::string stalled_response =
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+            "Content-Length: 20\r\nConnection: close\r\n\r\n";
+        MockHttpServer mock(
+            {stalled_response},
+            false,
+            std::chrono::milliseconds(2000));
+        mock.start();
+        CharacterDefinition definition = network_definition(mock.port());
+        definition.backend.timeout_s = test_case.timeout_s;
+        definition.backend.idle_timeout_s = test_case.idle_timeout_s;
+        std::atomic_bool cancellation{false};
+        GenerationResult result;
+        const auto started_at = std::chrono::steady_clock::now();
+        {
+            ProviderClient client(std::move(definition));
+            Transcript transcript;
+            const GenerationRequest request = client_request(transcript, 95, "Question");
+            result = complete(
+                client, request, transcript, [](GenerationDelta) {}, cancellation);
+        }
+        const auto elapsed = std::chrono::steady_clock::now() - started_at;
+
+        EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
+        EXPECT_NE(result.message.find(test_case.expected_message), std::string::npos);
+        EXPECT_LT(elapsed, test_case.maximum_elapsed);
+        mock.join();
+    }
+}
+
+TEST(ProviderClient, WaitsThroughProviderThinkTimeBeforeTheFirstByte) {
+    // The server accepts the request and sends nothing while it "thinks". A
+    // reasoning model or any non-streaming provider looks exactly like this,
+    // so only the overall timeout may end it.
+    constexpr auto think_time = std::chrono::milliseconds(1500);
+    MockHttpServer mock({std::string()}, false, think_time);
+    mock.start();
+    CharacterDefinition definition = network_definition(mock.port(), false);
+    definition.backend.timeout_s = 600;
+    definition.backend.idle_timeout_s = 1;
+    std::atomic_bool cancellation{false};
+    GenerationResult result;
+    const auto started_at = std::chrono::steady_clock::now();
+    {
+        ProviderClient client(std::move(definition));
+        Transcript transcript;
+        const GenerationRequest request = client_request(transcript, 98, "Question");
+        result = complete(
+            client, request, transcript, [](GenerationDelta) {}, cancellation);
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - started_at;
+    mock.join();
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
+    EXPECT_EQ(result.message.find("idle timeout"), std::string::npos);
+    EXPECT_GE(elapsed, think_time - std::chrono::milliseconds(300));
+}
+
 TEST(ProviderClient, ReportsATruncatedResponseAsATransportError) {
     const std::string body = "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n";
     const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
@@ -495,6 +757,7 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
 
     CharacterDefinition definition = responses_network_definition(mock.port());
     definition.backend.temperature = 0.25;
+    definition.backend.max_tokens = 8;
     definition.backend.reasoning_effort = "medium";
     definition.backend.api_key = "test-key";
     definition.system_prompt = "Be concise.";
@@ -526,6 +789,7 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
     EXPECT_TRUE(body["stream"]);
     EXPECT_FALSE(body["store"]);
     EXPECT_DOUBLE_EQ(body["temperature"], 0.25);
+    EXPECT_EQ(body["max_output_tokens"], 16);
     EXPECT_EQ(body["reasoning"]["effort"], "medium");
     EXPECT_FALSE(body.contains("reasoning_effort"));
     EXPECT_FALSE(body.contains("include"));

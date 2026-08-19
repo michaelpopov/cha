@@ -87,7 +87,8 @@ void expect_error_containing(const std::function<void()>& operation,
 
 constexpr std::string_view complete_provider =
     "host = \"definition\"\nport = 80\nmode = \"test\"\nmodel = \"one\"\nstream = true\n"
-    "temperature = 0.1\napi_key_env = \"ONE\"\nreasoning_effort = \"low\"\n"
+    "temperature = 0.1\nmax_tokens = 512\ntimeout_s = 90\nidle_timeout_s = 15\n"
+    "api_key_env = \"ONE\"\nreasoning_effort = \"low\"\n"
     "reasoning_format = \"none\"\nhttps = false\nbase_path = \"/definition\"\n";
 
 void expect_complete_provider_values(const ModelBackendConfig& config) {
@@ -97,7 +98,11 @@ void expect_complete_provider_values(const ModelBackendConfig& config) {
     EXPECT_EQ(config.mode, Mode::test);
     EXPECT_EQ(config.model, "one");
     EXPECT_TRUE(config.stream);
-    EXPECT_DOUBLE_EQ(config.temperature, 0.1);
+    ASSERT_TRUE(config.temperature);
+    EXPECT_DOUBLE_EQ(*config.temperature, 0.1);
+    EXPECT_EQ(config.max_tokens, 512);
+    EXPECT_EQ(config.timeout_s, 90);
+    EXPECT_EQ(config.idle_timeout_s, 15);
     EXPECT_EQ(config.api_key_env, "ONE");
     EXPECT_EQ(config.reasoning_effort, "low");
     EXPECT_EQ(config.reasoning_format, ReasoningFormat::none);
@@ -168,7 +173,7 @@ TEST(Config, AHigherLayerProviderReplacesTheLowerOneOutright) {
     EXPECT_EQ(config.port, 8443);
     EXPECT_EQ(config.mode, Mode::net);
     EXPECT_EQ(config.model, "two");
-    EXPECT_DOUBLE_EQ(config.temperature, 1.0);
+    EXPECT_FALSE(config.temperature);
     EXPECT_TRUE(config.reasoning_effort.empty());
     EXPECT_TRUE(config.base_path.empty());
 }
@@ -247,7 +252,8 @@ TEST(Config, RejectsInlineProviderSettingsInEveryCharacterLayer) {
     for (const std::string_view setting :
             {"host = \"example\"\n", "port = 80\n", "model = \"one\"\n",
              "api = \"responses\"\n", "web_search = \"off\"\n", "cache_retention = \"off\"\n", "api_key = \"secret\"\n",
-             "base_path = \"/api\"\n", "temperature = 0.5\n"}) {
+             "base_path = \"/api\"\n", "temperature = 0.5\n", "max_tokens = 10\n",
+             "timeout_s = 10\n", "idle_timeout_s = 10\n"}) {
         files.write(files.definition(), std::string(required_definition) + std::string(setting));
         expect_error_containing(
             [&] { (void)load_character_config(files.paths()); },
@@ -388,6 +394,9 @@ TEST(Config, AttributesProviderValidationToTheProviderConfig) {
     expect_provider_error("host = \"example\"\n", "port");
     expect_provider_error("host = \"example\"\nport = 65536\n", "port");
     expect_provider_error("host = \"example\"\nport = 80\ntemperature = 2.1\n", "temperature");
+    expect_provider_error("host = \"example\"\nport = 80\nmax_tokens = 0\n", "max_tokens");
+    expect_provider_error("host = \"example\"\nport = 80\ntimeout_s = 0\n", "timeout_s");
+    expect_provider_error("host = \"example\"\nport = 80\nidle_timeout_s = -1\n", "idle_timeout_s");
     expect_provider_error("host = \"example\"\nport = 80\nbase_path = \"api\"\n", "base_path");
     expect_provider_error("host = \"example\"\nport = 80\nmode = \"invalid\"\n", "mode");
     expect_provider_error("host = \"example\"\nport = 80\nreasoning_format = \"invalid\"\n", "reasoning_format");
@@ -532,7 +541,10 @@ TEST(Config, PreservesModelBackendDefaultsForOmittedProviderFields) {
     EXPECT_TRUE(config.model.empty());
     EXPECT_TRUE(config.base_path.empty());
     EXPECT_TRUE(config.api_key.empty());
-    EXPECT_DOUBLE_EQ(config.temperature, 1.0);
+    EXPECT_FALSE(config.temperature);
+    EXPECT_FALSE(config.max_tokens);
+    EXPECT_EQ(config.timeout_s, 600);
+    EXPECT_EQ(config.idle_timeout_s, 60);
     EXPECT_TRUE(config.stream);
     EXPECT_EQ(config.reasoning_format, ReasoningFormat::automatic);
     EXPECT_EQ(config.api, ProviderApi::responses);

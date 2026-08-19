@@ -90,6 +90,7 @@ TEST(ResponsesApi, BuildsRequestFieldsAndMapsRoles) {
         });
     ModelBackendConfig config = responses_config(WebSearchMode::automatic);
     config.reasoning_effort = "none";
+    config.max_tokens = 8;
 
     const Json body = Json::parse(build_responses_request_body(
         request, config, "System prompt"));
@@ -98,6 +99,7 @@ TEST(ResponsesApi, BuildsRequestFieldsAndMapsRoles) {
     EXPECT_TRUE(body["stream"]);
     EXPECT_FALSE(body["store"]);
     EXPECT_DOUBLE_EQ(body["temperature"].get<double>(), 0.5);
+    EXPECT_EQ(body["max_output_tokens"], 16);
     EXPECT_EQ(body["instructions"], "System prompt");
     EXPECT_EQ(body["reasoning"]["effort"], "none");
     EXPECT_FALSE(body.contains("reasoning_effort"));
@@ -116,11 +118,15 @@ TEST(ResponsesApi, BuildsRequestFieldsAndMapsRoles) {
 TEST(ResponsesApi, OmitsEmptyInstructionsAndReasoningAndSearchFields) {
     Transcript transcript;
     const GenerationRequest request = make_request(transcript, "Hi");
+    ModelBackendConfig config = responses_config();
+    config.temperature.reset();
     const Json body = Json::parse(build_responses_request_body(
-        request, responses_config(), ""));
+        request, config, ""));
 
     EXPECT_FALSE(body.contains("instructions"));
     EXPECT_FALSE(body.contains("reasoning"));
+    EXPECT_FALSE(body.contains("temperature"));
+    EXPECT_FALSE(body.contains("max_output_tokens"));
     EXPECT_FALSE(body.contains("tools"));
     EXPECT_FALSE(body.contains("tool_choice"));
     ASSERT_EQ(body["input"].size(), 1U);

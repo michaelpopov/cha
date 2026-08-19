@@ -27,9 +27,11 @@ class MockHttpServer {
 public:
     explicit MockHttpServer(
         std::vector<std::string> responses,
-        bool wait_for_client_close = false)
+        bool wait_for_client_close = false,
+        std::chrono::milliseconds hold_response_open = {})
       : responses_(std::move(responses)),
-        wait_for_client_close_(wait_for_client_close) {
+        wait_for_client_close_(wait_for_client_close),
+        hold_response_open_(hold_response_open) {
         listener_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (listener_ == -1) {
             throw std::runtime_error("Failed to create mock server socket");
@@ -96,6 +98,9 @@ public:
                     }
                     requests_changed_.notify_all();
                     send_all(client, response);
+                    if (hold_response_open_.count() > 0) {
+                        std::this_thread::sleep_for(hold_response_open_);
+                    }
                     if (wait_for_client_close_) {
                         wait_for_client_close(client);
                     }
@@ -223,6 +228,7 @@ private:
     int port_{};
     std::vector<std::string> responses_;
     bool wait_for_client_close_{};
+    std::chrono::milliseconds hold_response_open_{};
     std::mutex requests_mutex_;
     std::condition_variable requests_changed_;
     std::vector<std::string> requests_;

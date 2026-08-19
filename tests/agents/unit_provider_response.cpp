@@ -286,6 +286,18 @@ TEST(ProviderResponse, StreamsReasoningBeforeAnswerWithAutomaticPrecedence) {
     EXPECT_EQ(output.deltas()[2].text, " late");
 }
 
+TEST(ProviderResponse, UsesReasoningTextAsTheLastAutomaticFallback) {
+    Output output;
+    const GenerationResult result = decode_provider_response(
+        R"({"choices":[{"message":{"reasoning_content":"","reasoning":"","reasoning_text":"Fallback","content":"Answer"}}]})",
+        ReasoningFormat::automatic,
+        output.sink());
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    EXPECT_EQ(output.reasoning(), "Fallback");
+    EXPECT_EQ(output.answer(), "Answer");
+}
+
 TEST(ProviderResponse, ReportsAnExplicitReasoningFieldOfTheWrongType) {
     Output output;
     ProviderStreamDecoder decoder(

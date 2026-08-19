@@ -117,6 +117,11 @@ Provider protocol and search fields belong in the provider config:
 | `api` | `chat_completions`, `responses` | `responses` | Selects `/v1/chat/completions` or `/v1/responses`. |
 | `web_search` | `off`, `auto`, `required` | `required` | Hosted OpenAI web search; non-`off` requires `api = "responses"`. |
 | `base_path` | URL path prefix | empty | Prepended before the API's `/v1` path; for example, OpenRouter uses `/api`. |
+| `temperature` | number from 0 through 2 | unset | Omitted from the request when unset. |
+| `max_tokens` | positive integer | unset | Chat `max_tokens`; Responses `max_output_tokens`, clamped to at least 16. |
+| `timeout_s` | positive integer | `600` | Overall generation timeout. |
+| `idle_timeout_s` | positive integer | `60` | Stops a generation that has received no bytes for this long, counted from the first byte. |
+| `cache_retention` | `off`, `short`, `long` | `short` | Controls supported direct-OpenAI cache metadata. |
 
 The effective defaults are `api = "responses"` and
 `web_search = "required"`, so a provider that selects Chat Completions also
@@ -276,8 +281,8 @@ cancellation, or logging.
 flowchart TD
     prep["prepare"] --> proj["project_model_context"]
     proj --> api{"config.api"}
-    api -->|"chat_completions"| chat_body["JSON: model, stream, messages,<br/>temperature, optional reasoning_effort"]
-    api -->|"responses"| resp_body["JSON: model, stream, store false,<br/>instructions, input, temperature,<br/>optional reasoning.effort and tools"]
+    api -->|"chat_completions"| chat_body["JSON: model, stream, messages,<br/>optional temperature, max_tokens,<br/>and reasoning_effort"]
+    api -->|"responses"| resp_body["JSON: model, stream, store false,<br/>instructions, input, optional temperature,<br/>max_output_tokens, reasoning.effort, and tools"]
     chat_body --> chat_post["POST /v1/chat/completions"]
     resp_body --> resp_post["POST /v1/responses"]
     chat_post --> transfer{"curl and HTTP success?"}
@@ -321,23 +326,30 @@ HTTP metadata to streaming decoder errors.
 Details worth knowing before changing these files:
 
 - **Model discovery.** When `model` is unset, the constructor GETs `/v1/models`
-  and takes `data[0].id`. That request has a 10-second timeout; generation
-  requests deliberately have none, because they are long. Both use a 10-second
-  connect timeout. Discovery is shared by both protocols.
+  and takes `data[0].id`. That request has a 10-second timeout. Generation uses
+  the provider's overall and idle timeouts, while both paths retain a 10-second
+  connection timeout. Discovery is shared by both protocols.
 - **Cancellation** is wired through libcurl's progress callback, so an in-flight
   transfer aborts promptly and is reported as `cancelled` rather than an error.
-  Cancellation wins over a decoder's missing-terminal-event error.
+  Cancellation wins over a decoder's missing-terminal-event error. The same
+  callback enforces `idle_timeout_s`, whose clock starts at the first received
+  byte so that provider think time falls under `timeout_s` instead.
 - **Reasoning formats.** `reasoning_format` applies to Chat Completions decoding
-  only. `auto` accepts `reasoning_content` or `reasoning` (preferring the
-  former), `none` disables extraction, and the two named formats select exactly
-  one field. Reasoning inside ordinary `content`, such as `<think>` tags, is
-  *not* parsed. The Responses path maps non-empty `reasoning_effort` to
-  `reasoning.effort` and ignores reasoning/summary stream events.
+  only. `auto` checks `reasoning_content`, `reasoning`, then `reasoning_text`,
+  taking the first non-empty field. `none` disables extraction, and the two
+  named formats select exactly one field. Reasoning inside ordinary `content`,
+  such as `<think>` tags, is *not* parsed. The Responses path maps non-empty
+  `reasoning_effort` to `reasoning.effort` and ignores reasoning/summary stream
+  events.
 - **Outcome taxonomy.** `completed`, `cancelled`, `protocol_error` (bad HTTP
   status, malformed JSON or SSE, missing terminator, no answer content), and
-  `transport_error` (libcurl failure). Only the error outcomes carry a message,
-  and streaming protocol errors report sanitized status, content type, and byte
-  counts — never model output, search queries, or source URLs.
+  `transport_error` (libcurl failure). Quota, rate-limit, authentication, and
+  context-overflow failures receive stable public messages. Provider error
+  details are single-line and bounded to 4 KiB in diagnostics; public fallback
+  details are bounded further. Classification reads the provider's error
+  document only, never a decoded stream, so messages still exclude model
+  output, search queries, and source URLs. Completion logs include the first
+  recognized provider request-ID header.
 - **Test mode.** `mode = "test"` skips HTTP entirely: `prepare` returns the
   prompt text and `perform` echoes it back as a single answer delta. This is
   what makes the checked-in workspace runnable without a server.

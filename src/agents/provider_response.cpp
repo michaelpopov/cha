@@ -91,7 +91,9 @@ std::string process_response_object(
     switch (format) {
     case ReasoningFormat::automatic:
         if (!emit_field("reasoning_content", false)) {
-            (void)emit_field("reasoning", false);
+            if (!emit_field("reasoning", false)) {
+                (void)emit_field("reasoning_text", false);
+            }
         }
         break;
     case ReasoningFormat::none:

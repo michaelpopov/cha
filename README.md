@@ -85,11 +85,12 @@ file = "logs/cha.log"
 level = "info"
 ```
 
-Each completed provider request writes its HTTP metadata and the provider's
-`input_tokens` and `output_tokens` to this diagnostic log. Chat Completions
-streaming requests ask for the final usage block explicitly; Responses includes
-usage in its completion object. A compatible provider that omits either field
-is logged as `unreported` rather than estimated locally.
+Each completed provider request writes its HTTP metadata, provider request ID,
+and reported `input_tokens`, `output_tokens`, and `cache_read_tokens` to this
+diagnostic log. Chat Completions streaming requests ask for the final usage
+block explicitly; Responses includes usage in its completion object. A
+compatible provider that omits a field is logged as `unreported` rather than
+estimated locally.
 
 Each provider lives in `system/providers/<id>/config.toml`. Its file contains
 the connection, model, protocol, and authentication-environment settings:
@@ -104,7 +105,19 @@ stream = true
 api = "responses"          # responses | chat_completions
 web_search = "required"    # required | auto | off
 api_key_env = "OPENAI_API_KEY"
+cache_retention = "short"  # off | short | long
+timeout_s = 600
+idle_timeout_s = 60
+max_tokens = 4096
+# temperature = 0.7        # omitted from requests when unset
 ```
+
+Generation stops after `timeout_s` overall, or after `idle_timeout_s` without a
+single received byte. That idle timer starts at the first byte of the response,
+so a model that thinks for minutes before answering is bounded by `timeout_s`
+alone. Both timeout values and `max_tokens` must be positive. `max_tokens` is sent under that name for Chat
+Completions and as `max_output_tokens` for Responses, whose value is clamped to
+at least 16.
 
 Set `base_path` when a compatible provider exposes its API below a path rather
 than at the host root. For example, OpenRouter uses `base_path = "/api"`, which

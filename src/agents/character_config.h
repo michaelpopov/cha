@@ -63,7 +63,10 @@ struct ModelBackendConfig {
     Mode mode{Mode::test};
     std::string model;
     bool stream{true};
-    double temperature{1.0};
+    std::optional<double> temperature;
+    std::optional<int> max_tokens;
+    int timeout_s{600};
+    int idle_timeout_s{60};
     std::string api_key;
     std::string api_key_env;
     std::string reasoning_effort;
@@ -86,6 +89,9 @@ struct ProviderConfig {
     std::optional<std::string> model;
     std::optional<bool> stream;
     std::optional<double> temperature;
+    std::optional<int> max_tokens;
+    std::optional<int> timeout_s;
+    std::optional<int> idle_timeout_s;
     std::optional<std::string> api_key_env;
     std::optional<std::string> reasoning_effort;
     std::optional<ReasoningFormat> reasoning_format;

@@ -4,6 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -115,8 +116,13 @@ std::string build_responses_request_body(
         {"stream", config.stream},
         {"store", false},
         {"input", std::move(messages)},
-        {"temperature", config.temperature},
     };
+    if (config.temperature) {
+        body["temperature"] = *config.temperature;
+    }
+    if (config.max_tokens) {
+        body["max_output_tokens"] = std::max(*config.max_tokens, 16);
+    }
     if (!instructions.empty()) {
         body["instructions"] = std::move(instructions);
     }

@@ -38,7 +38,8 @@ struct ParsedConfig {
 constexpr std::string_view provider_setting_names[]{
     "host", "port", "base_path", "mode", "model", "stream", "temperature",
     "api_key", "api_key_env", "reasoning_effort", "reasoning_format", "https",
-    "api", "web_search", "cache_retention"};
+    "api", "web_search", "cache_retention", "max_tokens", "timeout_s",
+    "idle_timeout_s"};
 
 template<typename Value>
 std::optional<Value> read_optional(
@@ -259,6 +260,18 @@ void validate_provider_config(
         throw std::runtime_error("Provider config '" + utf8_path(path)
             + "' requires 'temperature' between 0 and 2");
     }
+    if (provider.max_tokens && *provider.max_tokens <= 0) {
+        throw std::runtime_error("Provider config '" + utf8_path(path)
+            + "' requires positive 'max_tokens'");
+    }
+    if (provider.timeout_s && *provider.timeout_s <= 0) {
+        throw std::runtime_error("Provider config '" + utf8_path(path)
+            + "' requires positive 'timeout_s'");
+    }
+    if (provider.idle_timeout_s && *provider.idle_timeout_s <= 0) {
+        throw std::runtime_error("Provider config '" + utf8_path(path)
+            + "' requires positive 'idle_timeout_s'");
+    }
     if (provider.base_path && !is_valid_base_path(*provider.base_path)) {
         throw std::runtime_error("Provider config '" + utf8_path(path)
             + "' requires 'base_path' to start with '/', not end with '/', and contain no query, fragment, or whitespace");
@@ -317,6 +330,9 @@ ProviderConfig load_named_provider(
         .model = read_optional<std::string>(table, path, "model", "string"),
         .stream = read_optional<bool>(table, path, "stream", "boolean"),
         .temperature = read_optional<double>(table, path, "temperature", "numeric"),
+        .max_tokens = read_optional<int>(table, path, "max_tokens", "integer"),
+        .timeout_s = read_optional<int>(table, path, "timeout_s", "integer"),
+        .idle_timeout_s = read_optional<int>(table, path, "idle_timeout_s", "integer"),
         .api_key_env = read_optional<std::string>(table, path, "api_key_env", "string"),
         .reasoning_effort = read_optional<std::string>(table, path, "reasoning_effort", "string"),
         .reasoning_format = read_reasoning_format(table, path),
@@ -508,7 +524,10 @@ ModelBackendConfig make_backend_config(const ProviderConfig& effective) {
     if (effective.mode) backend.mode = *effective.mode;
     if (effective.model) backend.model = *effective.model;
     if (effective.stream) backend.stream = *effective.stream;
-    if (effective.temperature) backend.temperature = *effective.temperature;
+    backend.temperature = effective.temperature;
+    backend.max_tokens = effective.max_tokens;
+    if (effective.timeout_s) backend.timeout_s = *effective.timeout_s;
+    if (effective.idle_timeout_s) backend.idle_timeout_s = *effective.idle_timeout_s;
     if (effective.api_key_env) backend.api_key_env = *effective.api_key_env;
     if (effective.reasoning_effort) backend.reasoning_effort = *effective.reasoning_effort;
     if (effective.reasoning_format) backend.reasoning_format = *effective.reasoning_format;

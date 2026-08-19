@@ -25,6 +25,9 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
         .model = "model-one",
         .stream = false,
         .temperature = 0.25,
+        .max_tokens = 512,
+        .timeout_s = 90,
+        .idle_timeout_s = 15,
         .api_key_env = "PROVIDER_KEY",
         .reasoning_effort = "high",
         .reasoning_format = cha::ReasoningFormat::reasoning,
@@ -39,7 +42,11 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
     EXPECT_EQ(backend.mode, cha::Mode::net);
     EXPECT_EQ(backend.model, "model-one");
     EXPECT_FALSE(backend.stream);
-    EXPECT_DOUBLE_EQ(backend.temperature, 0.25);
+    ASSERT_TRUE(backend.temperature);
+    EXPECT_DOUBLE_EQ(*backend.temperature, 0.25);
+    EXPECT_EQ(backend.max_tokens, 512);
+    EXPECT_EQ(backend.timeout_s, 90);
+    EXPECT_EQ(backend.idle_timeout_s, 15);
     EXPECT_EQ(backend.api_key_env, "PROVIDER_KEY");
     EXPECT_EQ(backend.reasoning_effort, "high");
     EXPECT_EQ(backend.reasoning_format, cha::ReasoningFormat::reasoning);
@@ -58,7 +65,10 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
     EXPECT_EQ(sparse.mode, defaults.mode);
     EXPECT_EQ(sparse.model, defaults.model);
     EXPECT_EQ(sparse.stream, defaults.stream);
-    EXPECT_DOUBLE_EQ(sparse.temperature, defaults.temperature);
+    EXPECT_EQ(sparse.temperature, defaults.temperature);
+    EXPECT_EQ(sparse.max_tokens, defaults.max_tokens);
+    EXPECT_EQ(sparse.timeout_s, defaults.timeout_s);
+    EXPECT_EQ(sparse.idle_timeout_s, defaults.idle_timeout_s);
     EXPECT_EQ(sparse.api_key, defaults.api_key);
     EXPECT_EQ(sparse.api_key_env, defaults.api_key_env);
     EXPECT_EQ(sparse.reasoning_effort, defaults.reasoning_effort);
