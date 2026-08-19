@@ -81,7 +81,7 @@ TEST(ProviderResponse, ReadsUsageFromTheFinalStreamingChunk) {
 
     decoder.consume(
         "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\n"
-        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5}}\n\n"
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":9}}}\n\n"
         "data: [DONE]\n\n");
     const StreamDecodeResult result = decoder.finish();
 
@@ -90,6 +90,40 @@ TEST(ProviderResponse, ReadsUsageFromTheFinalStreamingChunk) {
     ASSERT_TRUE(result.result.usage.output_tokens);
     EXPECT_EQ(*result.result.usage.input_tokens, 12U);
     EXPECT_EQ(*result.result.usage.output_tokens, 5U);
+    ASSERT_TRUE(result.result.usage.cache_read_tokens);
+    EXPECT_EQ(*result.result.usage.cache_read_tokens, 9U);
+}
+
+TEST(ProviderResponse, UsesTheLegacyCacheCountOnlyWhenPrimaryDetailsAreAbsent) {
+    Output output;
+    const GenerationResult fallback = decode_provider_response(
+        R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4},"choices":[{"message":{"content":"Answer"}}]})",
+        ReasoningFormat::automatic,
+        output.sink());
+    ASSERT_TRUE(fallback.usage.cache_read_tokens);
+    EXPECT_EQ(*fallback.usage.cache_read_tokens, 4U);
+
+    const GenerationResult primary = decode_provider_response(
+        R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4,"prompt_tokens_details":{"cached_tokens":9}},"choices":[{"message":{"content":"Answer"}}]})",
+        ReasoningFormat::automatic,
+        output.sink());
+    ASSERT_TRUE(primary.usage.cache_read_tokens);
+    EXPECT_EQ(*primary.usage.cache_read_tokens, 9U);
+}
+
+TEST(ProviderResponse, LeavesCacheUsageUnsetWhenProviderOmitsIt) {
+    Output output;
+    const GenerationResult result = decode_provider_response(
+        R"({"usage":{"prompt_tokens":12,"completion_tokens":5},"choices":[{"message":{"content":"Answer"}}]})",
+        ReasoningFormat::automatic,
+        output.sink());
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    ASSERT_TRUE(result.usage.input_tokens);
+    ASSERT_TRUE(result.usage.output_tokens);
+    EXPECT_EQ(*result.usage.input_tokens, 12U);
+    EXPECT_EQ(*result.usage.output_tokens, 5U);
+    EXPECT_FALSE(result.usage.cache_read_tokens);
 }
 
 TEST(ProviderResponse, DecodesTheSameStreamOneByteAtATime) {

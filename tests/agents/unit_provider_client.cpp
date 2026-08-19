@@ -281,7 +281,7 @@ TEST(ProviderClient, HandlesNonStreamingProviderResponse) {
 
 TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     const std::string response_body =
-        R"({"choices":[{"message":{"content":"private response"}}],"usage":{"prompt_tokens":12,"completion_tokens":5}})";
+        R"({"choices":[{"message":{"content":"private response"}}],"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":9}}})";
     MockHttpServer mock({http_response("application/json", response_body)});
     mock.start();
     DiagnosticLogFile log;
@@ -311,8 +311,68 @@ TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     EXPECT_NE(output.find("duration_ms="), std::string::npos);
     EXPECT_NE(output.find("input_tokens=12"), std::string::npos);
     EXPECT_NE(output.find("output_tokens=5"), std::string::npos);
+    EXPECT_NE(output.find("cache_read_tokens=9"), std::string::npos);
     EXPECT_EQ(output.find("private prompt"), std::string::npos);
     EXPECT_EQ(output.find("private response"), std::string::npos);
+}
+
+TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
+    Transcript transcript;
+    GenerationRequest request = client_request(transcript, 91, "Question");
+    request.run.prompt_cache_key = "forum/session/assistant";
+    request.run.created_at = 1'700'000'003;
+
+    CharacterDefinition direct = network_definition(443, false);
+    direct.backend.host = "API.OPENAI.COM.";
+    direct.backend.https = true;
+    direct.system_prompt = "Stable instructions";
+    direct.backend.api = ProviderApi::chat_completions;
+    ProviderClient chat_client(direct);
+    const RequestPayload chat = chat_client.prepare(request);
+    EXPECT_EQ(Json::parse(chat.bytes)["prompt_cache_key"], request.run.prompt_cache_key);
+    EXPECT_FALSE(chat.session_id);
+
+    direct.backend.api = ProviderApi::responses;
+    ProviderClient short_client(direct);
+    const RequestPayload short_payload = short_client.prepare(request);
+    const Json short_body = Json::parse(short_payload.bytes);
+    EXPECT_EQ(short_body["prompt_cache_key"], request.run.prompt_cache_key);
+    EXPECT_FALSE(short_body.contains("prompt_cache_retention"));
+    ASSERT_TRUE(short_payload.session_id);
+    EXPECT_EQ(*short_payload.session_id, request.run.prompt_cache_key);
+
+    GenerationRequest later_request = request;
+    later_request.run.created_at = 1'700'000'004;
+    const RequestPayload later_payload = short_client.prepare(later_request);
+    const Json later_body = Json::parse(later_payload.bytes);
+    EXPECT_EQ(later_body["instructions"], short_body["instructions"]);
+    EXPECT_EQ(later_body["prompt_cache_key"], short_body["prompt_cache_key"]);
+    ASSERT_TRUE(later_payload.session_id);
+    EXPECT_EQ(*later_payload.session_id, *short_payload.session_id);
+
+    direct.backend.cache_retention = CacheRetention::long_;
+    ProviderClient responses_client(direct);
+    const RequestPayload responses = responses_client.prepare(request);
+    const Json responses_body = Json::parse(responses.bytes);
+    EXPECT_EQ(responses_body["prompt_cache_key"], request.run.prompt_cache_key);
+    EXPECT_EQ(responses_body["prompt_cache_retention"], "24h");
+    ASSERT_TRUE(responses.session_id);
+    EXPECT_EQ(*responses.session_id, request.run.prompt_cache_key);
+    EXPECT_FALSE(responses_body.contains("previous_response_id"));
+    EXPECT_FALSE(responses_body.contains("conversation"));
+
+    direct.backend.cache_retention = CacheRetention::off;
+    ProviderClient disabled_client(direct);
+    const RequestPayload disabled = disabled_client.prepare(request);
+    EXPECT_FALSE(Json::parse(disabled.bytes).contains("prompt_cache_key"));
+    EXPECT_FALSE(disabled.session_id);
+
+    direct.backend.cache_retention = CacheRetention::short_;
+    direct.backend.host = "api.openai.com.example";
+    ProviderClient gateway_client(std::move(direct));
+    const RequestPayload gateway = gateway_client.prepare(request);
+    EXPECT_FALSE(Json::parse(gateway.bytes).contains("prompt_cache_key"));
+    EXPECT_FALSE(gateway.session_id);
 }
 
 TEST(ProviderClient, ReportsProviderHttpFailure) {

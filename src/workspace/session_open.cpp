@@ -51,7 +51,8 @@ OpenedSession open_session(
             // Same borrow as the provider resolver above.
             [&model](std::string_view name) {
                 return model.resolve_session_style(name);
-            }),
+            },
+            prepared.identity),
         .persist_default_character = [&model, forum_id = forum->id](
                                          std::string_view character_id) {
             model.persist_forum_default_character(forum_id, character_id);

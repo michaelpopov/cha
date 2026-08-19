@@ -9,7 +9,6 @@
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
-#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <exception>
@@ -217,7 +216,8 @@ std::string http_event(
         + " response_bytes=" + std::to_string(response_bytes)
         + " duration_ms=" + std::to_string(duration_ms)
         + " input_tokens=" + token_count(usage.input_tokens)
-        + " output_tokens=" + token_count(usage.output_tokens);
+        + " output_tokens=" + token_count(usage.output_tokens)
+        + " cache_read_tokens=" + token_count(usage.cache_read_tokens);
 }
 
 std::string streaming_metadata(
@@ -276,6 +276,11 @@ std::string build_chat_completions_request_body(
     }
     if (!config.reasoning_effort.empty()) {
         body["reasoning_effort"] = config.reasoning_effort;
+    }
+    if (!input.run.prompt_cache_key.empty()
+        && config.cache_retention != CacheRetention::off
+        && is_direct_openai_host(config.host)) {
+        body["prompt_cache_key"] = input.run.prompt_cache_key;
     }
 
     return dump_json(body, "Model request");
@@ -410,6 +415,11 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
                 input,
                 config_,
                 system_prompt_),
+            .session_id = !input.run.prompt_cache_key.empty()
+                    && config_.cache_retention != CacheRetention::off
+                    && is_direct_openai_host(config_.host)
+                ? std::optional<std::string>(input.run.prompt_cache_key)
+                : std::nullopt,
         };
     }
     throw std::logic_error("Unknown provider API");
@@ -512,6 +522,11 @@ GenerationResult ProviderClient::perform(
         raw_headers = curl_slist_append(
             raw_headers,
             ("Authorization: Bearer " + api_key_).c_str());
+    }
+    if (payload.session_id) {
+        raw_headers = curl_slist_append(
+            raw_headers,
+            ("session_id: " + *payload.session_id).c_str());
     }
     if (!raw_headers) {
         throw std::runtime_error("Failed to create HTTP headers");

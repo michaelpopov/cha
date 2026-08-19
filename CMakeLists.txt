@@ -8,12 +8,9 @@ include(CTest)
 
 find_package(Threads REQUIRED)
 find_package(CURL QUIET)
-if(WIN32 OR APPLE)
-    find_package(OpenSSL QUIET)
-else()
-    # Unix-like builds require OpenSSL so HTTPS is always available.
-    find_package(OpenSSL REQUIRED)
-endif()
+# Prompt-cache keys use SHA-256, so OpenSSL is required independently of the
+# TLS backend libcurl happens to use on this platform.
+find_package(OpenSSL REQUIRED)
 
 # Keep sanitizer instrumentation opt-in so ordinary release-like builds stay
 # portable, while CI and local hardening runs use named, reproducible presets.
@@ -228,6 +225,7 @@ target_link_libraries(
     PRIVATE
         cha_sqlite3
         spdlog::spdlog
+        OpenSSL::Crypto
 )
 cha_enable_warnings(cha_core)
 

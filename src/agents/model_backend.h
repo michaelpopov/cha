@@ -34,6 +34,7 @@ enum class GenerationOutcome {
 struct GenerationTokenUsage {
     std::optional<std::size_t> input_tokens;
     std::optional<std::size_t> output_tokens;
+    std::optional<std::size_t> cache_read_tokens;
 };
 
 // How one call to ModelBackend::perform() ended. The message explains the failure outcomes
@@ -48,6 +49,8 @@ struct GenerationResult {
 // consumes immutable input; performing the slow call is a separate step.
 struct RequestPayload {
     std::string bytes;
+    // Optional Responses session_id header; omitted when empty.
+    std::optional<std::string> session_id;
 };
 
 // Receives one semantic transport fragment without attaching request identity.

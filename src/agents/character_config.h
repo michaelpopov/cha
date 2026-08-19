@@ -41,8 +41,18 @@ enum class WebSearchMode {
     required,
 };
 
+enum class CacheRetention {
+    off,
+    short_,
+    long_,
+};
+
 inline constexpr ProviderApi default_provider_api = ProviderApi::responses;
 inline constexpr WebSearchMode default_web_search_mode = WebSearchMode::required;
+
+// True only for the direct OpenAI API host, case-insensitively and allowing
+// one DNS trailing dot. Gate cache-only wire extensions with this check.
+bool is_direct_openai_host(std::string_view host);
 
 // Effective private configuration for one model backend after workspace,
 // character, forum-default, and member-override layers have been applied.
@@ -61,6 +71,7 @@ struct ModelBackendConfig {
     bool https{};
     ProviderApi api{default_provider_api};
     WebSearchMode web_search{default_web_search_mode};
+    CacheRetention cache_retention{CacheRetention::short_};
 };
 
 // Provider/runtime settings as written in one named provider configuration.
@@ -81,6 +92,7 @@ struct ProviderConfig {
     std::optional<bool> https;
     std::optional<ProviderApi> api;
     std::optional<WebSearchMode> web_search;
+    std::optional<CacheRetention> cache_retention;
 };
 
 // Materializes the effective provider values, leaving ModelBackendConfig's own

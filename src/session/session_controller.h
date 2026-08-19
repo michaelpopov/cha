@@ -10,6 +10,7 @@
 #include "session/forum_characters.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
+#include "session/session_identity.h"
 #include "chat/transcript.h"
 #include "util/wake_notifier.h"
 #include "util/thread_pool.h"
@@ -64,7 +65,8 @@ public:
         WakeNotifier& notifier,
         SessionRestore restored = {},
         ProviderResolver provider_resolver = {},
-        StyleResolver style_resolver = {});
+        StyleResolver style_resolver = {},
+        SessionIdentity identity = {});
     // Test-only counterpart for controller tests that intentionally do not
     // claim a fixture database's production lease.
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
@@ -76,7 +78,8 @@ public:
         SessionRestore restored = {},
         ProviderResolver provider_resolver = {},
         GenerationExecutor::BackendFactory backend_factory = {},
-        StyleResolver style_resolver = {});
+        StyleResolver style_resolver = {},
+        SessionIdentity identity = {});
     // Test-only construction and activation fault injection. These seams live
     // here because the otherwise private controller owns both dependencies.
     [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
@@ -86,7 +89,8 @@ public:
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {},
-        ActivationHook before_activation = {});
+        ActivationHook before_activation = {},
+        SessionIdentity identity = {});
     ~SessionController();
     SessionController(const SessionController&) = delete;
     SessionController& operator=(const SessionController&) = delete;
@@ -159,7 +163,8 @@ private:
         SessionRestore restored,
         ProviderResolver provider_resolver = {},
         GenerationExecutor::BackendFactory backend_factory = {},
-        StyleResolver style_resolver = {});
+        StyleResolver style_resolver = {},
+        SessionIdentity identity = {});
     SessionController(
         std::vector<std::unique_ptr<ModelBackend>> backends,
         PersonaRoster personas,
@@ -168,7 +173,8 @@ private:
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored,
-        ActivationHook before_activation);
+        ActivationHook before_activation,
+        SessionIdentity identity = {});
 
     void initialize(SessionRestore restored, std::string_view initial_persona_id);
     [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
@@ -230,6 +236,7 @@ private:
     GenerationExecutor generation_executor_;
     ForumCharacters characters_;
     SharedPersonaRoster personas_;
+    SessionIdentity identity_;
     CharacterId default_character_id_;
     // Borrowed from personas_, which is immutable and outlives the controller,
     // so the view can hand out the persona's own strings.

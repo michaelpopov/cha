@@ -241,9 +241,7 @@ TEST(ModelContext, ProjectsUtcTimestampsWhenRunHasSubmissionTime) {
     EXPECT_EQ(
         project_model_context(input, "System"),
         (std::vector<ModelMessage>{
-            {ModelRole::system,
-             "System\n\nConversation timestamps are in UTC. The current prompt was "
-             "submitted at 2023-11-14T22:13:23Z."},
+            {ModelRole::system, "System"},
             {ModelRole::persona,
              "from You at 2023-11-14T22:13:20Z:\nEarlier question"},
             {ModelRole::assistant,
@@ -254,6 +252,43 @@ TEST(ModelContext, ProjectsUtcTimestampsWhenRunHasSubmissionTime) {
             {ModelRole::persona,
              "from You at 2023-11-14T22:13:23Z:\nCurrent question"},
         }));
+}
+
+TEST(ModelContext, SubmissionTimeChangesOnlyTheFinalMessage) {
+    const auto make_input = [](std::int64_t created_at) {
+        TranscriptEntry earlier_question = test::human_entry(
+            1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier question", 1);
+        earlier_question.created_at = 1'700'000'000;
+        TranscriptEntry earlier_answer = make_character_entry(
+            2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 1);
+        earlier_answer.created_at = 1'700'000'001;
+        return GenerationRequest{
+            .history = std::make_shared<const ModelHistory>(ModelHistory{
+                .entries = {std::move(earlier_question), std::move(earlier_answer)},
+            }),
+            .run = {
+                .request_id = 1,
+                .target = {"assistant", "Assistant"},
+                .author = {"human", "You"},
+                .prompt_text = "Current question",
+                .created_at = created_at,
+            },
+        };
+    };
+
+    const std::vector<ModelMessage> first =
+        project_model_context(make_input(1'700'000'003), "System");
+    const std::vector<ModelMessage> second =
+        project_model_context(make_input(1'700'000'004), "System");
+
+    ASSERT_EQ(first.size(), 4U);
+    ASSERT_EQ(second.size(), 4U);
+    for (std::size_t index = 0; index + 1 < first.size(); ++index) {
+        EXPECT_EQ(first[index], second[index]);
+    }
+    EXPECT_NE(first.back(), second.back());
+    EXPECT_EQ(first.back().content, "from You at 2023-11-14T22:13:23Z:\nCurrent question");
+    EXPECT_EQ(second.back().content, "from You at 2023-11-14T22:13:24Z:\nCurrent question");
 }
 
 TEST(ModelContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {

@@ -175,7 +175,7 @@ TEST(ResponsesApi, ReadsUsageFromTheCompletionEvent) {
     ResponsesStreamDecoder decoder(output.sink());
     decoder.consume(
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Answer\"}\n\n"
-        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5}}}\n\n");
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":9}}}}\n\n");
     const StreamDecodeResult result = decoder.finish();
 
     EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
@@ -183,6 +183,8 @@ TEST(ResponsesApi, ReadsUsageFromTheCompletionEvent) {
     ASSERT_TRUE(result.result.usage.output_tokens);
     EXPECT_EQ(*result.result.usage.input_tokens, 12U);
     EXPECT_EQ(*result.result.usage.output_tokens, 5U);
+    ASSERT_TRUE(result.result.usage.cache_read_tokens);
+    EXPECT_EQ(*result.result.usage.cache_read_tokens, 9U);
 }
 
 TEST(ResponsesApi, KeepsSearchAnnotationsAndReasoningEventsPrivate) {
@@ -306,7 +308,8 @@ TEST(ResponsesApi, IgnoresNonStreamingSearchAndAnnotationMetadata) {
     Output output;
     const std::string body = R"({
         "status": "completed",
-        "usage": {"input_tokens": 12, "output_tokens": 5},
+        "usage": {"input_tokens": 12, "output_tokens": 5,
+                  "input_tokens_details": {"cached_tokens": 9}},
         "output": [
             {"type": "reasoning", "summary": []},
             {
@@ -343,6 +346,8 @@ TEST(ResponsesApi, IgnoresNonStreamingSearchAndAnnotationMetadata) {
     ASSERT_TRUE(result.usage.output_tokens);
     EXPECT_EQ(*result.usage.input_tokens, 12U);
     EXPECT_EQ(*result.usage.output_tokens, 5U);
+    ASSERT_TRUE(result.usage.cache_read_tokens);
+    EXPECT_EQ(*result.usage.cache_read_tokens, 9U);
 }
 
 TEST(ResponsesApi, DecodesNonStreamingRefusalAsAnswer) {

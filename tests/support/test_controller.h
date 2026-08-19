@@ -61,7 +61,8 @@ inline std::unique_ptr<SessionController> from_backends_for_testing(
     WakeNotifier& notifier,
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {},
-    std::optional<ParticipantId> initial_default_character_id = std::nullopt) {
+    std::optional<ParticipantId> initial_default_character_id = std::nullopt,
+    SessionIdentity identity = {}) {
     const ParticipantId default_character_id = initial_default_character_id.value_or(
         backends.empty() ? ParticipantId{} : backends.front()->info().character.id);
     return SessionController::from_backends_for_testing(
@@ -71,7 +72,8 @@ inline std::unique_ptr<SessionController> from_backends_for_testing(
         std::move(database_path),
         notifier,
         std::move(restored),
-        std::move(before_activation));
+        std::move(before_activation),
+        std::move(identity));
 }
 
 inline std::unique_ptr<SessionController> from_backends_for_testing(
@@ -80,7 +82,8 @@ inline std::unique_ptr<SessionController> from_backends_for_testing(
     WakeNotifier& notifier,
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {},
-    std::optional<ParticipantId> initial_default_character_id = std::nullopt) {
+    std::optional<ParticipantId> initial_default_character_id = std::nullopt,
+    SessionIdentity identity = {}) {
     return from_backends_for_testing(
         std::move(backends),
         operator_roster(),
@@ -88,7 +91,8 @@ inline std::unique_ptr<SessionController> from_backends_for_testing(
         notifier,
         std::move(restored),
         std::move(before_activation),
-        std::move(initial_default_character_id));
+        std::move(initial_default_character_id),
+        std::move(identity));
 }
 
 } // namespace cha::test

@@ -37,9 +37,15 @@ GenerationTokenUsage responses_token_usage(const Json& response) {
     if (usage == response.end() || !usage->is_object()) {
         return {};
     }
+    std::optional<std::size_t> cache_read_tokens;
+    const auto details = usage->find("input_tokens_details");
+    if (details != usage->end() && details->is_object()) {
+        cache_read_tokens = token_count(*details, "cached_tokens");
+    }
     return {
         .input_tokens = token_count(*usage, "input_tokens"),
         .output_tokens = token_count(*usage, "output_tokens"),
+        .cache_read_tokens = cache_read_tokens,
     };
 }
 
@@ -116,6 +122,14 @@ std::string build_responses_request_body(
     }
     if (!config.reasoning_effort.empty()) {
         body["reasoning"] = Json{{"effort", config.reasoning_effort}};
+    }
+    if (!input.run.prompt_cache_key.empty()
+        && config.cache_retention != CacheRetention::off
+        && is_direct_openai_host(config.host)) {
+        body["prompt_cache_key"] = input.run.prompt_cache_key;
+        if (config.cache_retention == CacheRetention::long_) {
+            body["prompt_cache_retention"] = "24h";
+        }
     }
 
     switch (config.web_search) {

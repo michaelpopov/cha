@@ -34,9 +34,18 @@ GenerationTokenUsage chat_token_usage(const Json& response) {
     if (usage == response.end() || !usage->is_object()) {
         return {};
     }
+    std::optional<std::size_t> cache_read_tokens;
+    const auto details = usage->find("prompt_tokens_details");
+    if (details != usage->end() && details->is_object()) {
+        cache_read_tokens = token_count(*details, "cached_tokens");
+    }
+    if (!cache_read_tokens) {
+        cache_read_tokens = token_count(*usage, "prompt_cache_hit_tokens");
+    }
     return {
         .input_tokens = token_count(*usage, "prompt_tokens"),
         .output_tokens = token_count(*usage, "completion_tokens"),
+        .cache_read_tokens = cache_read_tokens,
     };
 }
 

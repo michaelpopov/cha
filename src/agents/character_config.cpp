@@ -38,7 +38,7 @@ struct ParsedConfig {
 constexpr std::string_view provider_setting_names[]{
     "host", "port", "base_path", "mode", "model", "stream", "temperature",
     "api_key", "api_key_env", "reasoning_effort", "reasoning_format", "https",
-    "api", "web_search"};
+    "api", "web_search", "cache_retention"};
 
 template<typename Value>
 std::optional<Value> read_optional(
@@ -187,6 +187,21 @@ std::optional<WebSearchMode> read_web_search_mode(
         + "'; expected one of off, auto, required");
 }
 
+std::optional<CacheRetention> read_cache_retention(
+    const toml::table& table,
+    const std::filesystem::path& path) {
+    const auto value = read_optional<std::string>(table, path, "cache_retention", "string");
+    if (!value) {
+        return std::nullopt;
+    }
+    if (*value == "off") return CacheRetention::off;
+    if (*value == "short") return CacheRetention::short_;
+    if (*value == "long") return CacheRetention::long_;
+    throw std::runtime_error("Config file '" + utf8_path(path)
+        + "' has unsupported cache_retention '" + *value
+        + "'; expected one of off, short, long");
+}
+
 bool is_valid_base_path(std::string_view base_path) {
     return base_path.empty()
         || (base_path.starts_with('/')
@@ -258,6 +273,13 @@ void validate_provider_config(
 
 } // namespace
 
+bool is_direct_openai_host(std::string_view host) {
+    if (host.ends_with('.')) {
+        host.remove_suffix(1);
+    }
+    return ascii_iequals(host, "api.openai.com");
+}
+
 ProviderConfig load_named_provider(
     const std::filesystem::path& directory,
     std::string_view name,
@@ -300,7 +322,8 @@ ProviderConfig load_named_provider(
         .reasoning_format = read_reasoning_format(table, path),
         .https = read_optional<bool>(table, path, "https", "boolean"),
         .api = read_provider_api(table, path),
-        .web_search = read_web_search_mode(table, path)};
+        .web_search = read_web_search_mode(table, path),
+        .cache_retention = read_cache_retention(table, path)};
     validate_provider_config(provider, path);
     return provider;
 }
@@ -492,6 +515,7 @@ ModelBackendConfig make_backend_config(const ProviderConfig& effective) {
     if (effective.https) backend.https = *effective.https;
     if (effective.api) backend.api = *effective.api;
     if (effective.web_search) backend.web_search = *effective.web_search;
+    if (effective.cache_retention) backend.cache_retention = *effective.cache_retention;
     return backend;
 }
 

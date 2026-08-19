@@ -182,17 +182,6 @@ std::vector<ModelMessage> project_model_context(
         system_prompt,
         input.run.target.id,
         include_timestamps);
-    if (const std::string timestamp = format_utc_timestamp(input.run.created_at);
-        !timestamp.empty()) {
-        const std::string time_context =
-            "Conversation timestamps are in UTC. The current prompt was submitted at "
-            + timestamp + ".";
-        if (!messages.empty() && messages.front().role == ModelRole::system) {
-            messages.front().content += "\n\n" + time_context;
-        } else {
-            messages.insert(messages.begin(), {ModelRole::system, time_context});
-        }
-    }
     messages.push_back({
         ModelRole::persona,
         prefixed_human_message(

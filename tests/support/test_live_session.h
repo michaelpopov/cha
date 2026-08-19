@@ -259,7 +259,9 @@ inline OpenedSession open_scripted_session(
             database_path,
             notifier,
             load_session_state(database_path),
-            std::move(before_activation)),
+            std::move(before_activation),
+            std::nullopt,
+            identity),
     };
 }
 
@@ -292,7 +294,10 @@ inline OpenedSession open_restored_session(
             reader_roster(),
             database_path,
             notifier,
-            std::move(restored)),
+            std::move(restored),
+            {},
+            std::nullopt,
+            identity),
     };
 }
 
@@ -334,7 +339,10 @@ inline OpenedSession open_leased_session(
             database_path,
             std::move(lease),
             notifier,
-            std::move(restored)),
+            std::move(restored),
+            {},
+            {},
+            identity),
     };
 }
 

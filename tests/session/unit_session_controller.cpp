@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -364,6 +365,47 @@ ControllerUpdate receive_until_idle(SessionController& controller) {
         }
     }
     return combined;
+}
+
+TEST(SessionController, BuildsStablePerCharacterPromptCacheKeys) {
+    TemporaryJournal short_journal;
+    auto short_backend = std::make_unique<ScriptedBackend>();
+    ScriptedBackend* short_view = short_backend.get();
+    auto short_controller = test::from_backends_for_testing(
+        test::one_backend(std::move(short_backend)),
+        short_journal.path,
+        notifier(),
+        {},
+        {},
+        std::nullopt,
+        {"forum", "session"});
+
+    (void)short_controller->submit_prompt("operator", "First");
+    (void)receive_until_idle(*short_controller);
+    (void)short_controller->submit_prompt("operator", "Second");
+    (void)receive_until_idle(*short_controller);
+    ASSERT_EQ(short_view->inputs.size(), 2U);
+    EXPECT_EQ(short_view->inputs[0].run.prompt_cache_key, "forum/session/guide-id");
+    EXPECT_EQ(
+        short_view->inputs[1].run.prompt_cache_key,
+        short_view->inputs[0].run.prompt_cache_key);
+
+    TemporaryJournal long_journal;
+    auto long_backend = std::make_unique<ScriptedBackend>();
+    ScriptedBackend* long_view = long_backend.get();
+    auto long_controller = test::from_backends_for_testing(
+        test::one_backend(std::move(long_backend)),
+        long_journal.path,
+        notifier(),
+        {},
+        {},
+        std::nullopt,
+        {std::string(30, 'f'), std::string(30, 's')});
+    (void)long_controller->submit_prompt("operator", "Long");
+    (void)receive_until_idle(*long_controller);
+    ASSERT_EQ(long_view->inputs.size(), 1U);
+    const std::string& digest = long_view->inputs.front().run.prompt_cache_key;
+    EXPECT_EQ(digest, "d9cb4005d6e1505e03f996791763ef57f5ab07bef766af2edd8f2f05bde795bc");
 }
 
 void receive_until_entry_count(
@@ -1760,7 +1802,8 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
         notifier(),
         {},
         {},
-        "ismael-id");
+        "ismael-id",
+        {"forum", "session"});
 
     EXPECT_EQ(controller->view().default_character_id, "ismael-id");
     ASSERT_EQ(controller->view().characters.size(), 2U);
@@ -1779,6 +1822,8 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
     ASSERT_EQ(ismael_view->inputs.size(), 2U);
     EXPECT_EQ(guide_view->inputs.back().run.target.id, "guide-id");
     EXPECT_EQ(ismael_view->inputs.back().run.target.id, "ismael-id");
+    EXPECT_EQ(guide_view->inputs.back().run.prompt_cache_key, "forum/session/guide-id");
+    EXPECT_EQ(ismael_view->inputs.back().run.prompt_cache_key, "forum/session/ismael-id");
     const std::vector<TranscriptEntry> entries_after_multicast =
         copy_entries(controller->view().transcript);
     ASSERT_EQ(entries_after_multicast.size(), 6U);

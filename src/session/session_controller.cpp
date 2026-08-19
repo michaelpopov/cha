@@ -5,9 +5,11 @@
 #include "util/text.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <exception>
 #include <limits>
+#include <openssl/sha.h>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -50,6 +52,34 @@ std::string request_action(
     std::string_view character_display_name) {
     return std::string(action) + " request " + std::to_string(request_id)
         + " for @" + std::string(character_display_name);
+}
+
+std::string prompt_cache_key(
+    const SessionIdentity& identity,
+    std::string_view character_id) {
+    if (identity.forum_id.empty() || identity.session_id.empty() || character_id.empty()) {
+        return {};
+    }
+    const std::string key = identity.forum_id + "/" + identity.session_id
+        + "/" + std::string(character_id);
+    const bool ascii = std::ranges::all_of(key, [](unsigned char character) {
+        return character <= 0x7f;
+    });
+    if (ascii && key.size() <= 64) return key;
+
+    std::array<unsigned char, SHA256_DIGEST_LENGTH> digest{};
+    SHA256(
+        reinterpret_cast<const unsigned char*>(key.data()),
+        key.size(),
+        digest.data());
+    constexpr char hex[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(digest.size() * 2);
+    for (const unsigned char byte : digest) {
+        result.push_back(hex[byte >> 4]);
+        result.push_back(hex[byte & 0x0f]);
+    }
+    return result;
 }
 
 ForumCharacters make_forum_characters(
@@ -114,7 +144,8 @@ std::unique_ptr<SessionController> SessionController::from_shared_definitions(
     WakeNotifier& notifier,
     SessionRestore restored,
     ProviderResolver provider_resolver,
-    StyleResolver style_resolver) {
+    StyleResolver style_resolver,
+    SessionIdentity identity) {
     require_character_count(definitions.size());
     if (!personas) throw std::invalid_argument("Session controller requires a persona roster");
     if (!lease.active()) throw std::invalid_argument("Production session controllers require an active session lease");
@@ -122,7 +153,7 @@ std::unique_ptr<SessionController> SessionController::from_shared_definitions(
         std::move(definitions), std::move(personas), std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
         std::move(database_path), std::move(lease), notifier, std::move(restored),
-        std::move(provider_resolver), {}, std::move(style_resolver)));
+        std::move(provider_resolver), {}, std::move(style_resolver), std::move(identity)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
@@ -134,7 +165,8 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
     SessionRestore restored,
     ProviderResolver provider_resolver,
     GenerationExecutor::BackendFactory backend_factory,
-    StyleResolver style_resolver) {
+    StyleResolver style_resolver,
+    SessionIdentity identity) {
     require_character_count(definitions.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions),
@@ -147,7 +179,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
         std::move(restored),
         std::move(provider_resolver),
         std::move(backend_factory),
-        std::move(style_resolver)));
+        std::move(style_resolver), std::move(identity)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
@@ -157,7 +189,8 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored,
-    ActivationHook before_activation) {
+    ActivationHook before_activation,
+    SessionIdentity identity) {
     require_character_count(backends.size());
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(backends),
@@ -167,7 +200,7 @@ std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
         std::move(database_path),
         notifier,
         std::move(restored),
-        std::move(before_activation)));
+        std::move(before_activation), std::move(identity)));
 }
 
 SessionController::SessionController(
@@ -181,7 +214,8 @@ SessionController::SessionController(
     SessionRestore restored,
     ProviderResolver provider_resolver,
     GenerationExecutor::BackendFactory backend_factory,
-    StyleResolver style_resolver)
+    StyleResolver style_resolver,
+    SessionIdentity identity)
     : lease_(std::move(lease)),
       journal_(std::move(path)),
       worker_pool_(definitions.size()),
@@ -189,6 +223,7 @@ SessionController::SessionController(
           std::move(definitions), notifier, worker_pool_, std::move(backend_factory)),
       characters_(make_forum_characters(generation_executor_.runtime_info())),
       personas_(std::move(personas)),
+      identity_(std::move(identity)),
       default_character_id_(std::move(initial_default_character_id)),
       provider_resolver_(std::move(provider_resolver)),
       style_resolver_(std::move(style_resolver)) {
@@ -203,13 +238,15 @@ SessionController::SessionController(
     std::filesystem::path path,
     WakeNotifier& notifier,
     SessionRestore restored,
-    ActivationHook before_activation)
+    ActivationHook before_activation,
+    SessionIdentity identity)
     : lease_(SessionLease::inactive_for_testing()),
       journal_(std::move(path)),
       worker_pool_(backends.size()),
       generation_executor_(std::move(backends), notifier, worker_pool_),
       characters_(make_forum_characters(generation_executor_.runtime_info())),
       personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
+      identity_(std::move(identity)),
       default_character_id_(std::move(initial_default_character_id)),
       before_activation_(std::move(before_activation)) {
     initialize(std::move(restored), initial_default_persona_id);
@@ -421,6 +458,7 @@ void SessionController::start_batch(
     std::vector<GenerationRequest> inputs;
     inputs.reserve(targets.size());
     for (CharacterMetadata& target : targets) {
+        const std::string cache_key = prompt_cache_key(identity_, target.id);
         inputs.push_back({
             .history = history,
             .run = {
@@ -428,6 +466,7 @@ void SessionController::start_batch(
                 .target = std::move(target),
                 .author = author,
                 .prompt_text = text,
+                .prompt_cache_key = cache_key,
                 .created_at = unix_now(),
             },
         });

@@ -102,6 +102,7 @@ void expect_complete_provider_values(const ModelBackendConfig& config) {
     EXPECT_EQ(config.reasoning_effort, "low");
     EXPECT_EQ(config.reasoning_format, ReasoningFormat::none);
     EXPECT_FALSE(config.https);
+    EXPECT_EQ(config.cache_retention, CacheRetention::short_);
 }
 
 TEST(Config, BackendMaterializationRequiresHostAndPort) {
@@ -119,6 +120,33 @@ TEST(Config, ReadsEveryProviderSettingFromTheReferencedConfig) {
     files.write(files.definition(),
         std::string(required_definition) + "provider = \"complete\"\n");
     expect_complete_provider_values(load_character_config(files.paths()).backend);
+}
+
+TEST(Config, ReadsAndValidatesCacheRetention) {
+    ConfigFiles files;
+    files.write_provider(
+        "cached",
+        "host = \"example\"\nport = 443\ncache_retention = \"long\"\n");
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"cached\"\n");
+    EXPECT_EQ(
+        load_character_config(files.paths()).backend.cache_retention,
+        CacheRetention::long_);
+
+    files.write_provider(
+        "cached",
+        "host = \"example\"\nport = 443\ncache_retention = \"off\"\n");
+    EXPECT_EQ(
+        load_character_config(files.paths()).backend.cache_retention,
+        CacheRetention::off);
+
+    files.write_provider(
+        "cached",
+        "host = \"example\"\nport = 443\ncache_retention = \"forever\"\n");
+    expect_error_containing(
+        [&] { (void)load_character_config(files.paths()); },
+        files.providers() / "cached" / "config.toml",
+        "cache_retention");
 }
 
 // A provider config is a whole backend. Selecting one must not leave stray
@@ -218,7 +246,7 @@ TEST(Config, RejectsInlineProviderSettingsInEveryCharacterLayer) {
     ConfigFiles files;
     for (const std::string_view setting :
             {"host = \"example\"\n", "port = 80\n", "model = \"one\"\n",
-             "api = \"responses\"\n", "web_search = \"off\"\n", "api_key = \"secret\"\n",
+             "api = \"responses\"\n", "web_search = \"off\"\n", "cache_retention = \"off\"\n", "api_key = \"secret\"\n",
              "base_path = \"/api\"\n", "temperature = 0.5\n"}) {
         files.write(files.definition(), std::string(required_definition) + std::string(setting));
         expect_error_containing(

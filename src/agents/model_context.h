@@ -24,6 +24,9 @@ struct RunSpec {
     CharacterMetadata target;
     EntryIdentity author;
     std::string prompt_text;
+    // Provider-side prompt-cache affinity for this forum/session/character
+    // projection. An empty value leaves caching disabled for the request.
+    std::string prompt_cache_key;
     // The prompt's UTC Unix-seconds timestamp. It is copied into the durable
     // transcript entry when this run becomes active.
     std::int64_t created_at{};
