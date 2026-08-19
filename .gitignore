@@ -3,6 +3,7 @@
 /build/
 /Testing/
 /test-results/
+/graphify-out/
 
 # Local deployment directory: the build fills it in. The starter script is the
 # one file here that is written by hand, so it stays tracked.
