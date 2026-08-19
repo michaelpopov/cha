@@ -9,7 +9,8 @@
 namespace cha::web {
 
 // A portable transcript export: the session and each speaker become headings,
-// while entry text stays verbatim so any Markdown in the conversation survives.
+// known entry times appear as readable local timestamps, and entry text stays
+// verbatim so any Markdown in the conversation survives.
 std::string session_markdown(
     std::string_view label,
     std::span<const TranscriptEntry> entries);
