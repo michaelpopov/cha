@@ -192,6 +192,7 @@ add_library(cha_core STATIC
     src/session/session_label.cpp
     src/session/session_lease.cpp
     src/session/session_repository.cpp
+    src/session/session_snapshot.cpp
     src/workspace/workspace_definition.cpp
     src/workspace/workspace_runtime.cpp
     src/workspace/session_open.cpp

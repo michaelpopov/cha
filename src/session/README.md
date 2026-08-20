@@ -38,7 +38,7 @@ flowchart TD
     members --> base["character_defaults.toml<br/>optional forum defaults + [prompt]"]
     members --> member["<id>/character.toml + CHARACTER.md<br/>optional overrides"]
     forum --> forum_prompt["FORUM.md — template-expanded forum prompt extension"]
-    forum --> sessions["sessions/&lt;id&gt;.sqlite3<br/>created on demand"]
+    forum --> sessions["sessions/&lt;id&gt;.sqlite3 + &lt;id&gt;.sql<br/>local state + portable reload snapshot"]
     sessions --> deleted["deleted/&lt;id&gt;.sqlite3<br/>recoverable deletion"]
 ```
 
@@ -205,6 +205,15 @@ timestamp that cannot be taken, fails the whole listing rather than becoming one
 row's error. Anything that is not a `.sqlite3` file with a URL-safe stem —
 companion locks, hidden temporary siblings, a `catalog.cha-lock` left by an
 older release — is simply not a catalog entry.
+
+Workspace reload also treats `<id>.sql` beside each active database as its
+portable snapshot. Every active `<id>.sqlite3` is dumped over `<id>.sql`; when
+only the SQL file exists, reload builds and validates a temporary database
+before publishing `<id>.sqlite3`. If `deleted/<id>.sqlite3` exists, the SQL file
+is not imported, so recoverable local deletion remains authoritative. Both
+directions use temporary siblings, leaving the previous SQL or no active
+database at all when an operation fails. SQL snapshots are intentionally not
+catalog entries and are tracked by Git; `.sqlite3` remains machine-local.
 
 Session paths are resolved only by `SessionCatalog`. Its `database_path()`
 requires the session ID to be one safe path component before appending

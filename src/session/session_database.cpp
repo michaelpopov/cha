@@ -5,9 +5,12 @@
 #include <sqlite3.h>
 #include <uv.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -266,6 +269,40 @@ public:
 
     bool is_null(int column) const {
         return sqlite3_column_type(statement_, column) == SQLITE_NULL;
+    }
+
+    int column_count() const noexcept {
+        return sqlite3_column_count(statement_);
+    }
+
+    int column_type(int column) const noexcept {
+        return sqlite3_column_type(statement_, column);
+    }
+
+    double real(int column) const noexcept {
+        return sqlite3_column_double(statement_, column);
+    }
+
+    std::string_view text_view(int column) const {
+        const unsigned char* value = sqlite3_column_text(statement_, column);
+        const int size = sqlite3_column_bytes(statement_, column);
+        if (size == 0) return {};
+        if (!value) database_->fail(SQLITE_NOMEM);
+        return {
+            reinterpret_cast<const char*>(value),
+            static_cast<std::size_t>(size),
+        };
+    }
+
+    std::string_view blob_view(int column) const {
+        const void* value = sqlite3_column_blob(statement_, column);
+        const int size = sqlite3_column_bytes(statement_, column);
+        if (size == 0) return {};
+        if (!value) database_->fail(SQLITE_NOMEM);
+        return {
+            static_cast<const char*>(value),
+            static_cast<std::size_t>(size),
+        };
     }
 
 private:
@@ -642,7 +679,7 @@ void finish_turn(
     transaction.commit();
 }
 
-std::filesystem::path create_temporary_database_path(
+std::filesystem::path create_temporary_path(
     const std::filesystem::path& path) {
 
     const std::filesystem::path pattern_path =
@@ -662,7 +699,7 @@ std::filesystem::path create_temporary_database_path(
     if (descriptor < 0) {
         uv_fs_req_cleanup(&create_request);
         throw std::runtime_error(
-            "Failed to create a temporary session database for '"
+            "Failed to create a temporary file for '"
             + utf8_path(path) + "': " + uv_strerror(descriptor));
     }
     const std::filesystem::path temporary_path =
@@ -677,7 +714,7 @@ std::filesystem::path create_temporary_database_path(
         std::error_code ignored;
         std::filesystem::remove(temporary_path, ignored);
         throw std::runtime_error(
-            "Failed to close temporary session database '"
+            "Failed to close temporary file '"
             + utf8_path(temporary_path) + "': "
             + uv_strerror(close_status));
     }
@@ -740,6 +777,189 @@ bool publish_database_path(
         error);
 }
 
+std::string quoted_identifier(std::string_view identifier) {
+    std::string result = "\"";
+    for (const char character : identifier) {
+        result += character;
+        if (character == '"') result += '"';
+    }
+    return result + "\"";
+}
+
+std::string hex_literal(std::string_view value, bool as_text) {
+    static constexpr char digits[] = "0123456789ABCDEF";
+    std::string result = as_text ? "CAST(X'" : "X'";
+    result.reserve(result.size() + value.size() * 2 + (as_text ? 10 : 1));
+    for (const unsigned char byte : value) {
+        result += digits[byte >> 4];
+        result += digits[byte & 0x0f];
+    }
+    return result + (as_text ? "' AS TEXT)" : "'");
+}
+
+std::string quoted_text(std::string_view value) {
+    if (value.find('\0') != std::string_view::npos) {
+        return hex_literal(value, true);
+    }
+    std::string result = "'";
+    for (const char character : value) {
+        result += character;
+        if (character == '\'') result += '\'';
+    }
+    return result + "'";
+}
+
+std::string sql_value(const Statement& statement, int column) {
+    switch (statement.column_type(column)) {
+    case SQLITE_NULL:
+        return "NULL";
+    case SQLITE_INTEGER:
+        return std::to_string(statement.integer(column));
+    case SQLITE_FLOAT: {
+        const double value = statement.real(column);
+        if (std::isnan(value)) return "NULL";
+        if (std::isinf(value)) return value < 0 ? "-9.0e+999" : "9.0e+999";
+        char buffer[64];
+        sqlite3_snprintf(sizeof buffer, buffer, "%!.17g", value);
+        return buffer;
+    }
+    case SQLITE_TEXT:
+        return quoted_text(statement.text_view(column));
+    case SQLITE_BLOB:
+        return hex_literal(statement.blob_view(column), false);
+    default:
+        throw std::runtime_error("SQLite returned an unknown value type while exporting a session");
+    }
+}
+
+struct SchemaObject {
+    std::string type;
+    std::string name;
+    std::string sql;
+};
+
+std::string dump_session_database(
+    Database& database,
+    const SessionIdentity& expected_identity) {
+    database.execute("BEGIN");
+    try {
+        validate_database(database);
+        const SessionDatabaseMetadata metadata = read_metadata(database);
+        validate_session_database_identity(
+            path_from_utf8(database.path()), expected_identity, metadata);
+        const std::int64_t application_id =
+            database.pragma_integer("application_id");
+        const std::int64_t user_version =
+            database.pragma_integer("user_version");
+
+        std::vector<SchemaObject> objects;
+        Statement schema = database.prepare(
+            "SELECT type, name, sql FROM sqlite_schema "
+            "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' "
+            "ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 "
+            "WHEN 'trigger' THEN 2 WHEN 'view' THEN 3 ELSE 4 END, rowid");
+        while (schema.step()) {
+            objects.push_back({schema.text(0), schema.text(1), schema.text(2)});
+        }
+
+        std::string dump =
+            "PRAGMA foreign_keys = OFF;\n"
+            "BEGIN TRANSACTION;\n";
+        for (const SchemaObject& object : objects) {
+            if (object.type == "table") dump += object.sql + ";\n";
+        }
+        for (const SchemaObject& object : objects) {
+            if (object.type != "table") continue;
+            const std::string table = quoted_identifier(object.name);
+            Statement rows = database.prepare(
+                "SELECT * FROM " + table + " ORDER BY rowid");
+            while (rows.step()) {
+                dump += "INSERT INTO " + table + " VALUES(";
+                for (int column = 0; column != rows.column_count(); ++column) {
+                    if (column != 0) dump += ',';
+                    dump += sql_value(rows, column);
+                }
+                dump += ");\n";
+            }
+        }
+        for (const SchemaObject& object : objects) {
+            if (object.type != "table") dump += object.sql + ";\n";
+        }
+        dump += "PRAGMA application_id = "
+            + std::to_string(application_id) + ";\n";
+        dump += "PRAGMA user_version = "
+            + std::to_string(user_version) + ";\n";
+        dump += "COMMIT;\nPRAGMA foreign_keys = ON;\n";
+        database.execute("COMMIT");
+        return dump;
+    } catch (...) {
+        database.rollback_noexcept();
+        throw;
+    }
+}
+
+void replace_path(
+    const std::filesystem::path& source,
+    const std::filesystem::path& destination) {
+    uv_fs_t request{};
+    const std::string source_text = utf8_path(source);
+    const std::string destination_text = utf8_path(destination);
+    const int status = uv_fs_rename(
+        nullptr,
+        &request,
+        source_text.c_str(),
+        destination_text.c_str(),
+        nullptr);
+    uv_fs_req_cleanup(&request);
+    if (status < 0) {
+        throw std::runtime_error(
+            "Failed to replace SQL snapshot '" + destination_text
+            + "': " + uv_strerror(status));
+    }
+}
+
+void write_file_atomically(
+    const std::filesystem::path& path,
+    std::string_view contents) {
+    const std::filesystem::path temporary_path = create_temporary_path(path);
+    try {
+        {
+            std::ofstream output(
+                temporary_path,
+                std::ios::binary | std::ios::trunc);
+            output.write(
+                contents.data(),
+                static_cast<std::streamsize>(contents.size()));
+            output.close();
+            if (!output) {
+                throw std::runtime_error(
+                    "Failed to write SQL snapshot '" + utf8_path(path) + "'");
+            }
+        }
+        replace_path(temporary_path, path);
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary_path, ignored);
+        throw;
+    }
+}
+
+std::string read_file(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error(
+            "Failed to read SQL snapshot '" + utf8_path(path) + "'");
+    }
+    std::string result{
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()};
+    if (input.bad()) {
+        throw std::runtime_error(
+            "Failed to read SQL snapshot '" + utf8_path(path) + "'");
+    }
+    return result;
+}
+
 } // namespace
 
 bool create_session_database(
@@ -752,7 +972,7 @@ bool create_session_database(
             "Session database metadata fields cannot be empty");
     }
     const std::filesystem::path temporary_path =
-        create_temporary_database_path(path);
+        create_temporary_path(path);
 
     try {
         {
@@ -772,6 +992,43 @@ bool create_session_database(
         }
         const bool published =
             publish_database_path(temporary_path, path);
+        std::error_code ignored;
+        std::filesystem::remove(temporary_path, ignored);
+        return published;
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary_path, ignored);
+        throw;
+    }
+}
+
+void export_session_database_sql(
+    const std::filesystem::path& database_path,
+    const std::filesystem::path& sql_path,
+    const SessionIdentity& expected_identity) {
+    Database database(database_path, Database::Mode::read_only);
+    write_file_atomically(
+        sql_path,
+        dump_session_database(database, expected_identity));
+}
+
+bool import_session_database_sql(
+    const std::filesystem::path& sql_path,
+    const std::filesystem::path& database_path,
+    const SessionIdentity& expected_identity) {
+    const std::filesystem::path temporary_path =
+        create_temporary_path(database_path);
+    try {
+        {
+            Database database(
+                temporary_path,
+                Database::Mode::read_write_create);
+            database.execute(read_file(sql_path));
+        }
+        migrate_session_database(temporary_path);
+        (void)load_session_database(temporary_path, expected_identity);
+        const bool published =
+            publish_database_path(temporary_path, database_path);
         std::error_code ignored;
         std::filesystem::remove(temporary_path, ignored);
         return published;

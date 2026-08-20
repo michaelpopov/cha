@@ -84,7 +84,7 @@ CharacterDefinition integration_definition(bool stream) {
         .providers = {load_provider_config(workspace_directory / "workspace.toml"),
             providers_directory(workspace_directory)},
         .styles_directory = styles_directory(workspace_directory),
-        .definition = workspace_directory / "characters" / "Ismael" / "character.toml",
+        .definition = workspace_directory / "characters" / "test" / "Ismael" / "character.toml",
         .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
     });
     loaded.backend.stream = stream;

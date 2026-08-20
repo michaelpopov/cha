@@ -47,7 +47,8 @@ public:
         WakeNotifier& notifier) const;
 
 private:
-    [[nodiscard]] std::shared_ptr<const WorkspaceGeneration> load_generation() const;
+    [[nodiscard]] std::shared_ptr<const WorkspaceGeneration> load_generation(
+        bool reload_sessions = false) const;
 
     const std::filesystem::path root_;
     const TemporarySessionSeed temporary_session_;
