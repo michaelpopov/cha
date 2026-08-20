@@ -863,8 +863,9 @@ WorkspaceDefinition WorkspaceDefinition::load(
         model.forums_.push_back(forum.info);
     }
 
-    // Keep unassigned characters discoverable. They have no effective forum
-    // prompt, so there is nothing to expand against until they are assigned.
+    // Keep unassigned characters discoverable. Their public description still
+    // uses the definition's template scope; only the absent forum identity is
+    // represented by empty reserved values.
     for (const CharacterMetadata& character : characters) {
         if (!model.character_markdown_.contains(character.id)) {
             const auto directory = model.character_directories_.find(character.id);
@@ -872,11 +873,30 @@ WorkspaceDefinition WorkspaceDefinition::load(
                 throw std::runtime_error(
                     "Character '" + character.id + "' has no definition directory");
             }
-            model.character_markdown_.emplace(
-                character.id,
-                read_text_file(
-                    directory->second / "CHARACTER.md",
-                    "character definition"));
+            TemplateOptions options{
+                .containment_root = definitions_directory,
+                .scope_table_name = std::string(prompt_scope_table),
+                .reserved =
+                    {
+                        {"character.id", character.id},
+                        {"character.display_name", character.display_name},
+                        {"forum.id", ""},
+                        {"forum.display_name", ""},
+                    },
+                .initial_scope = load_template_scope(
+                    directory->second / "character.toml", prompt_scope_table).value_or(
+                        TemplateScope{}),
+            };
+            try {
+                const std::string prompt = expand_template_file(
+                    directory->second / "CHARACTER.md", options);
+                model.character_markdown_.emplace(
+                    character.id, character_description_from_prompt(prompt));
+            } catch (const std::exception& error) {
+                throw std::runtime_error(
+                    "Character '" + character.id
+                    + "' failed to read CHARACTER.md: " + error.what());
+            }
         }
     }
 

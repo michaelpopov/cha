@@ -186,6 +186,28 @@ TEST(WorkspaceDefinition, ServesAssistantDetailFromTheEmbeddedApplicationGuide) 
     EXPECT_THROW((void)model.character_markdown("absent"), std::runtime_error);
 }
 
+TEST(WorkspaceDefinition, ExpandsThePublicProfileOfAnUnassignedCharacter) {
+    test::TestWorkspace fixture;
+    add_character(
+        fixture, "orphan", "Orphan",
+        "[prompt]\norigin = \"definition scope\"\n");
+    std::ofstream(fixture.root() / "characters" / "voice.md")
+        << "Voice for $${character.display_name} in '$${forum.display_name}'\n";
+    std::ofstream(fixture.root() / "characters" / "orphan" / "PROFILE.md")
+        << "Profile for $${character.display_name} from $${origin}\n";
+    std::ofstream(fixture.root() / "characters" / "orphan" / "CHARACTER.md")
+        << "$$(../voice.md)\n"
+           "<character_profile>\n"
+           "$$(PROFILE.md)\n"
+           "</character_profile>\n";
+
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    EXPECT_EQ(
+        model.character_markdown("orphan"),
+        "Profile for Orphan from definition scope");
+}
+
 TEST(WorkspaceDefinition, FailsStartupForMissingCharacterOrForumProviderReferences) {
     test::TestWorkspace fixture;
     fixture.write_character_config(

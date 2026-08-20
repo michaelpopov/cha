@@ -30,20 +30,6 @@ std::string_view authentication_source(const ModelBackendConfig& config) noexcep
     return config.api_key.empty() ? "none" : "config";
 }
 
-// The public part of an already-expanded character prompt. Everything outside
-// the section is private portrayal instruction, so the section is taken from
-// the expansion rather than predicted from the template source.
-std::optional<std::string> character_profile_section(std::string_view prompt) {
-    constexpr std::string_view opening_tag = "<character_profile>";
-    constexpr std::string_view closing_tag = "</character_profile>";
-    const std::size_t opening = prompt.find(opening_tag);
-    if (opening == std::string_view::npos) return std::nullopt;
-    const std::size_t body_start = opening + opening_tag.size();
-    const std::size_t closing = prompt.find(closing_tag, body_start);
-    if (closing == std::string_view::npos) return std::nullopt;
-    return std::string(trim_view(prompt.substr(body_start, closing - body_start)));
-}
-
 void log_character_config(
     const CharacterMetadata& character,
     const ModelBackendConfig& backend_config,
@@ -136,7 +122,7 @@ CharacterDefinition load_definition_files(
             + "' failed to read CHARACTER.md: " + error.what());
     }
     std::string character_description =
-        character_profile_section(character_prompt).value_or(character_prompt);
+        character_description_from_prompt(character_prompt);
     TemplateOptions forum_options = character_options;
     forum_options.containment_root = forum_directory;
     std::string forum_prompt;
@@ -216,6 +202,17 @@ void append_forum_context(std::vector<CharacterDefinition>& definitions) {
 }
 
 } // namespace
+
+std::string character_description_from_prompt(std::string_view prompt) {
+    constexpr std::string_view opening_tag = "<character_profile>";
+    constexpr std::string_view closing_tag = "</character_profile>";
+    const std::size_t opening = prompt.find(opening_tag);
+    if (opening == std::string_view::npos) return std::string(prompt);
+    const std::size_t body_start = opening + opening_tag.size();
+    const std::size_t closing = prompt.find(closing_tag, body_start);
+    if (closing == std::string_view::npos) return std::string(prompt);
+    return std::string(trim_view(prompt.substr(body_start, closing - body_start)));
+}
 
 std::vector<CharacterDefinition> load_character_definitions(
     const std::vector<CharacterDefinitionSource>& sources,

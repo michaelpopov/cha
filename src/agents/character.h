@@ -39,6 +39,10 @@ struct CharacterDefinitionSource {
     std::filesystem::path definition_containment_root;
 };
 
+// Returns the public part of an expanded character prompt. When a profile
+// section is present, private portrayal instructions outside it are omitted.
+std::string character_description_from_prompt(std::string_view prompt);
+
 // Loads the forum's character configurations in order and assembles each effective system prompt.
 std::vector<CharacterDefinition> load_character_definitions(
     const std::vector<CharacterDefinitionSource>& sources,
