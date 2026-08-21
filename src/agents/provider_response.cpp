@@ -49,13 +49,6 @@ GenerationTokenUsage chat_token_usage(const Json& response) {
     };
 }
 
-void normalize_newlines(std::string& text) {
-    std::size_t index = 0;
-    while ((index = text.find("\r\n", index)) != std::string::npos) {
-        text.erase(index, 1);
-    }
-}
-
 // Interprets one provider message or delta object: the reasoning field named by
 // the configured format, then answer content. Returns the protocol error the
 // object carried, or an empty string. 'emit' receives non-empty text only.
@@ -130,25 +123,16 @@ void ProviderStreamDecoder::consume(std::string_view bytes) {
     if (done_) {
         return;
     }
-    pending_.append(bytes);
-    normalize_newlines(pending_);
-
-    std::size_t event_end = 0;
-    while ((event_end = pending_.find("\n\n")) != std::string::npos) {
-        const std::string event = pending_.substr(0, event_end);
-        pending_.erase(0, event_end + 2);
-        read_event(event);
-        if (done_) {
-            pending_.clear();
-            return;
-        }
-    }
+    framer_.consume(bytes, [this](std::string_view data) {
+        return handle_event_data(data);
+    });
 }
 
 StreamDecodeResult ProviderStreamDecoder::finish() {
-    if (!pending_.empty()) {
-        read_event(pending_);
-        pending_.clear();
+    if (!done_) {
+        framer_.finish([this](std::string_view data) {
+            return handle_event_data(data);
+        });
     }
 
     if (!protocol_error_.empty()) {
@@ -173,68 +157,42 @@ StreamDecodeResult ProviderStreamDecoder::finish() {
     return {{GenerationOutcome::completed, {}, usage_}, false};
 }
 
-void ProviderStreamDecoder::read_event(std::string_view event) {
-    std::size_t line_start = 0;
-
-    while (line_start <= event.size()) {
-        const std::size_t line_end = event.find('\n', line_start);
-        const std::string_view line = event.substr(
-            line_start,
-            line_end == std::string_view::npos
-                ? event.size() - line_start
-                : line_end - line_start);
-
-        if (line.starts_with("data:")) {
-            std::string_view data = line.substr(5);
-            while (!data.empty() && data.front() == ' ') {
-                data.remove_prefix(1);
-            }
-
-            if (data == "[DONE]") {
-                done_ = true;
-                return;
-            }
-            if (!data.empty()) {
-                try {
-                    const Json value = Json::parse(data);
-                    if (value.contains("usage")) {
-                        usage_ = chat_token_usage(value);
-                    }
-                    const Json::json_pointer choices_pointer("/choices");
-                    const Json::json_pointer delta_pointer(
-                        "/choices/0/delta");
-                    if (!value.contains(choices_pointer)
-                        || !value.at(choices_pointer).is_array()) {
-                        if (protocol_error_.empty()) {
-                            protocol_error_ =
-                                "Streaming event did not contain a choices array";
-                        }
-                    } else if (value.contains(delta_pointer)
-                        && value.at(delta_pointer).is_object()) {
-                        std::string error = process_response_object(
-                            value.at(delta_pointer),
-                            format_,
-                            [this](GenerationDeltaKind kind, std::string text) {
-                                emit(kind, std::move(text));
-                            });
-                        if (protocol_error_.empty()) {
-                            protocol_error_ = std::move(error);
-                        }
-                    }
-                } catch (const Json::parse_error&) {
-                    if (protocol_error_.empty()) {
-                        protocol_error_ =
-                            "Streaming event contained malformed JSON";
-                    }
-                }
-            }
-        }
-
-        if (line_end == std::string_view::npos) {
-            break;
-        }
-        line_start = line_end + 1;
+bool ProviderStreamDecoder::handle_event_data(std::string_view data) {
+    if (data == "[DONE]") {
+        done_ = true;
+        return false;
     }
+    try {
+        const Json value = Json::parse(data);
+        if (value.contains("usage")) {
+            usage_ = chat_token_usage(value);
+        }
+        const Json::json_pointer choices_pointer("/choices");
+        const Json::json_pointer delta_pointer("/choices/0/delta");
+        if (!value.contains(choices_pointer)
+            || !value.at(choices_pointer).is_array()) {
+            if (protocol_error_.empty()) {
+                protocol_error_ =
+                    "Streaming event did not contain a choices array";
+            }
+        } else if (value.contains(delta_pointer)
+            && value.at(delta_pointer).is_object()) {
+            std::string error = process_response_object(
+                value.at(delta_pointer),
+                format_,
+                [this](GenerationDeltaKind kind, std::string text) {
+                    emit(kind, std::move(text));
+                });
+            if (protocol_error_.empty()) {
+                protocol_error_ = std::move(error);
+            }
+        }
+    } catch (const Json::parse_error&) {
+        if (protocol_error_.empty()) {
+            protocol_error_ = "Streaming event contained malformed JSON";
+        }
+    }
+    return true;
 }
 
 void ProviderStreamDecoder::emit(GenerationDeltaKind kind, std::string text) {

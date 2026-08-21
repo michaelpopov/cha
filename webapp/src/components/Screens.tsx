@@ -689,23 +689,6 @@ function unresolvedOption(
   return { id: saved, label: `${saved} (not available)` };
 }
 
-function providerOverrideNote(
-  overriddenBy: readonly string[],
-  characterName: string,
-  everyForumOverrides: boolean,
-): string | null {
-  if (overriddenBy.length === 0) return null;
-  const listed = overriddenBy.join(', ');
-  if (overriddenBy.length === 1) {
-    return everyForumOverrides
-      ? `${listed} uses its own provider for this character, and it is the only forum ${characterName} belongs to.`
-      : `${listed} uses its own provider for this character.`;
-  }
-  return everyForumOverrides
-    ? `${listed} use their own providers for this character, and they are the only forums ${characterName} belongs to.`
-    : `${listed} use their own providers for this character.`;
-}
-
 export function CharacterSettingsScreen({
   state,
   dispatch,
@@ -751,7 +734,7 @@ export function CharacterSettingsScreen({
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!characterId || !detail || saving) return;
+    if (!characterId || !detail || provider === null || saving) return;
     if (provider === detail.provider && style === detail.style) return;
     setSaving(true);
     setError(null);
@@ -772,19 +755,6 @@ export function CharacterSettingsScreen({
     && unresolvedOption(detail.available_providers, detail.provider);
   const unresolvedStyle = detail
     && unresolvedOption(detail.available_styles, detail.style);
-  const memberForums = state.bootstrap?.forums.filter(
-    (forum) => forum.members.some(({ id }) => id === characterId),
-  ) ?? [];
-  const overrideNote = detail
-    ? providerOverrideNote(
-        detail.provider_overridden_by,
-        character?.display_name ?? 'this character',
-        memberForums.length > 0
-          && memberForums.every((forum) => (
-            detail.provider_overridden_by.includes(forum.display_name)
-          )),
-      )
-    : null;
   const dirty = detail !== null
     && (provider !== detail.provider || style !== detail.style);
 
@@ -821,11 +791,11 @@ export function CharacterSettingsScreen({
             disabled={saving}
             id="cha-character-provider"
             onChange={(event) => {
-              setProvider(event.target.value === '' ? null : event.target.value);
+              setProvider(event.target.value);
             }}
             value={provider ?? ''}
           >
-            <option value="">Workspace default</option>
+            <option disabled value="">Select provider</option>
             {detail.available_providers.map((option) => (
               <option key={option.id} value={option.id}>{option.label}</option>
             ))}
@@ -833,7 +803,6 @@ export function CharacterSettingsScreen({
               <option value={unresolvedProvider.id}>{unresolvedProvider.label}</option>
             )}
           </select>
-          {overrideNote && <p>{overrideNote}</p>}
           <label htmlFor="cha-character-style">Style</label>
           <select
             className="cha-form-control"
@@ -868,7 +837,7 @@ export function CharacterSettingsScreen({
             </button>
             <button
               className="cha-button cha-button-primary"
-              disabled={!dirty || saving}
+              disabled={!dirty || provider === null || saving}
               type="submit"
             >
               Save

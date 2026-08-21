@@ -159,14 +159,14 @@ export interface paths {
         /**
          * Update a character's provider and style
          * @description Rewrites `provider` and `style` in the character's `character.toml`.
-         *     `null` erases the key. A name whose config does not load is `400` and
-         *     leaves the file untouched. The built-in Assistant, a missing character,
-         *     and a character whose file cannot be read are `404`.
+         *     Provider is required; `null` erases only the style key. A name whose
+         *     config does not load is `400` and leaves the file untouched. The
+         *     built-in Assistant, a missing character, and a character whose file
+         *     cannot be read are `404`.
          *
          *     After a write that actually changes a value, the server asks live
-         *     sessions the change can affect to shut down with `reloading`. A
-         *     provider-only save does not restart sessions in forums that override
-         *     the provider. The server does not reopen anything.
+         *     sessions in every forum containing the character to shut down with
+         *     `reloading`. The server does not reopen anything.
          */
         patch: operations["updateCharacter"];
         trace?: never;
@@ -598,11 +598,10 @@ export interface components {
             style: string | null;
             available_providers: components["schemas"]["ProviderOption"][];
             available_styles: components["schemas"]["StyleOption"][];
-            provider_overridden_by: string[];
             writable: boolean;
         };
         UpdateCharacterRequest: {
-            provider: string | null;
+            provider: string;
             style: string | null;
         };
         PersonaDetail: {

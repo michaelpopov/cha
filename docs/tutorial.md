@@ -381,20 +381,12 @@ the startup copy and sets a notice on `OpenedSession`.
 
 ### 8.2 Provider selection
 
-Every provider setting lives in one place: `system/providers/<id>/config.toml`.
-Four layers may select one of those configs by ID, from broad default to
-specific override:
-
-1. workspace-level `[provider]` in `workspace.toml`;
-2. the base character definition;
-3. forum-wide character defaults;
-4. the forum member override.
-
-The highest layer naming a `provider` supplies the whole backend; a layer that
-names none inherits the one below it. Selection replaces rather than merges, so
-a provider config must be complete on its own, and any provider setting written
-directly into one of the four layers is rejected at startup. Only the
-`[prompt]` scope still merges across layers.
+Every connection and model setting lives in
+`system/providers/<id>/config.toml`. Each character selects exactly one of
+those configs with `provider = "<id>"` in its own `character.toml`. Workspace,
+forum-default, and member provider keys are ignored, so there is no provider
+inheritance or override chain. The `[prompt]` scope still merges across the
+character, forum-default, and member layers.
 
 Read [agents/character_config.h](../src/agents/character_config.h),
 [agents/character_config.cpp](../src/agents/character_config.cpp), and then
@@ -781,16 +773,10 @@ Parsing is divided among:
 
 The parser belongs in `web` because it adapts one input protocol. The
 controller exposes typed actions and remains usable without slash-command
-syntax. `/provider` is the one command that swaps session machinery rather
-than session state: it reaches `SessionController::set_session_provider()`,
-which resolves the name through a workspace-injected `ProviderResolver` and
-has the executor rebuild that character's backend in place — runtime-only,
-so unlike `/@Name` and `/!Name` it wires no persistence callback. `/style` is
-its presentation counterpart: `set_session_style()` resolves the name through
+syntax. `/style` is a presentation-only command: `set_session_style()` resolves the name through
 a workspace-injected `StyleResolver` and mutates that character's appearance
-in the roster, so the next snapshot repaints its messages — no backend, no
-resolver hazard, so no busy guard, but the change is browser-visible where the
-provider swap is not, so its mutating forms carry a snapshot. Also runtime-only.
+in the roster, so the next snapshot repaints its messages. It has no backend or
+busy guard, and its mutating forms carry a snapshot. It is runtime-only.
 
 ### 12.4 The owner loop
 
@@ -962,11 +948,10 @@ turns, not interleaved token streams.
 From the browser:
 
 1. Open Characters, select a workspace character, and follow the top-right
-   chevron into Settings. Assistant has no chevron: it has no `character.toml`.
-2. Choose a provider and a style. The first picker entries are Workspace
-   default and No style, which erase the keys. The sample line uses the
-   selected style's appearance. Forums that override the provider are named
-   under that picker.
+   chevron into Settings. Assistant has no chevron because its system config is
+   not writable from the browser.
+2. Choose a required provider and an optional style. No style erases only the
+   style key. The sample line uses the selected style's appearance.
 3. Save writes both values. The screen warns that sessions using the character
    will restart and that an answer being generated is lost.
 
@@ -974,8 +959,8 @@ On the server:
 
 4. `PATCH /api/v1/characters/{id}` validates the names through
    `load_named_provider()` / `load_named_style()`, writes `character.toml`, and
-   asks affected live sessions to shut down with `reloading`. A provider-only
-   save skips forums that override the provider.
+   asks sessions in every forum containing the character to shut down with
+   `reloading`.
 5. The stream drops. The browser's existing recovery ladder probes, sees
    `session_not_live`, opens again, and reattaches. It reports `session-snapshot`,
    so the settings screen stays in view. The chat shows "Applying character

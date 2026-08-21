@@ -1,1 +1,1 @@
-# Provider settings are inherited from workspace.toml.
+# Shared prompt variables may be defined here; provider selection is per character.

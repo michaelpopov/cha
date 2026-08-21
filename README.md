@@ -34,7 +34,6 @@ The chat input also accepts these controller-level commands:
 | `/@Name` | Change and save the forum's default character. |
 | `/@-` | Enter recording mode: plain messages are saved to the transcript but not sent to a model. Session-local — `-` is never saved as the forum default. |
 | `/!Name` | Change and save the forum's current persona. |
-| `/provider <name>` | Override the current character's provider for this session only; `/provider` reports the override and `/provider default` restores the configured provider. Nothing is saved. |
 | `/style <name>` | Override the current character's appearance (font, slant, weight, size) for this session only; `/style` reports the override and `/style default` restores the configured style. Nothing is saved. |
 | `/stop` | Stop generation. |
 | `/exit` | Close the live session. |
@@ -73,13 +72,9 @@ unambiguous, case-insensitive full or partial persona ID or display name, then
 saves the selected ID as `default_persona` in the forum config. Later prompts
 in the session are attributed to that persona.
 
-`workspace.toml` selects the default provider and supplies diagnostic logging
-settings:
+`workspace.toml` supplies diagnostic logging settings:
 
 ```toml
-[provider]
-provider = "terra"
-
 [logging]
 file = "logs/cha.log"
 level = "info"
@@ -123,26 +118,20 @@ Set `base_path` when a compatible provider exposes its API below a path rather
 than at the host root. For example, OpenRouter uses `base_path = "/api"`, which
 produces `/api/v1/chat/completions`.
 
-A provider config is the only place these settings may appear. Character
-definitions, forum `character_defaults.toml`, and member overrides select one
-with `provider = "<id>"` and nothing else; writing `host`, `model`, or any other
-provider setting into those files is rejected at startup, as is a reference
-whose config file is missing.
-
-Selections are read in order — workspace `[provider]`, character definition,
-forum defaults, member override — and the highest one that names a provider
-supplies the whole backend. Selecting a provider replaces the layer below
-outright rather than merging with it, so each provider config must be complete
-on its own. Provider config files are loaded with each workspace generation, so
-edits to host, model, or credentials take effect after a workspace reload.
+A provider config is the only place connection and model settings may appear.
+Each character selects exactly one of those configs in its own `character.toml`
+with `provider = "<id>"`. Provider keys in workspace, forum-default, and member
+configuration are ignored; there is no provider inheritance or override chain.
+A missing character provider or provider config stops startup. Provider config
+files are loaded with each workspace generation, so edits to host, model, or
+credentials take effect after a workspace reload.
 
 A character's chosen `provider` and `style` can be changed from the browser:
 Characters → the character → the row naming it above the description → Settings. Save writes
 those keys in the character's `character.toml` (under `characters/`, including
-through any grouping directories) and restarts live sessions the
-change can affect. A forum that sets its own provider is named under the picker
-and is not restarted for a provider-only save. The built-in Assistant has no
-config file and no settings screen.
+through any grouping directories) and restarts live sessions containing that
+character. The built-in Assistant reads `system/assistant/character.toml` but
+has no settings screen.
 
 Character appearance is selected in the character definition with
 `style = "<id>"`. The matching config lives at
@@ -179,7 +168,7 @@ workspace. Set `backup_dir` in `app.toml` to choose its destination; omitted,
 it defaults to the user's home directory.
 
 Linux deployment packages include a minimal `workspace/` directory containing
-the default provider and logging settings. The packaged `start-cha.sh` uses it
+the default character providers and logging settings. The packaged `start-cha.sh` uses it
 automatically, so the application can be started immediately after unpacking.
 It starts `chaweb` in the background on port 8086 and returns, so the server
 outlives the terminal session; it prints the PID to stop it with and writes

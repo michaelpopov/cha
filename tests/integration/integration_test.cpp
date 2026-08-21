@@ -81,8 +81,7 @@ CharacterDefinition integration_definition(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
     LoadedCharacterConfig loaded = load_character_config({
-        .providers = {load_provider_config(workspace_directory / "workspace.toml"),
-            providers_directory(workspace_directory)},
+        .providers_directory = providers_directory(workspace_directory),
         .styles_directory = styles_directory(workspace_directory),
         .definition = workspace_directory / "characters" / "test" / "Ismael" / "character.toml",
         .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
@@ -287,8 +286,13 @@ LobbySetup lobby_setup() {
     const std::filesystem::path forum_directory = root / "forums" / "lobby";
     std::vector<CharacterDefinitionSource> sources;
     for (const std::string& character_id : forum->member_ids) {
+        const auto config_path = model.character_config_path(character_id);
+        if (!config_path) {
+            throw std::runtime_error(
+                "Checked-in workspace character has no configuration: " + character_id);
+        }
         sources.push_back({
-            .definition_directory = root / "characters" / character_id,
+            .definition_directory = config_path->parent_path(),
             .member_directory = forum_directory / "members" / character_id,
         });
     }
@@ -306,7 +310,7 @@ LobbySetup lobby_setup() {
             forum->display_name,
             personas,
             forum_directory / "members" / "character_defaults.toml",
-            {config.provider, config.providers_directory},
+            config.providers_directory,
             config.styles_directory),
         .personas = personas,
         .author_id = persona->id,
@@ -352,6 +356,40 @@ void run_until_idle(SessionController& controller) {
 
 Json body_of(const MockHttpServer& server) {
     return Json::parse(request_body(server.requests().front()));
+}
+
+Json messages_without_timestamps(Json messages) {
+    constexpr std::string_view created_at = R"(,"created_at":")";
+    for (Json& message : messages) {
+        std::string& content = message.at("content").get_ref<std::string&>();
+
+        // Ordinary human and character messages render their timestamps as
+        // text around the message body.
+        if (content.starts_with("from ")) {
+            const std::size_t at = content.find(" at ");
+            if (at != std::string::npos
+                && content.size() > at + 25
+                && content.compare(at + 24, 2, ":\n") == 0) {
+                content.erase(at, 24);
+            }
+        } else if (content.size() > 22
+            && content.front() == '['
+            && content[21] == ']'
+            && content[22] == '\n') {
+            content.erase(0, 23);
+        }
+
+        // Shared-history entries carry the same value as a JSON field.
+        std::size_t field = content.find(created_at);
+        while (field != std::string::npos) {
+            const std::size_t value_end = content.find(
+                '"', field + created_at.size());
+            if (value_end == std::string::npos) break;
+            content.erase(field, value_end - field + 1);
+            field = content.find(created_at, field);
+        }
+    }
+    return messages;
 }
 
 std::string streamed_answer(
@@ -491,7 +529,7 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
     ASSERT_EQ(server.requests().size(), 3U);
     const Json current_body =
         Json::parse(request_body(server.requests().back()));
-    EXPECT_EQ(current_body["messages"], Json::array({
+    EXPECT_EQ(messages_without_timestamps(current_body["messages"]), Json::array({
         Json{{"role", "system"}, {"content", system_prompt}},
         Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nVisible question"}},
         Json{{"role", "assistant"}, {"content", "Visible answer"}},
@@ -550,14 +588,14 @@ TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTrans
     ASSERT_EQ(ismael_server.requests().size(), 1U);
 
     const Json first = body_of(cheburashka_server);
-    EXPECT_EQ(first["messages"], Json::array({
+    EXPECT_EQ(messages_without_timestamps(first["messages"]), Json::array({
         Json{{"role", "system"}, {"content", cheburashka_prompt}},
         Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWho are you?"}},
     }));
 
     // Ismael's own system prompt, and Cheburashka's answer attributed as persona input.
     const Json second = body_of(ismael_server);
-    EXPECT_EQ(second["messages"], Json::array({
+    EXPECT_EQ(messages_without_timestamps(second["messages"]), Json::array({
         Json{{"role", "system"}, {"content", ismael_prompt}},
         Json{{"role", "user"},
              {"content",
@@ -619,13 +657,14 @@ TEST(MultiCharacterIntegration, MulticastSendsIndependentBodiesAndRestoresHistor
     ASSERT_EQ(cheburashka_server.requests().size(), 2U);
     ASSERT_EQ(ismael_server.requests().size(), 1U);
     EXPECT_EQ(
-        Json::parse(request_body(cheburashka_server.requests()[0]))["messages"],
+        messages_without_timestamps(
+            Json::parse(request_body(cheburashka_server.requests()[0]))["messages"]),
         Json::array({
             Json{{"role", "system"}, {"content", cheburashka_prompt}},
         Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWhat time is it?"}},
         }));
     EXPECT_EQ(
-        body_of(ismael_server)["messages"],
+        messages_without_timestamps(body_of(ismael_server)["messages"]),
         Json::array({
             Json{{"role", "system"}, {"content", ismael_prompt}},
         Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWhat time is it?"}},
@@ -693,7 +732,7 @@ TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharact
 
     ASSERT_EQ(ismael_server.requests().size(), 2U);
     const Json body = Json::parse(request_body(ismael_server.requests().back()));
-    EXPECT_EQ(body["messages"], Json::array({
+    EXPECT_EQ(messages_without_timestamps(body["messages"]), Json::array({
         Json{{"role", "system"}, {"content", ismael_prompt}},
         Json{{"role", "user"},
              {"content",

@@ -341,7 +341,6 @@ inline OpenedSession open_leased_session(
             notifier,
             std::move(restored),
             {},
-            {},
             identity),
     };
 }

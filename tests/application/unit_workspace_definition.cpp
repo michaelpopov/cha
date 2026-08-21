@@ -64,7 +64,8 @@ void add_character(
     const auto directory = fixture.root() / "characters" / std::string(id);
     std::filesystem::create_directories(directory);
     std::ofstream(directory / "character.toml")
-        << "display_name = \"" << display_name << "\"\n" << extra_config;
+        << "display_name = \"" << display_name << "\"\n"
+           "provider = \"test\"\n" << extra_config;
     std::ofstream(directory / "CHARACTER.md") << "Prompt\n";
 }
 
@@ -208,7 +209,22 @@ TEST(WorkspaceDefinition, ExpandsThePublicProfileOfAnUnassignedCharacter) {
         "Profile for Orphan from definition scope");
 }
 
-TEST(WorkspaceDefinition, FailsStartupForMissingCharacterOrForumProviderReferences) {
+TEST(WorkspaceDefinition, ShowsAnUnexpandableUnassignedCharacterVerbatim) {
+    // No forum supplies this character's variables any more, which must cost
+    // the character its expansion and not the whole workspace its load.
+    test::TestWorkspace fixture;
+    add_character(fixture, "orphan", "Orphan");
+    std::ofstream(fixture.root() / "characters" / "orphan" / "CHARACTER.md")
+        << "Orphan speaks in a $${voice} voice\n";
+
+    const WorkspaceDefinition model = load_model(fixture.root());
+
+    EXPECT_EQ(
+        model.character_markdown("orphan"),
+        "Orphan speaks in a $${voice} voice\n");
+}
+
+TEST(WorkspaceDefinition, ValidatesCharacterProviderAndIgnoresForumProvider) {
     test::TestWorkspace fixture;
     fixture.write_character_config(
         "display_name = \"Guide\"\nprovider = \"missing-character\"\n");
@@ -220,22 +236,17 @@ TEST(WorkspaceDefinition, FailsStartupForMissingCharacterOrForumProviderReferenc
         EXPECT_NE(std::string(error.what()).find("character.toml"), std::string::npos);
     }
 
-    fixture.write_character_config("display_name = \"Guide\"\n");
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"test\"\n");
     fixture.write_character_defaults("provider = \"missing-forum\"\n");
-    try {
-        (void)load_model(fixture.root());
-        FAIL() << "expected a missing forum provider to stop startup";
-    } catch (const std::runtime_error& error) {
-        EXPECT_NE(std::string(error.what()).find("missing-forum"), std::string::npos);
-        EXPECT_NE(std::string(error.what()).find("character_defaults.toml"), std::string::npos);
-    }
+    EXPECT_NO_THROW((void)load_model(fixture.root()));
 }
 
 TEST(WorkspaceDefinition, ResolvesACharacterStyleIntoPublishedMetadata) {
     test::TestWorkspace fixture;
     fixture.write_style("serif-bold", "font = \"serif\"\nweight = \"bold\"\n");
     fixture.write_character_config(
-        "display_name = \"Guide\"\nstyle = \"serif-bold\"\n");
+        "display_name = \"Guide\"\nprovider = \"test\"\nstyle = \"serif-bold\"\n");
 
     const WorkspaceDefinition model = load_model(fixture.root());
 
@@ -247,14 +258,14 @@ TEST(WorkspaceDefinition, ResolvesACharacterStyleIntoPublishedMetadata) {
         CharacterWeight::bold, CharacterScale::normal}));
 }
 
-TEST(WorkspaceDefinition, ReadsCharacterSettingsFromDiskAndTreatsAbsenceAsUnset) {
+TEST(WorkspaceDefinition, ReadsCharacterProviderAndOptionalStyleFromDisk) {
     test::TestWorkspace fixture;
     const WorkspaceDefinition model = load_model(fixture.root());
 
-    const std::optional<CharacterSettings> unset = model.character_settings("guide");
-    ASSERT_TRUE(unset);
-    EXPECT_FALSE(unset->provider);
-    EXPECT_FALSE(unset->style);
+    const std::optional<CharacterSettings> settings = model.character_settings("guide");
+    ASSERT_TRUE(settings);
+    EXPECT_EQ(settings->provider, std::optional<std::string>("test"));
+    EXPECT_FALSE(settings->style);
     EXPECT_TRUE(model.character_config_path("guide"));
     EXPECT_FALSE(model.character_config_path(assistant_id));
     EXPECT_FALSE(model.character_settings(assistant_id));
@@ -294,40 +305,29 @@ std::string file_bytes(const std::filesystem::path& path) {
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
-TEST(WorkspaceDefinition, WritesAndErasesCharacterProviderAndStyle) {
+TEST(WorkspaceDefinition, WritesCharacterProviderAndOptionalStyle) {
     test::TestWorkspace fixture;
+    fixture.write_provider("other", "host = \"test\"\nport = 2\nmode = \"test\"\n");
     fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
     const WorkspaceDefinition model = load_model(fixture.root());
 
     EXPECT_EQ(
-        model.write_character_settings("guide", "test", "serif-italic"),
+        model.write_character_settings("guide", "other", "serif-italic"),
         (CharacterSettingsChange{true, true}));
     EXPECT_EQ(
         model.character_settings("guide"),
-        (CharacterSettings{"test", "serif-italic"}));
+        (CharacterSettings{"other", "serif-italic"}));
 
     EXPECT_EQ(
-        model.write_character_settings("guide", "test", "serif-italic"),
+        model.write_character_settings("guide", "other", "serif-italic"),
         CharacterSettingsChange{});
 
     EXPECT_EQ(
-        model.write_character_settings("guide", std::nullopt, "serif-italic"),
-        (CharacterSettingsChange{true, false}));
+        model.write_character_settings("guide", "other", std::nullopt),
+        (CharacterSettingsChange{false, true}));
     EXPECT_EQ(
         model.character_settings("guide"),
-        (CharacterSettings{std::nullopt, "serif-italic"}));
-
-    EXPECT_EQ(
-        model.write_character_settings("guide", "test", std::nullopt),
-        (CharacterSettingsChange{true, true}));
-    EXPECT_EQ(
-        model.character_settings("guide"),
-        (CharacterSettings{"test", std::nullopt}));
-
-    EXPECT_EQ(
-        model.write_character_settings("guide", std::nullopt, std::nullopt),
-        (CharacterSettingsChange{true, false}));
-    EXPECT_EQ(model.character_settings("guide"), CharacterSettings{});
+        (CharacterSettings{"other", std::nullopt}));
 }
 
 TEST(WorkspaceDefinition, ComparesAStaleSaveWithTheDocumentItActuallyReplaces) {
@@ -338,15 +338,14 @@ TEST(WorkspaceDefinition, ComparesAStaleSaveWithTheDocumentItActuallyReplaces) {
     ASSERT_TRUE(stale);
 
     EXPECT_EQ(
-        model.write_character_settings("guide", stale->provider, "serif-italic"),
+        model.write_character_settings("guide", *stale->provider, "serif-italic"),
         (CharacterSettingsChange{false, true}));
 
     // This is the full form body a second browser prepared before the style
-    // save above. Its provider changed relative to that old view, but its old
-    // style also changes the document it now replaces and must be reported.
+    // save above. Its old style changes the document it now replaces.
     EXPECT_EQ(
         model.write_character_settings("guide", "test", stale->style),
-        (CharacterSettingsChange{true, true}));
+        (CharacterSettingsChange{false, true}));
 }
 
 TEST(WorkspaceDefinition, RejectsAnUnusableSelectionWithoutTouchingTheFile) {
@@ -362,7 +361,7 @@ TEST(WorkspaceDefinition, RejectsAnUnusableSelectionWithoutTouchingTheFile) {
         model.write_character_settings("guide", "broken", std::nullopt),
         std::invalid_argument);
     EXPECT_THROW(
-        model.write_character_settings("guide", std::nullopt, "broken"),
+        model.write_character_settings("guide", "test", "broken"),
         std::invalid_argument);
     EXPECT_THROW(
         model.write_character_settings(assistant_id, "test", std::nullopt),
@@ -414,55 +413,6 @@ TEST(WorkspaceDefinition, ListsOnlyProvidersAndStylesThatResolveAndDerivesLabels
         CharacterWeight::normal, CharacterScale::normal}));
 }
 
-TEST(WorkspaceDefinition, ResolvesASessionProviderAsACompleteReplacement) {
-    test::TestWorkspace fixture;
-    fixture.write_provider("sol-high", "host = \"elsewhere\"\nport = 8443\nhttps = true\n");
-    const WorkspaceDefinition model = load_model(fixture.root());
-
-    const ModelBackendConfig config = model.resolve_session_provider("sol-high");
-    EXPECT_EQ(config.host, "elsewhere");
-    EXPECT_EQ(config.port, 8443);
-    EXPECT_TRUE(config.https);
-    // Absent fields are ModelBackendConfig defaults, not the workspace
-    // default provider's values: the workspace provider names model "fake".
-    EXPECT_EQ(config.mode, Mode::test);
-    EXPECT_TRUE(config.model.empty());
-    EXPECT_TRUE(config.stream);
-}
-
-TEST(WorkspaceDefinition, SessionProviderFailuresListTheAvailableProviders) {
-    test::TestWorkspace fixture;
-    fixture.write_provider("sol-high", "host = \"elsewhere\"\nport = 8443\n");
-    fixture.write_provider("broken", "this is not a usable provider\n");
-    const WorkspaceDefinition model = load_model(fixture.root());
-
-    // A name nothing is installed under is the common mistake, so it reads as
-    // one plain sentence: no filesystem path, and no config file described as
-    // referencing itself.
-    try {
-        (void)model.resolve_session_provider("missing");
-        FAIL() << "Expected an unknown provider to be rejected";
-    } catch (const std::invalid_argument& error) {
-        const std::string message = error.what();
-        EXPECT_EQ(
-            message,
-            "Provider 'missing' is not usable: no provider config is installed"
-            " under this name. Available providers: broken, sol-high, test");
-    }
-
-    EXPECT_THROW(
-        (void)model.resolve_session_provider("../sol-high"),
-        std::invalid_argument);
-
-    try {
-        (void)model.resolve_session_provider("broken");
-        FAIL() << "Expected a malformed provider to be rejected";
-    } catch (const std::invalid_argument& error) {
-        EXPECT_NE(
-            std::string(error.what()).find("broken"), std::string::npos);
-    }
-}
-
 TEST(WorkspaceDefinition, ResolvesASessionStyleIntoACompleteAppearance) {
     test::TestWorkspace fixture;
     fixture.write_style("serif-bold", "font = \"serif\"\nweight = \"bold\"\n");
@@ -505,58 +455,10 @@ TEST(WorkspaceDefinition, SessionStyleFailuresListTheAvailableStyles) {
     }
 }
 
-TEST(WorkspaceDefinition, ReportsForumsThatOverrideACharactersProvider) {
-    test::TestWorkspace fixture;
-    fixture.write_provider(
-        "sol-high", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
-    add_character(fixture, "montaigne", "Montaigne", "provider = \"test\"\n");
-    add_character(fixture, "orphan", "Orphan");
-    add_forum(fixture, "circle", "Circle of Life", {"montaigne"});
-    std::ofstream(
-        fixture.root() / "forums" / "circle" / "members" / "character_defaults.toml")
-        << "provider = \"sol-high\"\n";
-
-    const WorkspaceDefinition model = load_model(fixture.root());
-    EXPECT_EQ(
-        model.forums_overriding_provider("montaigne"),
-        (std::vector<std::string>{"circle"}));
-    EXPECT_TRUE(model.forums_overriding_provider("guide").empty());
-    EXPECT_TRUE(model.forums_overriding_provider("orphan").empty());
-    EXPECT_TRUE(model.forums_overriding_provider(assistant_id).empty());
-}
-
-// Guessing "no override" for a file it cannot read would tell the reader their
-// provider choice applies where it may not, and would hand that forum's live
-// sessions to a restart they gain nothing from.
-TEST(WorkspaceDefinition, TreatsAnUnreadableOverrideFileAsAnOverride) {
-    test::TestWorkspace fixture;
-    const WorkspaceDefinition model = load_model(fixture.root());
-    ASSERT_TRUE(model.forums_overriding_provider("guide").empty());
-
-    const auto defaults =
-        fixture.root() / "forums" / "lobby" / "members" / "character_defaults.toml";
-    std::ofstream(defaults) << "provider = \n";
-    EXPECT_EQ(
-        model.forums_overriding_provider("guide"),
-        (std::vector<std::string>{"lobby"}));
-}
-
-TEST(WorkspaceDefinition, TreatsAMemberProviderAsAnOverride) {
-    test::TestWorkspace fixture;
-    std::ofstream(
-        fixture.root() / "forums" / "lobby" / "members" / "guide" / "character.toml")
-        << "provider = \"test\"\n";
-
-    const WorkspaceDefinition model = load_model(fixture.root());
-    EXPECT_EQ(
-        model.forums_overriding_provider("guide"),
-        (std::vector<std::string>{"lobby"}));
-}
-
 TEST(WorkspaceDefinition, FailsStartupForMissingCharacterStyleReference) {
     test::TestWorkspace fixture;
     fixture.write_character_config(
-        "display_name = \"Guide\"\nstyle = \"missing-style\"\n");
+        "display_name = \"Guide\"\nprovider = \"test\"\nstyle = \"missing-style\"\n");
     try {
         (void)load_model(fixture.root());
         FAIL() << "expected a missing character style to stop startup";
@@ -642,7 +544,8 @@ TEST(WorkspaceDefinition, KeepsPublicResultsFixedWhenWorkspaceFilesChangeAfterLo
     const std::vector<std::string> forums = display_names(model.forums());
     const std::size_t persona_count = model.personas()->size();
 
-    fixture.write_character_config("display_name = \"Renamed\"\n");
+    fixture.write_character_config(
+        "display_name = \"Renamed\"\nprovider = \"test\"\n");
     std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
         << "display_name = \"Renamed Lobby\"\n";
     std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
@@ -678,19 +581,20 @@ protected:
         std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "guide");
         std::filesystem::create_directories(root_ / "personas" / "operator");
         write_provider("test", "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\n");
+        std::filesystem::create_directories(root_ / "system" / "assistant");
+        std::ofstream(root_ / "system" / "assistant" / "character.toml")
+            << "display_name = \"Assistant\"\nprovider = \"test\"\n";
         std::ofstream(root_ / "workspace.toml")
-            << "[provider]\n"
-               "provider = \"test\"\n"
-               "[logging]\n"
+            << "[logging]\n"
                "file = \"logs/cha.log\"\n"
                "level = \"off\"\n";
         std::ofstream(root_ / "forums" / "lobby" / "config.toml")
             << "display_name = \"The Lobby\"\n";
         std::ofstream(root_ / "forums" / "lobby" / "FORUM.md") << "Forum instructions";
         std::ofstream(root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
-            << "# Provider settings are inherited from workspace.toml.\n";
+            << "# Provider selection is per character.\n";
         std::ofstream(root_ / "characters" / "guide" / "character.toml")
-            << "display_name = \"Guide\"\n";
+            << "display_name = \"Guide\"\nprovider = \"test\"\n";
         std::ofstream(root_ / "characters" / "guide" / "CHARACTER.md")
             << "Character instructions";
         std::ofstream(root_ / "personas" / "operator" / "persona.toml")
@@ -720,30 +624,27 @@ TEST_F(WorkspaceDefinitionLayoutTest, ResolvesLoggingSettingsRelativeToTheWorksp
 TEST_F(WorkspaceDefinitionLayoutTest, LeavesAnAbsoluteLogPathUntouched) {
     const std::filesystem::path absolute_log = root_ / "elsewhere" / "cha.log";
     std::ofstream(root_ / "workspace.toml")
-        << "[provider]\nprovider = \"test\"\n"
-           "[logging]\nfile = \"" << absolute_log.string()
+        << "[logging]\nfile = \"" << absolute_log.string()
         << "\"\nlevel = \"off\"\n";
 
     EXPECT_EQ(load_workspace_config(root_).log_file, absolute_log);
 }
 
-TEST_F(WorkspaceDefinitionLayoutTest, KeepsBindAndProviderConfigurationDistinct) {
+TEST_F(WorkspaceDefinitionLayoutTest, DerivesProviderAndStyleDirectoriesFromTheRoot) {
     write_provider("named", "host = \"provider.example\"\nport = 444\nmode = \"test\"\n");
     std::ofstream(root_ / "workspace.toml")
-        << "[provider]\nprovider = \"named\"\n"
+        << "[provider]\nprovider = 42\nhost = \"ignored\"\n"
            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
     const WorkspaceConfig config = load_workspace_config(root_);
     EXPECT_EQ(config.providers_directory, providers_directory(root_));
     EXPECT_EQ(config.styles_directory, styles_directory(root_));
-    EXPECT_EQ(*config.provider.host, "provider.example");
-    EXPECT_EQ(*config.provider.port, 444);
     EXPECT_NO_THROW((void)WorkspaceDefinition::load(root_, config));
 }
 
-TEST_F(WorkspaceDefinitionLayoutTest, RequiresValidProviderWithoutAcceptingIdentityFields) {
+TEST_F(WorkspaceDefinitionLayoutTest, IgnoresWorkspaceProviderConfiguration) {
     std::ofstream(root_ / "workspace.toml")
         << "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
-    EXPECT_THROW((void)load(), std::runtime_error);
+    EXPECT_NO_THROW((void)load());
 
     for (const std::string_view table :
             {"display_name = \"No\"\nprovider = \"test\"\n", "provider = \"test\"\nhtps = true\n",
@@ -752,7 +653,7 @@ TEST_F(WorkspaceDefinitionLayoutTest, RequiresValidProviderWithoutAcceptingIdent
         std::ofstream(root_ / "workspace.toml")
             << "[provider]\n" << table
             << "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n";
-        EXPECT_THROW((void)load(), std::runtime_error);
+        EXPECT_NO_THROW((void)load());
     }
 }
 
@@ -965,7 +866,7 @@ TEST_F(WorkspaceDefinitionLayoutTest, ResolvesDefaultCharacterWithoutReorderingM
     std::filesystem::create_directories(root_ / "characters" / "alpha");
     std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "alpha");
     std::ofstream(root_ / "characters" / "alpha" / "character.toml")
-        << "display_name = \"Alpha\"\n";
+        << "display_name = \"Alpha\"\nprovider = \"test\"\n";
     std::ofstream(root_ / "characters" / "alpha" / "CHARACTER.md") << "Alpha";
     std::ofstream(root_ / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\ndefault_character = \"guide\"\n";
@@ -981,7 +882,7 @@ TEST_F(WorkspaceDefinitionLayoutTest, DefaultsToFirstLexicographicMember) {
     std::filesystem::create_directories(root_ / "characters" / "alpha");
     std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "alpha");
     std::ofstream(root_ / "characters" / "alpha" / "character.toml")
-        << "display_name = \"Alpha\"\n";
+        << "display_name = \"Alpha\"\nprovider = \"test\"\n";
     std::ofstream(root_ / "characters" / "alpha" / "CHARACTER.md") << "Alpha";
 
     const WorkspaceDefinition model = load();
@@ -1076,7 +977,7 @@ TEST_F(WorkspaceDefinitionLayoutTest, AcceptsDefinitionDefaultsWithAMemberOverri
     EXPECT_NO_THROW((void)load());
 }
 
-TEST_F(WorkspaceDefinitionLayoutTest, InheritsApplicationProviderSettingsWithoutSharedDefaults) {
+TEST_F(WorkspaceDefinitionLayoutTest, LoadsWithoutSharedCharacterDefaults) {
     std::filesystem::remove(
         root_ / "forums" / "lobby" / "members" / "character_defaults.toml");
     EXPECT_NO_THROW((void)load());
@@ -1093,16 +994,17 @@ protected:
         std::filesystem::create_directories(root_ / "forums");
         std::filesystem::create_directories(root_ / "characters" / "guide");
         std::ofstream(root_ / "characters" / "guide" / "character.toml")
-            << "display_name = \"Guide\"\n";
+            << "display_name = \"Guide\"\nprovider = \"test\"\n";
         std::ofstream(root_ / "characters" / "guide" / "CHARACTER.md") << "Guide";
         const std::filesystem::path provider = providers_directory(root_) / "test";
         std::filesystem::create_directories(provider);
         std::ofstream(provider / "config.toml")
             << "host = \"test\"\nport = 1\nmode = \"test\"\n";
+        std::filesystem::create_directories(root_ / "system" / "assistant");
+        std::ofstream(root_ / "system" / "assistant" / "character.toml")
+            << "display_name = \"Assistant\"\nprovider = \"test\"\n";
         std::ofstream(root_ / "workspace.toml")
-            << "[provider]\n"
-               "provider = \"test\"\n"
-               "[logging]\n"
+            << "[logging]\n"
                "file = \"cha.log\"\n"
                "level = \"off\"\n";
     }

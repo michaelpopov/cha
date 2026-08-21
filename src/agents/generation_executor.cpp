@@ -82,15 +82,8 @@ GenerationExecutor::GenerationExecutor(
     WakeNotifier& notifier,
     ThreadPool& worker_pool,
     BackendFactory backend_factory)
-    // The delegated constructor consumes the backends, so the definitions are
-    // copied into build_backends here and kept as rebuild recipes below.
     : GenerationExecutor(
-          build_backends(definitions, backend_factory), notifier, worker_pool) {
-    rebuild_recipes_ = std::move(definitions);
-    backend_factory_ = backend_factory
-        ? std::move(backend_factory)
-        : BackendFactory(default_backend_factory);
-}
+          build_backends(std::move(definitions), backend_factory), notifier, worker_pool) {}
 
 GenerationExecutor::GenerationExecutor(
     std::vector<std::unique_ptr<ModelBackend>> backends,
@@ -151,53 +144,6 @@ GenerationBatch GenerationExecutor::stage_batch(
 
     return GenerationBatch::stage(
         std::move(inputs), targets, notifier_, worker_pool_, before_submit_);
-}
-
-std::size_t GenerationExecutor::recipe_index(const CharacterId& character_id) const {
-    if (rebuild_recipes_.empty()) {
-        throw std::logic_error(
-            "Generation executor has no definitions to rebuild a backend from");
-    }
-    const std::size_t index = backend_index(character_id);
-    if (index == runtime_info_.size()) {
-        throw std::invalid_argument(
-            "Backend rebuild has unknown target '" + character_id + "'");
-    }
-    return index;
-}
-
-void GenerationExecutor::replace_backend(
-    CharacterId character_id,
-    const ModelBackendConfig& config) {
-    // rebuild_recipes_ and runtime_info_ were built from the same definitions
-    // in the same order, so the recipe sits at the slot's index.
-    const std::size_t index = recipe_index(character_id);
-    CharacterDefinition definition = rebuild_recipes_[index];
-    definition.backend = config;
-    // Construct before swapping: a factory throw leaves the old slot in place.
-    std::unique_ptr<ModelBackend> replacement =
-        backend_factory_(std::move(definition));
-    if (!replacement) {
-        throw std::runtime_error(
-            "Backend factory returned no backend for character '"
-            + character_id + "'");
-    }
-    ModelBackendInfo info = replacement->info();
-    if (info.character.id != character_id) {
-        throw std::runtime_error(
-            "Backend factory returned a backend for character '"
-            + info.character.id + "' instead of '" + character_id + "'");
-    }
-    backends_[index] = std::move(replacement);
-    runtime_info_[index] = std::move(info);
-}
-
-void GenerationExecutor::reset_backend(CharacterId character_id) {
-    // The recipe's own configuration, copied because replace_backend rebuilds
-    // from that same recipe.
-    const ModelBackendConfig config =
-        rebuild_recipes_[recipe_index(character_id)].backend;
-    replace_backend(std::move(character_id), config);
 }
 
 } // namespace cha

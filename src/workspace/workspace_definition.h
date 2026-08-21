@@ -20,13 +20,12 @@ namespace cha {
 class WakeNotifier;
 class SessionRepository;
 
-// Provider and logging settings stored in the workspace's workspace.toml.
+// Workspace paths derived from the root plus logging settings in workspace.toml.
 struct WorkspaceConfig {
     std::filesystem::path log_file;
     std::string log_level;
     std::filesystem::path providers_directory;
     std::filesystem::path styles_directory;
-    ProviderConfig provider;
 };
 
 // Reads the workspace configuration without validating the rest of the
@@ -120,20 +119,9 @@ public:
     // also one a save must not overwrite, so the two collapse to the same
     // answer rather than reporting an unreadable file as "nothing is set".
     std::optional<CharacterSettings> character_settings(std::string_view id) const;
-    // Empty for the built-in Assistant, which has no character.toml to write.
+    // Empty for the built-in Assistant, whose system config is not writable.
     std::optional<std::filesystem::path> character_config_path(
         std::string_view id) const;
-    // Forum IDs that contain this character and name a provider of their own.
-    std::vector<std::string> forums_overriding_provider(std::string_view id) const;
-
-    // Resolves one named provider config to a complete backend configuration
-    // for a session's runtime provider override. Replacement, not merge:
-    // absent fields fall back to ModelBackendConfig defaults. Throws
-    // std::invalid_argument naming the problem and the available IDs when the
-    // name does not resolve.
-    [[nodiscard]] ModelBackendConfig resolve_session_provider(
-        std::string_view name) const;
-
     // Resolves one named style config to a complete appearance for a session's
     // runtime style override. Throws std::invalid_argument naming the problem
     // and the available IDs when the name does not resolve. A style is inert
@@ -143,11 +131,11 @@ public:
 
     // Rejects a character with no readable config file. Compares and writes
     // under one lock, returning the fields the committed document changed.
-    // Loads each non-null name before writing, so a selection that cannot run
-    // is never recorded. nullopt erases the key.
+    // Loads each name before writing, so a selection that cannot run is never
+    // recorded. Provider is required; nullopt remains valid only for style.
     CharacterSettingsChange write_character_settings(
         std::string_view id,
-        std::optional<std::string> provider,
+        std::string provider,
         std::optional<std::string> style) const;
 
 private:

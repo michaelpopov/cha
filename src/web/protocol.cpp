@@ -299,7 +299,6 @@ void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json["style"] = value.style ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
     json["available_providers"] = value.available_providers;
     json["available_styles"] = value.available_styles;
-    json["provider_overridden_by"] = value.provider_overridden_by;
     json["writable"] = value.writable;
 }
 

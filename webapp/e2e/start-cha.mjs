@@ -101,10 +101,8 @@ await new Promise((resolveListen, reject) => {
   modelServer.listen(modelPort, '127.0.0.1', resolveListen);
 });
 
-// The mock server's port is the one setting that cannot be committed, and
-// provider settings live in exactly one file, so this is the only fixture the
-// harness rewrites. workspace.toml already selects this provider by name, and
-// the character and forum defaults inherit it.
+// The mock server's port is the one setting that cannot be committed, so the
+// harness rewrites the named provider selected by the character definition.
 await writeFile(
   resolve(workspace, 'system/providers/test/config.toml'),
   `host = "127.0.0.1"

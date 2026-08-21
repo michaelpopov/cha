@@ -46,7 +46,7 @@ describe('character settings screen', () => {
     renderSettings(fixtureClient({ updateCharacter }));
 
     expect(await screen.findByLabelText('Provider')).toHaveValue('terra');
-    expect(screen.getByRole('option', { name: 'Workspace default' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Select provider' })).toBeDisabled();
     expect(screen.getByRole('option', { name: 'No style' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(screen.getByText('The chief task in life is this…')).toHaveClass(
@@ -68,29 +68,6 @@ describe('character settings screen', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 
-  it('names an override that makes the provider picker currently inert', async () => {
-    const bootstrap = structuredClone(bootstrapFixture);
-    bootstrap.forums[1] = { ...bootstrap.forums[1], display_name: 'Circle of Life' };
-    const dispatch = vi.fn();
-    render(
-      <CharacterSettingsScreen
-        client={fixtureClient({
-          getCharacter: async () => ({
-            ...characterDetailFixture,
-            provider_overridden_by: ['Circle of Life'],
-          }),
-        })}
-        dispatch={dispatch}
-        sessionReport={null}
-        state={settingsState({ bootstrap })}
-      />,
-    );
-
-    expect(await screen.findByText(
-      'Circle of Life uses its own provider for this character, and it is the only forum Guide belongs to.',
-    )).toBeInTheDocument();
-  });
-
   it('shows a saved provider the workspace can no longer resolve', async () => {
     // The name is absent from available_providers because loading it failed,
     // but it is still what the file says and still what a save resubmits.
@@ -103,6 +80,30 @@ describe('character settings screen', () => {
     expect(provider.options[provider.selectedIndex].textContent).toBe('gone (not available)');
   });
 
+  it('keeps save disabled until a character without a provider has one', async () => {
+    // A character file may omit 'provider', and a save without one is
+    // rejected, so editing only the style must not offer a save that silently
+    // does nothing.
+    const user = userEvent.setup();
+    const updateCharacter = vi.fn(async () => characterDetailFixture);
+    renderSettings(fixtureClient({
+      getCharacter: async () => ({ ...characterDetailFixture, provider: null }),
+      updateCharacter,
+    }));
+
+    expect(await screen.findByLabelText('Provider')).toHaveValue('');
+    await user.selectOptions(screen.getByLabelText('Style'), 'mono-large');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+    await user.selectOptions(screen.getByLabelText('Provider'), 'terra');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateCharacter).toHaveBeenCalledWith('guide', {
+      provider: 'terra',
+      style: 'mono-large',
+    }));
+  });
+
   it('reports a failed save in place and keeps the edited values', async () => {
     const user = userEvent.setup();
     const updateCharacter = vi.fn(async () => {
@@ -110,11 +111,11 @@ describe('character settings screen', () => {
     });
     renderSettings(fixtureClient({ updateCharacter }));
 
-    await user.selectOptions(await screen.findByLabelText('Provider'), '');
+    await user.selectOptions(await screen.findByLabelText('Provider'), 'sol-high');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid provider or style.');
-    expect(screen.getByLabelText('Provider')).toHaveValue('');
+    expect(screen.getByLabelText('Provider')).toHaveValue('sol-high');
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 });

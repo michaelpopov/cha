@@ -1,9 +1,8 @@
 # Web frontend boundary
 
-Workspace characters in the web frontend inherit the provider selected by
-`[provider]` in `workspace.toml`; `host`, `port`, and the workspace path live in
-the application directory's `app.toml` and remain the web server's listener and
-root settings. Web discovery has its own HTTP projection, including
+Workspace characters select their providers in their own `character.toml`;
+`host`, `port`, and the workspace path in the application directory's `app.toml`
+remain the web server's listener and root settings. Web discovery has its own HTTP projection, including
 Guest, Assistant, Entrance, and Welcome, but does not use terminal
 presentation result types.
 
@@ -34,16 +33,15 @@ Bootstrap also carries the workspace persona roster as summaries, and `GET
 reading, not selection: neither endpoint takes part in attribution, and
 `persona_markdown` is empty for a persona that configures no `PERSONA.md`.
 Character detail also carries the character's current provider and style names
-(null when the key is absent), the lists of options that resolve, the display
-names of forums that override the provider, and `writable`, which is false for
-the built-in Assistant. A provider option is only an id and a label — never
+(null when a setting cannot be read), the lists of options that resolve, and
+`writable`, which is false for the built-in Assistant. A provider option is only
+an id and a label — never
 host, model, or credential — so the response stays discovery-safe.
 
-`PATCH /api/v1/characters/{id}` takes both names (`null` erases a key), writes
-the file, and asks live sessions the change can actually affect to shut down
-with `reloading`. A provider-only save skips forums that override the provider,
-so saving Montaigne's provider does not tear down Circle. The server does not
-reopen anything: the browser's existing stream-recovery ladder does that.
+`PATCH /api/v1/characters/{id}` requires a provider name and takes an optional
+style (`null` erases only the style), writes the file, and asks live sessions in
+every forum containing that character to shut down with `reloading`. The server
+does not reopen anything: the browser's existing stream-recovery ladder does that.
 `reloading` is ranked above `browser_disconnected` in
 `shutdown_reason_priority()`, or the reason never reaches the wire.
 
@@ -74,7 +72,7 @@ reloads the forum's live sessions so agent prompts carry that persona.
 
 The raw-input owner path recognizes optional leading character mentions and
 the commands `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/mcast`, `/info`,
-`/characters` (`/agents` is a legacy alias), `/@Name`, `/!Name`, `/provider`,
+`/characters` (`/agents` is a legacy alias), `/@Name`, `/!Name`,
 `/style`, `/stop`, and `/exit`. Mentions and multicast recipient
 handles remain unresolved until `SessionController` applies the forum's
 authoritative character rules. While generation is active, only a bare

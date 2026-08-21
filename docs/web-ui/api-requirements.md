@@ -172,9 +172,8 @@ GET /api/v1/characters/{character_id}
 ```
 
 The detail response contains the character summary fields,
-`character_markdown`, the current `provider` and `style` (null when absent),
-the lists of options that resolve, the display names of forums that override
-the provider, and `writable`. For workspace characters `character_markdown` is
+`character_markdown`, the current `provider` and `style` (null when unreadable
+or absent), the lists of options that resolve, and `writable`. For workspace characters `character_markdown` is
 the `<character_profile>` section of the template-expanded
 `characters/<id>/CHARACTER.md`, using the same effective character scope as
 the agent prompt. If the prompt has no such section, it is the whole
@@ -197,13 +196,12 @@ interactive, images are not fetched, and raw HTML does not execute.
 {"provider":"qwen","style":null}
 ```
 
-`null` erases the key. The response is the same body as GET. A name whose
-config does not load is `400` and leaves the file untouched. The built-in
+Provider is required; `null` erases only the style key. The response is the
+same body as GET. A name whose config does not load is `400` and leaves the file untouched. The built-in
 Assistant, a missing character, and a character whose file cannot be read are
 `404`. After a write that changes a value, live sessions the change can affect
-shut down with `shutdown_reason: "reloading"`. A provider-only save does not
-restart sessions in forums that override the provider. The server does not
-reopen the session; the browser's stream recovery does.
+shut down with `shutdown_reason: "reloading"`. The server does not reopen the
+session; the browser's stream recovery does.
 
 ## Sessions and Recent
 

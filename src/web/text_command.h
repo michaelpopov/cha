@@ -18,7 +18,6 @@ enum class CommandKind {
     characters,
     set_default,
     set_persona,
-    session_provider,
     session_style,
     unknown,
 };

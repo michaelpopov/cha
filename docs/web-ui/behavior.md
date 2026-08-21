@@ -143,7 +143,7 @@ Characters is a workspace-level navigation area.
 - Character detail renders `CHARACTER.md` as formatted Markdown, including headings, paragraphs, emphasis, lists, and code blocks.
 - Links are not interactive and images are not rendered or fetched.
 - Character detail does not show forum membership, the current provider or style, or links to forums.
-- Character detail shows a header row above the description carrying the character display name, in the shape the Sessions forum header uses. After the detail loads, a writable character's row opens Character settings. Assistant's row is plain text with no chevron: it has no `character.toml`.
+- Character detail shows a header row above the description carrying the character display name, in the shape the Sessions forum header uses. After the detail loads, a writable character's row opens Character settings. Assistant's row is plain text with no chevron because its system config is not writable from the browser.
 - Users cannot create characters in this version. Provider and style are edited on Character settings; every other character field stays a hand edit.
 
 ## Character settings
@@ -151,8 +151,7 @@ Characters is a workspace-level navigation area.
 Character settings is one form, reached only from a writable Character detail.
 
 - The title is `Settings`. The back row names the character and returns to Character detail.
-- Provider lists the workspace options that resolve, plus Workspace default (`null`, erase the key). Style lists the same way, plus No style.
-- Forums that override the provider are named under that picker. When they are every forum the character belongs to, the note says the picker is currently inert. Style is never overridden.
+- Provider lists the workspace options that resolve and requires one selection. Style lists the same way, plus No style.
 - A sample line shows the selected style before save. No style uses the plain default appearance.
 - A fixed line above Save says that saving restarts the sessions using this character and loses any answer being generated.
 - Save is disabled while nothing has changed and while a save is in flight. Cancel returns to Character detail without writing.

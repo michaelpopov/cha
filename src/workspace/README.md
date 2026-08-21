@@ -51,19 +51,15 @@ as unset. `available_providers()` and
 `load_named_provider()` / `load_named_style()` — and drop one that throws rather
 than failing the list. Labels are derived from the directory name. A provider
 option is only an id and a label; a style option also carries the resolved
-appearance. `forums_overriding_provider()` names the forums that contain the
-character and set a provider in `character_defaults.toml` or the member override;
-a layer file it cannot read counts as one that overrides, because that answer
-only over-warns and leaves sessions alone, while the opposite guess would tell a
-reader their choice applies where it does not. `character_config_path()` is empty
-for the built-in Assistant.
+appearance. `character_config_path()` is empty for the built-in Assistant.
 
 `write_character_settings()` compares and rewrites `provider` and `style` in one
 parse-write cycle under the same mutex as the forum-config writes, and reports
-which fields that document actually changed. It loads each non-null name before
-writing, so a config that cannot run is never recorded and the file is left
-untouched. `nullopt` erases the key. A character with no readable config is
-rejected rather than created or overwritten.
+which fields that document actually changed. It requires and validates the
+provider name before writing, and validates an optional style, so a config that
+cannot run is never recorded and the file is left untouched. Only `style` may
+be erased. A character with no readable config is rejected rather than created
+or overwritten.
 
 When a session opens, `copy_definitions_for()` re-runs the forum's full
 definition loader. A broken hand edit logs a warning, returns the startup copy,

@@ -191,7 +191,7 @@ struct StyleOption {
 };
 
 struct CharacterSettingsUpdate {
-    std::optional<std::string> provider;
+    std::string provider;
     std::optional<std::string> style;
 };
 
@@ -202,7 +202,6 @@ struct CharacterDetail {
     std::optional<std::string> style;
     std::vector<ProviderOption> available_providers;
     std::vector<StyleOption> available_styles;
-    std::vector<std::string> provider_overridden_by;
     bool writable{};
 };
 

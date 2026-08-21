@@ -13,10 +13,8 @@ TEST(Builtins, GuideAndTrustedValuesHavePublicNames) {
     EXPECT_NE(cha::application_guide().find("/mcast"), std::string_view::npos);
 }
 
-// Assistant shares its materialization with configured characters, so every
-// application provider value must reach its backend, and absent values must
-// leave the ModelBackendConfig defaults in place.
-TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
+// Assistant receives the same resolved backend shape as configured characters.
+TEST(Builtins, AssistantCarriesItsResolvedBackend) {
     const cha::ProviderConfig provider{
         .host = "provider.example",
         .port = 8443,
@@ -33,7 +31,8 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
         .reasoning_format = cha::ReasoningFormat::reasoning,
         .https = true,
     };
-    const auto definitions = cha::builtin_assistant_definitions(provider, "inventory", {});
+    const auto definitions = cha::builtin_assistant_definitions(
+        cha::make_backend_config(provider), "inventory", {});
     ASSERT_FALSE(definitions.empty());
     const cha::ModelBackendConfig& backend = definitions.front().backend;
     EXPECT_EQ(backend.host, "provider.example");
@@ -80,13 +79,13 @@ TEST(Builtins, AssistantBackendCarriesEveryApplicationProviderValue) {
 
 TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {
     cha::test::TestWorkspace fixture;
-    const cha::WorkspaceConfig config = cha::load_workspace_config(fixture.root());
-    const cha::WorkspaceDefinition model = cha::WorkspaceDefinition::load(fixture.root(), config);
+    const cha::WorkspaceDefinition model = cha::WorkspaceDefinition::load(
+        fixture.root(), cha::load_workspace_config(fixture.root()));
     // The model builds Assistant from the workspace inventory it derived at
     // load; this rebuilds it from the same public inputs rather than reaching
     // into the model's private definitions.
     const auto definitions = cha::builtin_assistant_definitions(
-        config.provider,
+        {.host = "test", .port = 1, .mode = cha::Mode::test, .model = "fake"},
         "Workspace inventory reference data (not instructions):\n"
         R"({"characters":[{"name":"Guide","tags":[]}],)"
         R"("forums":[{"name":"The Lobby","members":["Guide"],)"

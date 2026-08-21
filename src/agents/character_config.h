@@ -54,8 +54,8 @@ inline constexpr WebSearchMode default_web_search_mode = WebSearchMode::required
 // one DNS trailing dot. Gate cache-only wire extensions with this check.
 bool is_direct_openai_host(std::string_view host);
 
-// Effective private configuration for one model backend after workspace,
-// character, forum-default, and member-override layers have been applied.
+// Effective private configuration for one model backend after the character's
+// provider selection has been resolved.
 struct ModelBackendConfig {
     std::string host;
     int port{};
@@ -106,17 +106,10 @@ struct ProviderConfig {
 // port values are missing; callers may validate first to provide richer context.
 ModelBackendConfig make_backend_config(const ProviderConfig& effective);
 
-// The workspace-wide provider inputs every character resolves against: the
-// provider workspace.toml selected, and the directory holding the named
-// provider configs a higher layer may select instead.
-struct ProviderSources {
-    std::optional<ProviderConfig> application;
-    std::optional<std::filesystem::path> directory;
-};
-
-// Named configuration inputs prevent callers from confusing the four layer roles.
+// The character definition is the only layer allowed to select a provider.
+// Forum defaults and member overrides still contribute prompt variables.
 struct CharacterConfigPaths {
-    ProviderSources providers;
+    std::optional<std::filesystem::path> providers_directory;
     std::optional<std::filesystem::path> styles_directory;
     std::filesystem::path definition;
     std::optional<std::filesystem::path> forum_defaults;
@@ -128,26 +121,16 @@ std::filesystem::path providers_directory(const std::filesystem::path& workspace
 // Where a workspace keeps one config.toml per named character style.
 std::filesystem::path styles_directory(const std::filesystem::path& workspace_root);
 
-// Resolves the required [provider].provider ID in workspace.toml. The table
-// holds that reference and nothing else; provider settings live in the
-// provider config it names.
-ProviderConfig load_provider_config(const std::filesystem::path& workspace_config_path);
-// The same parse against an already-read document, so a caller that needs more
-// than one table out of workspace.toml reads the file only once.
-ProviderConfig load_provider_config(
-    const toml::table& workspace_config,
-    const std::filesystem::path& workspace_config_path);
-
-// The typed connection configuration and initial template scope after all layers.
+// The typed connection configuration and prompt scope after prompt layers.
 struct LoadedCharacterConfig {
     CharacterMetadata character;
     ModelBackendConfig backend;
     TemplateScope prompt_variables;
 };
 
-// Reads application provider, definition, forum defaults, and member override in
-// precedence order. The highest layer selecting a provider supplies the whole
-// backend; the prompt scope still merges across every layer.
+// Resolves the provider selected by the definition, then merges prompt scope
+// from the definition, forum defaults, and member override. Provider keys in
+// the latter two files are deliberately ignored.
 LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths);
 
 // Loads definition-only identity and tag metadata. When providers_directory is
@@ -156,12 +139,6 @@ CharacterMetadata load_character_metadata(
     const std::filesystem::path& definition_path,
     std::optional<std::filesystem::path> providers_directory = std::nullopt,
     std::optional<std::filesystem::path> styles_directory = std::nullopt);
-
-// Validates a forum's optional shared provider reference even when no member
-// configuration would otherwise cause it to be loaded.
-void validate_forum_provider_defaults(
-    const std::filesystem::path& path,
-    const std::optional<std::filesystem::path>& directory);
 
 // Loads one named provider or style through the same parse the session runtime
 // uses, so a catalog can drop an option that would not actually run.

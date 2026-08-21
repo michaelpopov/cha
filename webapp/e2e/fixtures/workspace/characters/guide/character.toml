@@ -1,5 +1,6 @@
 display_name = "Guide"
 description = "A deterministic test character"
+provider = "test"
 
 # Gives the browser tests a character whose words are set apart from the
 # reader's, so the whole path from workspace file to rendered class is covered.

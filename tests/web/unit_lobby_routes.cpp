@@ -163,7 +163,8 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     test::TestWorkspace fixture;
     fixture.write_character_config(
         "display_name = \"Guide\"\n"
-        "description = \"Explains the workspace\"\n");
+        "description = \"Explains the workspace\"\n"
+        "provider = \"test\"\n");
     std::ofstream(fixture.root() / "characters" / "guide" / "PROFILE.md")
         << "Profile $${character.display_name}\n";
     std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
@@ -237,7 +238,7 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     const nlohmann::json workspace_character_body = body(workspace_character);
     EXPECT_EQ(workspace_character_body["character_markdown"], "Profile Guide");
     EXPECT_EQ(workspace_character_body["appearance"], (*guide)["appearance"]);
-    EXPECT_TRUE(workspace_character_body["provider"].is_null());
+    EXPECT_EQ(workspace_character_body["provider"], "test");
     EXPECT_TRUE(workspace_character_body["style"].is_null());
     EXPECT_EQ(workspace_character_body["writable"], true);
 
@@ -399,7 +400,7 @@ TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderC
     EXPECT_EQ(guide_body["provider"], "test");
     EXPECT_EQ(guide_body["style"], "serif-italic");
     EXPECT_EQ(guide_body["writable"], true);
-    EXPECT_TRUE(guide_body["provider_overridden_by"].empty());
+    EXPECT_FALSE(guide_body.contains("provider_overridden_by"));
 
     std::vector<std::string> provider_ids;
     for (const auto& option : guide_body["available_providers"]) {
@@ -432,8 +433,9 @@ TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderC
     const auto montaigne_detail = server.client().Get("/api/v1/characters/montaigne");
     ASSERT_TRUE(montaigne_detail);
     ASSERT_EQ(montaigne_detail->status, 200);
-    EXPECT_EQ(body(montaigne_detail)["provider_overridden_by"],
-        nlohmann::json::array({"Circle of Life"}));
+    const nlohmann::json montaigne_body = body(montaigne_detail);
+    EXPECT_EQ(montaigne_body["provider"], "test");
+    EXPECT_FALSE(montaigne_body.contains("provider_overridden_by"));
 
     // The description is served from what startup read and does not depend on
     // these settings, so a character.toml edited into an unreadable state must
@@ -497,7 +499,7 @@ TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
 
     const auto patched = server.client().Patch(
         "/api/v1/characters/guide",
-        R"({"provider":null,"style":"mono-large"})",
+        R"({"provider":"test","style":"mono-large"})",
         "application/json");
     ASSERT_TRUE(patched);
     ASSERT_EQ(patched->status, 200) << patched->body;
@@ -557,10 +559,10 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
     EXPECT_EQ(body(saved)["writable"], true);
 
     const auto cleared = patch_character(
-        server, "guide", {{"provider", nullptr}, {"style", nullptr}});
+        server, "guide", {{"provider", "test"}, {"style", nullptr}});
     ASSERT_TRUE(cleared);
     ASSERT_EQ(cleared->status, 200);
-    EXPECT_TRUE(body(cleared)["provider"].is_null());
+    EXPECT_EQ(body(cleared)["provider"], "test");
     EXPECT_TRUE(body(cleared)["style"].is_null());
 
     const std::string before = read_bytes(path);
@@ -582,11 +584,11 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
 
     fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
     expect_error(
-        patch_character(server, "guide", {{"provider", nullptr}, {"style", nullptr}}),
+        patch_character(server, "guide", {{"provider", "test"}, {"style", nullptr}}),
         404, "not_found", "That character was not found.");
 }
 
-TEST(LobbyRoutes, ReloadsOnlySessionsASaveCanChange) {
+TEST(LobbyRoutes, ReloadsEveryForumContainingTheChangedCharacter) {
     test::TestWorkspace fixture;
     fixture.write_provider(
         "sol-high", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
@@ -628,17 +630,23 @@ TEST(LobbyRoutes, ReloadsOnlySessionsASaveCanChange) {
         200);
     EXPECT_EQ(manager.snapshot().live_session_count, 2);
 
-    // Provider-only save for a character every forum overrides: no restart.
+    // A provider change affects every forum containing that character, even
+    // when a stale forum default still names another provider.
     const auto provider_only = patch_character(
         server, "montaigne", {{"provider", "sol-high"}, {"style", nullptr}});
     ASSERT_TRUE(provider_only);
     ASSERT_EQ(provider_only->status, 200);
-    EXPECT_EQ(manager.snapshot().live_session_count, 2);
-    EXPECT_TRUE(session_is_live(manager, {"circle", circle_id}));
+    const auto circle_deadline = std::chrono::steady_clock::now() + 2s;
+    while (session_is_live(manager, {"circle", circle_id})
+        && std::chrono::steady_clock::now() < circle_deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_FALSE(session_is_live(manager, {"circle", circle_id}));
+    EXPECT_TRUE(session_is_live(manager, {"lobby", lobby_id}));
 
     // Style changes every forum that contains the character.
     const auto style_save = patch_character(
-        server, "guide", {{"provider", nullptr}, {"style", "serif-italic"}});
+        server, "guide", {{"provider", "test"}, {"style", "serif-italic"}});
     ASSERT_TRUE(style_save);
     ASSERT_EQ(style_save->status, 200);
     const auto deadline = std::chrono::steady_clock::now() + 2s;
@@ -647,7 +655,7 @@ TEST(LobbyRoutes, ReloadsOnlySessionsASaveCanChange) {
         std::this_thread::sleep_for(10ms);
     }
     EXPECT_FALSE(session_is_live(manager, {"lobby", lobby_id}));
-    EXPECT_TRUE(session_is_live(manager, {"circle", circle_id}));
+    EXPECT_FALSE(session_is_live(manager, {"circle", circle_id}));
 }
 
 TEST(LobbyRoutes, CreateIsSeparateFromOpenAndListingsMarkOnlyRunningSessions) {

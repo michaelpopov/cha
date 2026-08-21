@@ -2,6 +2,7 @@
 
 #include "agents/character_config.h"
 #include "agents/model_backend.h"
+#include "agents/sse_framer.h"
 
 #include <string>
 #include <string_view>
@@ -16,7 +17,7 @@ struct StreamDecodeResult {
 };
 
 // Protocol-neutral streaming decoder boundary used by ProviderClient. Concrete
-// decoders own wire-specific framing and event interpretation.
+// decoders own provider-specific event interpretation.
 class StreamingResponseDecoder {
 public:
     virtual ~StreamingResponseDecoder() = default;
@@ -53,7 +54,7 @@ public:
     StreamDecodeResult finish() override;
 
 private:
-    void read_event(std::string_view event);
+    bool handle_event_data(std::string_view data);
     void emit(GenerationDeltaKind kind, std::string text);
 
     bool received_output() const noexcept {
@@ -62,7 +63,7 @@ private:
 
     ReasoningFormat format_;
     const GenerationDeltaSink* on_delta_;
-    std::string pending_;
+    SseFramer framer_;
     std::string protocol_error_;
     bool done_{};
     bool received_reasoning_{};

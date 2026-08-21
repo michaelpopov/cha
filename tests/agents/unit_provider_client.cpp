@@ -423,6 +423,9 @@ TEST(ProviderClient, ClassifiesActionableProviderFailures) {
          R"({"error":{"message":"bad request"}})",
          "Prompt exceeds the model's context window."},
         {413, "Payload Too Large", "", "Prompt exceeds the model's context window."},
+        // A bare 400 says nothing about length, so it stays unclassified.
+        {400, "Bad Request", "",
+         "Inference server returned HTTP 400: unknown server error"},
         // Rate-limit and authentication errors often link to a billing page,
         // which must not turn them into a quota verdict.
         {429, "Too Many Requests",
@@ -598,9 +601,11 @@ TEST(ProviderClient, BoundsOverallAndIdleGenerationTime) {
         SCOPED_TRACE(
             "timeout=" + std::to_string(test_case.timeout_s)
             + " idle=" + std::to_string(test_case.idle_timeout_s));
+        // The idle clock starts at the first body byte, so the response
+        // opens with one SSE keepalive and then stalls mid-body.
         const std::string stalled_response =
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
-            "Content-Length: 20\r\nConnection: close\r\n\r\n";
+            "Content-Length: 40\r\nConnection: close\r\n\r\n: ping\n\n";
         MockHttpServer mock(
             {stalled_response},
             false,
@@ -629,31 +634,39 @@ TEST(ProviderClient, BoundsOverallAndIdleGenerationTime) {
 }
 
 TEST(ProviderClient, WaitsThroughProviderThinkTimeBeforeTheFirstByte) {
-    // The server accepts the request and sends nothing while it "thinks". A
-    // reasoning model or any non-streaming provider looks exactly like this,
-    // so only the overall timeout may end it.
+    // The server accepts the request and sends no body while it "thinks",
+    // either silently or after its response headers. A reasoning model behind
+    // a streaming request looks exactly like the second case, so only the
+    // overall timeout may end either one.
     constexpr auto think_time = std::chrono::milliseconds(1500);
-    MockHttpServer mock({std::string()}, false, think_time);
-    mock.start();
-    CharacterDefinition definition = network_definition(mock.port(), false);
-    definition.backend.timeout_s = 600;
-    definition.backend.idle_timeout_s = 1;
-    std::atomic_bool cancellation{false};
-    GenerationResult result;
-    const auto started_at = std::chrono::steady_clock::now();
-    {
-        ProviderClient client(std::move(definition));
-        Transcript transcript;
-        const GenerationRequest request = client_request(transcript, 98, "Question");
-        result = complete(
-            client, request, transcript, [](GenerationDelta) {}, cancellation);
-    }
-    const auto elapsed = std::chrono::steady_clock::now() - started_at;
-    mock.join();
+    const std::string headers_only =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+        "Content-Length: 20\r\nConnection: close\r\n\r\n";
+    for (const std::string& response : {std::string(), headers_only}) {
+        SCOPED_TRACE(response.empty() ? "silent" : "headers first");
+        MockHttpServer mock({response}, false, think_time);
+        mock.start();
+        CharacterDefinition definition =
+            network_definition(mock.port(), !response.empty());
+        definition.backend.timeout_s = 600;
+        definition.backend.idle_timeout_s = 1;
+        std::atomic_bool cancellation{false};
+        GenerationResult result;
+        const auto started_at = std::chrono::steady_clock::now();
+        {
+            ProviderClient client(std::move(definition));
+            Transcript transcript;
+            const GenerationRequest request = client_request(transcript, 98, "Question");
+            result = complete(
+                client, request, transcript, [](GenerationDelta) {}, cancellation);
+        }
+        const auto elapsed = std::chrono::steady_clock::now() - started_at;
+        mock.join();
 
-    EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
-    EXPECT_EQ(result.message.find("idle timeout"), std::string::npos);
-    EXPECT_GE(elapsed, think_time - std::chrono::milliseconds(300));
+        EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
+        EXPECT_EQ(result.message.find("idle timeout"), std::string::npos);
+        EXPECT_GE(elapsed, think_time - std::chrono::milliseconds(300));
+    }
 }
 
 TEST(ProviderClient, ReportsATruncatedResponseAsATransportError) {

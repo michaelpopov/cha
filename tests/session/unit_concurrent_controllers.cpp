@@ -158,9 +158,11 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
         std::ofstream(provider / "config.toml")
             << "host = \"127.0.0.1\"\nport = 9\nmode = \"test\"\n"
             << "model = \"configured-model\"\n";
+        std::filesystem::create_directories(root / "system" / "assistant");
+        std::ofstream(root / "system" / "assistant" / "character.toml")
+            << "display_name = \"Assistant\"\nprovider = \"test\"\n";
         std::ofstream file(root / "workspace.toml");
-        file << "host = \"127.0.0.1\"\nport = 8080\n[provider]\n"
-             << "provider = \"test\"\n[logging]\n"
+        file << "[logging]\n"
              << "file = \"cha.log\"\nlevel = \"off\"\n";
     }
     std::ofstream(forum / "config.toml") << "display_name = \"Forum\"\n";

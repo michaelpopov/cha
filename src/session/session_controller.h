@@ -40,13 +40,6 @@ public:
     // but before durable state changes.
     using ActivationHook = std::function<void(std::size_t)>;
 
-    // Resolves a provider name to a complete backend configuration for a
-    // runtime provider override. Session open injects the workspace's named
-    // provider loading through this seam so the controller never learns the
-    // workspace file layout. Throws std::invalid_argument when the name does
-    // not resolve.
-    using ProviderResolver = std::function<ModelBackendConfig(std::string_view)>;
-
     // Resolves a style name to a complete appearance for a runtime style
     // override. Session open injects the workspace's named style loading through
     // this seam so the controller never learns the workspace file layout.
@@ -64,7 +57,6 @@ public:
         SessionLease lease,
         WakeNotifier& notifier,
         SessionRestore restored = {},
-        ProviderResolver provider_resolver = {},
         StyleResolver style_resolver = {},
         SessionIdentity identity = {});
     // Test-only counterpart for controller tests that intentionally do not
@@ -76,7 +68,6 @@ public:
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {},
-        ProviderResolver provider_resolver = {},
         GenerationExecutor::BackendFactory backend_factory = {},
         StyleResolver style_resolver = {},
         SessionIdentity identity = {});
@@ -122,16 +113,10 @@ public:
     [[nodiscard]] ControllerUpdate set_default_character(std::string_view handle);
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
     [[nodiscard]] ControllerUpdate set_default_persona(std::string_view handle);
-    // Runtime provider override for the current default character: an empty
-    // name reports the override state, "default" restores the configured
-    // backend, anything else is resolved and swapped in. Session-scoped only;
-    // nothing is persisted.
-    [[nodiscard]] ControllerUpdate set_session_provider(std::string_view name);
     // Runtime appearance override for the current default character: an empty
     // name reports the override state, "default" restores the configured style,
     // anything else is resolved and swapped in. Session-scoped only; nothing is
-    // persisted. Unlike the provider override the change is browser-visible, so
-    // the mutating forms carry a snapshot.
+    // persisted. Mutating forms carry a browser-visible snapshot.
     [[nodiscard]] ControllerUpdate set_session_style(std::string_view name);
     [[nodiscard]] ControllerUpdate request_stop();
     void rename(std::string_view label);
@@ -161,7 +146,6 @@ private:
         SessionLease lease,
         WakeNotifier& notifier,
         SessionRestore restored,
-        ProviderResolver provider_resolver = {},
         GenerationExecutor::BackendFactory backend_factory = {},
         StyleResolver style_resolver = {},
         SessionIdentity identity = {});
@@ -241,11 +225,6 @@ private:
     // Borrowed from personas_, which is immutable and outlives the controller,
     // so the view can hand out the persona's own strings.
     const Persona* default_persona_{};
-    // Runtime provider overrides: the resolver (empty when the session cannot
-    // change providers) and one provider name per overridden character, kept
-    // for the report form. Session-scoped; never persisted.
-    ProviderResolver provider_resolver_;
-    std::unordered_map<CharacterId, std::string> provider_overrides_;
     // Runtime style overrides: the resolver (empty when the session cannot
     // change styles) and one style name per overridden character, kept for the
     // report form. Session-scoped; never persisted. The reset source is the

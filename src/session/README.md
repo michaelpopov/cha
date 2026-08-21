@@ -87,8 +87,9 @@ are contained to their forum directory.
 Each controller receives the workspace persona roster and starts on its forum's
 configured persona, resolving submitted stable author IDs against that roster so
 an unknown author is refused rather than attributed. The roster also contributes
-static model context, but it is not forum or session membership. The generation layer applies the shared provider
-layer, definition, forum-default, and member override policy,
+static model context, but it is not forum or session membership. The generation
+layer resolves the provider selected by each character definition and applies
+the definition, forum-default, and member prompt policy,
 deriving the definition containment root from the definition directory's parent
 and otherwise receiving resolved workspace paths explicitly.
 
@@ -212,7 +213,9 @@ only the SQL file exists, reload builds and validates a temporary database
 before publishing `<id>.sqlite3`. If `deleted/<id>.sqlite3` exists, the SQL file
 is not imported, so recoverable local deletion remains authoritative. Both
 directions use temporary siblings, leaving the previous SQL or no active
-database at all when an operation fails. SQL snapshots are intentionally not
+database at all when an operation fails. A `.sqlite3` that fails validation —
+the same file listing shows as invalid — is logged and skipped instead of
+failing the reload for every other forum. SQL snapshots are intentionally not
 catalog entries and are tracked by Git; `.sqlite3` remains machine-local.
 
 Session paths are resolved only by `SessionCatalog`. Its `database_path()`
@@ -401,7 +404,7 @@ The reserved null target `-` is not a forum character: `submit_prompt` with
 handle `-`, or any plain prompt while `default_character_id_` is `-`, records a
 human entry with no turn through `SessionJournal::record_entry` and starts no
 generation, and `set_default_character("-")` switches to that recording mode
-session-scoped only (like `/provider`), so the web layer never persists `-` as
+session-scoped only, so the web layer never persists `-` as
 the forum default. A recorded entry later projects into another character's
 model context as shared history.
 

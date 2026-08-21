@@ -410,7 +410,8 @@ TEST(SessionRoutes, ServesWorkspaceMetadataAndReportsUnavailableMetadata) {
     test::TestWorkspace fixture;
     fixture.write_character_config(
         "display_name = \"Guide\"\n"
-        "description = \"Explains the workspace\"\n");
+        "description = \"Explains the workspace\"\n"
+        "provider = \"test\"\n");
     const test::WebGraph graph(fixture.root());
     const StoredSession stored = graph.sessions()->create("lobby", "Named session");
     const WebSettings settings{

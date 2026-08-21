@@ -363,8 +363,8 @@ CharacterAppearance load_named_style(
 
 namespace {
 
-// Nothing when the layer names no provider, so callers can tell "inherit the
-// layer below" apart from "use this backend".
+// Nothing when a definition names no provider, so metadata-only callers can
+// distinguish an absent selection from a resolved backend.
 std::optional<ProviderConfig> resolve_provider(
     const std::optional<std::string>& provider_name,
     const std::optional<std::filesystem::path>& directory,
@@ -477,7 +477,9 @@ ParsedConfig parse_config(const std::filesystem::path& path, ConfigLayer layer) 
     reject_provider_settings(table, path, "Config file");
     return {
         .display_name = display_name,
-        .provider_name = read_provider_name(table, path),
+        // Provider selection belongs only to the character definition. Older
+        // forum/member provider keys remain harmless inert configuration.
+        .provider_name = definition ? read_provider_name(table, path) : std::nullopt,
         .style_name = definition ? read_style_name(table, path) : std::nullopt,
         .prompt_variables = template_scope_from_toml(table, prompt_scope_table, utf8_path(path)),
         .tags = definition ? read_tags(table, path) : std::vector<std::string>{},
@@ -500,7 +502,9 @@ CharacterMetadata load_character_metadata(
     const ParsedConfig definition = parse_config(definition_path, ConfigLayer::definition);
     // Metadata needs no backend, but a broken reference should stop startup
     // here rather than when someone first opens a forum.
-    (void)resolve_provider(definition.provider_name, providers_directory, definition_path);
+    if (providers_directory) {
+        (void)resolve_provider(definition.provider_name, providers_directory, definition_path);
+    }
     const CharacterAppearance appearance =
         resolve_style(definition.style_name, styles_directory, definition_path);
     return {
@@ -538,38 +542,6 @@ ModelBackendConfig make_backend_config(const ProviderConfig& effective) {
     return backend;
 }
 
-ProviderConfig load_provider_config(const std::filesystem::path& workspace_config_path) {
-    std::ifstream file(workspace_config_path, std::ios::binary);
-    if (!file) throw std::runtime_error("Failed to read workspace config '" + utf8_path(workspace_config_path) + "'");
-    const toml::table root = toml::parse(file, utf8_path(workspace_config_path));
-    return load_provider_config(root, workspace_config_path);
-}
-
-ProviderConfig load_provider_config(
-    const toml::table& workspace_config,
-    const std::filesystem::path& workspace_config_path) {
-    const toml::table* table = workspace_config["provider"].as_table();
-    if (!table) throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path) + "' requires a [provider] table");
-    reject_provider_settings(*table, workspace_config_path, "Workspace config");
-    for (const auto& [key, value] : *table) {
-        (void)value;
-        const std::string_view name = key.str();
-        if (name != "provider") {
-            throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
-                + "' [provider] has unsupported field '" + std::string(name) + "'");
-        }
-    }
-    const auto provider_name = read_provider_name(*table, workspace_config_path);
-    if (!provider_name) {
-        throw std::runtime_error("Workspace config '" + utf8_path(workspace_config_path)
-            + "' [provider] requires a 'provider' name selecting a provider config");
-    }
-    return load_named_provider(
-        providers_directory(workspace_config_path.parent_path()),
-        *provider_name,
-        workspace_config_path);
-}
-
 std::filesystem::path providers_directory(const std::filesystem::path& workspace_root) {
     return workspace_root / "system" / "providers";
 }
@@ -582,31 +554,22 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     const ParsedConfig definition = parse_config(paths.definition, ConfigLayer::definition);
     const CharacterAppearance appearance =
         resolve_style(definition.style_name, paths.styles_directory, paths.definition);
-    // A provider config is a whole backend, so the highest layer naming one
-    // wins outright instead of merging field by field with the layers below.
-    std::optional<ProviderConfig> effective = paths.providers.application;
-    TemplateScope prompt_variables = definition.prompt_variables;
-    if (auto named = resolve_provider(
-            definition.provider_name, paths.providers.directory, paths.definition)) {
-        effective = std::move(named);
+    const std::optional<ProviderConfig> provider = resolve_provider(
+        definition.provider_name, paths.providers_directory, paths.definition);
+    if (!provider) {
+        throw std::runtime_error("Character config file '" + utf8_path(paths.definition)
+            + "' requires a 'provider' name selecting a provider config");
     }
+    TemplateScope prompt_variables = definition.prompt_variables;
     const auto apply = [&](const std::optional<std::filesystem::path>& path, ConfigLayer layer) {
         if (!path) {
             return;
         }
         const ParsedConfig parsed = parse_config(*path, layer);
-        if (auto named = resolve_provider(
-                parsed.provider_name, paths.providers.directory, *path)) {
-            effective = std::move(named);
-        }
         overlay(prompt_variables, parsed.prompt_variables);
     };
     apply(paths.forum_defaults, ConfigLayer::forum_defaults);
     apply(paths.member_override, ConfigLayer::member_override);
-    if (!effective) {
-        throw std::runtime_error("Character config file '" + utf8_path(paths.definition)
-            + "' selects no provider and no layer below it supplies one");
-    }
     CharacterMetadata character{
         .id = utf8_path(paths.definition.parent_path().filename()),
         .display_name = *definition.display_name,
@@ -616,16 +579,9 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     };
     return {
         .character = std::move(character),
-        .backend = make_backend_config(*effective),
+        .backend = make_backend_config(*provider),
         .prompt_variables = std::move(prompt_variables),
     };
-}
-
-void validate_forum_provider_defaults(
-    const std::filesystem::path& path,
-    const std::optional<std::filesystem::path>& directory) {
-    const ParsedConfig defaults = parse_config(path, ConfigLayer::forum_defaults);
-    (void)resolve_provider(defaults.provider_name, directory, path);
 }
 
 } // namespace cha

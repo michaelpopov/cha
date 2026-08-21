@@ -46,10 +46,6 @@ OpenedSession open_session(
             // least that long: a caller that can replace it publishes each one
             // as a generation and retains it in OpenedSession::lifetime.
             [&model](std::string_view name) {
-                return model.resolve_session_provider(name);
-            },
-            // Same borrow as the provider resolver above.
-            [&model](std::string_view name) {
                 return model.resolve_session_style(name);
             },
             prepared.identity),

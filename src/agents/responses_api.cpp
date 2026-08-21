@@ -50,13 +50,6 @@ GenerationTokenUsage responses_token_usage(const Json& response) {
     };
 }
 
-void normalize_newlines(std::string& text) {
-    std::size_t index = 0;
-    while ((index = text.find("\r\n", index)) != std::string::npos) {
-        text.erase(index, 1);
-    }
-}
-
 std::string_view input_role_name(ModelRole role) {
     switch (role) {
     case ModelRole::persona: return "user";
@@ -164,25 +157,16 @@ void ResponsesStreamDecoder::consume(std::string_view bytes) {
     if (done_) {
         return;
     }
-    pending_.append(bytes);
-    normalize_newlines(pending_);
-
-    std::size_t event_end = 0;
-    while ((event_end = pending_.find("\n\n")) != std::string::npos) {
-        const std::string event = pending_.substr(0, event_end);
-        pending_.erase(0, event_end + 2);
-        read_event(event);
-        if (done_) {
-            pending_.clear();
-            return;
-        }
-    }
+    framer_.consume(bytes, [this](std::string_view data) {
+        return handle_event_json(data);
+    });
 }
 
 StreamDecodeResult ResponsesStreamDecoder::finish() {
-    if (!pending_.empty()) {
-        read_event(pending_);
-        pending_.clear();
+    if (!done_) {
+        framer_.finish([this](std::string_view data) {
+            return handle_event_json(data);
+        });
     }
 
     if (!protocol_error_.empty()) {
@@ -207,36 +191,9 @@ StreamDecodeResult ResponsesStreamDecoder::finish() {
     return {{GenerationOutcome::completed, {}, usage_}, false};
 }
 
-void ResponsesStreamDecoder::read_event(std::string_view event) {
-    std::size_t line_start = 0;
-    while (line_start <= event.size()) {
-        const std::size_t line_end = event.find('\n', line_start);
-        const std::string_view line = event.substr(
-            line_start,
-            line_end == std::string_view::npos
-                ? event.size() - line_start
-                : line_end - line_start);
-
-        if (line.starts_with("data:")) {
-            std::string_view data = line.substr(5);
-            while (!data.empty() && data.front() == ' ') {
-                data.remove_prefix(1);
-            }
-            if (!data.empty()) {
-                handle_event_json(data);
-            }
-        }
-
-        if (line_end == std::string_view::npos) {
-            break;
-        }
-        line_start = line_end + 1;
-    }
-}
-
-void ResponsesStreamDecoder::handle_event_json(std::string_view data) {
+bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
     if (done_) {
-        return;
+        return false;
     }
 
     Json value;
@@ -247,12 +204,12 @@ void ResponsesStreamDecoder::handle_event_json(std::string_view data) {
             protocol_error_ = "Streaming event contained malformed JSON";
             describe_response_ = true;
         }
-        return;
+        return true;
     }
 
     const auto type_iterator = value.find("type");
     if (type_iterator == value.end() || !type_iterator->is_string()) {
-        return;
+        return true;
     }
     const std::string type = type_iterator->get<std::string>();
 
@@ -264,13 +221,13 @@ void ResponsesStreamDecoder::handle_event_json(std::string_view data) {
                     "Responses event '" + type + "' did not contain a string delta";
                 describe_response_ = true;
             }
-            return;
+            return true;
         }
         std::string text = delta->get<std::string>();
         if (!text.empty()) {
             emit_answer(std::move(text));
         }
-        return;
+        return true;
     }
 
     if (type == "response.completed") {
@@ -285,7 +242,7 @@ void ResponsesStreamDecoder::handle_event_json(std::string_view data) {
                         "Responses stream completed with status '" + status + "'";
                     describe_response_ = false;
                 }
-                return;
+                return false;
             }
             const std::string error = nested_string_field(*response, "error", "message");
             if (!error.empty()) {
@@ -293,13 +250,13 @@ void ResponsesStreamDecoder::handle_event_json(std::string_view data) {
                     protocol_error_ = "Responses stream failed: " + error;
                     describe_response_ = false;
                 }
-                return;
+                return false;
             }
         }
         if (protocol_error_.empty()) {
             completed_successfully_ = true;
         }
-        return;
+        return false;
     }
 
     if (type == "response.failed") {
@@ -321,7 +278,7 @@ void ResponsesStreamDecoder::handle_event_json(std::string_view data) {
                 : "Responses stream failed: " + error;
             describe_response_ = false;
         }
-        return;
+        return false;
     }
 
     if (type == "response.incomplete") {
@@ -343,7 +300,7 @@ void ResponsesStreamDecoder::handle_event_json(std::string_view data) {
                 : "Responses stream ended incomplete: " + reason;
             describe_response_ = false;
         }
-        return;
+        return false;
     }
 
     if (type == "error") {
@@ -355,11 +312,12 @@ void ResponsesStreamDecoder::handle_event_json(std::string_view data) {
                 : "Responses stream error: " + message;
             describe_response_ = false;
         }
-        return;
+        return false;
     }
 
     // Web-search lifecycle, reasoning, item lifecycle, and other nonterminal
     // content events are private implementation details and are ignored.
+    return true;
 }
 
 void ResponsesStreamDecoder::emit_answer(std::string text) {

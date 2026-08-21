@@ -84,7 +84,6 @@ export const characterDetailFixture: CharacterDetail = {
     { id: 'mono-large', label: 'Mono large', appearance: monoLargeVoice },
     { id: 'serif-italic', label: 'Serif italic', appearance: serifItalicVoice },
   ],
-  provider_overridden_by: [],
   writable: true,
 };
 

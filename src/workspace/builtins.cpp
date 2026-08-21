@@ -1,7 +1,5 @@
 #include "workspace/builtins.h"
 
-#include <stdexcept>
-
 namespace cha {
 std::string_view embedded_application_guide();
 
@@ -14,20 +12,15 @@ const Persona& builtin_guest() {
 std::string_view application_guide() { return embedded_application_guide(); }
 
 std::vector<CharacterDefinition> builtin_assistant_definitions(
-    const ProviderConfig& provider,
+    ModelBackendConfig backend,
     const std::string& inventory,
     const PersonaRoster& personas) {
-
-    if (!provider.host || !provider.port) {
-        throw std::runtime_error("workspace.toml provider configuration is incomplete for Assistant");
-    }
-
     CharacterDefinition assistant{
         .character = {
             .id = std::string(assistant_id),
             .display_name = std::string(assistant_name),
         },
-        .backend = make_backend_config(provider),
+        .backend = std::move(backend),
         .system_prompt = "You are Assistant, the CHA application guide. Help users navigate using public names only.\n\n"
                           + std::string(application_guide())
                           + "\n\n" + inventory

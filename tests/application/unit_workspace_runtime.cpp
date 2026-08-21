@@ -134,6 +134,26 @@ TEST(WorkspaceRuntime, DoesNotPublishAPartialDatabaseForInvalidSql) {
     EXPECT_FALSE(std::filesystem::exists(sessions / "broken.sqlite3"));
 }
 
+TEST(WorkspaceRuntime, SkipsSnapshotExportForAnUnreadableDatabase) {
+    test::TestWorkspace fixture;
+    WorkspaceRuntime runtime(fixture.root(), welcome_seed());
+    add_writer_forum(fixture);
+    const std::filesystem::path sessions =
+        fixture.root() / "forums" / "writers" / "sessions";
+    std::filesystem::create_directories(sessions);
+    std::ofstream(sessions / "broken.sqlite3") << "this is not a database";
+    const std::filesystem::path healthy = sessions / "draft.sqlite3";
+    ASSERT_TRUE(create_session_database(
+        healthy, {.id = "draft", .forum = "writers", .label = "Draft"}));
+
+    runtime.reload();
+
+    // The corrupt file is what listing already shows as invalid, so it only
+    // loses its own snapshot; every other database is still exported.
+    EXPECT_FALSE(std::filesystem::exists(sessions / "broken.sql"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(sessions / "draft.sql"));
+}
+
 TEST(WorkspaceRuntime, BootstrapsSnapshotsForAForumAddedByTheReload) {
     test::TestWorkspace fixture;
     WorkspaceRuntime runtime(fixture.root(), welcome_seed());

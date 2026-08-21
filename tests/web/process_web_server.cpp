@@ -919,7 +919,6 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
         "stream = true\n");
     workspace.write_character_config(
         "display_name = \"Guide\"\nprovider = \"blocking\"\n");
-    workspace.write_character_defaults("provider = \"blocking\"\n");
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
     workspace.write_workspace_config();
@@ -1072,7 +1071,7 @@ TEST(WebServerProcess, ReloadsALiveSessionAfterAStyleSave) {
 
     const auto patched = client.Patch(
         "/api/v1/characters/guide",
-        R"({"provider":null,"style":"mono-large"})",
+        R"({"provider":"test","style":"mono-large"})",
         "application/json");
     ASSERT_TRUE(patched);
     ASSERT_EQ(patched->status, 200) << patched->body;
@@ -1106,7 +1105,8 @@ TEST(WebServerProcess, ReloadsTheWorkspaceThroughTheApi) {
     StreamingRequest stream(port, path + "api/v1/events");
     ASSERT_TRUE(stream.wait_for_snapshot());
 
-    workspace.write_character_config("display_name = \"Reloaded Guide\"\n");
+    workspace.write_character_config(
+        "display_name = \"Reloaded Guide\"\nprovider = \"test\"\n");
     const auto reloaded = client.Post(
         "/api/v1/workspace/reload", "{}", "application/json");
     ASSERT_TRUE(reloaded);
@@ -1123,7 +1123,7 @@ TEST(WebServerProcess, ReloadsTheWorkspaceThroughTheApi) {
     ASSERT_TRUE(open_after_reload(client, "lobby", id));
 }
 
-TEST(WebServerProcess, DoesNotReloadASessionWhoseForumOverridesTheProvider) {
+TEST(WebServerProcess, ReloadsASessionDespiteAStaleForumProvider) {
     test::TestWorkspace workspace;
     workspace.write_provider(
         "sol-high", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
@@ -1167,13 +1167,8 @@ TEST(WebServerProcess, DoesNotReloadASessionWhoseForumOverridesTheProvider) {
         "application/json");
     ASSERT_TRUE(patched);
     ASSERT_EQ(patched->status, 200) << patched->body;
-    EXPECT_FALSE(stream.wait_for_shutdown_reason("reloading", 200ms));
-    const auto live = client.Get(path + "api/v1/session");
-    ASSERT_TRUE(live);
-    EXPECT_EQ(live->status, 200) << live->body;
-    EXPECT_EQ(
-        nlohmann::json::parse(live->body).at("lifecycle"),
-        "running");
+    EXPECT_TRUE(stream.wait_for_shutdown_reason("reloading"));
+    EXPECT_TRUE(stream.wait_for_end(5s));
 }
 
 TEST(WebServerProcess, ReloadsAForumsLiveSessionsAfterAPersonaSwitch) {

@@ -489,7 +489,7 @@ std::vector<CharacterDefinition> load_forum_definitions(
     const PersonaRoster& personas,
     const std::unordered_map<std::string, std::filesystem::path>& character_directories,
     const std::filesystem::path& definitions_directory,
-    const ProviderSources& providers,
+    const std::filesystem::path& providers_directory,
     const std::filesystem::path& styles_directory) {
     log_info(
         "Loading forum character definitions: forum_id=" + forum.info.id
@@ -513,16 +513,13 @@ std::vector<CharacterDefinition> load_forum_definitions(
         std::filesystem::exists(defaults_candidate)
         ? std::optional<std::filesystem::path>(defaults_candidate)
         : std::nullopt;
-    if (base_config) {
-        validate_forum_provider_defaults(*base_config, providers.directory);
-    }
     std::vector<CharacterDefinition> definitions = load_character_definitions(
         sources,
         forum.directory,
         forum.info.display_name,
         personas,
         base_config,
-        providers,
+        providers_directory,
         styles_directory);
     std::vector<CharacterMetadata> characters;
     characters.reserve(definitions.size());
@@ -623,30 +620,9 @@ std::vector<std::string> named_config_ids(const std::filesystem::path& directory
     return ids;
 }
 
-// The ", Available providers: ..." tail of a failed name resolution, or an
-// empty string when there is nothing to list. It runs while building an error
-// message, so a directory it cannot read costs the list rather than replacing
-// the failure being reported with a second one.
-std::string available_providers_note(const std::filesystem::path& directory) {
-    std::vector<std::string> available;
-    try {
-        available = named_config_ids(directory);
-    } catch (const std::exception&) {
-        return {};
-    }
-    if (available.empty()) return {};
-    // Directory order is unspecified; the reader gets a stable list.
-    std::ranges::sort(available);
-    std::string note = ". Available providers: ";
-    for (std::size_t index = 0; index < available.size(); ++index) {
-        if (index != 0) note += ", ";
-        note += available[index];
-    }
-    return note;
-}
-
-// The style counterpart of available_providers_note; see it for why a directory
-// it cannot read costs the list rather than replacing the reported failure.
+// The ", Available styles: ..." tail of a failed name resolution, or an empty
+// string when there is nothing to list. A directory error costs the list rather
+// than replacing the original failure with a second one.
 std::string available_styles_note(const std::filesystem::path& directory) {
     std::vector<std::string> available;
     try {
@@ -677,28 +653,6 @@ std::optional<std::string> read_setting_name(
         throw std::runtime_error("'" + std::string(key) + "' must be a string");
     }
     return value;
-}
-
-// Whether one optional layer file names a provider of its own. A file that
-// cannot be read counts as one that does. Both consequences of that answer --
-// warning the reader that their choice may not reach this forum, and leaving
-// the forum's sessions alone rather than restarting them -- are harmless when
-// wrong this way and harmful when wrong the other way, so an unknown answer
-// takes the side that cannot mislead or destroy work.
-bool file_may_name_provider(const std::filesystem::path& path) {
-    if (!std::filesystem::is_regular_file(path)) return false;
-    try {
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
-            throw std::runtime_error("the file could not be opened");
-        }
-        return toml::parse(input, utf8_path(path)).contains("provider");
-    } catch (const std::exception& error) {
-        log_warn(
-            "Could not read '" + utf8_path(path) + "' while checking for a "
-            "provider override; assuming it overrides: " + error.what());
-        return true;
-    }
 }
 
 } // namespace
@@ -741,7 +695,6 @@ WorkspaceConfig load_workspace_config(const std::filesystem::path& root) {
         .log_level = *log_level,
         .providers_directory = providers_directory(root),
         .styles_directory = styles_directory(root),
-        .provider = load_provider_config(table, path),
     };
 }
 
@@ -839,7 +792,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
                 model.find_persona(forum.info.default_persona_id);
             std::vector<CharacterDefinition> definitions = load_forum_definitions(
                 forum, PersonaRoster{*persona}, model.character_directories_, definitions_directory,
-                {model.config_.provider, model.config_.providers_directory},
+                model.config_.providers_directory,
                 model.config_.styles_directory);
             for (const CharacterDefinition& definition : definitions) {
                 // A character may participate in multiple forums. The detail
@@ -887,9 +840,20 @@ WorkspaceDefinition WorkspaceDefinition::load(
                     directory->second / "character.toml", prompt_scope_table).value_or(
                         TemplateScope{}),
             };
+            const std::filesystem::path markdown_path =
+                directory->second / "CHARACTER.md";
             try {
-                const std::string prompt = expand_template_file(
-                    directory->second / "CHARACTER.md", options);
+                std::string prompt;
+                try {
+                    prompt = expand_template_file(markdown_path, options);
+                } catch (const std::exception& error) {
+                    // No forum supplies the forum-scoped variables here, so a
+                    // file that cannot expand is shown verbatim rather than
+                    // failing the whole workspace load.
+                    log_warn("Character '" + character.id
+                        + "' CHARACTER.md shown unexpanded: " + error.what());
+                    prompt = read_text_file(markdown_path, "character description");
+                }
                 model.character_markdown_.emplace(
                     character.id, character_description_from_prompt(prompt));
             } catch (const std::exception& error) {
@@ -904,10 +868,14 @@ WorkspaceDefinition WorkspaceDefinition::load(
         {std::string(assistant_id), std::string(assistant_name), std::nullopt, {}});
     model.character_markdown_.emplace(
         std::string(assistant_id), std::string(application_guide()));
+    const LoadedCharacterConfig assistant_config = load_character_config({
+        .providers_directory = model.config_.providers_directory,
+        .definition = root / "system" / "assistant" / "character.toml",
+    });
     model.definitions_.emplace(
         std::string(entrance_id),
         builtin_assistant_definitions(
-            model.config_.provider, inventory, PersonaRoster{builtin_guest()}));
+            assistant_config.backend, inventory, PersonaRoster{builtin_guest()}));
     // The Entrance is described by the application guide the Assistant carries,
     // not by a FORUM.md of its own, so its detail reports the absent one.
     model.forum_markdown_.emplace(std::string(entrance_id), std::string());
@@ -989,7 +957,7 @@ WorkspaceDefinition::CopiedForumDefinitions WorkspaceDefinition::copy_definition
             PersonaRoster{*persona},
             character_directories_,
             characters_directory_,
-            {config_.provider, config_.providers_directory},
+            config_.providers_directory,
             config_.styles_directory)};
     } catch (const std::exception& error) {
         log_warn(
@@ -1180,7 +1148,7 @@ std::optional<std::filesystem::path> WorkspaceDefinition::character_config_path(
 
 CharacterSettingsChange WorkspaceDefinition::write_character_settings(
     std::string_view id,
-    std::optional<std::string> provider,
+    std::string provider,
     std::optional<std::string> style) const {
     const std::optional<std::filesystem::path> path = character_config_path(id);
     if (!path) {
@@ -1188,17 +1156,16 @@ CharacterSettingsChange WorkspaceDefinition::write_character_settings(
             "Character '" + std::string(id) + "' has no writable configuration");
     }
     const auto load_selection = [&](
-        const std::optional<std::string>& name,
+        std::string_view name,
         std::string_view kind,
         auto&& load) {
-        if (!name) return;
         try {
-            require_path_component(*name, *path);
-            load(*name);
+            require_path_component(name, *path);
+            load(name);
         } catch (const std::exception& error) {
             throw std::invalid_argument(
                 "Character '" + std::string(id) + "' " + std::string(kind)
-                + " '" + *name + "' is not usable: " + error.what());
+                + " '" + std::string(name) + "' is not usable: " + error.what());
         }
     };
     CharacterSettingsChange change;
@@ -1216,36 +1183,16 @@ CharacterSettingsChange WorkspaceDefinition::write_character_settings(
         load_selection(provider, "provider", [&](std::string_view name) {
             (void)load_named_provider(config_.providers_directory, name, *path);
         });
-        load_selection(style, "style", [&](std::string_view name) {
-            (void)load_named_style(config_.styles_directory, name, *path);
-        });
-        assign_or_erase(table, "provider", provider);
+        if (style) {
+            load_selection(*style, "style", [&](std::string_view name) {
+                (void)load_named_style(config_.styles_directory, name, *path);
+            });
+        }
+        table.insert_or_assign("provider", provider);
         assign_or_erase(table, "style", style);
         return true;
     });
     return change;
-}
-
-ModelBackendConfig WorkspaceDefinition::resolve_session_provider(
-    std::string_view name) const {
-    try {
-        require_path_component(name, config_.providers_directory);
-        const std::filesystem::path path =
-            config_.providers_directory / path_from_utf8(name) / "config.toml";
-        // load_named_provider's reference path names the file that points at
-        // the provider. Nothing points at this one -- the name came from the
-        // keyboard -- so an absent config is reported here, rather than as a
-        // file that references itself.
-        if (!std::filesystem::is_regular_file(path)) {
-            throw std::runtime_error("no provider config is installed under this name");
-        }
-        return make_backend_config(
-            load_named_provider(config_.providers_directory, name, path));
-    } catch (const std::exception& error) {
-        throw std::invalid_argument(
-            "Provider '" + std::string(name) + "' is not usable: " + error.what()
-            + available_providers_note(config_.providers_directory));
-    }
 }
 
 CharacterAppearance WorkspaceDefinition::resolve_session_style(
@@ -1267,23 +1214,6 @@ CharacterAppearance WorkspaceDefinition::resolve_session_style(
             "Style '" + std::string(name) + "' is not usable: " + error.what()
             + available_styles_note(config_.styles_directory));
     }
-}
-
-std::vector<std::string> WorkspaceDefinition::forums_overriding_provider(
-    std::string_view id) const {
-    std::vector<std::string> result;
-    for (const ForumInfo& forum : forums_) {
-        if (!std::ranges::binary_search(forum.member_ids, id)) continue;
-        const auto directory = forum_directories_.find(forum.id);
-        if (directory == forum_directories_.end()) continue;
-        const std::filesystem::path members = directory->second / "members";
-        if (file_may_name_provider(members / "character_defaults.toml")
-            || file_may_name_provider(
-                members / path_from_utf8(id) / "character.toml")) {
-            result.push_back(forum.id);
-        }
-    }
-    return result;
 }
 
 } // namespace cha

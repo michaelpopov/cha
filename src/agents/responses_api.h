@@ -32,12 +32,11 @@ public:
     StreamDecodeResult finish() override;
 
 private:
-    void read_event(std::string_view event);
-    void handle_event_json(std::string_view data);
+    bool handle_event_json(std::string_view data);
     void emit_answer(std::string text);
 
     const GenerationDeltaSink* on_delta_;
-    std::string pending_;
+    SseFramer framer_;
     std::string protocol_error_;
     bool done_{};
     bool completed_successfully_{};

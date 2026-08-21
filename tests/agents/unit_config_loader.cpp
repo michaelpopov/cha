@@ -29,7 +29,6 @@ public:
         std::filesystem::create_directories(definition_.parent_path());
         std::filesystem::create_directories(defaults_.parent_path());
         std::filesystem::create_directories(member_.parent_path());
-        write(application_, "[provider]\nprovider = \"application\"\n");
         write_provider("application", "host = \"application\"\nport = 81\nmode = \"test\"\n");
     }
     ~ConfigFiles() { std::filesystem::remove_all(root_); }
@@ -47,12 +46,8 @@ public:
         std::filesystem::create_directories(path.parent_path());
         write(path, contents);
     }
-    // The workspace provider is supplied as an already-resolved layer, exactly
-    // as WorkspaceDefinition passes it in.
-    CharacterConfigPaths paths(bool defaults = false, bool member = false, bool application = true) const {
-        return {.providers = {application ? std::optional{ProviderConfig{
-                    .host = "application", .port = 81, .mode = Mode::test}} : std::nullopt,
-                providers_},
+    CharacterConfigPaths paths(bool defaults = false, bool member = false) const {
+        return {.providers_directory = providers_,
             .styles_directory = styles_,
             .definition = definition_,
             .forum_defaults = defaults ? std::optional{defaults_} : std::nullopt,
@@ -61,14 +56,13 @@ public:
     const std::filesystem::path& definition() const { return definition_; }
     const std::filesystem::path& defaults() const { return defaults_; }
     const std::filesystem::path& member() const { return member_; }
-    const std::filesystem::path& application() const { return application_; }
     const std::filesystem::path& providers() const { return providers_; }
     const std::filesystem::path& styles() const { return styles_; }
     std::filesystem::path provider(std::string_view name) const {
         return providers_ / std::string(name) / "config.toml";
     }
 private:
-    std::filesystem::path root_, application_ = root_ / "workspace.toml", definition_, defaults_, member_, providers_, styles_;
+    std::filesystem::path root_, definition_, defaults_, member_, providers_, styles_;
 };
 
 constexpr std::string_view required_definition = "display_name = \"Example\"\n";
@@ -154,48 +148,27 @@ TEST(Config, ReadsAndValidatesCacheRetention) {
         "cache_retention");
 }
 
-// A provider config is a whole backend. Selecting one must not leave stray
-// values from the layer below in the effective configuration.
-TEST(Config, AHigherLayerProviderReplacesTheLowerOneOutright) {
+TEST(Config, IgnoresProviderSelectionsOutsideTheCharacterDefinition) {
     ConfigFiles files;
     files.write_provider("definition",
         "host = \"definition.example\"\nport = 443\nmode = \"test\"\nmodel = \"one\"\n"
         "temperature = 0.5\nreasoning_effort = \"low\"\nbase_path = \"/definition\"\n");
-    files.write_provider("forum",
-        "host = \"forum.example\"\nport = 8443\nmode = \"net\"\nmodel = \"two\"\n");
     files.write(files.definition(),
         std::string(required_definition) + "provider = \"definition\"\n");
-    files.write(files.defaults(), "provider = \"forum\"\n");
+    // These names need not even resolve: provider keys in optional prompt
+    // layers are inert legacy data.
+    files.write(files.defaults(), "provider = \"missing-forum\"\n");
+    files.write(files.member(), "provider = 42\n");
 
     const ModelBackendConfig config =
-        load_character_config(files.paths(true)).backend;
-    EXPECT_EQ(config.host, "forum.example");
-    EXPECT_EQ(config.port, 8443);
-    EXPECT_EQ(config.mode, Mode::net);
-    EXPECT_EQ(config.model, "two");
-    EXPECT_FALSE(config.temperature);
-    EXPECT_TRUE(config.reasoning_effort.empty());
-    EXPECT_TRUE(config.base_path.empty());
-}
-
-TEST(Config, EachLayerCanSelectTheProviderAndTheHighestOneWins) {
-    ConfigFiles files;
-    for (const std::string_view name : {"definition", "forum", "member"}) {
-        files.write_provider(name,
-            "host = \"" + std::string(name) + "\"\nport = 443\nmode = \"test\"\n");
-    }
-    files.write(files.definition(), required_definition);
-    EXPECT_EQ(load_character_config(files.paths()).backend.host, "application");
-
-    files.write(files.definition(),
-        std::string(required_definition) + "provider = \"definition\"\n");
-    EXPECT_EQ(load_character_config(files.paths()).backend.host, "definition");
-
-    files.write(files.defaults(), "provider = \"forum\"\n");
-    EXPECT_EQ(load_character_config(files.paths(true)).backend.host, "forum");
-
-    files.write(files.member(), "provider = \"member\"\n");
-    EXPECT_EQ(load_character_config(files.paths(true, true)).backend.host, "member");
+        load_character_config(files.paths(true, true)).backend;
+    EXPECT_EQ(config.host, "definition.example");
+    EXPECT_EQ(config.port, 443);
+    EXPECT_EQ(config.mode, Mode::test);
+    EXPECT_EQ(config.model, "one");
+    EXPECT_EQ(config.temperature, 0.5);
+    EXPECT_EQ(config.reasoning_effort, "low");
+    EXPECT_EQ(config.base_path, "/definition");
 }
 
 TEST(Config, EmptyAndCommentOnlyOptionalLayersKeepTheProviderBelow) {
@@ -212,10 +185,9 @@ TEST(Config, EmptyAndCommentOnlyOptionalLayersKeepTheProviderBelow) {
     }
 }
 
-TEST(Config, MergesThePromptScopeAcrossLayersWhileTheProviderIsReplaced) {
+TEST(Config, MergesPromptScopeWithoutOverridingTheProvider) {
     ConfigFiles files;
     files.write_provider("definition", "host = \"definition\"\nport = 80\nmode = \"test\"\n");
-    files.write_provider("member", "host = \"member\"\nport = 8443\nmode = \"net\"\n");
     files.write(files.definition(),
         std::string(required_definition)
             + "provider = \"definition\"\n[prompt]\nvalue = \"definition\"\nbase = \"base\"\n");
@@ -224,7 +196,7 @@ TEST(Config, MergesThePromptScopeAcrossLayersWhileTheProviderIsReplaced) {
         "provider = \"member\"\n[prompt]\nvalue = \"member\"\nmember = \"member\"\n");
 
     const LoadedCharacterConfig loaded = load_character_config(files.paths(true, true));
-    EXPECT_EQ(loaded.backend.host, "member");
+    EXPECT_EQ(loaded.backend.host, "definition");
     EXPECT_EQ(loaded.prompt_variables.at("value"), "member");
     EXPECT_EQ(loaded.prompt_variables.at("base"), "base");
     EXPECT_EQ(loaded.prompt_variables.at("default"), "default");
@@ -245,9 +217,9 @@ TEST(Config, SeparatesDefinitionMetadataFromModelBackendConfiguration) {
     EXPECT_EQ(loaded.backend.port, 8080);
 }
 
-// Provider settings are centralized, so a file that still spells one out is
-// stale configuration rather than a silent no-op.
-TEST(Config, RejectsInlineProviderSettingsInEveryCharacterLayer) {
+// Connection settings belong in named provider configs. Character definitions
+// may select one by name, while prompt layers cannot inline connection fields.
+TEST(Config, RejectsInlineProviderSettingsInCharacterAndPromptLayers) {
     ConfigFiles files;
     for (const std::string_view setting :
             {"host = \"example\"\n", "port = 80\n", "model = \"one\"\n",
@@ -260,7 +232,8 @@ TEST(Config, RejectsInlineProviderSettingsInEveryCharacterLayer) {
             files.definition(),
             "provider setting");
     }
-    files.write(files.definition(), required_definition);
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"application\"\n");
     files.write(files.defaults(), "model = \"one\"\n");
     expect_error_containing(
         [&] { (void)load_character_config(files.paths(true)); },
@@ -272,31 +245,6 @@ TEST(Config, RejectsInlineProviderSettingsInEveryCharacterLayer) {
         [&] { (void)load_character_config(files.paths(true, true)); },
         files.member(),
         "provider setting");
-}
-
-TEST(Config, RejectsInlineProviderSettingsInTheWorkspaceTable) {
-    ConfigFiles files;
-    files.write(files.application(),
-        "[provider]\nprovider = \"application\"\nhost = \"elsewhere\"\n");
-    expect_error_containing(
-        [&] { (void)load_provider_config(files.application()); },
-        files.application(),
-        "provider setting");
-    files.write(files.application(), "[provider]\napi_key = \"secret\"\n");
-    expect_error_containing(
-        [&] { (void)load_provider_config(files.application()); },
-        files.application(),
-        "api_key");
-    files.write(files.application(), "[provider]\nhtps = true\n");
-    expect_error_containing(
-        [&] { (void)load_provider_config(files.application()); },
-        files.application(),
-        "htps");
-    files.write(files.application(), "[provider]\n");
-    expect_error_containing(
-        [&] { (void)load_provider_config(files.application()); },
-        files.application(),
-        "requires a 'provider' name");
 }
 
 TEST(Config, RejectsAProviderReferenceWithoutAConfigFile) {
@@ -321,28 +269,13 @@ TEST(Config, RejectsAProviderNameThatEscapesTheProvidersDirectory) {
     }
 }
 
-TEST(Config, RequiresAProviderSomewhereBelowTheCharacter) {
+TEST(Config, RequiresAProviderInTheCharacterDefinition) {
     ConfigFiles files;
     files.write(files.definition(), required_definition);
     expect_error_containing(
-        [&] { (void)load_character_config(files.paths(false, false, false)); },
+        [&] { (void)load_character_config(files.paths()); },
         files.definition(),
-        "selects no provider");
-}
-
-TEST(Config, ResolvesTheWorkspaceProviderReferenceAndRejectsAMissingOne) {
-    ConfigFiles files;
-    files.write_provider("workspace", "host = \"workspace.example\"\nport = 443\nmode = \"test\"\n");
-    files.write(files.application(), "[provider]\nprovider = \"workspace\"\n");
-    const ProviderConfig provider = load_provider_config(files.application());
-    EXPECT_EQ(provider.host, "workspace.example");
-    EXPECT_EQ(provider.port, 443);
-
-    files.write(files.application(), "[provider]\nprovider = \"missing\"\n");
-    expect_error_containing(
-        [&] { (void)load_provider_config(files.application()); },
-        files.application(),
-        "missing");
+        "requires a 'provider' name");
 }
 
 TEST(Config, RejectsDefinitionOnlyAndRemovedIdentityFieldsInEveryLayer) {
@@ -352,7 +285,8 @@ TEST(Config, RejectsDefinitionOnlyAndRemovedIdentityFieldsInEveryLayer) {
             std::string(required_definition) + std::string(key) + " = \"Wrong\"\n");
         expect_error_containing([&] { (void)load_character_config(files.paths()); }, files.definition(), key);
     }
-    files.write(files.definition(), required_definition);
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"application\"\n");
     for (const auto& path : {files.defaults(), files.member()}) {
         files.write(path, "display_name = \"Wrong\"\n");
         expect_error_containing(
@@ -431,21 +365,18 @@ TEST(Config, ValidatesMetadataProviderReferencesWhenAProvidersDirectoryIsGiven) 
         "missing");
 }
 
-TEST(Config, ValidatesForumProviderDefaultsWithoutLoadingAnyMember) {
+TEST(Config, IgnoresAForumProviderWithoutLoadingIt) {
     ConfigFiles files;
-    files.write_provider("forum", "host = \"forum.example\"\nport = 443\nmode = \"test\"\n");
-    files.write(files.defaults(), "provider = \"forum\"\n");
-    EXPECT_NO_THROW(validate_forum_provider_defaults(files.defaults(), files.providers()));
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"application\"\n");
     files.write(files.defaults(), "provider = \"missing\"\n");
-    expect_error_containing(
-        [&] { validate_forum_provider_defaults(files.defaults(), files.providers()); },
-        files.defaults(),
-        "missing");
+    EXPECT_EQ(load_character_config(files.paths(true)).backend.host, "application");
 }
 
 TEST(Config, DefaultsCharacterAppearanceToTheInterfaceSettings) {
     ConfigFiles files;
-    files.write(files.definition(), "display_name = \"Example\"\n");
+    files.write(files.definition(),
+        "display_name = \"Example\"\nprovider = \"application\"\n");
     const CharacterAppearance appearance =
         load_character_metadata(files.definition()).appearance;
     EXPECT_EQ(appearance, CharacterAppearance{});
@@ -464,6 +395,7 @@ TEST(Config, ReadsEveryCharacterAppearanceFieldAndCarriesItIntoTheEffectiveConfi
         "text_color = \"accent\"\n");
     files.write(files.definition(),
         "display_name = \"Seneca\"\n"
+        "provider = \"application\"\n"
         "style = \"serif-italic-semibold-large-accent\"\n");
     const CharacterAppearance expected{CharacterFont::serif, CharacterSlant::italic,
         CharacterWeight::semibold, CharacterScale::large, CharacterTextColor::accent};
@@ -536,7 +468,8 @@ TEST(Config, RequiresDefinitionDisplayName) {
 
 TEST(Config, PreservesModelBackendDefaultsForOmittedProviderFields) {
     ConfigFiles files;
-    files.write(files.definition(), required_definition);
+    files.write(files.definition(),
+        std::string(required_definition) + "provider = \"application\"\n");
     const ModelBackendConfig config = load_character_config(files.paths()).backend;
     EXPECT_TRUE(config.model.empty());
     EXPECT_TRUE(config.base_path.empty());
@@ -567,13 +500,17 @@ TEST(Config, ReadsExplicitFalseBooleansFromAProviderConfig) {
 TEST(Config, DerivesIdFromANonAsciiDefinitionDirectory) {
     const auto root = std::filesystem::temp_directory_path() / "cha_config_\xC3\xA9";
     const auto definition = root / "caf\xC3\xA9" / "character.toml";
+    const auto providers = root / "system" / "providers";
     std::filesystem::create_directories(definition.parent_path());
+    std::filesystem::create_directories(providers / "test");
     {
         std::ofstream file(definition);
-        file << required_definition;
+        file << required_definition << "provider = \"test\"\n";
     }
+    std::ofstream(providers / "test" / "config.toml")
+        << "host = \"test\"\nport = 1\nmode = \"test\"\n";
     const LoadedCharacterConfig loaded = load_character_config({
-        .providers = {ProviderConfig{.host = "application", .port = 81, .mode = Mode::test}},
+        .providers_directory = providers,
         .definition = definition});
     EXPECT_EQ(loaded.character.id, "caf\xC3\xA9");
     EXPECT_EQ(load_character_metadata(definition).id, "caf\xC3\xA9");

@@ -116,7 +116,7 @@ std::optional<std::string> nullable_string(
 
 CharacterSettingsUpdate parse_character_settings_update(const nlohmann::json& json) {
     exact_keys(json, {"provider", "style"});
-    return {nullable_string(json, "provider"), nullable_string(json, "style")};
+    return {required_string(json, "provider"), nullable_string(json, "style")};
 }
 
 void parse_empty_object(const nlohmann::json& json) {

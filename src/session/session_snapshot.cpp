@@ -1,6 +1,7 @@
 #include "session/session_snapshot.h"
 
 #include "session/session_database.h"
+#include "util/logging.h"
 #include "util/path_name.h"
 
 #include <algorithm>
@@ -44,12 +45,19 @@ void export_and_bootstrap_sessions(
         std::sort(databases.begin(), databases.end());
         std::sort(snapshots.begin(), snapshots.end());
 
+        // One unreadable file is what listing already tolerates, so it is
+        // logged and skipped rather than failing the whole reload.
         for (const std::filesystem::path& database : databases) {
             const std::string id = utf8_path(database.stem());
-            export_session_database_sql(
-                database,
-                with_extension(database, ".sql"),
-                {forum.forum_id, id});
+            try {
+                export_session_database_sql(
+                    database,
+                    with_extension(database, ".sql"),
+                    {forum.forum_id, id});
+            } catch (const std::exception& error) {
+                log_warn("Session snapshot export skipped: path="
+                    + utf8_path(database) + " reason=" + error.what());
+            }
         }
 
         for (const std::filesystem::path& snapshot : snapshots) {

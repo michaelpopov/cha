@@ -1,6 +1,3 @@
-[provider]
-provider = "terra"
-
 [logging]
 file = "logs/cha.log"
 level = "info"

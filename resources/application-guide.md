@@ -18,11 +18,11 @@ private to this server run and is removed on shutdown.
 A workspace character's model provider and visual style are edited from that
 character's Settings screen: Characters → the character → the row naming it
 above the description.
-The first picker entry is Workspace default or No style, which clears the
-setting. Saving restarts conversations that use the character and loses any
-answer being generated. A forum that sets its own provider is named under the
-picker; changing the character's provider does not affect that forum. Assistant
-has no Settings screen — it is built in and has no `character.toml`.
+The provider picker requires a selection; No style clears only the visual style.
+Saving restarts conversations that use the character and loses any answer being
+generated. Forum and member configuration cannot override the character's
+provider. Assistant has no Settings screen; its provider is configured in
+`system/assistant/character.toml`.
 
 ## Commands
 
@@ -32,7 +32,6 @@ has no Settings screen — it is built in and has no `character.toml`.
 - `/info` shows session information; `/characters` lists the forum's characters (`/agents` is a legacy alias).
 - `/@Name` changes the default character and saves it as the forum's default.
 - `/!Name` changes the current persona and saves it as the forum's default.
-- `/provider <name>` switches the current character's provider for this session only; `/provider` reports the override and `/provider default` restores the configured provider. Nothing is saved.
 - `/style <name>` switches the current character's appearance for this session only; `/style` reports the override and `/style default` restores the configured style. Nothing is saved.
 - `/stop` stops generation; `/exit` closes the live session.
 

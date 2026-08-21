@@ -20,7 +20,8 @@ generation pool tasks.
 | `generation_batch.*` | One in-flight operation: its execution slots, shared start gate, foreground position, cancellation, event queues, and wait state. |
 | `model_backend.h` | The `ModelBackend` seam, discovery-safe runtime diagnostics, and prepared-request/result types. |
 | `provider_client.*` | Shared HTTP transport for Chat Completions and Responses: curl execution, cancellation, model discovery, HTTP outcome mapping, and transport diagnostics. |
-| `provider_response.*` | Chat Completions response interpretation: incremental SSE framing, streaming/non-streaming JSON decoding, reasoning fields, and answer validation. |
+| `provider_response.*` | Chat Completions response interpretation: streaming/non-streaming JSON decoding, reasoning fields, and answer validation. |
+| `sse_framer.*` | Incremental inbound SSE framing shared by the supported provider APIs. |
 | `responses_api.*` | Responses API request body builder plus streaming and non-streaming decoding for answer/refusal text. |
 
 ## From character directory to running model backend
@@ -28,9 +29,8 @@ generation pool tasks.
 ```mermaid
 flowchart LR
     subgraph disk["Workspace files"]
-        app_cfg["workspace.toml [provider]<br/>selects a provider by ID"]
         providers["system/providers/&lt;id&gt;/config.toml<br/>every provider setting"]
-        definition_cfg["characters/X/character.toml"]
+        definition_cfg["characters/X/character.toml<br/>selects one provider by ID"]
         definition_prompt["characters/X/CHARACTER.md"]
         base["forums/R/members/character_defaults.toml<br/>optional forum defaults + [prompt]"]
         member_cfg["forums/R/members/X/character.toml<br/>optional"]
@@ -40,8 +40,7 @@ flowchart LR
         shared["definition includes under characters/;<br/>member/forum includes under the forum"]
     end
 
-    app_cfg --> load["load_character_config<br/>highest provider selection wins"]
-    definition_cfg --> load
+    definition_cfg --> load["load_character_config<br/>character provider + prompt layers"]
     base --> load
     member_cfg --> load
     providers -->|"resolved reference"| load
@@ -84,14 +83,12 @@ on the session's owner thread; a forum check loads synchronously on its
 calling thread. `session/` decides
 *which* directories to load, `agents/` decides *how*.
 
-Configuration selects complete provider configs; it does not overlay provider
-fields. The application `[provider]`, the character definition, the optional
-forum `members/character_defaults.toml`, and the optional per-member override
-are read in that order, and the highest layer naming a `provider` supplies the
-whole backend. A layer that names none inherits the one below it. Each
-reference is read from `system/providers/<id>/config.toml`; a missing config
-stops startup, as does any provider setting written into a layer instead of a
-provider config. Only the `[prompt]` scope still merges across layers.
+Each character definition selects one complete provider config by ID; provider
+fields are never overlaid. The reference is read from
+`system/providers/<id>/config.toml`, and a missing selection or config stops
+startup for a forum using that character. Provider keys in forum defaults and
+member overrides are ignored. Their `[prompt]` scopes still merge with the
+character definition in the usual order.
 
 The character definition directory name provides the ID, and its
 file must define `display_name`; it may also carry an optional one-line
@@ -162,9 +159,7 @@ field and unprefixed text.
 This split exists so slow providers never block the UI, and so that two
 different lifetimes stay in two different types. `GenerationExecutor` lives as
 long as the session: it owns one backend per forum character and borrows the
-session's fixed-size `ThreadPool`. A slot can be rebuilt while idle — a
-runtime provider override (`/provider`) replaces one character's backend from
-its retained definition without touching the others. `GenerationBatch` lives
+session's fixed-size `ThreadPool`. `GenerationBatch` lives
 as long as one submitted operation: it owns that operation's ordered execution
 slots, their shared start gate, the foreground position, and cancellation
 state.

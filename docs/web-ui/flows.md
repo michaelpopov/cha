@@ -59,7 +59,7 @@ flowchart TD
 ```
 
 Save stays on Settings. Recovery reports `session-snapshot`, so it does not
-force Chat. A provider-only save skips forums that override the provider.
+force Chat. Every forum containing the changed character is affected.
 
 ## Forum and session navigation
 

@@ -72,7 +72,8 @@ TEST_F(SessionOpenTest, PersistsAChangedForumDefaultCharacter) {
     std::filesystem::create_directories(character);
     std::filesystem::create_directories(
         fixture_.root() / "forums" / "lobby" / "members" / "alpha");
-    std::ofstream(character / "character.toml") << "display_name = \"Alpha\"\n";
+    std::ofstream(character / "character.toml")
+        << "display_name = \"Alpha\"\nprovider = \"test\"\n";
     std::ofstream(character / "CHARACTER.md") << "Alpha instructions\n";
     std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\ndescription = \"Where it starts\"\n"
@@ -159,7 +160,8 @@ TEST_F(SessionOpenTest, ReplacesTheLegacyDefaultAgentKeyWhenItSaves) {
     std::filesystem::create_directories(character);
     std::filesystem::create_directories(
         fixture_.root() / "forums" / "lobby" / "members" / "alpha");
-    std::ofstream(character / "character.toml") << "display_name = \"Alpha\"\n";
+    std::ofstream(character / "character.toml")
+        << "display_name = \"Alpha\"\nprovider = \"test\"\n";
     std::ofstream(character / "CHARACTER.md") << "Alpha instructions\n";
     std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\ndefault_agent = \"guide\"\n";
@@ -239,7 +241,8 @@ TEST_F(SessionOpenTest, ReleasesTheLeaseWhenControllerConstructionFails) {
     fixture_.write_provider("keyless",
         "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n"
         "api_key_env = \"CHA_TEST_UNSET_API_KEY\"\n");
-    fixture_.write_character_defaults("provider = \"keyless\"\n");
+    fixture_.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"keyless\"\n");
     const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
@@ -259,7 +262,7 @@ TEST_F(SessionOpenTest, ReResolvesCharacterDefinitionsWhenASessionOpens) {
     const StoredSession created = sessions->create("lobby", "Stored");
 
     fixture_.write_character_config(
-        "display_name = \"Renamed\"\nstyle = \"serif-italic\"\n");
+        "display_name = \"Renamed\"\nprovider = \"test\"\nstyle = \"serif-italic\"\n");
     std::ofstream(fixture_.root() / "forums" / "lobby" / "config.toml")
         << "display_name = \"Renamed Lobby\"\n";
 
@@ -334,7 +337,8 @@ TEST_F(SessionOpenTest, ReopensAStoredSessionWithTheSameDescriptor) {
 TEST_F(SessionOpenTest, OpensAWorkspaceWithoutSharedCharacterDefaults) {
     std::filesystem::remove(
         fixture_.root() / "forums" / "lobby" / "members" / "character_defaults.toml");
-    fixture_.write_character_config("display_name = \"Guide\"\n");
+    fixture_.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"test\"\n");
     const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "No shared config");

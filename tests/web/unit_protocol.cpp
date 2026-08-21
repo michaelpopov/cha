@@ -112,7 +112,6 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             .available_styles = {{"serif-italic", "Serif italic",
                 {CharacterFont::serif, CharacterSlant::italic,
                  CharacterWeight::normal, CharacterScale::normal}}},
-            .provider_overridden_by = {"Circle of Life"},
             .writable = true,
         }),
         nlohmann::json({
@@ -129,7 +128,6 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
                 {"appearance", {{"font", "serif"}, {"style", "italic"},
                     {"weight", "normal"}, {"size", "normal"}, {"text_color", "normal"}}},
             }}},
-            {"provider_overridden_by", {"Circle of Life"}},
             {"writable", true},
         }));
     EXPECT_EQ(
@@ -338,13 +336,16 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
 
     const CharacterSettingsUpdate update = parse_character_settings_update(
         {{"provider", "qwen"}, {"style", nullptr}});
-    EXPECT_EQ(update.provider, std::optional<std::string>("qwen"));
+    EXPECT_EQ(update.provider, "qwen");
     EXPECT_FALSE(update.style);
     EXPECT_THROW(
         (void)parse_character_settings_update({{"provider", "qwen"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_character_settings_update({{"provider", 1}, {"style", nullptr}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_character_settings_update({{"provider", nullptr}, {"style", nullptr}}),
         std::invalid_argument);
 
     EXPECT_EQ(parse_create_session_label({{"label", "Notes"}}), "Notes");

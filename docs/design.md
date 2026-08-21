@@ -1,519 +1,793 @@
-# Design: model-provider communication and context caching
+# Design: process-wide provider execution
 
-## Purpose
+## Status
 
-This report aggregates the seven provider investigations written on
-2026-08-19:
+This document describes the planned provider-execution redesign. It is not an
+implementation description of the current code.
 
-- [Pi detailed report](grok-report.md) and
-  [Pi recommendations](provider-communication-report.md);
-- [OpenCode detailed report](grok-opencode.md) and
-  [OpenCode recommendations](provider-communication-opencode-report.md);
-- [Tau detailed report](grok-tau.md) and
-  [Tau recommendations](provider-communication-tau-report.md);
-- [earlier Pi summary](provider-communication.md).
+The design deliberately stays small. Its purpose is to move network execution
+out of active sessions, reuse provider connections across sessions, and retain
+the conversation behavior that already works. It is not intended to become a
+general scheduling framework or a separate provider service.
 
-The reports agree on the important points. Their differences are mostly about
-retry parameters, cache configuration names, and provider-specific affinity
-headers. This document resolves those differences into one CHA-sized design.
+## Summary
 
-The primary goal is to reduce inference cost by making provider-side prompt
-caching effective. The secondary goal is to make provider calls bounded,
-retryable when safe, and easier to diagnose.
+CHA will have one process-owned `Providers` instance. Every active session will
+borrow it and submit generation requests to it. `Providers` will own:
 
-## Executive decision
+- one fixed worker pool shared by all sessions;
+- the cache of initialized provider state;
+- reusable `ProviderClient` instances and their curl easy handles;
+- provider-task dispatch and process-level execution shutdown.
 
-Implement provider improvements in two phases:
+An active session will continue to own:
 
-**Phase 1: Cost measurement (highest ROI first)**
+- conversation and transcript state;
+- character selection and prompt construction;
+- a handle for its current generation batch;
+- foreground ordering, persistence, and presentation of generated output;
+- cancellation of its own work.
 
-1. Make the prompt prefix stable and log provider-reported cached tokens.
-2. Add a per-session-and-character cache key for direct OpenAI requests.
+A normal prompt is a batch containing one request. `/mcast` is a batch
+containing several requests. The provider layer may run requests concurrently,
+but the session layer keeps the existing deterministic order in which multicast
+answers become visible.
 
-These items unlock cache effectiveness measurement. Phase 1 completion means:
-logs show `cache_read_tokens` on repeated turns, same `prompt_cache_key`
-sent on each turn, and stable system prefix across submissions. This gives
-evidence of whether provider-side caching is working, which directly answers
-the cost-reduction question.
+`Providers` is a singleton by ownership, not a global service locator. It is
+constructed once in the process composition root and passed explicitly to the
+objects that need it.
 
-**Phase 2: Resilience and diagnostics (after Phase 1 shows cache benefit)**
+## Motivation
 
-3. Add bounded timeouts, pre-output retries, and optional generation fields.
-4. Classify overflow and improve diagnostic metadata.
-
-Phase 2 improves reliability (transient failures recover gracefully, overflow
-is detected, diagnostics are clear). Do not start Phase 2 until Phase 1 logs
-show provider caching is effective.
-
-Do not add stored provider conversations, `previous_response_id`, a provider
-SDK, a compatibility framework, automatic summarization, token-price catalogs,
-or history truncation unless logs demonstrate a real need.
-
-## Current state
-
-CHA already has a suitable architecture:
-
-- `ProviderClient` owns libcurl, authentication, discovery, and HTTP outcomes.
-- Chat Completions and Responses have separate request/stream codecs.
-- `ModelBackend::prepare` is separate from the slow `perform` call.
-- `store: false` keeps CHA's SQLite transcript authoritative.
-- cancellation interrupts curl and is distinct from transport failure;
-- terminal usage is already parsed as input and output tokens;
-- provider configuration remains a small, closed TOML schema.
-
-The important current gaps are:
-
-- `project_model_context()` puts the current submission time in the system
-  prompt, changing the beginning of every request;
-- no cache key or affinity hint is sent;
-- cached input tokens are not parsed or logged;
-- generation has no overall or idle timeout;
-- a transient 429, 5xx, or connection reset fails the turn immediately;
-- `temperature = 1.0` is sent even when it was not configured;
-- output is not bounded with `max_tokens` / `max_output_tokens`;
-- overflow, quota, authentication, and malformed responses mostly collapse
-  into generic protocol errors.
-
-## Provider-side context caching
-
-### How the cache works
-
-OpenAI-compatible provider caches generally reuse a token prefix from an
-earlier request. The system instructions, tool definition, and leading
-messages must be identical. New material may be appended at the tail without
-invalidating the earlier prefix.
-
-This cache is independent of stored conversation state. CHA should retain
-`store: false`; a prompt cache key is a routing hint, not a conversation ID
-that lets the provider own history.
-
-A cache key cannot repair a changing prefix. Prefix stability is therefore the
-first and required change.
-
-### 1. Freeze the system prefix
-
-Remove the per-turn sentence currently appended to the system message:
+Today provider execution is nested under each active session:
 
 ```text
-Conversation timestamps are in UTC. The current prompt was submitted at ...
+LiveSession
+  SessionController
+    ThreadPool
+    GenerationExecutor
+      ProviderClient per character
+        CurlEasyHandle
+    GenerationBatch
 ```
 
-Keep the timestamp already attached to the final user message and the stable
-timestamps stored on historical entries. This leaves the model with the same
-time information while moving the changing value to the request tail.
+This makes threads and network connections session resources even though they
+do not contain conversation state. The consequences are:
 
-If a system-level time hint is desired, use only a stable sentence such as
-`Conversation timestamps are in UTC.` A calendar date that changes once per
-day is acceptable but unnecessary; omitting it is simpler and maximizes cache
-life.
+- every open session reserves its own worker threads;
+- provider connections cannot be reused by another session;
+- the number of threads grows with the number of sessions and characters;
+- curl and scheduling lifetimes are coupled to conversation lifetimes;
+- future process-wide concurrency control would require coordinating several
+  independent pools.
 
-The invariant is:
+The provider configuration cleanup is a prerequisite for this design. A
+character configuration is now the only place that selects a provider. Forum,
+session, command, and other overrides must not affect provider selection.
 
-> For the same character, forum definition, persona roster, tools, and stored
-> history, changing only the current submission time must not change the
-> system prompt or any earlier message.
+## Goals
 
-The character prompt, forum prompt, roster, and hosted `web_search` tool shape
-are already stable during a live session. A workspace reload, persona change,
-provider change, `/hide`, or another deliberate history rewrite may cause a
-cache miss. Those misses are correct.
+1. Keep exactly one provider-execution component per CHA process.
+2. Share a bounded number of worker threads across all active sessions.
+3. Reuse initialized provider state and curl handles across sessions.
+4. Support a normal request and concurrent `/mcast` requests with the same API.
+5. Keep transcripts, prompts, queues, and presentation state isolated between
+   sessions and requests.
+6. Preserve cancellation, streaming, persistence, and deterministic multicast
+   presentation.
+7. Make provider configuration reloads safe for already-running work.
+8. Make shutdown order explicit and ensure no provider task calls destroyed
+   session objects.
 
-OpenCode's persisted “Context Epoch” is not needed. CHA already freezes the
-loaded workspace for a live generation, and workspace reload has explicit
-lifecycle semantics.
+## Non-goals
 
-### 2. Use a cache key scoped to the real prompt
+This change does not introduce:
 
-Use one key per forum session and target character:
+- a separate or remotely accessible provider service;
+- dynamic worker-pool resizing;
+- one worker pool per provider;
+- provider-specific rate limiting or priority scheduling;
+- a new retry policy;
+- curl multi;
+- persistent connection caches across process restarts;
+- request deduplication or shared generated output;
+- provider selection outside character configuration;
+- a replacement for the current transcript or persistence model.
 
-```text
-<forum-id>/<session-id>/<character-id>
+## Current behavior to preserve
+
+The redesign changes ownership, not user-visible generation semantics.
+
+- `SessionController` creates one immutable model-history view before a batch.
+- Every request in `/mcast` sees that same pre-multicast history.
+- No target execution can reach a provider until the session has committed the
+  durable state that receives its output.
+- Each execution has its own event queue and cancellation state.
+- Provider work may happen concurrently.
+- Multicast outputs are consumed and persisted in target order.
+- Failure of one multicast target does not corrupt another target's output.
+- Session shutdown cancels and waits for its active generation before destroying
+  the notifier and controller.
+
+## Target ownership
+
+```mermaid
+flowchart TD
+    Main["web_main composition root"] --> Providers["Providers (one per process)"]
+    Main --> Manager["LiveSessionManager"]
+    Manager --> Session["LiveSession"]
+    Session --> Controller["SessionController"]
+    Controller -->|"stage immutable requests"| Providers
+    Providers --> Pool["global ThreadPool"]
+    Providers --> States["ProviderState cache"]
+    States --> Clients["idle ProviderClient / curl slots"]
+    Pool --> Task["provider execution"]
+    Task --> Queue["per-execution GenerationEvent queue"]
+    Task -->|"notify"| Wake["session WakeNotifier"]
+    Controller -->|"consume"| Queue
 ```
 
-The character ID is required because each character sees a different
-projection of the same forum transcript. A forum-wide or session-only key
-would create noisy affinity between different prompt prefixes.
+The process composition root constructs `Providers` before the live-session
+manager. Consequently, normal reverse destruction destroys all live sessions
+before it destroys `Providers`.
 
-If the composed key is at most 64 ASCII characters, send it unchanged. If it
-is longer, replace it with SHA-256, outputting the first 64 characters of the
-hex digest. SHA-256 is deterministic across process restarts, collision-resistant,
-and available in C++ via OpenSSL. Do not use `std::hash`, whose representation
-is not a persistence contract.
+`SessionController` borrows `Providers&`. It will no longer own a `ThreadPool`
+or a `GenerationExecutor`. A session still owns its `GenerationBatch`, because
+the batch is the session's handle for observing, ordering, canceling, and
+waiting for its own requests.
 
-Plumb the identity through existing structures:
+## Provider selection
 
-1. pass `SessionIdentity` from `open_session()` into `SessionController`;
-2. add a cache-key string to `RunSpec` or `GenerationRequest`;
-3. construct the key in `start_batch()` for each target character;
-4. let the request builders and `ProviderClient` consume it.
-
-An empty identity in narrow unit-test constructors should simply omit caching.
-
-### 3. Provider behavior
-
-Start with behavior that is supported by the reports and by CHA's checked-in
-providers:
-
-| Provider path | Body | Headers | Notes |
-| --- | --- | --- | --- |
-| Direct OpenAI Responses | `prompt_cache_key` | `session_id` | Primary CHA caching path; may also support explicit retention. |
-| Direct OpenAI Chat Completions | `prompt_cache_key` | none | Tau specifically recommends no affinity header here. |
-| Gemini OpenAI-compatible | none | none | Rely on implicit stable-prefix caching and parse reported cache usage. |
-| OpenRouter Chat Completions | none initially | none initially | Add `x-session-id` only after its effect is documented or measured for CHA's models. |
-| Other compatible endpoints | none by default | none | Opt in only when a checked-in provider needs it. |
-
-Do not set `x-client-request-id` to the session key. Tau's investigation
-corrects the earlier Pi report here: it is a per-request diagnostic identifier,
-not session affinity. Reusing the session key would make request tracing
-ambiguous.
-
-Do not infer broad compatibility from `base_path`. Direct-host matching is a
-safe default; a future explicit provider flag can opt a gateway into a key or
-header without introducing a compatibility matrix.
-
-### 4. Cache configuration
-
-Use one provider-level option:
-
-```toml
-cache_retention = "short"  # off | short | long
-```
-
-Semantics:
-
-- `off`: omit cache keys, affinity headers, and retention fields;
-- `short` (default): send the supported key/header and use provider-default
-  in-memory retention;
-- `long`: on direct OpenAI Responses, additionally send
-  `prompt_cache_retention = "24h"`; elsewhere behave as `short` until that
-  provider is explicitly supported.
-
-This retains the useful Pi distinction while avoiding separate
-`prompt_cache`, `cache_ttl`, and affinity options. `long` must remain opt-in
-because provider support and billing treatment vary.
-
-Do not put the generated `prompt_cache_key` in TOML. It is request identity,
-not connection configuration.
-
-### 5. Observe cache behavior before claiming savings
-
-Extend `GenerationTokenUsage` with:
+Provider selection remains part of the resolved character definition. The
+resolved value must contain both a stable provider identifier and the exact
+connection configuration used by that character:
 
 ```cpp
-std::optional<std::size_t> cache_read_tokens;
+struct ProviderSelection {
+  std::string id;
+  ModelBackendConfig config;
+};
 ```
 
-Parse:
+`CharacterDefinition` should contain `ProviderSelection` instead of an
+unidentified `ModelBackendConfig`. `LoadedCharacterConfig` must carry the same
+resolved selection into the runtime definition.
 
-- Responses: `usage.input_tokens_details.cached_tokens`;
-- Chat Completions: `usage.prompt_tokens_details.cached_tokens`;
-- optionally as a compatibility fallback:
-  `usage.prompt_cache_hit_tokens`.
-
-Keep the provider's raw `input_tokens` value and log
-`cache_read_tokens` separately. If an uncached count is useful, derive it as
-`max(input_tokens - cache_read_tokens, 0)` and name it explicitly. Do not
-silently redefine `input_tokens`, because providers generally report it as an
-inclusive total.
-
-Add cache tokens to the existing sanitized HTTP completion log. No cache-rate
-widget or dollar-cost calculation is needed. Logs and the provider billing
-dashboard are enough for this application.
-
-Expected validation:
-
-1. on two requests with the same history but different submission times,
-   system instructions are identical;
-2. a sufficiently long direct-OpenAI conversation sends the same
-   session/character key on each turn;
-3. after the cache is warm, later completions report non-zero cached tokens;
-4. `store` remains false and no `previous_response_id` or `conversation` field
-   appears.
-
-Short prompts may not cross a provider's minimum cacheable prefix, and a cold
-or evicted cache may report zero. Neither is a CHA failure.
-
-### Cache invalidation behavior
-
-The following behavior requires no extra machinery:
-
-- appending a new user turn preserves the earlier prefix;
-- growing the final shared-history JSONL block preserves its existing prefix;
-- multicast uses one key per target character;
-- `/hide`, off-record splicing, or failed-turn removal intentionally changes
-  the projected history;
-- workspace reload and prompt/config changes intentionally produce a new
-  prefix;
-- a provider or model switch may reuse history but should be expected to miss
-  on the new backend.
-
-## Provider resilience and request hygiene
-
-These recommendations are secondary to caching but strongly supported by all
-three source investigations.
-
-### Bounded generation
-
-Add provider TOML settings:
-
-```toml
-timeout_s = 600
-idle_timeout_s = 60
-```
-
-Keep the existing 10-second connection timeout. For generation, set an overall
-10-minute timeout and use curl's low-speed limit/time so a silent SSE stream
-dies after about one minute. Both values must be positive; do not provide an
-“unbounded” sentinel unless a real provider requires it.
-
-### Safe retries
-
-Retry inside `ProviderClient::perform`, never in `GenerationBatch` or the
-controller. A retry is allowed only before `on_delta` has published any answer
-or reasoning text.
-
-Recommended policy:
-
-- two retries after the initial attempt;
-- transient statuses `{408, 409, 425, 429}` and all `>= 500` statuses;
-- transient curl connect, resolve, reset, send, receive, and empty-response
-  failures;
-- 500 ms exponential backoff with small jitter, computed delay capped at
-  10 seconds;
-- parse `Retry-After-Ms`, delta-seconds, and HTTP-date `Retry-After`, capped at
-  60 seconds;
-- sleep in short cancellation-aware intervals;
-- log the retry attempt rather than adding transcript entries.
-
-Never retry:
-
-- cancellation;
-- 400/401/403/404 and other deterministic client errors;
-- quota/billing responses containing `insufficient_quota`, `quota_exceeded`,
-  `quota exceeded`, `out of budget`, or `billing`;
-- context overflow;
-- a transfer after its first visible delta.
-
-A provider error event inside an HTTP-200 SSE stream may use the same retry
-budget only when it is clearly transient and arrived before any delta. This is
-useful but can follow the simpler HTTP retry implementation.
-
-### Optional request fields
-
-Change `temperature` to optional. If absent in provider TOML, omit it from the
-JSON body. Add optional `max_tokens`:
-
-- Chat Completions: `max_tokens`;
-- Responses: `max_output_tokens`, clamped to the provider's minimum accepted
-  value (the reports use 16).
-
-Do not add `top_p`, a request overlay bag, or a model-name routing table.
-
-For Chat Completions automatic reasoning extraction, probe
-`reasoning_content`, then `reasoning`, then `reasoning_text`, taking the first
-non-empty field.
-
-### Errors and diagnostics
-
-Classify errors while keeping CHA's small public outcome enum:
-
-- rate limit: retry, then protocol error if exhausted;
-- quota: no retry, stable quota message;
-- authentication/permissions: no retry;
-- context overflow: no retry, stable public message;
-- 5xx/connect/reset: retry before output;
-- content policy and malformed success bodies: no retry.
-
-Use exclusion-first overflow matching so rate-limit phrases containing words
-such as “limit” are not mistaken for context overflow. Match these concrete
-overflow patterns (check in this order):
-
-- `”context window”`, `”maximum context length”`, `”prompt is too long”`,
-  `”context length exceeded”`, `”exceeds the context window”`,
-  `”input token count”` (as prefix, e.g., “input token count X exceeds Y”)
-- HTTP 400 with no body or generic “bad request” message
-- HTTP 413 (Payload Too Large), especially from llama.cpp
-
-Match these quota/billing patterns as explicitly non-retryable:
-
-- `”insufficient_quota”`, `”quota exceeded”`, `”quota_exceeded”`,
-  `”out of budget”`, `”billing”` (in error message body)
-
-Public overflow text should be stable, for example:
+The identifier is useful for cache sharing and diagnostics, but it is not
+sufficient to identify reusable state. The cache key is:
 
 ```text
-Prompt exceeds the model's context window.
+(provider id, exact resolved ModelBackendConfig)
 ```
 
-Keep the vendor body in sanitized diagnostics, capped to a small bound such as
-4 KiB. Never echo an unbounded provider body into the transcript.
+Using the full pair matters during workspace reload. An identifier can retain
+the same name while its endpoint, model, protocol, or another setting changes.
+Old in-flight requests must keep using the old resolved configuration, while
+new requests use the replacement. In every other situation the pair is
+redundant, because a provider config file is the only source of a resolved
+`ModelBackendConfig`: no character, forum, or session layer overrides one of its
+fields.
 
-Capture and log the first available request identifier from:
+Exact comparison needs a defaulted `operator==` on `ModelBackendConfig`. That
+struct holds `api_key`, so the cache key contains a secret: it may be compared
+but never logged or included in diagnostics.
 
-```text
-x-request-id
-openai-request-id
-request-id
-x-goog-request-id
-x-amzn-requestid
-x-amz-request-id
-cf-ray
+No provider selector is accepted from a forum, an active session, or a command.
+In particular, `Providers` does not add a runtime equivalent of `/provider`.
+
+## Request boundaries
+
+Provider work is asynchronous, so everything a task reads must either be owned
+by the task or have a lifetime guaranteed through task completion. The API must
+not accept a raw `TranscriptView&` or a pointer into mutable session state.
+
+The existing immutable `SharedModelHistory` and `GenerationRequest` are the
+right boundary for transcript data. A provider request can combine that data
+with a shared immutable character definition:
+
+```cpp
+struct ProviderRequest {
+  std::shared_ptr<const CharacterDefinition> definition;
+  GenerationRequest generation;
+};
 ```
 
-Do not send these response identifiers back as affinity values.
+The shared character definition avoids copying a potentially large system
+prompt on every submission. It is a snapshot: later workspace changes do not
+change an already-submitted request.
 
-### Context-window warning
+Each request includes the data already required for generation, including its
+request identifier, target character, author, prompt, shared history, prompt
+cache key, and timestamp. The provider cache never stores any of those values.
 
-Do not add compaction or a tokenizer. Optionally add `context_tokens` to a
-provider config. After a successful generation, compare reported use with:
+## Public interface
 
-```text
-usable = context_tokens - reserve
+The intended interface is small:
+
+```cpp
+class Providers {
+ public:
+  explicit Providers(std::size_t worker_count,
+                     ProviderClientFactory client_factory = {});
+  ~Providers();
+
+  Providers(const Providers&) = delete;
+  Providers& operator=(const Providers&) = delete;
+
+  ProviderRuntimeInfo describe(const ProviderSelection& selection);
+
+  GenerationBatch stage_batch(
+      std::vector<ProviderRequest> requests,
+      WakeNotifier& notifier);
+
+  void shutdown() noexcept;
+};
 ```
 
-Use configured `max_tokens` as the reserve when available, otherwise a fixed
-4096-token reserve. When usage crosses the usable threshold, emit a visible
-notice entry in the transcript (or diagnostic log if the UI lacks a notice-entry
-mechanism). Example: "Context nearly full; consider /hide or a smaller scope."
-This gives the user actionable guidance before overflow occurs. Provider usage
-is more trustworthy than a local characters-per-token estimate.
+Names may be adjusted during implementation, but the responsibilities should
+not grow. In particular, this component does not know about active sessions,
+forums, transcript mutation, foreground characters, or message persistence.
 
-If actual sessions begin overflowing, a later projection-only change may drop
-the oldest shared-history JSONL entries first, then the oldest completed
-other-character turns. Never drop the system prompt or current user message,
-and retry a rewritten request at most once before any visible output.
+`describe()` initializes the selection's provider state if it is not cached
+yet, then returns provider-level runtime information: the model, the
+API/protocol, and streaming capability. It can block on the network and it can
+throw, exactly as constructing a `ProviderClient` does today. Character metadata
+is combined with that information by the session-facing layer when a
+`ModelBackendInfo` is needed.
 
-## Implementation slices
+`SessionController` calls `describe()` once per forum character while it
+constructs, because it builds its `characters_` view from that runtime
+information before any prompt exists. Session open therefore keeps today's
+behavior: it blocks on provider initialization and fails when a provider
+configuration is invalid or undiscoverable. The benefit of the shared cache is
+that a second session on the same providers finds every state already
+initialized and blocks on nothing.
 
-### Phase 1: Cost Measurement (Slices 1–2)
+`stage_batch()` has failure-atomic behavior: either it returns a batch handle
+for every requested execution, or no execution is created and no worker is
+occupied. It resolves the provider state for each request (normally a cache hit,
+because `describe()` already initialized it) and constructs one execution per
+request. It submits nothing to the worker pool.
 
-Implement only these slices first. Phase 1 is complete when logs show
-non-zero `cache_read_tokens` on repeated turns and the same `prompt_cache_key`
-is sent on each turn. This gives evidence of whether provider-side caching is
-effective.
+The batch handle retains the operations the controller needs:
 
-#### Slice 1: stable prefix and cache metrics
+```cpp
+foreground_run()
+open()
+try_receive_foreground()
+advance()
+cancel()
+wait()
+```
 
-Files:
+`open()` is the point at which executions are submitted to the global worker
+pool. Until then the batch holds inert executions that no worker can see. This
+replaces the previous shared start gate; see
+[Execution state and cancellation](#execution-state-and-cancellation).
 
-- `src/agents/model_context.cpp`;
-- `src/agents/model_backend.h`;
-- `src/agents/provider_response.cpp`;
-- `src/agents/responses_api.cpp`;
-- `src/agents/provider_client.cpp` logging;
-- corresponding model-context and decoder tests.
+The exact type may remain the current `GenerationBatch` during migration.
 
-Acceptance criteria:
+## Separation inside `ProviderClient`
 
-- changing only the current timestamp leaves system instructions identical;
-- cached token fields parse for both protocols;
-- logs show `cache_read_tokens` without exposing prompt contents.
+The current `ProviderClient` combines two kinds of state:
 
-#### Slice 2: direct-OpenAI cache identity
+1. provider transport state: endpoint, protocol, API key, selected model, and
+   one curl easy handle;
+2. character/request state: metadata, system prompt, model history, and current
+   output destination.
 
-Files:
+Only the first category is cacheable across sessions. `ProviderClient` will be
+changed into a provider-only connection. Character metadata and the system
+prompt are supplied to request preparation for each call and are not retained
+after the call finishes.
 
-- `src/agents/model_context.h`;
-- `src/session/session_controller.h/.cpp`;
-- `src/workspace/session_open.cpp`;
-- `src/agents/character_config.h/.cpp`;
-- `src/agents/provider_client.h/.cpp`;
-- `src/agents/responses_api.cpp`;
-- test constructors and unit tests.
+A provider client owns exactly one curl easy handle. A handle is leased to at
+most one running request at a time. No locking scheme may make simultaneous
+requests share a curl easy handle.
 
-Acceptance criteria:
+## Provider-state cache
 
-- key is forum/session/character and stable across turns;
-- long keys are deterministically hashed;
-- direct OpenAI Responses gets body key plus `session_id` header;
-- direct OpenAI Completions gets body key only;
-- unsupported hosts get no speculative cache fields;
-- `off`, `short`, and `long` configuration validates;
-- `x-client-request-id` is not reused as affinity;
-- `store: false` remains.
+`Providers` maintains a small collection of `ProviderState` objects. A state
+contains:
 
-### Phase 2: Reliability and Diagnostics (Slices 3–4)
+- its immutable `ProviderSelection` snapshot;
+- resolved model/API/streaming information;
+- resolved credentials needed to create clients;
+- idle provider clients, each owning one curl easy handle;
+- the synchronization needed to initialize and lease clients.
 
-Implement these slices only after Phase 1 shows provider caching is effective.
-Phase 2 improves reliability (transient failures recover, overflow is detected)
-and diagnostics (clear error messages, request tracing).
+The number of configured providers is small. A locked linear collection with
+exact configuration equality is preferable to custom hashing and a more
+general cache framework.
 
-#### Slice 3: transport resilience and legal request bodies
+### Initialization
 
-Files:
+The first use of a selection initializes its state. API-key resolution and
+optional model discovery occur once for that state. Additional clients are
+created from the resolved state and do not repeat a `/models` request.
 
-- `src/agents/character_config.h/.cpp`;
-- `src/agents/provider_client.cpp`;
-- `src/agents/responses_api.cpp`;
-- mock HTTP, request-body, and config-loader tests.
+In practice the first use is `describe()` on the session-open path, so a
+session's providers are already initialized before its first prompt. `Providers`
+does not rely on that: `stage_batch()` initializes any state it does not find
+cached, so initialization is correct regardless of which call reaches a
+selection first.
 
-Acceptance criteria:
+Concurrent first users of the same selection wait for the same initialization
+result. If initialization fails, the incomplete entry is removed rather than
+left as a permanently poisoned cache value. All current waiters receive the
+failure, and a future call can retry initialization. This matters for
+`describe()`, because a provider that is down when one session opens must not
+stay permanently broken for the next one.
 
-- scripted 429 then 200 succeeds with two requests;
-- quota 429, 401, and post-delta failure are not retried;
-- cancellation interrupts retry backoff;
-- overall and idle timeouts terminate stalled requests;
-- unset temperature is absent;
-- max token field matches the selected API.
+Because initialization happens inside `describe()` and `stage_batch()`, both
+report configuration and discovery failures by throwing, before any execution
+exists. Failure atomicity is preserved: a batch that cannot resolve every
+provider state creates no executions at all.
 
-#### Slice 4: overflow and diagnostics
+### Client leasing
 
-Files:
+For each executing task:
 
-- `src/agents/provider_client.cpp` and possibly a small nearby helper;
-- decoder/error tests;
-- documentation for new TOML keys and log fields.
+1. read the `ProviderState` the execution already holds a shared reference to;
+2. lease an idle `ProviderClient`, or create one when none is idle;
+3. prepare and perform the request using only that client;
+4. reset request-specific curl options and return a healthy client to the idle
+   list;
+5. discard the client if its transport state cannot safely be reused.
 
-Acceptance criteria:
+An execution holds its `ProviderState` from staging onward, but leases a client
+only while it runs. Nothing is leased by an execution that is queued, cancelled
+before it starts, or waiting behind other work.
 
-- overflow is stable and non-retryable;
-- rate limit is not misclassified as overflow;
-- public error bodies are bounded;
-- request IDs are logged;
-- empty failed assistant entries are not projected into the next request.
+Concurrent requests to one provider therefore cause multiple curl handles to
+exist. Once concurrency falls, those clients remain idle for later sessions.
+The number of idle clients per provider cannot exceed the global worker count,
+so no eviction policy is needed initially.
 
-## Deferred improvements
+When a configuration changes under the same provider identifier, a new state
+is selected. In-flight tasks retain a shared reference to their old state. That
+old state and its clients are destroyed automatically after the last task and
+lease release them.
 
-Only implement these in response to observed behavior:
+### What is never cached
 
-- OpenRouter `x-session-id` or other gateway affinity headers;
-- generic `[headers]` TOML for referer, title, organization, or project;
-- history truncation after real overflow;
-- a shared incremental SSE splitter to replace repeated front erases;
-- cache-write token accounting if a checked-in provider reports it;
-- Anthropic `cache_control` breakpoints if CHA adds a direct Claude Messages
-  provider.
+The provider cache must not retain:
 
-## Explicit non-goals
+- transcript or model-history views;
+- user prompts or generated text;
+- system prompts beyond the lifetime of an immutable character definition;
+- output queues or wake notifiers;
+- session, forum, or controller pointers;
+- cancellation state belonging to completed executions.
 
-- official vendor SDKs or a provider factory/catalog layer;
-- OAuth and subscription-specific transports;
-- provider-owned conversation state, `store: true`,
-  `previous_response_id`, or `conversation`;
-- automatic LLM summarization or a compaction pipeline;
-- local tokenizer integration or approximate cost accounting;
-- transcript-visible retry countdowns;
-- a broad protocol compatibility flag matrix;
-- request-body overlays that bypass CHA's codecs;
-- WebSocket Responses or a CHA-owned tool loop;
-- dollar pricing in the application;
-- one cache key shared by all characters in a forum.
+## Global worker pool
 
-## Recommended implementation order: Phase 1 then Phase 2
+`Providers` owns one fixed `ThreadPool`. The core constructor takes its size so
+tests can use a deterministic value. Production initially passes
+`WebSettings::session_limit`, whose current default is eight. This introduces no
+new user-facing setting and allows one normal request per admitted session to
+make progress when all sessions are busy.
 
-**Phase 1 deliverable:** Stable-prefix projection, cache-read usage logging,
-and direct-OpenAI cache identity (Implementation Slices 1–2). This unlocks
-cost measurement: CHA will preserve the provider's cacheable prefix, route
-repeated turns consistently, and log how many input tokens the provider
-actually reused. Phase 1 is complete when logs show non-zero `cache_read_tokens`
-on repeated turns in the same session.
+`/mcast` can use otherwise available workers. If there are more multicast
+children and normal requests than workers, excess work waits in FIFO order.
+The guarantee is bounded concurrency, not simultaneous start of every multicast
+target.
 
-**Phase 1 expected outcome:** Evidence of whether provider-side caching is
-working and what the cost reduction is. If caching is effective, proceed to
-Phase 2. If caching is not hitting (zero cached tokens despite stable prefix),
-investigate cache eviction or provider configuration before starting Phase 2.
+This deliberately retires an existing invariant. Today `SessionController` sizes
+its private pool to the number of forum characters, so a multicast always starts
+every target at once. With a shared pool of eight, a forum wider than the pool
+starts eight targets and queues the rest, and a session competing with seven
+busy sessions can start one at a time. Presentation order is unaffected, because
+the controller already displays targets in their original order regardless of
+completion order; only the time to the last answer changes.
 
-**Phase 2 (after Phase 1 shows cache benefit):** Resilience work (Slices 3–4):
-bounded timeouts, retries, overflow detection, and improved diagnostics.
-Decide from Phase 1 logs whether long retention, OpenRouter affinity, or
-history truncation is worth the additional implementation.
+Sizing the pool from `session_limit` is a starting value, not a derivation:
+`session_limit` bounds admitted sessions, while this bounds concurrent provider
+requests. It is chosen because it needs no new user-facing setting and
+guarantees that every admitted session can always make progress on one normal
+request. An independently configurable worker count is a deferred decision, to
+be revisited if multicast latency in a wide forum turns out to matter in
+practice.
+
+The first implementation does not add priorities, per-session quotas, or
+provider-specific pools. FIFO scheduling is adequate for CHA. These can be
+reconsidered only if observed behavior demonstrates a real problem.
+
+## Execution state and cancellation
+
+Moving to a global pool changes two things about how work starts and stops.
+
+### Submission replaces the start gate
+
+Today every execution is submitted to the pool immediately and then blocks in a
+shared start gate until the controller has committed the durable session state
+that will receive its output. That is safe while the pool is session-private,
+because only that session's own workers wait. On a shared pool it is not: the
+controller writes a durable transcript entry between staging and opening, so a
+multicast would park up to eight global workers in an unbounded wait while one
+session finishes a database write. Every other session would stall behind it.
+
+The start gate is therefore removed. Submission itself becomes the start signal:
+
+- `stage_batch()` constructs every execution and verifies the pool is still
+  accepting work. It submits nothing, so no worker is occupied and no provider
+  can be reached. If any step fails, no execution exists and the caller sees the
+  failure as an exception, exactly as before.
+- `open()` submits every execution to the pool. The controller calls it only
+  after the durable state is committed, so the first moment a worker can run an
+  execution is already the first moment its output has somewhere to go.
+- If the controller fails between the two calls, it cancels the batch instead of
+  opening it. Nothing was ever submitted, so cancellation completes immediately.
+
+This removes the `StartGate` type, its condition variable, and the possibility
+of a worker blocking on anything other than its own provider I/O.
+
+One failure mode moves. Pool submission can now fail after the durable commit
+rather than during staging. `open()` therefore cannot throw: an execution that
+cannot be submitted is completed in place with a failure event, which the
+controller consumes and presents through the path it already uses for provider
+errors. In practice submission fails only when the pool has stopped, which
+happens during shutdown.
+
+### Execution state machine
+
+Each execution has a small atomic state machine, so that canceling a session
+never waits for that session's queued closure to reach the front of the process
+queue behind unrelated long-running requests:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Staged
+    Staged --> Queued: open() submits
+    Staged --> Finished: cancelled before open()
+    Queued --> Running: worker claims and starts
+    Queued --> Finished: cancel before claim
+    Running --> Finished: success, error, or cancel
+    Finished --> [*]
+```
+
+Cancellation behaves as follows:
+
+- A `Staged` execution was never submitted. Cancelling it completes it in place.
+- A `Queued` execution is atomically completed by the canceling thread. Its
+  terminal state is published immediately, so `wait()` returns without waiting
+  for a worker.
+- A `Running` execution observes the existing atomic cancellation flag. Curl's
+  progress callback aborts network transfer in the same way it does today.
+- Completion and terminal-event publication happen once, regardless of races
+  between cancellation and worker execution.
+
+This makes session teardown depend on that session's running I/O, not on the
+position of its unstarted work in the process queue.
+
+### The abandoned-closure rule
+
+The previous point has a consequence that must be stated explicitly, because
+getting it wrong is a use-after-free rather than a missed wakeup.
+
+A `Queued` execution that is cancelled is `Finished` before its closure is
+dequeued. `wait()` returns, the session tears down, and the controller, the
+notifier, and the session owner are destroyed. The closure is still sitting in
+the global pool queue, and some worker will eventually run it.
+
+Therefore: **a closure that observes `Finished` must return without touching
+anything it borrows.** It must not call the notifier, must not touch its
+`ProviderState` or lease a client, must not publish an event, and must not run
+the normal completion path — the terminal event was already published by the
+canceling thread. The only state it may touch is its own execution object, whose
+lifetime the closure's `shared_ptr` guarantees.
+
+This also rules out the current arrangement in which an execution holds a bare
+`ModelBackend&`. An execution owns a `shared_ptr<ProviderState>` and leases a
+client only after it has committed to running, so an abandoned closure holds no
+reference to anything a destroyed session owned.
+
+## Output delivery and wakeups
+
+Every execution retains its own `ConcurrentQueue<GenerationEvent>`. There is no
+global output queue. Per-execution queues prevent interleaving events from
+different requests and avoid relying on request identifiers for isolation.
+
+A worker pushes events to its execution queue and calls the borrowed
+`WakeNotifier`. `OwnerWakeSignal` can continue implementing this interface.
+
+The notifier is borrowed, so its lifetime needs care. Session teardown cancels
+and waits for the whole batch before destroying the notifier, which covers every
+execution that actually reaches a worker. It does not cover an execution that
+was cancelled while `Queued`, because that one finishes without waiting for its
+closure to be dequeued. Such a closure may run after the notifier is gone, and
+it is precisely the case the abandoned-closure rule above forbids from calling
+`wake()`. Note that today's terminal path wakes the notifier unconditionally
+after marking an execution finished; that unconditional wake must not survive
+into the abandoned-closure path.
+
+Request identifiers can remain session-local because queues and execution state
+are not shared between sessions. Logs should include both the session/request
+context and provider identifier when available, but request IDs do not become a
+process-wide addressing mechanism.
+
+## Normal generation
+
+For a normal user prompt:
+
+1. `SessionController` resolves the active character definition.
+2. It snapshots the model history and builds one `ProviderRequest`.
+3. It calls `Providers::stage_batch()` with a one-element vector, which
+   constructs the execution without submitting it.
+4. After the session mutation is committed, it calls `open()`, which submits the
+   execution to the global pool.
+5. A global worker claims it, leases a matching provider client, and performs
+   the request.
+6. The controller consumes events from the request queue, persists the answer,
+   and completes the batch as it does today.
+
+The common path has no special single-provider mode. It is simply a batch of
+one.
+
+## Multicast generation
+
+For `/mcast`:
+
+1. The controller creates one immutable pre-multicast history snapshot.
+2. It builds a `ProviderRequest` for every target character using that snapshot.
+3. `Providers::stage_batch()` resolves all required provider states and
+   constructs every execution, or fails without constructing any.
+4. `open()` submits all of them at once. Workers execute targets concurrently up
+   to global pool capacity, and any excess waits in the pool queue. Targets may
+   use the same provider state or different states.
+5. Each target writes only to its own event queue.
+6. The controller activates, drains, displays, and persists target answers in
+   the original target order.
+7. Cancellation applies to every unfinished child. Failure of one child remains
+   isolated from the others.
+
+Tasks from other sessions may run between multicast tasks. That changes only
+timing; it must not change history snapshots, output ownership, or presentation
+order.
+
+## Workspace reload
+
+Provider configuration follows snapshot semantics:
+
+- A submitted request holds its resolved character and provider selection.
+- File changes do not mutate a running request.
+- Newly loaded character definitions use the new resolved configuration.
+- An unchanged `(id, config)` pair reuses cached state and curl handles.
+- The same identifier with a changed config creates a new state.
+- Old state is reclaimed when no task uses it.
+
+The existing reload path closes and reopens affected live sessions. No explicit
+provider-cache flush is required. Exact resolved configuration matching gives
+the desired behavior without coordinating the cache with workspace generations.
+
+## Process shutdown
+
+Shutdown order must be explicit:
+
+1. Stop accepting new HTTP work.
+2. Ask `LiveSessionManager` to shut down all sessions.
+3. Each controller cancels and waits for its active batch.
+4. Join session owner threads, destroying their controllers and notifiers.
+5. Call `Providers::shutdown()`.
+6. `Providers` rejects new staging and `describe()`, stops and joins its worker
+   pool, and destroys cached provider states and their clients.
+7. Shut down logging.
+
+By step 5 every batch has already been cancelled, waited for, and destroyed by
+its owning session, so `Providers` has no outstanding execution to chase. It
+keeps no registry of executions: ownership flows through the session's batch,
+and adding a parallel weak registry would be machinery for a state that steps
+2-4 already make impossible. `shutdown()` may assert that the pool queue drained
+rather than track what was in it.
+
+Abandoned closures are the one thing that can still be in the pool queue at step
+6, and they are harmless: `ThreadPool::stop()` drains already-accepted tasks, and
+each such closure observes `Finished` and returns immediately.
+
+`Providers::shutdown()` is idempotent. Its destructor calls it as a fallback,
+but the composition root should call it explicitly so ordering is obvious.
+`stage_batch()` and `describe()` after shutdown throw without creating anything.
+
+Curl global initialization stays where it is: a function-local static
+constructed on first use and destroyed after `main` returns. That already orders
+correctly, because `Providers` is scoped inside `main` and destroys every cached
+easy handle in step 6, before the static's cleanup runs. There is no explicit
+curl-global step to perform, and moving one into `Providers` would only add a
+lifetime to manage.
+
+## Error handling
+
+The ownership change should preserve existing user-visible errors and streaming
+behavior.
+
+- Invalid or undiscoverable provider configuration throws from `describe()` at
+  session open, or from `stage_batch()` if a state is first reached there.
+  Neither creates an execution.
+- A transport/protocol failure becomes an error event for only that execution.
+- A batch that cannot resolve every provider state creates no executions and
+  reports the failure to the caller.
+- An execution that cannot be submitted during `open()` is completed in place
+  with a failure event rather than throwing, because the session state it
+  belongs to is already durable by then.
+- Exceptions cannot escape worker functions.
+- Exactly one terminal result is observable for each execution.
+- A client that may contain unsafe curl state after failure is discarded.
+- Secrets, authorization headers, prompts, and response bodies are not emitted
+  in cache or scheduler logs.
+
+## Diagnostics
+
+Existing logs should gain enough context to diagnose shared execution without
+turning `Providers` into an observability subsystem. Useful fields are:
+
+- provider identifier;
+- provider-state cache hit, miss, and initialization failure;
+- client lease reused versus newly created;
+- request and session identifiers already present in the call path;
+- queued, running, canceled, and completed transitions;
+- elapsed queue and provider time.
+
+Configuration values containing credentials and all prompt/transcript content
+remain excluded.
+
+## Expected code changes
+
+### New files
+
+- `src/agents/providers.h`
+- `src/agents/providers.cpp`
+- `tests/agents/unit_providers.cpp`
+
+### Main modifications
+
+- `character_config.*`: retain the provider ID with the resolved backend config,
+  and give `ModelBackendConfig` a defaulted `operator==` for cache-key equality.
+- `character.*`: store `ProviderSelection` in `CharacterDefinition`.
+- `provider_client.*`: remove retained character/request state and make a client
+  an exclusively leased provider connection.
+- `model_backend.h`: separate provider runtime information from character-facing
+  `ModelBackendInfo` if needed.
+- `generation_batch.*`: remove `StartGate`; make `open()` the submission point
+  on the global pool; replace the borrowed `ModelBackend&` with a
+  `shared_ptr<ProviderState>` and an in-task client lease; add the execution
+  state machine, immediate completion of cancelled staged and queued executions,
+  and the abandoned-closure early return.
+- `session_controller.*`: borrow `Providers&`; remove its worker pool and
+  `GenerationExecutor`; retain session batch consumption and ordering.
+- `session_open.*`, `workspace_runtime.*`, and `web_main.cpp`: pass the one
+  process-owned `Providers` instance through the construction path and enforce
+  shutdown order.
+- build files: compile the new component and remove obsolete sources.
+
+`GenerationExecutor` becomes redundant after `SessionController` stages work
+directly through `Providers`. It can be used as a temporary migration adapter,
+then its source and unit tests should be removed rather than maintained as an
+extra forwarding abstraction.
+
+## Implementation sequence
+
+The work should be split into small, continuously testable changes.
+
+### 1. Carry provider identity
+
+- Introduce `ProviderSelection`.
+- Carry it from character configuration into `CharacterDefinition`.
+- Keep the current session-local executor behavior.
+- Update configuration and character tests.
+
+### 2. Make clients reusable
+
+- Separate provider transport state from character/request inputs.
+- Make exclusive client leasing possible without changing ownership yet.
+- Preserve protocol request-body and streaming tests.
+
+### 3. Add `Providers`
+
+- Add the global pool, provider-state initialization, `describe()`, and the
+  client cache.
+- Replace the start gate with submission on `open()`, and add the execution
+  state machine, cancellation transitions, and the abandoned-closure rule.
+- Test this component independently through an injected client factory.
+
+### 4. Move sessions onto the shared component
+
+- Inject `Providers&` into `SessionController`.
+- Build `characters_` from `describe()` per forum character at construction.
+- Remove the session-owned pool and executor.
+- Keep `GenerationBatch` and all foreground/persistence logic in the session.
+- Add tests using two controllers against one provider component.
+
+### 5. Complete process lifetime changes
+
+- Construct one instance in `web_main`.
+- Implement explicit shutdown order and reload coverage.
+- Remove `GenerationExecutor` and obsolete tests/build entries.
+- Update documentation that describes ownership.
+
+Each step should compile and pass its focused unit tests before the next step.
+The final step should run the full test suite.
+
+## Test plan
+
+### Providers unit tests
+
+- repeated requests with the same `(id, config)` reuse one provider state;
+- the same ID with different resolved configs creates distinct states;
+- concurrent same-provider requests never use one client/curl handle together;
+- a second client avoids repeating model discovery;
+- initialization failure is shared by current waiters but can be retried later,
+  including a failed `describe()` followed by a successful one;
+- `stage_batch()` occupies no worker until `open()` is called;
+- a staged batch that is cancelled instead of opened finishes immediately and
+  reaches no provider;
+- a queued execution cancels and finishes without waiting to be dequeued;
+- a closure dequeued after its execution finished touches no borrowed state:
+  with the notifier and provider state already destroyed, running it is safe and
+  publishes nothing;
+- running cancellation reaches the client and publishes one terminal result;
+- a batch that cannot resolve one provider state creates no executions;
+- submission failure during `open()` produces a failure event, not an exception;
+- shutdown rejects new work, cancels outstanding work, and joins workers;
+- healthy clients are reused and broken clients are discarded.
+
+### Batch and session tests
+
+- normal generation behavior is unchanged;
+- a session opened against an unreachable provider fails at open, as today;
+- a second session on the same providers opens without re-running discovery;
+- `/mcast` children share one history snapshot;
+- `/mcast` executes concurrently when capacity exists, and serializes the excess
+  in target order when the forum is wider than the pool;
+- a slow durable commit in one session does not delay another session's request;
+- outputs are consumed in target order even when completion order differs;
+- one target failure does not mix or discard another target's output;
+- session shutdown waits for its running request and not unrelated queued work;
+- destroying a session leaves no notifier callbacks behind;
+- two sessions share provider state while retaining separate queues and output;
+- the global number of concurrent clients never exceeds worker-pool capacity.
+
+### Reload and process tests
+
+- unchanged configuration reuses provider state across a workspace reload;
+- changed configuration under the same ID is used only by new requests;
+- in-flight requests complete on their original configuration snapshot;
+- process shutdown destroys sessions before curl clients and worker threads;
+- every cached easy handle is destroyed before curl's global cleanup runs.
+
+Existing `ProviderClient` protocol, body construction, authentication,
+streaming, and curl-cancellation tests remain transport-level regression tests.
+
+## Acceptance criteria
+
+The redesign is complete when all of these invariants hold:
+
+1. No active session or `SessionController` owns a worker pool,
+   `ProviderClient`, or curl easy handle.
+2. Exactly one explicitly owned `Providers` instance serves all live sessions.
+3. Every curl easy handle is used by at most one request at a time.
+4. Every execution has an isolated output channel.
+5. Canceling a session's queued request does not wait behind unrelated work.
+6. `/mcast` retains one history snapshot and deterministic presentation order.
+7. Configuration reloads provide snapshot isolation to in-flight requests.
+8. Provider caches contain no transcript, prompt, output, or session state.
+9. Provider configuration secrets are never logged.
+10. Existing protocols, streaming, error reporting, and running-request
+    cancellation continue to work.
+11. No worker ever blocks on session state: a worker waits only on its own
+    provider I/O.
+12. A pool closure that runs after its session was destroyed touches nothing
+    that session owned.
+
+## Deferred decisions
+
+The following are intentionally deferred until real usage demonstrates a need:
+
+- fairness stronger than FIFO between sessions;
+- an idle-client eviction policy;
+- an independently configurable global worker count;
+- provider concurrency limits or rate limiting;
+- request priorities;
+- proactive provider warm-up.
+
+The structures above do not prevent those changes, but they should not be built
+as part of this redesign.

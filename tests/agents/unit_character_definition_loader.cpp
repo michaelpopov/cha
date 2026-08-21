@@ -17,8 +17,9 @@ public:
           definitions(root / "characters"), forum(root / "forums" / "forum") {
         std::filesystem::create_directories(definitions / "guide");
         std::filesystem::create_directories(forum / "members" / "guide");
+        write_provider("guide", "host = \"127.0.0.1\"\nport = 8080\n");
         std::ofstream(definitions / "guide" / "character.toml")
-            << "display_name = \"Guide\"\n[prompt]\nvoice = \"base\"\n";
+            << "display_name = \"Guide\"\nprovider = \"guide\"\n[prompt]\nvoice = \"base\"\n";
         std::ofstream(definitions / "guide" / "CHARACTER.md") << "Definition $${voice}";
         std::ofstream(forum / "FORUM.md") << "Forum $${character.display_name}";
     }
@@ -26,10 +27,6 @@ public:
 
     CharacterDefinitionSource source() const {
         return {.definition_directory = definitions / "guide", .member_directory = forum / "members" / "guide"};
-    }
-    // Stands in for the resolved workspace [provider] layer.
-    ProviderConfig provider() const {
-        return {.host = "127.0.0.1", .port = 8080};
     }
     std::filesystem::path providers() const { return providers_directory(root); }
     void write_provider(std::string_view name, std::string_view contents) const {
@@ -42,8 +39,6 @@ public:
     std::filesystem::path forum;
 };
 
-// Every call needs the workspace layers that supply the backend, so they are
-// filled in here instead of at each call site.
 std::vector<CharacterDefinition> load_definitions(
     const CharacterDefinitionFiles& files,
     std::vector<CharacterDefinitionSource> sources,
@@ -51,14 +46,16 @@ std::vector<CharacterDefinition> load_definitions(
     std::optional<std::filesystem::path> defaults = std::nullopt) {
     return load_character_definitions(
         std::move(sources), files.forum, "Forum", personas, std::move(defaults),
-        {files.provider(), files.providers()});
+        files.providers());
 }
 
-TEST(CharacterDefinitions, UsesDefinitionPromptAndThreeLayerConfiguration) {
+TEST(CharacterDefinitions, UsesDefinitionProviderAndThreeLayerPromptConfiguration) {
     CharacterDefinitionFiles files;
     files.write_provider("forum", "host = \"127.0.0.1\"\nport = 9\n");
+    std::ofstream(files.definitions / "guide" / "character.toml")
+        << "display_name = \"Guide\"\nprovider = \"forum\"\n[prompt]\nvoice = \"base\"\n";
     std::ofstream(files.forum / "members" / "character_defaults.toml")
-        << "provider = \"forum\"\n[prompt]\nvoice = \"forum\"\n";
+        << "provider = \"ignored\"\n[prompt]\nvoice = \"forum\"\n";
     std::ofstream(files.forum / "members" / "guide" / "character.toml")
         << "[prompt]\nvoice = \"member\"\n";
 
@@ -155,7 +152,7 @@ TEST(CharacterDefinitions, RequiresDefinitionFiles) {
     EXPECT_THROW((void)load_definitions(files, {files.source()}), std::runtime_error);
 
     std::ofstream(files.definitions / "guide" / "character.toml")
-        << "display_name = \"Guide\"\n";
+        << "display_name = \"Guide\"\nprovider = \"guide\"\n";
     std::filesystem::remove(files.definitions / "guide" / "CHARACTER.md");
     EXPECT_THROW((void)load_definitions(files, {files.source()}), std::runtime_error);
 }
@@ -191,7 +188,7 @@ TEST(CharacterDefinitions, RetainsTheSuppliedSourceOrder) {
     std::filesystem::create_directories(files.definitions / "other");
     std::filesystem::create_directories(files.forum / "members" / "other");
     std::ofstream(files.definitions / "other" / "character.toml")
-        << "display_name = \"Other\"\n";
+        << "display_name = \"Other\"\nprovider = \"guide\"\n";
     std::ofstream(files.definitions / "other" / "CHARACTER.md") << "Other";
     const auto definitions = load_definitions(files,
         {{files.definitions / "other", files.forum / "members" / "other"}, files.source()});

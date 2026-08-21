@@ -193,7 +193,9 @@ std::size_t receive_header(
         : size * count;
     auto& context = *static_cast<ResponseContext*>(persona_data);
     try {
-        context.last_activity = std::chrono::steady_clock::now();
+        // Headers deliberately leave last_activity unset: a streaming provider
+        // sends them before it starts thinking, and a proxy's 100-continue
+        // arrives before the request body is even on the wire.
         const std::string_view line(data, bytes);
         if (line.starts_with("HTTP/")) {
             begin_http_response(context, line);
@@ -409,10 +411,11 @@ std::optional<std::string> recognized_provider_error(
         "context length exceeded", "exceeds the context window",
         "input token count",
     };
+    // An empty 400 body is not evidence about length: a malformed request, an
+    // unsupported parameter, or a gateway rejection looks exactly the same.
     if (status == 413
         || contains_any(folded_text, overflow_patterns)
-        || (status == 400
-            && (text.empty() || folded_text == "bad request"))) {
+        || (status == 400 && folded_text == "bad request")) {
         return "Prompt exceeds the model's context window.";
     }
 

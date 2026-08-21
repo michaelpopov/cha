@@ -18,6 +18,9 @@ TestWorkspace::TestWorkspace()
     std::filesystem::create_directories(member);
     std::filesystem::create_directories(root_ / "personas");
     write_provider("test", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
+    std::filesystem::create_directories(root_ / "system" / "assistant");
+    std::ofstream(root_ / "system" / "assistant" / "character.toml")
+        << "display_name = \"Assistant\"\nprovider = \"test\"\n";
     write_workspace_config();
     std::filesystem::create_directories(root_ / "web" / "assets");
     std::ofstream(root_ / "web" / "index.html")
@@ -29,8 +32,8 @@ TestWorkspace::TestWorkspace()
         << "display_name = \"The Lobby\"\n";
     std::ofstream(root_ / "forums" / "lobby" / "FORUM.md")
         << "Forum instructions\n";
-    write_character_defaults("# Provider settings are inherited from workspace.toml.\n");
-    write_character_config("display_name = \"Guide\"\n");
+    write_character_defaults("# Provider selection is per character.\n");
+    write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");
     std::ofstream(definition / "CHARACTER.md") << "Character instructions\n";
     add_persona("reader", "Reader");
 }
@@ -42,9 +45,7 @@ TestWorkspace::~TestWorkspace() {
 
 void TestWorkspace::write_workspace_config(std::string_view log_level) const {
     std::ofstream(root_ / "workspace.toml")
-        << "[provider]\n"
-           "provider = \"test\"\n"
-           "[logging]\n"
+        << "[logging]\n"
            "file = \"logs/cha.log\"\n"
            "level = \"" << log_level << "\"\n";
 }
@@ -96,7 +97,8 @@ void TestWorkspace::add_character(
     const std::filesystem::path directory = root_ / "characters" / std::string(id);
     std::filesystem::create_directories(directory);
     std::ofstream(directory / "character.toml")
-        << "display_name = \"" << display_name << "\"\n";
+        << "display_name = \"" << display_name << "\"\n"
+           "provider = \"test\"\n";
     std::ofstream(directory / "CHARACTER.md") << display_name << " instructions\n";
 }
 
@@ -110,7 +112,7 @@ void TestWorkspace::add_forum(
         << "display_name = \"" << display_name << "\"\n";
     std::ofstream(directory / "FORUM.md") << display_name << " forum instructions\n";
     std::ofstream(directory / "members" / "character_defaults.toml")
-        << "# Provider settings are inherited from workspace.toml.\n";
+        << "# Provider selection is per character.\n";
 }
 
 } // namespace cha::test

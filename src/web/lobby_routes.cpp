@@ -138,30 +138,17 @@ CharacterDetail character_detail(
     for (const AvailableStyle& option : model.available_styles()) {
         detail.available_styles.push_back({option.id, option.label, option.appearance});
     }
-    for (const std::string& forum_id : model.forums_overriding_provider(character.id)) {
-        const ForumInfo* const forum = model.find_forum(forum_id);
-        if (forum != nullptr) {
-            detail.provider_overridden_by.push_back(forum->display_name);
-        }
-    }
     return detail;
 }
 
 std::vector<std::string> forums_affected_by_save(
     const WorkspaceDefinition& model,
     std::string_view character_id,
-    bool style_changed,
-    bool provider_changed) {
-    if (!style_changed && !provider_changed) return {};
-    const std::vector<std::string> overridden =
-        model.forums_overriding_provider(character_id);
+    bool changed) {
+    if (!changed) return {};
     std::vector<std::string> result;
     for (const ForumInfo& forum : model.forums()) {
         if (!std::ranges::binary_search(forum.member_ids, character_id)) continue;
-        if (!style_changed
-            && std::ranges::find(overridden, forum.id) != overridden.end()) {
-            continue;
-        }
         result.push_back(forum.id);
     }
     return result;
@@ -352,7 +339,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             request_reload(
                 *live_sessions,
                 forums_affected_by_save(
-                    *model, id, change.style_changed, change.provider_changed));
+                    *model, id, change.any()));
         }
         set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
     });
