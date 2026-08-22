@@ -179,6 +179,7 @@ add_library(cha_core STATIC
     src/agents/model_context.cpp
     src/agents/generation_batch.cpp
     src/agents/generation_executor.cpp
+    src/agents/providers.cpp
     src/agents/provider_client.cpp
     src/agents/provider_response.cpp
     src/agents/responses_api.cpp
@@ -295,6 +296,7 @@ if(BUILD_TESTING)
         tests/agents/unit_character_definition_loader.cpp
         tests/agents/unit_generation_batch.cpp
         tests/agents/unit_generation_executor.cpp
+        tests/agents/unit_providers.cpp
         tests/agents/unit_provider_response.cpp
         tests/agents/unit_responses_api.cpp
         tests/agents/unit_sse_framer.cpp
