@@ -4,12 +4,17 @@ This plan implements [design.md](design.md). The design document is the source
 of truth for behavior and ownership; this document defines the implementation
 order and the checks required at each boundary.
 
-The work is divided into five substantial blocks. Each block is intended to fit
+The work is divided into six substantial blocks. Each block is intended to fit
 one focused Codex session and must leave the repository buildable and its normal
-test suite green. Blocks 1–3 prepare and prove the new boundaries while the
+test suite green. Blocks 1–4 prepare and prove the new boundaries while the
 current `GenerationExecutor`/`GenerationBatch` path remains the only production
-execution path. Block 4 is the atomic production cutover. Block 5 hardens the
+execution path. Block 5 is the atomic production cutover. Block 6 hardens the
 new lifecycle and completes cleanup and documentation.
+
+The cutover is atomic in *production* code only: no reviewed state may contain
+two production execution paths. Test-harness consolidation is not a production
+path, so Block 4 pulls it forward deliberately. That keeps the irreversible
+block small enough to review.
 
 ## Rules for every block
 
@@ -22,10 +27,10 @@ new lifecycle and completes cleanup and documentation.
 - Do not store resolved credentials outside the request-local transport.
 - Add no temporary second production execution path. Transitional adapters may
   exist only inside the old executor while it remains the sole production path,
-  and must be removed in Block 4.
+  and must be removed in Block 5.
 - Run `make test` before finishing each block.
 - Update nearby comments as ownership changes; defer broad README rewrites to
-  Block 5.
+  Block 6.
 
 For concurrency blocks, also run:
 
@@ -42,8 +47,9 @@ ctest --test-dir build/tsan --output-on-failure
 | 1 | Provider identity, required model, and eager credential-name validation | Existing executor and batch |
 | 2 | Shared immutable definitions, static runtime information, and the final client factory boundary | Existing executor and batch |
 | 3 | Fully tested standalone `Providers` and `ProviderRequest` | Existing executor and batch |
-| 4 | Atomic controller, session-opening, process-owner, and shutdown cutover; old execution code removed | Request-owned execution |
-| 5 | Reload/process race coverage, sanitizer verification, and documentation cleanup | Request-owned execution |
+| 4 | Session-open definition ownership and re-validation; one consolidated controller test harness | Existing executor and batch |
+| 5 | Atomic controller, session-opening, process-owner, and shutdown cutover; old execution code removed | Request-owned execution |
+| 6 | Reload/process race coverage, sanitizer verification, and documentation cleanup | Request-owned execution |
 
 ---
 
@@ -95,6 +101,14 @@ ownership or session scheduling in this block.
    - a failed `WorkspaceRuntime::reload()` candidate is never published;
    - no production code mutates the process environment after startup.
 
+   This validates the *published* generation only. `copy_definitions_for()`
+   re-parses a forum's character and provider files on every session open, so
+   from this block until Block 4 a session can still open on definitions that
+   never passed the new check. That is benign only because this block's
+   boundaries keep `ProviderClient` construction at session open, where its
+   constructor still rejects a missing credential. Block 4 closes the gap
+   properly; do not close it here by deleting the re-parse.
+
 6. Remove model-discovery behavior from `ProviderClient`: delete
    `discover_model()`, `models_endpoint()`, the GET request construction, and
    discovery-only logging and tests. Client construction must reject an
@@ -129,7 +143,7 @@ workspace suites:
 - `GenerationExecutor`, `GenerationBatch`, and the session `ThreadPool` remain
   unchanged as production owners.
 - `ProviderClient` may still be constructed during session opening through the
-  old executor. The final lazy request-time construction happens in Block 4.
+  old executor. The final lazy request-time construction happens in Block 5.
 - Do not add `Providers` or request threads here.
 
 ### Exit criteria
@@ -197,13 +211,13 @@ Move character-facing runtime information away from initialized backends.
 
 7. Adapt the transitional `GenerationExecutor` to construct its per-character
    clients through this factory from shared definitions. It may continue to
-   own those clients and schedule batches until Block 4, but production runtime
+   own those clients and schedule batches until Block 5, but production runtime
    metadata must now come from definitions, not `ModelBackend::info()`.
 
-8. Remove production uses of `ModelBackend::info()`. If the old
-   `from_backends_for_testing` helper still needs the virtual operation until
-   the atomic cutover, mark that use as temporary and remove both in Block 4;
-   do not build new behavior on it.
+8. Remove production uses of `ModelBackend::info()`. The retired
+   `from_backends_for_testing` helper may still need the virtual operation;
+   mark that use as temporary. Block 4 retires the helper and deletes the
+   operation with it. Do not build new behavior on it.
 
 9. Verify that `Transcript::model_history()` remains the single synchronous
    owning snapshot operation. Normal generation creates one
@@ -297,8 +311,10 @@ threading and lifetime invariants before the production cutover.
    - register a valid request before launching;
    - synchronize admission/registration/launch so shutdown cannot admit work
      after closure;
-   - if thread creation throws, publish one failure terminal, remove the
-     registry entry, and return the handle;
+   - if thread creation throws, publish one failure terminal, then remove the
+     registry entry **and notify shutdown waiters** on that path exactly as a
+     completing worker does, and return the handle. A `shutdown()` already
+     blocked on registry emptiness is otherwise left asleep;
    - allow allocation failure to follow the existing fatal policy.
 
 7. In the worker, check cancellation, invoke `ProviderClientFactory` with the
@@ -382,88 +398,208 @@ no production session can call it yet.
 
 ---
 
-## Block 4 — Atomic production cutover and old execution removal
+## Block 4 — Session-open definition ownership and test-harness consolidation
 
 ### Goal
 
-Switch the entire production ownership graph from session-owned executor/batch
+Do everything the cutover needs that does not itself switch execution
+ownership: make session opening hand the controller validated shared
+definitions, and collapse three controller construction paths into one harness.
+The old executor and batch remain the sole production execution path for the
+whole block, so every step here is individually reviewable and revertible.
+
+This block exists so Block 5 stays small. Roughly ninety controller test call
+sites change here, under the old scheduler, where a mistake shows up as a plain
+test failure rather than as a lifetime bug in new threading code.
+
+### Session-open definitions
+
+1. Keep `WorkspaceDefinition::copy_definitions_for()` re-parsing the forum's
+   character and provider files at session open. That re-parse is the only
+   mechanism by which a character-settings save reaches a session:
+   `write_character_settings()` writes the file and then calls
+   `request_reload()`, which merely shuts down the affected forum's live
+   sessions — it does not publish a new workspace generation. Removing the
+   re-parse would silently break provider and style changes until an operator
+   called `/api/v1/workspace/reload`. Do not remove it, and do not remove the
+   startup-definition fallback or its notice.
+
+2. Close the validation gap opened in Block 1 instead. Extract the static check
+   added there — required non-empty model, and a referenced non-empty
+   `api_key_env` naming a set, non-empty variable — into one pure function over
+   a resolved definition set, and call it from both places that build
+   definitions:
+
+   - `WorkspaceDefinition::load()` and the `reload()` candidate, where failure
+     rejects the generation as it already does;
+   - `copy_definitions_for()`, where failure joins the existing `catch` path:
+     log, fall back to the startup definitions, and return the existing
+     "Character settings could not be reloaded" notice.
+
+   The check reads configuration and the environment only. It performs no
+   network request, no provider authentication, and no reachability probe, and
+   it puts no credential value into session state — so it satisfies what
+   `docs/design.md` requires of session opening. A bad hand edit therefore
+   degrades to the startup settings with a visible notice rather than producing
+   a session whose every prompt fails at the provider boundary.
+
+3. Record the wording mismatch for Block 6 rather than diverging silently.
+   `docs/design.md` currently states that session opening performs no
+   "environment lookup". The behavior above is compatible with the design's
+   actual guarantees but not with that phrase. Note it as a documentation
+   reconciliation item; do not change behavior to match the phrase.
+
+4. Convert the definitions handed to session construction into ordered
+   `SharedCharacterDefinition` values exactly once, at the session-open
+   boundary, and pass them through `SessionController::from_shared_definitions()`.
+   Session opening still constructs no provider client and performs no provider
+   I/O beyond the local validation above.
+
+### One controller test harness
+
+5. Collapse the three controller construction paths into one. Today
+   `SessionController` exposes `from_shared_definitions()` for production,
+   `from_definitions_for_testing()` (about two dozen uses, and it takes a
+   `GenerationExecutor::BackendFactory`), and `from_backends_for_testing()`
+   (about sixty-five uses, which exists for activation fault injection and
+   `ModelBackend::info()`). Both test factories must disappear before Block 5
+   deletes `GenerationExecutor`; converting them there as well would make the
+   irreversible block unreviewable.
+
+   Keep exactly one test factory, definition-based, taking the
+   `ProviderClientFactory` from Block 2 plus the existing activation hook.
+
+6. Rewrite every `from_backends_for_testing()` call site to build shared
+   definitions and supply fake behavior through `ProviderClientFactory`. A fake
+   that previously handed over a prebuilt `ModelBackend` instance now returns a
+   fresh fake per invocation, with counters, barriers, scripted deltas, and
+   observations held in separately shared test state. Preserve each test's
+   existing assertions exactly; this is a construction change, not a behavior
+   change.
+
+7. Rewrite every `from_definitions_for_testing()` call site onto the same
+   harness, replacing its `GenerationExecutor::BackendFactory` argument with
+   the `ProviderClientFactory`.
+
+8. Give the harness the object ownership order production will need in Block 5
+   — shared notifier and definitions, then controller — and a destructor that
+   destroys the controller first. Leave the `Providers` member out until
+   Block 5; adding the field is then a one-line change per harness rather than
+   a rewrite per test.
+
+9. Remove `ModelBackend::info()` and its remaining test uses once no harness
+   needs it. Runtime information already comes from definitions after Block 2.
+
+### Tests
+
+- a character-settings save followed by a new session applies the new provider
+  and style without a workspace reload;
+- a session opened after a settings save that names an unset `api_key_env`
+  falls back to the startup definitions and reports the existing notice;
+- the same failure does not reject or replace the published workspace
+  generation;
+- a settings save naming a provider with no configured model behaves
+  identically;
+- workspace load and session open reject the same definition sets, proving one
+  shared validation function;
+- session opening still constructs no provider client and issues no provider
+  HTTP request;
+- every converted controller suite passes with its original assertions intact.
+
+Run `make test` and `make itest`. Run `make web-check` as well: the settings and
+notice paths are surfaced by the web UI.
+
+### Boundaries
+
+- `GenerationExecutor`, `GenerationBatch`, and the session `ThreadPool` remain
+  the only production execution path.
+- Do not add `Providers` to any controller, opener, or harness yet, and do not
+  change opener signatures.
+- Do not change `/stop`, session destruction, `busy()`, or process shutdown.
+- Do not change any converted test's assertions while converting its
+  construction.
+
+### Exit criteria
+
+`make test`, `make itest`, and `make web-check` are green; a character-settings
+save still reaches the next session; workspace load and session open share one
+validation function; exactly one controller test factory remains; and the old
+executor still provides the only production execution path.
+
+---
+
+## Block 5 — Atomic production cutover and old execution removal
+
+### Goal
+
+Switch the production ownership graph from session-owned executor/batch
 execution to the one process-owned `Providers`. Controller behavior,
-session-opening plumbing, composition-root ownership, shutdown order, test
-harnesses, integration helpers, and deletion of the old scheduler land
-together. Do not leave a reviewed state with two production execution paths.
+session-opening plumbing, composition-root ownership, shutdown order, and
+deletion of the old scheduler land together. Do not leave a reviewed state with
+two production execution paths.
+
+Block 4 has already moved the definition ownership and the test harness, so
+this block changes execution and wiring only.
 
 ### Construction and data ownership
 
-1. Change `WorkspaceDefinition` session-opening access to return the immutable
-   definitions already validated in the current workspace generation. Stop
-   reparsing character/provider definitions during session opening; changes to
-   those files take effect through workspace reload. Preserve the existing
-   default-character/default-persona selection behavior separately.
+1. Change the free `open_session()` and `WorkspaceRuntime::open_session()`
+   signatures to take `Providers&` and `std::shared_ptr<WakeNotifier>`. They
+   pass both into `SessionController`. Session opening keeps the definition
+   handling established in Block 4 and still constructs no provider client.
 
-2. Convert the selected forum definitions to ordered
-   `SharedCharacterDefinition` values once and pass them through session
-   construction. Remove the obsolete open-time character-settings fallback
-   notice if no path can produce it after this change.
-
-3. Change the free `open_session()` and
-   `WorkspaceRuntime::open_session()` signatures to take `Providers&` and
-   `std::shared_ptr<WakeNotifier>`. They pass both into
-   `SessionController`; no session-opening layer constructs a provider client,
-   reads the environment, or performs provider I/O.
-
-4. Change `web::SessionOpener` to receive the shared notifier. The production
+2. Change `web::SessionOpener` to receive the shared notifier. The production
    opener captures the process-owned `Providers&` and forwards it to
    `WorkspaceRuntime`. `LiveSession` passes its existing
    `shared_ptr<OwnerWakeSignal>` rather than a borrowed reference.
 
-5. Construct exactly one `Providers` in `prepare_and_run()` before the
+3. Construct exactly one `Providers` in `prepare_and_run()` before the
    `LiveSessionManager` ownership scope. Ensure every opener and controller
    that can call it is destroyed before the provider owner.
 
 ### Controller execution
 
-6. Remove `ThreadPool`, `GenerationExecutor`, and `GenerationBatch` fields from
+4. Remove `ThreadPool`, `GenerationExecutor`, and `GenerationBatch` fields from
    `SessionController`. Add:
 
    - borrowed `Providers&`;
    - the shared wake notifier used for new requests;
-   - ordered shared character definitions;
-   - immutable per-character runtime records;
    - one optional session-local active-generation value containing ordered
      `shared_ptr<ProviderRequest>` handles, a foreground index, and only the
      cancellation/presentation state the controller needs.
 
-   This active-generation value is not an executor and owns no queue, thread,
-   transport, or wait primitive.
+   The ordered shared definitions and immutable per-character runtime records
+   are already controller fields from Blocks 2 and 4. This active-generation
+   value is not an executor and owns no queue, thread, transport, or wait
+   primitive.
 
-7. Add a direct character-ID-to-definition lookup over the retained ordered
-   definitions. Before committing a normal prompt or multicast, resolve every
-   target and build every `ProviderRequestInput`, including one synchronous
-   `SharedModelHistory` snapshot shared by all multicast targets. Reject
-   programmer/input errors before durable state.
+5. Before committing a normal prompt or multicast, resolve every target through
+   the existing definition lookup and build every `ProviderRequestInput`,
+   including one synchronous `SharedModelHistory` snapshot shared by all
+   multicast targets. Reject programmer/input errors before durable state.
 
-8. Preserve durable ordering: activate and journal the first foreground turn,
+6. Preserve durable ordering: activate and journal the first foreground turn,
    then call `make_request()` independently for every prepared target. Because
    every operational outcome is a returned handle with a terminal event, a
    post-commit failure cannot leave an open journal turn without a consumable
    request.
 
-9. Normal generation stores one returned handle. Multicast stores every handle
+7. Normal generation stores one returned handle. Multicast stores every handle
    in target order; all workers start immediately. A failed target does not
    stop construction or execution of independent later targets.
 
-10. Replace `try_receive_foreground()` with
-    `active_generation.requests[foreground]->try_receive()`. Preserve bounded
-    draining, request-ID validation, streaming persistence, and target-ordered
-    presentation. A later target may finish early but remains isolated in its
-    own queue until the controller activates it.
+8. Replace `try_receive_foreground()` with
+   `active_generation.requests[foreground]->try_receive()`. Preserve bounded
+   draining, request-ID validation, streaming persistence, and target-ordered
+   presentation. A later target may finish early but remains isolated in its
+   own queue until the controller activates it.
 
-11. After a foreground terminal is persisted, release that handle. If another
-    target exists and the generation was not stopped, advance the foreground,
-    durably activate its turn, and drain its already-buffered events. Do not
-    add a `finished()` operation to `ProviderRequest`.
+9. After a foreground terminal is persisted, release that handle. If another
+   target exists and the generation was not stopped, advance the foreground,
+   durably activate its turn, and drain its already-buffered events. Do not add
+   a `finished()` operation to `ProviderRequest`.
 
-12. Implement `/stop` exactly as specified by the design:
+10. Implement `/stop` exactly as specified by the design:
 
     - cancel every handle;
     - immediately release and discard all non-foreground handles and queues;
@@ -473,7 +609,7 @@ together. Do not leave a reviewed state with two production execution paths.
     - clear the active-generation state and `busy()` after the foreground
       terminal, without waiting for registry cleanup.
 
-13. Implement controller shutdown/destruction without waiting for providers:
+11. Implement controller shutdown/destruction without waiting for providers:
 
     - cancel every retained request;
     - synchronously persist cancellation of the currently durable turn using
@@ -484,35 +620,28 @@ together. Do not leave a reviewed state with two production execution paths.
     Do not drain abandoned non-foreground queues and do not call
     `Providers::shutdown()` from a session.
 
-14. Update `busy()`, `is_generating()`, generation views, notices, and command
+12. Update `busy()`, `is_generating()`, generation views, notices, and command
     rejection to reflect only session-visible active-generation state. A new
     prompt is valid while older cancelled workers remain in the process
     registry.
 
-15. Keep `/characters`, `/info`, and style reset on the immutable runtime
-    records introduced in Block 2. Remove all controller dependence on backend
-    runtime information.
+### Test harness and migration
 
-### Test construction and migration
+13. Add the `Providers` member to the single controller harness from Block 4,
+    constructed before the notifier, definitions, and controller. Its
+    destructor destroys the controller first and then calls
+    `Providers::shutdown()`. No test's construction shape changes beyond this
+    field, because Block 4 already converted them.
 
-16. Replace `from_backends_for_testing` with a test harness that owns objects in
-    production order: `Providers`, shared notifier/definitions, then
-    `SessionController`. Its destructor destroys the controller first and then
-    calls `Providers::shutdown()`.
+14. Update the session-open, live-session, web-graph, and C++ integration
+    helpers for the new opener signatures.
 
-17. Make controller fake behavior come from `ProviderClientFactory`. Each call
-    returns a fresh fake backend for one request. Put coordination counters,
-    barriers, scripted deltas, and observations in separately shared test state;
-    never reuse a fake `ModelBackend` instance between requests.
-
-18. Convert controller, concurrent-controller, live-session, text-input,
-    session-open, web-graph, and C++ integration helpers to the new harness and
-    opener signatures. Preserve their existing behavioral assertions before
-    adding the new stop/destruction assertions.
+15. Use `ProviderThreadLauncher` where a test needs deterministic thread-start
+    failure.
 
 ### Process shutdown and deletion
 
-19. Make normal process shutdown order explicit:
+16. Make normal process shutdown order explicit:
 
     1. stop HTTP admission;
     2. request and join all live-session owners;
@@ -525,7 +654,7 @@ together. Do not leave a reviewed state with two production execution paths.
     forced `_Exit` path for an expired session-owner grace remains a forced
     exit.
 
-20. Remove the old production execution implementation and its obsolete tests
+17. Remove the old production execution implementation and its obsolete tests
     in the same block:
 
     - `generation_executor.*`;
@@ -533,16 +662,13 @@ together. Do not leave a reviewed state with two production execution paths.
     - the application `util/thread_pool.*` if no non-generation user remains;
     - executor/batch/thread-pool CMake entries;
     - start gates, staging hooks, pool-width rules, waiting cleanup, and
-      client collections;
-    - the temporary `ModelBackend::info()` operation once no test uses it.
+      client collections.
 
 ### Tests
 
-In addition to converting the existing suites, add controller and production
-plumbing coverage for:
+Add controller and production plumbing coverage for:
 
-- session opening creating no client and performing no provider/environment
-  work;
+- session opening creating no client and performing no provider HTTP request;
 - durable start preceding `make_request()`;
 - independent immediate multicast starts and target-ordered presentation;
 - one target start/transport failure not affecting another;
@@ -555,6 +681,9 @@ plumbing coverage for:
 - process construction and shutdown ownership order;
 - no curl handle remaining when provider shutdown returns.
 
+Also re-run the Block 4 settings-save and fallback tests unchanged: the cutover
+must not disturb them.
+
 Run `make test`, `make itest`, and the full TSan sequence. This block is not
 complete while any production reference to `GenerationExecutor`,
 `GenerationBatch`, or the application generation `ThreadPool` remains.
@@ -563,12 +692,13 @@ complete while any production reference to `GenerationExecutor`,
 
 The complete application uses exactly one process-owned `Providers`; sessions
 own only request handles and presentation state; the old execution path is
-deleted; normal, multicast, stop, destruction, session opening, and shutdown
-tests are green; and TSan reports no race in the new ownership graph.
+deleted; normal, multicast, stop, destruction, session opening, settings-save,
+and shutdown tests are green; and TSan reports no race in the new ownership
+graph.
 
 ---
 
-## Block 5 — Reload, lifecycle hardening, sanitizers, and documentation
+## Block 6 — Reload, lifecycle hardening, sanitizers, and documentation
 
 ### Goal
 
@@ -598,6 +728,11 @@ acceptance criterion in `docs/design.md`.
      workspace generation published;
    - `.env` is not reloaded by workspace reload.
 
+   Keep these distinct from the character-settings path proved in Block 4. A
+   settings save shuts down the affected forum's sessions and is re-read at the
+   next session open; it never publishes a workspace generation. Assert both
+   routes so a later change cannot collapse one into the other.
+
 3. Add process-level shutdown tests proving that session owners finish before
    provider admission closes, provider shutdown waits for transport quiescence,
    easy handles and callbacks are destroyed before unregister, and logging
@@ -626,7 +761,24 @@ acceptance criterion in `docs/design.md`.
    relevant test-support comments. Keep the HTTP library thread pool clearly
    distinguished from removed generation scheduling.
 
-8. Walk all 23 acceptance criteria in `docs/design.md` against code and tests.
+8. Correct names and comments the refactor invalidated:
+
+   - `ModelBackendInfo` no longer comes from a `ModelBackend` and no longer
+     lives naturally in `model_backend.h`. Rename it for the per-character
+     runtime record it now is and move it beside the character definitions.
+   - `WorkspaceDefinition`'s class comment claims definitions are "loaded once
+     at startup and never re-read", which `copy_definitions_for()` contradicts.
+     State what actually holds: the published generation is immutable, and a
+     session open re-parses and re-validates a forum's character files so a
+     settings save applies.
+   - Reconcile the item recorded in Block 4: `docs/design.md` says session
+     opening performs no "environment lookup", while the shared validation
+     function reads the environment locally. Amend that sentence to the
+     guarantee the design actually depends on — no provider network work, no
+     reachability check, no credential value in session state — rather than
+     changing behavior to fit the current wording.
+
+9. Walk all 23 acceptance criteria in `docs/design.md` against code and tests.
    Change the design status from planned to implemented only after every
    criterion is actually true.
 
@@ -647,8 +799,8 @@ cmake --build --preset asan-ubsan
 ctest --test-dir build/asan-ubsan --output-on-failure
 ```
 
-If any web application source or protocol shape changed during the cutover,
-also run:
+Also run the web checks. The cutover touches session opening and the
+character-settings notice, both of which the browser renders:
 
 ```bash
 make web-check
