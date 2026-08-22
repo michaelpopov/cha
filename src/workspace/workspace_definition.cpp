@@ -530,6 +530,16 @@ std::vector<CharacterDefinition> load_forum_definitions(
     return definitions;
 }
 
+void validate_provider_selections(
+    const std::vector<CharacterDefinition>& definitions,
+    const std::filesystem::path& providers_directory) {
+    for (const CharacterDefinition& definition : definitions) {
+        validate_provider_selection(
+            definition.provider,
+            providers_directory / path_from_utf8(definition.provider.id) / "config.toml");
+    }
+}
+
 Json inventory_entity(
     const std::string& name,
     const std::optional<std::string>& description) {
@@ -794,6 +804,7 @@ WorkspaceDefinition WorkspaceDefinition::load(
                 forum, PersonaRoster{*persona}, model.character_directories_, definitions_directory,
                 model.config_.providers_directory,
                 model.config_.styles_directory);
+            validate_provider_selections(definitions, model.config_.providers_directory);
             for (const CharacterDefinition& definition : definitions) {
                 // A character may participate in multiple forums. The detail
                 // endpoint is workspace-wide, so retain the first effective
@@ -872,10 +883,13 @@ WorkspaceDefinition WorkspaceDefinition::load(
         .providers_directory = model.config_.providers_directory,
         .definition = root / "system" / "assistant" / "character.toml",
     });
+    validate_provider_selection(
+        assistant_config.provider,
+        model.config_.providers_directory / path_from_utf8(assistant_config.provider.id) / "config.toml");
     model.definitions_.emplace(
         std::string(entrance_id),
         builtin_assistant_definitions(
-            assistant_config.backend, inventory, PersonaRoster{builtin_guest()}));
+            assistant_config.provider, inventory, PersonaRoster{builtin_guest()}));
     // The Entrance is described by the application guide the Assistant carries,
     // not by a FORUM.md of its own, so its detail reports the absent one.
     model.forum_markdown_.emplace(std::string(entrance_id), std::string());
@@ -1181,7 +1195,11 @@ CharacterSettingsChange WorkspaceDefinition::write_character_settings(
         if (!change.any()) return false;
 
         load_selection(provider, "provider", [&](std::string_view name) {
-            (void)load_named_provider(config_.providers_directory, name, *path);
+            const ProviderConfig config =
+                load_named_provider(config_.providers_directory, name, *path);
+            validate_provider_selection(
+                {.id = std::string(name), .config = make_backend_config(config)},
+                config_.providers_directory / path_from_utf8(name) / "config.toml");
         });
         if (style) {
             load_selection(*style, "style", [&](std::string_view name) {

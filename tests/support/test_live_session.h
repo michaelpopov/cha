@@ -312,10 +312,11 @@ inline CharacterDefinition unreachable_definition(
             .id = std::move(id),
             .display_name = std::move(name),
         },
-        .backend = {
+        .provider = {.id = "test", .config = {
             .host = "127.0.0.1",
             .port = 1,
-        },
+            .model = "fake",
+        }},
         .system_prompt = "Test prompt",
     };
 }

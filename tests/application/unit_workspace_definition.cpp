@@ -1,12 +1,15 @@
 #include "workspace/workspace_definition.h"
 
+#include "agents/provider_client.h"
 #include "workspace/builtins.h"
 #include "support/test_workspace.h"
+#include "util/environment.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -43,6 +46,25 @@ namespace {
 WorkspaceDefinition load_model(const std::filesystem::path& root) {
     return WorkspaceDefinition::load(root, load_workspace_config(root));
 }
+
+class ScopedEnvironmentVariable {
+public:
+    explicit ScopedEnvironmentVariable(std::string name) : name_(std::move(name)) {
+        if (const char* value = std::getenv(name_.c_str())) previous_ = value;
+    }
+
+    ~ScopedEnvironmentVariable() {
+        if (previous_) {
+            (void)set_environment_variable(name_, *previous_);
+        } else {
+            (void)unset_environment_variable(name_);
+        }
+    }
+
+private:
+    std::string name_;
+    std::optional<std::string> previous_;
+};
 
 std::vector<std::string> display_names(std::span<const CharacterMetadata> values) {
     std::vector<std::string> names;
@@ -124,6 +146,99 @@ TEST(WorkspaceDefinition, ReportsForumMembershipAndDefaultsWithoutAPath) {
     EXPECT_EQ(entrance->member_ids, (std::vector<std::string>{std::string(assistant_id)}));
     EXPECT_EQ(entrance->default_character_id, assistant_id);
     EXPECT_EQ(entrance->default_persona_id, guest_id);
+}
+
+TEST(WorkspaceDefinition, RejectsReferencedProvidersWithoutAConfiguredModel) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("test", "host = \"test\"\nport = 1\nmode = \"test\"\n");
+
+    try {
+        (void)load_model(fixture.root());
+        FAIL() << "expected missing model rejection";
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("providers/test/config.toml"), std::string::npos);
+        EXPECT_NE(message.find("provider 'test'"), std::string::npos);
+        EXPECT_NE(message.find("model"), std::string::npos);
+    }
+}
+
+TEST(WorkspaceDefinition, RejectsAnUnassignedCharactersProviderWithoutAConfiguredModel) {
+    test::TestWorkspace fixture;
+    fixture.add_character("unassigned", "Unassigned");
+    std::ofstream(fixture.root() / "characters" / "unassigned" / "character.toml")
+        << "display_name = \"Unassigned\"\nprovider = \"unassigned-provider\"\n";
+    fixture.write_provider(
+        "unassigned-provider", "host = \"test\"\nport = 1\nmode = \"test\"\n");
+
+    try {
+        (void)load_model(fixture.root());
+        FAIL() << "expected missing model rejection";
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("providers/unassigned-provider/config.toml"), std::string::npos);
+        EXPECT_NE(message.find("provider 'unassigned-provider'"), std::string::npos);
+    }
+}
+
+TEST(WorkspaceDefinition, ValidatesReferencedCredentialEnvironmentVariablesWithoutExposingValues) {
+    constexpr std::string_view variable = "CHA_BLOCK_ONE_PROVIDER_KEY";
+    constexpr std::string_view secret = "never-log-this-value";
+    ScopedEnvironmentVariable environment{std::string(variable)};
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "test",
+        "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n"
+        "api_key_env = \"CHA_BLOCK_ONE_PROVIDER_KEY\"\n");
+
+    ASSERT_TRUE(unset_environment_variable(variable));
+    EXPECT_THROW((void)load_model(fixture.root()), std::runtime_error);
+
+    ASSERT_TRUE(set_environment_variable(variable, ""));
+    EXPECT_THROW((void)load_model(fixture.root()), std::runtime_error);
+
+    ASSERT_TRUE(set_environment_variable(variable, secret));
+    const WorkspaceDefinition model = load_model(fixture.root());
+    const CharacterDefinition& definition =
+        WorkspaceDefinitionTestAccess::loaded(model, "lobby").front();
+    EXPECT_TRUE(definition.provider.config.api_key.empty());
+    ProviderClient client(definition);
+    const ModelBackendInfo info = client.info();
+    EXPECT_EQ(info.model, "fake");
+    EXPECT_EQ(info.model.find(secret), std::string::npos);
+    EXPECT_EQ(info.api.find(secret), std::string::npos);
+
+    try {
+        ASSERT_TRUE(unset_environment_variable(variable));
+        (void)load_model(fixture.root());
+        FAIL() << "expected missing credential rejection";
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("providers/test/config.toml"), std::string::npos);
+        EXPECT_NE(message.find("provider 'test'"), std::string::npos);
+        EXPECT_NE(message.find(std::string(variable)), std::string::npos);
+        EXPECT_EQ(message.find(std::string(secret)), std::string::npos);
+    }
+}
+
+TEST(WorkspaceDefinition, LaterDefinitionsUseAnUpdatedProviderSnapshot) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("test", "host = \"first\"\nport = 1\nmode = \"test\"\nmodel = \"one\"\n");
+    const WorkspaceDefinition first = load_model(fixture.root());
+
+    fixture.write_provider("test", "host = \"second\"\nport = 2\nmode = \"test\"\nmodel = \"two\"\n");
+    const WorkspaceDefinition second = load_model(fixture.root());
+
+    const CharacterDefinition& first_definition =
+        WorkspaceDefinitionTestAccess::loaded(first, "lobby").front();
+    const CharacterDefinition& second_definition =
+        WorkspaceDefinitionTestAccess::loaded(second, "lobby").front();
+    EXPECT_EQ(first_definition.provider.id, "test");
+    EXPECT_EQ(first_definition.provider.config.model, "one");
+    EXPECT_EQ(first_definition.provider.config.host, "first");
+    EXPECT_EQ(second_definition.provider.id, "test");
+    EXPECT_EQ(second_definition.provider.config.model, "two");
+    EXPECT_EQ(second_definition.provider.config.host, "second");
 }
 
 void expect_prompt_contains_only(
@@ -307,7 +422,7 @@ std::string file_bytes(const std::filesystem::path& path) {
 
 TEST(WorkspaceDefinition, WritesCharacterProviderAndOptionalStyle) {
     test::TestWorkspace fixture;
-    fixture.write_provider("other", "host = \"test\"\nport = 2\nmode = \"test\"\n");
+    fixture.write_provider("other", "host = \"test\"\nport = 2\nmode = \"test\"\nmodel = \"fake\"\n");
     fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
     const WorkspaceDefinition model = load_model(fixture.root());
 
@@ -351,6 +466,7 @@ TEST(WorkspaceDefinition, ComparesAStaleSaveWithTheDocumentItActuallyReplaces) {
 TEST(WorkspaceDefinition, RejectsAnUnusableSelectionWithoutTouchingTheFile) {
     test::TestWorkspace fixture;
     fixture.write_provider("broken", "this is not a usable provider\n");
+    fixture.write_provider("model-less", "host = \"test\"\nport = 1\nmode = \"test\"\n");
     fixture.write_style("broken", "font = \"comic\"\n");
     fixture.write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");
     const WorkspaceDefinition model = load_model(fixture.root());
@@ -359,6 +475,9 @@ TEST(WorkspaceDefinition, RejectsAnUnusableSelectionWithoutTouchingTheFile) {
 
     EXPECT_THROW(
         model.write_character_settings("guide", "broken", std::nullopt),
+        std::invalid_argument);
+    EXPECT_THROW(
+        model.write_character_settings("guide", "model-less", std::nullopt),
         std::invalid_argument);
     EXPECT_THROW(
         model.write_character_settings("guide", "test", "broken"),
@@ -580,7 +699,7 @@ protected:
         std::filesystem::create_directories(root_ / "characters" / "guide");
         std::filesystem::create_directories(root_ / "forums" / "lobby" / "members" / "guide");
         std::filesystem::create_directories(root_ / "personas" / "operator");
-        write_provider("test", "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\n");
+        write_provider("test", "host = \"127.0.0.1\"\nport = 8080\nmode = \"test\"\nmodel = \"fake\"\n");
         std::filesystem::create_directories(root_ / "system" / "assistant");
         std::ofstream(root_ / "system" / "assistant" / "character.toml")
             << "display_name = \"Assistant\"\nprovider = \"test\"\n";
@@ -999,7 +1118,7 @@ protected:
         const std::filesystem::path provider = providers_directory(root_) / "test";
         std::filesystem::create_directories(provider);
         std::ofstream(provider / "config.toml")
-            << "host = \"test\"\nport = 1\nmode = \"test\"\n";
+            << "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n";
         std::filesystem::create_directories(root_ / "system" / "assistant");
         std::ofstream(root_ / "system" / "assistant" / "character.toml")
             << "display_name = \"Assistant\"\nprovider = \"test\"\n";

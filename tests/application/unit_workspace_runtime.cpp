@@ -60,6 +60,19 @@ TEST(WorkspaceRuntime, KeepsTheCurrentGenerationWhenReloadValidationFails) {
     EXPECT_NE(after->model->find_character("guide"), nullptr);
 }
 
+TEST(WorkspaceRuntime, DoesNotPublishAProviderValidationFailure) {
+    test::TestWorkspace fixture;
+    WorkspaceRuntime runtime(fixture.root(), welcome_seed());
+    const auto before = runtime.snapshot();
+
+    fixture.write_provider("test", "host = \"test\"\nport = 1\nmode = \"test\"\n");
+    EXPECT_THROW(runtime.reload(), std::runtime_error);
+
+    const auto after = runtime.snapshot();
+    EXPECT_EQ(after, before);
+    EXPECT_NE(after->model->find_character("guide"), nullptr);
+}
+
 TEST(WorkspaceRuntime, ExportsAndBootstrapsAStoredSessionOnReload) {
     test::TestWorkspace fixture;
     WorkspaceRuntime runtime(fixture.root(), welcome_seed());

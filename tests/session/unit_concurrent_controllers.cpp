@@ -232,10 +232,12 @@ TEST(ConcurrentControllers, ConstructSessionLocalProviderClientsConcurrently) {
             CharacterDefinition definition;
             definition.character.id = "character-" + std::to_string(index);
             definition.character.display_name = "Character " + std::to_string(index);
-            definition.backend.host = "127.0.0.1";
-            definition.backend.port = 9;
-            definition.backend.mode = Mode::net;
-            definition.backend.model = "configured-model";
+            definition.provider = {.id = "test", .config = {
+                .host = "127.0.0.1",
+                .port = 9,
+                .mode = Mode::net,
+                .model = "configured-model",
+            }};
             start.arrive_and_wait();
             auto controller = test::from_definitions_for_testing(
                 {std::move(definition)}, path, notifier);

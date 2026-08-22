@@ -77,6 +77,14 @@ struct ModelBackendConfig {
     CacheRetention cache_retention{CacheRetention::short_};
 };
 
+// The exact named provider configuration selected by a character. The name is
+// retained for request ownership and diagnostics; config is its resolved
+// snapshot and is never looked up again by execution code.
+struct ProviderSelection {
+    std::string id;
+    ModelBackendConfig config;
+};
+
 // Provider/runtime settings as written in one named provider configuration.
 // Absent values fall back to the ModelBackendConfig defaults, not to another
 // configuration file: a provider config is never merged with a second one.
@@ -124,9 +132,15 @@ std::filesystem::path styles_directory(const std::filesystem::path& workspace_ro
 // The typed connection configuration and prompt scope after prompt layers.
 struct LoadedCharacterConfig {
     CharacterMetadata character;
-    ModelBackendConfig backend;
+    ProviderSelection provider;
     TemplateScope prompt_variables;
 };
+
+// Validates the parts of a resolved provider selection that need local
+// process state. The path is included in diagnostics, never credential data.
+void validate_provider_selection(
+    const ProviderSelection& provider,
+    const std::filesystem::path& config_path);
 
 // Resolves the provider selected by the definition, then merges prompt scope
 // from the definition, forum defaults, and member override. Provider keys in

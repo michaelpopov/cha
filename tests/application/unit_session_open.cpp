@@ -237,13 +237,13 @@ TEST_F(SessionOpenTest, PropagatesMissingForumsSessionsAndLeaseContention) {
     held.controller->shutdown();
 }
 
-TEST_F(SessionOpenTest, ReleasesTheLeaseWhenControllerConstructionFails) {
+TEST_F(SessionOpenTest, KeepsSessionOpenCredentialValidationForReparsedDefinitions) {
+    const WorkspaceDefinition model = load_model();
     fixture_.write_provider("keyless",
         "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n"
         "api_key_env = \"CHA_TEST_UNSET_API_KEY\"\n");
     fixture_.write_character_config(
         "display_name = \"Guide\"\nprovider = \"keyless\"\n");
-    const WorkspaceDefinition model = load_model();
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
 
@@ -251,7 +251,8 @@ TEST_F(SessionOpenTest, ReleasesTheLeaseWhenControllerConstructionFails) {
         (void)open_session(model, *sessions, created.identity, notifier_),
         std::runtime_error);
 
-    // The failed open must not leave the session leased against the next one.
+    // This Block 1 gap is intentional: re-parsed definitions are still
+    // rejected by ProviderClient while Block 4 moves this validation earlier.
     EXPECT_NO_THROW((void)sessions->prepare(created.identity));
 }
 

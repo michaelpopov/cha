@@ -65,25 +65,26 @@ CharacterDefinition test_definition(
             .display_name = "Assistant",
             .description = std::move(description),
         },
+        .provider = {.id = "test", .config = {.model = "fake"}},
     };
 }
 
 CharacterDefinition network_definition(int port, bool stream = true) {
     CharacterDefinition definition = test_definition();
-    definition.backend.host = "127.0.0.1";
-    definition.backend.port = port;
-    definition.backend.mode = Mode::net;
-    definition.backend.model = "configured-model";
-    definition.backend.stream = stream;
-    definition.backend.api = ProviderApi::chat_completions;
-    definition.backend.web_search = WebSearchMode::off;
+    definition.provider.config.host = "127.0.0.1";
+    definition.provider.config.port = port;
+    definition.provider.config.mode = Mode::net;
+    definition.provider.config.model = "configured-model";
+    definition.provider.config.stream = stream;
+    definition.provider.config.api = ProviderApi::chat_completions;
+    definition.provider.config.web_search = WebSearchMode::off;
     return definition;
 }
 
 CharacterDefinition responses_network_definition(int port, bool stream = true) {
     CharacterDefinition definition = network_definition(port, stream);
-    definition.backend.api = ProviderApi::responses;
-    definition.backend.web_search = WebSearchMode::automatic;
+    definition.provider.config.api = ProviderApi::responses;
+    definition.provider.config.web_search = WebSearchMode::automatic;
     return definition;
 }
 
@@ -174,10 +175,10 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     mock.start();
 
     CharacterDefinition definition = network_definition(mock.port());
-    definition.backend.temperature = 0.25;
-    definition.backend.max_tokens = 200;
-    definition.backend.reasoning_effort = "medium";
-    definition.backend.api_key = "test-key";
+    definition.provider.config.temperature = 0.25;
+    definition.provider.config.max_tokens = 200;
+    definition.provider.config.reasoning_effort = "medium";
+    definition.provider.config.api_key = "test-key";
     definition.system_prompt = "Be concise.";
     std::atomic_bool cancellation{false};
     ProviderClient client(std::move(definition));
@@ -328,16 +329,16 @@ TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
     request.run.created_at = 1'700'000'003;
 
     CharacterDefinition direct = network_definition(443, false);
-    direct.backend.host = "API.OPENAI.COM.";
-    direct.backend.https = true;
+    direct.provider.config.host = "API.OPENAI.COM.";
+    direct.provider.config.https = true;
     direct.system_prompt = "Stable instructions";
-    direct.backend.api = ProviderApi::chat_completions;
+    direct.provider.config.api = ProviderApi::chat_completions;
     ProviderClient chat_client(direct);
     const RequestPayload chat = chat_client.prepare(request);
     EXPECT_EQ(Json::parse(chat.bytes)["prompt_cache_key"], request.run.prompt_cache_key);
     EXPECT_FALSE(chat.session_id);
 
-    direct.backend.api = ProviderApi::responses;
+    direct.provider.config.api = ProviderApi::responses;
     ProviderClient short_client(direct);
     const RequestPayload short_payload = short_client.prepare(request);
     const Json short_body = Json::parse(short_payload.bytes);
@@ -355,7 +356,7 @@ TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
     ASSERT_TRUE(later_payload.session_id);
     EXPECT_EQ(*later_payload.session_id, *short_payload.session_id);
 
-    direct.backend.cache_retention = CacheRetention::long_;
+    direct.provider.config.cache_retention = CacheRetention::long_;
     ProviderClient responses_client(direct);
     const RequestPayload responses = responses_client.prepare(request);
     const Json responses_body = Json::parse(responses.bytes);
@@ -366,14 +367,14 @@ TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
     EXPECT_FALSE(responses_body.contains("previous_response_id"));
     EXPECT_FALSE(responses_body.contains("conversation"));
 
-    direct.backend.cache_retention = CacheRetention::off;
+    direct.provider.config.cache_retention = CacheRetention::off;
     ProviderClient disabled_client(direct);
     const RequestPayload disabled = disabled_client.prepare(request);
     EXPECT_FALSE(Json::parse(disabled.bytes).contains("prompt_cache_key"));
     EXPECT_FALSE(disabled.session_id);
 
-    direct.backend.cache_retention = CacheRetention::short_;
-    direct.backend.host = "api.openai.com.example";
+    direct.provider.config.cache_retention = CacheRetention::short_;
+    direct.provider.config.host = "api.openai.com.example";
     ProviderClient gateway_client(std::move(direct));
     const RequestPayload gateway = gateway_client.prepare(request);
     EXPECT_FALSE(Json::parse(gateway.bytes).contains("prompt_cache_key"));
@@ -482,7 +483,7 @@ TEST(ProviderClient, ClassifiesProviderErrorsInsideSuccessfulResponses) {
     for (Case& test_case : cases) {
         MockHttpServer mock({http_response(test_case.content_type, test_case.body)});
         mock.start();
-        test_case.definition.backend.port = mock.port();
+        test_case.definition.provider.config.port = mock.port();
         std::atomic_bool cancellation{false};
         ProviderClient client(std::move(test_case.definition));
         Transcript transcript;
@@ -612,8 +613,8 @@ TEST(ProviderClient, BoundsOverallAndIdleGenerationTime) {
             std::chrono::milliseconds(2000));
         mock.start();
         CharacterDefinition definition = network_definition(mock.port());
-        definition.backend.timeout_s = test_case.timeout_s;
-        definition.backend.idle_timeout_s = test_case.idle_timeout_s;
+        definition.provider.config.timeout_s = test_case.timeout_s;
+        definition.provider.config.idle_timeout_s = test_case.idle_timeout_s;
         std::atomic_bool cancellation{false};
         GenerationResult result;
         const auto started_at = std::chrono::steady_clock::now();
@@ -648,8 +649,8 @@ TEST(ProviderClient, WaitsThroughProviderThinkTimeBeforeTheFirstByte) {
         mock.start();
         CharacterDefinition definition =
             network_definition(mock.port(), !response.empty());
-        definition.backend.timeout_s = 600;
-        definition.backend.idle_timeout_s = 1;
+        definition.provider.config.timeout_s = 600;
+        definition.provider.config.idle_timeout_s = 1;
         std::atomic_bool cancellation{false};
         GenerationResult result;
         const auto started_at = std::chrono::steady_clock::now();
@@ -736,28 +737,15 @@ TEST(ProviderClient, ReportsAJsonErrorReturnedInsteadOfAStream) {
     mock.join();
 }
 
-TEST(ProviderClient, DiscoversItsModelBeforeTheFirstGeneration) {
-    MockHttpServer mock({
-        http_response("application/json", R"({"data":[{"id":"discovered-model"}]})"),
-        http_response("application/json", R"({"choices":[{"message":{"content":"Answer"}}]})"),
-    });
-    mock.start();
-    CharacterDefinition definition = network_definition(mock.port(), false);
-    definition.backend.model.clear();
-    std::atomic_bool cancellation{false};
-    ProviderClient client(std::move(definition));
-    EXPECT_EQ(client.info().model, "discovered-model");
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 18, "Question");
-
-    const GenerationResult result = complete(
-        client, request, transcript, [](GenerationDelta) {}, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-    mock.join();
-    ASSERT_EQ(mock.requests().size(), 2U);
-    EXPECT_TRUE(mock.requests()[0].starts_with("GET /v1/models HTTP/1.1"));
-    EXPECT_EQ(Json::parse(request_body(mock.requests()[1]))["model"], "discovered-model");
+TEST(ProviderClient, RejectsAnEmptyConfiguredModelWithoutContactingTheProvider) {
+    CharacterDefinition definition = network_definition(1, false);
+    definition.provider.config.model.clear();
+    try {
+        (void)ProviderClient(std::move(definition));
+        FAIL() << "expected missing model rejection";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("non-empty configured model"), std::string::npos);
+    }
 }
 
 TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
@@ -769,10 +757,10 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
     mock.start();
 
     CharacterDefinition definition = responses_network_definition(mock.port());
-    definition.backend.temperature = 0.25;
-    definition.backend.max_tokens = 8;
-    definition.backend.reasoning_effort = "medium";
-    definition.backend.api_key = "test-key";
+    definition.provider.config.temperature = 0.25;
+    definition.provider.config.max_tokens = 8;
+    definition.provider.config.reasoning_effort = "medium";
+    definition.provider.config.api_key = "test-key";
     definition.system_prompt = "Be concise.";
     std::atomic_bool cancellation{false};
     ProviderClient client(std::move(definition));
@@ -821,7 +809,7 @@ TEST(ProviderClient, PrefixesProviderEndpointsWithConfiguredBasePath) {
         "application/json", R"({"choices":[{"message":{"content":"Answer"}}]})")});
     mock.start();
     CharacterDefinition definition = network_definition(mock.port(), false);
-    definition.backend.base_path = "/api";
+    definition.provider.config.base_path = "/api";
     std::atomic_bool cancellation{false};
     ProviderClient client(std::move(definition));
     Transcript transcript;
@@ -867,11 +855,11 @@ TEST(ProviderClient, UnconfiguredProtocolDefaultsToMandatoryWebSearch) {
         R"("content":[{"type":"output_text","text":"Answer"}]}]})")});
     mock.start();
     CharacterDefinition definition = test_definition();
-    definition.backend.host = "127.0.0.1";
-    definition.backend.port = mock.port();
-    definition.backend.mode = Mode::net;
-    definition.backend.model = "configured-model";
-    definition.backend.stream = false;
+    definition.provider.config.host = "127.0.0.1";
+    definition.provider.config.port = mock.port();
+    definition.provider.config.mode = Mode::net;
+    definition.provider.config.model = "configured-model";
+    definition.provider.config.stream = false;
     std::atomic_bool cancellation{false};
     ProviderClient client(std::move(definition));
     Transcript transcript;
@@ -937,35 +925,6 @@ TEST(ProviderClient, CancelsAnActiveResponsesStreamingTransfer) {
     EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
     EXPECT_EQ(output, "Partial");
     mock.join();
-}
-
-TEST(ProviderClient, DiscoversModelBeforeResponsesGeneration) {
-    MockHttpServer mock({
-        http_response("application/json", R"({"data":[{"id":"discovered-model"}]})"),
-        http_response(
-            "application/json",
-            R"({"status":"completed","output":[{"type":"message","role":"assistant",)"
-            R"("content":[{"type":"output_text","text":"Answer"}]}]})"),
-    });
-    mock.start();
-    CharacterDefinition definition = responses_network_definition(mock.port(), false);
-    definition.backend.model.clear();
-    std::atomic_bool cancellation{false};
-    ProviderClient client(std::move(definition));
-    EXPECT_EQ(client.info().model, "discovered-model");
-    EXPECT_TRUE(client.info().api.ends_with("/v1/responses"));
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 31, "Question");
-
-    const GenerationResult result = complete(
-        client, request, transcript, [](GenerationDelta) {}, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-    mock.join();
-    ASSERT_EQ(mock.requests().size(), 2U);
-    EXPECT_TRUE(mock.requests()[0].starts_with("GET /v1/models HTTP/1.1"));
-    EXPECT_TRUE(mock.requests()[1].starts_with("POST /v1/responses HTTP/1.1"));
-    EXPECT_EQ(Json::parse(request_body(mock.requests()[1]))["model"], "discovered-model");
 }
 
 } // namespace

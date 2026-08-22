@@ -2179,11 +2179,11 @@ CharacterDefinition provider_test_definition(
             .id = std::move(id),
             .display_name = std::move(name),
         },
-        .backend = {
+        .provider = {.id = "test", .config = {
             .host = "127.0.0.1",
             .port = 1,
             .model = std::move(model),
-        },
+        }},
         .system_prompt = "Test prompt",
     };
 }
@@ -2220,14 +2220,14 @@ public:
                && !cancellation.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
-        on_delta({GenerationDeltaKind::answer, "answer-" + definition_.backend.model});
+        on_delta({GenerationDeltaKind::answer, "answer-" + definition_.provider.config.model});
         return {};
     }
 
     ModelBackendInfo info() const override {
         return {
             definition_.character,
-            definition_.backend.model,
+            definition_.provider.config.model,
             "test://model",
             true,
         };
@@ -2244,7 +2244,7 @@ GenerationExecutor::BackendFactory provider_recording_factory(
         if (observation->fail_next.exchange(false)) {
             throw std::runtime_error("backend construction failed");
         }
-        observation->configs.push_back(definition.backend);
+        observation->configs.push_back(definition.provider.config);
         return std::unique_ptr<ModelBackend>(
             new ProviderFactoryBackend(std::move(definition), observation));
     };

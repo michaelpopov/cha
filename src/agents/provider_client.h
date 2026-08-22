@@ -14,7 +14,7 @@ namespace cha {
 // one CharacterDefinition.
 // It projects the transcript into provider messages, performs the request over libcurl as either a
 // streaming or a single-response call, parses reasoning and answer content out of the provider
-// format, and discovers a model when the configuration names none. It owns one connection handle,
+// format. It owns one connection handle,
 // so a single client serves one request at a time.
 class ProviderClient final : public ModelBackend {
 public:
@@ -34,10 +34,8 @@ public:
 private:
     class CurlEasyHandle;
 
-    void discover_model();
     std::string base_url() const;
     std::string endpoint() const;
-    std::string models_endpoint() const;
 
     CharacterMetadata character_;
     ModelBackendConfig config_;

@@ -20,7 +20,7 @@ inline constexpr std::string_view welcome_id = "builtin-welcome";
 const Persona& builtin_guest();
 std::string_view application_guide();
 std::vector<CharacterDefinition> builtin_assistant_definitions(
-    ModelBackendConfig backend,
+    ProviderSelection provider,
     const std::string& inventory,
     const PersonaRoster& personas);
 

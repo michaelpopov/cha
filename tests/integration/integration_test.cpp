@@ -17,8 +17,10 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -36,6 +38,31 @@ test::TestNotifier& notifier() {
     static test::TestNotifier instance;
     return instance;
 }
+
+class ScopedEnvironmentVariable {
+public:
+    ScopedEnvironmentVariable(std::string name, std::string value)
+        : name_(std::move(name)) {
+        if (const char* current = std::getenv(name_.c_str())) previous_ = current;
+        if (!previous_ || previous_->empty()) {
+            if (!set_environment_variable(name_, value)) {
+                throw std::runtime_error("Failed to set integration-test environment variable");
+            }
+        }
+    }
+
+    ~ScopedEnvironmentVariable() {
+        if (previous_) {
+            (void)set_environment_variable(name_, *previous_);
+        } else {
+            (void)unset_environment_variable(name_);
+        }
+    }
+
+private:
+    std::string name_;
+    std::optional<std::string> previous_;
+};
 
 std::vector<TranscriptEntry> copy_entries(TranscriptView transcript) {
     const auto entries = transcript.entries;
@@ -86,10 +113,10 @@ CharacterDefinition integration_definition(bool stream) {
         .definition = workspace_directory / "characters" / "test" / "Ismael" / "character.toml",
         .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
     });
-    loaded.backend.stream = stream;
+    loaded.provider.config.stream = stream;
     return {
         .character = std::move(loaded.character),
-        .backend = std::move(loaded.backend),
+        .provider = std::move(loaded.provider),
     };
 }
 
@@ -279,6 +306,11 @@ struct LobbySetup {
 
 LobbySetup lobby_setup() {
     const std::filesystem::path root{CHA_WORKSPACE_DIRECTORY};
+    // The mock transports below replace every loaded provider before use, but
+    // workspace loading correctly validates every referenced credential name.
+    ScopedEnvironmentVariable openai_key("OPENAI_API_KEY", "integration-test-key");
+    ScopedEnvironmentVariable openrouter_key("OPEN_ROUTER_API_KEY", "integration-test-key");
+    ScopedEnvironmentVariable gemini_key("GEMINI_API_KEY", "integration-test-key");
     const WorkspaceConfig config = load_workspace_config(root);
     const WorkspaceDefinition model = WorkspaceDefinition::load(root, config);
     const ForumInfo* const forum = model.find_forum("lobby");
@@ -320,18 +352,18 @@ LobbySetup lobby_setup() {
 
 // Redirects one character's backend at a local mock server without touching its prompt.
 void point_at(CharacterDefinition& definition, int port) {
-    definition.backend.host = "127.0.0.1";
-    definition.backend.port = port;
-    definition.backend.https = false;
-    definition.backend.mode = Mode::net;
+    definition.provider.config.host = "127.0.0.1";
+    definition.provider.config.port = port;
+    definition.provider.config.https = false;
+    definition.provider.config.mode = Mode::net;
     // The local fixtures below use the Chat Completions wire format. The
     // checked-in workspace defaults to Responses, so make the test transport
     // choice explicit rather than relying on the workspace default.
-    definition.backend.api = ProviderApi::chat_completions;
-    definition.backend.web_search = WebSearchMode::off;
-    definition.backend.stream = false;
-    definition.backend.api_key = "integration-key";
-    definition.backend.api_key_env.clear();
+    definition.provider.config.api = ProviderApi::chat_completions;
+    definition.provider.config.web_search = WebSearchMode::off;
+    definition.provider.config.stream = false;
+    definition.provider.config.api_key = "integration-key";
+    definition.provider.config.api_key_env.clear();
 }
 
 std::string answer(std::string_view text) {
@@ -427,8 +459,8 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
     });
     server.start();
     point_at(definitions.front(), server.port());
-    definitions.front().backend.stream = true;
-    definitions.front().backend.reasoning_format =
+    definitions.front().provider.config.stream = true;
+    definitions.front().provider.config.reasoning_format =
         ReasoningFormat::automatic;
 
     TemporarySession session;
@@ -473,7 +505,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
         R"({"choices":[{"message":{"reasoning":"Non-stream thought","content":"Non-stream answer"}}]})")});
     server.start();
     point_at(definitions.front(), server.port());
-    definitions.front().backend.reasoning_format =
+    definitions.front().provider.config.reasoning_format =
         ReasoningFormat::reasoning;
 
     TemporarySession session;

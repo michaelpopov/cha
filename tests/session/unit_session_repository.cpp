@@ -226,10 +226,10 @@ TEST_F(SessionRepositoryTest, KeepsADamagedDatabaseListedButRejectsItStrictly) {
 }
 
 TEST_F(SessionRepositoryTest, CreatesWithoutInitializingAProvider) {
-    // A network-mode provider with no configured model would have to discover
-    // one during controller construction. Creation must not do that work.
+    // Session creation only records session state; it must not initialize a
+    // network-mode provider.
     fixture_.write_character_defaults(
-        "host = \"127.0.0.1\"\nport = 1\nmode = \"net\"\n");
+        "host = \"127.0.0.1\"\nport = 1\nmode = \"net\"\nmodel = \"fake\"\n");
     const SessionRepository repository = make_repository();
 
     const StoredSession created = repository.create("lobby", "Unopened");

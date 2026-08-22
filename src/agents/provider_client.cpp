@@ -130,8 +130,8 @@ constexpr std::size_t max_request_id_size = 128;
 
 // Accumulates one HTTP response and hands streaming bytes to its decoder.
 struct ResponseContext {
-    // Set for streaming generation only; discovery and single-response calls
-    // keep the whole body instead.
+    // Set for streaming generation only; single-response calls keep the whole
+    // body instead.
     StreamingResponseDecoder* decoder{};
     std::size_t received_bytes{};
     std::string body;
@@ -524,11 +524,14 @@ std::string build_chat_completions_request_body(
 
 ProviderClient::ProviderClient(CharacterDefinition definition)
     : character_(std::move(definition.character)),
-      config_(std::move(definition.backend)),
+      config_(std::move(definition.provider.config)),
       system_prompt_(std::move(definition.system_prompt)) {
     if (character_.id.empty() || character_.display_name.empty()) {
         throw std::runtime_error(
             "Provider client character ID and display name cannot be empty");
+    }
+    if (config_.model.empty()) {
+        throw std::runtime_error("Provider client requires a non-empty configured model");
     }
     api_key_ = config_.api_key;
 
@@ -545,96 +548,10 @@ ProviderClient::ProviderClient(CharacterDefinition definition)
     if (config_.mode == Mode::net) {
         (void)curl_global();
         curl_ = std::make_unique<CurlEasyHandle>();
-        if (config_.model.empty()) {
-            discover_model();
-        }
     }
 }
 
 ProviderClient::~ProviderClient() = default;
-
-void ProviderClient::discover_model() {
-    ResponseContext response;
-    const std::string url = models_endpoint();
-    const auto started_at = std::chrono::steady_clock::now();
-    log_info("Model discovery started: endpoint=" + url);
-    try {
-        curl_->reset();
-        curl_->set(CURLOPT_URL, url.c_str(), "Failed to configure models request URL");
-        curl_->set(CURLOPT_HTTPGET, 1L, "Failed to configure models request");
-        curl_->set(CURLOPT_WRITEFUNCTION, receive_response, "Failed to configure models response callback");
-        curl_->set(CURLOPT_WRITEDATA, &response, "Failed to configure models response destination");
-        curl_->set(CURLOPT_HEADERFUNCTION, receive_header, "Failed to configure models header callback");
-        curl_->set(CURLOPT_HEADERDATA, &response, "Failed to configure models header destination");
-        curl_->set(CURLOPT_CONNECTTIMEOUT, 10L, "Failed to configure models connection timeout");
-        // Model discovery is a small metadata request and must not block startup indefinitely.
-        curl_->set(CURLOPT_TIMEOUT, 10L, "Failed to configure models request timeout");
-        curl_->set(CURLOPT_NOSIGNAL, 1L, "Failed to configure libcurl signals");
-
-        curl_slist* raw_headers = nullptr;
-        raw_headers = curl_slist_append(raw_headers, "Accept: application/json");
-        if (!api_key_.empty()) {
-            raw_headers = curl_slist_append(
-                raw_headers,
-                ("Authorization: Bearer " + api_key_).c_str());
-        }
-        if (!raw_headers) {
-            throw std::runtime_error("Failed to create models request headers");
-        }
-        CurlHeaders headers(raw_headers);
-        curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure models request headers");
-
-        const CURLcode perform_result = curl_->perform();
-        if (response.error) {
-            std::rethrow_exception(response.error);
-        }
-        if (perform_result != CURLE_OK) {
-            throw std::runtime_error(
-                "Models request failed: "
-                + std::string(curl_easy_strerror(perform_result)));
-        }
-
-        const long status = curl_->response_code(
-            "Failed to read models response status");
-        const std::string content_type = curl_->content_type(
-            "Failed to read models response content type");
-        if (status < 200 || status >= 300) {
-            log_provider_error_detail(url, status, response);
-            throw std::runtime_error(
-                "Models request returned HTTP " + std::to_string(status)
-                + ": " + response_error(response.body));
-        }
-
-        try {
-            const Json value = Json::parse(response.body);
-            const Json::json_pointer model_pointer("/data/0/id");
-            if (!value.contains(model_pointer)
-                || !value.at(model_pointer).is_string()) {
-                throw std::runtime_error(
-                    "Models response did not contain data[0].id");
-            }
-            config_.model = value.at(model_pointer).get<std::string>();
-        } catch (const Json::exception& error) {
-            throw std::runtime_error(
-                "Failed to parse models response: " + std::string(error.what()));
-        }
-        log_info(
-            "Model discovery completed: endpoint=" + url
-            + " model=" + config_.model
-            + " status=" + std::to_string(status)
-            + " content_type=" + sanitize_content_type(content_type)
-            + " response_bytes=" + std::to_string(response.received_bytes)
-            + request_id_field(response.request_id)
-            + " duration_ms=" + std::to_string(elapsed_milliseconds(started_at)));
-    } catch (const std::exception&) {
-        log_error(
-            "Model discovery failed: endpoint=" + url
-            + " response_bytes=" + std::to_string(response.received_bytes)
-            + request_id_field(response.request_id)
-            + " duration_ms=" + std::to_string(elapsed_milliseconds(started_at)));
-        throw;
-    }
-}
 
 RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
     if (config_.mode == Mode::test) {
@@ -900,10 +817,6 @@ std::string ProviderClient::endpoint() const {
         return base_url() + "/v1/responses";
     }
     throw std::logic_error("Unknown provider API");
-}
-
-std::string ProviderClient::models_endpoint() const {
-    return base_url() + "/v1/models";
 }
 
 } // namespace cha

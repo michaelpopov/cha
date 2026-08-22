@@ -12,7 +12,7 @@ const Persona& builtin_guest() {
 std::string_view application_guide() { return embedded_application_guide(); }
 
 std::vector<CharacterDefinition> builtin_assistant_definitions(
-    ModelBackendConfig backend,
+    ProviderSelection provider,
     const std::string& inventory,
     const PersonaRoster& personas) {
     CharacterDefinition assistant{
@@ -20,7 +20,7 @@ std::vector<CharacterDefinition> builtin_assistant_definitions(
             .id = std::string(assistant_id),
             .display_name = std::string(assistant_name),
         },
-        .backend = std::move(backend),
+        .provider = std::move(provider),
         .system_prompt = "You are Assistant, the CHA application guide. Help users navigate using public names only.\n\n"
                           + std::string(application_guide())
                           + "\n\n" + inventory

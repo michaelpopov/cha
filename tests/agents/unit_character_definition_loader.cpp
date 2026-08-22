@@ -17,7 +17,7 @@ public:
           definitions(root / "characters"), forum(root / "forums" / "forum") {
         std::filesystem::create_directories(definitions / "guide");
         std::filesystem::create_directories(forum / "members" / "guide");
-        write_provider("guide", "host = \"127.0.0.1\"\nport = 8080\n");
+        write_provider("guide", "host = \"127.0.0.1\"\nport = 8080\nmodel = \"test\"\n");
         std::ofstream(definitions / "guide" / "character.toml")
             << "display_name = \"Guide\"\nprovider = \"guide\"\n[prompt]\nvoice = \"base\"\n";
         std::ofstream(definitions / "guide" / "CHARACTER.md") << "Definition $${voice}";
@@ -51,7 +51,7 @@ std::vector<CharacterDefinition> load_definitions(
 
 TEST(CharacterDefinitions, UsesDefinitionProviderAndThreeLayerPromptConfiguration) {
     CharacterDefinitionFiles files;
-    files.write_provider("forum", "host = \"127.0.0.1\"\nport = 9\n");
+    files.write_provider("forum", "host = \"127.0.0.1\"\nport = 9\nmodel = \"test\"\n");
     std::ofstream(files.definitions / "guide" / "character.toml")
         << "display_name = \"Guide\"\nprovider = \"forum\"\n[prompt]\nvoice = \"base\"\n";
     std::ofstream(files.forum / "members" / "character_defaults.toml")
@@ -63,7 +63,8 @@ TEST(CharacterDefinitions, UsesDefinitionProviderAndThreeLayerPromptConfiguratio
         files.forum / "members" / "character_defaults.toml");
 
     ASSERT_EQ(definitions.size(), 1U);
-    EXPECT_EQ(definitions.front().backend.port, 9);
+    EXPECT_EQ(definitions.front().provider.id, "forum");
+    EXPECT_EQ(definitions.front().provider.config.port, 9);
     EXPECT_EQ(definitions.front().character_prompt, "Definition member");
     EXPECT_TRUE(definitions.front().system_prompt.starts_with("Definition member\n\nForum Guide"));
 }

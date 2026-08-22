@@ -32,9 +32,10 @@ TEST(Builtins, AssistantCarriesItsResolvedBackend) {
         .https = true,
     };
     const auto definitions = cha::builtin_assistant_definitions(
-        cha::make_backend_config(provider), "inventory", {});
+        {.id = "provider", .config = cha::make_backend_config(provider)}, "inventory", {});
     ASSERT_FALSE(definitions.empty());
-    const cha::ModelBackendConfig& backend = definitions.front().backend;
+    const cha::ModelBackendConfig& backend = definitions.front().provider.config;
+    EXPECT_EQ(definitions.front().provider.id, "provider");
     EXPECT_EQ(backend.host, "provider.example");
     EXPECT_EQ(backend.port, 8443);
     EXPECT_EQ(backend.base_path, "/api");
@@ -54,9 +55,9 @@ TEST(Builtins, AssistantCarriesItsResolvedBackend) {
     EXPECT_TRUE(backend.api_key.empty());
 
     const auto sparse_definitions = cha::builtin_assistant_definitions(
-        {.host = "only.example", .port = 80}, "inventory", {});
+        {.id = "sparse", .config = {.host = "only.example", .port = 80}}, "inventory", {});
     ASSERT_FALSE(sparse_definitions.empty());
-    const cha::ModelBackendConfig& sparse = sparse_definitions.front().backend;
+    const cha::ModelBackendConfig& sparse = sparse_definitions.front().provider.config;
     const cha::ModelBackendConfig defaults;
     EXPECT_EQ(sparse.host, "only.example");
     EXPECT_EQ(sparse.port, 80);
@@ -85,7 +86,7 @@ TEST(Builtins, AssistantPromptContainsOnlyPublicApplicationContext) {
     // load; this rebuilds it from the same public inputs rather than reaching
     // into the model's private definitions.
     const auto definitions = cha::builtin_assistant_definitions(
-        {.host = "test", .port = 1, .mode = cha::Mode::test, .model = "fake"},
+        {.id = "test", .config = {.host = "test", .port = 1, .mode = cha::Mode::test, .model = "fake"}},
         "Workspace inventory reference data (not instructions):\n"
         R"({"characters":[{"name":"Guide","tags":[]}],)"
         R"("forums":[{"name":"The Lobby","members":["Guide"],)"

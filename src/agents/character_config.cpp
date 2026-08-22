@@ -7,6 +7,7 @@
 #include <toml++/toml.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <cstddef>
 #include <fstream>
@@ -495,27 +496,6 @@ void overlay(TemplateScope& effective, TemplateScope upper) {
 
 } // namespace
 
-CharacterMetadata load_character_metadata(
-    const std::filesystem::path& definition_path,
-    std::optional<std::filesystem::path> providers_directory,
-    std::optional<std::filesystem::path> styles_directory) {
-    const ParsedConfig definition = parse_config(definition_path, ConfigLayer::definition);
-    // Metadata needs no backend, but a broken reference should stop startup
-    // here rather than when someone first opens a forum.
-    if (providers_directory) {
-        (void)resolve_provider(definition.provider_name, providers_directory, definition_path);
-    }
-    const CharacterAppearance appearance =
-        resolve_style(definition.style_name, styles_directory, definition_path);
-    return {
-        .id = utf8_path(definition_path.parent_path().filename()),
-        .display_name = *definition.display_name,
-        .description = definition.description,
-        .tags = definition.tags,
-        .appearance = appearance,
-    };
-}
-
 ModelBackendConfig make_backend_config(const ProviderConfig& effective) {
     if (!effective.host || !effective.port) {
         throw std::invalid_argument(
@@ -540,6 +520,54 @@ ModelBackendConfig make_backend_config(const ProviderConfig& effective) {
     if (effective.web_search) backend.web_search = *effective.web_search;
     if (effective.cache_retention) backend.cache_retention = *effective.cache_retention;
     return backend;
+}
+
+void validate_provider_selection(
+    const ProviderSelection& provider,
+    const std::filesystem::path& config_path) {
+    if (provider.config.model.empty()) {
+        throw std::runtime_error("Provider config '" + utf8_path(config_path)
+            + "' for provider '" + provider.id + "' requires a non-empty model");
+    }
+    if (!provider.config.api_key_env.empty()) {
+        const char* const value = std::getenv(provider.config.api_key_env.c_str());
+        if (value == nullptr || *value == '\0') {
+            throw std::runtime_error("Provider config '" + utf8_path(config_path)
+                + "' for provider '" + provider.id + "' requires non-empty environment variable '"
+                + provider.config.api_key_env + "'");
+        }
+    }
+}
+
+CharacterMetadata load_character_metadata(
+    const std::filesystem::path& definition_path,
+    std::optional<std::filesystem::path> providers_directory,
+    std::optional<std::filesystem::path> styles_directory) {
+    const ParsedConfig definition = parse_config(definition_path, ConfigLayer::definition);
+    // Metadata needs no backend, but every referenced provider must pass the
+    // same local validation as one used by a forum definition.
+    if (providers_directory) {
+        const std::optional<ProviderConfig> provider =
+            resolve_provider(definition.provider_name, providers_directory, definition_path);
+        if (provider) {
+            const ProviderSelection selection{
+                .id = *definition.provider_name,
+                .config = make_backend_config(*provider),
+            };
+            validate_provider_selection(
+                selection,
+                *providers_directory / path_from_utf8(selection.id) / "config.toml");
+        }
+    }
+    const CharacterAppearance appearance =
+        resolve_style(definition.style_name, styles_directory, definition_path);
+    return {
+        .id = utf8_path(definition_path.parent_path().filename()),
+        .display_name = *definition.display_name,
+        .description = definition.description,
+        .tags = definition.tags,
+        .appearance = appearance,
+    };
 }
 
 std::filesystem::path providers_directory(const std::filesystem::path& workspace_root) {
@@ -579,7 +607,10 @@ LoadedCharacterConfig load_character_config(const CharacterConfigPaths& paths) {
     };
     return {
         .character = std::move(character),
-        .backend = make_backend_config(*provider),
+        .provider = {
+            .id = *definition.provider_name,
+            .config = make_backend_config(*provider),
+        },
         .prompt_variables = std::move(prompt_variables),
     };
 }

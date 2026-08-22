@@ -134,9 +134,10 @@ TEST(GenerationExecutor, IdentifiesCharacterWhoseDefinitionStartupFails) {
             .id = "alpha-id",
             .display_name = "Alpha",
         },
-        .backend = {
+        .provider = {.id = "test", .config = {
+            .model = "fake",
             .api_key_env = "__CHA_TEST_MISSING_AGENT_KEY__",
-        },
+        }},
         .system_prompt = "Prompt",
     };
 
@@ -283,11 +284,11 @@ CharacterDefinition recipe_definition(
             .id = std::move(id),
             .display_name = std::move(name),
         },
-        .backend = {
+        .provider = {.id = "test", .config = {
             .host = "127.0.0.1",
             .port = 1,
             .model = std::move(model),
-        },
+        }},
         .system_prompt = "Test prompt",
     };
 }
@@ -323,7 +324,7 @@ public:
     ModelBackendInfo info() const override {
         return {
             definition_.character,
-            definition_.backend.model,
+            definition_.provider.config.model,
             "test://model",
             true,
         };
@@ -337,7 +338,7 @@ private:
 GenerationExecutor::BackendFactory recording_factory(
     const std::shared_ptr<FactoryObservation>& observation) {
     return [observation](CharacterDefinition definition) {
-        observation->configs.push_back(definition.backend);
+        observation->configs.push_back(definition.provider.config);
         auto performed = std::make_shared<std::atomic_bool>(false);
         observation->performed.push_back(performed);
         return std::unique_ptr<ModelBackend>(

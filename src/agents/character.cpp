@@ -32,14 +32,16 @@ std::string_view authentication_source(const ModelBackendConfig& config) noexcep
 
 void log_character_config(
     const CharacterMetadata& character,
-    const ModelBackendConfig& backend_config,
+    const ProviderSelection& provider,
     const std::filesystem::path& forum_directory) {
+    const ModelBackendConfig& backend_config = provider.config;
     log_info(
         "Character configuration resolved: forum_id="
         + utf8_path(forum_directory.filename())
         + " character_id=" + character.id
+        + " provider_id=" + provider.id
         + " mode=" + std::string(mode_name(backend_config.mode))
-        + " model=" + (backend_config.model.empty() ? "discovery" : backend_config.model)
+        + " model=" + backend_config.model
         + " authentication=" + std::string(authentication_source(backend_config)));
 }
 
@@ -76,8 +78,8 @@ CharacterDefinition load_definition_files(
             + "' has invalid configuration: " + error.what());
     }
     CharacterMetadata character = std::move(loaded.character);
-    ModelBackendConfig backend_config = std::move(loaded.backend);
-    log_character_config(character, backend_config, forum_directory);
+    ProviderSelection provider = std::move(loaded.provider);
+    log_character_config(character, provider, forum_directory);
 
     std::optional<std::filesystem::path> selected_member_prompt;
     try {
@@ -135,7 +137,7 @@ CharacterDefinition load_definition_files(
     }
     return {
         .character = std::move(character),
-        .backend = std::move(backend_config),
+        .provider = std::move(provider),
         .character_prompt = character_prompt,
         .character_description = std::move(character_description),
         .system_prompt = std::move(character_prompt)
