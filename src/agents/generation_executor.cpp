@@ -46,10 +46,46 @@ std::vector<ModelBackendInfo> build_runtime_info(
     return infos;
 }
 
+std::vector<ModelBackendInfo> build_runtime_info(
+    const std::vector<SharedCharacterDefinition>& definitions) {
+    if (definitions.empty()) {
+        throw std::invalid_argument(
+            "Generation executor requires at least one character");
+    }
+    std::vector<ModelBackendInfo> infos;
+    infos.reserve(definitions.size());
+    std::unordered_set<std::string> ids;
+    std::unordered_set<std::string> names;
+    for (const SharedCharacterDefinition& definition : definitions) {
+        if (!definition) {
+            throw std::invalid_argument(
+                "Generation executor requires character definitions");
+        }
+        ModelBackendInfo info = model_backend_info(*definition);
+        validate_character_id(info.character.id);
+        validate_character_display_name_syntax(info.character.display_name);
+        if (!ids.insert(info.character.id).second) {
+            throw std::invalid_argument(
+                "Generation executor has duplicate character ID '"
+                + info.character.id + "'");
+        }
+        if (!names.insert(fold_ascii(info.character.display_name)).second) {
+            throw std::invalid_argument(
+                "Generation executor has duplicate character name '"
+                + info.character.display_name + "'");
+        }
+        infos.push_back(std::move(info));
+    }
+    return infos;
+}
+
 std::unique_ptr<ModelBackend> default_backend_factory(
-    CharacterDefinition definition) {
-    const std::string id = definition.character.id;
-    const std::string display_name = definition.character.display_name;
+    SharedCharacterDefinition definition) {
+    if (!definition) {
+        throw std::invalid_argument("Provider client requires a character definition");
+    }
+    const std::string id = definition->character.id;
+    const std::string display_name = definition->character.display_name;
     try {
         return std::make_unique<ProviderClient>(std::move(definition));
     } catch (const std::exception& error) {
@@ -62,15 +98,25 @@ std::unique_ptr<ModelBackend> default_backend_factory(
 }
 
 std::vector<std::unique_ptr<ModelBackend>> build_backends(
-    std::vector<CharacterDefinition> definitions,
-    const GenerationExecutor::BackendFactory& backend_factory) {
+    const std::vector<SharedCharacterDefinition>& definitions,
+    const ProviderClientFactory& client_factory) {
     std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.reserve(definitions.size());
-    for (CharacterDefinition& definition : definitions) {
-        backends.push_back(
-            backend_factory
-                ? backend_factory(std::move(definition))
-                : default_backend_factory(std::move(definition)));
+    for (const SharedCharacterDefinition& definition : definitions) {
+        if (!definition) {
+            throw std::invalid_argument(
+                "Generation executor requires character definitions");
+        }
+    }
+    for (const SharedCharacterDefinition& definition : definitions) {
+        std::unique_ptr<ModelBackend> backend = client_factory
+            ? client_factory(definition)
+            : default_backend_factory(definition);
+        if (!backend) {
+            throw std::invalid_argument(
+                "Generation executor factory returned a null model backend");
+        }
+        backends.push_back(std::move(backend));
     }
     return backends;
 }
@@ -78,12 +124,19 @@ std::vector<std::unique_ptr<ModelBackend>> build_backends(
 } // namespace
 
 GenerationExecutor::GenerationExecutor(
-    std::vector<CharacterDefinition> definitions,
+    std::vector<SharedCharacterDefinition> definitions,
     WakeNotifier& notifier,
     ThreadPool& worker_pool,
-    BackendFactory backend_factory)
-    : GenerationExecutor(
-          build_backends(std::move(definitions), backend_factory), notifier, worker_pool) {}
+    ProviderClientFactory client_factory)
+    : backends_(build_backends(definitions, client_factory)),
+      runtime_info_(build_runtime_info(definitions)),
+      notifier_(notifier),
+      worker_pool_(worker_pool) {
+    if (worker_pool_.worker_count() != backends_.size()) {
+        throw std::invalid_argument(
+            "Generation executor requires one pool worker per backend");
+    }
+}
 
 GenerationExecutor::GenerationExecutor(
     std::vector<std::unique_ptr<ModelBackend>> backends,

@@ -80,6 +80,14 @@ TEST(GenerationExecutor, RejectsEmptyAndNullBackendConstruction) {
         std::invalid_argument);
 }
 
+TEST(GenerationExecutor, RejectsNullSharedCharacterDefinitions) {
+    ThreadPool pool(1);
+    EXPECT_THROW(
+        (void)GenerationExecutor(
+            std::vector<SharedCharacterDefinition>{nullptr}, notifier(), pool),
+        std::invalid_argument);
+}
+
 TEST(GenerationExecutor, RejectsInvalidBackendMetadataAtConstruction) {
     ThreadPool pool(1);
     EXPECT_THROW(
@@ -143,7 +151,8 @@ TEST(GenerationExecutor, IdentifiesCharacterWhoseDefinitionStartupFails) {
 
     try {
         (void)GenerationExecutor(
-            std::vector<CharacterDefinition>{std::move(definition)},
+            share_character_definitions(
+                std::vector<CharacterDefinition>{std::move(definition)}),
             notifier(),
             pool);
         FAIL() << "Expected startup failure";
@@ -298,13 +307,14 @@ CharacterDefinition recipe_definition(
 // instance served a request even after a slot was swapped.
 struct FactoryObservation {
     std::vector<ModelBackendConfig> configs;
+    std::vector<SharedCharacterDefinition> definitions;
     std::vector<std::shared_ptr<std::atomic_bool>> performed;
 };
 
 class FactoryBackend final : public ModelBackend {
 public:
     FactoryBackend(
-        CharacterDefinition definition,
+        SharedCharacterDefinition definition,
         std::shared_ptr<std::atomic_bool> performed)
         : definition_(std::move(definition)), performed_(std::move(performed)) {
     }
@@ -322,23 +332,19 @@ public:
     }
 
     ModelBackendInfo info() const override {
-        return {
-            definition_.character,
-            definition_.provider.config.model,
-            "test://model",
-            true,
-        };
+        throw std::logic_error("Definition-built executors must not read backend info");
     }
 
 private:
-    CharacterDefinition definition_;
+    SharedCharacterDefinition definition_;
     std::shared_ptr<std::atomic_bool> performed_;
 };
 
-GenerationExecutor::BackendFactory recording_factory(
+ProviderClientFactory recording_factory(
     const std::shared_ptr<FactoryObservation>& observation) {
-    return [observation](CharacterDefinition definition) {
-        observation->configs.push_back(definition.provider.config);
+    return [observation](SharedCharacterDefinition definition) {
+        observation->configs.push_back(definition->provider.config);
+        observation->definitions.push_back(definition);
         auto performed = std::make_shared<std::atomic_bool>(false);
         observation->performed.push_back(performed);
         return std::unique_ptr<ModelBackend>(
@@ -346,14 +352,32 @@ GenerationExecutor::BackendFactory recording_factory(
     };
 }
 
+TEST(GenerationExecutor, RejectsNullBackendReturnedByFactory) {
+    ThreadPool pool(1);
+    const std::vector<SharedCharacterDefinition> definitions =
+        share_character_definitions({recipe_definition("one-id", "One")});
+
+    EXPECT_THROW(
+        (void)GenerationExecutor(
+            definitions,
+            notifier(),
+            pool,
+            [](SharedCharacterDefinition) {
+                return std::unique_ptr<ModelBackend>{};
+            }),
+        std::invalid_argument);
+}
+
 TEST(GenerationExecutor, BuildsBackendsThroughTheFactoryInOrder) {
     ThreadPool pool(2);
     auto observation = std::make_shared<FactoryObservation>();
-    GenerationExecutor executor(
-        std::vector<CharacterDefinition>{
+    std::vector<SharedCharacterDefinition> definitions =
+        share_character_definitions(std::vector<CharacterDefinition>{
             recipe_definition("one-id", "One", "model-one"),
             recipe_definition("two-id", "Two", "model-two"),
-        },
+        });
+    GenerationExecutor executor(
+        definitions,
         notifier(),
         pool,
         recording_factory(observation));
@@ -361,6 +385,8 @@ TEST(GenerationExecutor, BuildsBackendsThroughTheFactoryInOrder) {
     ASSERT_EQ(observation->configs.size(), 2U);
     EXPECT_EQ(observation->configs[0].model, "model-one");
     EXPECT_EQ(observation->configs[1].model, "model-two");
+    EXPECT_EQ(observation->definitions[0], definitions[0]);
+    EXPECT_EQ(observation->definitions[1], definitions[1]);
     ASSERT_EQ(executor.runtime_info().size(), 2U);
     EXPECT_EQ(executor.runtime_info()[0].model, "model-one");
     pool.stop();

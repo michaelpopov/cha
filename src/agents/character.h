@@ -4,6 +4,7 @@
 #include "chat/persona.h"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -29,6 +30,15 @@ struct CharacterDefinition {
     std::string character_description;
     std::string system_prompt;
 };
+
+// The immutable character snapshot shared by a session, its request-local
+// clients, and eventually request-owned provider work.
+using SharedCharacterDefinition = std::shared_ptr<const CharacterDefinition>;
+
+// Converts loaded definitions to the shared immutable form while preserving
+// the forum roster order.
+std::vector<SharedCharacterDefinition> share_character_definitions(
+    std::vector<CharacterDefinition> definitions);
 
 // The two filesystem layers that form one forum member's effective character.
 struct CharacterDefinitionSource {

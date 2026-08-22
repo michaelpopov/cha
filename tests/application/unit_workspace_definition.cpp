@@ -202,7 +202,7 @@ TEST(WorkspaceDefinition, ValidatesReferencedCredentialEnvironmentVariablesWitho
     const CharacterDefinition& definition =
         WorkspaceDefinitionTestAccess::loaded(model, "lobby").front();
     EXPECT_TRUE(definition.provider.config.api_key.empty());
-    ProviderClient client(definition);
+    ProviderClient client(share_character_definitions({definition}).front());
     const ModelBackendInfo info = client.info();
     EXPECT_EQ(info.model, "fake");
     EXPECT_EQ(info.model.find(secret), std::string::npos);

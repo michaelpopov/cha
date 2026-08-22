@@ -2,6 +2,7 @@
 
 #include "agents/character.h"
 #include "agents/model_backend.h"
+#include "agents/provider_client.h"
 #include "agents/generation_batch.h"
 #include "util/thread_pool.h"
 #include "util/wake_notifier.h"
@@ -14,9 +15,10 @@
 
 namespace cha {
 
-// The session-lived supplier of model backends. It owns one backend per
-// forum character plus their public runtime metadata, and stages new operations
-// into the borrowed worker pool.
+// The session-lived supplier of model backends. It owns one backend per forum
+// character and stages new operations into the borrowed worker pool. Normal
+// runtime metadata comes from immutable definitions; backend metadata remains
+// only for the temporary test-only constructor.
 //
 // It deliberately keeps no current batch: staging hands complete ownership of
 // one operation to the caller, so there is nothing here addressed to an
@@ -27,19 +29,13 @@ public:
     // argument is the zero-based submission index and exceptions abort staging.
     using BeforeSubmitHook = std::function<void(std::size_t)>;
 
-    // Builds one backend from one character definition. The default constructs
-    // a ProviderClient; tests substitute fakes. The definition is moved in and
-    // carries the backend configuration the backend must run.
-    using BackendFactory =
-        std::function<std::unique_ptr<ModelBackend>(CharacterDefinition)>;
-
     // The caller owns the pool and must join it while this executor and its
     // notifier remain alive.
     GenerationExecutor(
-        std::vector<CharacterDefinition> definitions,
+        std::vector<SharedCharacterDefinition> definitions,
         WakeNotifier& notifier,
         ThreadPool& worker_pool,
-        BackendFactory backend_factory = {});
+        ProviderClientFactory client_factory = {});
     GenerationExecutor(
         std::vector<std::unique_ptr<ModelBackend>> backends,
         WakeNotifier& notifier,

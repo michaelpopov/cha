@@ -94,6 +94,20 @@ ForumCharacters make_forum_characters(
     return ForumCharacters(std::move(characters), true);
 }
 
+std::vector<ModelBackendInfo> make_runtime_info(
+    const std::vector<SharedCharacterDefinition>& definitions) {
+    std::vector<ModelBackendInfo> runtime_info;
+    runtime_info.reserve(definitions.size());
+    for (const SharedCharacterDefinition& definition : definitions) {
+        if (!definition) {
+            throw std::invalid_argument(
+                "Session controller requires character definitions");
+        }
+        runtime_info.push_back(model_backend_info(*definition));
+    }
+    return runtime_info;
+}
+
 void require_character_count(std::size_t count) {
     if (count == 0) {
         throw std::invalid_argument(
@@ -162,7 +176,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored,
-    GenerationExecutor::BackendFactory backend_factory,
+    ProviderClientFactory client_factory,
     StyleResolver style_resolver,
     SessionIdentity identity) {
     require_character_count(definitions.size());
@@ -175,7 +189,7 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
         SessionLease::inactive_for_testing(),
         notifier,
         std::move(restored),
-        std::move(backend_factory),
+        std::move(client_factory),
         std::move(style_resolver), std::move(identity)));
 }
 
@@ -209,15 +223,17 @@ SessionController::SessionController(
     SessionLease lease,
     WakeNotifier& notifier,
     SessionRestore restored,
-    GenerationExecutor::BackendFactory backend_factory,
+    ProviderClientFactory client_factory,
     StyleResolver style_resolver,
     SessionIdentity identity)
     : lease_(std::move(lease)),
       journal_(std::move(path)),
-      worker_pool_(definitions.size()),
+      definitions_(share_character_definitions(std::move(definitions))),
+      worker_pool_(definitions_.size()),
       generation_executor_(
-          std::move(definitions), notifier, worker_pool_, std::move(backend_factory)),
-      characters_(make_forum_characters(generation_executor_.runtime_info())),
+          definitions_, notifier, worker_pool_, std::move(client_factory)),
+      runtime_info_(make_runtime_info(definitions_)),
+      characters_(make_forum_characters(runtime_info_)),
       personas_(std::move(personas)),
       identity_(std::move(identity)),
       default_character_id_(std::move(initial_default_character_id)),
@@ -239,7 +255,8 @@ SessionController::SessionController(
       journal_(std::move(path)),
       worker_pool_(backends.size()),
       generation_executor_(std::move(backends), notifier, worker_pool_),
-      characters_(make_forum_characters(generation_executor_.runtime_info())),
+      runtime_info_(generation_executor_.runtime_info()),
+      characters_(make_forum_characters(runtime_info_)),
       personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
       identity_(std::move(identity)),
       default_character_id_(std::move(initial_default_character_id)),
@@ -291,6 +308,16 @@ void SessionController::initialize(
             });
         transcript_.add_entry(turn.error_entry);
     }
+}
+
+SharedCharacterDefinition SessionController::definition_for(
+    std::string_view id) const {
+    const auto found = std::find_if(
+        definitions_.begin(), definitions_.end(),
+        [id](const SharedCharacterDefinition& definition) {
+            return definition && definition->character.id == id;
+        });
+    return found == definitions_.end() ? SharedCharacterDefinition{} : *found;
 }
 
 ControllerGenerationView SessionController::generation_view() const noexcept {
@@ -795,7 +822,7 @@ ControllerUpdate SessionController::session_information() {
         .notice = format_session_information(
             transcript_.view().size(),
             characters_,
-            generation_executor_.runtime_info(),
+            runtime_info_,
             default_character_id_),
     };
 }
@@ -807,7 +834,7 @@ ControllerUpdate SessionController::character_information() {
     return {
         .input_consumed = true,
         .notice = format_characters_notice(
-            characters_, generation_executor_.runtime_info(), default_character_id_),
+            characters_, runtime_info_, default_character_id_),
     };
 }
 
@@ -919,11 +946,10 @@ ControllerUpdate SessionController::set_session_style(std::string_view name) {
         return update;
     }
     // "default" is a reserved word: it never reaches the resolver. The
-    // configured appearance lives in the executor's runtime info, the same
-    // configured source retained by the executor's runtime information.
+    // configured appearance lives in the immutable per-character runtime
+    // record derived from the selected definition.
     if (name == "default") {
-        for (const ModelBackendInfo& backend :
-             generation_executor_.runtime_info()) {
+        for (const ModelBackendInfo& backend : runtime_info_) {
             if (backend.character.id == default_character_id_) {
                 characters_.set_appearance(
                     default_character_id_, backend.character.appearance);

@@ -29,7 +29,9 @@ public:
         std::filesystem::create_directories(definition_.parent_path());
         std::filesystem::create_directories(defaults_.parent_path());
         std::filesystem::create_directories(member_.parent_path());
-        write_provider("application", "host = \"application\"\nport = 81\nmode = \"test\"\n");
+        write_provider(
+            "application",
+            "host = \"application\"\nport = 81\nmode = \"test\"\nmodel = \"fake\"\n");
     }
     ~ConfigFiles() { std::filesystem::remove_all(root_); }
     void write(const std::filesystem::path& path, std::string_view contents) const {
@@ -207,7 +209,9 @@ TEST(Config, MergesPromptScopeWithoutOverridingTheProvider) {
 
 TEST(Config, SeparatesDefinitionMetadataFromModelBackendConfiguration) {
     ConfigFiles files;
-    files.write_provider("named", "host = \"named.example\"\nport = 8080\nmode = \"test\"\n");
+    files.write_provider(
+        "named",
+        "host = \"named.example\"\nport = 8080\nmode = \"test\"\nmodel = \"fake\"\n");
     files.write(files.definition(),
         std::string(required_definition)
             + "description = \"Useful character\"\nprovider = \"named\"\n");
@@ -356,7 +360,9 @@ TEST(Config, ValidatesCharacterDescriptionsAndRejectsThemOutsideDefinitions) {
 
 TEST(Config, ValidatesMetadataProviderReferencesWhenAProvidersDirectoryIsGiven) {
     ConfigFiles files;
-    files.write_provider("named", "host = \"named.example\"\nport = 8080\nmode = \"test\"\n");
+    files.write_provider(
+        "named",
+        "host = \"named.example\"\nport = 8080\nmode = \"test\"\nmodel = \"fake\"\n");
     files.write(files.definition(),
         std::string(required_definition) + "provider = \"named\"\n");
     EXPECT_EQ(load_character_metadata(files.definition(), files.providers()).display_name, "Example");
@@ -474,7 +480,7 @@ TEST(Config, PreservesModelBackendDefaultsForOmittedProviderFields) {
     files.write(files.definition(),
         std::string(required_definition) + "provider = \"application\"\n");
     const ModelBackendConfig config = load_character_config(files.paths()).provider.config;
-    EXPECT_TRUE(config.model.empty());
+    EXPECT_EQ(config.model, "fake");
     EXPECT_TRUE(config.base_path.empty());
     EXPECT_TRUE(config.api_key.empty());
     EXPECT_FALSE(config.temperature);

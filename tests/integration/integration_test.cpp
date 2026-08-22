@@ -175,7 +175,7 @@ ChatResult run_chat(bool stream) {
     definitions.push_back(std::move(definition));
     ThreadPool pool(1);
     GenerationExecutor executor(
-        std::move(definitions),
+        share_character_definitions(std::move(definitions)),
         notifier(),
         pool);
     const PoolCleanup cleanup(pool);
@@ -217,7 +217,7 @@ ChatResult run_cancelled_chat() {
     definitions.push_back(std::move(definition));
     ThreadPool pool(1);
     GenerationExecutor executor(
-        std::move(definitions),
+        share_character_definitions(std::move(definitions)),
         notifier(),
         pool);
     const PoolCleanup cleanup(pool);

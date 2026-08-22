@@ -12,8 +12,8 @@
 
 namespace cha {
 
-// Public operational information about one initialized model backend. It
-// is safe to show in diagnostics and never carries connection secrets.
+// Public configured runtime information for one character. It is safe to show
+// in diagnostics and never carries connection secrets.
 struct ModelBackendInfo {
     CharacterMetadata character;
     std::string model;
@@ -71,6 +71,8 @@ public:
         RequestPayload payload,
         const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) = 0;
+    // Temporary support for from_backends_for_testing(). Production runtime
+    // information comes directly from immutable character definitions.
     virtual ModelBackendInfo info() const = 0;
 };
 

@@ -88,6 +88,10 @@ CharacterDefinition responses_network_definition(int port, bool stream = true) {
     return definition;
 }
 
+SharedCharacterDefinition shared_definition(CharacterDefinition definition) {
+    return share_character_definitions({std::move(definition)}).front();
+}
+
 std::string status_response(
     int status,
     std::string_view reason,
@@ -132,7 +136,10 @@ private:
 
 TEST(ProviderClient, EchoesOnePromptInTestMode) {
     std::atomic_bool cancellation{false};
-    ProviderClient client(test_definition("Helpful character"));
+    const SharedCharacterDefinition definition =
+        share_character_definitions({test_definition("Helpful character")}).front();
+    ProviderClient client(definition);
+    ProviderClient second_client(definition);
     Transcript transcript;
     GenerationRequest request = client_request(transcript, 1, "hello");
     std::vector<std::string> deltas;
@@ -147,12 +154,13 @@ TEST(ProviderClient, EchoesOnePromptInTestMode) {
 
     EXPECT_EQ(result.outcome, GenerationOutcome::completed);
     EXPECT_EQ(deltas, (std::vector<std::string>{"hello"}));
+    EXPECT_EQ(second_client.prepare(request).bytes, "hello");
     EXPECT_EQ(client.info().character.description, "Helpful character");
 }
 
 TEST(ProviderClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
     std::atomic_bool cancellation{true};
-    ProviderClient client(test_definition());
+    ProviderClient client(shared_definition(test_definition()));
     Transcript transcript;
     GenerationRequest request = client_request(transcript, 2, "do not dispatch");
     bool received_delta = false;
@@ -174,14 +182,21 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
 
-    CharacterDefinition definition = network_definition(mock.port());
-    definition.provider.config.temperature = 0.25;
-    definition.provider.config.max_tokens = 200;
-    definition.provider.config.reasoning_effort = "medium";
-    definition.provider.config.api_key = "test-key";
-    definition.system_prompt = "Be concise.";
+    CharacterDefinition configured = network_definition(mock.port());
+    configured.provider.config.temperature = 0.25;
+    configured.provider.config.max_tokens = 200;
+    configured.provider.config.reasoning_effort = "medium";
+    configured.provider.config.api_key = "test-key";
+    configured.system_prompt = "Be concise.";
+    const SharedCharacterDefinition definition =
+        share_character_definitions({std::move(configured)}).front();
+    const ModelBackendInfo runtime = model_backend_info(*definition);
+    EXPECT_EQ(runtime.character.id, "assistant");
+    EXPECT_EQ(runtime.model, "configured-model");
+    EXPECT_TRUE(runtime.api.ends_with("/v1/chat/completions"));
+    EXPECT_TRUE(runtime.streaming);
     std::atomic_bool cancellation{false};
-    ProviderClient client(std::move(definition));
+    ProviderClient client(definition);
     Transcript transcript;
     const GenerationRequest request = client_request(
         transcript, 7, "Question", {
@@ -230,7 +245,7 @@ TEST(ProviderClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
         "application/json", R"({"choices":[{"message":{"content":"Answer"}}]})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port(), false));
+    ProviderClient client(shared_definition(network_definition(mock.port(), false)));
     Transcript transcript;
     const std::string prompt = "quote \" and newline\n and backslash \\";
     const GenerationRequest request = client_request(transcript, 19, prompt);
@@ -249,7 +264,7 @@ TEST(ProviderClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
 }
 
 TEST(ProviderClient, RejectsInvalidUtf8WhenPreparingRequest) {
-    ProviderClient client(network_definition(1, false));
+    ProviderClient client(shared_definition(network_definition(1, false)));
     Transcript transcript;
     const GenerationRequest request = client_request(
         transcript,
@@ -271,7 +286,7 @@ TEST(ProviderClient, HandlesNonStreamingProviderResponse) {
         "application/json", R"({"choices":[{"message":{"content":"Answer"}}]})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port(), false));
+    ProviderClient client(shared_definition(network_definition(mock.port(), false)));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 8, "Question");
     std::string output;
@@ -292,7 +307,7 @@ TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     mock.start();
     DiagnosticLogFile log;
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port(), false));
+    ProviderClient client(shared_definition(network_definition(mock.port(), false)));
     Transcript transcript;
     const GenerationRequest request =
         client_request(transcript, 77, "private prompt");
@@ -333,13 +348,13 @@ TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
     direct.provider.config.https = true;
     direct.system_prompt = "Stable instructions";
     direct.provider.config.api = ProviderApi::chat_completions;
-    ProviderClient chat_client(direct);
+    ProviderClient chat_client(shared_definition(direct));
     const RequestPayload chat = chat_client.prepare(request);
     EXPECT_EQ(Json::parse(chat.bytes)["prompt_cache_key"], request.run.prompt_cache_key);
     EXPECT_FALSE(chat.session_id);
 
     direct.provider.config.api = ProviderApi::responses;
-    ProviderClient short_client(direct);
+    ProviderClient short_client(shared_definition(direct));
     const RequestPayload short_payload = short_client.prepare(request);
     const Json short_body = Json::parse(short_payload.bytes);
     EXPECT_EQ(short_body["prompt_cache_key"], request.run.prompt_cache_key);
@@ -357,7 +372,7 @@ TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
     EXPECT_EQ(*later_payload.session_id, *short_payload.session_id);
 
     direct.provider.config.cache_retention = CacheRetention::long_;
-    ProviderClient responses_client(direct);
+    ProviderClient responses_client(shared_definition(direct));
     const RequestPayload responses = responses_client.prepare(request);
     const Json responses_body = Json::parse(responses.bytes);
     EXPECT_EQ(responses_body["prompt_cache_key"], request.run.prompt_cache_key);
@@ -368,14 +383,14 @@ TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
     EXPECT_FALSE(responses_body.contains("conversation"));
 
     direct.provider.config.cache_retention = CacheRetention::off;
-    ProviderClient disabled_client(direct);
+    ProviderClient disabled_client(shared_definition(direct));
     const RequestPayload disabled = disabled_client.prepare(request);
     EXPECT_FALSE(Json::parse(disabled.bytes).contains("prompt_cache_key"));
     EXPECT_FALSE(disabled.session_id);
 
     direct.provider.config.cache_retention = CacheRetention::short_;
     direct.provider.config.host = "api.openai.com.example";
-    ProviderClient gateway_client(std::move(direct));
+    ProviderClient gateway_client(shared_definition(std::move(direct)));
     const RequestPayload gateway = gateway_client.prepare(request);
     EXPECT_FALSE(Json::parse(gateway.bytes).contains("prompt_cache_key"));
     EXPECT_FALSE(gateway.session_id);
@@ -387,7 +402,7 @@ TEST(ProviderClient, ReportsProviderHttpFailure) {
         R"({"error":{"message":"request rejected"}})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port()));
+    ProviderClient client(shared_definition(network_definition(mock.port())));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 9, "Question");
 
@@ -446,7 +461,7 @@ TEST(ProviderClient, ClassifiesActionableProviderFailures) {
             test_case.body)});
         mock.start();
         std::atomic_bool cancellation{false};
-        ProviderClient client(network_definition(mock.port(), false));
+        ProviderClient client(shared_definition(network_definition(mock.port(), false)));
         Transcript transcript;
         const GenerationRequest request = client_request(transcript, 92, "Question");
 
@@ -485,7 +500,7 @@ TEST(ProviderClient, ClassifiesProviderErrorsInsideSuccessfulResponses) {
         mock.start();
         test_case.definition.provider.config.port = mock.port();
         std::atomic_bool cancellation{false};
-        ProviderClient client(std::move(test_case.definition));
+        ProviderClient client(shared_definition(std::move(test_case.definition)));
         Transcript transcript;
         const GenerationRequest request = client_request(transcript, 95, "Question");
 
@@ -507,7 +522,7 @@ TEST(ProviderClient, KeepsStreamDiagnosisWhenModelOutputResemblesAProviderError)
     MockHttpServer mock({http_response("text/event-stream", stream)});
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port()));
+    ProviderClient client(shared_definition(network_definition(mock.port())));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 97, "Question");
 
@@ -528,7 +543,7 @@ TEST(ProviderClient, BoundsProviderErrorInsideSuccessfulResponse) {
     MockHttpServer mock({http_response("text/event-stream", body)});
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(responses_network_definition(mock.port()));
+    ProviderClient client(shared_definition(responses_network_definition(mock.port())));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 96, "Question");
 
@@ -547,7 +562,7 @@ TEST(ProviderClient, BoundsProviderErrorsInResultsAndDiagnostics) {
     mock.start();
     DiagnosticLogFile log;
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port(), false));
+    ProviderClient client(shared_definition(network_definition(mock.port(), false)));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 93, "Question");
 
@@ -575,7 +590,7 @@ TEST(ProviderClient, LogsTheHighestPriorityProviderRequestId) {
     mock.start();
     DiagnosticLogFile log;
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port(), false));
+    ProviderClient client(shared_definition(network_definition(mock.port(), false)));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 94, "Question");
 
@@ -619,7 +634,7 @@ TEST(ProviderClient, BoundsOverallAndIdleGenerationTime) {
         GenerationResult result;
         const auto started_at = std::chrono::steady_clock::now();
         {
-            ProviderClient client(std::move(definition));
+            ProviderClient client(shared_definition(std::move(definition)));
             Transcript transcript;
             const GenerationRequest request = client_request(transcript, 95, "Question");
             result = complete(
@@ -655,7 +670,7 @@ TEST(ProviderClient, WaitsThroughProviderThinkTimeBeforeTheFirstByte) {
         GenerationResult result;
         const auto started_at = std::chrono::steady_clock::now();
         {
-            ProviderClient client(std::move(definition));
+            ProviderClient client(shared_definition(std::move(definition)));
             Transcript transcript;
             const GenerationRequest request = client_request(transcript, 98, "Question");
             result = complete(
@@ -678,7 +693,7 @@ TEST(ProviderClient, ReportsATruncatedResponseAsATransportError) {
     MockHttpServer mock({response});
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port()));
+    ProviderClient client(shared_definition(network_definition(mock.port())));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 12, "Question");
     std::string output;
@@ -701,7 +716,7 @@ TEST(ProviderClient, CancelsAnActiveStreamingTransfer) {
     MockHttpServer mock({response}, true);
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port()));
+    ProviderClient client(shared_definition(network_definition(mock.port())));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 13, "Question");
     std::string output;
@@ -723,7 +738,7 @@ TEST(ProviderClient, ReportsAJsonErrorReturnedInsteadOfAStream) {
         "application/json", R"({"error":{"message":"model unavailable"}})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(network_definition(mock.port()));
+    ProviderClient client(shared_definition(network_definition(mock.port())));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 14, "Question");
 
@@ -741,7 +756,7 @@ TEST(ProviderClient, RejectsAnEmptyConfiguredModelWithoutContactingTheProvider) 
     CharacterDefinition definition = network_definition(1, false);
     definition.provider.config.model.clear();
     try {
-        (void)ProviderClient(std::move(definition));
+        (void)ProviderClient(shared_definition(std::move(definition)));
         FAIL() << "expected missing model rejection";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("non-empty configured model"), std::string::npos);
@@ -763,7 +778,7 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
     definition.provider.config.api_key = "test-key";
     definition.system_prompt = "Be concise.";
     std::atomic_bool cancellation{false};
-    ProviderClient client(std::move(definition));
+    ProviderClient client(shared_definition(std::move(definition)));
     Transcript transcript;
     const GenerationRequest request = client_request(
         transcript, 27, "Question", {
@@ -811,7 +826,7 @@ TEST(ProviderClient, PrefixesProviderEndpointsWithConfiguredBasePath) {
     CharacterDefinition definition = network_definition(mock.port(), false);
     definition.provider.config.base_path = "/api";
     std::atomic_bool cancellation{false};
-    ProviderClient client(std::move(definition));
+    ProviderClient client(shared_definition(std::move(definition)));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 33, "Question");
 
@@ -832,7 +847,7 @@ TEST(ProviderClient, HandlesNonStreamingResponsesApiResponse) {
         R"("content":[{"type":"output_text","text":"Answer"}]}]})")});
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(responses_network_definition(mock.port(), false));
+    ProviderClient client(shared_definition(responses_network_definition(mock.port(), false)));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 28, "Question");
     std::string output;
@@ -861,7 +876,7 @@ TEST(ProviderClient, UnconfiguredProtocolDefaultsToMandatoryWebSearch) {
     definition.provider.config.model = "configured-model";
     definition.provider.config.stream = false;
     std::atomic_bool cancellation{false};
-    ProviderClient client(std::move(definition));
+    ProviderClient client(shared_definition(std::move(definition)));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 32, "Question");
 
@@ -886,7 +901,7 @@ TEST(ProviderClient, ReportsATruncatedResponsesStreamAsATransportError) {
     MockHttpServer mock({response});
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(responses_network_definition(mock.port()));
+    ProviderClient client(shared_definition(responses_network_definition(mock.port())));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 29, "Question");
     std::string output;
@@ -910,7 +925,7 @@ TEST(ProviderClient, CancelsAnActiveResponsesStreamingTransfer) {
     MockHttpServer mock({response}, true);
     mock.start();
     std::atomic_bool cancellation{false};
-    ProviderClient client(responses_network_definition(mock.port()));
+    ProviderClient client(shared_definition(responses_network_definition(mock.port())));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 30, "Question");
     std::string output;

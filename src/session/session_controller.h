@@ -68,7 +68,7 @@ public:
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {},
-        GenerationExecutor::BackendFactory backend_factory = {},
+        ProviderClientFactory client_factory = {},
         StyleResolver style_resolver = {},
         SessionIdentity identity = {});
     // Test-only construction and activation fault injection. These seams live
@@ -146,7 +146,7 @@ private:
         SessionLease lease,
         WakeNotifier& notifier,
         SessionRestore restored,
-        GenerationExecutor::BackendFactory backend_factory = {},
+        ProviderClientFactory client_factory = {},
         StyleResolver style_resolver = {},
         SessionIdentity identity = {});
     SessionController(
@@ -161,6 +161,8 @@ private:
         SessionIdentity identity = {});
 
     void initialize(SessionRestore restored, std::string_view initial_persona_id);
+    [[nodiscard]] SharedCharacterDefinition definition_for(
+        std::string_view id) const;
     [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
     bool busy() const noexcept;
     ControllerUpdate busy_notice() const;
@@ -212,12 +214,14 @@ private:
     SessionLease lease_;
     Transcript transcript_;
     SessionJournal journal_;
+    std::vector<SharedCharacterDefinition> definitions_;
     // Explicit shutdown joins this pool while generation_executor_ is still
     // alive. One worker per backend intentionally admits full-width multicast
     // work. Declaration order — pool, then executor, then batch — is the
     // fallback only for construction failures.
     ThreadPool worker_pool_;
     GenerationExecutor generation_executor_;
+    std::vector<ModelBackendInfo> runtime_info_;
     ForumCharacters characters_;
     SharedPersonaRoster personas_;
     SessionIdentity identity_;
@@ -228,8 +232,7 @@ private:
     // Runtime style overrides: the resolver (empty when the session cannot
     // change styles) and one style name per overridden character, kept for the
     // report form. Session-scoped; never persisted. The reset source is the
-    // executor's runtime info, which holds the configured appearance, so no
-    // baseline appearance is stored here.
+    // immutable runtime information built from configured definitions.
     StyleResolver style_resolver_;
     std::unordered_map<CharacterId, std::string> style_overrides_;
     RequestId next_request_id_{1};

@@ -531,6 +531,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_NE(request.run.created_at, 0);
     ASSERT_EQ(request.history->entries.size(), 1U);
     EXPECT_EQ(request.history->entries.front(), earlier);
+    const SharedModelHistory captured_history = request.history;
     EXPECT_EQ(
         context_without_timestamp_metadata(request, backend_view->system_prompt),
         (std::vector<ModelMessage>{
@@ -548,6 +549,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(response.display_name, "Guide");
     EXPECT_EQ(response.text, "Hello there");
     EXPECT_EQ(response.status, EntryStatus::complete);
+    EXPECT_EQ(captured_history->entries, (std::vector<TranscriptEntry>{earlier}));
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
@@ -2202,7 +2204,7 @@ struct ProviderFactoryObservation {
 class ProviderFactoryBackend final : public ModelBackend {
 public:
     ProviderFactoryBackend(
-        CharacterDefinition definition,
+        SharedCharacterDefinition definition,
         std::shared_ptr<ProviderFactoryObservation> observation)
         : definition_(std::move(definition)), observation_(std::move(observation)) {
     }
@@ -2220,31 +2222,26 @@ public:
                && !cancellation.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
-        on_delta({GenerationDeltaKind::answer, "answer-" + definition_.provider.config.model});
+        on_delta({GenerationDeltaKind::answer, "answer-" + definition_->provider.config.model});
         return {};
     }
 
     ModelBackendInfo info() const override {
-        return {
-            definition_.character,
-            definition_.provider.config.model,
-            "test://model",
-            true,
-        };
+        return model_backend_info(*definition_);
     }
 
 private:
-    CharacterDefinition definition_;
+    SharedCharacterDefinition definition_;
     std::shared_ptr<ProviderFactoryObservation> observation_;
 };
 
-GenerationExecutor::BackendFactory provider_recording_factory(
+ProviderClientFactory provider_recording_factory(
     const std::shared_ptr<ProviderFactoryObservation>& observation) {
-    return [observation](CharacterDefinition definition) {
+    return [observation](SharedCharacterDefinition definition) {
         if (observation->fail_next.exchange(false)) {
             throw std::runtime_error("backend construction failed");
         }
-        observation->configs.push_back(definition.provider.config);
+        observation->configs.push_back(definition->provider.config);
         return std::unique_ptr<ModelBackend>(
             new ProviderFactoryBackend(std::move(definition), observation));
     };

@@ -522,30 +522,58 @@ std::string build_chat_completions_request_body(
 
 } // namespace
 
-ProviderClient::ProviderClient(CharacterDefinition definition)
-    : character_(std::move(definition.character)),
-      config_(std::move(definition.provider.config)),
-      system_prompt_(std::move(definition.system_prompt)) {
-    if (character_.id.empty() || character_.display_name.empty()) {
+ModelBackendInfo model_backend_info(const CharacterDefinition& definition) {
+    return {
+        .character = definition.character,
+        .model = definition.provider.config.model,
+        .api = provider_endpoint(definition.provider.config),
+        .streaming = definition.provider.config.stream,
+    };
+}
+
+std::string provider_endpoint(const ModelBackendConfig& config) {
+    std::string host = config.host;
+    if (host.find(':') != std::string::npos && !host.starts_with('[')) {
+        host = '[' + host + ']';
+    }
+    const std::string base_url = std::string(config.https ? "https://" : "http://")
+        + host + ':' + std::to_string(config.port) + config.base_path;
+    switch (config.api) {
+    case ProviderApi::chat_completions:
+        return base_url + "/v1/chat/completions";
+    case ProviderApi::responses:
+        return base_url + "/v1/responses";
+    }
+    throw std::logic_error("Unknown provider API");
+}
+
+ProviderClient::ProviderClient(SharedCharacterDefinition definition)
+    : definition_(std::move(definition)) {
+    if (!definition_) {
+        throw std::invalid_argument("Provider client requires a character definition");
+    }
+    const CharacterMetadata& character = definition_->character;
+    const ModelBackendConfig& config = definition_->provider.config;
+    if (character.id.empty() || character.display_name.empty()) {
         throw std::runtime_error(
             "Provider client character ID and display name cannot be empty");
     }
-    if (config_.model.empty()) {
+    if (config.model.empty()) {
         throw std::runtime_error("Provider client requires a non-empty configured model");
     }
-    api_key_ = config_.api_key;
+    api_key_ = config.api_key;
 
-    if (!config_.api_key_env.empty()) {
-        const char* api_key = std::getenv(config_.api_key_env.c_str());
+    if (!config.api_key_env.empty()) {
+        const char* api_key = std::getenv(config.api_key_env.c_str());
         if (!api_key || *api_key == '\0') {
             throw std::runtime_error(
-                "Environment variable '" + config_.api_key_env
+                "Environment variable '" + config.api_key_env
                 + "' configured as api_key_env is not set");
         }
         api_key_ = api_key;
     }
 
-    if (config_.mode == Mode::net) {
+    if (config.mode == Mode::net) {
         (void)curl_global();
         curl_ = std::make_unique<CurlEasyHandle>();
     }
@@ -554,26 +582,27 @@ ProviderClient::ProviderClient(CharacterDefinition definition)
 ProviderClient::~ProviderClient() = default;
 
 RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
-    if (config_.mode == Mode::test) {
+    const ModelBackendConfig& config = definition_->provider.config;
+    if (config.mode == Mode::test) {
         return {.bytes = input.run.prompt_text};
     }
-    switch (config_.api) {
+    switch (config.api) {
     case ProviderApi::chat_completions:
         return {
             .bytes = build_chat_completions_request_body(
                 input,
-                config_,
-                system_prompt_),
+                config,
+                definition_->system_prompt),
         };
     case ProviderApi::responses:
         return {
             .bytes = build_responses_request_body(
                 input,
-                config_,
-                system_prompt_),
+                config,
+                definition_->system_prompt),
             .session_id = !input.run.prompt_cache_key.empty()
-                    && config_.cache_retention != CacheRetention::off
-                    && is_direct_openai_host(config_.host)
+                    && config.cache_retention != CacheRetention::off
+                    && is_direct_openai_host(config.host)
                 ? std::optional<std::string>(input.run.prompt_cache_key)
                 : std::nullopt,
         };
@@ -585,11 +614,12 @@ GenerationResult ProviderClient::perform(
     RequestPayload payload,
     const GenerationDeltaSink& on_delta,
     const std::atomic_bool& cancellation) {
+    const ModelBackendConfig& config = definition_->provider.config;
     if (cancellation.load(std::memory_order_acquire)) {
         log_info("HTTP generation skipped because cancellation was already requested");
         return {GenerationOutcome::cancelled, {}};
     }
-    if (config_.mode == Mode::test) {
+    if (config.mode == Mode::test) {
         on_delta({
             GenerationDeltaKind::answer,
             std::move(payload.bytes),
@@ -599,11 +629,11 @@ GenerationResult ProviderClient::perform(
 
     const std::string& request_body = payload.bytes;
     std::unique_ptr<StreamingResponseDecoder> decoder;
-    if (config_.stream) {
-        switch (config_.api) {
+    if (config.stream) {
+        switch (config.api) {
         case ProviderApi::chat_completions:
             decoder = std::make_unique<ProviderStreamDecoder>(
-                config_.reasoning_format, on_delta);
+                config.reasoning_format, on_delta);
             break;
         case ProviderApi::responses:
             decoder = std::make_unique<ResponsesStreamDecoder>(on_delta);
@@ -618,11 +648,11 @@ GenerationResult ProviderClient::perform(
     TransferProgressContext progress{
         .cancellation = &cancellation,
         .response = &response,
-        .idle_timeout = std::chrono::seconds(config_.idle_timeout_s),
+        .idle_timeout = std::chrono::seconds(config.idle_timeout_s),
     };
 
     curl_->reset();
-    const std::string url = endpoint();
+    const std::string url = provider_endpoint(config);
     const auto started_at = std::chrono::steady_clock::now();
     log_debug(
         "HTTP request started: endpoint=" + url
@@ -668,7 +698,7 @@ GenerationResult ProviderClient::perform(
     curl_->set(CURLOPT_CONNECTTIMEOUT, 10L, "Failed to configure connection timeout");
     curl_->set(
         CURLOPT_TIMEOUT,
-        static_cast<long>(config_.timeout_s),
+        static_cast<long>(config.timeout_s),
         "Failed to configure generation timeout");
     curl_->set(CURLOPT_NOSIGNAL, 1L, "Failed to configure libcurl signals");
     curl_->set(CURLOPT_TCP_KEEPALIVE, 1L, "Failed to configure TCP keepalive");
@@ -685,7 +715,7 @@ GenerationResult ProviderClient::perform(
         "Content-Type: application/json");
     raw_headers = curl_slist_append(
         raw_headers,
-        config_.stream
+        config.stream
             ? "Accept: text/event-stream"
             : "Accept: application/json");
     if (!api_key_.empty()) {
@@ -769,11 +799,11 @@ GenerationResult ProviderClient::perform(
     }
 
     GenerationResult result;
-    switch (config_.api) {
+    switch (config.api) {
     case ProviderApi::chat_completions:
         result = decode_provider_response(
             response.body,
-            config_.reasoning_format,
+            config.reasoning_format,
             on_delta);
         break;
     case ProviderApi::responses:
@@ -792,31 +822,7 @@ GenerationResult ProviderClient::perform(
 }
 
 ModelBackendInfo ProviderClient::info() const {
-    return {
-        .character = character_,
-        .model = config_.model,
-        .api = endpoint(),
-        .streaming = config_.stream,
-    };
-}
-
-std::string ProviderClient::base_url() const {
-    std::string host = config_.host;
-    if (host.find(':') != std::string::npos && !host.starts_with('[')) {
-        host = '[' + host + ']';
-    }
-    return std::string(config_.https ? "https://" : "http://")
-        + host + ':' + std::to_string(config_.port) + config_.base_path;
-}
-
-std::string ProviderClient::endpoint() const {
-    switch (config_.api) {
-    case ProviderApi::chat_completions:
-        return base_url() + "/v1/chat/completions";
-    case ProviderApi::responses:
-        return base_url() + "/v1/responses";
-    }
-    throw std::logic_error("Unknown provider API");
+    return model_backend_info(*definition_);
 }
 
 } // namespace cha
