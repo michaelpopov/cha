@@ -99,7 +99,7 @@ ControllerResult run_controller(
     try {
         test::TestNotifier notifier;
         start.arrive_and_wait();
-        auto controller = test::from_backends_for_testing(
+        auto controller = test::from_test_backends(
             test::one_backend(std::make_unique<DeterministicBackend>(
                 std::move(id), std::move(name), std::move(answer))),
             database_path,

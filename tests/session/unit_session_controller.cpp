@@ -371,7 +371,7 @@ TEST(SessionController, BuildsStablePerCharacterPromptCacheKeys) {
     TemporaryJournal short_journal;
     auto short_backend = std::make_unique<ScriptedBackend>();
     ScriptedBackend* short_view = short_backend.get();
-    auto short_controller = test::from_backends_for_testing(
+    auto short_controller = test::from_test_backends(
         test::one_backend(std::move(short_backend)),
         short_journal.path,
         notifier(),
@@ -393,7 +393,7 @@ TEST(SessionController, BuildsStablePerCharacterPromptCacheKeys) {
     TemporaryJournal long_journal;
     auto long_backend = std::make_unique<ScriptedBackend>();
     ScriptedBackend* long_view = long_backend.get();
-    auto long_controller = test::from_backends_for_testing(
+    auto long_controller = test::from_test_backends(
         test::one_backend(std::move(long_backend)),
         long_journal.path,
         notifier(),
@@ -465,7 +465,7 @@ TEST(SessionController, RejectsAnEmptyPersonaRoster) {
     TemporaryJournal temporary;
 
     try {
-        (void)test::from_backends_for_testing(
+        (void)test::from_test_backends(
             test::one_backend(std::make_unique<ScriptedBackend>()),
             PersonaRoster{},
             temporary.path,
@@ -482,12 +482,14 @@ TEST(SessionController, RejectsUnknownInitialDefaultCharacterID) {
     TemporaryJournal temporary;
 
     try {
-        (void)SessionController::from_backends_for_testing(
+        (void)test::from_test_backends(
             test::one_backend(std::make_unique<ScriptedBackend>()),
             test::operator_roster(),
-            "unknown-id",
             temporary.path,
-            notifier());
+            notifier(),
+            {},
+            {},
+            "unknown-id");
         FAIL() << "Expected unknown initial default rejection";
     } catch (const std::invalid_argument& error) {
         EXPECT_EQ(
@@ -509,7 +511,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
         GenerationResult{},
         std::vector<std::string>{"Hello", " there"});
     ScriptedBackend* backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier(),
@@ -566,7 +568,7 @@ TEST(SessionController, ResolvesAndStampsTheAuthorForEveryBatchRun) {
     std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends),
         PersonaRoster{{.id = "engineer", .display_name = "Engineer"}},
         temporary.path,
@@ -595,7 +597,7 @@ TEST(SessionController, RejectsUnknownAuthorBeforeOrdinaryOrMulticastBatches) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>();
     ScriptedBackend* const backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         PersonaRoster{{.id = "engineer", .display_name = "Engineer"}},
         temporary.path,
@@ -618,7 +620,7 @@ TEST(SessionController, BoundsGenerationEventDrains) {
     auto backend = std::make_unique<ScriptedBackend>(
         GenerationResult{},
         std::vector<std::string>{"one", "two", "three"});
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
@@ -651,7 +653,7 @@ TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
     auto backend = std::make_unique<ScriptedBackend>(
         GenerationResult{}, std::vector<std::string>{"Answer"});
     ScriptedBackend* backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
@@ -671,7 +673,7 @@ TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
 
 TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{GenerationOutcome::cancelled, {}},
             std::vector<std::string>{"Partial"})),
@@ -700,7 +702,7 @@ TEST(SessionController, StoresTheEntryCreationTimeItDisplayed) {
     auto backend = std::make_unique<ScriptedBackend>(
         GenerationResult{}, std::vector<std::string>{"Hello"});
     backend->hold_after_deltas = &release;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
@@ -734,7 +736,7 @@ TEST(SessionController, StoresTheDisplayedCreationTimeForACancelledResponse) {
         GenerationResult{GenerationOutcome::cancelled, {}},
         std::vector<std::string>{"Partial"});
     backend->hold_after_deltas = &release;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
@@ -761,7 +763,7 @@ TEST(SessionController, StoresTheDisplayedCreationTimeForACancelledResponse) {
 
 TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{GenerationOutcome::cancelled, {}})),
         temporary.path,
@@ -778,7 +780,7 @@ TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
 
 TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{},
             std::vector<std::string>{},
@@ -842,7 +844,7 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
 
 TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{},
             std::vector<std::string>{},
@@ -876,7 +878,7 @@ TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
 
 TEST(SessionController, RejectsGenerationWithoutResponseContent) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
@@ -900,7 +902,7 @@ TEST(SessionController, PersistsPreparationFailureAsTheTurnOutcome) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ThrowingPrepareBackend>();
     ThrowingPrepareBackend* backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
@@ -921,7 +923,7 @@ TEST(SessionController, PersistsPreparationFailureAsTheTurnOutcome) {
 
 TEST(SessionController, ReplacesPartialOutputWithATypedError) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{
                 GenerationOutcome::transport_error,
@@ -953,7 +955,7 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
         journal.start_turn(1, existing);
         journal.cancel_turn(1, std::nullopt);
     }
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier(),
@@ -971,7 +973,8 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
         info.notice->find("Transcript entries: 0"),
         std::string::npos);
     EXPECT_NE(
-        info.notice->find("* @Guide  test-model  test://model  streaming"),
+        info.notice->find(
+            "* @Guide  test-model  http://127.0.0.1:1/v1/responses  streaming"),
         std::string::npos);
     EXPECT_EQ(info.notice->find("Model:"), std::string::npos);
     EXPECT_TRUE(controller->view().transcript.entries.empty());
@@ -981,7 +984,7 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
 
 TEST(SessionController, KeepsOffrecordMarkersOutOfTheSessionDatabase) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
@@ -1018,7 +1021,7 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
     auto backend = std::make_unique<ScriptedBackend>(
         GenerationResult{}, std::vector<std::string>{"Answer"});
     ScriptedBackend* backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
@@ -1063,7 +1066,7 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
 
 TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan) {
     TemporaryJournal busy_temporary;
-    auto busy_controller = test::from_backends_for_testing(
+    auto busy_controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{}, std::vector<std::string>{}, true)),
         busy_temporary.path,
@@ -1076,7 +1079,7 @@ TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan
     busy_controller->shutdown();
 
     TemporaryJournal clear_temporary;
-    auto clear_controller = test::from_backends_for_testing(
+    auto clear_controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         clear_temporary.path,
         notifier());
@@ -1099,7 +1102,7 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
     std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(one));
     backends.push_back(std::move(two));
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends), temporary.path, notifier());
 
     const ControllerUpdate started = controller->start_multicast("operator",
@@ -1163,7 +1166,7 @@ TEST(SessionController, ResolvesMulticastHandlesAndTreatsAnEmptyListAsAllCharact
     std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(one));
     backends.push_back(std::move(two));
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends), temporary.path, notifier());
 
     EXPECT_EQ(
@@ -1184,7 +1187,7 @@ TEST(SessionController, ResolvesMulticastHandlesAndTreatsAnEmptyListAsAllCharact
 
 TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) {
     TemporaryJournal span_temporary;
-    auto span_controller = test::from_backends_for_testing(
+    auto span_controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         span_temporary.path,
         notifier());
@@ -1203,7 +1206,7 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
     std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
-    auto stop_controller = test::from_backends_for_testing(
+    auto stop_controller = test::from_test_backends(
         std::move(backends), stop_temporary.path, notifier());
 
     (void)stop_controller->start_multicast("operator",
@@ -1251,7 +1254,7 @@ TEST(SessionController, CompletedForegroundWinsTheStopRace) {
     std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends), temporary.path, notifier());
 
     (void)controller->start_multicast("operator", "Question", {"One", "Two"});
@@ -1288,7 +1291,7 @@ TEST(SessionController, StopDoesNotWaitForCancelledBackgroundExecution) {
     std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(foreground));
     backends.push_back(std::move(background));
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends), temporary.path, notifier());
 
     (void)controller->start_multicast("operator", "Question", {"One", "Two"});
@@ -1332,7 +1335,7 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     backends.push_back(std::move(failed));
     backends.push_back(std::move(cancelled));
     backends.push_back(std::move(complete));
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends), temporary.path, notifier());
 
     (void)controller->start_multicast("operator",
@@ -1369,7 +1372,7 @@ TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedGenerationOr
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     backends.push_back(std::move(third));
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends), temporary.path, notifier());
 
     (void)controller->start_multicast(
@@ -1430,7 +1433,7 @@ TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndCharacter) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>();
     ScriptedBackend* backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
@@ -1484,7 +1487,7 @@ TEST(SessionController, FirstActivationFailureTearsDownEveryGatedExecution) {
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     bool fail_first_activation = true;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends),
         temporary.path,
         notifier(),
@@ -1527,7 +1530,7 @@ TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryExecution) 
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     bool fail_second_activation = true;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends),
         temporary.path,
         notifier(),
@@ -1562,7 +1565,7 @@ TEST(SessionController, RecordsAnInlineNullAgentMessageWithoutGeneration) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>();
     ScriptedBackend* const backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
@@ -1592,7 +1595,7 @@ TEST(SessionController, RecordsPlainMessagesInSessionLocalRecordingMode) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>();
     ScriptedBackend* const backend_view = backend.get();
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::move(backend)),
         temporary.path,
         notifier());
@@ -1637,7 +1640,7 @@ TEST(SessionController, RecordsPlainMessagesInSessionLocalRecordingMode) {
 
 TEST(SessionController, RejectsEmptyNullAgentMessagesWithoutRecording) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
@@ -1661,7 +1664,7 @@ TEST(SessionController, RejectsEmptyNullAgentMessagesWithoutRecording) {
 
 TEST(SessionController, RejectsNullAgentRecordingDuringGeneration) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{},
             std::vector<std::string>{},
@@ -1684,7 +1687,7 @@ TEST(SessionController, RejectsNullAgentRecordingDuringGeneration) {
 
 TEST(SessionController, RejectsNewOperationsDuringGeneration) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{},
             std::vector<std::string>{},
@@ -1708,7 +1711,7 @@ TEST(SessionController, RejectsNewOperationsDuringGeneration) {
 
 TEST(SessionController, IgnoresEventsForAnotherRequest) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{},
             std::vector<std::string>{},
@@ -1741,7 +1744,7 @@ TEST(SessionController, IgnoresEventsForAnotherRequest) {
 
 TEST(SessionController, StagingFailureLeavesNoDurableTurn) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
@@ -1770,7 +1773,7 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
         load_session_state(temporary.path);
     ASSERT_EQ(restored.interrupted_turns.size(), 1U);
 
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier(),
@@ -1798,7 +1801,7 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
     std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(guide));
     backends.push_back(std::move(ismael));
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends),
         temporary.path,
         notifier(),
@@ -1895,7 +1898,7 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
 
 TEST(SessionController, ResolvesCurrentPersonaByIdOrDisplayNamePrefix) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         PersonaRoster{
             {.id = "michael", .display_name = "Michael"},
@@ -1935,7 +1938,7 @@ TEST(SessionController, ResolvesCurrentPersonaByIdOrDisplayNamePrefix) {
 
 TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
             GenerationResult{},
             std::vector<std::string>{"Partial"},
@@ -1962,7 +1965,7 @@ TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {
 
 TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
@@ -2022,7 +2025,7 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
 
 TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
@@ -2055,7 +2058,7 @@ TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
 
 TEST(SessionController, CommandsRequestSnapshotsAndNoticesAloneDoNot) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
@@ -2096,7 +2099,7 @@ TEST(SessionController, ShutdownJoinsPoolBeforeExecutorCanBeDestroyed) {
     ConcurrentBackend* backend_view = backend.get();
     std::vector<std::unique_ptr<ModelBackend>> backends;
     backends.push_back(std::move(backend));
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         std::move(backends), temporary.path, shutdown_notifier);
 
     (void)controller->submit_prompt("operator", "Question");
@@ -2126,7 +2129,7 @@ TEST(SessionController, ShutdownJoinsPoolBeforeExecutorCanBeDestroyed) {
 
 TEST(SessionController, ReportsSemanticStateAndInputConsumptionIndependently) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
@@ -2281,13 +2284,14 @@ std::unique_ptr<SessionController> style_test_controller(
     std::vector<CharacterDefinition> definitions,
     const std::shared_ptr<ProviderFactoryObservation>& observation) {
     return SessionController::from_definitions_for_testing(
-        std::move(definitions),
+        share_character_definitions(std::move(definitions)),
         test::operator_roster(),
         "guide-id",
         database_path,
         notifier(),
         {},
         provider_recording_factory(observation),
+        {},
         style_stub_resolver());
 }
 
@@ -2418,13 +2422,15 @@ TEST(SessionController, StyleResolverFailureLeavesTheAppearanceAlone) {
     // The resolver reads the filesystem, so it can fail in ways its own contract
     // does not name. One mistyped style must still not fail the session.
     auto throwing = SessionController::from_definitions_for_testing(
-        std::vector<CharacterDefinition>{style_test_definition("guide-id", "Guide")},
+        share_character_definitions(
+            std::vector<CharacterDefinition>{style_test_definition("guide-id", "Guide")}),
         test::operator_roster(),
         "guide-id",
         temporary.path,
         notifier(),
         {},
         provider_recording_factory(observation),
+        {},
         [](std::string_view) -> CharacterAppearance {
             throw std::runtime_error("styles directory is unreadable");
         });
@@ -2436,7 +2442,7 @@ TEST(SessionController, StyleResolverFailureLeavesTheAppearanceAlone) {
 
 TEST(SessionController, StyleOverrideNeedsAResolver) {
     TemporaryJournal temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());

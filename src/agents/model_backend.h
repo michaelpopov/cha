@@ -71,8 +71,8 @@ public:
         RequestPayload payload,
         const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) = 0;
-    // Temporary support for from_backends_for_testing(). Production runtime
-    // information comes directly from immutable character definitions.
+    // Temporary legacy-executor test support. Production runtime information
+    // comes directly from immutable character definitions.
     virtual ModelBackendInfo info() const = 0;
 };
 

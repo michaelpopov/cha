@@ -253,7 +253,7 @@ inline OpenedSession open_scripted_session(
     PersonaRoster personas = reader_roster()) {
     return {
         .descriptor = test_descriptor(identity),
-        .controller = from_backends_for_testing(
+        .controller = std::move(from_test_backends(
             std::move(backends),
             std::move(personas),
             database_path,
@@ -261,7 +261,7 @@ inline OpenedSession open_scripted_session(
             load_session_state(database_path),
             std::move(before_activation),
             std::nullopt,
-            identity),
+            identity)).take_controller(),
     };
 }
 
@@ -289,7 +289,7 @@ inline OpenedSession open_restored_session(
     std::shared_ptr<BackendControls> controls) {
     return {
         .descriptor = test_descriptor(identity),
-        .controller = from_backends_for_testing(
+        .controller = std::move(from_test_backends(
             one_backend(scripted_backend(std::move(controls))),
             reader_roster(),
             database_path,
@@ -297,7 +297,7 @@ inline OpenedSession open_restored_session(
             std::move(restored),
             {},
             std::nullopt,
-            identity),
+            identity)).take_controller(),
     };
 }
 
@@ -333,7 +333,7 @@ inline OpenedSession open_leased_session(
     return {
         .descriptor = test_descriptor(identity),
         .controller = SessionController::from_shared_definitions(
-            {unreachable_definition()},
+            share_character_definitions({unreachable_definition()}),
             std::make_shared<const PersonaRoster>(reader_roster()),
             "guide",
             "reader",

@@ -6,6 +6,7 @@
 #include "session/session_repository.h"
 #include "support/test_notifier.h"
 #include "support/test_workspace.h"
+#include "util/environment.h"
 
 #include <gtest/gtest.h>
 
@@ -15,6 +16,8 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <cstdlib>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +27,28 @@
 
 namespace cha {
 namespace {
+
+class ScopedEnvironmentValue {
+public:
+    explicit ScopedEnvironmentValue(std::string name) : name_(std::move(name)) {
+        if (const char* value = std::getenv(name_.c_str())) previous_ = value;
+    }
+
+    ~ScopedEnvironmentValue() {
+        if (previous_) {
+            (void)set_environment_variable(name_, *previous_);
+        } else {
+            (void)unset_environment_variable(name_);
+        }
+    }
+
+    ScopedEnvironmentValue(const ScopedEnvironmentValue&) = delete;
+    ScopedEnvironmentValue& operator=(const ScopedEnvironmentValue&) = delete;
+
+private:
+    std::string name_;
+    std::optional<std::string> previous_;
+};
 
 class SessionOpenTest : public ::testing::Test {
 protected:
@@ -237,23 +262,58 @@ TEST_F(SessionOpenTest, PropagatesMissingForumsSessionsAndLeaseContention) {
     held.controller->shutdown();
 }
 
-TEST_F(SessionOpenTest, KeepsSessionOpenCredentialValidationForReparsedDefinitions) {
+TEST_F(SessionOpenTest, FallsBackWhenReparsedDefinitionsUseAnUnsetCredentialVariable) {
+    constexpr std::string_view variable = "CHA_SESSION_OPEN_UNSET_CREDENTIAL";
+    ScopedEnvironmentValue environment{std::string(variable)};
+    ASSERT_TRUE(unset_environment_variable(variable));
     const WorkspaceDefinition model = load_model();
     fixture_.write_provider("keyless",
         "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n"
-        "api_key_env = \"CHA_TEST_UNSET_API_KEY\"\n");
+        "api_key_env = \"CHA_SESSION_OPEN_UNSET_CREDENTIAL\"\n");
     fixture_.write_character_config(
         "display_name = \"Guide\"\nprovider = \"keyless\"\n");
     const auto sessions = make_repository(model);
     const StoredSession created = sessions->create("lobby", "Stored");
 
-    EXPECT_THROW(
-        (void)open_session(model, *sessions, created.identity, notifier_),
-        std::runtime_error);
+    OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+    ASSERT_TRUE(opened.controller->character_information().notice);
+    EXPECT_NE(
+        opened.controller->character_information().notice->find("fake"),
+        std::string::npos);
+    ASSERT_TRUE(opened.notice);
+    EXPECT_NE(opened.notice->find("could not be reloaded"), std::string::npos);
+    opened.controller->shutdown();
+    opened.controller.reset();
 
-    // This Block 1 gap is intentional: re-parsed definitions are still
-    // rejected by ProviderClient while Block 4 moves this validation earlier.
+    // The bad hand edit is local to session opening. It neither rejects nor
+    // replaces the generation published at startup, so another session still
+    // opens from the same validated startup definitions.
     EXPECT_NO_THROW((void)sessions->prepare(created.identity));
+    const StoredSession later = sessions->create("lobby", "Later");
+    OpenedSession reopened = open_session(model, *sessions, later.identity, notifier_);
+    ASSERT_TRUE(reopened.controller->character_information().notice);
+    EXPECT_NE(
+        reopened.controller->character_information().notice->find("fake"),
+        std::string::npos);
+    reopened.controller->shutdown();
+}
+
+TEST_F(SessionOpenTest, FallsBackWhenReparsedDefinitionsUseAProviderWithoutAModel) {
+    const WorkspaceDefinition model = load_model();
+    fixture_.write_provider("model-less", "host = \"test\"\nport = 1\nmode = \"test\"\n");
+    fixture_.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"model-less\"\n");
+    const auto sessions = make_repository(model);
+    const StoredSession created = sessions->create("lobby", "Stored");
+
+    OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+    ASSERT_TRUE(opened.controller->character_information().notice);
+    EXPECT_NE(
+        opened.controller->character_information().notice->find("fake"),
+        std::string::npos);
+    ASSERT_TRUE(opened.notice);
+    EXPECT_NE(opened.notice->find("could not be reloaded"), std::string::npos);
+    opened.controller->shutdown();
 }
 
 TEST_F(SessionOpenTest, ReResolvesCharacterDefinitionsWhenASessionOpens) {
@@ -288,6 +348,32 @@ TEST_F(SessionOpenTest, ReResolvesCharacterDefinitionsWhenASessionOpens) {
     EXPECT_EQ(fresh.descriptor.forum_display_name, "Renamed Lobby");
     EXPECT_EQ(fresh.controller->view().characters.front().display_name, "Renamed");
     fresh.controller->shutdown();
+}
+
+TEST_F(SessionOpenTest, CharacterSettingsSaveReachesTheNextSession) {
+    fixture_.write_provider(
+        "other", "host = \"test\"\nport = 2\nmode = \"test\"\nmodel = \"other-model\"\n");
+    fixture_.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    const WorkspaceDefinition model = load_model();
+    const auto sessions = make_repository(model);
+    const StoredSession created = sessions->create("lobby", "Stored");
+
+    EXPECT_EQ(
+        model.write_character_settings("guide", "other", "serif-italic"),
+        (CharacterSettingsChange{true, true}));
+
+    OpenedSession opened = open_session(model, *sessions, created.identity, notifier_);
+    ASSERT_EQ(opened.controller->view().characters.size(), 1U);
+    EXPECT_EQ(
+        opened.controller->view().characters.front().appearance,
+        (CharacterAppearance{
+            CharacterFont::serif, CharacterSlant::italic,
+            CharacterWeight::normal, CharacterScale::normal}));
+    ASSERT_TRUE(opened.controller->character_information().notice);
+    EXPECT_NE(
+        opened.controller->character_information().notice->find("other-model"),
+        std::string::npos);
+    opened.controller->shutdown();
 }
 
 TEST_F(SessionOpenTest, FallsBackToStartupDefinitionsAndReportsWhenReloadFails) {

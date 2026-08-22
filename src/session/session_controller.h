@@ -49,7 +49,7 @@ public:
     using StyleResolver = std::function<CharacterAppearance(std::string_view)>;
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_shared_definitions(
-        std::vector<CharacterDefinition> definitions,
+        std::vector<SharedCharacterDefinition> definitions,
         SharedPersonaRoster personas,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
@@ -59,28 +59,19 @@ public:
         SessionRestore restored = {},
         StyleResolver style_resolver = {},
         SessionIdentity identity = {});
-    // Test-only counterpart for controller tests that intentionally do not
-    // claim a fixture database's production lease.
+    // The sole test-only constructor. Tests use the same immutable definitions
+    // and provider-client factory boundary as production, but do not claim a
+    // fixture database's production lease.
     [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
-        std::vector<CharacterDefinition> definitions,
+        std::vector<SharedCharacterDefinition> definitions,
         PersonaRoster personas,
         CharacterId initial_default_character_id,
         std::filesystem::path database_path,
         WakeNotifier& notifier,
         SessionRestore restored = {},
         ProviderClientFactory client_factory = {},
-        StyleResolver style_resolver = {},
-        SessionIdentity identity = {});
-    // Test-only construction and activation fault injection. These seams live
-    // here because the otherwise private controller owns both dependencies.
-    [[nodiscard]] static std::unique_ptr<SessionController> from_backends_for_testing(
-        std::vector<std::unique_ptr<ModelBackend>> backends,
-        PersonaRoster personas,
-        CharacterId initial_default_character_id,
-        std::filesystem::path database_path,
-        WakeNotifier& notifier,
-        SessionRestore restored = {},
         ActivationHook before_activation = {},
+        StyleResolver style_resolver = {},
         SessionIdentity identity = {});
     ~SessionController();
     SessionController(const SessionController&) = delete;
@@ -138,7 +129,7 @@ private:
     };
 
     SessionController(
-        std::vector<CharacterDefinition> definitions,
+        std::vector<SharedCharacterDefinition> definitions,
         SharedPersonaRoster personas,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
@@ -147,17 +138,8 @@ private:
         WakeNotifier& notifier,
         SessionRestore restored,
         ProviderClientFactory client_factory = {},
+        ActivationHook before_activation = {},
         StyleResolver style_resolver = {},
-        SessionIdentity identity = {});
-    SessionController(
-        std::vector<std::unique_ptr<ModelBackend>> backends,
-        PersonaRoster personas,
-        CharacterId initial_default_character_id,
-        std::string initial_default_persona_id,
-        std::filesystem::path database_path,
-        WakeNotifier& notifier,
-        SessionRestore restored,
-        ActivationHook before_activation,
         SessionIdentity identity = {});
 
     void initialize(SessionRestore restored, std::string_view initial_persona_id);

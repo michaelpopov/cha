@@ -33,7 +33,7 @@ OpenedSession open_session(
             .forum_default_character_id = default_character,
         },
         .controller = SessionController::from_shared_definitions(
-            std::move(copied.definitions),
+            share_character_definitions(std::move(copied.definitions)),
             model.personas(),
             default_character,
             default_persona,

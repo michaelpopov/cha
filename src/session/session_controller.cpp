@@ -149,7 +149,7 @@ std::string persona_handle_list(const PersonaRoster& personas) {
 } // namespace
 
 std::unique_ptr<SessionController> SessionController::from_shared_definitions(
-    std::vector<CharacterDefinition> definitions,
+    std::vector<SharedCharacterDefinition> definitions,
     SharedPersonaRoster personas,
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
@@ -166,17 +166,18 @@ std::unique_ptr<SessionController> SessionController::from_shared_definitions(
         std::move(definitions), std::move(personas), std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
         std::move(database_path), std::move(lease), notifier, std::move(restored),
-        {}, std::move(style_resolver), std::move(identity)));
+        {}, {}, std::move(style_resolver), std::move(identity)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
-    std::vector<CharacterDefinition> definitions,
+    std::vector<SharedCharacterDefinition> definitions,
     PersonaRoster personas,
     ParticipantId initial_default_character_id,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored,
     ProviderClientFactory client_factory,
+    ActivationHook before_activation,
     StyleResolver style_resolver,
     SessionIdentity identity) {
     require_character_count(definitions.size());
@@ -190,32 +191,12 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
         notifier,
         std::move(restored),
         std::move(client_factory),
+        std::move(before_activation),
         std::move(style_resolver), std::move(identity)));
 }
 
-std::unique_ptr<SessionController> SessionController::from_backends_for_testing(
-    std::vector<std::unique_ptr<ModelBackend>> backends,
-    PersonaRoster personas,
-    ParticipantId initial_default_character_id,
-    std::filesystem::path database_path,
-    WakeNotifier& notifier,
-    SessionRestore restored,
-    ActivationHook before_activation,
-    SessionIdentity identity) {
-    require_character_count(backends.size());
-    return std::unique_ptr<SessionController>(new SessionController(
-        std::move(backends),
-        std::move(personas),
-        std::move(initial_default_character_id),
-        {},
-        std::move(database_path),
-        notifier,
-        std::move(restored),
-        std::move(before_activation), std::move(identity)));
-}
-
 SessionController::SessionController(
-    std::vector<CharacterDefinition> definitions,
+    std::vector<SharedCharacterDefinition> definitions,
     SharedPersonaRoster personas,
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
@@ -224,11 +205,12 @@ SessionController::SessionController(
     WakeNotifier& notifier,
     SessionRestore restored,
     ProviderClientFactory client_factory,
+    ActivationHook before_activation,
     StyleResolver style_resolver,
     SessionIdentity identity)
     : lease_(std::move(lease)),
       journal_(std::move(path)),
-      definitions_(share_character_definitions(std::move(definitions))),
+      definitions_(std::move(definitions)),
       worker_pool_(definitions_.size()),
       generation_executor_(
           definitions_, notifier, worker_pool_, std::move(client_factory)),
@@ -237,29 +219,7 @@ SessionController::SessionController(
       personas_(std::move(personas)),
       identity_(std::move(identity)),
       default_character_id_(std::move(initial_default_character_id)),
-      style_resolver_(std::move(style_resolver)) {
-    initialize(std::move(restored), initial_default_persona_id);
-}
-
-SessionController::SessionController(
-    std::vector<std::unique_ptr<ModelBackend>> backends,
-    PersonaRoster personas,
-    ParticipantId initial_default_character_id,
-    std::string initial_default_persona_id,
-    std::filesystem::path path,
-    WakeNotifier& notifier,
-    SessionRestore restored,
-    ActivationHook before_activation,
-    SessionIdentity identity)
-    : lease_(SessionLease::inactive_for_testing()),
-      journal_(std::move(path)),
-      worker_pool_(backends.size()),
-      generation_executor_(std::move(backends), notifier, worker_pool_),
-      runtime_info_(generation_executor_.runtime_info()),
-      characters_(make_forum_characters(runtime_info_)),
-      personas_(std::make_shared<const PersonaRoster>(std::move(personas))),
-      identity_(std::move(identity)),
-      default_character_id_(std::move(initial_default_character_id)),
+      style_resolver_(std::move(style_resolver)),
       before_activation_(std::move(before_activation)) {
     initialize(std::move(restored), initial_default_persona_id);
 }

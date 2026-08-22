@@ -258,7 +258,7 @@ TEST(TextInput, RecordsNullAgentMessagesAndNeverPersistsTheSentinelDefault) {
 
 TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
     TemporaryTextSession ordinary_temporary;
-    auto ordinary_controller = test::from_backends_for_testing(
+    auto ordinary_controller = test::from_test_backends(
         test::one_backend(std::make_unique<BlockingBackend>()),
         PersonaRoster{{.id = "engineer", .display_name = "Engineer"}},
         ordinary_temporary.path,
@@ -277,7 +277,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
     ordinary_controller->shutdown();
 
     TemporaryTextSession multicast_temporary;
-    auto multicast_controller = test::from_backends_for_testing(
+    auto multicast_controller = test::from_test_backends(
         test::one_backend(std::make_unique<BlockingBackend>()),
         PersonaRoster{{.id = "engineer", .display_name = "Engineer"}},
         multicast_temporary.path,
@@ -319,7 +319,7 @@ TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
 
 TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
     TemporaryTextSession temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<BlockingBackend>()),
         temporary.path,
         notifier());
@@ -408,11 +408,12 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
 TEST(TextInput, DispatchesTheStyleCommandWithoutPersisting) {
     TemporaryTextSession temporary;
     auto controller = SessionController::from_definitions_for_testing(
-        std::vector<CharacterDefinition>{definition()},
+        share_character_definitions(std::vector<CharacterDefinition>{definition()}),
         test::operator_roster(),
         "guide-id",
         temporary.path,
         notifier(),
+        {},
         {},
         {},
         [](std::string_view name) -> CharacterAppearance {
@@ -452,7 +453,7 @@ TEST(TextInput, DispatchesTheStyleCommandWithoutPersisting) {
 
 TEST(TextInput, RejectsTheStyleCommandDuringGeneration) {
     TemporaryTextSession temporary;
-    auto controller = test::from_backends_for_testing(
+    auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<BlockingBackend>()),
         temporary.path,
         notifier());
