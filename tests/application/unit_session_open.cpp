@@ -1,5 +1,7 @@
 #include "workspace/session_open.h"
 
+#include "agents/providers.h"
+
 #include "workspace/builtins.h"
 #include "session/not_found_error.h"
 #include "session/session_lease.h"
@@ -68,8 +70,19 @@ protected:
         return {std::string(entrance_id), std::string(welcome_id)};
     }
 
+    OpenedSession open_session(
+        const WorkspaceDefinition& model,
+        const SessionRepository& sessions,
+        const SessionIdentity& identity,
+        WakeNotifier& notifier) {
+        return cha::open_session(
+            model, sessions, identity, providers_,
+            std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}));
+    }
+
     test::TestWorkspace fixture_;
     test::NoopNotifier notifier_;
+    Providers providers_;
 };
 
 TEST_F(SessionOpenTest, OpensAStoredSessionWithTheLoadedForumDefinitions) {

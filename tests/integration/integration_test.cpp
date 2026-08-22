@@ -1,10 +1,8 @@
 #include "agents/character.h"
-#include "agents/generation_batch.h"
-#include "agents/generation_executor.h"
+#include "agents/providers.h"
 #include "session/session_controller.h"
 #include "agents/character_config.h"
 #include "util/environment.h"
-#include "util/thread_pool.h"
 #include "support/mock_http_server.h"
 #include "session/session_database.h"
 #include "workspace/workspace_definition.h"
@@ -84,26 +82,6 @@ using IntegrationDeadline = IntegrationClock::time_point;
 // chunk.
 constexpr auto integration_chat_timeout = std::chrono::seconds(60);
 
-// Declared before the batch so the batch is destroyed first: its destructor
-// cancels the live request — curl's progress callback observes that while the
-// transfer is blocked — and waits, after which stopping the pool joins the
-// worker safely even when the test exits through an exception.
-class PoolCleanup final {
-public:
-    explicit PoolCleanup(ThreadPool& pool) : pool_(pool) {
-    }
-
-    ~PoolCleanup() {
-        pool_.stop();
-    }
-
-    PoolCleanup(const PoolCleanup&) = delete;
-    PoolCleanup& operator=(const PoolCleanup&) = delete;
-
-private:
-    ThreadPool& pool_;
-};
-
 CharacterDefinition integration_definition(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
@@ -121,12 +99,12 @@ CharacterDefinition integration_definition(bool stream) {
 }
 
 GenerationEvent wait_for_generation_event(
-    GenerationBatch& batch,
+    ProviderRequest& request,
     IntegrationDeadline deadline) {
     while (true) {
         const std::size_t observed = notifier().wake_count();
         GenerationEvent event = GenerationCompleted{};
-        const ChannelReadStatus status = batch.try_receive_foreground(event);
+        const ChannelReadStatus status = request.try_receive(event);
         if (status == ChannelReadStatus::value) {
             return event;
         }
@@ -137,7 +115,7 @@ GenerationEvent wait_for_generation_event(
 
         const auto now = IntegrationClock::now();
         if (now >= deadline) {
-            batch.cancel();
+            request.cancel();
             throw std::runtime_error(
                 "Timed out after 60 seconds waiting for an integration generation "
                 "event; cancelled the live request");
@@ -150,21 +128,12 @@ GenerationEvent wait_for_generation_event(
         if (!notifier().wait_for_wake(
                 observed,
                 remaining)) {
-            batch.cancel();
+            request.cancel();
             throw std::runtime_error(
                 "Timed out after 60 seconds waiting for an integration generation "
                 "event; cancelled the live request");
         }
     }
-}
-
-GenerationBatch start_generation_run(
-    GenerationExecutor& executor,
-    GenerationRequest input) {
-    GenerationBatch batch =
-        executor.stage_batch(std::vector<GenerationRequest>{std::move(input)});
-    batch.open();
-    return batch;
 }
 
 ChatResult run_chat(bool stream) {
@@ -173,12 +142,9 @@ ChatResult run_chat(bool stream) {
     Transcript transcript;
     std::vector<CharacterDefinition> definitions;
     definitions.push_back(std::move(definition));
-    ThreadPool pool(1);
-    GenerationExecutor executor(
-        share_character_definitions(std::move(definitions)),
-        notifier(),
-        pool);
-    const PoolCleanup cleanup(pool);
+    const std::vector<SharedCharacterDefinition> shared =
+        share_character_definitions(std::move(definitions));
+    Providers providers;
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     GenerationRequest request{
@@ -190,13 +156,15 @@ ChatResult run_chat(bool stream) {
             .prompt_text = input,
         },
     };
-    GenerationBatch batch = start_generation_run(executor, std::move(request));
+    auto wake = std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {});
+    const auto request_handle = providers.make_request(
+        {.character = shared.front(), .generation = std::move(request)}, std::move(wake));
 
     ChatResult result;
     const IntegrationDeadline deadline =
         IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const GenerationEvent event = wait_for_generation_event(batch, deadline);
+        const GenerationEvent event = wait_for_generation_event(*request_handle, deadline);
         if (const auto* delta = std::get_if<GenerationEventDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
@@ -206,6 +174,7 @@ ChatResult run_chat(bool stream) {
         }
     }
 
+    providers.shutdown();
     return result;
 }
 
@@ -215,12 +184,9 @@ ChatResult run_cancelled_chat() {
     Transcript transcript;
     std::vector<CharacterDefinition> definitions;
     definitions.push_back(std::move(definition));
-    ThreadPool pool(1);
-    GenerationExecutor executor(
-        share_character_definitions(std::move(definitions)),
-        notifier(),
-        pool);
-    const PoolCleanup cleanup(pool);
+    const std::vector<SharedCharacterDefinition> shared =
+        share_character_definitions(std::move(definitions));
+    Providers providers;
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     GenerationRequest request{
@@ -232,23 +198,26 @@ ChatResult run_cancelled_chat() {
             .prompt_text = input,
         },
     };
-    GenerationBatch batch = start_generation_run(executor, std::move(request));
+    auto wake = std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {});
+    const auto request_handle = providers.make_request(
+        {.character = shared.front(), .generation = std::move(request)}, std::move(wake));
 
     ChatResult result;
     const IntegrationDeadline deadline =
         IntegrationClock::now() + integration_chat_timeout;
     while (true) {
-        const GenerationEvent event = wait_for_generation_event(batch, deadline);
+        const GenerationEvent event = wait_for_generation_event(*request_handle, deadline);
         if (const auto* delta = std::get_if<GenerationEventDelta>(&event)) {
             ++result.chunks;
             result.response += delta->text;
-            batch.cancel();
+            request_handle->cancel();
         } else {
             EXPECT_TRUE(std::holds_alternative<GenerationCancelled>(event));
             break;
         }
     }
 
+    providers.shutdown();
     return result;
 }
 

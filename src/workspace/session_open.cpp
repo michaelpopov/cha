@@ -3,6 +3,7 @@
 #include "session/not_found_error.h"
 #include "session/session_controller.h"
 #include "session/session_repository.h"
+#include "agents/providers.h"
 #include "util/logging.h"
 
 #include <utility>
@@ -13,7 +14,8 @@ OpenedSession open_session(
     const WorkspaceDefinition& model,
     const SessionRepository& sessions,
     const SessionIdentity& identity,
-    WakeNotifier& notifier) {
+    Providers& providers,
+    std::shared_ptr<WakeNotifier> notifier) {
     const ForumInfo* const forum = model.find_forum(identity.forum_id);
     if (forum == nullptr) {
         throw ForumNotFoundError("Forum '" + identity.forum_id + "' does not exist");
@@ -39,7 +41,8 @@ OpenedSession open_session(
             default_persona,
             prepared.database_path,
             std::move(prepared.lease),
-            notifier,
+            providers,
+            std::move(notifier),
             std::move(prepared.restore),
             // Borrowed for the session's life, the same borrow the persist
             // callbacks below take. The caller must keep the model alive for at

@@ -8,6 +8,7 @@
 #include "session/session_repository.h"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -18,6 +19,7 @@
 namespace cha {
 
 class WakeNotifier;
+class Providers;
 class SessionRepository;
 
 // Workspace paths derived from the root plus logging settings in workspace.toml.
@@ -147,7 +149,8 @@ private:
         const WorkspaceDefinition&,
         const SessionRepository&,
         const SessionIdentity&,
-        WakeNotifier&);
+        Providers&,
+        std::shared_ptr<WakeNotifier>);
     friend struct WorkspaceDefinitionTestAccess;
 
     struct CopiedForumDefinitions {

@@ -22,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 namespace cha {
 
@@ -31,14 +32,12 @@ class SessionController;
 
 namespace cha::web {
 
-// The one construction operation the web host still needs. Session
-// construction combines application-owned model and repository data, and it
-// must happen on the actor's own owner thread, so the actor calls back out for
-// it exactly once. It always returns the production-shaped result containing a
-// concrete SessionController; there is no test-only alternative.
+// The one construction operation the web host still needs. The actor passes
+// its shared wake signal through unchanged, so request workers can retain it
+// safely after the session owner has gone.
 using SessionOpener = std::function<OpenedSession(
     const SessionIdentity&,
-    cha::WakeNotifier&)>;
+    std::shared_ptr<cha::WakeNotifier>)>;
 
 // Owner-thread monotonic time seam; an empty function selects steady_clock.
 using LiveSessionClock =

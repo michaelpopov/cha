@@ -4,10 +4,13 @@
 #include "session/opened_session.h"
 #include "session/session_identity.h"
 
+#include <memory>
+
 namespace cha {
 
 class SessionRepository;
 class WakeNotifier;
+class Providers;
 
 // The one production path that creates a SessionController. It re-resolves
 // the forum's character definitions from disk and combines them with storage
@@ -25,6 +28,8 @@ OpenedSession open_session(
     const WorkspaceDefinition& model,
     const SessionRepository& sessions,
     const SessionIdentity& identity,
-    WakeNotifier& notifier);
+    Providers& providers,
+    std::shared_ptr<WakeNotifier> notifier);
+
 
 } // namespace cha

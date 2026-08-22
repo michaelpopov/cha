@@ -155,14 +155,14 @@ SessionOpener scripted_opener(
     std::shared_ptr<test::BackendControls> controls,
     SessionController::ActivationHook before_activation = {}) {
     return [path, controls, before_activation](
-               const SessionIdentity& identity, WakeNotifier& notifier) {
+               const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
         return test::open_scripted_session(
             identity, path, notifier, controls, before_activation);
     };
 }
 
 SessionOpener leased_opener(const std::filesystem::path& path) {
-    return [path](const SessionIdentity& identity, WakeNotifier& notifier) {
+    return [path](const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
         return test::open_leased_session(identity, path, notifier);
     };
 }
@@ -287,7 +287,7 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     SessionOpener opener = [path = file.path(), guide, scribe, &persisted_default,
                              &persisted_persona](
                                const SessionIdentity& identity,
-                               WakeNotifier& notifier) {
+                               std::shared_ptr<WakeNotifier> notifier) {
         std::vector<std::unique_ptr<ModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
@@ -344,7 +344,7 @@ TEST(LiveSession, KeepsADefaultCharacterThatCouldNotBeSaved) {
     auto guide = std::make_shared<test::BackendControls>();
     auto scribe = std::make_shared<test::BackendControls>();
     SessionOpener opener = [path = file.path(), guide, scribe](
-                               const SessionIdentity& identity, WakeNotifier& notifier) {
+                               const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
         std::vector<std::unique_ptr<ModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
@@ -468,7 +468,7 @@ TEST(LiveSession, IndependentSessionsProgressWithoutSharedState) {
     auto second_controls = std::make_shared<test::BackendControls>();
     LiveSessionManager manager(
         test_settings(),
-        [&](const SessionIdentity& identity, WakeNotifier& notifier) {
+        [&](const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
             return test::open_scripted_session(
                 identity,
                 identity.session_id == "one" ? first_file.path()
@@ -633,7 +633,7 @@ TEST(LiveSession, PublishesAnOpenedSessionNoticeOnTheFirstSnapshot) {
     LiveSessionHost host(
         test_settings(),
         [path = file.path(), controls](
-            const SessionIdentity& identity, WakeNotifier& notifier) {
+            const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
             OpenedSession opened = test::open_scripted_session(
                 identity, path, notifier, controls);
             opened.notice =
@@ -959,7 +959,7 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
     test::TemporarySessionFile healthy("live_session_healthy");
     LiveSessionManager manager(
         test_settings(),
-        [&](const SessionIdentity& identity, WakeNotifier& notifier) {
+        [&](const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
             return test::open_leased_session(
                 identity,
                 identity.session_id == "failing" ? failing.path() : healthy.path(),

@@ -12,7 +12,6 @@ agents, sessions, or UI policy.
 | `environment.*` | Optional `.env` loading without overriding the process environment. |
 | `logging.*` | Synchronous rotating diagnostic-file logging. |
 | `concurrent_queue.h` | Portable typed thread-safe queue with reserved final delivery. |
-| `thread_pool.*` | Fixed-size executor for session-scoped blocking work. |
 | `wake_notifier.h` | Narrow producer-to-owner wake interface. |
 
 `require_path_component()` protects workspace-controlled path components.
@@ -29,10 +28,6 @@ file/include-chain context.
 adds one allocation-independent final value before consumers observe closure.
 Notification is separate from queue storage: producers use an injected
 `WakeNotifier` only when their owner loop requires one.
-
-`ThreadPool::submit()` is thread-safe. `stop()` closes admission, drains
-accepted tasks, and joins workers. Domain callers own cancellation and convert
-task failures at their own boundaries.
 
 The utility layer depends only on the standard library, process environment,
 nlohmann-json, spdlog, and toml++ where required. Libuv remains a core dependency because the

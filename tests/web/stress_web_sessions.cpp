@@ -118,7 +118,7 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     settings.command_queue_capacity = 64;
     LiveSessionManager manager(
         settings,
-        [&files](const SessionIdentity& key, WakeNotifier& notifier) {
+        [&files](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
             return test::open_leased_session(key, files.path_for(key), notifier);
         });
 
@@ -176,7 +176,7 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
     settings.command_queue_capacity = 8;
     LiveSessionManager manager(
         settings,
-        [&](const SessionIdentity& key, WakeNotifier& notifier) {
+        [&](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
             if (key.session_id == "blocked") {
                 return test::open_scripted_session(
                     key,
@@ -223,7 +223,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
     settings.session_limit = limit;
     LiveSessionManager manager(
         settings,
-        [&](const SessionIdentity& key, WakeNotifier& notifier) {
+        [&](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
             ++starts;
             return test::open_leased_session(key, files.path_for(key), notifier);
         });
@@ -319,7 +319,7 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptItsPeer) {
     settings.command_queue_capacity = 64;
     LiveSessionManager manager(
         settings,
-        [&files](const SessionIdentity& key, WakeNotifier& notifier) {
+        [&files](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
             return test::open_leased_session(key, files.path_for(key), notifier);
         });
     const SessionIdentity failing{"forum", "failing"};

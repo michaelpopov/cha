@@ -30,10 +30,11 @@ void WorkspaceRuntime::reload() {
 
 OpenedSession WorkspaceRuntime::open_session(
     const SessionIdentity& identity,
-    WakeNotifier& notifier) const {
+    Providers& providers,
+    std::shared_ptr<WakeNotifier> notifier) const {
     const std::shared_ptr<const WorkspaceGeneration> generation = snapshot();
     OpenedSession opened = cha::open_session(
-        *generation->model, *generation->sessions, identity, notifier);
+        *generation->model, *generation->sessions, identity, providers, std::move(notifier));
     opened.lifetime = generation;
     return opened;
 }

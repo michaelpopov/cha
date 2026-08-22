@@ -44,7 +44,7 @@ SessionOpener counting_opener(
     const LobbyGraph& graph,
     std::atomic<int>* starts = nullptr) {
     return [open = graph.opener(), starts](
-               const SessionIdentity& key, WakeNotifier& notifier) {
+               const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
         if (starts) ++*starts;
         return open(key, notifier);
     };
@@ -467,7 +467,7 @@ TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
     LiveSessionManager manager(
         lobby_settings(2),
         [open = graph.opener(), &mutex, &gate, &opening, &released](
-            const SessionIdentity& key, WakeNotifier& notifier) {
+            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
             {
                 std::unique_lock lock(mutex);
                 opening = true;
@@ -1131,7 +1131,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
         settings,
         [open_real, deleted, deleted_database](
             const SessionIdentity& key,
-            WakeNotifier& notifier) {
+            std::shared_ptr<WakeNotifier> notifier) {
             if (key.session_id == deleted.identity.session_id
                 && !std::filesystem::remove(deleted_database)) {
                 throw std::runtime_error("Test session was not deleted");
@@ -1170,7 +1170,7 @@ TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
         settings,
         [open_real, forum_directory](
             const SessionIdentity& key,
-            WakeNotifier& notifier) {
+            std::shared_ptr<WakeNotifier> notifier) {
             if (std::filesystem::remove_all(forum_directory) == 0) {
                 throw std::runtime_error("Test forum was not deleted");
             }
@@ -1281,7 +1281,7 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
     LiveSessionManager manager(
         lobby_settings(),
         [&busy, open = graph.opener()](
-            const SessionIdentity& key, WakeNotifier& notifier) {
+            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
             if (busy) throw SessionBusyError("held by test");
             return open(key, notifier);
         });
@@ -1342,7 +1342,7 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesInitializationFailureAndCanBeRetried) 
     LiveSessionManager manager(
         lobby_settings(),
         [&fail, open = graph.opener()](
-            const SessionIdentity& key, WakeNotifier& notifier) {
+            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
             if (fail) throw std::runtime_error("initialization failed");
             return open(key, notifier);
         });
@@ -1408,7 +1408,7 @@ TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
     LiveSessionManager manager(
         lobby_settings(),
         [open = graph.opener()](
-            const SessionIdentity& key, WakeNotifier& notifier) {
+            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
             std::this_thread::sleep_for(100ms);
             return open(key, notifier);
         });
@@ -1449,7 +1449,7 @@ TEST(LobbyRoutes, MapsStoppingAndManagerShutdownOpenFailuresToExistingEnvelopes)
     LiveSessionManager manager(
         lobby_settings(1),
         [&starts, controls, root = graph.root()](
-            const SessionIdentity& key, WakeNotifier& notifier) {
+            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
             ++starts;
             return test::open_scripted_session(
                 key,

@@ -285,8 +285,10 @@ public:
     CancellationBlockingBackend(
         std::string id,
         std::string name,
-        std::atomic_bool& release)
-        : id_(std::move(id)), name_(std::move(name)), release_(release) {
+        std::atomic_bool& release,
+        GenerationResult result = {GenerationOutcome::cancelled, {}})
+        : id_(std::move(id)), name_(std::move(name)), release_(release),
+          result_(std::move(result)) {
     }
 
     RequestPayload prepare(const GenerationRequest& input) override {
@@ -304,7 +306,7 @@ public:
         while (!release_.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
-        return {GenerationOutcome::cancelled, {}};
+        return result_;
     }
 
     ModelBackendInfo info() const override {
@@ -322,6 +324,7 @@ private:
     std::string id_;
     std::string name_;
     std::atomic_bool& release_;
+    GenerationResult result_;
 };
 
 class ThrowingPrepareBackend final : public ModelBackend {
@@ -447,7 +450,7 @@ SessionRestore restore_with(
     };
 }
 
-TEST(SessionController, RejectsEmptyCharacterConfigurationWithExecutorMessage) {
+TEST(SessionController, RejectsEmptyCharacterConfiguration) {
     TemporaryJournal temporary;
 
     try {
@@ -457,7 +460,7 @@ TEST(SessionController, RejectsEmptyCharacterConfigurationWithExecutorMessage) {
     } catch (const std::invalid_argument& error) {
         EXPECT_EQ(
             error.what(),
-            std::string("Generation executor requires at least one character"));
+            std::string("Generation requires at least one character"));
     }
 }
 
@@ -1309,12 +1312,45 @@ TEST(SessionController, StopDoesNotWaitForCancelledBackgroundExecution) {
     const auto started = std::chrono::steady_clock::now();
     const ControllerUpdate stopping = controller->request_stop();
     const auto elapsed = std::chrono::steady_clock::now() - started;
-    release_background.store(true, std::memory_order_release);
 
     EXPECT_TRUE(both_entered);
     EXPECT_LT(elapsed, std::chrono::milliseconds(50));
     EXPECT_EQ(stopping.notice, "Stopping generation...");
     receive_until_idle(*controller);
+
+    // The cancelled second target is still registered and intentionally held
+    // in its transport tail, but it no longer occupies this session's visible
+    // generation state. A new foreground request may start immediately.
+    const ControllerUpdate restarted =
+        controller->submit_prompt("operator", "New question");
+    EXPECT_TRUE(restarted.input_consumed);
+    receive_until_idle(*controller);
+    release_background.store(true, std::memory_order_release);
+}
+
+TEST(SessionController, StopAcknowledgesAForegroundFailure) {
+    TemporaryJournal temporary;
+    std::atomic_bool release{};
+    auto backend = std::make_unique<CancellationBlockingBackend>(
+        "guide-id", "Guide", release,
+        GenerationResult{GenerationOutcome::transport_error, "Unavailable"});
+    CancellationBlockingBackend* const backend_view = backend.get();
+    auto controller = test::from_test_backends(
+        test::one_backend(std::move(backend)), temporary.path, notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!backend_view->entered.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_TRUE(backend_view->entered.load(std::memory_order_acquire));
+
+    EXPECT_EQ(controller->request_stop().notice, "Stopping generation...");
+    release.store(true, std::memory_order_release);
+    EXPECT_EQ(
+        receive_until_idle(*controller).notice,
+        "Generation failed\nGeneration stopped");
 }
 
 TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
@@ -2086,7 +2122,7 @@ TEST(SessionController, CommandsRequestSnapshotsAndNoticesAloneDoNot) {
     EXPECT_FALSE(has_state_update(controller->request_stop()));
 }
 
-TEST(SessionController, ShutdownJoinsPoolBeforeExecutorCanBeDestroyed) {
+TEST(SessionController, ShutdownReturnsBeforeCancelledProviderUnregisters) {
     TemporaryJournal temporary;
     FinalWakeBlockingNotifier shutdown_notifier;
     // The backend stays inside perform() until shutdown cancels it, so the
@@ -2123,7 +2159,7 @@ TEST(SessionController, ShutdownJoinsPoolBeforeExecutorCanBeDestroyed) {
     shutdown_notifier.release_final_wake();
 
     ASSERT_TRUE(final_wake_blocked);
-    EXPECT_EQ(status, std::future_status::timeout);
+    EXPECT_EQ(status, std::future_status::ready);
     shutdown.get();
 }
 
@@ -2191,6 +2227,27 @@ CharacterDefinition provider_test_definition(
         }},
         .system_prompt = "Test prompt",
     };
+}
+
+TEST(SessionController, ThreadLaunchFailureClosesTheCommittedTurn) {
+    TemporaryJournal temporary;
+    auto controller = test::from_definitions_for_testing(
+        {provider_test_definition("guide-id", "Guide")},
+        temporary.path,
+        notifier(),
+        {},
+        std::nullopt,
+        [](std::function<void()>) {
+            throw std::runtime_error("thread creation failed");
+        });
+
+    const ControllerUpdate started = controller->submit_prompt("operator", "Question");
+    EXPECT_TRUE(started.input_consumed);
+    EXPECT_EQ(receive_until_idle(*controller).notice, "Generation failed");
+    const std::vector<TranscriptEntry> entries = load_transcript_entries(temporary.path);
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries.front().text, "Question");
+    EXPECT_EQ(entries.back().status, EntryStatus::failed);
 }
 
 // Shared observation of every backend one factory builds: the configs it was
@@ -2279,18 +2336,19 @@ CharacterDefinition style_test_definition(std::string id, std::string name) {
     return definition;
 }
 
-std::unique_ptr<SessionController> style_test_controller(
+test::TestController style_test_controller(
     const std::filesystem::path& database_path,
     std::vector<CharacterDefinition> definitions,
     const std::shared_ptr<ProviderFactoryObservation>& observation) {
-    return SessionController::from_definitions_for_testing(
-        share_character_definitions(std::move(definitions)),
+    return test::TestController(
+        std::move(definitions),
         test::operator_roster(),
         "guide-id",
         database_path,
-        notifier(),
+        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
         {},
         provider_recording_factory(observation),
+        {},
         {},
         style_stub_resolver());
 }
@@ -2421,15 +2479,15 @@ TEST(SessionController, StyleResolverFailureLeavesTheAppearanceAlone) {
 
     // The resolver reads the filesystem, so it can fail in ways its own contract
     // does not name. One mistyped style must still not fail the session.
-    auto throwing = SessionController::from_definitions_for_testing(
-        share_character_definitions(
-            std::vector<CharacterDefinition>{style_test_definition("guide-id", "Guide")}),
+    test::TestController throwing(
+        std::vector<CharacterDefinition>{style_test_definition("guide-id", "Guide")},
         test::operator_roster(),
         "guide-id",
         temporary.path,
-        notifier(),
+        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
         {},
         provider_recording_factory(observation),
+        {},
         {},
         [](std::string_view) -> CharacterAppearance {
             throw std::runtime_error("styles directory is unreadable");

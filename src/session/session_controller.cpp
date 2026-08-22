@@ -111,7 +111,7 @@ std::vector<ModelBackendInfo> make_runtime_info(
 void require_character_count(std::size_t count) {
     if (count == 0) {
         throw std::invalid_argument(
-            "Generation executor requires at least one character");
+            "Generation requires at least one character");
     }
 }
 
@@ -155,7 +155,8 @@ std::unique_ptr<SessionController> SessionController::from_shared_definitions(
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
     SessionLease lease,
-    WakeNotifier& notifier,
+    Providers& providers,
+    std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     StyleResolver style_resolver,
     SessionIdentity identity) {
@@ -165,8 +166,8 @@ std::unique_ptr<SessionController> SessionController::from_shared_definitions(
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(definitions), std::move(personas), std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
-        std::move(database_path), std::move(lease), notifier, std::move(restored),
-        {}, {}, std::move(style_resolver), std::move(identity)));
+        std::move(database_path), std::move(lease), providers, std::move(notifier),
+        std::move(restored), {}, std::move(style_resolver), std::move(identity)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
@@ -174,9 +175,9 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
     PersonaRoster personas,
     ParticipantId initial_default_character_id,
     std::filesystem::path database_path,
-    WakeNotifier& notifier,
+    Providers& providers,
+    std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
-    ProviderClientFactory client_factory,
     ActivationHook before_activation,
     StyleResolver style_resolver,
     SessionIdentity identity) {
@@ -188,9 +189,9 @@ std::unique_ptr<SessionController> SessionController::from_definitions_for_testi
         {},
         std::move(database_path),
         SessionLease::inactive_for_testing(),
-        notifier,
+        providers,
+        std::move(notifier),
         std::move(restored),
-        std::move(client_factory),
         std::move(before_activation),
         std::move(style_resolver), std::move(identity)));
 }
@@ -202,18 +203,17 @@ SessionController::SessionController(
     std::string initial_default_persona_id,
     std::filesystem::path path,
     SessionLease lease,
-    WakeNotifier& notifier,
+    Providers& providers,
+    std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
-    ProviderClientFactory client_factory,
     ActivationHook before_activation,
     StyleResolver style_resolver,
     SessionIdentity identity)
     : lease_(std::move(lease)),
       journal_(std::move(path)),
       definitions_(std::move(definitions)),
-      worker_pool_(definitions_.size()),
-      generation_executor_(
-          definitions_, notifier, worker_pool_, std::move(client_factory)),
+      providers_(providers),
+      notifier_(std::move(notifier)),
       runtime_info_(make_runtime_info(definitions_)),
       characters_(make_forum_characters(runtime_info_)),
       personas_(std::move(personas)),
@@ -221,6 +221,7 @@ SessionController::SessionController(
       default_character_id_(std::move(initial_default_character_id)),
       style_resolver_(std::move(style_resolver)),
       before_activation_(std::move(before_activation)) {
+    if (!notifier_) throw std::invalid_argument("Session controller requires a wake notifier");
     initialize(std::move(restored), initial_default_persona_id);
 }
 
@@ -281,8 +282,8 @@ SharedCharacterDefinition SessionController::definition_for(
 }
 
 ControllerGenerationView SessionController::generation_view() const noexcept {
-    if (batch_ && batch_->cancellation_requested()) {
-        const RunSpec& run = batch_->foreground_run();
+    if (generation_ && generation_->cancellation_requested && active_) {
+        const RunSpec& run = generation_->requests[generation_->foreground_index]->run();
         return {
             .active = true,
             .request_id = run.request_id,
@@ -323,7 +324,7 @@ bool SessionController::is_generating() const noexcept {
 }
 
 bool SessionController::busy() const noexcept {
-    return active_ || batch_;
+    return generation_.has_value();
 }
 
 ControllerUpdate SessionController::busy_notice() const {
@@ -373,6 +374,9 @@ ControllerUpdate SessionController::submit_prompt(
     std::string_view author_id,
     std::string text,
     std::string handle) {
+    if (shutdown_) {
+        return {.notice = "Request could not be dispatched"};
+    }
     if (busy()) {
         return busy_notice();
     }
@@ -416,7 +420,7 @@ ControllerUpdate SessionController::submit_prompt(
         std::make_shared<const ModelHistory>(
             transcript_.model_history());
     update.input_consumed = true;
-    start_batch(
+    start_generation(
         std::move(*author),
         std::move(text),
         std::vector<CharacterMetadata>{*target},
@@ -425,7 +429,7 @@ ControllerUpdate SessionController::submit_prompt(
     return update;
 }
 
-void SessionController::start_batch(
+void SessionController::start_generation(
     EntryIdentity author,
     std::string text,
     std::vector<CharacterMetadata> targets,
@@ -433,51 +437,48 @@ void SessionController::start_batch(
     ControllerUpdate& update) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
-            "Generation batch requires history and at least one target");
+            "Generation requires history and at least one target");
     }
-    // Each input owns its own run, so there is no second run vector to keep in
-    // step with the batch's execution slots.
-    std::vector<GenerationRequest> inputs;
+    std::vector<ProviderRequestInput> inputs;
     inputs.reserve(targets.size());
     for (CharacterMetadata& target : targets) {
+        SharedCharacterDefinition definition = definition_for(target.id);
+        if (!definition) {
+            throw std::logic_error("Generation target has no character definition");
+        }
         const std::string cache_key = prompt_cache_key(identity_, target.id);
         inputs.push_back({
-            .history = history,
-            .run = {
-                .request_id = next_request_id_++,
-                .target = std::move(target),
-                .author = author,
-                .prompt_text = text,
-                .prompt_cache_key = cache_key,
-                .created_at = unix_now(),
+            .character = std::move(definition),
+            .generation = {
+                .history = history,
+                .run = {
+                    .request_id = next_request_id_++,
+                    .target = std::move(target),
+                    .author = author,
+                    .prompt_text = text,
+                    .prompt_cache_key = cache_key,
+                    .created_at = unix_now(),
+                },
             },
         });
     }
 
-    try {
-        batch_.emplace(generation_executor_.stage_batch(std::move(inputs)));
-    } catch (const std::runtime_error&) {
-        update.input_consumed = false;
-        update.notice = "Request could not be dispatched";
-        return;
-    }
-
-    try {
-        activate_current_run(update);
-        // Only now can a backend publish output, and only into session state
-        // that is already durable and able to receive it.
-        batch_->open();
-    } catch (...) {
-        release_batch();
-        throw;
+    // Durable state exists before immediate request start. A returned request
+    // always has a terminal event, including closed admission and launch
+    // failure, so post-commit operational failures cannot strand this turn.
+    activate_run(inputs.front().generation.run, 0, update);
+    generation_.emplace();
+    generation_->requests.reserve(inputs.size());
+    for (ProviderRequestInput& input : inputs) {
+        generation_->requests.push_back(
+            providers_.make_request(std::move(input), notifier_));
     }
 }
 
-void SessionController::activate_current_run(ControllerUpdate& update) {
-    if (!batch_) {
-        throw std::logic_error("Foreground activation requires a staged batch");
-    }
-    const RunSpec& run = batch_->foreground_run();
+void SessionController::activate_run(
+    const RunSpec& run,
+    std::size_t foreground_index,
+    ControllerUpdate& update) {
     TranscriptEntry prompt = make_human_entry({
         .id = next_entry_id_++,
         .author = run.author,
@@ -495,7 +496,7 @@ void SessionController::activate_current_run(ControllerUpdate& update) {
     };
 
     if (before_activation_) {
-        before_activation_(batch_->foreground_index());
+        before_activation_(foreground_index);
     }
     persist(
         request_action(
@@ -528,108 +529,48 @@ void SessionController::activate_current_run(ControllerUpdate& update) {
     update.notice = "";
 }
 
-void SessionController::start_next_batch_run(ControllerUpdate& update) {
-    if (!batch_) {
+void SessionController::finish_generation_run(ControllerUpdate& update) {
+    if (!generation_) return;
+    if (generation_->cancellation_requested
+        && (!update.notice || *update.notice != "Generation stopped")) {
+        if (update.notice && !update.notice->empty()) {
+            *update.notice += "\n";
+        } else {
+            update.notice = "";
+        }
+        *update.notice += "Generation stopped";
+    }
+    if (update.notice && !update.notice->empty()) {
+        if (!generation_->terminal_notices.empty()) {
+            generation_->terminal_notices += '\n';
+        }
+        generation_->terminal_notices += *update.notice;
+    }
+    const std::size_t foreground = generation_->foreground_index;
+    generation_->requests[foreground].reset();
+    if (shutdown_ || generation_->cancellation_requested
+        || foreground + 1 == generation_->requests.size()) {
+        const std::string terminal_notices = generation_->terminal_notices;
+        release_generation();
+        require_snapshot(update);
+        if (!terminal_notices.empty()) update.notice = terminal_notices;
         return;
     }
-    if (batch_->cancellation_requested()) {
-        poll_abort_cleanup(update);
-        return;
-    }
-
+    ++generation_->foreground_index;
+    const RunSpec& run = generation_->requests[generation_->foreground_index]->run();
     try {
-        activate_current_run(update);
+        activate_run(run, generation_->foreground_index, update);
     } catch (...) {
-        release_batch();
+        for (const std::shared_ptr<ProviderRequest>& request : generation_->requests) {
+            if (request) request->cancel();
+        }
+        release_generation();
         throw;
     }
 }
 
-void SessionController::finish_batch_run(ControllerUpdate& update) {
-    if (!batch_) {
-        return;
-    }
-    if (shutdown_) {
-        finish_batch(update);
-        return;
-    }
-
-    if (batch_->cancellation_requested()) {
-        append_batch_notice(update);
-        poll_abort_cleanup(update);
-        return;
-    }
-
-    if (!batch_->has_next_foreground()) {
-        finish_batch(update);
-        return;
-    }
-    append_batch_notice(update);
-    batch_->advance_foreground();
-    start_next_batch_run(update);
-}
-
-void SessionController::finish_batch(ControllerUpdate& update) {
-    if (!batch_) {
-        return;
-    }
-    append_batch_notice(update);
-    const std::string terminal_notices = terminal_notices_;
-    release_batch();
-    // Ending the batch ends the visible generation. Every caller reaches here
-    // from a terminal event that already requested a snapshot; classify it
-    // locally anyway so this helper cannot be moved into a purer path.
-    require_snapshot(update);
-    if (!terminal_notices.empty()) {
-        update.notice = terminal_notices;
-    }
-}
-
-void SessionController::finish_aborted_batch(ControllerUpdate& update) {
-    if (!batch_) {
-        return;
-    }
-    std::string notices = terminal_notices_;
-    if (!stop_notice_recorded_ && !notices.empty()) {
-        notices += "\nGeneration stopped";
-    } else if (!stop_notice_recorded_) {
-        notices = "Generation stopped";
-    }
-    release_batch();
-    require_snapshot(update);
-    update.notice = std::move(notices);
-}
-
-void SessionController::poll_abort_cleanup(ControllerUpdate& update) {
-    if (!batch_ || !batch_->cancellation_requested()) {
-        return;
-    }
-    if (!active_ && batch_->executions_finished()) {
-        finish_aborted_batch(update);
-    }
-}
-
-void SessionController::append_batch_notice(const ControllerUpdate& update) {
-    if (!batch_ || !update.notice || update.notice->empty()) {
-        return;
-    }
-    if (!terminal_notices_.empty()) {
-        terminal_notices_ += '\n';
-    }
-    terminal_notices_ += *update.notice;
-}
-
-void SessionController::release_batch() noexcept {
-    if (batch_) {
-        // Wait here rather than in the destructor so every blocking point is
-        // visible on the path that reaches it. Events buffered for children
-        // that never became foreground are discarded with their queues.
-        batch_->cancel();
-        batch_->wait_until_finished();
-        batch_.reset();
-    }
-    terminal_notices_.clear();
-    stop_notice_recorded_ = false;
+void SessionController::release_generation() noexcept {
+    generation_.reset();
 }
 
 ControllerUpdate SessionController::clear_transcript() {
@@ -705,6 +646,9 @@ ControllerUpdate SessionController::start_multicast(
     std::string_view author_id,
     std::string text,
     std::vector<std::string> handles) {
+    if (shutdown_) {
+        return {.notice = "Request could not be dispatched"};
+    }
     if (busy()) {
         return busy_notice();
     }
@@ -764,7 +708,7 @@ ControllerUpdate SessionController::start_resolved_multicast(
     }
 
     update.input_consumed = true;
-    start_batch(
+    start_generation(
         std::move(*author),
         std::move(text),
         std::move(targets),
@@ -942,24 +886,22 @@ ControllerUpdate SessionController::set_session_style(std::string_view name) {
 
 ControllerUpdate SessionController::request_stop() {
     ControllerUpdate update;
-    if (!batch_) {
+    if (!generation_) {
         update.notice = "No generation is active";
         return update;
     }
 
-    if (!batch_->cancellation_requested()) {
+    if (!generation_->cancellation_requested) {
         log_info("Session generation cancellation requested");
-        // Non-blocking: cancellation only signals the executions. The event
-        // loop performs the cleanup.
-        batch_->cancel();
-        require_snapshot(update);
-    }
-    if (!active_) {
-        poll_abort_cleanup(update);
-        if (!update.notice) {
-            update.notice = "Stopping generation...";
+        generation_->cancellation_requested = true;
+        for (const std::shared_ptr<ProviderRequest>& request : generation_->requests) {
+            if (request) request->cancel();
         }
-        return update;
+        // Later multicast targets never acquired durable turns. Drop their
+        // queues immediately; Providers retains their workers until curl has
+        // observed cancellation and released its transport resources.
+        generation_->requests.resize(generation_->foreground_index + 1);
+        require_snapshot(update);
     }
     update.notice = "Stopping generation...";
     return update;
@@ -1023,7 +965,7 @@ void SessionController::apply(const GenerationCompleted& event, ControllerUpdate
     if (active_->phase != ResponsePhase::answering) {
         fail_active_response(
             "Generation finished without answer content", active_->character_id, update);
-        finish_batch_run(update);
+        finish_generation_run(update);
         return;
     }
     const TranscriptEntry response =
@@ -1040,7 +982,7 @@ void SessionController::apply(const GenerationCompleted& event, ControllerUpdate
     active_.reset();
     require_snapshot(update);
     update.notice = "";
-    finish_batch_run(update);
+    finish_generation_run(update);
 }
 
 void SessionController::apply(const GenerationCancelled& event, ControllerUpdate& update) {
@@ -1072,14 +1014,13 @@ void SessionController::apply(const GenerationCancelled& event, ControllerUpdate
     active_.reset();
     require_snapshot(update);
     update.notice = "Generation stopped";
-    stop_notice_recorded_ = true;
-    finish_batch_run(update);
+    finish_generation_run(update);
 }
 
 void SessionController::apply(const GenerationFailed& event, ControllerUpdate& update) {
     if (matches(event.request_id)) {
         fail_active_response(event.message, active_->character_id, update);
-        finish_batch_run(update);
+        finish_generation_run(update);
     }
 }
 
@@ -1143,21 +1084,21 @@ ControllerEventBatch SessionController::receive_events(std::size_t max_events) {
         throw std::invalid_argument("Generation event batch size must be positive");
     }
     ControllerUpdate update;
-    if (shutdown_ && !batch_) {
+    if (shutdown_ && !generation_) {
         update.session_ended = true;
         return {.update = std::move(update)};
     }
     GenerationEvent event = GenerationCompleted{};
     std::size_t processed = 0;
-    while (batch_ && active_ && processed < max_events) {
-        const ChannelReadStatus status = batch_->try_receive_foreground(event);
+    while (generation_ && active_ && processed < max_events) {
+        const ChannelReadStatus status = generation_->requests[
+            generation_->foreground_index]->try_receive(event);
         if (status != ChannelReadStatus::value) {
             break;
         }
         merge(update, handle_generation_event(std::move(event)));
         ++processed;
     }
-    poll_abort_cleanup(update);
     return {
         .update = std::move(update),
         .full = processed == max_events,
@@ -1171,24 +1112,22 @@ void SessionController::shutdown() {
     log_info("Session controller shutting down");
     shutdown_ = true;
     try {
-        if (batch_) {
-            batch_->cancel();
-            // No execution can reach a backend after this returns, while its
-            // queues stay drainable below.
-            batch_->wait_until_finished();
+        if (generation_) {
+            generation_->cancellation_requested = true;
+            for (const std::shared_ptr<ProviderRequest>& request : generation_->requests) {
+                if (request) request->cancel();
+            }
         }
-        (void)receive_events(std::numeric_limits<std::size_t>::max());
-        active_.reset();
-        release_batch();
+        if (active_) {
+            ControllerUpdate ignored;
+            apply(GenerationCancelled{active_->request_id}, ignored);
+        } else {
+            release_generation();
+        }
     } catch (...) {
-        // `execution_finished` allows a task to issue its final wake after
-        // wait_until_finished() returns. Join the pool while the executor and
-        // its borrowed notifier are still alive even when terminal persistence
-        // fails.
-        worker_pool_.stop();
+        release_generation();
         throw;
     }
-    worker_pool_.stop();
 }
 
 } // namespace cha

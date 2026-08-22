@@ -15,44 +15,54 @@
 
 namespace cha::test {
 
-// Test counterpart of the production construction order. The notifier and
-// immutable definitions outlive the controller, and destruction explicitly
-// releases the controller first. Block 5 can add the process-owned Providers
-// member ahead of these fields without changing callers.
+// Test counterpart of the production construction order. The process-owned
+// Providers, notifier, and immutable definitions outlive the controller.
 class TestController {
 public:
+    struct ReleasedController {
+        std::shared_ptr<Providers> providers;
+        std::unique_ptr<SessionController> controller;
+    };
+
     TestController(
         std::vector<CharacterDefinition> definitions,
         PersonaRoster personas,
         ParticipantId default_character_id,
         std::filesystem::path database_path,
-        WakeNotifier& notifier,
+        std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored = {},
         ProviderClientFactory client_factory = {},
+        ProviderThreadLauncher thread_launcher = {},
         SessionController::ActivationHook before_activation = {},
         SessionController::StyleResolver style_resolver = {},
         SessionIdentity identity = {})
-        : notifier_(&notifier, [](WakeNotifier*) {}),
+        : providers_(std::make_shared<Providers>(
+              std::move(client_factory), std::move(thread_launcher))),
+          notifier_(std::move(notifier)),
           definitions_(share_character_definitions(std::move(definitions))),
           controller_(SessionController::from_definitions_for_testing(
               definitions_, std::move(personas), std::move(default_character_id),
-              std::move(database_path), *notifier_, std::move(restored),
-              std::move(client_factory), std::move(before_activation),
+              std::move(database_path), *providers_, notifier_, std::move(restored),
+              std::move(before_activation),
               std::move(style_resolver), std::move(identity))) {}
 
-    ~TestController() { controller_.reset(); }
-    TestController(TestController&&) noexcept = default;
-    TestController& operator=(TestController&&) noexcept = default;
+    ~TestController() {
+        controller_.reset();
+        if (providers_) providers_->shutdown();
+    }
+    TestController(TestController&&) = delete;
+    TestController& operator=(TestController&&) = delete;
     TestController(const TestController&) = delete;
     TestController& operator=(const TestController&) = delete;
 
     [[nodiscard]] SessionController* operator->() const noexcept { return controller_.get(); }
     [[nodiscard]] SessionController& operator*() const noexcept { return *controller_; }
-    [[nodiscard]] std::unique_ptr<SessionController> take_controller() && {
-        return std::move(controller_);
+    [[nodiscard]] ReleasedController release() && {
+        return {std::move(providers_), std::move(controller_)};
     }
 
 private:
+    std::shared_ptr<Providers> providers_;
     std::shared_ptr<WakeNotifier> notifier_;
     std::vector<SharedCharacterDefinition> definitions_;
     std::unique_ptr<SessionController> controller_;
@@ -110,7 +120,8 @@ inline TestController from_definitions_for_testing(
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored = {},
-    std::optional<ParticipantId> initial_default_character_id = std::nullopt) {
+    std::optional<ParticipantId> initial_default_character_id = std::nullopt,
+    ProviderThreadLauncher thread_launcher = {}) {
     const ParticipantId default_character_id = initial_default_character_id.value_or(
         definitions.empty() ? CharacterId{} : definitions.front().character.id);
     return TestController(
@@ -118,8 +129,8 @@ inline TestController from_definitions_for_testing(
         std::move(personas),
         default_character_id,
         std::move(database_path),
-        notifier,
-        std::move(restored));
+        std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}),
+        std::move(restored), {}, std::move(thread_launcher));
 }
 
 inline TestController from_definitions_for_testing(
@@ -127,21 +138,23 @@ inline TestController from_definitions_for_testing(
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored = {},
-    std::optional<ParticipantId> initial_default_character_id = std::nullopt) {
+    std::optional<ParticipantId> initial_default_character_id = std::nullopt,
+    ProviderThreadLauncher thread_launcher = {}) {
     return from_definitions_for_testing(
         std::move(definitions),
         operator_roster(),
         std::move(database_path),
         notifier,
         std::move(restored),
-        std::move(initial_default_character_id));
+        std::move(initial_default_character_id),
+        std::move(thread_launcher));
 }
 
 inline TestController from_test_backends(
     std::vector<std::unique_ptr<ModelBackend>> backends,
     PersonaRoster personas,
     std::filesystem::path database_path,
-    WakeNotifier& notifier,
+    std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {},
     std::optional<ParticipantId> initial_default_character_id = std::nullopt,
@@ -183,11 +196,32 @@ inline TestController from_test_backends(
         std::move(personas),
         default_character_id,
         std::move(database_path),
-        notifier,
+        std::move(notifier),
         std::move(restored),
         std::move(factory),
+        {},
         std::move(before_activation),
         {},
+        std::move(identity));
+}
+
+inline TestController from_test_backends(
+    std::vector<std::unique_ptr<ModelBackend>> backends,
+    PersonaRoster personas,
+    std::filesystem::path database_path,
+    WakeNotifier& notifier,
+    SessionRestore restored = {},
+    SessionController::ActivationHook before_activation = {},
+    std::optional<ParticipantId> initial_default_character_id = std::nullopt,
+    SessionIdentity identity = {}) {
+    return from_test_backends(
+        std::move(backends),
+        std::move(personas),
+        std::move(database_path),
+        std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}),
+        std::move(restored),
+        std::move(before_activation),
+        std::move(initial_default_character_id),
         std::move(identity));
 }
 
@@ -203,7 +237,7 @@ inline TestController from_test_backends(
         std::move(backends),
         operator_roster(),
         std::move(database_path),
-        notifier,
+        std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}),
         std::move(restored),
         std::move(before_activation),
         std::move(initial_default_character_id),

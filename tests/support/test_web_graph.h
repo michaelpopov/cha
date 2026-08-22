@@ -4,6 +4,7 @@
 #include "workspace/session_open.h"
 #include "workspace/workspace_definition.h"
 #include "workspace/workspace_runtime.h"
+#include "agents/providers.h"
 #include "session/session_repository.h"
 #include "web/live_session.h"
 #include "web/lobby_routes.h"
@@ -22,6 +23,7 @@ class WebGraph {
 public:
     explicit WebGraph(std::filesystem::path root)
         : root_(std::move(root)),
+          providers(std::make_shared<Providers>()),
           runtime(std::make_shared<WorkspaceRuntime>(
               root_,
               TemporarySessionSeed{
@@ -41,9 +43,9 @@ public:
     }
 
     web::SessionOpener opener() const {
-        return [runtime = runtime](
-                   const SessionIdentity& identity, WakeNotifier& notifier) {
-            return runtime->open_session(identity, notifier);
+        return [runtime = runtime, providers = providers](
+                   const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
+            return runtime->open_session(identity, *providers, std::move(notifier));
         };
     }
 
@@ -59,6 +61,7 @@ private:
     std::filesystem::path root_;
 
 public:
+    std::shared_ptr<Providers> providers;
     std::shared_ptr<WorkspaceRuntime> runtime;
 };
 

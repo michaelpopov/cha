@@ -380,9 +380,11 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     std::thread opening_first([&] {
         try {
             test::NoopNotifier notifier;
+            Providers providers;
             open_start.arrive_and_wait();
             auto controller = open_session(
-                graph.model, graph.repository, {"forum", created[0].identity.session_id}, notifier);
+                graph.model, graph.repository, {"forum", created[0].identity.session_id}, providers,
+                std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}));
             opened[0] = true;
             controller.controller->shutdown();
         } catch (...) {
@@ -392,9 +394,11 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     std::thread opening_second([&] {
         try {
             test::NoopNotifier notifier;
+            Providers providers;
             open_start.arrive_and_wait();
             auto controller = open_session(
-                graph.model, graph.repository, {"forum", created[1].identity.session_id}, notifier);
+                graph.model, graph.repository, {"forum", created[1].identity.session_id}, providers,
+                std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}));
             opened[1] = true;
             controller.controller->shutdown();
         } catch (...) {

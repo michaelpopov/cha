@@ -11,6 +11,7 @@
 namespace cha {
 
 class WakeNotifier;
+class Providers;
 
 // One complete, immutable workspace generation. Keeping the definition and
 // repository together means discovery and session storage always agree about
@@ -44,7 +45,8 @@ public:
     // session's lifetime.
     [[nodiscard]] OpenedSession open_session(
         const SessionIdentity& identity,
-        WakeNotifier& notifier) const;
+        Providers& providers,
+        std::shared_ptr<WakeNotifier> notifier) const;
 
 private:
     [[nodiscard]] std::shared_ptr<const WorkspaceGeneration> load_generation(

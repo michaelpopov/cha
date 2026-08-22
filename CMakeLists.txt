@@ -172,13 +172,10 @@ add_library(cha_core STATIC
     src/util/public_name.cpp
     src/util/text.cpp
     src/util/text_template.cpp
-    src/util/thread_pool.cpp
     src/chat/character.cpp
     src/chat/transcript.cpp
     src/agents/character.cpp
     src/agents/model_context.cpp
-    src/agents/generation_batch.cpp
-    src/agents/generation_executor.cpp
     src/agents/providers.cpp
     src/agents/provider_client.cpp
     src/agents/provider_response.cpp
@@ -285,7 +282,6 @@ if(BUILD_TESTING)
     set(CHA_TEST_SOURCES
         tests/util/unit_environment.cpp
         tests/util/unit_logging.cpp
-        tests/util/unit_thread_pool.cpp
         tests/util/unit_concurrent_queue.cpp
         tests/util/unit_text.cpp
         tests/util/unit_text_template.cpp
@@ -294,8 +290,6 @@ if(BUILD_TESTING)
         tests/chat/unit_transcript.cpp
         tests/agents/unit_model_context.cpp
         tests/agents/unit_character_definition_loader.cpp
-        tests/agents/unit_generation_batch.cpp
-        tests/agents/unit_generation_executor.cpp
         tests/agents/unit_providers.cpp
         tests/agents/unit_provider_response.cpp
         tests/agents/unit_responses_api.cpp

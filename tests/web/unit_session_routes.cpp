@@ -86,7 +86,7 @@ SessionOpener session_opener(
     SessionController::ActivationHook before_activation = {},
     std::atomic<int>* starts = nullptr) {
     return [&files, controls, before_activation, starts](
-               const SessionIdentity& identity, WakeNotifier& notifier) {
+               const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
         if (starts) ++*starts;
         return test::open_scripted_session(
             identity,

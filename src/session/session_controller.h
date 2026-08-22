@@ -1,8 +1,7 @@
 #pragma once
 
 #include "agents/character.h"
-#include "agents/generation_batch.h"
-#include "agents/generation_executor.h"
+#include "agents/providers.h"
 #include "chat/persona.h"
 #include "session/controller_update.h"
 #include "session/controller_view.h"
@@ -13,7 +12,6 @@
 #include "session/session_identity.h"
 #include "chat/transcript.h"
 #include "util/wake_notifier.h"
-#include "util/thread_pool.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -30,9 +28,9 @@ namespace cha {
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, forum characters, defaults, generation
 // status) and commands (submit a prompt, clear, stop, switch defaults, drain
-// generation events),
-// each returning a ControllerUpdate instead of touching a frontend. It owns the Transcript,
-// SessionJournal, GenerationExecutor, and the one in-flight GenerationBatch. Command syntax,
+// generation events), each returning a ControllerUpdate instead of touching a frontend. It owns
+// the Transcript, SessionJournal, and session-visible request handles. Provider execution itself
+// belongs to the process-owned Providers instance. Command syntax,
 // mentions, and transport formats belong to front ends, not here.
 class SessionController {
 public:
@@ -55,7 +53,8 @@ public:
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
         SessionLease lease,
-        WakeNotifier& notifier,
+        Providers& providers,
+        std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored = {},
         StyleResolver style_resolver = {},
         SessionIdentity identity = {});
@@ -67,9 +66,9 @@ public:
         PersonaRoster personas,
         CharacterId initial_default_character_id,
         std::filesystem::path database_path,
-        WakeNotifier& notifier,
+        Providers& providers,
+        std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored = {},
-        ProviderClientFactory client_factory = {},
         ActivationHook before_activation = {},
         StyleResolver style_resolver = {},
         SessionIdentity identity = {});
@@ -135,9 +134,9 @@ private:
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
         SessionLease lease,
-        WakeNotifier& notifier,
+        Providers& providers,
+        std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored,
-        ProviderClientFactory client_factory = {},
         ActivationHook before_activation = {},
         StyleResolver style_resolver = {},
         SessionIdentity identity = {});
@@ -158,7 +157,7 @@ private:
         std::string_view author_id,
         std::string text,
         ControllerUpdate& update);
-    void start_batch(
+    void start_generation(
         EntryIdentity author,
         std::string text,
         std::vector<CharacterMetadata> targets,
@@ -168,17 +167,10 @@ private:
         std::string_view author_id,
         std::string text,
         std::vector<CharacterMetadata> targets);
-    void activate_current_run(ControllerUpdate& update);
-    void start_next_batch_run(ControllerUpdate& update);
-    void finish_batch_run(ControllerUpdate& update);
-    void finish_batch(ControllerUpdate& update);
-    void finish_aborted_batch(ControllerUpdate& update);
-    void poll_abort_cleanup(ControllerUpdate& update);
-    void append_batch_notice(const ControllerUpdate& update);
-    // The one release path: waits until no execution can reach a backend,
-    // destroys the batch, and clears the controller's notice accumulation so it
-    // cannot leak into a later operation.
-    void release_batch() noexcept;
+    void activate_run(const RunSpec& run, std::size_t foreground_index,
+                      ControllerUpdate& update);
+    void finish_generation_run(ControllerUpdate& update);
+    void release_generation() noexcept;
     void apply(const GenerationEventDelta& event, ControllerUpdate& update);
     void apply(const GenerationCompleted& event, ControllerUpdate& update);
     void apply(const GenerationCancelled& event, ControllerUpdate& update);
@@ -197,12 +189,10 @@ private:
     Transcript transcript_;
     SessionJournal journal_;
     std::vector<SharedCharacterDefinition> definitions_;
-    // Explicit shutdown joins this pool while generation_executor_ is still
-    // alive. One worker per backend intentionally admits full-width multicast
-    // work. Declaration order — pool, then executor, then batch — is the
-    // fallback only for construction failures.
-    ThreadPool worker_pool_;
-    GenerationExecutor generation_executor_;
+    // Process-owned execution outlives this controller. The shared notifier is
+    // copied into each request so late worker wakes never borrow this session.
+    Providers& providers_;
+    std::shared_ptr<WakeNotifier> notifier_;
     std::vector<ModelBackendInfo> runtime_info_;
     ForumCharacters characters_;
     SharedPersonaRoster personas_;
@@ -220,11 +210,13 @@ private:
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;
-    std::optional<GenerationBatch> batch_;
-    // Presentation state only: the batch owns runs, foreground selection,
-    // cancellation, and generation finalization.
-    std::string terminal_notices_;
-    bool stop_notice_recorded_{};
+    struct ActiveGeneration {
+        std::vector<std::shared_ptr<ProviderRequest>> requests;
+        std::size_t foreground_index{};
+        bool cancellation_requested{};
+        std::string terminal_notices;
+    };
+    std::optional<ActiveGeneration> generation_;
     ActivationHook before_activation_;
     bool shutdown_{};
 };

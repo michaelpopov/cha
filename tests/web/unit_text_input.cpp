@@ -407,13 +407,14 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
 
 TEST(TextInput, DispatchesTheStyleCommandWithoutPersisting) {
     TemporaryTextSession temporary;
+    Providers providers;
     auto controller = SessionController::from_definitions_for_testing(
         share_character_definitions(std::vector<CharacterDefinition>{definition()}),
         test::operator_roster(),
         "guide-id",
         temporary.path,
-        notifier(),
-        {},
+        providers,
+        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
         {},
         {},
         [](std::string_view name) -> CharacterAppearance {

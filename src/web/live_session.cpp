@@ -276,7 +276,7 @@ void LiveSession::owner_main() {
 bool LiveSession::open_controller() {
     LiveSessionStartResult failure = LiveSessionStartResult::failed;
     try {
-        OpenedSession opened = opener_(identity_, *notifier_);
+        OpenedSession opened = opener_(identity_, notifier_);
         if (!opened.controller) {
             throw std::runtime_error("Session opener returned no controller");
         }
@@ -676,8 +676,8 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
             (void)mark_stopping(ShutdownReason::session_failed);
             log_fatal_once();
         }
-        // Destroying the controller here releases the journal, worker pool,
-        // and cross-process lease before this actor publishes Finished, which
+        // Destroying the controller here releases the journal and
+        // cross-process lease before this actor publishes Finished, which
         // is what lets a same-identity actor start immediately afterwards.
         controller_.reset();
         persist_default_character_ = {};

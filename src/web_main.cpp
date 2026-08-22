@@ -1,5 +1,6 @@
 #include "workspace/builtins.h"
 #include "workspace/workspace_runtime.h"
+#include "agents/providers.h"
 #include "web/application_config.h"
 #include "web/asset_handler.h"
 #include "web/http_server.h"
@@ -56,14 +57,20 @@ int prepare_and_run(int argc, const char* argv[]) {
 
     const auto seed = TemporarySessionSeed{{std::string(entrance_id), std::string(welcome_id)}, std::string(welcome_name)};
     const auto workspace = std::make_shared<WorkspaceRuntime>(app.workspace, seed);
+    Providers providers;
 
-    auto opener = [workspace](const SessionIdentity& identity, WakeNotifier& notifier) {
-        return workspace->open_session(identity, notifier);
+    auto opener = [workspace, &providers](
+                      const SessionIdentity& identity,
+                      std::shared_ptr<WakeNotifier> notifier) {
+        return workspace->open_session(identity, providers, std::move(notifier));
     };
     LiveSessionManager live_sessions(settings, opener);
 
-    return run_web_server(
+    const int result = run_web_server(
         app.host, app.port, app.root, app.backup_dir, workspace, live_sessions, settings);
+    providers.shutdown();
+    shutdown_diagnostic_logging();
+    return result;
 }
 
 int run_web_server(
@@ -90,7 +97,6 @@ int run_web_server(
         const std::string message = "Could not listen on " + host + ':' + std::to_string(port);
         log_error(message);
         std::cerr << "Failed: " << message << '\n';
-        shutdown_diagnostic_logging();
         return 1;
     }
 
@@ -103,8 +109,6 @@ int run_web_server(
     ProcessShutdownSignal signals;
     ServerShutdownCoordinator shutdown(live_sessions, server);
     shutdown.wait_and_shutdown(signals, listener, settings.shutdown_grace);
-
-    shutdown_diagnostic_logging();
 
     return 0;
 }

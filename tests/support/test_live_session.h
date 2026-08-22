@@ -70,8 +70,8 @@ private:
 };
 
 // Cross-thread controls for one scripted model backend. Tests hold it
-// through a shared pointer because the backend runs inside the controller's
-// worker pool and outlives any single call.
+// through a shared pointer because the backend runs on a provider request
+// worker and outlives any single call.
 class BackendControls {
 public:
     using Clock = std::chrono::steady_clock;
@@ -145,7 +145,7 @@ private:
 
 // A model backend whose whole behavior is decided by the test through
 // BackendControls. It is a provider fake, not a controller or output fake: the
-// controller, journal, worker pool, and web actor around it are all real.
+// controller, journal, provider requests, and web actor around it are all real.
 class ScriptedModelBackend final : public ModelBackend {
 public:
     ScriptedModelBackend(
@@ -247,34 +247,36 @@ inline SessionDescriptor test_descriptor(const SessionIdentity& identity) {
 inline OpenedSession open_scripted_session(
     const SessionIdentity& identity,
     const std::filesystem::path& database_path,
-    WakeNotifier& notifier,
+    std::shared_ptr<WakeNotifier> notifier,
     std::vector<std::unique_ptr<ModelBackend>> backends,
     SessionController::ActivationHook before_activation = {},
     PersonaRoster personas = reader_roster()) {
+    auto owned = std::move(from_test_backends(
+        std::move(backends),
+        std::move(personas),
+        database_path,
+        std::move(notifier),
+        load_session_state(database_path),
+        std::move(before_activation),
+        std::nullopt,
+        identity)).release();
     return {
+        .lifetime = std::move(owned.providers),
         .descriptor = test_descriptor(identity),
-        .controller = std::move(from_test_backends(
-            std::move(backends),
-            std::move(personas),
-            database_path,
-            notifier,
-            load_session_state(database_path),
-            std::move(before_activation),
-            std::nullopt,
-            identity)).take_controller(),
+        .controller = std::move(owned.controller),
     };
 }
 
 inline OpenedSession open_scripted_session(
     const SessionIdentity& identity,
     const std::filesystem::path& database_path,
-    WakeNotifier& notifier,
+    std::shared_ptr<WakeNotifier> notifier,
     std::shared_ptr<BackendControls> controls,
     SessionController::ActivationHook before_activation = {}) {
     return open_scripted_session(
         identity,
         database_path,
-        notifier,
+        std::move(notifier),
         one_backend(scripted_backend(std::move(controls))),
         std::move(before_activation));
 }
@@ -284,20 +286,22 @@ inline OpenedSession open_scripted_session(
 inline OpenedSession open_restored_session(
     const SessionIdentity& identity,
     const std::filesystem::path& database_path,
-    WakeNotifier& notifier,
+    std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     std::shared_ptr<BackendControls> controls) {
+    auto owned = std::move(from_test_backends(
+        one_backend(scripted_backend(std::move(controls))),
+        reader_roster(),
+        database_path,
+        std::move(notifier),
+        std::move(restored),
+        {},
+        std::nullopt,
+        identity)).release();
     return {
+        .lifetime = std::move(owned.providers),
         .descriptor = test_descriptor(identity),
-        .controller = std::move(from_test_backends(
-            one_backend(scripted_backend(std::move(controls))),
-            reader_roster(),
-            database_path,
-            notifier,
-            std::move(restored),
-            {},
-            std::nullopt,
-            identity)).take_controller(),
+        .controller = std::move(owned.controller),
     };
 }
 
@@ -327,10 +331,12 @@ inline CharacterDefinition unreachable_definition(
 inline OpenedSession open_leased_session(
     const SessionIdentity& identity,
     const std::filesystem::path& database_path,
-    WakeNotifier& notifier) {
+    std::shared_ptr<WakeNotifier> notifier) {
     SessionLease lease = SessionLease::acquire(database_path);
     SessionRestore restored = load_session_state(database_path);
+    auto providers = std::make_shared<Providers>();
     return {
+        .lifetime = providers,
         .descriptor = test_descriptor(identity),
         .controller = SessionController::from_shared_definitions(
             share_character_definitions({unreachable_definition()}),
@@ -339,7 +345,8 @@ inline OpenedSession open_leased_session(
             "reader",
             database_path,
             std::move(lease),
-            notifier,
+            *providers,
+            std::move(notifier),
             std::move(restored),
             {},
             identity),
