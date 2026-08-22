@@ -1,8 +1,8 @@
 #pragma once
 
 #include "chat/character.h"
+#include "chat/session_identity.h"
 #include "chat/transcript.h"
-#include "session/session_identity.h"
 
 #include <memory>
 #include <optional>

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agents/character.h"
-#include "agents/model_backend.h"
+#include "providers/model_backend.h"
 
 #include <memory>
 #include <string>

@@ -1,4 +1,4 @@
-#include "agents/providers.h"
+#include "providers/providers.h"
 #include "support/test_generations.h"
 #include "support/test_notifier.h"
 #include "util/environment.h"
@@ -605,7 +605,6 @@ TEST(Providers, DefaultFactoryResolvesCredentialsForEachRequest) {
     ASSERT_TRUE(set_environment_variable(variable, "first-key"));
 
     CharacterDefinition configured = *definition();
-    configured.provider.config.api_key.clear();
     configured.provider.config.api_key_env = variable;
     const auto character = std::make_shared<const CharacterDefinition>(configured);
     auto notifier = std::make_shared<test::NoopNotifier>();

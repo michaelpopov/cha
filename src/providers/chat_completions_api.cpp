@@ -1,10 +1,13 @@
-#include "agents/provider_response.h"
+#include "providers/chat_completions_api.h"
+
+#include "util/json_serialization.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -47,6 +50,15 @@ GenerationTokenUsage chat_token_usage(const Json& response) {
         .output_tokens = token_count(*usage, "completion_tokens"),
         .cache_read_tokens = cache_read_tokens,
     };
+}
+
+std::string_view role_name(ModelRole role) {
+    switch (role) {
+    case ModelRole::system: return "system";
+    case ModelRole::persona: return "user";
+    case ModelRole::assistant: return "assistant";
+    }
+    throw std::logic_error("Unknown model context role");
 }
 
 // Interprets one provider message or delta object: the reasoning field named by
@@ -112,14 +124,53 @@ std::string process_response_object(
 
 } // namespace
 
-ProviderStreamDecoder::ProviderStreamDecoder(
+std::string build_chat_completions_request_body(
+    const GenerationRequest& input,
+    const ModelBackendConfig& config,
+    std::string_view system_prompt) {
+    Json messages = Json::array();
+    for (const ModelMessage& message :
+         project_model_context(input, system_prompt)) {
+        messages.push_back({
+            {"role", role_name(message.role)},
+            {"content", message.content},
+        });
+    }
+
+    Json body{
+        {"model", config.model},
+        {"stream", config.stream},
+        {"messages", std::move(messages)},
+    };
+    if (config.temperature) {
+        body["temperature"] = *config.temperature;
+    }
+    if (config.max_tokens) {
+        body["max_tokens"] = *config.max_tokens;
+    }
+    if (config.stream) {
+        body["stream_options"] = Json{{"include_usage", true}};
+    }
+    if (!config.reasoning_effort.empty()) {
+        body["reasoning_effort"] = config.reasoning_effort;
+    }
+    if (!input.run.prompt_cache_key.empty()
+        && config.cache_retention != CacheRetention::off
+        && is_direct_openai_host(config.host)) {
+        body["prompt_cache_key"] = input.run.prompt_cache_key;
+    }
+
+    return dump_json(body, "Model request");
+}
+
+ChatCompletionsStreamDecoder::ChatCompletionsStreamDecoder(
     ReasoningFormat format,
     const GenerationDeltaSink& on_delta)
     : format_(format),
       on_delta_(&on_delta) {
 }
 
-void ProviderStreamDecoder::consume(std::string_view bytes) {
+void ChatCompletionsStreamDecoder::consume(std::string_view bytes) {
     if (done_) {
         return;
     }
@@ -128,7 +179,7 @@ void ProviderStreamDecoder::consume(std::string_view bytes) {
     });
 }
 
-StreamDecodeResult ProviderStreamDecoder::finish() {
+StreamDecodeResult ChatCompletionsStreamDecoder::finish() {
     if (!done_) {
         framer_.finish([this](std::string_view data) {
             return handle_event_data(data);
@@ -157,7 +208,7 @@ StreamDecodeResult ProviderStreamDecoder::finish() {
     return {{GenerationOutcome::completed, {}, usage_}, false};
 }
 
-bool ProviderStreamDecoder::handle_event_data(std::string_view data) {
+bool ChatCompletionsStreamDecoder::handle_event_data(std::string_view data) {
     if (data == "[DONE]") {
         done_ = true;
         return false;
@@ -195,7 +246,9 @@ bool ProviderStreamDecoder::handle_event_data(std::string_view data) {
     return true;
 }
 
-void ProviderStreamDecoder::emit(GenerationDeltaKind kind, std::string text) {
+void ChatCompletionsStreamDecoder::emit(
+    GenerationDeltaKind kind,
+    std::string text) {
     if (kind == GenerationDeltaKind::reasoning) {
         received_reasoning_ = true;
     } else {
@@ -204,7 +257,7 @@ void ProviderStreamDecoder::emit(GenerationDeltaKind kind, std::string text) {
     (*on_delta_)(GenerationDelta{kind, std::move(text)});
 }
 
-GenerationResult decode_provider_response(
+GenerationResult decode_chat_completions_response(
     std::string_view body,
     ReasoningFormat format,
     const GenerationDeltaSink& on_delta) {

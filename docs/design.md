@@ -411,9 +411,10 @@ worker process-level supervision:
    before launching the thread.
 2. The worker catches every exception and publishes exactly one terminal event.
 3. The worker destroys its curl handle and releases all transport callbacks.
-4. Under one registry lock, it removes the request and snapshots the resulting
-   active count.
-5. It logs the unregister transition, notifies shutdown waiters, and returns.
+4. Under one registry lock, it removes the request, snapshots the resulting
+   active count, and marks one diagnostic tail in progress.
+5. It logs the unregister transition, clears the diagnostic-tail count under
+   the registry lock, notifies shutdown waiters, and returns.
    The detached closure retains the request through that final return, so
    registry removal cannot destroy state still in use by the diagnostic tail.
 
@@ -423,16 +424,18 @@ worker's final completion action even while the outer `Providers` object is
 shutting down.
 
 The active-registry removal point means provider I/O is quiescent: the curl
-handle is already destroyed and no more events will be published. After
-unregistering, the worker only emits its final diagnostic, notifies the shared
-registry, and drops its closure pointers; it touches no session object.
+handle is already destroyed and no more events will be published. The separate
+diagnostic-tail count keeps process shutdown waiting through the final log.
+After clearing that count, the worker only notifies the shared registry and
+drops its closure pointers; it touches no session object.
 
 This is a supervised detached thread, not an abandoned thread. Process shutdown
 waits for every active registry entry to reach this quiescent point.
 
-Registry emptiness does not mean that every detached thread function has
-literally returned. A small tail may still release the closure's captured
-shared pointers. That tail is deliberately constrained:
+An empty active registry and zero diagnostic tails do not mean that every
+detached thread function has literally returned. A small tail may still notify
+the registry and release the closure's captured shared pointers. That tail is
+deliberately constrained:
 
 - `ProviderRequest` has no thread handle, unregister callback, or `Providers`
   pointer in its destructor;
@@ -440,13 +443,15 @@ shared pointers. That tail is deliberately constrained:
   notifier;
 - the internal registry is self-contained shared state whose destructor does
   not refer back to the outer `Providers` object;
-- after unregistering, the worker performs no application action other than
-  releasing the closure's request and registry pointers and returning.
+- after clearing its diagnostic-tail count, the worker performs no application
+  action other than notifying the registry, releasing the closure's request
+  and registry pointers, and returning.
 
 Consequently, `Providers::shutdown()` may destroy its outer members after the
-registry becomes empty while a worker is in this harmless release-only tail.
-Shared ownership keeps each captured object alive, and no tail can contend for
-a lock held by shutdown or use logging after provider shutdown returns.
+registry is empty and the diagnostic-tail count reaches zero while a worker is
+in this harmless release-only tail. Shared ownership keeps each captured
+object alive, and no tail can contend for a lock held by shutdown or use
+logging after provider shutdown returns.
 
 ## Required model, credential validation, and request-local resolution
 
@@ -465,8 +470,8 @@ network work or reachability check, and retains no credential value in session
 state.
 
 Every request worker resolves its own credential directly from the request's
-`ModelBackendConfig`: it uses the configured `api_key`, or reads the variable
-named by `api_key_env`. The resolved value remains request-local and is
+`ModelBackendConfig` by reading the variable named by `api_key_env`. The
+resolved value remains request-local and is
 destroyed with that request's transport. An invalid, revoked, or rejected
 credential fails only the affected request. A missing environment value at
 this point is retained as a defensive failed-request path, but production
@@ -725,7 +730,7 @@ Shutdown order is:
    owners. Request-held shared wake signals may remain alive.
 5. Call `Providers::shutdown()`.
 6. `Providers` closes admission, cancels every active request, and waits until
-   the active registry is empty.
+   the active registry is empty and every final diagnostic is complete.
 7. Every request unregisters only after its curl handle, resolved credential,
    and provider callbacks are gone.
 8. Shut down logging.

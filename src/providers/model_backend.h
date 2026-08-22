@@ -1,14 +1,15 @@
 #pragma once
 
 #include "agents/model_context.h"
-#include "agents/generation_event.h"
 #include "chat/character.h"
+#include "providers/generation_event.h"
 
 #include <atomic>
 #include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace cha {
 
@@ -36,6 +37,13 @@ struct GenerationResult {
     GenerationTokenUsage usage;
 };
 
+// How one streaming response ended. Failures the stream itself does not explain
+// set 'describe_response', asking the transport to append what actually arrived.
+struct StreamDecodeResult {
+    GenerationResult result;
+    bool describe_response{};
+};
+
 // The request a backend built for itself, opaque to its caller. Preparation
 // consumes immutable input; performing the slow call is a separate step.
 struct RequestPayload {
@@ -46,6 +54,15 @@ struct RequestPayload {
 
 // Receives one semantic transport fragment without attaching request identity.
 using GenerationDeltaSink = std::function<void(GenerationDelta)>;
+
+// Protocol-neutral streaming decoder boundary used by the transport. Concrete
+// decoders own protocol-specific event interpretation.
+class StreamingResponseDecoder {
+public:
+    virtual ~StreamingResponseDecoder() = default;
+    virtual void consume(std::string_view bytes) = 0;
+    virtual StreamDecodeResult finish() = 0;
+};
 
 // The provider boundary of the generation runtime: all one execution needs to answer one request,
 // with no knowledge of HTTP, JSON, or any particular vendor. An implementation builds a payload

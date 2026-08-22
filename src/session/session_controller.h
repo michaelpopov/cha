@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agents/character.h"
-#include "agents/providers.h"
+#include "providers/providers.h"
 #include "chat/persona.h"
 #include "session/controller_update.h"
 #include "session/controller_view.h"

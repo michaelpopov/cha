@@ -51,8 +51,6 @@ TEST(Builtins, AssistantCarriesItsResolvedBackend) {
     EXPECT_EQ(backend.reasoning_effort, "high");
     EXPECT_EQ(backend.reasoning_format, cha::ReasoningFormat::reasoning);
     EXPECT_TRUE(backend.https);
-    // No configuration file may set api_key, so Assistant never gets one.
-    EXPECT_TRUE(backend.api_key.empty());
 
     const auto sparse_definitions = cha::builtin_assistant_definitions(
         {.id = "sparse", .config = {.host = "only.example", .port = 80}}, "inventory", {});
@@ -69,7 +67,6 @@ TEST(Builtins, AssistantCarriesItsResolvedBackend) {
     EXPECT_EQ(sparse.max_tokens, defaults.max_tokens);
     EXPECT_EQ(sparse.timeout_s, defaults.timeout_s);
     EXPECT_EQ(sparse.idle_timeout_s, defaults.idle_timeout_s);
-    EXPECT_EQ(sparse.api_key, defaults.api_key);
     EXPECT_EQ(sparse.api_key_env, defaults.api_key_env);
     EXPECT_EQ(sparse.reasoning_effort, defaults.reasoning_effort);
     EXPECT_EQ(sparse.reasoning_format, defaults.reasoning_format);

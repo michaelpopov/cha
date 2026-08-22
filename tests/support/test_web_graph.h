@@ -4,7 +4,7 @@
 #include "workspace/session_open.h"
 #include "workspace/workspace_definition.h"
 #include "workspace/workspace_runtime.h"
-#include "agents/providers.h"
+#include "providers/providers.h"
 #include "session/session_repository.h"
 #include "web/live_session.h"
 #include "web/lobby_routes.h"

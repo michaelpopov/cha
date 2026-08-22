@@ -1,6 +1,6 @@
 #include "workspace/workspace_definition.h"
 
-#include "agents/provider_client.h"
+#include "agents/character.h"
 #include "workspace/builtins.h"
 #include "support/test_workspace.h"
 #include "util/environment.h"
@@ -201,7 +201,6 @@ TEST(WorkspaceDefinition, ValidatesReferencedCredentialEnvironmentVariablesWitho
     const WorkspaceDefinition model = load_model(fixture.root());
     const CharacterDefinition& definition =
         WorkspaceDefinitionTestAccess::loaded(model, "lobby").front();
-    EXPECT_TRUE(definition.provider.config.api_key.empty());
     const CharacterRuntimeInfo info = character_runtime_info(definition);
     EXPECT_EQ(info.model, "fake");
     EXPECT_EQ(info.model.find(secret), std::string::npos);

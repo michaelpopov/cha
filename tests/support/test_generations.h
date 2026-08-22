@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/model_backend.h"
+#include "providers/model_backend.h"
 #include "chat/transcript.h"
 
 #include <atomic>

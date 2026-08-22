@@ -176,11 +176,11 @@ add_library(cha_core STATIC
     src/chat/transcript.cpp
     src/agents/character.cpp
     src/agents/model_context.cpp
-    src/agents/providers.cpp
-    src/agents/provider_client.cpp
-    src/agents/provider_response.cpp
-    src/agents/responses_api.cpp
-    src/agents/sse_framer.cpp
+    src/providers/providers.cpp
+    src/providers/provider_client.cpp
+    src/providers/chat_completions_api.cpp
+    src/providers/responses_api.cpp
+    src/providers/sse_framer.cpp
     src/agents/character_config.cpp
     src/session/controller_update.cpp
     src/session/forum_characters.cpp
@@ -290,10 +290,10 @@ if(BUILD_TESTING)
         tests/chat/unit_transcript.cpp
         tests/agents/unit_model_context.cpp
         tests/agents/unit_character_definition_loader.cpp
-        tests/agents/unit_providers.cpp
-        tests/agents/unit_provider_response.cpp
-        tests/agents/unit_responses_api.cpp
-        tests/agents/unit_sse_framer.cpp
+        tests/providers/unit_providers.cpp
+        tests/providers/unit_chat_completions_api.cpp
+        tests/providers/unit_responses_api.cpp
+        tests/providers/unit_sse_framer.cpp
         tests/agents/unit_config_loader.cpp
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_forum_characters.cpp
@@ -312,7 +312,7 @@ if(BUILD_TESTING)
     if(NOT WIN32)
         # The socket fixture used by these transport tests is POSIX-only.
         list(APPEND CHA_TEST_SOURCES
-            tests/agents/unit_provider_client.cpp)
+            tests/providers/unit_provider_client.cpp)
 
         # Lease tests use a fresh executable rather than running C++ code in a
         # forked copy of the potentially threaded GoogleTest process.

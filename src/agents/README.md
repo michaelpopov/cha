@@ -1,32 +1,9 @@
-# Provider execution
+# Character definitions and model context
 
-`agents/` loads character definitions, projects immutable model history, and
-performs provider HTTP requests. It does not know about sessions, HTTP routes,
-or browser presentation.
-
-## Ownership
-
-`Providers` is constructed once by the composition root. `make_request()`
-creates one `ProviderRequest`, registers it, and immediately launches one
-detached worker. The request owns its immutable input, cancellation flag,
-event queue, shared wake notifier, request-local `ProviderClient`, curl easy
-handle, and resolved credential. The active registry retains the request until
-the worker has published its terminal event and destroyed transport resources.
-
-Sessions retain request handles only while they present events. They never own
-a provider client, curl handle, generation thread, or provider queue. The
-worker captures only the request and internal registry state, never a session
-or a raw `Providers*`; after unregistering, its tail only releases shared
-state.
-
-Each request has an independent client, curl handle, cancellation flag, and
-`ConcurrentQueue<GenerationEvent>`. There is no generation pool, task queue,
-lease, cache, or concurrency limit. A multicast is simply several independent
-requests sharing one immutable `SharedModelHistory`; the session chooses the
-presentation order.
-
-`shutdown()` closes admission, cancels a snapshot of active requests, and
-waits until their transport has quiesced. It is safe to call repeatedly.
+`agents/` loads character and provider configuration, assembles immutable
+character definitions, and projects owned model history for provider requests.
+It performs no provider transport and knows nothing about sessions, workspaces,
+HTTP routes, or browser presentation.
 
 ## Character and provider input
 
@@ -38,33 +15,24 @@ session-facing provider reporting; it does not require a provider client.
 
 Every referenced provider requires a configured model. Workspace loading and
 session-open definition reload validate a non-empty `api_key_env` without
-retaining its value. Each worker resolves the actual credential independently
-when it creates its request-local client. CHA does not discover models or call
+retaining its value. Request execution resolves the actual credential from the
+immutable configuration snapshot. CHA does not discover models or call
 `/models`.
 
 ## Source map
 
 | Source | Responsibility |
 | --- | --- |
-| `character_config.*` | Provider and character configuration parsing and static validation. |
+| `character_config.*` | Provider and character configuration parsing, endpoint projection, and static validation. |
 | `character.*` | Immutable character definitions, runtime information, prompt assembly, and template expansion. |
 | `model_context.*` | Owning model-history projection and request input. |
-| `providers.*` | Request-owned workers, registry supervision, cancellation, and event delivery. |
-| `provider_client.*` | One request-local OpenAI-compatible curl transport. |
-| `model_backend.h` | Small backend seam plus prepared-request and result types. |
-| `provider_response.*`, `responses_api.*`, `sse_framer.*` | Provider protocol decoding. |
-
-## Diagnostics
-
-Provider lifecycle logs contain provider ID, request ID, internal registry
-token, configured model, active count, and duration. They never contain a
-credential, complete configuration, prompt, transcript content, or response
-body.
 
 ## Tests
 
-`tests/agents/unit_providers.cpp` covers immediate execution, terminal-event
-delivery, cancellation, launch/shutdown races, request snapshot isolation,
-registry lifetime, notifier lifetime, and transport destruction ordering.
-`unit_provider_client.cpp` covers HTTP request/response behavior without model
-discovery.
+`tests/agents/unit_config_loader.cpp` covers provider and character
+configuration. `unit_character_definition_loader.cpp` covers definitions,
+prompt assembly, and public runtime information. `unit_model_context.cpp`
+covers immutable history projection.
+
+This directory may depend on `chat/` and `util/`.
+It must not depend on `providers/`, `session/`, `workspace/`, or `web/`.

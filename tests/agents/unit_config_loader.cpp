@@ -482,7 +482,6 @@ TEST(Config, PreservesModelBackendDefaultsForOmittedProviderFields) {
     const ModelBackendConfig config = load_character_config(files.paths()).provider.config;
     EXPECT_EQ(config.model, "fake");
     EXPECT_TRUE(config.base_path.empty());
-    EXPECT_TRUE(config.api_key.empty());
     EXPECT_FALSE(config.temperature);
     EXPECT_FALSE(config.max_tokens);
     EXPECT_EQ(config.timeout_s, 600);

@@ -1,6 +1,6 @@
 #include "workspace/builtins.h"
 #include "workspace/workspace_runtime.h"
-#include "agents/providers.h"
+#include "providers/providers.h"
 #include "web/application_config.h"
 #include "web/asset_handler.h"
 #include "web/http_server.h"

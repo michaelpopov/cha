@@ -1,9 +1,9 @@
 #pragma once
 
 #include "agents/character_config.h"
-#include "agents/model_backend.h"
 #include "agents/model_context.h"
-#include "agents/provider_response.h"
+#include "providers/model_backend.h"
+#include "providers/sse_framer.h"
 
 #include <string>
 #include <string_view>

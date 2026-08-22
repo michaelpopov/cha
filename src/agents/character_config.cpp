@@ -294,11 +294,27 @@ bool is_direct_openai_host(std::string_view host) {
     return ascii_iequals(host, "api.openai.com");
 }
 
+std::string provider_endpoint(const ModelBackendConfig& config) {
+    std::string host = config.host;
+    if (host.find(':') != std::string::npos && !host.starts_with('[')) {
+        host = '[' + host + ']';
+    }
+    const std::string base_url = std::string(config.https ? "https://" : "http://")
+        + host + ':' + std::to_string(config.port) + config.base_path;
+    switch (config.api) {
+    case ProviderApi::chat_completions:
+        return base_url + "/v1/chat/completions";
+    case ProviderApi::responses:
+        return base_url + "/v1/responses";
+    }
+    throw std::logic_error("Unknown provider API");
+}
+
 ProviderConfig load_named_provider(
     const std::filesystem::path& directory,
     std::string_view name,
     const std::filesystem::path& reference_path) {
-    const std::filesystem::path path = directory / path_from_utf8(name) / "config.toml";
+    const std::filesystem::path path = provider_config_path(directory, name);
     if (!std::filesystem::is_regular_file(path)) {
         throw std::runtime_error("Config file '" + utf8_path(reference_path)
             + "' references provider '" + std::string(name)
@@ -556,7 +572,7 @@ CharacterMetadata load_character_metadata(
             };
             validate_provider_selection(
                 selection,
-                *providers_directory / path_from_utf8(selection.id) / "config.toml");
+                provider_config_path(*providers_directory, selection.id));
         }
     }
     const CharacterAppearance appearance =
@@ -572,6 +588,12 @@ CharacterMetadata load_character_metadata(
 
 std::filesystem::path providers_directory(const std::filesystem::path& workspace_root) {
     return workspace_root / "system" / "providers";
+}
+
+std::filesystem::path provider_config_path(
+    const std::filesystem::path& directory,
+    std::string_view provider_id) {
+    return directory / path_from_utf8(provider_id) / "config.toml";
 }
 
 std::filesystem::path styles_directory(const std::filesystem::path& workspace_root) {

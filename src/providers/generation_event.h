@@ -7,8 +7,8 @@
 
 namespace cha {
 
-// One semantic provider fragment. Request identity is attached when a generation batch
-// publishes a GenerationEventDelta.
+// One semantic provider fragment. Request identity is attached when a provider
+// request publishes a GenerationEventDelta.
 enum class GenerationDeltaKind {
     reasoning,
     answer,

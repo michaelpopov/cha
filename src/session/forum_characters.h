@@ -26,8 +26,9 @@ struct HandleResolution {
 [[nodiscard]] std::string format_duplicate_character_notice(
     std::string_view display_name);
 // Runtime details come from immutable character definitions rather than the identity-only
-// character view, so both are passed in. The entry count is a plain size for
-// the same reason: this wording belongs to the session, not to a transcript.
+// character view, so both are passed in and correlated by character ID. The
+// entry count is a plain size for the same reason: this wording belongs to the
+// session, not to a transcript.
 [[nodiscard]] std::string format_characters_notice(
     const class ForumCharacters& characters,
     const std::vector<CharacterRuntimeInfo>& runtime_info,

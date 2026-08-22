@@ -536,7 +536,7 @@ void validate_provider_selections(
     for (const CharacterDefinition& definition : definitions) {
         validate_provider_selection(
             definition.provider,
-            providers_directory / path_from_utf8(definition.provider.id) / "config.toml");
+            provider_config_path(providers_directory, definition.provider.id));
     }
 }
 
@@ -885,7 +885,8 @@ WorkspaceDefinition WorkspaceDefinition::load(
     });
     validate_provider_selection(
         assistant_config.provider,
-        model.config_.providers_directory / path_from_utf8(assistant_config.provider.id) / "config.toml");
+        provider_config_path(
+            model.config_.providers_directory, assistant_config.provider.id));
     model.definitions_.emplace(
         std::string(entrance_id),
         builtin_assistant_definitions(
@@ -1096,7 +1097,7 @@ std::vector<AvailableProvider> WorkspaceDefinition::available_providers() const 
         try {
             (void)load_named_provider(
                 config_.providers_directory, id,
-                config_.providers_directory / path_from_utf8(id) / "config.toml");
+                provider_config_path(config_.providers_directory, id));
             result.push_back({id, option_label(id)});
         } catch (const std::exception& error) {
             log_warn("Provider '" + id + "' omitted from available list: " + error.what());
@@ -1204,7 +1205,7 @@ CharacterSettingsChange WorkspaceDefinition::write_character_settings(
                 load_named_provider(config_.providers_directory, name, *path);
             validate_provider_selection(
                 {.id = std::string(name), .config = make_backend_config(config)},
-                config_.providers_directory / path_from_utf8(name) / "config.toml");
+                provider_config_path(config_.providers_directory, name));
         });
         if (style) {
             load_selection(*style, "style", [&](std::string_view name) {

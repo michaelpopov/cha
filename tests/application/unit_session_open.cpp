@@ -1,6 +1,6 @@
 #include "workspace/session_open.h"
 
-#include "agents/providers.h"
+#include "providers/providers.h"
 
 #include "workspace/builtins.h"
 #include "session/not_found_error.h"

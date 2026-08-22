@@ -13,6 +13,7 @@ project.
 | Source | Responsibility |
 | --- | --- |
 | `ids.h` | `ForumId`, `CharacterId`, and `SessionId` aliases used across workspace, generation, session, and web boundaries. |
+| `session_identity.h` | The stable forum/session identity shared across provider, session, workspace, and web boundaries. |
 | `character.*` | Discovery-safe `CharacterMetadata`, including the closed appearance vocabulary used by frontends. |
 | `persona.h` | `Persona` and the immutable/shared roster forms used for human authorship and prompt context. |
 | `transcript.h` | Entry and request IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, the non-owning `TranscriptView`, `ModelHistory`, the reserved null-target `-` handle/name constants, and the `Transcript` container. |
@@ -182,7 +183,7 @@ can persist a terminal result without exposing transcript internals.
 ## Dependencies
 
 - **Depends on:** nothing in the project.
-- **Depended on by:** `agents/` (projection and request preparation),
+- **Depended on by:** `agents/` and `providers/` (request preparation and execution),
   `session/` (coordination and persistence), `web/` (rendering).
 
 Persistence and presentation choices stay outside this directory. The model may

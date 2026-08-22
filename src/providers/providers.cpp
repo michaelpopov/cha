@@ -1,4 +1,4 @@
-#include "agents/providers.h"
+#include "providers/providers.h"
 
 #include "util/logging.h"
 
@@ -35,6 +35,7 @@ struct Providers::Registry {
     std::condition_variable empty;
     bool admitting{true};
     std::unordered_map<std::uint64_t, std::shared_ptr<ProviderRequest>> active;
+    std::size_t diagnostic_tails{};
     std::uint64_t next_token{1};
 };
 
@@ -64,11 +65,7 @@ bool ProviderRequest::has_valid_input() const noexcept {
     if (!input_.character || !input_.generation.history) {
         return false;
     }
-    const CharacterDefinition& character = *input_.character;
-    return !character.character.id.empty()
-        && !character.character.display_name.empty()
-        && !character.provider.id.empty()
-        && !character.provider.config.model.empty()
+    return !input_.character->provider.id.empty()
         && !input_.generation.run.target.id.empty()
         && !input_.generation.run.target.display_name.empty();
 }
@@ -241,11 +238,16 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
                 const auto found = registry->active.find(token);
                 if (found == registry->active.end()) return;
                 registry->active.erase(found);
+                ++registry->diagnostic_tails;
                 active_count = registry->active.size();
             }
             log_debug("Provider request unregistering: "
                 + request->log_fields()
                 + " active_count=" + std::to_string(active_count));
+            {
+                std::lock_guard lock(registry->mutex);
+                --registry->diagnostic_tails;
+            }
             registry->empty.notify_all();
         });
     } catch (const std::exception& error) {
@@ -272,7 +274,9 @@ void Providers::shutdown() noexcept {
     }
 
     std::unique_lock lock(registry->mutex);
-    registry->empty.wait(lock, [registry] { return registry->active.empty(); });
+    registry->empty.wait(lock, [registry] {
+        return registry->active.empty() && registry->diagnostic_tails == 0;
+    });
 }
 
 } // namespace cha

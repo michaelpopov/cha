@@ -1,4 +1,4 @@
-#include "agents/responses_api.h"
+#include "providers/responses_api.h"
 #include "chat/transcript.h"
 #include "support/test_transcript.h"
 

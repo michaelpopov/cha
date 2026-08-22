@@ -1,4 +1,4 @@
-#include "agents/provider_response.h"
+#include "providers/chat_completions_api.h"
 
 #include <gtest/gtest.h>
 
@@ -49,9 +49,9 @@ constexpr std::string_view two_part_stream =
     "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
     "data: [DONE]\n\n";
 
-TEST(ProviderResponse, DecodesOneEventPerChunk) {
+TEST(ChatCompletionsApi, DecodesOneEventPerChunk) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume("data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n");
     decoder.consume("data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n");
@@ -64,9 +64,9 @@ TEST(ProviderResponse, DecodesOneEventPerChunk) {
     EXPECT_EQ(output.deltas().size(), 2U);
 }
 
-TEST(ProviderResponse, DecodesSeveralEventsInOneChunk) {
+TEST(ChatCompletionsApi, DecodesSeveralEventsInOneChunk) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume(two_part_stream);
     const StreamDecodeResult result = decoder.finish();
@@ -75,9 +75,9 @@ TEST(ProviderResponse, DecodesSeveralEventsInOneChunk) {
     EXPECT_EQ(output.answer(), "Hello world");
 }
 
-TEST(ProviderResponse, ReadsUsageFromTheFinalStreamingChunk) {
+TEST(ChatCompletionsApi, ReadsUsageFromTheFinalStreamingChunk) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume(
         "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\n"
@@ -94,16 +94,16 @@ TEST(ProviderResponse, ReadsUsageFromTheFinalStreamingChunk) {
     EXPECT_EQ(*result.result.usage.cache_read_tokens, 9U);
 }
 
-TEST(ProviderResponse, UsesTheLegacyCacheCountOnlyWhenPrimaryDetailsAreAbsent) {
+TEST(ChatCompletionsApi, UsesTheLegacyCacheCountOnlyWhenPrimaryDetailsAreAbsent) {
     Output output;
-    const GenerationResult fallback = decode_provider_response(
+    const GenerationResult fallback = decode_chat_completions_response(
         R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4},"choices":[{"message":{"content":"Answer"}}]})",
         ReasoningFormat::automatic,
         output.sink());
     ASSERT_TRUE(fallback.usage.cache_read_tokens);
     EXPECT_EQ(*fallback.usage.cache_read_tokens, 4U);
 
-    const GenerationResult primary = decode_provider_response(
+    const GenerationResult primary = decode_chat_completions_response(
         R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4,"prompt_tokens_details":{"cached_tokens":9}},"choices":[{"message":{"content":"Answer"}}]})",
         ReasoningFormat::automatic,
         output.sink());
@@ -111,9 +111,9 @@ TEST(ProviderResponse, UsesTheLegacyCacheCountOnlyWhenPrimaryDetailsAreAbsent) {
     EXPECT_EQ(*primary.usage.cache_read_tokens, 9U);
 }
 
-TEST(ProviderResponse, LeavesCacheUsageUnsetWhenProviderOmitsIt) {
+TEST(ChatCompletionsApi, LeavesCacheUsageUnsetWhenProviderOmitsIt) {
     Output output;
-    const GenerationResult result = decode_provider_response(
+    const GenerationResult result = decode_chat_completions_response(
         R"({"usage":{"prompt_tokens":12,"completion_tokens":5},"choices":[{"message":{"content":"Answer"}}]})",
         ReasoningFormat::automatic,
         output.sink());
@@ -126,9 +126,9 @@ TEST(ProviderResponse, LeavesCacheUsageUnsetWhenProviderOmitsIt) {
     EXPECT_FALSE(result.usage.cache_read_tokens);
 }
 
-TEST(ProviderResponse, DecodesTheSameStreamOneByteAtATime) {
+TEST(ChatCompletionsApi, DecodesTheSameStreamOneByteAtATime) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     for (const char character : two_part_stream) {
         decoder.consume(std::string_view(&character, 1));
@@ -140,9 +140,9 @@ TEST(ProviderResponse, DecodesTheSameStreamOneByteAtATime) {
     EXPECT_EQ(output.deltas().size(), 2U);
 }
 
-TEST(ProviderResponse, DecodesCarriageReturnsSplitAcrossChunks) {
+TEST(ChatCompletionsApi, DecodesCarriageReturnsSplitAcrossChunks) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume("data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\r");
     decoder.consume("\n\r");
@@ -153,9 +153,9 @@ TEST(ProviderResponse, DecodesCarriageReturnsSplitAcrossChunks) {
     EXPECT_EQ(output.answer(), "Hello");
 }
 
-TEST(ProviderResponse, DecodesATrailingEventTheStreamNeverTerminated) {
+TEST(ChatCompletionsApi, DecodesATrailingEventTheStreamNeverTerminated) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume("data: {\"choices\":[{\"delta\":{\"content\":\"Tail\"}}]}\n");
     decoder.consume("data: [DONE]");
@@ -165,9 +165,9 @@ TEST(ProviderResponse, DecodesATrailingEventTheStreamNeverTerminated) {
     EXPECT_EQ(output.answer(), "Tail");
 }
 
-TEST(ProviderResponse, ReportsMalformedEventJsonAfterEmittingValidEvents) {
+TEST(ChatCompletionsApi, ReportsMalformedEventJsonAfterEmittingValidEvents) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume(
         "data: not-json\n\n"
@@ -181,9 +181,9 @@ TEST(ProviderResponse, ReportsMalformedEventJsonAfterEmittingValidEvents) {
     EXPECT_EQ(output.answer(), "Partial");
 }
 
-TEST(ProviderResponse, ReportsAnEventWithoutAChoicesArray) {
+TEST(ChatCompletionsApi, ReportsAnEventWithoutAChoicesArray) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume("data: {\"object\":\"chunk\"}\n\ndata: [DONE]\n\n");
     const StreamDecodeResult result = decoder.finish();
@@ -195,9 +195,9 @@ TEST(ProviderResponse, ReportsAnEventWithoutAChoicesArray) {
     EXPECT_TRUE(result.describe_response);
 }
 
-TEST(ProviderResponse, ReportsAStreamThatEndedBeforeTheEndMarker) {
+TEST(ChatCompletionsApi, ReportsAStreamThatEndedBeforeTheEndMarker) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume("data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n");
     const StreamDecodeResult result = decoder.finish();
@@ -210,9 +210,9 @@ TEST(ProviderResponse, ReportsAStreamThatEndedBeforeTheEndMarker) {
     EXPECT_EQ(output.answer(), "Partial");
 }
 
-TEST(ProviderResponse, ReportsResponseBytesThatWereNotAnEventStream) {
+TEST(ChatCompletionsApi, ReportsResponseBytesThatWereNotAnEventStream) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume(R"({"error":{"message":"model unavailable"}})");
     const StreamDecodeResult result = decoder.finish();
@@ -226,9 +226,9 @@ TEST(ProviderResponse, ReportsResponseBytesThatWereNotAnEventStream) {
     EXPECT_TRUE(output.deltas().empty());
 }
 
-TEST(ProviderResponse, IgnoresDataAfterTheEndMarker) {
+TEST(ChatCompletionsApi, IgnoresDataAfterTheEndMarker) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume(
         "data: {\"choices\":[{\"delta\":{\"content\":\"Complete\"}}]}\n\n"
@@ -241,9 +241,9 @@ TEST(ProviderResponse, IgnoresDataAfterTheEndMarker) {
     EXPECT_EQ(output.answer(), "Complete");
 }
 
-TEST(ProviderResponse, RejectsACompletedStreamWithoutAnswerContent) {
+TEST(ChatCompletionsApi, RejectsACompletedStreamWithoutAnswerContent) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume(
         "data: {\"choices\":[{\"delta\":{"
@@ -263,9 +263,9 @@ TEST(ProviderResponse, RejectsACompletedStreamWithoutAnswerContent) {
     EXPECT_EQ(output.reasoning(), "PRIVATE_ONLY_REASONING");
 }
 
-TEST(ProviderResponse, StreamsReasoningBeforeAnswerWithAutomaticPrecedence) {
+TEST(ChatCompletionsApi, StreamsReasoningBeforeAnswerWithAutomaticPrecedence) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume(
         "data: {\"choices\":[{\"delta\":{"
@@ -286,9 +286,9 @@ TEST(ProviderResponse, StreamsReasoningBeforeAnswerWithAutomaticPrecedence) {
     EXPECT_EQ(output.deltas()[2].text, " late");
 }
 
-TEST(ProviderResponse, UsesReasoningTextAsTheLastAutomaticFallback) {
+TEST(ChatCompletionsApi, UsesReasoningTextAsTheLastAutomaticFallback) {
     Output output;
-    const GenerationResult result = decode_provider_response(
+    const GenerationResult result = decode_chat_completions_response(
         R"({"choices":[{"message":{"reasoning_content":"","reasoning":"","reasoning_text":"Fallback","content":"Answer"}}]})",
         ReasoningFormat::automatic,
         output.sink());
@@ -298,9 +298,9 @@ TEST(ProviderResponse, UsesReasoningTextAsTheLastAutomaticFallback) {
     EXPECT_EQ(output.answer(), "Answer");
 }
 
-TEST(ProviderResponse, ReportsAnExplicitReasoningFieldOfTheWrongType) {
+TEST(ChatCompletionsApi, ReportsAnExplicitReasoningFieldOfTheWrongType) {
     Output output;
-    ProviderStreamDecoder decoder(
+    ChatCompletionsStreamDecoder decoder(
         ReasoningFormat::reasoning_content, output.sink());
 
     decoder.consume(
@@ -320,9 +320,9 @@ TEST(ProviderResponse, ReportsAnExplicitReasoningFieldOfTheWrongType) {
     EXPECT_EQ(output.answer(), "Answer");
 }
 
-TEST(ProviderResponse, AcceptsNullAndEmptyReasoningUnderAnExplicitFormat) {
+TEST(ChatCompletionsApi, AcceptsNullAndEmptyReasoningUnderAnExplicitFormat) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::reasoning, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::reasoning, output.sink());
 
     decoder.consume(
         "data: {\"choices\":[{\"delta\":{\"reasoning\":null}}]}\n\n"
@@ -337,9 +337,9 @@ TEST(ProviderResponse, AcceptsNullAndEmptyReasoningUnderAnExplicitFormat) {
     EXPECT_EQ(output.answer(), "Answer");
 }
 
-TEST(ProviderResponse, DropsReasoningWhenTheFormatIsNone) {
+TEST(ChatCompletionsApi, DropsReasoningWhenTheFormatIsNone) {
     Output output;
-    ProviderStreamDecoder decoder(ReasoningFormat::none, output.sink());
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::none, output.sink());
 
     decoder.consume(
         "data: {\"choices\":[{\"delta\":{"
@@ -353,10 +353,10 @@ TEST(ProviderResponse, DropsReasoningWhenTheFormatIsNone) {
     EXPECT_EQ(output.deltas().front().kind, GenerationDeltaKind::answer);
 }
 
-TEST(ProviderResponse, DecodesANonStreamingResponse) {
+TEST(ChatCompletionsApi, DecodesANonStreamingResponse) {
     Output output;
 
-    const GenerationResult result = decode_provider_response(
+    const GenerationResult result = decode_chat_completions_response(
         R"({"choices":[{"message":{"reasoning":"Think","content":"Answer"}}]})",
         ReasoningFormat::reasoning,
         output.sink());
@@ -369,10 +369,10 @@ TEST(ProviderResponse, DecodesANonStreamingResponse) {
     EXPECT_EQ(output.deltas()[1].text, "Answer");
 }
 
-TEST(ProviderResponse, ReportsAMalformedNonStreamingBody) {
+TEST(ChatCompletionsApi, ReportsAMalformedNonStreamingBody) {
     Output output;
 
-    const GenerationResult result = decode_provider_response(
+    const GenerationResult result = decode_chat_completions_response(
         "not-json", ReasoningFormat::automatic, output.sink());
 
     EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
@@ -380,10 +380,10 @@ TEST(ProviderResponse, ReportsAMalformedNonStreamingBody) {
     EXPECT_TRUE(output.deltas().empty());
 }
 
-TEST(ProviderResponse, ReportsANonStreamingBodyWithoutAMessageObject) {
+TEST(ChatCompletionsApi, ReportsANonStreamingBodyWithoutAMessageObject) {
     Output output;
 
-    const GenerationResult result = decode_provider_response(
+    const GenerationResult result = decode_chat_completions_response(
         R"({"choices":[]})", ReasoningFormat::automatic, output.sink());
 
     EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
@@ -392,10 +392,10 @@ TEST(ProviderResponse, ReportsANonStreamingBodyWithoutAMessageObject) {
         std::string::npos);
 }
 
-TEST(ProviderResponse, RejectsANonStreamingResponseWithoutAnswerContent) {
+TEST(ChatCompletionsApi, RejectsANonStreamingResponseWithoutAnswerContent) {
     Output output;
 
-    const GenerationResult result = decode_provider_response(
+    const GenerationResult result = decode_chat_completions_response(
         R"({"choices":[{"message":{"reasoning":"Only","content":""}}]})",
         ReasoningFormat::reasoning,
         output.sink());
@@ -407,10 +407,10 @@ TEST(ProviderResponse, RejectsANonStreamingResponseWithoutAnswerContent) {
     EXPECT_EQ(output.reasoning(), "Only");
 }
 
-TEST(ProviderResponse, ReportsANonStreamingReasoningFieldOfTheWrongType) {
+TEST(ChatCompletionsApi, ReportsANonStreamingReasoningFieldOfTheWrongType) {
     Output output;
 
-    const GenerationResult result = decode_provider_response(
+    const GenerationResult result = decode_chat_completions_response(
         R"({"choices":[{"message":{"reasoning":7,"content":"Answer"}}]})",
         ReasoningFormat::reasoning,
         output.sink());

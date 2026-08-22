@@ -67,7 +67,6 @@ struct ModelBackendConfig {
     std::optional<int> max_tokens;
     int timeout_s{600};
     int idle_timeout_s{60};
-    std::string api_key;
     std::string api_key_env;
     std::string reasoning_effort;
     ReasoningFormat reasoning_format{ReasoningFormat::automatic};
@@ -76,6 +75,9 @@ struct ModelBackendConfig {
     WebSearchMode web_search{default_web_search_mode};
     CacheRetention cache_retention{CacheRetention::short_};
 };
+
+// Returns the configured OpenAI-compatible API URL without performing I/O.
+std::string provider_endpoint(const ModelBackendConfig& config);
 
 // The exact named provider configuration selected by a character. The name is
 // retained for request ownership and diagnostics; config is its resolved
@@ -126,6 +128,10 @@ struct CharacterConfigPaths {
 
 // Where a workspace keeps one config.toml per named provider.
 std::filesystem::path providers_directory(const std::filesystem::path& workspace_root);
+// The config.toml for one named provider inside a providers directory.
+std::filesystem::path provider_config_path(
+    const std::filesystem::path& directory,
+    std::string_view provider_id);
 // Where a workspace keeps one config.toml per named character style.
 std::filesystem::path styles_directory(const std::filesystem::path& workspace_root);
 

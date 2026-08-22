@@ -31,7 +31,8 @@ them into a learning sequence:
 - [Native architecture](../src/README.md)
 - [Utility contracts](../src/util/README.md)
 - [Chat model](../src/chat/README.md)
-- [Agent and generation layer](../src/agents/README.md)
+- [Character definitions and model context](../src/agents/README.md)
+- [Provider execution](../src/providers/README.md)
 - [Session layer](../src/session/README.md)
 - [Workspace composition](../src/workspace/README.md)
 - [Web runtime](../src/web/README.md)
@@ -55,12 +56,14 @@ The most useful high-level model is:
 - `LiveSessionManager` owns the process's live-session registry.
 - One `LiveSession` is an actor with one permanent owner thread for one open
   session.
-- One `SessionController` owns the live transcript, persistence journal,
-  generation state, and worker pool for that session.
-- `GenerationBatch` runs one or more character requests concurrently, but
-  exposes them to the controller in deterministic foreground order.
-- `ProviderClient` owns provider HTTP mechanics. `ProviderStreamDecoder` owns
-  provider response decoding without knowing about curl or HTTP.
+- One `SessionController` owns the live transcript, persistence journal, and
+  ordered generation state for that session.
+- The process-owned `Providers` supervisor starts one independent request
+  worker per target. The controller exposes their events in deterministic
+  foreground order.
+- `ProviderClient` owns provider HTTP mechanics. The Chat Completions and
+  Responses API modules own their request encoding and response decoding
+  without knowing about curl or HTTP.
 - `SseMailbox` transfers presentation updates from the session owner thread to
   the HTTP thread writing the browser's event stream.
 
@@ -72,8 +75,9 @@ flowchart LR
     Actor["LiveSession owner thread"]
     Controller["SessionController"]
     Journal["SessionJournal / SQLite"]
-    Batch["GenerationBatch"]
-    Workers["Session ThreadPool"]
+    Providers["Process Providers supervisor"]
+    Request["ProviderRequest"]
+    Worker["Detached request worker"]
     Provider["ProviderClient"]
     Mailbox["SseMailbox"]
 
@@ -82,10 +86,11 @@ flowchart LR
     Manager -->|"owns and locates"| Actor
     Actor -->|"only caller"| Controller
     Controller --> Journal
-    Controller --> Batch
-    Batch --> Workers
-    Workers --> Provider
-    Provider -->|"GenerationEvent queue + wake"| Actor
+    Controller -->|"retains while presenting"| Request
+    Providers -->|"supervises while active"| Request
+    Request --> Worker
+    Worker --> Provider
+    Request -->|"GenerationEvent queue + wake"| Actor
     Actor --> Mailbox
     Mailbox -->|"SSE snapshot or append"| Browser
 ```
@@ -110,7 +115,7 @@ important production targets:
 
 | Target | Role |
 | --- | --- |
-| `cha_core` | `util`, `chat`, `agents`, `session`, and `workspace` |
+| `cha_core` | `util`, `chat`, `agents`, `providers`, `session`, and `workspace` |
 | `cha_web` | HTTP, SSE, actor runtime, routing, and protocol; links `cha_core` |
 | `chaweb_app` | Small composition root in `src/web_main.cpp`; links `cha_web` |
 
@@ -122,9 +127,10 @@ The intended dependency direction is:
 ```text
 chaweb_app -> cha_web -> cha_core
 
-workspace -> session -> agents -> chat
-                    \                 ^
-                     +-------------- util where needed
+workspace -> session -> providers -> agents -> chat
+                \-----------> agents
+
+util is used where needed without depending on the domain layers.
 ```
 
 That diagram is intentionally approximate inside `cha_core`; the important
@@ -132,7 +138,9 @@ rules are simpler:
 
 - `chat` contains presentation-neutral domain vocabulary.
 - `util` contains domain-neutral mechanisms.
-- `agents` knows model backends and generation, but not sessions or HTTP.
+- `agents` owns character configuration and model-context projection.
+- `providers` owns request execution, provider transport, and protocol
+  decoding, but not sessions or HTTP routing.
 - `session` coordinates transcripts, persistence, and generation, but not web
   routes.
 - `workspace` loads the workspace and wires a session from workspace data.
@@ -160,8 +168,9 @@ unit suite; see the root [README](../README.md).
 | --- | --- |
 | [src/web_main.cpp](../src/web_main.cpp) | Process composition and destruction order |
 | [src/chat](../src/chat) | IDs, personas, character metadata, transcript vocabulary |
-| [src/util](../src/util) | Queues, worker pool, template expansion, logging, path/text helpers |
-| [src/agents](../src/agents) | Character configuration, model context, provider calls, generation batches |
+| [src/util](../src/util) | Queues, template expansion, logging, path/text helpers |
+| [src/agents](../src/agents) | Character configuration, definitions, and model context |
+| [src/providers](../src/providers) | Request workers, provider transport, and response decoding |
 | [src/session](../src/session) | Controller, transcript orchestration, SQLite journal, leases, repository |
 | [src/workspace](../src/workspace) | Workspace loading, built-ins, and session construction |
 | [src/web](../src/web) | Native protocol, routes, actor, mailbox, lifecycle, shutdown |
@@ -295,25 +304,14 @@ draining. `close_with()` installs one final terminal value. That terminal
 guarantee is how each generation execution reports exactly one completion,
 cancellation, or failure even on its exception path.
 
-### 7.2 `ThreadPool`
-
-[util/thread_pool.h](../src/util/thread_pool.h) and
-[util/thread_pool.cpp](../src/util/thread_pool.cpp) provide a fixed worker pool.
-`stop()` closes submission, drains accepted tasks, and joins the workers. It
-does not invent application-level cancellation; `GenerationBatch` owns that.
-
-Each session creates a pool with exactly one worker per backend. The executor
-checks this equality because multicast must be able to fan out to the full
-forum roster without one batch starving itself behind another slot.
-
-### 7.3 `WakeNotifier`
+### 7.2 `WakeNotifier`
 
 [util/wake_notifier.h](../src/util/wake_notifier.h) is the tiny seam by which a
 generation worker tells the session actor, “new events may be available.” The
 web implementation is `OwnerWakeSignal`. Waking does not carry state; queues
 remain the source of work.
 
-### 7.4 Configuration helpers
+### 7.3 Configuration helpers
 
 The other utilities support important boundaries:
 
@@ -495,13 +493,13 @@ but the actor's `open_session()` must still call `prepare()`.
 
 Read the interfaces before the implementations:
 
-1. [agents/model_backend.h](../src/agents/model_backend.h)
-2. [agents/generation_event.h](../src/agents/generation_event.h)
-3. [agents/model_context.h](../src/agents/model_context.h)
-4. [agents/generation_batch.h](../src/agents/generation_batch.h)
-5. [agents/generation_executor.h](../src/agents/generation_executor.h)
-6. [agents/provider_response.h](../src/agents/provider_response.h)
-7. [agents/provider_client.h](../src/agents/provider_client.h)
+1. [providers/generation_event.h](../src/providers/generation_event.h)
+2. [agents/model_context.h](../src/agents/model_context.h)
+3. [providers/model_backend.h](../src/providers/model_backend.h)
+4. [providers/providers.h](../src/providers/providers.h)
+5. [providers/chat_completions_api.h](../src/providers/chat_completions_api.h)
+6. [providers/responses_api.h](../src/providers/responses_api.h)
+7. [providers/provider_client.h](../src/providers/provider_client.h)
 
 ### 10.1 The backend seam
 
@@ -540,49 +538,44 @@ model can see the multi-party conversation without being told it authored
 someone else's words. The new prompt is appended last with its persona display
 name.
 
-### 10.3 Executor and batch
+### 10.3 Provider requests and ordered generation
 
-`GenerationExecutor` owns one session-lived backend per forum character. It
-validates runtime identities, resolves all batch targets before submission, and
-rejects duplicates.
+`Providers` is a process-owned supervisor, not a scheduler or cache. Each call
+to `make_request()` creates a `ProviderRequest`, registers it, and launches one
+detached worker. The request owns immutable character and history input, a
+cancellation flag, an event queue, and a shared wake notifier. Its worker
+creates a fresh backend and curl easy handle for that request.
 
-`GenerationBatch::stage()` creates one execution slot per target and submits
-all slots behind a shared closed start gate. If any submission fails, the gate
-is cancelled and no backend can begin. Only after the controller has made the
-foreground turn durable does it call `open()`.
+Registration makes the detached work supervised: `Providers` retains the
+request until its terminal event is published and its transport resources are
+gone. Process shutdown closes admission, cancels active requests, and waits for
+the registry and final diagnostic tails to quiesce. A session may release a
+request without waiting for its provider I/O.
 
-Each execution owns:
+For multicast, the controller creates an ordered vector of independent request
+handles that share one immutable history snapshot. Every request starts as soon
+as it is admitted, but the controller drains only `foreground_index`. A later
+request may finish first; its output remains buffered in its private queue until
+the controller durably activates that target. This preserves concurrent
+provider latency and deterministic transcript order without a provider-layer
+batch abstraction.
 
-- its immutable generation request;
-- one borrowed session-lived backend;
-- a cancellation flag;
-- a concurrent event queue;
-- shared access to the batch start gate and wake notifier.
+Stopping cancels every request, discards non-foreground handles, and retains
+only the current foreground request long enough to persist its terminal event.
 
-The workers may all call their backends concurrently. The controller, however,
-drains only `foreground_index()`. A finished foreground execution must deliver
-its terminal event before `advance_foreground()` exposes the next slot. This is
-how multicast gains parallel provider latency but deterministic transcript and
-persistence order.
-
-Background output is buffered in its execution queue. It does not become
-durable until that execution becomes foreground. Cancelling a batch can discard
-buffered children that never became foreground; this is a deliberate simplicity
-tradeoff.
-
-### 10.4 Provider transport versus response semantics
+### 10.4 Provider transport versus protocol semantics
 
 `ProviderClient` owns:
 
-- model discovery through `/v1/models` when no model is configured;
-- request JSON and `/v1/chat/completions` HTTP behavior;
+- protocol selection and `/v1/chat/completions` or `/v1/responses` dispatch;
 - headers/authentication, curl handles, status/content-type checks, logging,
   byte counts, and cancellation through curl's progress callback;
 - test mode, which emits the prompt as answer text.
 
-`ProviderStreamDecoder` and `decode_provider_response()` in
-[agents/provider_response.cpp](../src/agents/provider_response.cpp) own only
-response meaning:
+`chat_completions_api.*` and `responses_api.*` each own request encoding and
+response meaning for one protocol. Read
+[providers/chat_completions_api.cpp](../src/providers/chat_completions_api.cpp)
+beside [providers/responses_api.cpp](../src/providers/responses_api.cpp):
 
 - incremental SSE framing for streaming responses;
 - JSON message extraction;
@@ -590,7 +583,7 @@ response meaning:
 - reasoning and answer delta emission;
 - end marker, malformed response, and missing-answer classification.
 
-The decoder intentionally knows nothing about curl, HTTP status, or
+The protocol modules intentionally know nothing about curl, HTTP status, or
 cancellation. `ProviderClient::perform()` decides the final outcome after the
 transport completes and may add HTTP metadata to a decoder error.
 
@@ -606,7 +599,7 @@ read [session/session_controller.cpp](../src/session/session_controller.cpp) in
 four groups:
 
 1. construction, restoration, and `view()`;
-2. prompt resolution and `start_batch()`;
+2. prompt resolution and `start_generation()`;
 3. command methods such as clear, hide, multicast, default character, and stop;
 4. generation-event `apply()` overloads and shutdown.
 
@@ -616,16 +609,16 @@ One controller owns:
 
 - the session lease and `SessionJournal`;
 - the owner-thread-confined `Transcript`;
-- a fixed `ThreadPool` and `GenerationExecutor`;
+- a borrowed reference to the process-owned `Providers` supervisor;
 - the resolved forum character roster and the workspace persona roster;
 - default-character and current-persona selection;
 - next request and entry IDs;
 - at most one active foreground response;
-- at most one `GenerationBatch`.
+- at most one `ActiveGeneration`, containing ordered request handles.
 
 The controller has no mutex. Its public mutation/view methods belong to the
-owner thread. Thread-safe communication is isolated inside the batch/event
-queues and wake mechanism.
+owner thread. Thread-safe communication is isolated inside request event
+queues, cancellation flags, and the wake mechanism.
 
 `ForumCharacters` in
 [session/forum_characters.cpp](../src/session/forum_characters.cpp) is the
@@ -640,21 +633,25 @@ session state without gaining access to controller internals.
 
 `submit_prompt()` resolves a character handle or uses the current default,
 resolves the author ID against the workspace persona roster, copies current
-`ModelHistory`, and delegates to `start_batch()`.
+`ModelHistory`, and delegates to `start_generation()`.
 
-`start_batch()` is ordered carefully:
+`start_generation()` is ordered carefully:
 
-1. Allocate one request ID per target and build all `GenerationRequest` values.
-2. Stage all execution slots behind the closed gate.
-3. `activate_current_run()` allocates transcript entry IDs.
-4. Persist the started turn and human prompt transactionally.
-5. Add the human prompt to the in-memory transcript.
-6. Install `ActiveResponse` and require a presentation snapshot.
-7. Open the batch gate so provider code may finally run.
+1. Allocate one request ID per target and build all owning
+   `ProviderRequestInput` values from one shared history snapshot.
+2. Install `ActiveGeneration` and reserve its ordered request list.
+3. `activate_run()` persists the first started turn and human prompt
+   transactionally.
+4. Add that prompt to the transcript, install `ActiveResponse`, and require a
+   presentation snapshot.
+5. Call `Providers::make_request()` for every target. Each admitted request
+   starts immediately and returns a handle whose queue ends in one terminal
+   event.
 
-This is the key commit boundary: no worker can publish model output into a
-session that has not already recorded its prompt durably and installed state
-capable of receiving the result.
+This is the key commit boundary: provider work starts only after the foreground
+prompt is durable and the controller has installed state capable of receiving
+its result. Later multicast targets run immediately but are not made durable or
+visible until they become foreground.
 
 ### 11.3 Response phases
 
@@ -683,7 +680,7 @@ Reasoning is never written to the transcript or SQLite journal.
 
 On completion with answer text, the controller transactionally completes the
 turn, marks the streaming entry complete, clears `active_`, and advances or
-finishes the batch.
+finishes the active generation.
 
 Completion without answer text is treated as failure. On failure, an open
 streaming response is discarded and a durable error entry replaces it.
@@ -905,13 +902,14 @@ The lease-and-load in `prepare()` remains authoritative.
 1. `SessionRoutes` parses JSON into `RawCommand` and enqueues it.
 2. `LiveSession::execute()` calls `handle_text_input()` on the owner thread.
 3. Text parsing selects `SessionController::submit_prompt()`.
-4. The controller resolves the current persona and target, copies `ModelHistory`, stages one
-   execution, persists the started turn, adds the prompt, installs active state,
-   and opens the gate.
+4. The controller resolves the current persona and target, copies
+   `ModelHistory`, persists the started turn, adds the prompt, installs active
+   state, and asks `Providers` to start one request.
 5. The actor publishes a snapshot showing the prompt and active generation.
-6. A worker calls `ProviderClient::prepare()` to project/model-encode context.
+6. The request worker creates a fresh `ProviderClient` and calls `prepare()` to
+   project/model-encode context.
 7. It calls `perform()`, whose decoder emits reasoning or answer deltas.
-8. The execution queues each delta and wakes the owner.
+8. The request queues each delta and wakes the owner.
 9. The actor drains the event; the controller updates reasoning or transcript.
 10. Structural changes become snapshots; proven text growth becomes appends.
 11. The SSE writer serializes the mailbox payload to the browser.
@@ -922,11 +920,12 @@ The lease-and-load in `prepare()` remains authoritative.
 
 1. `/mcast` syntax resolves an ordered, duplicate-free target list.
 2. The controller captures one shared history for all children.
-3. All children are submitted behind one gate and opened together after the
-   first durable foreground prompt.
-4. Workers perform concurrently and buffer per-slot events.
-5. Only slot 0 mutates live state.
-6. On its terminal event, slot 1 becomes foreground and its prompt is then
+3. The controller makes the first foreground prompt durable, then starts one
+   independent request per target. The first can begin slightly before the
+   final request is admitted.
+4. Workers perform concurrently and buffer per-request events.
+5. Only request 0 mutates live state.
+6. On its terminal event, request 1 becomes foreground and its prompt is then
    persisted/added; already-buffered output can be drained immediately.
 7. The process repeats in requested target order.
 
@@ -937,15 +936,16 @@ turns, not interleaved token streams.
 
 1. The stop route enqueues `StopCommand`.
 2. The owner calls `SessionController::request_stop()`.
-3. The batch sets every execution's atomic cancellation flag and cancels an
-   unopened gate if applicable.
+3. The controller sets every request's atomic cancellation flag and releases
+   all non-foreground handles.
 4. `ProviderClient` observes cancellation in curl's progress callback; a fake
    backend is expected to observe the same flag.
 5. The command returns “Stopping generation...” without joining workers.
 6. Terminal events are drained later. The active turn is persisted as cancelled
    with or without partial answer text.
-7. Once all executions finish, the controller releases the batch and the UI
-   receives terminal state.
+7. Once the foreground terminal is handled, the controller releases its final
+   request and the UI receives terminal state. Cancelled background workers may
+   still be unregistering from `Providers`.
 
 ### 13.5 Changing a character's provider or style
 
@@ -1009,10 +1009,11 @@ starting -> running -> stopping -> finished
     \---- open failed/busy/not found ----> finished
 ```
 
-`finished` is published only after blocking teardown work, controller
-destruction, worker shutdown, journal release, and lease release. This makes a
-post-finished join bounded by invariant and permits another actor for the same
-identity to start immediately after the manager reaps the old one.
+`finished` is published only after blocking actor teardown work, controller
+destruction, journal release, and lease release. Provider requests are
+cancelled and released without waiting, so process-owned supervision may still
+be winding down their transport. A post-finished actor join is nevertheless
+bounded, and the manager may reap the old actor.
 
 ### 14.3 Presentation delivery
 
@@ -1036,8 +1037,8 @@ Treat snapshots as truth and appends as a verified compression of truth.
 | `LiveSession` | Manager entry plus transient route handles | Owner thread mutates session; lifecycle methods synchronize |
 | `SessionController` | One `LiveSession` | Owner thread only |
 | `Transcript` / `SessionJournal` | One controller | Owner thread only |
-| `GenerationExecutor` / backends | One controller | Backend slot used by its worker execution; controller owns lifetime |
-| `GenerationBatch::Execution` | One batch slot | Worker produces events; owner consumes; atomic cancellation |
+| `Providers` registry | Process | Mutex protects admission and active requests; shutdown waits for transport quiescence |
+| `ProviderRequest` | Session handle plus provider registry/worker | Worker produces queued events; owner consumes; cancellation is atomic |
 | `CommandQueue` | One actor | HTTP producers, actor consumer |
 | `SseMailbox` | One actor/stream pair | Actor producer, HTTP SSE consumer |
 
@@ -1045,7 +1046,8 @@ The application has three relevant thread roles:
 
 1. HTTP library threads parse requests, wait on command replies, and write SSE.
 2. One owner thread per live session performs all core state transitions.
-3. One generation worker per character/backend performs blocking provider work.
+3. One detached worker per active provider request performs blocking provider
+   work and may briefly outlive its creating session.
 
 When debugging a race, first classify every access by those roles. Most state
 should belong entirely to one row of this table; shared mechanisms are small and
@@ -1099,8 +1101,8 @@ Errors are handled at the narrowest layer that can give them meaning:
   failure as process failure.
 - Provider response code classifies malformed model output as protocol error.
 - `ProviderClient` classifies transport/HTTP failure and cancellation.
-- Execution slots convert exceptions/results into one terminal generation
-  event.
+- `ProviderRequest` workers convert exceptions/results into one terminal
+  generation event.
 - `SessionController` turns a generation failure into a failed durable turn and
   transcript error.
 - A journal failure escapes the controller and is contained as a fatal live
@@ -1132,13 +1134,19 @@ Within a `LiveSession`, teardown:
 3. closes the mailbox;
 4. resolves/rejects queued command replies;
 5. calls `SessionController::shutdown()`;
-6. destroys the controller, releasing workers, journal, and lease;
+6. destroys the controller, releasing request handles, journal, and lease;
 7. publishes `finished` so the manager may join and erase the actor.
 
-Within the controller, shutdown cancels the batch, waits for execution safety,
-drains terminal events, releases the batch, then stops and joins the worker
-pool. The executor and notifier stay alive until workers can no longer borrow
-them.
+Within the controller, shutdown cancels all requests, synchronously closes the
+currently durable turn as cancelled, and releases its handles without waiting
+for provider I/O. Each request owns a shared wake notifier, so a late wake does
+not borrow a destroyed session object.
+
+After all live sessions have stopped, the composition root calls
+`Providers::shutdown()`. It closes admission, cancels a snapshot of active
+requests, and waits for every request to unregister and finish its final
+diagnostic after transport resources are gone. Diagnostic logging is shut down
+only after that wait.
 
 When changing member declaration order, constructor order, or scopes in
 `web_main.cpp`, re-evaluate this destruction chain.
@@ -1153,9 +1161,9 @@ and before reading all of its implementation.
 | Transcript invariants | [tests/chat/unit_transcript.cpp](../tests/chat/unit_transcript.cpp) |
 | Provider selection and config validation | [tests/agents/unit_config_loader.cpp](../tests/agents/unit_config_loader.cpp) |
 | Context rules | [tests/agents/unit_model_context.cpp](../tests/agents/unit_model_context.cpp) |
-| Batch gate/order/cancel | [tests/agents/unit_generation_batch.cpp](../tests/agents/unit_generation_batch.cpp) |
-| Provider decoding | [tests/agents/unit_provider_response.cpp](../tests/agents/unit_provider_response.cpp) |
-| Provider HTTP integration | [tests/agents/unit_provider_client.cpp](../tests/agents/unit_provider_client.cpp) |
+| Provider request lifecycle | [tests/providers/unit_providers.cpp](../tests/providers/unit_providers.cpp) |
+| Provider protocols | [tests/providers/unit_chat_completions_api.cpp](../tests/providers/unit_chat_completions_api.cpp), [unit_responses_api.cpp](../tests/providers/unit_responses_api.cpp) |
+| Provider HTTP integration | [tests/providers/unit_provider_client.cpp](../tests/providers/unit_provider_client.cpp) |
 | Controller transitions | [tests/session/unit_session_controller.cpp](../tests/session/unit_session_controller.cpp) |
 | SQLite catalog/repository | [tests/session/unit_session_catalog.cpp](../tests/session/unit_session_catalog.cpp), [unit_session_repository.cpp](../tests/session/unit_session_repository.cpp) |
 | Cross-process leases | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
@@ -1224,7 +1232,8 @@ explicit.
 ### Adding provider response behavior
 
 - Put curl/HTTP/cancellation in `ProviderClient`.
-- Put JSON/SSE/reasoning semantics in `provider_response.*`.
+- Put Chat Completions encoding/decoding in `chat_completions_api.*` and
+  Responses encoding/decoding in `responses_api.*`.
 - Emit only generic generation deltas/results across the backend seam.
 - Test response chunk boundaries independently from HTTP.
 - Add a provider-client test only when transport integration matters.
@@ -1243,16 +1252,16 @@ Work through these in order. Write the answer with symbol names, not only prose.
 ### Exercise 1: draw the object graph
 
 Starting at `main()`, draw who owns `WorkspaceDefinition`, `SessionRepository`,
-`LiveSessionManager`, routes, a `LiveSession`, its controller, journal, executor,
-backends, batch, and mailbox. Mark `shared_ptr`, `unique_ptr`, value, and borrowed
-references.
+`LiveSessionManager`, `Providers`, routes, a `LiveSession`, its controller,
+journal, active requests, request-local backends, and mailbox. Mark
+`shared_ptr`, `unique_ptr`, value, and borrowed references.
 
 ### Exercise 2: follow one visible token
 
 Set a breakpoint or add temporary tracing at:
 
 - provider decoder delta emission;
-- `Execution::publish_delta()`;
+- the delta callback in `ProviderRequest::execute()`;
 - `SessionController::apply(GenerationEventDelta)`;
 - `LiveSession::publish_update()`;
 - `SseMailbox::publish_append()`;
@@ -1271,8 +1280,8 @@ explain the next startup transcript.
 ### Exercise 4: compare single-target and multicast
 
 Trace `submit_prompt()` and `start_multicast()` until they converge. Identify
-the one history copy, request IDs, target order, gate opening point, and the
-moment each child becomes durable.
+the one history copy, request IDs, target order, each request's admission point,
+and the moment each target becomes durable.
 
 ### Exercise 5: prove owner-thread confinement
 
@@ -1312,12 +1321,12 @@ Use this as a suggested pace, not a process requirement.
 | --- | --- | --- |
 | 1 | Build graph, `web_main`, root/native READMEs | Draw the process object graph |
 | 2 | `chat` and transcript tests | Write transcript invariants from memory |
-| 3 | `util` queue/pool/template tests | Explain shutdown semantics of each mechanism |
+| 3 | `util` queue/template tests | Explain shutdown semantics of each mechanism |
 | 4 | workspace model and sample workspace | Trace one effective character definition |
 | 5 | repository, catalog, lease | Explain observation vs prepared authority |
 | 6 | database schema and restore | Trace complete, cancelled, failed, interrupted turns |
 | 7 | model context | Hand-project a sample transcript into model messages |
-| 8 | generation executor/batch | Diagram staging, gate, foreground order, cancellation |
+| 8 | provider supervisor/requests | Diagram admission, foreground order, cancellation |
 | 9 | provider response/client | Separate semantic decode from transport outcomes |
 | 10 | controller | Trace prompt and every terminal outcome |
 | 11 | protocol/projection/parsers | Map typed core actions to web DTOs |
@@ -1333,11 +1342,12 @@ session state changes.
 **Active response:** The controller's foreground request currently allowed to affect transcript,
 journal, and presentation.
 
-**Backend:** A session-lived `ModelBackend` for one character. Production uses
-`ProviderClient`; tests can inject fakes.
+**Backend:** A request-local `ModelBackend`. Production creates a fresh
+`ProviderClient` per request; tests can inject fresh facades over shared
+observation state.
 
-**Batch:** One or more concurrently executing character requests with one deterministic
-foreground slot.
+**Active generation:** The controller's ordered request handles and one
+deterministic foreground index for a prompt or multicast.
 
 **Controller view:** A short-lived borrowed view of controller state, consumed synchronously to make
 an owning web snapshot.

@@ -10,7 +10,7 @@ through HTTP and server-sent events.
 chaweb_app -> cha_web
 cha_web    -> cha_core
 
-cha_core -> workspace / agents / chat / session / util
+cha_core -> workspace / providers / agents / chat / session / util
 cha_web  -> cpp-httplib / nlohmann-json
 cha_core -> curl / sqlite / libuv / threads / toml++ / spdlog
 ```
@@ -39,7 +39,8 @@ diagnostic logging remains available until their teardown finishes.
 | `web/` | HTTP/SSE transport, chat-input grammar, API DTOs, live-session registry, mailboxes, and lifecycle policy. |
 | `workspace/` | The loaded workspace model, built-ins, and the one controller-opening operation. |
 | `session/` | Session storage, databases and leases, controller state, persistence, and character resolution. |
-| `agents/` | Character configuration, provider clients, model context, generation execution, cancellation, and event delivery. |
+| `providers/` | Provider transport, request execution, cancellation, protocol decoding, and event delivery. |
+| `agents/` | Character and provider configuration, immutable definitions, prompt assembly, and model context. |
 | `chat/` | Stable domain IDs plus presentation-neutral transcript records, validation, and live mutation. |
 | `util/` | Domain-neutral text, path, environment, logging, queue, and thread helpers. |
 | `../webapp/` | React browser application and its browser tests. |
@@ -106,7 +107,8 @@ The browser has Vitest checks and Playwright development/production flows under
 ## Detailed contracts
 
 - [Workspace layer](workspace/README.md)
-- [Generation execution](agents/README.md)
+- [Provider execution](providers/README.md)
+- [Character definitions and model context](agents/README.md)
 - [Sessions and persistence](session/README.md)
 - [Shared chat model](chat/README.md)
 - [Web frontend](web/README.md)

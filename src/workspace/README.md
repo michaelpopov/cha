@@ -71,8 +71,9 @@ override or prompt fails the server's startup rather than waiting for someone to
 open that forum. The error names the forum and its source directory.
 
 Full `CharacterDefinition` values contain separate public `CharacterMetadata`
-and private `ModelBackendConfig` members. Backend configuration may carry inline
-keys, so they are not on the public model API. `open_session()` is a friend of
+and private `ModelBackendConfig` members. Backend configuration carries the
+environment-variable name used to resolve a request-local credential, so it is
+not on the public model API. `open_session()` is a friend of
 `WorkspaceDefinition` and the one production caller allowed to copy them; the public
 API exposes only personas, character metadata and Markdown, forum information,
 and the startup-only `ForumSessionDirectory` values used to build

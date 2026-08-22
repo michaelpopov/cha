@@ -196,13 +196,25 @@ std::string format_characters_notice(
     result << "Characters in this forum (" << characters.all().size()
            << "), * marks the default.";
     result << " Any unambiguous prefix works.";
-    for (std::size_t index = 0; index < runtime_info.size(); ++index) {
-        const CharacterMetadata& character = characters.all()[index];
-        const CharacterRuntimeInfo& backend = runtime_info[index];
-        result << " | " << (backend.id == default_character_id ? "* " : "")
-               << "@" << character.display_name << "  " << backend.model << "  "
-               << backend.api << "  "
-               << (backend.streaming ? "streaming" : "non-streaming");
+    if (runtime_info.size() != characters.all().size()) {
+        throw std::logic_error(
+            "Character and runtime information counts do not match");
+    }
+    for (const CharacterMetadata& character : characters.all()) {
+        const auto backend = std::find_if(
+            runtime_info.begin(),
+            runtime_info.end(),
+            [&character](const CharacterRuntimeInfo& value) {
+                return value.id == character.id;
+            });
+        if (backend == runtime_info.end()) {
+            throw std::logic_error(
+                "Runtime information is missing character '" + character.id + "'");
+        }
+        result << " | " << (backend->id == default_character_id ? "* " : "")
+               << "@" << character.display_name << "  " << backend->model << "  "
+               << backend->api << "  "
+               << (backend->streaming ? "streaming" : "non-streaming");
     }
     return result.str();
 }

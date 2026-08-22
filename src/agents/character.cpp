@@ -36,10 +36,7 @@ std::string_view mode_name(Mode mode) noexcept {
 }
 
 std::string_view authentication_source(const ModelBackendConfig& config) noexcept {
-    if (!config.api_key_env.empty()) {
-        return "environment";
-    }
-    return config.api_key.empty() ? "none" : "config";
+    return config.api_key_env.empty() ? "none" : "environment";
 }
 
 void log_character_config(
@@ -257,6 +254,15 @@ void append_standard_prompt_context(
     const PersonaRoster& personas) {
     append_participant_roster(definitions, personas);
     append_forum_context(definitions);
+}
+
+CharacterRuntimeInfo character_runtime_info(const CharacterDefinition& definition) {
+    return {
+        .id = definition.character.id,
+        .model = definition.provider.config.model,
+        .api = provider_endpoint(definition.provider.config),
+        .streaming = definition.provider.config.stream,
+    };
 }
 
 void validate_persona_character_collisions(

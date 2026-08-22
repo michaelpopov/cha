@@ -135,6 +135,39 @@ TEST(ForumCharacters, ExposesTheFirstCharacterAndLooksUpImmutableIds) {
     EXPECT_EQ(characters.find(""), nullptr);
 }
 
+TEST(ForumCharacters, CorrelatesRuntimeInformationByCharacterId) {
+    const ForumCharacters characters({
+        character("ada", "Ada"),
+        character("grace", "Grace"),
+    });
+    const std::vector<CharacterRuntimeInfo> runtime_info{
+        {.id = "grace", .model = "grace-model", .api = "grace-api", .streaming = true},
+        {.id = "ada", .model = "ada-model", .api = "ada-api", .streaming = false},
+    };
+
+    const std::string notice =
+        format_characters_notice(characters, runtime_info, "ada");
+
+    const std::size_t ada = notice.find(
+        "* @Ada  ada-model  ada-api  non-streaming");
+    const std::size_t grace = notice.find(
+        "@Grace  grace-model  grace-api  streaming");
+    ASSERT_NE(ada, std::string::npos);
+    ASSERT_NE(grace, std::string::npos);
+    EXPECT_LT(ada, grace);
+}
+
+TEST(ForumCharacters, RejectsRuntimeInformationForAnUnknownCharacter) {
+    const ForumCharacters characters({character("ada", "Ada")});
+
+    EXPECT_THROW(
+        format_characters_notice(
+            characters,
+            {{.id = "grace", .model = "model", .api = "api", .streaming = true}},
+            "ada"),
+        std::logic_error);
+}
+
 TEST(ForumCharacters, SetsOneCharactersAppearanceInPlace) {
     ForumCharacters characters({
         character("ada", "Ada"),

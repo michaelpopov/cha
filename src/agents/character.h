@@ -40,6 +40,10 @@ struct CharacterRuntimeInfo {
     bool streaming{};
 };
 
+// Safe public runtime information derived directly from immutable
+// configuration. This does not resolve credentials or construct a transport.
+CharacterRuntimeInfo character_runtime_info(const CharacterDefinition& definition);
+
 // The immutable character snapshot shared by a session, its request-local
 // clients, and eventually request-owned provider work.
 using SharedCharacterDefinition = std::shared_ptr<const CharacterDefinition>;

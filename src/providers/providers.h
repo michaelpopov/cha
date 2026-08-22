@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/provider_client.h"
+#include "providers/provider_client.h"
 #include "util/concurrent_queue.h"
 #include "util/wake_notifier.h"
 

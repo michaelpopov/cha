@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agents/character.h"
-#include "agents/model_backend.h"
+#include "providers/model_backend.h"
 
 #include <atomic>
 
@@ -15,11 +15,6 @@ namespace cha {
 // backend from the same immutable character snapshot selected by the caller.
 using ProviderClientFactory =
     std::function<std::unique_ptr<ModelBackend>(SharedCharacterDefinition)>;
-
-// Safe public runtime information comes directly from immutable configuration;
-// neither helper resolves credentials nor constructs a transport.
-CharacterRuntimeInfo character_runtime_info(const CharacterDefinition& definition);
-std::string provider_endpoint(const ModelBackendConfig& config);
 
 // The ModelBackend for OpenAI-compatible HTTP endpoints, configured from
 // one CharacterDefinition.

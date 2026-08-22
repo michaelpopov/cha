@@ -1,6 +1,6 @@
 #include "session/session_controller.h"
 #include "agents/character.h"
-#include "agents/model_backend.h"
+#include "providers/model_backend.h"
 #include "session/session_database.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"

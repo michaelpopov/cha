@@ -1,10 +1,10 @@
-#include "agents/provider_client.h"
+#include "providers/provider_client.h"
 
 #include "agents/character.h"
-#include "agents/provider_response.h"
-#include "agents/responses_api.h"
+#include "agents/character_config.h"
+#include "providers/chat_completions_api.h"
+#include "providers/responses_api.h"
 #include "util/logging.h"
-#include "util/json_serialization.h"
 #include "util/text.h"
 
 #include <curl/curl.h>
@@ -454,80 +454,7 @@ GenerationResult classify_success_response_error(
     return result;
 }
 
-std::string_view role_name(ModelRole role) {
-    switch (role) {
-    case ModelRole::system: return "system";
-    case ModelRole::persona: return "user";
-    case ModelRole::assistant: return "assistant";
-    }
-    throw std::logic_error("Unknown model context role");
-}
-
-std::string build_chat_completions_request_body(
-    const GenerationRequest& input,
-    const ModelBackendConfig& config,
-    std::string_view system_prompt) {
-    Json messages = Json::array();
-    for (const ModelMessage& message :
-         project_model_context(input, system_prompt)) {
-        messages.push_back({
-            {"role", role_name(message.role)},
-            {"content", message.content},
-        });
-    }
-
-    Json body{
-        {"model", config.model},
-        {"stream", config.stream},
-        {"messages", std::move(messages)},
-    };
-    if (config.temperature) {
-        body["temperature"] = *config.temperature;
-    }
-    if (config.max_tokens) {
-        body["max_tokens"] = *config.max_tokens;
-    }
-    if (config.stream) {
-        body["stream_options"] = Json{{"include_usage", true}};
-    }
-    if (!config.reasoning_effort.empty()) {
-        body["reasoning_effort"] = config.reasoning_effort;
-    }
-    if (!input.run.prompt_cache_key.empty()
-        && config.cache_retention != CacheRetention::off
-        && is_direct_openai_host(config.host)) {
-        body["prompt_cache_key"] = input.run.prompt_cache_key;
-    }
-
-    return dump_json(body, "Model request");
-}
-
 } // namespace
-
-CharacterRuntimeInfo character_runtime_info(const CharacterDefinition& definition) {
-    return {
-        .id = definition.character.id,
-        .model = definition.provider.config.model,
-        .api = provider_endpoint(definition.provider.config),
-        .streaming = definition.provider.config.stream,
-    };
-}
-
-std::string provider_endpoint(const ModelBackendConfig& config) {
-    std::string host = config.host;
-    if (host.find(':') != std::string::npos && !host.starts_with('[')) {
-        host = '[' + host + ']';
-    }
-    const std::string base_url = std::string(config.https ? "https://" : "http://")
-        + host + ':' + std::to_string(config.port) + config.base_path;
-    switch (config.api) {
-    case ProviderApi::chat_completions:
-        return base_url + "/v1/chat/completions";
-    case ProviderApi::responses:
-        return base_url + "/v1/responses";
-    }
-    throw std::logic_error("Unknown provider API");
-}
 
 ProviderClient::ProviderClient(SharedCharacterDefinition definition)
     : definition_(std::move(definition)) {
@@ -543,8 +470,6 @@ ProviderClient::ProviderClient(SharedCharacterDefinition definition)
     if (config.model.empty()) {
         throw std::runtime_error("Provider client requires a non-empty configured model");
     }
-    api_key_ = config.api_key;
-
     if (!config.api_key_env.empty()) {
         const char* api_key = std::getenv(config.api_key_env.c_str());
         if (!api_key || *api_key == '\0') {
@@ -614,7 +539,7 @@ GenerationResult ProviderClient::perform(
     if (config.stream) {
         switch (config.api) {
         case ProviderApi::chat_completions:
-            decoder = std::make_unique<ProviderStreamDecoder>(
+            decoder = std::make_unique<ChatCompletionsStreamDecoder>(
                 config.reasoning_format, on_delta);
             break;
         case ProviderApi::responses:
@@ -781,7 +706,7 @@ GenerationResult ProviderClient::perform(
     GenerationResult result;
     switch (config.api) {
     case ProviderApi::chat_completions:
-        result = decode_provider_response(
+        result = decode_chat_completions_response(
             response.body,
             config.reasoning_format,
             on_delta);

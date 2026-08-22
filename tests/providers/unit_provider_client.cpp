@@ -1,7 +1,8 @@
-#include "agents/provider_client.h"
+#include "providers/provider_client.h"
 #include "chat/transcript.h"
 #include "support/mock_http_server.h"
 #include "support/test_transcript.h"
+#include "util/environment.h"
 #include "util/logging.h"
 
 #include <gtest/gtest.h>
@@ -9,10 +10,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -22,6 +25,25 @@ namespace cha {
 namespace {
 
 using Json = nlohmann::json;
+
+class ScopedEnvironmentVariable {
+public:
+    explicit ScopedEnvironmentVariable(std::string name) : name_(std::move(name)) {
+        if (const char* value = std::getenv(name_.c_str())) previous_ = value;
+    }
+
+    ~ScopedEnvironmentVariable() {
+        if (previous_) {
+            (void)set_environment_variable(name_, *previous_);
+        } else {
+            (void)unset_environment_variable(name_);
+        }
+    }
+
+private:
+    std::string name_;
+    std::optional<std::string> previous_;
+};
 
 GenerationRequest client_request(
     Transcript& transcript,
@@ -174,6 +196,10 @@ TEST(ProviderClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
 }
 
 TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
+    constexpr std::string_view api_key_variable =
+        "CHA_PROVIDER_CLIENT_AUTHORIZATION_TEST_KEY";
+    ScopedEnvironmentVariable environment{std::string(api_key_variable)};
+    ASSERT_TRUE(set_environment_variable(api_key_variable, "test-key"));
     const std::string stream =
         "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"
         "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
@@ -185,7 +211,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     configured.provider.config.temperature = 0.25;
     configured.provider.config.max_tokens = 200;
     configured.provider.config.reasoning_effort = "medium";
-    configured.provider.config.api_key = "test-key";
+    configured.provider.config.api_key_env = api_key_variable;
     configured.system_prompt = "Be concise.";
     const SharedCharacterDefinition definition =
         share_character_definitions({std::move(configured)}).front();
@@ -776,7 +802,6 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
     definition.provider.config.temperature = 0.25;
     definition.provider.config.max_tokens = 8;
     definition.provider.config.reasoning_effort = "medium";
-    definition.provider.config.api_key = "test-key";
     definition.system_prompt = "Be concise.";
     std::atomic_bool cancellation{false};
     const SharedCharacterDefinition shared = shared_definition(std::move(definition));

@@ -1,5 +1,5 @@
 #include "agents/character.h"
-#include "agents/providers.h"
+#include "providers/providers.h"
 #include "session/session_controller.h"
 #include "agents/character_config.h"
 #include "util/environment.h"
@@ -331,7 +331,7 @@ void point_at(CharacterDefinition& definition, int port) {
     definition.provider.config.api = ProviderApi::chat_completions;
     definition.provider.config.web_search = WebSearchMode::off;
     definition.provider.config.stream = false;
-    definition.provider.config.api_key = "integration-key";
+    // The local mock server does not require authentication.
     definition.provider.config.api_key_env.clear();
 }
 
