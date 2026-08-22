@@ -25,7 +25,7 @@ import {
 } from '../api/client';
 import { sessionOperationState, type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
-import { transliterateRussianChange } from './transliteration';
+import { TransliterationToggle, useTransliteration } from './TransliterationMode';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -126,12 +126,11 @@ export function ChatScreen({
   onSubmitInput,
 }: ChatScreenProps) {
   const [draft, setDraft] = useState('');
-  const [transliterationEnabled, setTransliterationEnabled] = useState(false);
+  const transliteration = useTransliteration<HTMLTextAreaElement>(draft);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<'send' | 'stop' | 'target' | null>(null);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
-  const composerInput = useRef<HTMLTextAreaElement | null>(null);
-  const pendingComposerSelection = useRef<number | null>(null);
+  const composerInput = transliteration.field;
   const followingLatest = useRef(true);
   const snapshot = state.sessionSnapshot;
   const generation = snapshot?.generation;
@@ -177,10 +176,6 @@ export function ChatScreen({
     if (!input) return;
     input.style.height = 'auto';
     input.style.height = `${input.scrollHeight}px`;
-    if (pendingComposerSelection.current !== null && document.activeElement === input) {
-      input.setSelectionRange(pendingComposerSelection.current, pendingComposerSelection.current);
-    }
-    pendingComposerSelection.current = null;
   }, [draft]);
 
   // Growing the transcript moves the end away without moving the viewport, so
@@ -192,21 +187,7 @@ export function ChatScreen({
   }
 
   function updateDraft(event: ChangeEvent<HTMLTextAreaElement>) {
-    const next = event.target.value;
-    const composing = 'isComposing' in event.nativeEvent && event.nativeEvent.isComposing === true;
-    if (!transliterationEnabled || composing) {
-      pendingComposerSelection.current = null;
-      setDraft(next);
-      return;
-    }
-
-    const change = transliterateRussianChange(
-      draft,
-      next,
-      event.target.selectionStart ?? next.length,
-    );
-    pendingComposerSelection.current = change.selection;
-    setDraft(change.value);
+    setDraft(transliteration.convert(event, draft));
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -426,20 +407,7 @@ export function ChatScreen({
           <span>{forum?.display_name ?? 'Unknown forum'}</span>
           <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
           <span>To: {recording ? 'Recording' : (character?.display_name ?? 'Unknown character')}</span>
-          <button
-            aria-label="Latin to Russian transliteration"
-            aria-pressed={transliterationEnabled}
-            className="cha-transliteration-toggle"
-            disabled={!sessionAvailable}
-            onClick={() => {
-              setTransliterationEnabled((enabled) => !enabled);
-              composerInput.current?.focus();
-            }}
-            title={`${transliterationEnabled ? 'Disable' : 'Enable'} Latin to Russian transliteration`}
-            type="button"
-          >
-            A→Я
-          </button>
+          <TransliterationToggle disabled={!sessionAvailable} transliteration={transliteration} />
         </div>
       </div>
     </section>
@@ -1128,6 +1096,7 @@ export function NewSessionScreen({
   sessionReport,
 }: NewSessionScreenProps) {
   const [name, setName] = useState('');
+  const transliteration = useTransliteration<HTMLInputElement>(name);
   const trimmedName = name.trim();
   const { pending: sessionPending, failure: sessionFailure } = sessionOperationState(state);
 
@@ -1156,11 +1125,17 @@ export function NewSessionScreen({
           className="cha-form-control"
           disabled={sessionPending}
           id="cha-session-name"
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => setName(transliteration.convert(event, name))}
           placeholder="e.g. Architecture review"
+          ref={transliteration.field}
           type="text"
           value={name}
         />
+        {/* The mode switch sits under the field it types into, on the same
+            right edge as the actions below it. */}
+        <div className="cha-field-mode">
+          <TransliterationToggle disabled={sessionPending} transliteration={transliteration} />
+        </div>
         <div className="cha-new-session-actions">
           <button
             className="cha-button cha-button-ghost"

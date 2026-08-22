@@ -912,6 +912,11 @@ select:disabled {
   margin: 1.2rem auto 0;
 }
 
+.cha-field-mode {
+  display: flex;
+  margin-top: -0.3rem;
+}
+
 .cha-form-control {
   width: 100%;
   min-height: 2.25rem;

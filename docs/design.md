@@ -1,113 +1,106 @@
-# Design: process-wide provider execution
+# Design: request-owned provider execution
 
 ## Status
 
-This document describes the planned provider-execution redesign. It is not an
-implementation description of the current code.
+This document describes the planned provider-execution redesign. It replaces
+the previous global-worker-pool proposal; it is not a description of the
+current implementation.
 
-The design deliberately stays small. Its purpose is to move network execution
-out of active sessions, reuse provider connections across sessions, and retain
-the conversation behavior that already works. It is not intended to become a
-general scheduling framework or a separate provider service.
+The design deliberately favors direct ownership over scheduling machinery.
+CHA is a small personal application. One provider request is one independent
+asynchronous operation, and the code should represent it that way.
 
 ## Summary
 
-CHA will have one process-owned `Providers` instance. Every active session will
-borrow it and submit generation requests to it. `Providers` will own:
+CHA will have one process-owned `Providers` instance. Its primary operation is
+`make_request()`. The call creates and immediately starts a `ProviderRequest`,
+then returns a shared handle to it.
 
-- one fixed worker pool shared by all sessions;
-- the cache of initialized provider state;
-- reusable `ProviderClient` instances and their curl easy handles;
-- provider-task dispatch and process-level execution shutdown.
+Every active request owns all of its execution state:
 
-An active session will continue to own:
+- an immutable snapshot of its character and generation input;
+- a shared snapshot of the transcript history;
+- one supervised detached worker thread;
+- one curl easy handle, created and destroyed by that worker;
+- one private queue of `GenerationEvent` values;
+- its cancellation and terminal state;
+- a shared wake signal for the session owner.
 
-- conversation and transcript state;
-- character selection and prompt construction;
-- a handle for its current generation batch;
-- foreground ordering, persistence, and presentation of generated output;
-- cancellation of its own work.
+`Providers` keeps a shared pointer to each request while its worker is active.
+The session keeps another shared pointer while it consumes the request's
+events. When the worker has released its transport resources, `Providers`
+removes its pointer. When the session has consumed or abandoned the request, it
+removes its pointer. The request is destroyed after both sides are finished
+with it.
 
-A normal prompt is a batch containing one request. `/mcast` is a batch
-containing several requests. The provider layer may run requests concurrently,
-but the session layer keeps the existing deterministic order in which multicast
-answers become visible.
+There is no generation worker pool, task queue, start gate, client lease, or
+process-wide concurrency limit. Every runnable request starts one thread
+immediately. A normal prompt creates one request. `/mcast` creates one
+independent request per target.
 
-`Providers` is a singleton by ownership, not a global service locator. It is
-constructed once in the process composition root and passed explicitly to the
-objects that need it.
+`Providers` caches only provider information: resolved credentials, protocol
+settings, and a successfully discovered model. It never caches a curl handle,
+request queue, prompt, transcript, generated output, or session object.
 
-## Motivation
+`Providers` is a singleton by process ownership, not a global service locator.
+It is constructed in the composition root and passed explicitly to session
+construction.
 
-Today provider execution is nested under each active session:
+## Why this division is simpler
 
-```text
-LiveSession
-  SessionController
-    ThreadPool
-    GenerationExecutor
-      ProviderClient per character
-        CurlEasyHandle
-    GenerationBatch
-```
+The asynchronous unit in the application is a provider request. Its thread,
+curl handle, cancellation flag, and output queue all have the same lifetime and
+belong together.
 
-This makes threads and network connections session resources even though they
-do not contain conversation state. The consequences are:
+Putting those resources behind a session executor or a global scheduler splits
+one operation across several owners. It then requires additional machinery to
+answer questions that a self-contained request answers directly:
 
-- every open session reserves its own worker threads;
-- provider connections cannot be reused by another session;
-- the number of threads grows with the number of sessions and characters;
-- curl and scheduling lifetimes are coupled to conversation lifetimes;
-- future process-wide concurrency control would require coordinating several
-  independent pools.
+- whether a task has been submitted or claimed;
+- whether a queued closure can still touch a destroyed session;
+- which client is leased to which execution;
+- whether a session must wait for unrelated work ahead of it;
+- how staged work is prevented from occupying a worker;
+- how a shared pool is drained without retaining session dependencies.
 
-The provider configuration cleanup is a prerequisite for this design. A
-character configuration is now the only place that selects a provider. Forum,
-session, command, and other overrides must not affect provider selection.
+The request-owned design removes those questions. A request has no session
+pointer and borrows no mutable session state. Once constructed, it can finish
+or be cancelled even if the session that created it has already been
+destroyed.
 
 ## Goals
 
-1. Keep exactly one provider-execution component per CHA process.
-2. Share a bounded number of worker threads across all active sessions.
-3. Reuse initialized provider state and curl handles across sessions.
-4. Support a normal request and concurrent `/mcast` requests with the same API.
-5. Keep transcripts, prompts, queues, and presentation state isolated between
-   sessions and requests.
-6. Preserve cancellation, streaming, persistence, and deterministic multicast
-   presentation.
-7. Make provider configuration reloads safe for already-running work.
-8. Make shutdown order explicit and ensure no provider task calls destroyed
-   session objects.
+1. Make provider execution independent of session lifetime.
+2. Keep the provider API centered on one operation, `make_request()`.
+3. Allocate threads and curl handles only for active provider requests.
+4. Keep every request's input, output, cancellation, and transport isolated.
+5. Let normal and multicast generation use the same request type.
+6. Preserve streaming and deterministic multicast presentation.
+7. Let session teardown cancel and release provider work without waiting.
+8. Reuse resolved provider information without introducing client leasing.
+9. Keep workspace reloads safe for requests already in progress.
+10. Make process shutdown supervise all detached request workers.
 
 ## Non-goals
 
 This change does not introduce:
 
-- a separate or remotely accessible provider service;
-- dynamic worker-pool resizing;
-- one worker pool per provider;
-- provider-specific rate limiting or priority scheduling;
-- a new retry policy;
+- a generation thread pool;
+- a global provider task queue;
+- a process-wide request limit;
+- fairness, priorities, or rate limiting;
+- reusable curl easy handles or connection leasing;
 - curl multi;
-- persistent connection caches across process restarts;
+- batch dispatch atomicity;
+- session-open provider discovery or reachability checks;
+- a new retry policy;
 - request deduplication or shared generated output;
-- provider selection outside character configuration;
-- a replacement for the current transcript or persistence model.
+- a separate provider service;
+- persistent provider caches across process restarts.
 
-## Current behavior to preserve
-
-The redesign changes ownership, not user-visible generation semantics.
-
-- `SessionController` creates one immutable model-history view before a batch.
-- Every request in `/mcast` sees that same pre-multicast history.
-- No target execution can reach a provider until the session has committed the
-  durable state that receives its output.
-- Each execution has its own event queue and cancellation state.
-- Provider work may happen concurrently.
-- Multicast outputs are consumed and persisted in target order.
-- Failure of one multicast target does not corrupt another target's output.
-- Session shutdown cancels and waits for its active generation before destroying
-  the notifier and controller.
+If observed usage later demonstrates that unbounded active-request concurrency
+or new curl handles are a real problem, those problems can be addressed then.
+They should not shape this implementation preemptively.
 
 ## Target ownership
 
@@ -117,677 +110,677 @@ flowchart TD
     Main --> Manager["LiveSessionManager"]
     Manager --> Session["LiveSession"]
     Session --> Controller["SessionController"]
-    Controller -->|"stage immutable requests"| Providers
-    Providers --> Pool["global ThreadPool"]
-    Providers --> States["ProviderState cache"]
-    States --> Clients["idle ProviderClient / curl slots"]
-    Pool --> Task["provider execution"]
-    Task --> Queue["per-execution GenerationEvent queue"]
-    Task -->|"notify"| Wake["session WakeNotifier"]
-    Controller -->|"consume"| Queue
+
+    Controller -->|"shared handle while consuming"| Request["ProviderRequest"]
+    Providers -->|"shared handle while active"| Request
+
+    Request --> Input["immutable request input"]
+    Request --> Queue["GenerationEvent queue"]
+    Request --> Cancel["cancellation state"]
+    Request --> Wake["shared WakeNotifier"]
+    Request --> Worker["supervised detached worker"]
+    Worker --> Curl["one curl easy handle"]
+
+    Providers --> Cache["resolved provider information cache"]
+    Request -->|"shared provider snapshot"| Cache
 ```
 
-The process composition root constructs `Providers` before the live-session
-manager. Consequently, normal reverse destruction destroys all live sessions
-before it destroys `Providers`.
+The session owns conversation behavior. It does not own provider-execution
+resources. Specifically, the session continues to own:
 
-`SessionController` borrows `Providers&`. It will no longer own a `ThreadPool`
-or a `GenerationExecutor`. A session still owns its `GenerationBatch`, because
-the batch is the session's handle for observing, ordering, canceling, and
-waiting for its own requests.
+- transcript and journal state;
+- character and persona selection;
+- prompt construction and request ordering;
+- the ordered vector of request handles for the current generation;
+- persistence and presentation of streamed output;
+- the decision to cancel its requests.
 
-## Provider selection
+The ordered vector may be wrapped in a small session-local type, but that type
+is not an executor. It owns no thread, curl handle, queue, provider client, or
+waitable task.
 
-Provider selection remains part of the resolved character definition. The
-resolved value must contain both a stable provider identifier and the exact
-connection configuration used by that character:
+## Request input boundary
+
+No worker may retain the current `TranscriptView`. It is a call-scoped,
+non-owning view whose spans and strings may be invalidated by the next
+transcript mutation.
+
+Before any request thread is launched, the session synchronously creates one
+owning immutable model-history snapshot. A multicast creates this snapshot
+once and shares it among all target requests:
+
+```cpp
+using SharedModelHistory = std::shared_ptr<const ModelHistory>;
+```
+
+The snapshot operation copies every transcript value needed for model-context
+projection, including the open-entry and off-record state. No worker reads the
+live transcript.
+
+The complete request input is an owning value. Its intended shape is:
 
 ```cpp
 struct ProviderSelection {
   std::string id;
   ModelBackendConfig config;
 };
-```
 
-`CharacterDefinition` should contain `ProviderSelection` instead of an
-unidentified `ModelBackendConfig`. `LoadedCharacterConfig` must carry the same
-resolved selection into the runtime definition.
-
-The identifier is useful for cache sharing and diagnostics, but it is not
-sufficient to identify reusable state. The cache key is:
-
-```text
-(provider id, exact resolved ModelBackendConfig)
-```
-
-Using the full pair matters during workspace reload. An identifier can retain
-the same name while its endpoint, model, protocol, or another setting changes.
-Old in-flight requests must keep using the old resolved configuration, while
-new requests use the replacement. In every other situation the pair is
-redundant, because a provider config file is the only source of a resolved
-`ModelBackendConfig`: no character, forum, or session layer overrides one of its
-fields.
-
-Exact comparison needs a defaulted `operator==` on `ModelBackendConfig`. That
-struct holds `api_key`, so the cache key contains a secret: it may be compared
-but never logged or included in diagnostics.
-
-No provider selector is accepted from a forum, an active session, or a command.
-In particular, `Providers` does not add a runtime equivalent of `/provider`.
-
-## Request boundaries
-
-Provider work is asynchronous, so everything a task reads must either be owned
-by the task or have a lifetime guaranteed through task completion. The API must
-not accept a raw `TranscriptView&` or a pointer into mutable session state.
-
-The existing immutable `SharedModelHistory` and `GenerationRequest` are the
-right boundary for transcript data. A provider request can combine that data
-with a shared immutable character definition:
-
-```cpp
-struct ProviderRequest {
-  std::shared_ptr<const CharacterDefinition> definition;
-  GenerationRequest generation;
+struct ProviderRequestInput {
+  std::shared_ptr<const CharacterDefinition> character;
+  SharedModelHistory history;
+  RunSpec run;
 };
 ```
 
-The shared character definition avoids copying a potentially large system
-prompt on every submission. It is a snapshot: later workspace changes do not
-change an already-submitted request.
+The exact names may change during implementation. The important properties
+are:
 
-Each request includes the data already required for generation, including its
-request identifier, target character, author, prompt, shared history, prompt
-cache key, and timestamp. The provider cache never stores any of those values.
+- `character` snapshots identity, the system prompt, and its exact
+  `ProviderSelection`;
+- `history` owns the pre-request conversation projection;
+- `run` owns the request ID, author, target, prompt, cache key, and timestamp.
+
+`CharacterDefinition` should retain its provider identifier together with its
+resolved backend configuration. A bare provider ID is useful to callers and
+logs, but the request must retain the resolved configuration snapshot so that
+a reload cannot change work already in progress.
 
 ## Public interface
 
-The intended interface is small:
+The provider execution interface should remain small:
 
 ```cpp
+class ProviderRequest {
+ public:
+  const RunSpec& run() const noexcept;
+
+  ChannelReadStatus try_receive(GenerationEvent& event);
+  void cancel() noexcept;
+};
+
 class Providers {
  public:
-  explicit Providers(std::size_t worker_count,
-                     ProviderClientFactory client_factory = {});
+  Providers(ProviderClientFactory client_factory = {});
   ~Providers();
 
   Providers(const Providers&) = delete;
   Providers& operator=(const Providers&) = delete;
 
-  ProviderRuntimeInfo describe(const ProviderSelection& selection);
+  std::shared_ptr<ProviderRequest> make_request(
+      ProviderRequestInput input,
+      std::shared_ptr<WakeNotifier> notifier);
 
-  GenerationBatch stage_batch(
-      std::vector<ProviderRequest> requests,
-      WakeNotifier& notifier);
+  ProviderRuntimeInfo cached_info(
+      const ProviderSelection& selection) const;
 
   void shutdown() noexcept;
 };
 ```
 
-Names may be adjusted during implementation, but the responsibilities should
-not grow. In particular, this component does not know about active sessions,
-forums, transcript mutation, foreground characters, or message persistence.
+`make_request()` is the only operation that starts provider work. It copies or
+takes ownership of everything the worker needs, registers the request, starts
+its thread immediately, and returns its handle.
 
-`describe()` initializes the selection's provider state if it is not cached
-yet, then returns provider-level runtime information: the model, the
-API/protocol, and streaming capability. It can block on the network and it can
-throw, exactly as constructing a `ProviderClient` does today. Character metadata
-is combined with that information by the session-facing layer when a
-`ModelBackendInfo` is needed.
+`cached_info()` is a non-networking observation, not another execution path.
+It reports configured information and a discovered model when one is already
+cached. Before discovery, an automatically selected model is reported as
+unknown. Session opening never waits for this value to become known.
 
-`SessionController` calls `describe()` once per forum character while it
-constructs, because it builds its `characters_` view from that runtime
-information before any prompt exists. Session open therefore keeps today's
-behavior: it blocks on provider initialization and fails when a provider
-configuration is invalid or undiscoverable. The benefit of the shared cache is
-that a second session on the same providers finds every state already
-initialized and blocks on nothing.
+The injected client factory exists for focused tests. It should not grow into a
+general execution framework.
 
-`stage_batch()` has failure-atomic behavior: either it returns a batch handle
-for every requested execution, or no execution is created and no worker is
-occupied. It resolves the provider state for each request (normally a cache hit,
-because `describe()` already initialized it) and constructs one execution per
-request. It submits nothing to the worker pool.
+## `ProviderRequest`
 
-The batch handle retains the operations the controller needs:
+### Owned state
 
-```cpp
-foreground_run()
-open()
-try_receive_foreground()
-advance()
-cancel()
-wait()
+A request owns:
+
+- its `ProviderRequestInput`;
+- a shared reference to the matching cached provider information;
+- its event queue;
+- its atomic cancellation flag;
+- enough terminal state to guarantee exactly one terminal event;
+- its shared wake notifier;
+- request-local response decoding and error state;
+- its curl easy handle while its worker is using it.
+
+A request never contains:
+
+- a `SessionController`, `LiveSession`, forum, or journal pointer;
+- a borrowed transcript or character reference;
+- a borrowed notifier reference;
+- another request's events or cancellation state.
+
+### Immediate start
+
+`make_request()` does not stage work. It registers the new request and launches
+its worker before returning. There is no scheduler and no state in which a
+runnable request waits in a process queue.
+
+The worker first checks cancellation, resolves any provider information still
+needed, constructs one curl easy handle, prepares the request, and performs the
+HTTP operation. It publishes streaming deltas to its queue and closes the queue
+with exactly one completed, cancelled, or failed terminal event.
+
+If thread creation itself fails, `make_request()` returns the request already
+closed with a failure event. This is the exceptional case in which a request
+cannot have a worker. Other multicast requests are unaffected.
+
+Programmer errors such as a missing history snapshot remain exceptions.
+Ordinary provider, credential, discovery, thread-start, transport, and protocol
+failures are request terminal events.
+
+### Output queue and wakeups
+
+Every request has one `ConcurrentQueue<GenerationEvent>`. There is no process
+output queue and no session-owned provider queue. Request identifiers remain
+useful for persistence and diagnostics, but they are not used to separate
+interleaved output because output is already isolated by ownership.
+
+After adding an event, the request calls its shared `WakeNotifier`. The request
+owns a `shared_ptr`, not a reference. If the session has already disappeared,
+the signal object simply lives until the request releases it; waking it touches
+no destroyed session state.
+
+The queue remains readable after provider execution finishes. This is why the
+session's shared request handle may outlive the handle in `Providers`.
+
+### Cancellation
+
+`cancel()` only sets the request's atomic cancellation flag and wakes anything
+inside the request that needs to recheck it. It is idempotent and non-blocking.
+
+- A worker that has not started provider work reports cancellation without
+  creating a network request.
+- A worker resolving provider information stops as soon as that operation can
+  safely observe cancellation.
+- A running curl transfer observes the flag through its progress callback.
+- Cancellation never publishes a second terminal event after completion won
+  the race.
+
+There is no queued-request cancellation state. Once `make_request()` succeeds,
+the worker belongs only to that request and can always make progress toward its
+own terminal state.
+
+### Supervised detached worker
+
+The request logically owns one worker, but it must not store a joinable
+`std::thread` that can be destroyed by that same worker. Doing so would allow
+the last shared pointer to run the request destructor on the worker thread and
+attempt to join itself.
+
+Instead, the launched thread is detached and captures shared request state plus
+a shared internal provider-registry state. The registry gives the detached
+worker process-level supervision:
+
+1. `make_request()` inserts a strong request pointer into the active registry
+   before launching the thread.
+2. The worker catches every exception and publishes exactly one terminal event.
+3. The worker destroys its curl handle and releases all transport callbacks.
+4. As its final provider-facing action, it removes the request from the active
+   registry and notifies shutdown waiters.
+5. The detached closure retains the request through its final return, so
+   registry removal cannot destroy state still in use by that closure.
+
+The worker captures the shared internal registry state, not a raw `Providers*`.
+Consequently, the small registry object remains alive long enough for the
+worker's final completion action even while the outer `Providers` object is
+shutting down.
+
+The active-registry removal point means provider I/O is quiescent: the curl
+handle is already destroyed, no more events will be published, and the worker
+will touch no process or session object after unregistering.
+
+This is a supervised detached thread, not an abandoned thread. Process shutdown
+waits for every active registry entry to reach this quiescent point.
+
+## Provider-information cache
+
+`Providers` keeps a small collection of cached provider states. The cache key
+is the exact provider selection:
+
+```text
+(provider id, resolved ModelBackendConfig)
 ```
 
-`open()` is the point at which executions are submitted to the global worker
-pool. Until then the batch holds inert executions that no worker can see. This
-replaces the previous shared start gate; see
-[Execution state and cancellation](#execution-state-and-cancellation).
+The configuration remains part of the key because an identifier can retain the
+same name while its endpoint, model, credentials, or protocol changes during a
+workspace reload.
 
-The exact type may remain the current `GenerationBatch` during migration.
+One cached state may contain only provider-level information:
 
-## Separation inside `ProviderClient`
+- the provider ID and exact resolved configuration;
+- the resolved API key or other credential material;
+- the configured protocol and endpoint information;
+- the configured model, or one successfully discovered model;
+- the small synchronization needed for first resolution and discovery.
 
-The current `ProviderClient` combines two kinds of state:
+It never contains:
 
-1. provider transport state: endpoint, protocol, API key, selected model, and
-   one curl easy handle;
-2. character/request state: metadata, system prompt, model history, and current
-   output destination.
+- a curl easy handle or reusable `ProviderClient`;
+- a worker thread or task;
+- transcript history, prompts, or generated text;
+- an event queue, notifier, or cancellation flag;
+- a session, controller, forum, or journal pointer.
 
-Only the first category is cacheable across sessions. `ProviderClient` will be
-changed into a provider-only connection. Character metadata and the system
-prompt are supplied to request preparation for each call and are not retained
-after the call finishes.
+The number of configured providers is small, so a locked linear collection is
+adequate. `ModelBackendConfig` needs exact equality. Its secret fields may be
+compared but must never be logged.
 
-A provider client owns exactly one curl easy handle. A handle is leased to at
-most one running request at a time. No locking scheme may make simultaneous
-requests share a curl easy handle.
+### Lazy resolution and discovery
 
-## Provider-state cache
+Session opening performs no provider network work. It validates workspace
+configuration syntax and builds character definitions, but it does not resolve
+an automatic model or test provider reachability.
 
-`Providers` maintains a small collection of `ProviderState` objects. A state
-contains:
+The first request for a provider performs any remaining credential resolution
+and model discovery on its own worker. A successful result is stored in the
+provider-information cache. Later requests reuse that information but create
+their own curl handles.
 
-- its immutable `ProviderSelection` snapshot;
-- resolved model/API/streaming information;
-- resolved credentials needed to create clients;
-- idle provider clients, each owning one curl easy handle;
-- the synchronization needed to initialize and lease clients.
+Concurrent first requests for the same provider coordinate only provider
+information initialization. At most one of them performs a particular
+discovery at a time; the others wait in their own request threads. A discovery
+failure is reported to the request that encountered it and is not cached as a
+permanent failure. A later request may retry.
 
-The number of configured providers is small. A locked linear collection with
-exact configuration equality is preferable to custom hashing and a more
-general cache framework.
+Waiting for shared discovery does not occupy any scarce application worker:
+each waiting thread belongs to the request that needs the result. Discovery has
+its existing bounded network timeout.
 
-### Initialization
+The curl handle used for discovery belongs to the discovering request. It may
+be reused for that same request's generation call, but it is destroyed when
+the request finishes and is never returned to `Providers`.
 
-The first use of a selection initializes its state. API-key resolution and
-optional model discovery occur once for that state. Additional clients are
-created from the resolved state and do not repeat a `/models` request.
+## Concurrency model
 
-In practice the first use is `describe()` on the session-open path, so a
-session's providers are already initialized before its first prompt. `Providers`
-does not rely on that: `stage_batch()` initializes any state it does not find
-cached, so initialization is correct regardless of which call reaches a
-selection first.
+Every runnable provider request immediately creates one operating-system
+thread. There is no process-wide concurrency bound.
 
-Concurrent first users of the same selection wait for the same initialization
-result. If initialization fails, the incomplete entry is removed rather than
-left as a permanently poisoned cache value. All current waiters receive the
-failure, and a future call can retry initialization. This matters for
-`describe()`, because a provider that is down when one session opens must not
-stay permanently broken for the next one.
+This makes resource use proportional to active inference rather than to open
+sessions or configured characters. It also gives every multicast target and
+every session an independent path to its provider; unrelated slow requests
+cannot hold a shared worker needed by another session.
 
-Because initialization happens inside `describe()` and `stage_batch()`, both
-report configuration and discovery failures by throwing, before any execution
-exists. Failure atomicity is preserved: a batch that cannot resolve every
-provider state creates no executions at all.
+The maximum concurrency is therefore the sum of active normal and multicast
+requests across admitted sessions. A very wide multicast can create many
+threads and curl handles. This is an explicit tradeoff. CHA does not add a
+pool, semaphore, task queue, or rejection limit until actual use shows that one
+is needed.
 
-### Client leasing
+Thread creation and curl-handle creation add per-request overhead, and destroying
+the handle gives up connection reuse between requests. For slow inference calls
+that cost is expected to be small compared with the reduction in idle resources
+and scheduling machinery. This assumption should be measured before adding a
+reuse mechanism.
 
-For each executing task:
+## Session interaction
 
-1. read the `ProviderState` the execution already holds a shared reference to;
-2. lease an idle `ProviderClient`, or create one when none is idle;
-3. prepare and perform the request using only that client;
-4. reset request-specific curl options and return a healthy client to the idle
-   list;
-5. discard the client if its transport state cannot safely be reused.
+### Durable state before immediate start
 
-An execution holds its `ProviderState` from staging onward, but leases a client
-only while it runs. Nothing is leased by an execution that is queued, cancelled
-before it starts, or waiting behind other work.
+Because `make_request()` starts provider work immediately, the controller calls
+it only after it has committed the durable foreground state that will receive
+the generation.
 
-Concurrent requests to one provider therefore cause multiple curl handles to
-exist. Once concurrency falls, those clients remain idle for later sessions.
-The number of idle clients per provider cannot exceed the global worker count,
-so no eviction policy is needed initially.
+There is no need to construct an inert execution before that commit. Provider
+configuration has already been syntactically validated during workspace load.
+Any failure that happens after the durable turn begins is represented as that
+turn's generation failure.
 
-When a configuration changes under the same provider identifier, a new state
-is selected. In-flight tasks retain a shared reference to their old state. That
-old state and its clients are destroyed automatically after the last task and
-lease release them.
+This deliberately removes dispatch failure atomicity. Durable state is not
+rolled back merely because a thread, credential, discovery call, or provider
+failed to start. Such a failure is a normal failed generation and is persisted
+through the same terminal-event path as a transport error.
 
-### What is never cached
+### Normal generation
 
-The provider cache must not retain:
+For a normal prompt:
 
-- transcript or model-history views;
-- user prompts or generated text;
-- system prompts beyond the lifetime of an immutable character definition;
-- output queues or wake notifiers;
-- session, forum, or controller pointers;
-- cancellation state belonging to completed executions.
+1. The controller resolves the target character and creates an immutable
+   history snapshot.
+2. It builds the owning request input and commits the prompt turn.
+3. It calls `Providers::make_request()`.
+4. The returned handle becomes the only active request in the session's ordered
+   request list.
+5. The request worker streams events into its private queue and wakes the
+   session owner.
+6. The controller consumes and persists the events as it does today.
+7. After consuming the terminal event, the controller releases its handle.
 
-## Global worker pool
-
-`Providers` owns one fixed `ThreadPool`. The core constructor takes its size so
-tests can use a deterministic value. Production initially passes
-`WebSettings::session_limit`, whose current default is eight. This introduces no
-new user-facing setting and allows one normal request per admitted session to
-make progress when all sessions are busy.
-
-`/mcast` can use otherwise available workers. If there are more multicast
-children and normal requests than workers, excess work waits in FIFO order.
-The guarantee is bounded concurrency, not simultaneous start of every multicast
-target.
-
-This deliberately retires an existing invariant. Today `SessionController` sizes
-its private pool to the number of forum characters, so a multicast always starts
-every target at once. With a shared pool of eight, a forum wider than the pool
-starts eight targets and queues the rest, and a session competing with seven
-busy sessions can start one at a time. Presentation order is unaffected, because
-the controller already displays targets in their original order regardless of
-completion order; only the time to the last answer changes.
-
-Sizing the pool from `session_limit` is a starting value, not a derivation:
-`session_limit` bounds admitted sessions, while this bounds concurrent provider
-requests. It is chosen because it needs no new user-facing setting and
-guarantees that every admitted session can always make progress on one normal
-request. An independently configurable worker count is a deferred decision, to
-be revisited if multicast latency in a wide forum turns out to matter in
-practice.
-
-The first implementation does not add priorities, per-session quotas, or
-provider-specific pools. FIFO scheduling is adequate for CHA. These can be
-reconsidered only if observed behavior demonstrates a real problem.
-
-## Execution state and cancellation
-
-Moving to a global pool changes two things about how work starts and stops.
-
-### Submission replaces the start gate
-
-Today every execution is submitted to the pool immediately and then blocks in a
-shared start gate until the controller has committed the durable session state
-that will receive its output. That is safe while the pool is session-private,
-because only that session's own workers wait. On a shared pool it is not: the
-controller writes a durable transcript entry between staging and opening, so a
-multicast would park up to eight global workers in an unbounded wait while one
-session finishes a database write. Every other session would stall behind it.
-
-The start gate is therefore removed. Submission itself becomes the start signal:
-
-- `stage_batch()` constructs every execution and verifies the pool is still
-  accepting work. It submits nothing, so no worker is occupied and no provider
-  can be reached. If any step fails, no execution exists and the caller sees the
-  failure as an exception, exactly as before.
-- `open()` submits every execution to the pool. The controller calls it only
-  after the durable state is committed, so the first moment a worker can run an
-  execution is already the first moment its output has somewhere to go.
-- If the controller fails between the two calls, it cancels the batch instead of
-  opening it. Nothing was ever submitted, so cancellation completes immediately.
-
-This removes the `StartGate` type, its condition variable, and the possibility
-of a worker blocking on anything other than its own provider I/O.
-
-One failure mode moves. Pool submission can now fail after the durable commit
-rather than during staging. `open()` therefore cannot throw: an execution that
-cannot be submitted is completed in place with a failure event, which the
-controller consumes and presents through the path it already uses for provider
-errors. In practice submission fails only when the pool has stopped, which
-happens during shutdown.
-
-### Execution state machine
-
-Each execution has a small atomic state machine, so that canceling a session
-never waits for that session's queued closure to reach the front of the process
-queue behind unrelated long-running requests:
-
-```mermaid
-stateDiagram-v2
-    [*] --> Staged
-    Staged --> Queued: open() submits
-    Staged --> Finished: cancelled before open()
-    Queued --> Running: worker claims and starts
-    Queued --> Finished: cancel before claim
-    Running --> Finished: success, error, or cancel
-    Finished --> [*]
-```
-
-Cancellation behaves as follows:
-
-- A `Staged` execution was never submitted. Cancelling it completes it in place.
-- A `Queued` execution is atomically completed by the canceling thread. Its
-  terminal state is published immediately, so `wait()` returns without waiting
-  for a worker.
-- A `Running` execution observes the existing atomic cancellation flag. Curl's
-  progress callback aborts network transfer in the same way it does today.
-- Completion and terminal-event publication happen once, regardless of races
-  between cancellation and worker execution.
-
-This makes session teardown depend on that session's running I/O, not on the
-position of its unstarted work in the process queue.
-
-### The abandoned-closure rule
-
-The previous point has a consequence that must be stated explicitly, because
-getting it wrong is a use-after-free rather than a missed wakeup.
-
-A `Queued` execution that is cancelled is `Finished` before its closure is
-dequeued. `wait()` returns, the session tears down, and the controller, the
-notifier, and the session owner are destroyed. The closure is still sitting in
-the global pool queue, and some worker will eventually run it.
-
-Therefore: **a closure that observes `Finished` must return without touching
-anything it borrows.** It must not call the notifier, must not touch its
-`ProviderState` or lease a client, must not publish an event, and must not run
-the normal completion path — the terminal event was already published by the
-canceling thread. The only state it may touch is its own execution object, whose
-lifetime the closure's `shared_ptr` guarantees.
-
-This also rules out the current arrangement in which an execution holds a bare
-`ModelBackend&`. An execution owns a `shared_ptr<ProviderState>` and leases a
-client only after it has committed to running, so an abandoned closure holds no
-reference to anything a destroyed session owned.
-
-## Output delivery and wakeups
-
-Every execution retains its own `ConcurrentQueue<GenerationEvent>`. There is no
-global output queue. Per-execution queues prevent interleaving events from
-different requests and avoid relying on request identifiers for isolation.
-
-A worker pushes events to its execution queue and calls the borrowed
-`WakeNotifier`. `OwnerWakeSignal` can continue implementing this interface.
-
-The notifier is borrowed, so its lifetime needs care. Session teardown cancels
-and waits for the whole batch before destroying the notifier, which covers every
-execution that actually reaches a worker. It does not cover an execution that
-was cancelled while `Queued`, because that one finishes without waiting for its
-closure to be dequeued. Such a closure may run after the notifier is gone, and
-it is precisely the case the abandoned-closure rule above forbids from calling
-`wake()`. Note that today's terminal path wakes the notifier unconditionally
-after marking an execution finished; that unconditional wake must not survive
-into the abandoned-closure path.
-
-Request identifiers can remain session-local because queues and execution state
-are not shared between sessions. Logs should include both the session/request
-context and provider identifier when available, but request IDs do not become a
-process-wide addressing mechanism.
-
-## Normal generation
-
-For a normal user prompt:
-
-1. `SessionController` resolves the active character definition.
-2. It snapshots the model history and builds one `ProviderRequest`.
-3. It calls `Providers::stage_batch()` with a one-element vector, which
-   constructs the execution without submitting it.
-4. After the session mutation is committed, it calls `open()`, which submits the
-   execution to the global pool.
-5. A global worker claims it, leases a matching provider client, and performs
-   the request.
-6. The controller consumes events from the request queue, persists the answer,
-   and completes the batch as it does today.
-
-The common path has no special single-provider mode. It is simply a batch of
-one.
-
-## Multicast generation
+### Multicast generation
 
 For `/mcast`:
 
 1. The controller creates one immutable pre-multicast history snapshot.
-2. It builds a `ProviderRequest` for every target character using that snapshot.
-3. `Providers::stage_batch()` resolves all required provider states and
-   constructs every execution, or fails without constructing any.
-4. `open()` submits all of them at once. Workers execute targets concurrently up
-   to global pool capacity, and any excess waits in the pool queue. Targets may
-   use the same provider state or different states.
-5. Each target writes only to its own event queue.
-6. The controller activates, drains, displays, and persists target answers in
-   the original target order.
-7. Cancellation applies to every unfinished child. Failure of one child remains
-   isolated from the others.
+2. It builds an ordered request input for every target using that same shared
+   snapshot.
+3. It activates and durably records the first foreground target.
+4. It independently calls `make_request()` for every target. Every successful
+   call immediately starts one thread.
+5. A target that cannot start receives its own failed request. Other targets
+   continue normally; multicast dispatch is not failure-atomic.
+6. Each request buffers only its own events.
+7. The controller drains, presents, and persists the request handles in target
+   order. Before draining a later target, it activates that target's durable
+   turn as it does today.
+8. After each terminal event is consumed, the session releases that request
+   handle.
 
-Tasks from other sessions may run between multicast tasks. That changes only
-timing; it must not change history snapshots, output ownership, or presentation
-order.
+Later targets may finish before they become foreground. Their results remain
+in their own in-memory queues. This preserves one shared history snapshot and
+deterministic presentation without making the provider layer understand a
+batch.
+
+The first target may begin slightly before the last target's thread is created.
+The design promises independent concurrent execution, not simultaneous thread
+start.
+
+## Stop and session destruction
+
+`/stop` and session destruction have different responsibilities.
+
+### `/stop`
+
+`/stop` calls `cancel()` on every unfinished request but retains the ordered
+handles. The live session continues consuming terminal events so it can persist
+and present cancellation through the normal path. The command remains
+non-blocking; completion arrives through request queues and wakeups.
+
+### Session destruction
+
+Session destruction must not wait for provider I/O.
+
+The controller:
+
+1. calls `cancel()` on every unfinished request;
+2. synchronously closes any currently durable turn as cancelled;
+3. releases all request handles;
+4. destroys its transcript, journal, controller, and session objects normally.
+
+An active request remains alive through the shared pointer in `Providers` and
+the detached worker closure. Its shared wake signal may also outlive the
+session, but contains no session pointer and is harmless to wake. After curl
+observes cancellation and the worker reaches its terminal path, `Providers`
+removes its active pointer and the request is destroyed if no consumer remains.
+
+This lets a session release its journal and lease promptly. Provider cleanup is
+a process-owned concern rather than a session teardown dependency.
 
 ## Workspace reload
 
-Provider configuration follows snapshot semantics:
+Provider and character configuration use snapshot semantics:
 
-- A submitted request holds its resolved character and provider selection.
+- Every request owns the exact character and provider selection used when it
+  was created.
 - File changes do not mutate a running request.
-- Newly loaded character definitions use the new resolved configuration.
-- An unchanged `(id, config)` pair reuses cached state and curl handles.
-- The same identifier with a changed config creates a new state.
-- Old state is reclaimed when no task uses it.
+- New character definitions use the newly resolved provider configuration.
+- An unchanged `(provider id, config)` pair reuses cached credentials and a
+  discovered model.
+- A changed configuration creates a distinct cached provider state.
+- Old requests continue using their old state until they finish.
 
-The existing reload path closes and reopens affected live sessions. No explicit
-provider-cache flush is required. Exact resolved configuration matching gives
-the desired behavior without coordinating the cache with workspace generations.
+The cache does not need an explicit flush. Old cached information is small and
+contains no curl handle or generated content. A simple later cleanup of
+unreferenced obsolete states may be added if repeated reloads make it useful;
+it is not required for correctness.
 
 ## Process shutdown
 
-Shutdown order must be explicit:
+The composition root constructs `Providers` before live sessions, so it
+outlives every session that can call `make_request()`.
+
+Shutdown order is:
 
 1. Stop accepting new HTTP work.
-2. Ask `LiveSessionManager` to shut down all sessions.
-3. Each controller cancels and waits for its active batch.
-4. Join session owner threads, destroying their controllers and notifiers.
+2. Ask `LiveSessionManager` to destroy all sessions.
+3. Each session cancels and releases its request handles without waiting.
+4. Join all session owner threads and destroy their controllers and wake-signal
+   owners. Request-held shared wake signals may remain alive.
 5. Call `Providers::shutdown()`.
-6. `Providers` rejects new staging and `describe()`, stops and joins its worker
-   pool, and destroys cached provider states and their clients.
-7. Shut down logging.
-
-By step 5 every batch has already been cancelled, waited for, and destroyed by
-its owning session, so `Providers` has no outstanding execution to chase. It
-keeps no registry of executions: ownership flows through the session's batch,
-and adding a parallel weak registry would be machinery for a state that steps
-2-4 already make impossible. `shutdown()` may assert that the pool queue drained
-rather than track what was in it.
-
-Abandoned closures are the one thing that can still be in the pool queue at step
-6, and they are harmless: `ThreadPool::stop()` drains already-accepted tasks, and
-each such closure observes `Finished` and returns immediately.
+6. `Providers` closes admission, cancels every active request, and waits until
+   the active registry is empty.
+7. Every request unregisters only after its curl handle and provider callbacks
+   are gone, so cached provider information can then be destroyed safely.
+8. Shut down logging.
 
 `Providers::shutdown()` is idempotent. Its destructor calls it as a fallback,
-but the composition root should call it explicitly so ordering is obvious.
-`stage_batch()` and `describe()` after shutdown throw without creating anything.
+but the composition root calls it explicitly to make the order visible.
 
-Curl global initialization stays where it is: a function-local static
-constructed on first use and destroyed after `main` returns. That already orders
-correctly, because `Providers` is scoped inside `main` and destroys every cached
-easy handle in step 6, before the static's cleanup runs. There is no explicit
-curl-global step to perform, and moving one into `Providers` would only add a
-lifetime to manage.
+`make_request()` after shutdown is rejected without launching a thread.
+Ordinary application flow prevents this by stopping HTTP work and sessions
+first.
+
+Curl global initialization remains a function-local static. A request destroys
+its easy handle before it leaves the active registry, and shutdown waits for
+the registry to empty before `main` returns. Curl global cleanup therefore
+still occurs after every request transport has been released.
 
 ## Error handling
 
-The ownership change should preserve existing user-visible errors and streaming
-behavior.
+Provider errors belong to individual requests:
 
-- Invalid or undiscoverable provider configuration throws from `describe()` at
-  session open, or from `stage_batch()` if a state is first reached there.
-  Neither creates an execution.
-- A transport/protocol failure becomes an error event for only that execution.
-- A batch that cannot resolve every provider state creates no executions and
-  reports the failure to the caller.
-- An execution that cannot be submitted during `open()` is completed in place
-  with a failure event rather than throwing, because the session state it
-  belongs to is already durable by then.
-- Exceptions cannot escape worker functions.
-- Exactly one terminal result is observable for each execution.
-- A client that may contain unsafe curl state after failure is discarded.
-- Secrets, authorization headers, prompts, and response bodies are not emitted
-  in cache or scheduler logs.
+- invalid request input caused by a programmer error throws before registration;
+- missing credentials become a failed request event;
+- model-discovery failure becomes a failed request event and is not permanently
+  cached;
+- thread-start failure closes that request with a failure event;
+- transport and protocol failures close only that request's queue;
+- cancellation closes only that request's queue;
+- one multicast target's failure does not cancel or prevent another target;
+- exceptions never escape a detached worker;
+- exactly one terminal event is observable for every returned request.
+
+Failures after a durable prompt has been recorded are persisted as generation
+failures. The design does not attempt to roll back or atomically dispatch a
+multicast.
+
+Allocation failure remains process-fatal where the current application treats
+it as unrecoverable. The design does not add elaborate recovery for an
+inability to allocate the request object or its terminal event.
 
 ## Diagnostics
 
-Existing logs should gain enough context to diagnose shared execution without
-turning `Providers` into an observability subsystem. Useful fields are:
+Useful request and provider log fields are:
 
 - provider identifier;
-- provider-state cache hit, miss, and initialization failure;
-- client lease reused versus newly created;
-- request and session identifiers already present in the call path;
-- queued, running, canceled, and completed transitions;
-- elapsed queue and provider time.
+- the existing session and request identifiers;
+- an internal process request token used only to track the active registry;
+- provider-information cache hit or miss;
+- configured versus discovered model;
+- request thread started, cancelled, completed, and unregistered;
+- current active-request count;
+- provider and total request duration.
 
-Configuration values containing credentials and all prompt/transcript content
-remain excluded.
+Logs must not include:
+
+- API keys or authorization headers;
+- complete provider configurations containing secrets;
+- system prompts, transcript content, user prompts, or response bodies.
+
+There are no queued/running scheduler transitions or client-lease events to
+log because those concepts do not exist.
 
 ## Expected code changes
 
-### New files
+### Provider layer
 
-- `src/agents/providers.h`
-- `src/agents/providers.cpp`
-- `tests/agents/unit_providers.cpp`
+- Add the process-owned `Providers` component and `ProviderRequest` handle.
+- Move generation thread, cancellation, curl lifetime, event queue, and
+  terminal publication into the request implementation.
+- Refactor `ProviderClient` into a per-request transport created on the request
+  worker. It must not retain session state or survive for reuse.
+- Add the small provider-information cache for resolved credentials and model
+  discovery.
+- Retain an injectable client factory for request-level tests.
 
-### Main modifications
+### Character and request input
 
-- `character_config.*`: retain the provider ID with the resolved backend config,
-  and give `ModelBackendConfig` a defaulted `operator==` for cache-key equality.
-- `character.*`: store `ProviderSelection` in `CharacterDefinition`.
-- `provider_client.*`: remove retained character/request state and make a client
-  an exclusively leased provider connection.
-- `model_backend.h`: separate provider runtime information from character-facing
-  `ModelBackendInfo` if needed.
-- `generation_batch.*`: remove `StartGate`; make `open()` the submission point
-  on the global pool; replace the borrowed `ModelBackend&` with a
-  `shared_ptr<ProviderState>` and an in-task client lease; add the execution
-  state machine, immediate completion of cancelled staged and queued executions,
-  and the abandoned-closure early return.
-- `session_controller.*`: borrow `Providers&`; remove its worker pool and
-  `GenerationExecutor`; retain session batch consumption and ordering.
-- `session_open.*`, `workspace_runtime.*`, and `web_main.cpp`: pass the one
-  process-owned `Providers` instance through the construction path and enforce
-  shutdown order.
-- build files: compile the new component and remove obsolete sources.
+- Preserve the provider ID with the resolved `ModelBackendConfig` in
+  `CharacterDefinition`.
+- Give `ModelBackendConfig` exact equality for provider-cache lookup.
+- Preserve one synchronous immutable model-history copy per normal request or
+  multicast, shared among multicast targets.
 
-`GenerationExecutor` becomes redundant after `SessionController` stages work
-directly through `Providers`. It can be used as a temporary migration adapter,
-then its source and unit tests should be removed rather than maintained as an
-extra forwarding abstraction.
+### Session layer
+
+- Inject `Providers&` into `SessionController` construction.
+- Replace `GenerationExecutor` and `GenerationBatch` ownership with a small
+  ordered collection of `shared_ptr<ProviderRequest>` values and a foreground
+  index.
+- Retain all transcript, journal, ordering, and presentation behavior in the
+  controller.
+- Pass a shared wake signal rather than a borrowed notifier reference.
+- Separate `/stop`, which drains cancellation events, from destruction, which
+  cancels and releases without waiting.
+
+### Deletions
+
+After migration, remove:
+
+- `GenerationExecutor` and its tests;
+- the execution and start-gate implementation in `GenerationBatch`;
+- the application generation `ThreadPool` and its tests if it has no remaining
+  user;
+- session-owned backend/client collections;
+- documentation and build entries describing session or global generation
+  pools.
+
+The HTTP server's own library thread pool is unrelated and remains unchanged.
 
 ## Implementation sequence
 
-The work should be split into small, continuously testable changes.
+The implementation should stay continuously testable:
 
-### 1. Carry provider identity
+1. Carry provider identity alongside resolved character configuration.
+2. Add `ProviderRequest` with owned input, queue, cancellation, a shared wake
+   signal, and a request-local transport.
+3. Add `Providers` active-request supervision and provider-information caching.
+4. Add lazy model discovery and cached runtime information.
+5. Move normal session generation to one request handle.
+6. Replace multicast batch execution with an ordered vector of independent
+   request handles.
+7. Make session destruction cancel and release without waiting.
+8. Wire one `Providers` instance through the composition root and implement
+   process shutdown.
+9. Remove the old executor, batch execution machinery, generation thread pool,
+   and obsolete tests.
+10. Run the full suite and update ownership documentation.
 
-- Introduce `ProviderSelection`.
-- Carry it from character configuration into `CharacterDefinition`.
-- Keep the current session-local executor behavior.
-- Update configuration and character tests.
-
-### 2. Make clients reusable
-
-- Separate provider transport state from character/request inputs.
-- Make exclusive client leasing possible without changing ownership yet.
-- Preserve protocol request-body and streaming tests.
-
-### 3. Add `Providers`
-
-- Add the global pool, provider-state initialization, `describe()`, and the
-  client cache.
-- Replace the start gate with submission on `open()`, and add the execution
-  state machine, cancellation transitions, and the abandoned-closure rule.
-- Test this component independently through an injected client factory.
-
-### 4. Move sessions onto the shared component
-
-- Inject `Providers&` into `SessionController`.
-- Build `characters_` from `describe()` per forum character at construction.
-- Remove the session-owned pool and executor.
-- Keep `GenerationBatch` and all foreground/persistence logic in the session.
-- Add tests using two controllers against one provider component.
-
-### 5. Complete process lifetime changes
-
-- Construct one instance in `web_main`.
-- Implement explicit shutdown order and reload coverage.
-- Remove `GenerationExecutor` and obsolete tests/build entries.
-- Update documentation that describes ownership.
-
-Each step should compile and pass its focused unit tests before the next step.
-The final step should run the full test suite.
+Temporary adapters are acceptable between steps, but they should be removed
+when their migration step is complete rather than preserved as forwarding
+abstractions.
 
 ## Test plan
 
-### Providers unit tests
+### Provider request tests
 
-- repeated requests with the same `(id, config)` reuse one provider state;
-- the same ID with different resolved configs creates distinct states;
-- concurrent same-provider requests never use one client/curl handle together;
-- a second client avoids repeating model discovery;
-- initialization failure is shared by current waiters but can be retried later,
-  including a failed `describe()` followed by a successful one;
-- `stage_batch()` occupies no worker until `open()` is called;
-- a staged batch that is cancelled instead of opened finishes immediately and
-  reaches no provider;
-- a queued execution cancels and finishes without waiting to be dequeued;
-- a closure dequeued after its execution finished touches no borrowed state:
-  with the notifier and provider state already destroyed, running it is safe and
-  publishes nothing;
-- running cancellation reaches the client and publishes one terminal result;
-- a batch that cannot resolve one provider state creates no executions;
-- submission failure during `open()` produces a failure event, not an exception;
-- shutdown rejects new work, cancels outstanding work, and joins workers;
-- healthy clients are reused and broken clients are discarded.
+- `make_request()` starts a worker immediately;
+- a request owns an immutable input snapshot and never reads a mutated
+  transcript view;
+- each request creates a distinct curl handle;
+- streaming deltas and exactly one terminal event arrive through its queue;
+- two requests never share an output queue or cancellation flag;
+- cancelling before network work produces a cancelled terminal event;
+- running cancellation reaches curl's progress callback;
+- thread-start failure produces a failed request handle;
+- all worker exceptions become failed terminal events;
+- event publication safely wakes a shared notifier after the original session
+  owner has released it;
+- dropping the session handle while running does not destroy the request;
+- dropping the final consumer handle after completion destroys the request;
+- no curl handle or callback remains when the request unregisters.
 
-### Batch and session tests
+### Providers tests
 
-- normal generation behavior is unchanged;
-- a session opened against an unreachable provider fails at open, as today;
-- a second session on the same providers opens without re-running discovery;
-- `/mcast` children share one history snapshot;
-- `/mcast` executes concurrently when capacity exists, and serializes the excess
-  in target order when the forum is wider than the pool;
-- a slow durable commit in one session does not delay another session's request;
-- outputs are consumed in target order even when completion order differs;
-- one target failure does not mix or discard another target's output;
-- session shutdown waits for its running request and not unrelated queued work;
-- destroying a session leaves no notifier callbacks behind;
-- two sessions share provider state while retaining separate queues and output;
-- the global number of concurrent clients never exceeds worker-pool capacity.
+- `Providers` retains every active request and removes it after transport
+  quiescence;
+- repeated selections reuse resolved credentials and a discovered model;
+- repeated requests never reuse a curl handle;
+- the same provider ID with changed configuration uses a distinct state;
+- model discovery happens lazily on the first request, not on session open;
+- concurrent first requests coordinate discovery;
+- failed discovery can be retried by a later request;
+- `cached_info()` reports an unknown automatic model before discovery and the
+  resolved model afterward;
+- there is no concurrency limit: all requested workers may start;
+- shutdown rejects new work, cancels active work, and waits for the active
+  registry to empty;
+- a detached worker can finish safely after its creating session is destroyed.
+
+### Session tests
+
+- opening a session performs no provider network request and succeeds when the
+  provider is temporarily unreachable;
+- a normal prompt persists its durable start before calling `make_request()`;
+- normal streaming and terminal persistence are unchanged;
+- `/mcast` targets share one history snapshot;
+- every multicast target starts independently;
+- failure to start one target does not prevent another from running;
+- completion order may differ while presentation remains target-ordered;
+- later target events remain isolated until that target becomes foreground;
+- one target failure does not mix with or discard another target's output;
+- `/stop` cancels every request and retains handles until terminal events are
+  persisted;
+- session destruction cancels and releases requests without waiting for curl;
+- a request wake after session destruction touches no destroyed object;
+- two sessions share provider information but never request queues, curl
+  handles, or generated output.
 
 ### Reload and process tests
 
-- unchanged configuration reuses provider state across a workspace reload;
-- changed configuration under the same ID is used only by new requests;
-- in-flight requests complete on their original configuration snapshot;
-- process shutdown destroys sessions before curl clients and worker threads;
-- every cached easy handle is destroyed before curl's global cleanup runs.
-
-Existing `ProviderClient` protocol, body construction, authentication,
-streaming, and curl-cancellation tests remain transport-level regression tests.
+- unchanged provider configuration reuses cached information after reload;
+- changed configuration under the same provider ID affects only new requests;
+- an in-flight request completes with its original character and provider
+  snapshots;
+- process shutdown destroys sessions before closing provider admission;
+- provider shutdown waits for every request transport to unregister;
+- every curl easy handle is destroyed before curl global cleanup.
 
 ## Acceptance criteria
 
 The redesign is complete when all of these invariants hold:
 
-1. No active session or `SessionController` owns a worker pool,
-   `ProviderClient`, or curl easy handle.
-2. Exactly one explicitly owned `Providers` instance serves all live sessions.
-3. Every curl easy handle is used by at most one request at a time.
-4. Every execution has an isolated output channel.
-5. Canceling a session's queued request does not wait behind unrelated work.
-6. `/mcast` retains one history snapshot and deterministic presentation order.
-7. Configuration reloads provide snapshot isolation to in-flight requests.
-8. Provider caches contain no transcript, prompt, output, or session state.
-9. Provider configuration secrets are never logged.
-10. Existing protocols, streaming, error reporting, and running-request
-    cancellation continue to work.
-11. No worker ever blocks on session state: a worker waits only on its own
-    provider I/O.
-12. A pool closure that runs after its session was destroyed touches nothing
-    that session owned.
+1. No session or session controller owns a generation thread, curl handle,
+   provider client, or generation event queue.
+2. Every runnable provider request starts one thread immediately.
+3. There is no generation worker pool, process task queue, or concurrency cap.
+4. Every request owns one curl easy handle while running and never shares it.
+5. Every request has an isolated queue and exactly one terminal event.
+6. No worker reads a live `TranscriptView` or other mutable session state.
+7. A request borrows no session object; its wake signal is shared-owned.
+8. `Providers` retains active requests until their transport resources are
+   quiescent.
+9. Session destruction cancels and releases requests without waiting.
+10. `/stop` retains and drains requests so cancellation remains durable and
+    visible.
+11. Multicast targets share one immutable history snapshot and remain
+    presentation-ordered despite independent execution.
+12. Failure to start or execute one multicast target does not prevent another
+    target from running.
+13. Session opening performs no provider network discovery.
+14. The provider cache contains only provider information, never curl handles
+    or request/session content.
+15. Reloaded configuration does not mutate work already in progress.
+16. Process shutdown cancels and supervises every detached worker through
+    transport quiescence.
+17. Secrets and prompt or response content are never written to scheduler or
+    cache diagnostics.
 
 ## Deferred decisions
 
-The following are intentionally deferred until real usage demonstrates a need:
+The following are intentionally deferred until observed behavior justifies
+them:
 
-- fairness stronger than FIFO between sessions;
-- an idle-client eviction policy;
-- an independently configurable global worker count;
-- provider concurrency limits or rate limiting;
-- request priorities;
-- proactive provider warm-up.
+- an active-request limit;
+- a provider or process semaphore;
+- thread pooling;
+- reusable curl handles or another connection cache;
+- provider-specific concurrency and rate limits;
+- priorities or fairness between sessions;
+- bounded response queues and backpressure;
+- proactive provider warm-up;
+- eviction of obsolete provider-information states.
 
-The structures above do not prevent those changes, but they should not be built
-as part of this redesign.
+Adding one of these later must preserve the central ownership rule: a
+`ProviderRequest` remains a self-contained operation, and no provider worker
+may borrow session state.

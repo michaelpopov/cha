@@ -470,6 +470,41 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
     .toHaveAttribute('aria-current', 'page');
 });
 
+it('transliterates Latin typing to Russian in the session name when enabled', async () => {
+  const user = userEvent.setup();
+  const createSession = vi.fn(async (_forumId: string, label: string) => ({
+    id: 'created',
+    label,
+  }));
+  render(<App
+    client={fixtureClient({ listSessions: async () => [], createSession })}
+    connectSessionEvents={inertSessionEvents}
+  />);
+
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }));
+
+  const name = screen.getByRole('textbox', { name: 'Session name' });
+  const toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+  await user.type(name, 'Latin stays Latin');
+  expect(name).toHaveValue('Latin stays Latin');
+
+  await user.clear(name);
+  await user.click(toggle);
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  expect(name).toHaveFocus();
+  await user.type(name, "Privet, shhuka mozhet s+hodit' v raj+on.");
+  expect(name).toHaveValue('Привет, щука может сходить в район.');
+
+  await user.clear(name);
+  await user.type(name, 'Obzor arhitektury');
+  await user.click(screen.getByRole('button', { name: 'Start session' }));
+  await waitFor(() => expect(createSession).toHaveBeenCalledWith('lobby', 'Обзор архитектуры'));
+});
+
 it('refreshes Recent and an open forum catalog after a sidebar rename', async () => {
   const user = userEvent.setup();
   let renamed = false;
