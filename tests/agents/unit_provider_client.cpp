@@ -155,7 +155,8 @@ TEST(ProviderClient, EchoesOnePromptInTestMode) {
     EXPECT_EQ(result.outcome, GenerationOutcome::completed);
     EXPECT_EQ(deltas, (std::vector<std::string>{"hello"}));
     EXPECT_EQ(second_client.prepare(request).bytes, "hello");
-    EXPECT_EQ(client.info().character.description, "Helpful character");
+    EXPECT_EQ(character_runtime_info(*definition).character.description,
+              "Helpful character");
 }
 
 TEST(ProviderClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
@@ -190,7 +191,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     configured.system_prompt = "Be concise.";
     const SharedCharacterDefinition definition =
         share_character_definitions({std::move(configured)}).front();
-    const ModelBackendInfo runtime = model_backend_info(*definition);
+    const CharacterRuntimeInfo runtime = character_runtime_info(*definition);
     EXPECT_EQ(runtime.character.id, "assistant");
     EXPECT_EQ(runtime.model, "configured-model");
     EXPECT_TRUE(runtime.api.ends_with("/v1/chat/completions"));
@@ -237,7 +238,8 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
           R"({"kind":"character","speaker":"Other","text":"Other answer"})"}},
         {{"role", "user"}, {"content", "from You:\nQuestion"}},
     }));
-    EXPECT_TRUE(client.info().api.ends_with("/v1/chat/completions"));
+    EXPECT_TRUE(character_runtime_info(*definition).api.ends_with(
+        "/v1/chat/completions"));
 }
 
 TEST(ProviderClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
@@ -555,8 +557,9 @@ TEST(ProviderClient, BoundsProviderErrorInsideSuccessfulResponse) {
     EXPECT_LE(result.message.size(), 512U);
 }
 
-TEST(ProviderClient, BoundsProviderErrorsInResultsAndDiagnostics) {
-    const std::string body = std::string(10'000, 'x') + "UNRETAINED_TAIL";
+TEST(ProviderClient, BoundsProviderErrorsAndDoesNotLogResponseBodies) {
+    const std::string body = "SENSITIVE_RESPONSE_BODY "
+        + std::string(10'000, 'x') + "UNRETAINED_TAIL";
     MockHttpServer mock({status_response(
         503, "Service Unavailable", "text/plain", body)});
     mock.start();
@@ -574,7 +577,7 @@ TEST(ProviderClient, BoundsProviderErrorsInResultsAndDiagnostics) {
     EXPECT_LT(result.message.size(), 600U);
     EXPECT_EQ(result.message.find("UNRETAINED_TAIL"), std::string::npos);
     const std::string output = log.contents();
-    EXPECT_NE(output.find("Provider HTTP error details"), std::string::npos);
+    EXPECT_EQ(output.find("SENSITIVE_RESPONSE_BODY"), std::string::npos);
     EXPECT_EQ(output.find("UNRETAINED_TAIL"), std::string::npos);
 }
 
@@ -778,7 +781,8 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
     definition.provider.config.api_key = "test-key";
     definition.system_prompt = "Be concise.";
     std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(std::move(definition)));
+    const SharedCharacterDefinition shared = shared_definition(std::move(definition));
+    ProviderClient client(shared);
     Transcript transcript;
     const GenerationRequest request = client_request(
         transcript, 27, "Question", {
@@ -799,7 +803,7 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
     mock.join();
     ASSERT_EQ(mock.requests().size(), 1U);
     EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/responses HTTP/1.1"));
-    EXPECT_TRUE(client.info().api.ends_with("/v1/responses"));
+    EXPECT_TRUE(character_runtime_info(*shared).api.ends_with("/v1/responses"));
     const Json body = Json::parse(request_body(mock.requests().front()));
     EXPECT_EQ(body["model"], "configured-model");
     EXPECT_TRUE(body["stream"]);
@@ -826,7 +830,8 @@ TEST(ProviderClient, PrefixesProviderEndpointsWithConfiguredBasePath) {
     CharacterDefinition definition = network_definition(mock.port(), false);
     definition.provider.config.base_path = "/api";
     std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(std::move(definition)));
+    const SharedCharacterDefinition shared = shared_definition(std::move(definition));
+    ProviderClient client(shared);
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 33, "Question");
 
@@ -837,7 +842,8 @@ TEST(ProviderClient, PrefixesProviderEndpointsWithConfiguredBasePath) {
     mock.join();
     ASSERT_EQ(mock.requests().size(), 1U);
     EXPECT_TRUE(mock.requests().front().starts_with("POST /api/v1/chat/completions HTTP/1.1"));
-    EXPECT_TRUE(client.info().api.ends_with("/api/v1/chat/completions"));
+    EXPECT_TRUE(character_runtime_info(*shared).api.ends_with(
+        "/api/v1/chat/completions"));
 }
 
 TEST(ProviderClient, HandlesNonStreamingResponsesApiResponse) {

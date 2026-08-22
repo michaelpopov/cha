@@ -2,6 +2,7 @@
 
 #include "chat/character.h"
 #include "chat/transcript.h"
+#include "session/session_identity.h"
 
 #include <memory>
 #include <optional>
@@ -20,6 +21,7 @@ using SharedModelHistory = std::shared_ptr<const ModelHistory>;
 // One logical model run. Durable transcript entry IDs are assigned only when
 // the controller activates the run.
 struct RunSpec {
+    SessionIdentity session;
     RequestId request_id{};
     CharacterMetadata target;
     EntryIdentity author;

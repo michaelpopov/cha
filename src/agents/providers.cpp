@@ -31,9 +31,12 @@ void default_thread_launcher(std::function<void()> worker) {
 std::string lifecycle_fields(
     std::string_view provider_id,
     std::string_view model,
+    const SessionIdentity& session,
     RequestId request_id,
     std::uint64_t token) {
     return "provider_id=" + std::string(provider_id)
+        + " forum_id=" + session.forum_id
+        + " session_id=" + session.session_id
         + " request_id=" + std::to_string(request_id)
         + " token=" + std::to_string(token)
         + " model=" + std::string(model);
@@ -76,7 +79,7 @@ void ProviderRequest::cancel() noexcept {
 }
 
 bool ProviderRequest::has_valid_input() const noexcept {
-    if (!input_.character || !input_.generation.history || !notifier_) {
+    if (!input_.character || !input_.generation.history) {
         return false;
     }
     const CharacterDefinition& character = *input_.character;
@@ -121,6 +124,7 @@ void ProviderRequest::execute(
         fields = lifecycle_fields(
             character.provider.id,
             character.provider.config.model,
+            input_.generation.run.session,
             request_id,
             token_);
         if (cancellation_.load(std::memory_order_acquire)) {
@@ -198,6 +202,9 @@ Providers::~Providers() {
 std::shared_ptr<ProviderRequest> Providers::make_request(
     ProviderRequestInput input,
     std::shared_ptr<WakeNotifier> notifier) {
+    if (!notifier) {
+        throw std::invalid_argument("Provider request requires a notifier");
+    }
     auto request = std::shared_ptr<ProviderRequest>(new ProviderRequest(
         std::move(input), std::move(notifier)));
     if (!request->has_valid_input()) {
@@ -217,6 +224,7 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
             + lifecycle_fields(
                 character.provider.id,
                 character.provider.config.model,
+                request->input_.generation.run.session,
                 request->input_.generation.run.request_id,
                 0));
         request->fail("Provider request admission is closed");
@@ -226,11 +234,21 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
     const std::uint64_t token = registry->next_token++;
     request->set_token(token);
     registry->active.emplace(token, request);
+    const std::size_t active_count = registry->active.size();
     // The active entry is the admission decision. Releasing this lock before
     // thread construction lets shutdown cancel and wait for the registered
     // request; the worker then observes cancellation before client creation.
     lock.unlock();
     try {
+        const CharacterDefinition& character = *request->input_.character;
+        log_info("Provider request admitted: "
+            + lifecycle_fields(
+                character.provider.id,
+                character.provider.config.model,
+                request->input_.generation.run.session,
+                request->input_.generation.run.request_id,
+                token)
+            + " active_count=" + std::to_string(active_count));
         thread_launcher_([registry, request, client_factory, token]() mutable {
             request->execute(client_factory);
             // The closure's factory copy may own test or transport support
@@ -238,45 +256,57 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
             // contains only its request, registry, and scalar token.
             client_factory = nullptr;
 
-            std::unique_lock lock(registry->mutex);
-            const auto found = registry->active.find(token);
-            if (found != registry->active.end()) {
-                log_debug("Provider request unregistering: token="
-                    + std::to_string(token)
-                    + " active_count=" + std::to_string(registry->active.size() - 1));
-                registry->active.erase(found);
-                lock.unlock();
-                registry->empty.notify_all();
+            std::size_t active_count{};
+            {
+                std::lock_guard lock(registry->mutex);
+                if (!registry->active.contains(token)) return;
+                active_count = registry->active.size() - 1;
             }
+            try {
+                const CharacterDefinition& character = *request->input_.character;
+                log_debug("Provider request unregistering: "
+                    + lifecycle_fields(
+                        character.provider.id,
+                        character.provider.config.model,
+                        request->input_.generation.run.session,
+                        request->input_.generation.run.request_id,
+                        token)
+                    + " active_count=" + std::to_string(active_count));
+            } catch (...) {
+                log_debug("Provider request unregistering");
+            }
+            {
+                std::lock_guard lock(registry->mutex);
+                registry->active.erase(token);
+            }
+            registry->empty.notify_all();
         });
-    } catch (const std::exception& error) {
-        const CharacterDefinition& character = *request->input_.character;
-        log_error("Provider request failed to start: "
-            + lifecycle_fields(
-                character.provider.id,
-                character.provider.config.model,
-                request->input_.generation.run.request_id,
-                token));
-        request->fail(error.what());
-        {
-            std::lock_guard registry_lock(registry->mutex);
-            registry->active.erase(token);
-        }
-        registry->empty.notify_all();
     } catch (...) {
-        const CharacterDefinition& character = *request->input_.character;
-        log_error("Provider request failed to start: "
-            + lifecycle_fields(
-                character.provider.id,
-                character.provider.config.model,
-                request->input_.generation.run.request_id,
-                token));
-        request->fail("Provider request worker could not be started");
+        const std::exception_ptr launch_error = std::current_exception();
+        try {
+            std::rethrow_exception(launch_error);
+        } catch (const std::exception& error) {
+            request->fail(error.what());
+        } catch (...) {
+            request->fail("Provider request worker could not be started");
+        }
         {
             std::lock_guard registry_lock(registry->mutex);
             registry->active.erase(token);
         }
         registry->empty.notify_all();
+        const CharacterDefinition& character = *request->input_.character;
+        try {
+            log_error("Provider request failed to start: "
+                + lifecycle_fields(
+                    character.provider.id,
+                    character.provider.config.model,
+                    request->input_.generation.run.session,
+                    request->input_.generation.run.request_id,
+                    token));
+        } catch (...) {
+            log_error("Provider request failed to start");
+        }
     }
     return request;
 }

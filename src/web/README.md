@@ -54,10 +54,13 @@ returns actors rather than identities. The write commits before the fan-out, so
 an actor that appears in neither is one that has yet to read the file at all.
 
 `POST /api/v1/workspace/reload` is the equivalent whole-workspace operation. It
-requires the same empty JSON body and origin policy as other mutations. On
-success it returns the new bootstrap payload and shuts every starting or running
-session down with `workspace_reloading`; on validation failure it returns
-`422 workspace_reload_failed` and leaves the current generation alone.
+requires the same empty JSON body and origin policy as other mutations. It
+first shuts every starting or running session down with `workspace_reloading`
+and joins their owners, then loads and publishes the candidate generation. On
+validation failure it returns `422 workspace_reload_failed` and leaves the
+current generation alone. It does not reload `.env`. This is distinct from a
+character-settings save, which re-reads only affected forum definitions at the
+next session open and never publishes a workspace generation.
 
 A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
 rejected rather than ignored, so a client written against an older shape fails
@@ -233,11 +236,11 @@ model backend. Keeping that ordering in the coordinator makes the forced
 path directly testable and prevents a stuck HTTP worker from suppressing it.
 `ProcessShutdownSignal` is the portable signal bridge; its handler only records
 `sig_atomic_t` state and normal code performs the shutdown work.
-`web_main.cpp` is only the composition root for the one server listener. It
-destroys the live-session manager, repository, and model in an inner scope so
-their teardown
-records still reach the sink, and shuts logging down only afterwards, which is
-the order Section 19.1 step 7 requires.
+`web_main.cpp` is the composition root for the listener and one process-owned
+`Providers`. Process shutdown stops HTTP admission, joins every live-session
+owner, then calls `Providers::shutdown()` before diagnostic logging is closed.
+Provider shutdown waits for request transport cleanup, so curl callbacks and
+easy handles cannot outlive logging or process-owned provider state.
 Server-scoped log records use `web server`, while session-scoped records always
 carry `forum_id` and `session_id`; neither form includes prompt, answer,
 transcript, provider-message, or credential text. Route exceptions are recorded

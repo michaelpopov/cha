@@ -2,6 +2,7 @@
 #include "support/test_generations.h"
 #include "support/test_notifier.h"
 #include "util/environment.h"
+#include "util/logging.h"
 
 #include <gtest/gtest.h>
 
@@ -9,6 +10,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -24,6 +27,35 @@ namespace cha {
 namespace {
 
 using namespace std::chrono_literals;
+
+class ProviderDiagnosticLog {
+public:
+    ProviderDiagnosticLog()
+        : directory_(std::filesystem::temp_directory_path()
+            / ("cha_provider_logging_"
+               + std::to_string(
+                   std::chrono::steady_clock::now().time_since_epoch().count()))),
+          path_(directory_ / "cha.log") {
+        shutdown_diagnostic_logging();
+        initialize_diagnostic_logging(path_, "debug");
+    }
+
+    ~ProviderDiagnosticLog() {
+        shutdown_diagnostic_logging();
+        std::filesystem::remove_all(directory_);
+    }
+
+    std::string contents() const {
+        std::ifstream file(path_);
+        return {
+            std::istreambuf_iterator<char>(file),
+            std::istreambuf_iterator<char>()};
+    }
+
+private:
+    std::filesystem::path directory_;
+    std::filesystem::path path_;
+};
 
 struct BackendState {
     std::mutex mutex;
@@ -84,10 +116,6 @@ public:
         return cancellation.load(std::memory_order_acquire)
             ? GenerationResult{GenerationOutcome::cancelled, {}}
             : state_->result;
-    }
-
-    ModelBackendInfo info() const override {
-        return {{"test-id", "Test"}, "test", "test://provider", true};
     }
 
 private:
@@ -152,7 +180,7 @@ ProviderRequestInput input(
     const SharedCharacterDefinition& character,
     RequestId request_id) {
     Transcript transcript;
-    return {
+    ProviderRequestInput result{
         .character = character,
         .generation = test::generation_request(
             transcript,
@@ -160,6 +188,8 @@ ProviderRequestInput input(
             character->character.id,
             character->character.display_name),
     };
+    result.generation.run.session = {"test-forum", "test-session"};
+    return result;
 }
 
 std::vector<GenerationEvent> receive_terminal(
@@ -236,6 +266,37 @@ TEST(Providers, PublishesOrderedDeltasThenExactlyOneTerminal) {
     GenerationEvent extra = GenerationCompleted{};
     EXPECT_EQ(request->try_receive(extra), ChannelReadStatus::closed);
     providers.shutdown();
+}
+
+TEST(Providers, LifecycleLogsIncludeForumAndSessionIdentity) {
+    ProviderDiagnosticLog log;
+    auto state = std::make_shared<BackendState>();
+    Providers providers(factory(state));
+    auto request = providers.make_request(
+        input(definition(), 17), std::make_shared<test::NoopNotifier>());
+
+    EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(
+        receive_terminal(request).back()));
+    providers.shutdown();
+
+    const std::string output = log.contents();
+    for (const std::string_view event : {
+             "Provider request admitted:",
+             "Provider request started:",
+             "Provider request completed:",
+             "Provider request unregistering:",
+         }) {
+        const std::size_t line = output.find(event);
+        ASSERT_NE(line, std::string::npos) << event;
+        const std::size_t end = output.find('\n', line);
+        const std::size_t length = end == std::string::npos
+            ? output.size() - line
+            : end - line;
+        const std::string_view fields(output.data() + line, length);
+        EXPECT_NE(fields.find("forum_id=test-forum"), std::string_view::npos);
+        EXPECT_NE(fields.find("session_id=test-session"), std::string_view::npos);
+        EXPECT_NE(fields.find("request_id=17"), std::string_view::npos);
+    }
 }
 
 TEST(Providers, MapsBackendFailuresAndExceptionsToFailedTerminals) {
@@ -487,9 +548,48 @@ TEST(Providers, RetainsEachRequestConfigurationSnapshot) {
     providers.shutdown();
 }
 
+TEST(Providers, CancellingAnOldSnapshotDoesNotAffectANewerRequest) {
+    auto first_state = std::make_shared<BackendState>();
+    first_state->block = true;
+    auto second_state = std::make_shared<BackendState>();
+    Providers providers([first_state, second_state](SharedCharacterDefinition character) {
+        return std::make_unique<TestBackend>(
+            character->provider.config.model == "model-a" ? first_state : second_state);
+    });
+    auto notifier = std::make_shared<test::NoopNotifier>();
+
+    auto first = providers.make_request(
+        input(definition("same", "model-a"), 1), notifier);
+    ASSERT_TRUE(wait_for(first_state, [](const BackendState& state) {
+        return state.performing == 1;
+    }));
+    auto second = providers.make_request(
+        input(definition("same", "model-b"), 2), notifier);
+
+    EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(
+        receive_terminal(second).back()));
+    first->cancel();
+    EXPECT_TRUE(std::holds_alternative<GenerationCancelled>(
+        receive_terminal(first).back()));
+    providers.shutdown();
+    {
+        std::lock_guard lock(first_state->mutex);
+        EXPECT_EQ(first_state->constructed, 1);
+        EXPECT_EQ(first_state->destroyed, 1);
+    }
+    {
+        std::lock_guard lock(second_state->mutex);
+        EXPECT_EQ(second_state->constructed, 1);
+        EXPECT_EQ(second_state->destroyed, 1);
+    }
+}
+
 TEST(Providers, InvalidInputReturnsFailedTerminalWithoutLaunching) {
     auto state = std::make_shared<BackendState>();
     Providers providers(factory(state));
+    EXPECT_THROW(
+        (void)providers.make_request(input(definition(), 4), nullptr),
+        std::invalid_argument);
     ProviderRequestInput invalid;
     auto request = providers.make_request(
         std::move(invalid), std::make_shared<test::NoopNotifier>());

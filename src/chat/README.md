@@ -85,7 +85,7 @@ single-thread-owned design: the registry-owned session thread exclusively reads
 and mutates it. The class is not thread-safe, and callers must not share a live
 instance across threads.
 Generation workers never read it; the controller captures an immutable
-`ModelHistory` before staging a batch.
+`ModelHistory` before starting request-owned provider work.
 
 | Operation | Rule |
 | --- | --- |

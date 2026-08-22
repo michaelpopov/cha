@@ -367,6 +367,36 @@ TEST(LobbyRoutes, KeepsThePublishedWorkspaceWhenReloadFailsAfterBackup) {
     }));
 }
 
+TEST(LobbyRoutes, RejectsCredentialValidationFailureWithoutPublishingIt) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const std::string id = create_session(server, "Credential reload");
+    ASSERT_FALSE(id.empty());
+    ASSERT_EQ(
+        server.client().Post(
+            "/api/v1/forums/lobby/sessions/" + id + "/open",
+            "{}", "application/json")->status,
+        200);
+
+    fixture.write_provider(
+        "test",
+        "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n"
+        "api_key_env = \"CHA_RELOAD_MISSING_CREDENTIAL_7BA5F8\"\n");
+    expect_error(
+        server.client().Post("/api/v1/workspace/reload", "{}", "application/json"),
+        422, "workspace_reload_failed");
+
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    EXPECT_TRUE(std::ranges::any_of(body(bootstrap)["characters"], [](const nlohmann::json& character) {
+        return character["id"] == "guide" && character["display_name"] == "Guide";
+    }));
+    EXPECT_FALSE(session_is_live(manager, {"lobby", id}));
+}
+
 TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderConfig) {
     test::TestWorkspace fixture;
     fixture.write_provider(

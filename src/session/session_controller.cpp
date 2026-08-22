@@ -83,10 +83,10 @@ std::string prompt_cache_key(
 }
 
 ForumCharacters make_forum_characters(
-    const std::vector<ModelBackendInfo>& runtime_info) {
+    const std::vector<CharacterRuntimeInfo>& runtime_info) {
     std::vector<CharacterMetadata> characters;
     characters.reserve(runtime_info.size());
-    for (const ModelBackendInfo& backend : runtime_info) {
+    for (const CharacterRuntimeInfo& backend : runtime_info) {
         characters.push_back(backend.character);
     }
     // Definitions reached the controller through either the validated
@@ -94,16 +94,16 @@ ForumCharacters make_forum_characters(
     return ForumCharacters(std::move(characters), true);
 }
 
-std::vector<ModelBackendInfo> make_runtime_info(
+std::vector<CharacterRuntimeInfo> make_runtime_info(
     const std::vector<SharedCharacterDefinition>& definitions) {
-    std::vector<ModelBackendInfo> runtime_info;
+    std::vector<CharacterRuntimeInfo> runtime_info;
     runtime_info.reserve(definitions.size());
     for (const SharedCharacterDefinition& definition : definitions) {
         if (!definition) {
             throw std::invalid_argument(
                 "Session controller requires character definitions");
         }
-        runtime_info.push_back(model_backend_info(*definition));
+        runtime_info.push_back(character_runtime_info(*definition));
     }
     return runtime_info;
 }
@@ -452,6 +452,7 @@ void SessionController::start_generation(
             .generation = {
                 .history = history,
                 .run = {
+                    .session = identity_,
                     .request_id = next_request_id_++,
                     .target = std::move(target),
                     .author = author,
@@ -466,9 +467,14 @@ void SessionController::start_generation(
     // Durable state exists before immediate request start. A returned request
     // always has a terminal event, including closed admission and launch
     // failure, so post-commit operational failures cannot strand this turn.
-    activate_run(inputs.front().generation.run, 0, update);
     generation_.emplace();
-    generation_->requests.reserve(inputs.size());
+    try {
+        generation_->requests.reserve(inputs.size());
+        activate_run(inputs.front().generation.run, 0, update);
+    } catch (...) {
+        generation_.reset();
+        throw;
+    }
     for (ProviderRequestInput& input : inputs) {
         generation_->requests.push_back(
             providers_.make_request(std::move(input), notifier_));
@@ -853,7 +859,7 @@ ControllerUpdate SessionController::set_session_style(std::string_view name) {
     // configured appearance lives in the immutable per-character runtime
     // record derived from the selected definition.
     if (name == "default") {
-        for (const ModelBackendInfo& backend : runtime_info_) {
+        for (const CharacterRuntimeInfo& backend : runtime_info_) {
             if (backend.character.id == default_character_id_) {
                 characters_.set_appearance(
                     default_character_id_, backend.character.appearance);

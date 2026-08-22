@@ -2,9 +2,8 @@
 
 ## Status
 
-This document describes the planned provider-execution redesign. It replaces
-the previous global-worker-pool proposal; it is not a description of the
-current implementation.
+This document describes the implemented provider-execution architecture. It
+replaces the previous global-worker-pool proposal.
 
 The design deliberately favors direct ownership over scheduling machinery.
 CHA is a small personal application. One provider request is one independent
@@ -183,8 +182,8 @@ are:
 - `character` snapshots identity, the system prompt, and its exact
   `ProviderSelection`;
 - `generation` is the existing request boundary: its `history` owns the
-  pre-request conversation projection and its `run` owns the request ID,
-  author, target, prompt, cache key, and timestamp.
+  pre-request conversation projection and its `run` owns the forum/session
+  identity, request ID, author, target, prompt, cache key, and timestamp.
 
 `CharacterDefinition` should retain its provider identifier together with its
 resolved backend configuration. A bare provider ID is useful to callers and
@@ -218,8 +217,7 @@ Session destruction releases the controller's references, while any active
 request keeps its selected definition alive through its own shared pointer.
 
 At controller construction, the session derives one safe, immutable
-character-runtime record per definition. This may remain `ModelBackendInfo` or
-be renamed to reflect that it no longer comes from a backend. It contains only
+`CharacterRuntimeInfo` record per definition. It contains only
 the character's public metadata plus its configured model, API, and streaming
 flag. It contains no credential or prompt.
 
@@ -459,9 +457,10 @@ not call a models endpoint and has no automatic-model state, discovery
 synchronization, discovery failure, or discovery retry behavior.
 
 Workspace loading performs this static validation and builds the immutable
-character definitions. Session opening uses those already validated
-definitions: it performs no provider network work, environment lookup, or
-reachability check.
+character definitions. Session opening re-validates its re-parsed forum
+definitions locally so a settings save can take effect. It performs no provider
+network work or reachability check, and retains no credential value in session
+state.
 
 Every request worker resolves its own credential directly from the request's
 `ModelBackendConfig`: it uses the configured `api_key`, or reads the variable
@@ -495,16 +494,20 @@ After this redesign:
 - a referenced, non-empty `api_key_env` that is unset or empty is rejected
   while loading the workspace, before any session or durable generation turn;
 - session open performs no provider HTTP request;
-- session open does not read the environment or validate `api_key_env`;
+- session open re-validates any locally re-parsed character definitions,
+  including the presence of configured `api_key_env` values; a validation
+  failure keeps the workspace's startup definitions and reports a notice;
 - invalid, revoked, or provider-rejected credentials remain request failures;
 - `/characters`, `/info`, and style reset use the session's immutable
   per-character runtime records, so their configured model, API, streaming,
   and appearance values are available before any request.
 
-The presence of a configured credential variable is therefore a workspace-load
-concern. Reading the actual credential into request-local transport state,
-provider authentication, and provider reachability remain request-time
-concerns. Session opening does none of them.
+The presence of a configured credential variable is therefore validated both
+when publishing a workspace and when session opening successfully re-parses
+local character settings. Session opening may read the environment for that
+validation, but it never retains the credential value. Reading the actual
+credential into request-local transport state, provider authentication, and
+provider reachability remain request-time concerns.
 
 ## Concurrency model
 
@@ -785,106 +788,6 @@ Logs must not include:
 
 There are no queued/running scheduler transitions or client-lease events to
 log because those concepts do not exist.
-
-## Expected code changes
-
-### Provider layer
-
-- Add the process-owned `Providers` component and `ProviderRequest` handle.
-- Move generation thread, cancellation, curl lifetime, event queue, and
-  terminal publication into the request implementation.
-- Refactor `ProviderClient` into a per-request transport created on the request
-  worker from `shared_ptr<const CharacterDefinition>`. It may retain that
-  immutable request snapshot, but it must not retain live session state or
-  survive for reuse.
-- Remove model discovery and require every provider configuration to name its
-  model.
-- During workspace loading, reject every referenced provider whose non-empty
-  `api_key_env` names an unset or empty environment variable.
-- Resolve `api_key_env` independently on each request worker and retain the
-  resolved credential only for that request.
-- Define and retain the narrow `ProviderClientFactory` and
-  `ProviderThreadLauncher` seams for request-level tests.
-
-### Character and request input
-
-- Preserve the provider ID with the resolved `ModelBackendConfig` in
-  `CharacterDefinition`.
-- Retain the ordered immutable character definitions in `SessionController`;
-  requests share these definitions rather than transferring their ownership to
-  an executor.
-- Preserve one synchronous immutable model-history copy per normal request or
-  multicast, shared among multicast targets.
-
-### Session layer
-
-- Inject `Providers&` into `SessionController` construction.
-- Replace `GenerationExecutor` and `GenerationBatch` ownership with a small
-  ordered collection of `shared_ptr<ProviderRequest>` values and a foreground
-  index.
-- Build one immutable, safe per-character runtime record from each retained
-  character definition. Use those records for `/characters`, `/info`, and the
-  configured appearance restored by style reset.
-- Keep `ForumCharacters` as the session-mutable presentation copy; use the
-  immutable character definition as its appearance baseline.
-- Retain all transcript, journal, ordering, and presentation behavior in the
-  controller.
-- Pass a shared wake signal rather than a borrowed notifier reference.
-- Make `/stop` retain and drain only the durable foreground handle, discard
-  cancelled non-foreground handles, and clear `busy()` independently of
-  process-registry cleanup.
-- Make destruction cancel and release every handle without waiting.
-- Thread `Providers&` and the shared notifier through `SessionOpener`,
-  `open_session()`, and `WorkspaceRuntime::open_session()`.
-
-### Test support
-
-- Replace `from_backends_for_testing` with a controller test harness that owns
-  a real `Providers` instance, retained immutable character definitions, and
-  the controller in production lifetime order.
-- Route fake behavior through `ProviderClientFactory`; pass each fake the same
-  shared immutable definition as production, create a fresh fake backend per
-  request, and share separate test-observation state only where a test needs to
-  coordinate several calls.
-- Use `ProviderThreadLauncher` to inject thread-start failure deterministically.
-- Destroy the controller before calling `Providers::shutdown()` in every test
-  harness, matching production ownership.
-
-### Deletions
-
-After migration, remove:
-
-- `GenerationExecutor` and its tests;
-- the execution and start-gate implementation in `GenerationBatch`;
-- the application generation `ThreadPool` and its tests if it has no remaining
-  user;
-- session-owned backend/client collections;
-- documentation and build entries describing session or global generation
-  pools.
-
-The HTTP server's own library thread pool is unrelated and remains unchanged.
-
-## Implementation sequence
-
-The implementation should stay continuously testable. Provider identity,
-required-model validation, immutable request input, `ProviderRequest`, and the
-standalone `Providers` component can land in earlier green changes while the
-existing session executor remains the sole production path.
-
-The production cutover is one green integration change. That change must:
-
-1. construct the one process-owned `Providers` instance;
-2. thread it and the shared notifier through every session-opening layer;
-3. move normal, multicast, `/stop`, and destruction behavior to request
-   handles;
-4. replace controller test construction;
-5. establish process shutdown ordering; and
-6. remove `GenerationExecutor`, `GenerationBatch`, and the application
-   generation `ThreadPool`.
-
-The repository must not stop between these items in a state where production
-controllers require `Providers` but the composition root does not own one, or
-where two production execution paths coexist.
 
 ## Test plan
 

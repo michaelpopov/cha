@@ -975,8 +975,7 @@ WorkspaceDefinition::CopiedForumDefinitions WorkspaceDefinition::copy_definition
             config_.styles_directory);
         // Session-open reloads use the same static validation as workspace
         // publication. This reads only configuration and environment state;
-        // it does not construct a provider or probe its reachability. Block 6
-        // reconciles the design document's older "environment lookup" wording.
+        // it does not construct a provider or probe its reachability.
         validate_provider_selections(definitions, config_.providers_directory);
         return {.definitions = std::move(definitions)};
     } catch (const std::exception& error) {

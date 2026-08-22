@@ -27,7 +27,7 @@
 
 namespace cha {
 
-// Owns one reusable easy handle and keeps libcurl's variadic API behind typed calls.
+// Owns one request-local easy handle and keeps libcurl's variadic API behind typed calls.
 class ProviderClient::CurlEasyHandle {
 public:
     CurlEasyHandle()
@@ -36,8 +36,6 @@ public:
             throw std::runtime_error("Failed to create libcurl handle");
         }
     }
-
-    void reset() noexcept { curl_easy_reset(handle_.get()); }
 
     void set(CURLoption option, long value, std::string_view operation) {
         require(curl_easy_setopt(handle_.get(), option, value), operation);
@@ -456,22 +454,6 @@ GenerationResult classify_success_response_error(
     return result;
 }
 
-void log_provider_error_detail(
-    std::string_view endpoint,
-    long status,
-    const ResponseContext& response) {
-    if (response.body.empty()) return;
-    const std::string detail = sanitize_log_text(
-        response.body,
-        max_provider_error_body_size);
-    if (detail.empty()) return;
-    log_error(
-        "Provider HTTP error details: endpoint=" + std::string(endpoint)
-        + " status=" + std::to_string(status)
-        + request_id_field(response.request_id)
-        + " detail=" + detail);
-}
-
 std::string_view role_name(ModelRole role) {
     switch (role) {
     case ModelRole::system: return "system";
@@ -522,7 +504,7 @@ std::string build_chat_completions_request_body(
 
 } // namespace
 
-ModelBackendInfo model_backend_info(const CharacterDefinition& definition) {
+CharacterRuntimeInfo character_runtime_info(const CharacterDefinition& definition) {
     return {
         .character = definition.character,
         .model = definition.provider.config.model,
@@ -651,7 +633,6 @@ GenerationResult ProviderClient::perform(
         .idle_timeout = std::chrono::seconds(config.idle_timeout_s),
     };
 
-    curl_->reset();
     const std::string url = provider_endpoint(config);
     const auto started_at = std::chrono::steady_clock::now();
     log_debug(
@@ -772,7 +753,6 @@ GenerationResult ProviderClient::perform(
     const std::string content_type = curl_->content_type(
         "Failed to read HTTP content type");
     if (status < 200 || status >= 300) {
-        log_provider_error_detail(url, status, response);
         return complete({
             GenerationOutcome::protocol_error,
             classified_http_error(status, response.body),
@@ -819,10 +799,6 @@ GenerationResult ProviderClient::perform(
             response.body),
         status,
         content_type);
-}
-
-ModelBackendInfo ProviderClient::info() const {
-    return model_backend_info(*definition_);
 }
 
 } // namespace cha

@@ -12,15 +12,6 @@
 
 namespace cha {
 
-// Public configured runtime information for one character. It is safe to show
-// in diagnostics and never carries connection secrets.
-struct ModelBackendInfo {
-    CharacterMetadata character;
-    std::string model;
-    std::string api;
-    bool streaming{};
-};
-
 // Classifies the terminal transport result of one model request.
 enum class GenerationOutcome {
     completed,
@@ -71,9 +62,6 @@ public:
         RequestPayload payload,
         const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) = 0;
-    // Temporary legacy-executor test support. Production runtime information
-    // comes directly from immutable character definitions.
-    virtual ModelBackendInfo info() const = 0;
 };
 
 } // namespace cha

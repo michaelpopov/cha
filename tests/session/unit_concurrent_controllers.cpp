@@ -53,7 +53,7 @@ private:
     std::filesystem::path path_;
 };
 
-class DeterministicBackend final : public ModelBackend {
+class DeterministicBackend final : public test::DescribedModelBackend {
 public:
     DeterministicBackend(std::string id, std::string name, std::string answer)
         : info_{
@@ -77,10 +77,10 @@ public:
         return {};
     }
 
-    ModelBackendInfo info() const override { return info_; }
+    CharacterRuntimeInfo info() const override { return info_; }
 
 private:
-    ModelBackendInfo info_;
+    CharacterRuntimeInfo info_;
     std::string answer_;
 };
 

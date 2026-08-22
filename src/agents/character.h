@@ -31,6 +31,15 @@ struct CharacterDefinition {
     std::string system_prompt;
 };
 
+// Public configured runtime information for one character. It is derived from
+// immutable character definitions and is safe to show in diagnostics.
+struct CharacterRuntimeInfo {
+    CharacterMetadata character;
+    std::string model;
+    std::string api;
+    bool streaming{};
+};
+
 // The immutable character snapshot shared by a session, its request-local
 // clients, and eventually request-owned provider work.
 using SharedCharacterDefinition = std::shared_ptr<const CharacterDefinition>;

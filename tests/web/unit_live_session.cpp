@@ -288,7 +288,7 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
                              &persisted_persona](
                                const SessionIdentity& identity,
                                std::shared_ptr<WakeNotifier> notifier) {
-        std::vector<std::unique_ptr<ModelBackend>> backends;
+        std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
         // Two personas so the session starts on Operator and /!Rea is a real
@@ -345,7 +345,7 @@ TEST(LiveSession, KeepsADefaultCharacterThatCouldNotBeSaved) {
     auto scribe = std::make_shared<test::BackendControls>();
     SessionOpener opener = [path = file.path(), guide, scribe](
                                const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
-        std::vector<std::unique_ptr<ModelBackend>> backends;
+        std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
         OpenedSession opened = test::open_scripted_session(

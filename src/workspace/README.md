@@ -25,11 +25,11 @@ are retained so those later reads can find the files.
 
 `WorkspaceRuntime` owns the current immutable generation. Its `reload()` builds
 a replacement definition and repository while the previous generation remains
-available, then publishes the replacement only after both succeed. An
-application route shuts down the existing live sessions after publication; their
-opened-session lifetime retains the generation their controller borrows until
-the controller has released it. This is why an invalid workspace reload has no
-effect on current discovery or live sessions.
+available, then publishes the replacement only after both succeed. The
+workspace-reload route reserves reload by shutting down and joining every live
+session before it calls `reload()`. An invalid candidate leaves the current
+generation published; a new session therefore sees only the published
+generation. Reload does not reload `.env`.
 
 A forum's default character is the one setting that stays live.
 `forum_default_character()` re-reads it from the forum's retained `config.toml`
@@ -78,7 +78,8 @@ API exposes only personas, character metadata and Markdown, forum information,
 and the startup-only `ForumSessionDirectory` values used to build
 `SessionRepository`.
 
-`open_session()` is deliberately small: find the forum, re-resolve its
+`open_session()` is deliberately small: find the forum, re-resolve and
+statically validate its
 definitions (or take the startup copy and notice), ask `SessionRepository` to
 prepare storage, build the `SessionDescriptor`, and construct the controller
 with the workspace persona roster and that forum's configured current persona. This lets `/!Name` switch
@@ -87,6 +88,12 @@ config. It also supplies callbacks that let the live-session owner save changed
 character and persona defaults without exposing workspace paths to web routes.
 Entrance and Welcome need no branch — Entrance is an ordinary
 forum in the model and Welcome an ordinary prepared session in the repository.
+
+The session-open validation reads only local configuration and whether a named
+credential environment variable is non-empty. It performs no provider network
+work, reachability check, or credential-value retention. A character settings
+save is a separate route: it shuts down affected forum sessions and the next
+session re-reads those files, but it never publishes a workspace generation.
 
 This directory may depend on `session/`, `agents/`, `chat/`, and `util/`.
 It must not depend on `web/`, executable wiring, or HTTP types.

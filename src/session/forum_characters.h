@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/model_backend.h"
+#include "agents/character.h"
 #include "chat/character.h"
 
 #include <cstddef>
@@ -30,12 +30,12 @@ struct HandleResolution {
 // the same reason: this wording belongs to the session, not to a transcript.
 [[nodiscard]] std::string format_characters_notice(
     const class ForumCharacters& characters,
-    const std::vector<ModelBackendInfo>& runtime_info,
+    const std::vector<CharacterRuntimeInfo>& runtime_info,
     const CharacterId& default_character_id);
 [[nodiscard]] std::string format_session_information(
     std::size_t entry_count,
     const class ForumCharacters& characters,
-    const std::vector<ModelBackendInfo>& runtime_info,
+    const std::vector<CharacterRuntimeInfo>& runtime_info,
     const CharacterId& default_character_id);
 
 // The ordered characters participating in one forum. Construction guarantees that the collection is

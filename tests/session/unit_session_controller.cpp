@@ -138,7 +138,7 @@ public:
 };
 
 // Returns scripted generation output while retaining immutable inputs for assertions.
-class ScriptedBackend final : public ModelBackend {
+class ScriptedBackend final : public test::DescribedModelBackend {
 public:
     ScriptedBackend(
         GenerationResult result = {},
@@ -172,6 +172,7 @@ public:
     }
 
     RequestPayload prepare(const GenerationRequest& input) override {
+        std::lock_guard lock(observations_mutex_);
         inputs.push_back(input);
         model_contexts.push_back(project_model_context(input, system_prompt));
         return {.bytes = input.run.prompt_text};
@@ -199,7 +200,7 @@ public:
         return result_;
     }
 
-    ModelBackendInfo info() const override {
+    CharacterRuntimeInfo info() const override {
         return {
             .character = {
                 .id = id_,
@@ -217,6 +218,7 @@ public:
     std::atomic_bool* hold_after_deltas = nullptr;
 
 private:
+    std::mutex observations_mutex_;
     std::string id_{"guide-id"};
     std::string name_{"Guide"};
     GenerationResult result_;
@@ -224,7 +226,7 @@ private:
     bool wait_for_cancellation_{};
 };
 
-class ConcurrentBackend final : public ModelBackend {
+class ConcurrentBackend final : public test::DescribedModelBackend {
 public:
     ConcurrentBackend(
         std::string id,
@@ -238,6 +240,7 @@ public:
     }
 
     RequestPayload prepare(const GenerationRequest& input) override {
+        std::lock_guard lock(observations_mutex_);
         inputs.push_back(input);
         return {.bytes = input.run.prompt_text};
     }
@@ -260,7 +263,7 @@ public:
         return {};
     }
 
-    ModelBackendInfo info() const override {
+    CharacterRuntimeInfo info() const override {
         return {
             .character = {.id = id_, .display_name = name_},
             .model = "test-model",
@@ -274,13 +277,14 @@ public:
     std::atomic_bool finished{false};
 
 private:
+    std::mutex observations_mutex_;
     std::string id_;
     std::string name_;
     std::string answer_;
     const std::atomic_bool* release_{};
 };
 
-class CancellationBlockingBackend final : public ModelBackend {
+class CancellationBlockingBackend final : public test::DescribedModelBackend {
 public:
     CancellationBlockingBackend(
         std::string id,
@@ -309,7 +313,7 @@ public:
         return result_;
     }
 
-    ModelBackendInfo info() const override {
+    CharacterRuntimeInfo info() const override {
         return {
             .character = {.id = id_, .display_name = name_},
             .model = "test-model",
@@ -327,7 +331,51 @@ private:
     GenerationResult result_;
 };
 
-class ThrowingPrepareBackend final : public ModelBackend {
+class OverlappingBackend final : public test::DescribedModelBackend {
+public:
+    explicit OverlappingBackend(std::atomic_bool& release_first)
+        : release_first_(release_first) {}
+
+    RequestPayload prepare(const GenerationRequest& input) override {
+        return {.bytes = input.run.prompt_text};
+    }
+
+    GenerationResult perform(
+        RequestPayload,
+        const GenerationDeltaSink& on_delta,
+        const std::atomic_bool& cancellation) override {
+        const int call = calls.fetch_add(1, std::memory_order_acq_rel);
+        if (call == 0) {
+            while (!cancellation.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            first_cancelled.store(true, std::memory_order_release);
+            while (!release_first_.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            return {GenerationOutcome::cancelled, {}};
+        }
+        on_delta({GenerationDeltaKind::answer, "Second answer"});
+        return {};
+    }
+
+    CharacterRuntimeInfo info() const override {
+        return {
+            .character = {.id = "two-id", .display_name = "Two"},
+            .model = "test-model",
+            .api = "test://model",
+            .streaming = true,
+        };
+    }
+
+    std::atomic_int calls{};
+    std::atomic_bool first_cancelled{};
+
+private:
+    std::atomic_bool& release_first_;
+};
+
+class ThrowingPrepareBackend final : public test::DescribedModelBackend {
 public:
     RequestPayload prepare(const GenerationRequest&) override {
         throw std::runtime_error("preparation failed");
@@ -341,7 +389,7 @@ public:
         return {};
     }
 
-    ModelBackendInfo info() const override {
+    CharacterRuntimeInfo info() const override {
         return {
             .character = {
                 .id = "guide-id",
@@ -568,7 +616,7 @@ TEST(SessionController, ResolvesAndStampsTheAuthorForEveryBatchRun) {
         "two-id", "Two");
     ScriptedBackend* const first_view = first.get();
     ScriptedBackend* const second_view = second.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     auto controller = test::from_test_backends(
@@ -1102,7 +1150,7 @@ TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
         "two-id", "Two");
     ScriptedBackend* one_view = one.get();
     ScriptedBackend* two_view = two.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(one));
     backends.push_back(std::move(two));
     auto controller = test::from_test_backends(
@@ -1166,7 +1214,7 @@ TEST(SessionController, ResolvesMulticastHandlesAndTreatsAnEmptyListAsAllCharact
         "two-id", "Two");
     ScriptedBackend* const one_view = one.get();
     ScriptedBackend* const two_view = two.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(one));
     backends.push_back(std::move(two));
     auto controller = test::from_test_backends(
@@ -1206,7 +1254,7 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
         GenerationResult{}, std::vector<std::string>{"Two answer"}, false,
         "two-id", "Two");
     ScriptedBackend* second_view = second.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     auto stop_controller = test::from_test_backends(
@@ -1254,7 +1302,7 @@ TEST(SessionController, CompletedForegroundWinsTheStopRace) {
     auto second = std::make_unique<ConcurrentBackend>(
         "two-id", "Two", "Two answer");
     ConcurrentBackend* const first_view = first.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     auto controller = test::from_test_backends(
@@ -1291,7 +1339,7 @@ TEST(SessionController, StopDoesNotWaitForCancelledBackgroundExecution) {
         "two-id", "Two", release_background);
     ConcurrentBackend* foreground_view = foreground.get();
     CancellationBlockingBackend* background_view = background.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(foreground));
     backends.push_back(std::move(background));
     auto controller = test::from_test_backends(
@@ -1326,6 +1374,47 @@ TEST(SessionController, StopDoesNotWaitForCancelledBackgroundExecution) {
     EXPECT_TRUE(restarted.input_consumed);
     receive_until_idle(*controller);
     release_background.store(true, std::memory_order_release);
+}
+
+TEST(SessionController, NewRequestOverlapsDiscardedWorkerForTheSameCharacter) {
+    TemporaryJournal temporary;
+    std::atomic_bool release_first{};
+    auto first = std::make_unique<ConcurrentBackend>(
+        "one-id", "One", "First answer");
+    auto second = std::make_unique<OverlappingBackend>(release_first);
+    OverlappingBackend* second_view = second.get();
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
+    backends.push_back(std::move(first));
+    backends.push_back(std::move(second));
+    auto controller = test::from_test_backends(
+        std::move(backends), temporary.path, notifier(), {}, {},
+        std::optional<ParticipantId>{"two-id"});
+    struct ReleaseOnExit {
+        std::atomic_bool& flag;
+        ~ReleaseOnExit() { flag.store(true, std::memory_order_release); }
+    } release_on_exit{release_first};
+
+    (void)controller->start_multicast("operator", "Question", {"One", "Two"});
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (second_view->calls.load(std::memory_order_acquire) != 1
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    ASSERT_EQ(second_view->calls.load(std::memory_order_acquire), 1);
+
+    (void)controller->request_stop();
+    receive_until_idle(*controller);
+    ASSERT_TRUE(second_view->first_cancelled.load(std::memory_order_acquire));
+
+    const ControllerUpdate restarted =
+        controller->submit_prompt("operator", "New question");
+    EXPECT_TRUE(restarted.input_consumed);
+    receive_until_idle(*controller);
+    EXPECT_EQ(second_view->calls.load(std::memory_order_acquire), 2);
+
+    release_first.store(true, std::memory_order_release);
+    controller->shutdown();
 }
 
 TEST(SessionController, StopAcknowledgesAForegroundFailure) {
@@ -1367,7 +1456,7 @@ TEST(SessionController, MulticastContinuesAfterChildFailuresAndRetainsNotices) {
     ScriptedBackend* failed_view = failed.get();
     ScriptedBackend* cancelled_view = cancelled.get();
     ScriptedBackend* complete_view = complete.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(failed));
     backends.push_back(std::move(cancelled));
     backends.push_back(std::move(complete));
@@ -1404,7 +1493,7 @@ TEST(SessionController, PairsEveryChildWithItsOwnSlotDespiteReversedGenerationOr
     ConcurrentBackend* const first_view = first.get();
     ConcurrentBackend* const second_view = second.get();
     ConcurrentBackend* const third_view = third.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     backends.push_back(std::move(third));
@@ -1519,7 +1608,7 @@ TEST(SessionController, FirstActivationFailureTearsDownEveryGatedExecution) {
         "two-id", "Two");
     ScriptedBackend* const first_view = first.get();
     ScriptedBackend* const second_view = second.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     bool fail_first_activation = true;
@@ -1562,7 +1651,7 @@ TEST(SessionController, LaterActivationFailureCancelsAndReleasesEveryExecution) 
         "two-id", "Two");
     ScriptedBackend* const first_view = first.get();
     ScriptedBackend* const second_view = second.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(first));
     backends.push_back(std::move(second));
     bool fail_second_activation = true;
@@ -1834,7 +1923,7 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
         "ismael-id", "Ismael");
     ScriptedBackend* guide_view = guide.get();
     ScriptedBackend* ismael_view = ismael.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(guide));
     backends.push_back(std::move(ismael));
     auto controller = test::from_test_backends(
@@ -2133,7 +2222,7 @@ TEST(SessionController, ShutdownReturnsBeforeCancelledProviderUnregisters) {
     auto backend = std::make_unique<ConcurrentBackend>(
         "guide-id", "Guide", "unused", &never_released);
     ConcurrentBackend* backend_view = backend.get();
-    std::vector<std::unique_ptr<ModelBackend>> backends;
+    std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
     backends.push_back(std::move(backend));
     auto controller = test::from_test_backends(
         std::move(backends), temporary.path, shutdown_notifier);
@@ -2284,10 +2373,6 @@ public:
         }
         on_delta({GenerationDeltaKind::answer, "answer-" + definition_->provider.config.model});
         return {};
-    }
-
-    ModelBackendInfo info() const override {
-        return model_backend_info(*definition_);
     }
 
 private:

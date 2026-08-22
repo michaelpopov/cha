@@ -1,11 +1,11 @@
 #pragma once
 
 #include "session/session_controller.h"
+#include "support/test_backends.h"
 
 #include <filesystem>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <stdexcept>
@@ -77,37 +77,28 @@ inline PersonaRoster operator_roster() {
     return {{.id = "operator", .display_name = "Operator"}};
 }
 
-// Old-controller tests often describe one character with a stateful fake.
-// Keep that state in a separately shared slot and return a fresh request
-// facade for every factory call. This already has the lifetime and locking
-// shape that request-owned execution needs, while preserving the existing
-// observations used by the old-executor tests.
-class SharedBackendProxy final : public ModelBackend {
+// Some controller tests coordinate several calls through one shared scenario.
+// Each factory call still returns a distinct, unsynchronized backend facade,
+// matching production request-local ownership and overlap.
+class RequestBackendFacade final : public ModelBackend {
 public:
     struct Slot {
-        explicit Slot(std::unique_ptr<ModelBackend> value) : backend(std::move(value)) {}
-        std::unique_ptr<ModelBackend> backend;
-        std::mutex mutex;
+        explicit Slot(std::unique_ptr<DescribedModelBackend> value)
+            : scenario(std::move(value)) {}
+        std::unique_ptr<DescribedModelBackend> scenario;
     };
 
-    explicit SharedBackendProxy(std::shared_ptr<Slot> slot) : slot_(std::move(slot)) {}
+    explicit RequestBackendFacade(std::shared_ptr<Slot> slot) : slot_(std::move(slot)) {}
 
     RequestPayload prepare(const GenerationRequest& input) override {
-        std::lock_guard lock(slot_->mutex);
-        return slot_->backend->prepare(input);
+        return slot_->scenario->prepare(input);
     }
 
     GenerationResult perform(
         RequestPayload payload,
         const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
-        std::lock_guard lock(slot_->mutex);
-        return slot_->backend->perform(std::move(payload), on_delta, cancellation);
-    }
-
-    ModelBackendInfo info() const override {
-        std::lock_guard lock(slot_->mutex);
-        return slot_->backend->info();
+        return slot_->scenario->perform(std::move(payload), on_delta, cancellation);
     }
 
 private:
@@ -151,7 +142,7 @@ inline TestController from_definitions_for_testing(
 }
 
 inline TestController from_test_backends(
-    std::vector<std::unique_ptr<ModelBackend>> backends,
+    std::vector<std::unique_ptr<DescribedModelBackend>> backends,
     PersonaRoster personas,
     std::filesystem::path database_path,
     std::shared_ptr<WakeNotifier> notifier,
@@ -161,9 +152,9 @@ inline TestController from_test_backends(
     SessionIdentity identity = {}) {
     std::vector<CharacterDefinition> definitions;
     definitions.reserve(backends.size());
-    for (const std::unique_ptr<ModelBackend>& backend : backends) {
+    for (const std::unique_ptr<DescribedModelBackend>& backend : backends) {
         if (!backend) throw std::invalid_argument("Test controller requires model backends");
-        const ModelBackendInfo info = backend->info();
+        const CharacterRuntimeInfo info = backend->info();
         definitions.push_back({
             .character = info.character,
             .provider = {.id = "test", .config = {
@@ -177,7 +168,7 @@ inline TestController from_test_backends(
     }
     const ParticipantId default_character_id = initial_default_character_id.value_or(
         definitions.empty() ? ParticipantId{} : definitions.front().character.id);
-    using Slot = SharedBackendProxy::Slot;
+    using Slot = RequestBackendFacade::Slot;
     auto supplied = std::make_shared<std::unordered_map<ParticipantId, std::shared_ptr<Slot>>>();
     for (std::size_t index = 0; index < definitions.size(); ++index) {
         supplied->emplace(
@@ -189,7 +180,7 @@ inline TestController from_test_backends(
         if (found == supplied->end()) {
             throw std::runtime_error("Test backend factory received an unexpected character");
         }
-        return std::make_unique<SharedBackendProxy>(found->second);
+        return std::make_unique<RequestBackendFacade>(found->second);
     };
     return TestController(
         std::move(definitions),
@@ -206,7 +197,7 @@ inline TestController from_test_backends(
 }
 
 inline TestController from_test_backends(
-    std::vector<std::unique_ptr<ModelBackend>> backends,
+    std::vector<std::unique_ptr<DescribedModelBackend>> backends,
     PersonaRoster personas,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
@@ -226,7 +217,7 @@ inline TestController from_test_backends(
 }
 
 inline TestController from_test_backends(
-    std::vector<std::unique_ptr<ModelBackend>> backends,
+    std::vector<std::unique_ptr<DescribedModelBackend>> backends,
     std::filesystem::path database_path,
     WakeNotifier& notifier,
     SessionRestore restored = {},

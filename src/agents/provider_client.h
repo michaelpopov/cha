@@ -18,15 +18,14 @@ using ProviderClientFactory =
 
 // Safe public runtime information comes directly from immutable configuration;
 // neither helper resolves credentials nor constructs a transport.
-ModelBackendInfo model_backend_info(const CharacterDefinition& definition);
+CharacterRuntimeInfo character_runtime_info(const CharacterDefinition& definition);
 std::string provider_endpoint(const ModelBackendConfig& config);
 
 // The ModelBackend for OpenAI-compatible HTTP endpoints, configured from
 // one CharacterDefinition.
 // It projects the transcript into provider messages, performs the request over libcurl as either a
 // streaming or a single-response call, parses reasoning and answer content out of the provider
-// format. It owns one connection handle,
-// so a single client serves one request at a time.
+// format. Each request-local client owns one connection handle.
 class ProviderClient final : public ModelBackend {
 public:
     explicit ProviderClient(SharedCharacterDefinition definition);
@@ -40,8 +39,6 @@ public:
         RequestPayload payload,
         const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override;
-    ModelBackendInfo info() const override;
-
 private:
     class CurlEasyHandle;
 

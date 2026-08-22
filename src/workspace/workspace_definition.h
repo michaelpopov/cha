@@ -143,8 +143,10 @@ public:
 private:
     WorkspaceDefinition() = default;
 
-    // Full definitions may carry provider credentials, so they stay off the
-    // general API. open_session() is the one production caller that needs them.
+    // A published generation is immutable. Session opening re-parses and
+    // re-validates a forum's character files so a saved setting reaches the
+    // next session without publishing a new generation. Full definitions may
+    // carry provider credentials, so they stay off the general API.
     friend OpenedSession open_session(
         const WorkspaceDefinition&,
         const SessionRepository&,

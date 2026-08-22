@@ -44,10 +44,6 @@ public:
         return result_;
     }
 
-    ModelBackendInfo info() const override {
-        return {{id_, name_}, "model", "test://model", true};
-    }
-
     std::atomic_bool prepared{};
     std::atomic_bool performed{};
     GenerationRequest received;
@@ -91,10 +87,6 @@ public:
             : GenerationResult{};
     }
 
-    ModelBackendInfo info() const override {
-        return {{id_, name_}, "model", "test://model", true};
-    }
-
     std::atomic_bool prepared{};
 
 private:
@@ -116,9 +108,6 @@ public:
         return {};
     }
 
-    ModelBackendInfo info() const override {
-        return {{"one-id", "One"}, "model", "test://model", true};
-    }
 };
 
 inline GenerationRequest generation_request(

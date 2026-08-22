@@ -146,7 +146,7 @@ private:
 // A model backend whose whole behavior is decided by the test through
 // BackendControls. It is a provider fake, not a controller or output fake: the
 // controller, journal, provider requests, and web actor around it are all real.
-class ScriptedModelBackend final : public ModelBackend {
+class ScriptedModelBackend final : public DescribedModelBackend {
 public:
     ScriptedModelBackend(
         std::shared_ptr<BackendControls> controls,
@@ -206,7 +206,7 @@ public:
         }
     }
 
-    ModelBackendInfo info() const override {
+    CharacterRuntimeInfo info() const override {
         return {
             .character = {.id = id_, .display_name = name_},
             .model = "test-model",
@@ -221,7 +221,7 @@ private:
     std::string name_;
 };
 
-inline std::unique_ptr<ModelBackend> scripted_backend(
+inline std::unique_ptr<DescribedModelBackend> scripted_backend(
     std::shared_ptr<BackendControls> controls,
     std::string id = "guide",
     std::string name = "Guide") {
@@ -248,7 +248,7 @@ inline OpenedSession open_scripted_session(
     const SessionIdentity& identity,
     const std::filesystem::path& database_path,
     std::shared_ptr<WakeNotifier> notifier,
-    std::vector<std::unique_ptr<ModelBackend>> backends,
+    std::vector<std::unique_ptr<DescribedModelBackend>> backends,
     SessionController::ActivationHook before_activation = {},
     PersonaRoster personas = reader_roster()) {
     auto owned = std::move(from_test_backends(

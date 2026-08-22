@@ -193,7 +193,7 @@ private:
     // copied into each request so late worker wakes never borrow this session.
     Providers& providers_;
     std::shared_ptr<WakeNotifier> notifier_;
-    std::vector<ModelBackendInfo> runtime_info_;
+    std::vector<CharacterRuntimeInfo> runtime_info_;
     ForumCharacters characters_;
     SharedPersonaRoster personas_;
     SessionIdentity identity_;

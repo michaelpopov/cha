@@ -79,7 +79,7 @@ std::vector<TranscriptEntry> copy_entries(TranscriptView transcript) {
     return {entries.begin(), entries.end()};
 }
 
-class BlockingBackend final : public ModelBackend {
+class BlockingBackend final : public test::DescribedModelBackend {
 public:
     RequestPayload prepare(const GenerationRequest& input) override {
         return {.bytes = input.run.prompt_text};
@@ -95,7 +95,7 @@ public:
         return {GenerationOutcome::cancelled, {}};
     }
 
-    ModelBackendInfo info() const override {
+    CharacterRuntimeInfo info() const override {
         return {
             .character = {
                 .id = id_,

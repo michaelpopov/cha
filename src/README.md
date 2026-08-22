@@ -56,10 +56,13 @@ provider event draining. HTTP threads communicate through `CommandQueue`; owner-
 is copied into protocol snapshots or append events and delivered through an
 `SseMailbox`.
 
-Each `SessionController` owns a fixed-width worker pool and a `GenerationExecutor`.
-Provider work runs on those workers and publishes deltas plus exactly one final
-event. The owner thread applies events and persists turn transitions. A stored
-session lease remains owned until the controller and journal are destroyed.
+`web_main.cpp` owns one process-wide `Providers` instance. Each
+`SessionController` retains only request handles while it applies streamed
+events and persists turn transitions; every provider request owns its own
+worker, client, curl handle, cancellation state, and event queue. The owner
+thread never waits for provider cleanup during `/stop` or controller teardown.
+A stored session lease remains owned until the controller and journal are
+destroyed.
 
 Welcome is the sole built-in Entrance session. `SessionRepository` creates and
 owns its process-local database directory and removes it on destruction, while
@@ -75,9 +78,10 @@ Opening a session validates that its database metadata matches its forum,
 filename, and schema before restoring it.
 
 One `WorkspaceGeneration` holds an immutable definition and matching session
-repository. `POST /api/v1/workspace/reload` builds a new generation and replaces
-the current one only after full validation succeeds, then shuts down live
-sessions with `workspace_reloading`. A session open re-resolves that forum's
+repository. `POST /api/v1/workspace/reload` first shuts down and joins every
+live session, then builds and publishes a new generation only after full
+validation succeeds. A failed candidate leaves the old generation published.
+A session open re-resolves that forum's
 character definitions from disk, so a saved provider or style — and a hand edit
 to `CHARACTER.md`, member configs, or the forum context — reach the next session
 without a workspace reload. Session listings are read from storage per request,
