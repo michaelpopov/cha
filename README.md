@@ -1,8 +1,7 @@
 # CHA
 
-CHA is a C++20 browser application for chatting with OpenAI-compatible
-OpenAI-compatible model servers. The `chaweb` process serves the browser client and its
-HTTP/SSE API.
+CHA is a C++20 browser application for chatting with OpenAI-compatible model
+servers. The `chaweb` process serves the browser client and its HTTP/SSE API.
 
 ## Start chatting
 
@@ -110,9 +109,14 @@ max_tokens = 4096
 Generation stops after `timeout_s` overall, or after `idle_timeout_s` without a
 single received byte. That idle timer starts at the first byte of the response,
 so a model that thinks for minutes before answering is bounded by `timeout_s`
-alone. Both timeout values and `max_tokens` must be positive. `max_tokens` is sent under that name for Chat
-Completions and as `max_output_tokens` for Responses, whose value is clamped to
-at least 16.
+alone. Both timeout values and `max_tokens` must be positive. `max_tokens` is
+sent under that name for Chat Completions and as `max_output_tokens` for
+Responses, whose value is clamped to at least 16.
+
+For the direct `api.openai.com` host, `cache_retention` other than `off` sends a
+stable prompt-cache key for each forum/session/character. `long` additionally
+requests 24-hour retention from the Responses API. These OpenAI-specific cache
+fields are omitted for other hosts.
 
 Set `base_path` when a compatible provider exposes its API below a path rather
 than at the host root. For example, OpenRouter uses `base_path = "/api"`, which
@@ -123,8 +127,10 @@ Each character selects exactly one of those configs in its own `character.toml`
 with `provider = "<id>"`. Provider keys in workspace, forum-default, and member
 configuration are ignored; there is no provider inheritance or override chain.
 A missing character provider or provider config stops startup. Provider config
-files are loaded with each workspace generation, so edits to host, model, or
-credentials take effect after a workspace reload.
+files are loaded with each workspace generation, so edits to their host, model,
+or other settings take effect after a workspace reload. The workspace `.env`
+is loaded only at process startup, so changing a secret there requires a
+restart.
 
 A character's chosen `provider` and `style` can be changed from the browser:
 Characters → the character → the row naming it above the description → Settings. Save writes
@@ -160,12 +166,13 @@ stay inside the provider interaction. Only the character's synthesized answer
 text enters the transcript.
 
 Provider secrets belong in the environment or the workspace `.env`, never in
-the application directory. `chaweb` reads listener and workspace settings from
-`app.toml` beside the executable; `--host`, `--port`, `--workspace`, and
-`--root` override them. On Reload workspace, chaweb writes a
-`chaweb-YYYY-MM-DD-HH-MM.tar.gz` archive before loading the replacement
-workspace. Set `backup_dir` in `app.toml` to choose its destination; omitted,
-it defaults to the user's home directory.
+the application directory. By default, `chaweb` treats the executable directory
+as its application root and reads `app.toml` there. `--root` selects another
+application root, `--config` selects another config file, and `--host`,
+`--port`, and `--workspace` override individual settings. On Reload workspace,
+chaweb writes a `chaweb-YYYY-MM-DD-HH-MM.tar.gz` archive before loading the
+replacement workspace. Set `backup_dir` in `app.toml` to choose its
+destination; omitted, it defaults to the user's home directory.
 
 Linux deployment packages include a minimal `workspace/` directory containing
 the default character providers and logging settings. The packaged `start-cha.sh` uses it
@@ -184,16 +191,28 @@ saved provider or style, and a hand edit to `CHARACTER.md`, member configs, or
 the forum context, reach the next session without a reload. To publish added or
 removed characters, personas, and forums, send `POST /api/v1/workspace/reload`
 with an empty JSON object. It validates and atomically publishes a complete new
-generation, then restarts every live session; stored sessions remain on disk.
-The Welcome session is temporary and belongs to the generation that created it,
-so a reload starts it empty. An invalid workspace leaves the running generation
-and its sessions unchanged.
+generation. Reload first closes every live session; the browser recovery flow
+reopens a selected stored session against the published generation. Stored
+sessions remain on disk, while Welcome belongs to the generation that created
+it and starts empty after a successful reload. A failed reload retains the old
+published generation, but the live sessions have already been closed.
+
+Reload also synchronizes portable session snapshots. Each valid
+`forums/<forum>/sessions/<session>.sqlite3` database is exported beside itself
+as `<session>.sql`. If only the SQL file exists, reload recreates the database,
+unless a matching database is present under `sessions/deleted/`. An existing
+SQLite database is authoritative over its SQL snapshot. This synchronization
+runs on reload, not initial startup.
 
 Startup validates every configured forum, not only the ones in use. A forum with
 an invalid default character, member override, or prompt therefore prevents the
 server from starting; the reported error names that forum and its source.
 
 ## Build and test
+
+Native configuration currently requires OpenSSL development headers and
+libraries on every platform. The Ninja preset fetches the other vendored
+dependencies when needed.
 
 ```sh
 cmake --preset ninja
@@ -206,7 +225,7 @@ make itest
 ```
 
 Browser development is documented in
-[webapp/README.md](webapp/README.md). Packaging and
-upgrade instructions are in
-[docs/linux-webapp-package.md](docs/linux-webapp-package.md). See
-[src/README.md](src/README.md) for the native architecture.
+[webapp/README.md](webapp/README.md). Build a validated Linux release with
+`make package-linux VERSION=<version>`; it writes an application directory and
+`.tar.gz` archive under `packages/`. See [src/README.md](src/README.md) for the
+native architecture.
