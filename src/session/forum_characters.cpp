@@ -196,9 +196,11 @@ std::string format_characters_notice(
     result << "Characters in this forum (" << characters.all().size()
            << "), * marks the default.";
     result << " Any unambiguous prefix works.";
-    for (const CharacterRuntimeInfo& backend : runtime_info) {
-        result << " | " << (backend.character.id == default_character_id ? "* " : "")
-               << "@" << backend.character.display_name << "  " << backend.model << "  "
+    for (std::size_t index = 0; index < runtime_info.size(); ++index) {
+        const CharacterMetadata& character = characters.all()[index];
+        const CharacterRuntimeInfo& backend = runtime_info[index];
+        result << " | " << (backend.id == default_character_id ? "* " : "")
+               << "@" << character.display_name << "  " << backend.model << "  "
                << backend.api << "  "
                << (backend.streaming ? "streaming" : "non-streaming");
     }

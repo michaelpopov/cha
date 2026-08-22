@@ -34,8 +34,7 @@ waits until their transport has quiesced. It is safe to call repeatedly.
 resolved `ModelBackendConfig`. A request retains a shared immutable definition,
 so a later reload under the same provider ID cannot change work already in
 flight. `CharacterRuntimeInfo` is derived directly from definitions for
-session-facing reporting and style-reset baselines; it does not require a
-provider client.
+session-facing provider reporting; it does not require a provider client.
 
 Every referenced provider requires a configured model. Workspace loading and
 session-open definition reload validate a non-empty `api_key_env` without

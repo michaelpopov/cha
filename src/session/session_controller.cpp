@@ -18,6 +18,13 @@
 namespace cha {
 namespace {
 
+constexpr std::string_view generation_stopped_notice = "Generation stopped";
+
+void append_line(std::string& text, std::string_view line) {
+    if (!text.empty()) text += '\n';
+    text += line;
+}
+
 std::int64_t unix_now() {
     return std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
@@ -83,11 +90,15 @@ std::string prompt_cache_key(
 }
 
 ForumCharacters make_forum_characters(
-    const std::vector<CharacterRuntimeInfo>& runtime_info) {
+    const std::vector<SharedCharacterDefinition>& definitions) {
     std::vector<CharacterMetadata> characters;
-    characters.reserve(runtime_info.size());
-    for (const CharacterRuntimeInfo& backend : runtime_info) {
-        characters.push_back(backend.character);
+    characters.reserve(definitions.size());
+    for (const SharedCharacterDefinition& definition : definitions) {
+        if (!definition) {
+            throw std::invalid_argument(
+                "Session controller requires character definitions");
+        }
+        characters.push_back(definition->character);
     }
     // Definitions reached the controller through either the validated
     // workspace boundary or a trusted application built-in factory.
@@ -215,7 +226,7 @@ SessionController::SessionController(
       providers_(providers),
       notifier_(std::move(notifier)),
       runtime_info_(make_runtime_info(definitions_)),
-      characters_(make_forum_characters(runtime_info_)),
+      characters_(make_forum_characters(definitions_)),
       personas_(std::move(personas)),
       identity_(std::move(identity)),
       default_character_id_(std::move(initial_default_character_id)),
@@ -293,7 +304,7 @@ ControllerGenerationView SessionController::generation_view() const noexcept {
         };
     }
     return {
-        .active = busy(),
+        .active = is_generating(),
         .request_id = active_ ? std::optional<RequestId>(active_->request_id)
                               : std::nullopt,
         .character_id = active_ ? std::string_view(active_->character_id)
@@ -320,10 +331,6 @@ ControllerView SessionController::view() const noexcept {
 }
 
 bool SessionController::is_generating() const noexcept {
-    return busy();
-}
-
-bool SessionController::busy() const noexcept {
     return generation_.has_value();
 }
 
@@ -377,7 +384,7 @@ ControllerUpdate SessionController::submit_prompt(
     if (shutdown_) {
         return {.notice = "Request could not be dispatched"};
     }
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     if (text.empty() && handle.empty()) {
@@ -538,26 +545,19 @@ void SessionController::activate_run(
 void SessionController::finish_generation_run(ControllerUpdate& update) {
     if (!generation_) return;
     if (generation_->cancellation_requested
-        && (!update.notice || *update.notice != "Generation stopped")) {
-        if (update.notice && !update.notice->empty()) {
-            *update.notice += "\n";
-        } else {
-            update.notice = "";
-        }
-        *update.notice += "Generation stopped";
+        && (!update.notice || *update.notice != generation_stopped_notice)) {
+        if (!update.notice) update.notice.emplace();
+        append_line(*update.notice, generation_stopped_notice);
     }
     if (update.notice && !update.notice->empty()) {
-        if (!generation_->terminal_notices.empty()) {
-            generation_->terminal_notices += '\n';
-        }
-        generation_->terminal_notices += *update.notice;
+        append_line(generation_->terminal_notices, *update.notice);
     }
     const std::size_t foreground = generation_->foreground_index;
     generation_->requests[foreground].reset();
     if (shutdown_ || generation_->cancellation_requested
         || foreground + 1 == generation_->requests.size()) {
         const std::string terminal_notices = generation_->terminal_notices;
-        release_generation();
+        generation_.reset();
         require_snapshot(update);
         if (!terminal_notices.empty()) update.notice = terminal_notices;
         return;
@@ -567,20 +567,20 @@ void SessionController::finish_generation_run(ControllerUpdate& update) {
     try {
         activate_run(run, generation_->foreground_index, update);
     } catch (...) {
-        for (const std::shared_ptr<ProviderRequest>& request : generation_->requests) {
-            if (request) request->cancel();
-        }
-        release_generation();
+        cancel_generation_requests();
+        generation_.reset();
         throw;
     }
 }
 
-void SessionController::release_generation() noexcept {
-    generation_.reset();
+void SessionController::cancel_generation_requests() noexcept {
+    for (const std::shared_ptr<ProviderRequest>& request : generation_->requests) {
+        if (request) request->cancel();
+    }
 }
 
 ControllerUpdate SessionController::clear_transcript() {
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     try {
@@ -598,7 +598,7 @@ ControllerUpdate SessionController::clear_transcript() {
 }
 
 ControllerUpdate SessionController::open_offrecord() {
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     if (!transcript_.open_offrecord(next_entry_id_)) {
@@ -615,7 +615,7 @@ ControllerUpdate SessionController::open_offrecord() {
 }
 
 ControllerUpdate SessionController::extend_offrecord() {
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     if (!transcript_.extend_offrecord(next_entry_id_)) {
@@ -632,7 +632,7 @@ ControllerUpdate SessionController::extend_offrecord() {
 }
 
 ControllerUpdate SessionController::restore_offrecord() {
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     if (!transcript_.restore_offrecord(next_entry_id_)) {
@@ -655,7 +655,7 @@ ControllerUpdate SessionController::start_multicast(
     if (shutdown_) {
         return {.notice = "Request could not be dispatched"};
     }
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
 
@@ -724,7 +724,7 @@ ControllerUpdate SessionController::start_resolved_multicast(
 }
 
 ControllerUpdate SessionController::session_information() {
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     return {
@@ -738,7 +738,7 @@ ControllerUpdate SessionController::session_information() {
 }
 
 ControllerUpdate SessionController::character_information() {
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     return {
@@ -749,7 +749,7 @@ ControllerUpdate SessionController::character_information() {
 }
 
 ControllerUpdate SessionController::set_default_character(std::string_view handle) {
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     ControllerUpdate update{.input_consumed = true};
@@ -777,7 +777,7 @@ ControllerUpdate SessionController::set_default_character(std::string_view handl
 }
 
 ControllerUpdate SessionController::set_default_character_by_id(std::string_view id) {
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     // This typed action submits no editor text, so it never clears a draft.
@@ -794,7 +794,7 @@ ControllerUpdate SessionController::set_default_character_by_id(std::string_view
 }
 
 ControllerUpdate SessionController::set_default_persona(std::string_view handle) {
-    if (busy()) {
+    if (is_generating()) {
         return busy_notice();
     }
     ControllerUpdate update{.input_consumed = true};
@@ -830,7 +830,7 @@ ControllerUpdate SessionController::set_default_persona(std::string_view handle)
 }
 
 ControllerUpdate SessionController::set_session_style(std::string_view name) {
-    // No busy() guard: appearance touches no generation machinery, so the typed
+    // No generation guard: appearance touches no generation machinery, so the typed
     // action is safe at any time. The web grammar's generating gate still
     // rejects the command mid-generation.
     ControllerUpdate update{.input_consumed = true};
@@ -856,16 +856,12 @@ ControllerUpdate SessionController::set_session_style(std::string_view name) {
         return update;
     }
     // "default" is a reserved word: it never reaches the resolver. The
-    // configured appearance lives in the immutable per-character runtime
-    // record derived from the selected definition.
+    // configured appearance lives in the immutable selected definition.
     if (name == "default") {
-        for (const CharacterRuntimeInfo& backend : runtime_info_) {
-            if (backend.character.id == default_character_id_) {
-                characters_.set_appearance(
-                    default_character_id_, backend.character.appearance);
-                break;
-            }
-        }
+        const SharedCharacterDefinition definition =
+            definition_for(default_character_id_);
+        characters_.set_appearance(
+            default_character_id_, definition->character.appearance);
         style_overrides_.erase(default_character_id_);
         update.notice = character->display_name
             + " is back to its configured style for this session.";
@@ -900,9 +896,7 @@ ControllerUpdate SessionController::request_stop() {
     if (!generation_->cancellation_requested) {
         log_info("Session generation cancellation requested");
         generation_->cancellation_requested = true;
-        for (const std::shared_ptr<ProviderRequest>& request : generation_->requests) {
-            if (request) request->cancel();
-        }
+        cancel_generation_requests();
         // Later multicast targets never acquired durable turns. Drop their
         // queues immediately; Providers retains their workers until curl has
         // observed cancellation and released its transport resources.
@@ -1019,7 +1013,7 @@ void SessionController::apply(const GenerationCancelled& event, ControllerUpdate
     }
     active_.reset();
     require_snapshot(update);
-    update.notice = "Generation stopped";
+    update.notice = std::string(generation_stopped_notice);
     finish_generation_run(update);
 }
 
@@ -1120,18 +1114,16 @@ void SessionController::shutdown() {
     try {
         if (generation_) {
             generation_->cancellation_requested = true;
-            for (const std::shared_ptr<ProviderRequest>& request : generation_->requests) {
-                if (request) request->cancel();
-            }
+            cancel_generation_requests();
         }
         if (active_) {
             ControllerUpdate ignored;
             apply(GenerationCancelled{active_->request_id}, ignored);
         } else {
-            release_generation();
+            generation_.reset();
         }
     } catch (...) {
-        release_generation();
+        generation_.reset();
         throw;
     }
 }

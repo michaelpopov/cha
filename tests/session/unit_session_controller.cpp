@@ -200,7 +200,7 @@ public:
         return result_;
     }
 
-    CharacterRuntimeInfo info() const override {
+    test::DescribedBackendInfo info() const override {
         return {
             .character = {
                 .id = id_,
@@ -263,7 +263,7 @@ public:
         return {};
     }
 
-    CharacterRuntimeInfo info() const override {
+    test::DescribedBackendInfo info() const override {
         return {
             .character = {.id = id_, .display_name = name_},
             .model = "test-model",
@@ -313,7 +313,7 @@ public:
         return result_;
     }
 
-    CharacterRuntimeInfo info() const override {
+    test::DescribedBackendInfo info() const override {
         return {
             .character = {.id = id_, .display_name = name_},
             .model = "test-model",
@@ -359,7 +359,7 @@ public:
         return {};
     }
 
-    CharacterRuntimeInfo info() const override {
+    test::DescribedBackendInfo info() const override {
         return {
             .character = {.id = "two-id", .display_name = "Two"},
             .model = "test-model",
@@ -389,7 +389,7 @@ public:
         return {};
     }
 
-    CharacterRuntimeInfo info() const override {
+    test::DescribedBackendInfo info() const override {
         return {
             .character = {
                 .id = "guide-id",

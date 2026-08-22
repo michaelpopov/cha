@@ -217,15 +217,15 @@ Session destruction releases the controller's references, while any active
 request keeps its selected definition alive through its own shared pointer.
 
 At controller construction, the session derives one safe, immutable
-`CharacterRuntimeInfo` record per definition. It contains only
-the character's public metadata plus its configured model, API, and streaming
-flag. It contains no credential or prompt.
+`CharacterRuntimeInfo` record per definition. It contains only the character
+ID plus its configured model, API, and streaming flag. It contains no copied
+character metadata, credential, or prompt.
 
 `ForumCharacters` is a separate mutable presentation copy. A session style
-override changes only the appearance in that copy. The immutable per-character
-runtime record remains the configured baseline, so resetting a style restores
-the original appearance from that character's record. `style_overrides_` still
-needs to store only the selected override names.
+override changes only the appearance in that copy. The immutable character
+definition remains the configured baseline, so resetting a style restores the
+original appearance from that definition. `style_overrides_` still needs to
+store only the selected override names.
 
 `/characters` and `/info` use the ordered per-character runtime records. If two
 characters share one provider selection, they still produce two records with
@@ -411,10 +411,11 @@ worker process-level supervision:
    before launching the thread.
 2. The worker catches every exception and publishes exactly one terminal event.
 3. The worker destroys its curl handle and releases all transport callbacks.
-4. As its final provider-facing action, it removes the request from the active
-   registry and notifies shutdown waiters.
-5. The detached closure retains the request through its final return, so
-   registry removal cannot destroy state still in use by that closure.
+4. Under one registry lock, it removes the request and snapshots the resulting
+   active count.
+5. It logs the unregister transition, notifies shutdown waiters, and returns.
+   The detached closure retains the request through that final return, so
+   registry removal cannot destroy state still in use by the diagnostic tail.
 
 The worker captures the shared internal registry state, not a raw `Providers*`.
 Consequently, the small registry object remains alive long enough for the
@@ -422,8 +423,9 @@ worker's final completion action even while the outer `Providers` object is
 shutting down.
 
 The active-registry removal point means provider I/O is quiescent: the curl
-handle is already destroyed, no more events will be published, and the worker
-will touch no process or session object after unregistering.
+handle is already destroyed and no more events will be published. After
+unregistering, the worker only emits its final diagnostic, notifies the shared
+registry, and drops its closure pointers; it touches no session object.
 
 This is a supervised detached thread, not an abandoned thread. Process shutdown
 waits for every active registry entry to reach this quiescent point.
@@ -498,9 +500,9 @@ After this redesign:
   including the presence of configured `api_key_env` values; a validation
   failure keeps the workspace's startup definitions and reports a notice;
 - invalid, revoked, or provider-rejected credentials remain request failures;
-- `/characters`, `/info`, and style reset use the session's immutable
-  per-character runtime records, so their configured model, API, streaming,
-  and appearance values are available before any request.
+- `/characters` and `/info` use the session's immutable per-character runtime
+  records, while style reset uses the immutable character definition; all
+  configured values are available before any request.
 
 The presence of a configured credential variable is therefore validated both
 when publishing a workspace and when session opening successfully re-parses
@@ -624,7 +626,7 @@ The command remains non-blocking; the foreground terminal arrives through its
 request queue and wake signal. `ProviderRequest` needs no public `finished()`
 operation for this path.
 
-`busy()` reflects session-owned visible generation state, not the process
+`is_generating()` reflects session-owned visible generation state, not the process
 registry. It remains true while the durable foreground request is awaiting its
 terminal event and becomes false as soon as that event is persisted and the
 session's handles are cleared. A new prompt may then start even if cancelled
@@ -846,7 +848,7 @@ log because those concepts do not exist.
 - one target failure does not mix with or discard another target's output;
 - `/stop` drains only the durable foreground request and discards every
   non-foreground queue;
-- `busy()` clears after the foreground terminal is persisted even while old
+- `is_generating()` clears after the foreground terminal is persisted even while old
   cancelled requests remain in the process registry;
 - a new prompt can run while those old requests finish unregistering, without
   consuming their events;
@@ -896,7 +898,7 @@ The redesign is complete when all of these invariants hold:
    quiescent.
 9. Session destruction cancels and releases requests without waiting.
 10. `/stop` drains only the durable foreground request, discards
-    non-foreground handles, and clears session `busy()` without waiting for
+    non-foreground handles, and clears `is_generating()` without waiting for
     process-registry cleanup.
 11. Multicast targets share one immutable history snapshot and remain
     presentation-ordered despite independent execution.

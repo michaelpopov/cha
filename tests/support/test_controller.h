@@ -154,7 +154,7 @@ inline TestController from_test_backends(
     definitions.reserve(backends.size());
     for (const std::unique_ptr<DescribedModelBackend>& backend : backends) {
         if (!backend) throw std::invalid_argument("Test controller requires model backends");
-        const CharacterRuntimeInfo info = backend->info();
+        const DescribedBackendInfo info = backend->info();
         definitions.push_back({
             .character = info.character,
             .provider = {.id = "test", .config = {

@@ -77,10 +77,10 @@ public:
         return {};
     }
 
-    CharacterRuntimeInfo info() const override { return info_; }
+    test::DescribedBackendInfo info() const override { return info_; }
 
 private:
-    CharacterRuntimeInfo info_;
+    test::DescribedBackendInfo info_;
     std::string answer_;
 };
 

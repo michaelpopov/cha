@@ -34,7 +34,7 @@ struct CharacterDefinition {
 // Public configured runtime information for one character. It is derived from
 // immutable character definitions and is safe to show in diagnostics.
 struct CharacterRuntimeInfo {
-    CharacterMetadata character;
+    CharacterId id;
     std::string model;
     std::string api;
     bool streaming{};

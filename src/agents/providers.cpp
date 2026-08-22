@@ -28,20 +28,6 @@ void default_thread_launcher(std::function<void()> worker) {
     std::thread(std::move(worker)).detach();
 }
 
-std::string lifecycle_fields(
-    std::string_view provider_id,
-    std::string_view model,
-    const SessionIdentity& session,
-    RequestId request_id,
-    std::uint64_t token) {
-    return "provider_id=" + std::string(provider_id)
-        + " forum_id=" + session.forum_id
-        + " session_id=" + session.session_id
-        + " request_id=" + std::to_string(request_id)
-        + " token=" + std::to_string(token)
-        + " model=" + std::string(model);
-}
-
 } // namespace
 
 struct Providers::Registry {
@@ -56,11 +42,7 @@ ProviderRequest::ProviderRequest(
     ProviderRequestInput input,
     std::shared_ptr<WakeNotifier> notifier)
     : input_(std::move(input)),
-      notifier_(std::move(notifier)),
-      fallback_terminal_(GenerationFailed{
-          input_.generation.run.request_id,
-          "Provider request failed before details could be reported",
-      }) {
+      notifier_(std::move(notifier)) {
     static_assert(std::is_nothrow_move_constructible_v<GenerationEvent>);
     static_assert(std::is_nothrow_move_assignable_v<GenerationEvent>);
 }
@@ -75,7 +57,7 @@ ChannelReadStatus ProviderRequest::try_receive(GenerationEvent& event) {
 
 void ProviderRequest::cancel() noexcept {
     cancellation_.store(true, std::memory_order_release);
-    if (notifier_) notifier_->wake();
+    notifier_->wake();
 }
 
 bool ProviderRequest::has_valid_input() const noexcept {
@@ -91,42 +73,41 @@ bool ProviderRequest::has_valid_input() const noexcept {
         && !input_.generation.run.target.display_name.empty();
 }
 
+std::string ProviderRequest::log_fields() const {
+    const CharacterDefinition& character = *input_.character;
+    const RunSpec& run = input_.generation.run;
+    return "provider_id=" + character.provider.id
+        + " forum_id=" + run.session.forum_id
+        + " session_id=" + run.session.session_id
+        + " request_id=" + std::to_string(run.request_id)
+        + " token=" + std::to_string(token_)
+        + " model=" + character.provider.config.model;
+}
+
 void ProviderRequest::set_token(std::uint64_t token) noexcept {
     token_ = token;
 }
 
 void ProviderRequest::close_with(GenerationEvent event) noexcept {
     events_.close_with(std::move(event));
-    if (notifier_) notifier_->wake();
+    notifier_->wake();
 }
 
 void ProviderRequest::fail(std::string_view message) noexcept {
-    GenerationEvent terminal = std::move(fallback_terminal_);
-    try {
-        terminal = GenerationFailed{
-            input_.generation.run.request_id,
-            std::string(message),
-        };
-    } catch (...) {
-        log_critical("Provider request failure details could not be preserved");
-    }
-    close_with(std::move(terminal));
+    close_with(GenerationFailed{
+        input_.generation.run.request_id,
+        std::string(message),
+    });
 }
 
 void ProviderRequest::execute(
     const ProviderClientFactory& client_factory) noexcept {
     const RequestId request_id = input_.generation.run.request_id;
-    const CharacterDefinition& character = *input_.character;
     const auto started = std::chrono::steady_clock::now();
     std::string fields;
 
     try {
-        fields = lifecycle_fields(
-            character.provider.id,
-            character.provider.config.model,
-            input_.generation.run.session,
-            request_id,
-            token_);
+        fields = log_fields();
         if (cancellation_.load(std::memory_order_acquire)) {
             log_info("Provider request cancelled before client construction: " + fields);
             close_with(GenerationCancelled{request_id});
@@ -156,7 +137,7 @@ void ProviderRequest::execute(
                     throw std::logic_error(
                         "Provider request event queue closed before execution stopped");
                 }
-                if (notifier_) notifier_->wake();
+                notifier_->wake();
             },
             cancellation_);
 
@@ -219,14 +200,8 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
     std::unique_lock lock(registry->mutex);
     if (!registry->admitting) {
         lock.unlock();
-        const CharacterDefinition& character = *request->input_.character;
         log_error("Provider request rejected: admission closed: "
-            + lifecycle_fields(
-                character.provider.id,
-                character.provider.config.model,
-                request->input_.generation.run.session,
-                request->input_.generation.run.request_id,
-                0));
+            + request->log_fields());
         request->fail("Provider request admission is closed");
         return request;
     }
@@ -239,15 +214,19 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
     // thread construction lets shutdown cancel and wait for the registered
     // request; the worker then observes cancellation before client creation.
     lock.unlock();
+    const auto fail_launch = [&](std::string_view message) {
+        request->fail(message);
+        {
+            std::lock_guard registry_lock(registry->mutex);
+            registry->active.erase(token);
+        }
+        registry->empty.notify_all();
+        log_error("Provider request failed to start: "
+            + request->log_fields());
+    };
     try {
-        const CharacterDefinition& character = *request->input_.character;
         log_info("Provider request admitted: "
-            + lifecycle_fields(
-                character.provider.id,
-                character.provider.config.model,
-                request->input_.generation.run.session,
-                request->input_.generation.run.request_id,
-                token)
+            + request->log_fields()
             + " active_count=" + std::to_string(active_count));
         thread_launcher_([registry, request, client_factory, token]() mutable {
             request->execute(client_factory);
@@ -256,57 +235,23 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
             // contains only its request, registry, and scalar token.
             client_factory = nullptr;
 
-            std::size_t active_count{};
+            std::size_t active_count;
             {
                 std::lock_guard lock(registry->mutex);
-                if (!registry->active.contains(token)) return;
-                active_count = registry->active.size() - 1;
+                const auto found = registry->active.find(token);
+                if (found == registry->active.end()) return;
+                registry->active.erase(found);
+                active_count = registry->active.size();
             }
-            try {
-                const CharacterDefinition& character = *request->input_.character;
-                log_debug("Provider request unregistering: "
-                    + lifecycle_fields(
-                        character.provider.id,
-                        character.provider.config.model,
-                        request->input_.generation.run.session,
-                        request->input_.generation.run.request_id,
-                        token)
-                    + " active_count=" + std::to_string(active_count));
-            } catch (...) {
-                log_debug("Provider request unregistering");
-            }
-            {
-                std::lock_guard lock(registry->mutex);
-                registry->active.erase(token);
-            }
+            log_debug("Provider request unregistering: "
+                + request->log_fields()
+                + " active_count=" + std::to_string(active_count));
             registry->empty.notify_all();
         });
+    } catch (const std::exception& error) {
+        fail_launch(error.what());
     } catch (...) {
-        const std::exception_ptr launch_error = std::current_exception();
-        try {
-            std::rethrow_exception(launch_error);
-        } catch (const std::exception& error) {
-            request->fail(error.what());
-        } catch (...) {
-            request->fail("Provider request worker could not be started");
-        }
-        {
-            std::lock_guard registry_lock(registry->mutex);
-            registry->active.erase(token);
-        }
-        registry->empty.notify_all();
-        const CharacterDefinition& character = *request->input_.character;
-        try {
-            log_error("Provider request failed to start: "
-                + lifecycle_fields(
-                    character.provider.id,
-                    character.provider.config.model,
-                    request->input_.generation.run.session,
-                    request->input_.generation.run.request_id,
-                    token));
-        } catch (...) {
-            log_error("Provider request failed to start");
-        }
+        fail_launch("Provider request worker could not be started");
     }
     return request;
 }

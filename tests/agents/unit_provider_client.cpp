@@ -155,8 +155,6 @@ TEST(ProviderClient, EchoesOnePromptInTestMode) {
     EXPECT_EQ(result.outcome, GenerationOutcome::completed);
     EXPECT_EQ(deltas, (std::vector<std::string>{"hello"}));
     EXPECT_EQ(second_client.prepare(request).bytes, "hello");
-    EXPECT_EQ(character_runtime_info(*definition).character.description,
-              "Helpful character");
 }
 
 TEST(ProviderClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
@@ -192,7 +190,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     const SharedCharacterDefinition definition =
         share_character_definitions({std::move(configured)}).front();
     const CharacterRuntimeInfo runtime = character_runtime_info(*definition);
-    EXPECT_EQ(runtime.character.id, "assistant");
+    EXPECT_EQ(runtime.id, "assistant");
     EXPECT_EQ(runtime.model, "configured-model");
     EXPECT_TRUE(runtime.api.ends_with("/v1/chat/completions"));
     EXPECT_TRUE(runtime.streaming);

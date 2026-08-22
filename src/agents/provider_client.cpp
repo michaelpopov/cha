@@ -506,7 +506,7 @@ std::string build_chat_completions_request_body(
 
 CharacterRuntimeInfo character_runtime_info(const CharacterDefinition& definition) {
     return {
-        .character = definition.character,
+        .id = definition.character.id,
         .model = definition.provider.config.model,
         .api = provider_endpoint(definition.provider.config),
         .streaming = definition.provider.config.stream,

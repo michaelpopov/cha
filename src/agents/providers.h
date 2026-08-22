@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <string_view>
 
 namespace cha {
@@ -37,6 +38,7 @@ private:
         std::shared_ptr<WakeNotifier> notifier);
 
     [[nodiscard]] bool has_valid_input() const noexcept;
+    [[nodiscard]] std::string log_fields() const;
     void set_token(std::uint64_t token) noexcept;
     void execute(const ProviderClientFactory& client_factory) noexcept;
     void fail(std::string_view message) noexcept;
@@ -46,7 +48,6 @@ private:
     ConcurrentQueue<GenerationEvent> events_;
     std::atomic_bool cancellation_{false};
     std::shared_ptr<WakeNotifier> notifier_;
-    GenerationEvent fallback_terminal_;
     std::uint64_t token_{};
 };
 

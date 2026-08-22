@@ -7,10 +7,10 @@ output. It has no HTTP or browser dependency.
 ## Controller ownership
 
 `SessionController` retains ordered immutable character definitions and derives
-one `CharacterRuntimeInfo` per character for `/characters`, `/info`, and style
-reset. `ForumCharacters` is the mutable presentation copy: a session style
-override changes only that copy, and reset restores the immutable configured
-appearance.
+one identity-and-provider `CharacterRuntimeInfo` per character for
+`/characters` and `/info`. `ForumCharacters` is the mutable presentation copy:
+a session style override changes only that copy, and reset restores the
+appearance from the immutable definition.
 
 The controller borrows the process-owned `Providers` and holds a shared wake
 notifier. During a generation it owns only ordered `ProviderRequest` handles,

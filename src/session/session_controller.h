@@ -145,7 +145,6 @@ private:
     [[nodiscard]] SharedCharacterDefinition definition_for(
         std::string_view id) const;
     [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
-    bool busy() const noexcept;
     ControllerUpdate busy_notice() const;
     [[nodiscard]] std::optional<EntryIdentity> resolve_author(
         std::string_view author_id,
@@ -170,7 +169,7 @@ private:
     void activate_run(const RunSpec& run, std::size_t foreground_index,
                       ControllerUpdate& update);
     void finish_generation_run(ControllerUpdate& update);
-    void release_generation() noexcept;
+    void cancel_generation_requests() noexcept;
     void apply(const GenerationEventDelta& event, ControllerUpdate& update);
     void apply(const GenerationCompleted& event, ControllerUpdate& update);
     void apply(const GenerationCancelled& event, ControllerUpdate& update);

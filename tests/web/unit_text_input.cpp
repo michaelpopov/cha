@@ -95,7 +95,7 @@ public:
         return {GenerationOutcome::cancelled, {}};
     }
 
-    CharacterRuntimeInfo info() const override {
+    test::DescribedBackendInfo info() const override {
         return {
             .character = {
                 .id = id_,

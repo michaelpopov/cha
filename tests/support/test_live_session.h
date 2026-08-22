@@ -206,7 +206,7 @@ public:
         }
     }
 
-    CharacterRuntimeInfo info() const override {
+    DescribedBackendInfo info() const override {
         return {
             .character = {.id = id_, .display_name = name_},
             .model = "test-model",
