@@ -6,13 +6,21 @@
 
 namespace cha::web {
 
-// Owner-thread-only bookkeeping for the supported one-page browser contract.
+// Owner-thread-only bookkeeping for the one browser this single-user
+// application serves at a time. The reader moves between devices, so the
+// newest connection always wins and the one it replaces is simply reported.
 class BrowserConnectionState {
 public:
     using Clock = std::chrono::steady_clock;
 
+    struct Accepted {
+        std::uint64_t connection_id{};
+        // The connection this one displaced, if a device was still attached.
+        std::optional<std::uint64_t> superseded_connection_id;
+    };
+
     void published(Clock::time_point now);
-    [[nodiscard]] std::optional<std::uint64_t> accept();
+    [[nodiscard]] Accepted accept();
     bool close(std::uint64_t connection_id, Clock::time_point now);
     [[nodiscard]] std::optional<Clock::time_point> deadline(
         bool is_generating,

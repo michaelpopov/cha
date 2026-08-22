@@ -408,25 +408,27 @@ void LiveSession::execute(OwnerCommand command) {
         return;
     }
     if (std::holds_alternative<SseConnectCommand>(command.command)) {
-        const auto connection_id = browser_connection_.accept();
-        if (!connection_id) {
-            log_event("sse_conflict");
-            (void)command.reply->complete(ErrorCode::browser_stream_in_use);
-            return;
-        }
+        // One reader on one device at a time, and the device that just
+        // connected is the one they are looking at: it takes the session over
+        // immediately rather than waiting for the previous stream to die.
+        const BrowserConnectionState::Accepted accepted =
+            browser_connection_.accept();
         // The snapshot sent on connect establishes the mailbox's append base
         // and resets its sequence accounting, so a later append is always
         // relative to what this browser actually received.
         const SseMailbox::Stream stream =
             mailbox_->begin_stream({make_snapshot()});
         if (!command.reply->complete(SseConnectResult{
-                mailbox_, stream, *connection_id})) {
+                mailbox_, stream, accepted.connection_id})) {
             // Mutations retain their unknown outcome after a timeout, but an
-            // unclaimed connect must not retain its exclusive slot.
+            // unclaimed connect must not retain the browser slot.
             mailbox_->end_stream(stream);
-            (void)browser_connection_.close(*connection_id, clock_());
+            (void)browser_connection_.close(accepted.connection_id, clock_());
         } else {
-            log_event(has_connected_sse_ ? "sse_reconnected" : "sse_connected");
+            std::string_view event = "sse_connected";
+            if (accepted.superseded_connection_id) event = "sse_taken_over";
+            else if (has_connected_sse_) event = "sse_reconnected";
+            log_event(event);
             has_connected_sse_ = true;
         }
         return;

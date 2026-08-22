@@ -88,6 +88,23 @@ TEST(SseStreamWriter, ClosedMailboxEndsChunkedResponseCleanly) {
     EXPECT_TRUE(output.content.empty());
 }
 
+// A stream another device took over ends with one record that says so, which
+// is what stops the displaced page from reconnecting and taking it back.
+TEST(SseStreamWriter, SupersededStreamEndsWithItsOwnRecord) {
+    auto mailbox = std::make_shared<SseMailbox>();
+    const SseMailbox::Stream stream =
+        mailbox->begin_stream({snapshot_with_text("initial")});
+    SseStreamWriter writer(mailbox, stream, 1ms);
+    CapturingDataSink output;
+    ASSERT_TRUE(writer.write(output.sink));
+    output.content.clear();
+
+    (void)mailbox->begin_stream({snapshot_with_text("elsewhere")});
+    EXPECT_TRUE(writer.write(output.sink));
+    EXPECT_EQ(output.content, "event: superseded\ndata: {}\n\n");
+    EXPECT_TRUE(output.done);
+}
+
 TEST(SseStreamWriter, IdleOpenStreamEmitsHeartbeat) {
     auto mailbox = std::make_shared<SseMailbox>();
     const SseMailbox::Stream stream =

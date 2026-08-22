@@ -25,7 +25,14 @@ SseMailbox::Next SseMailbox::next(
         return closed_ || active_stream_ != stream.id
             || (!in_flight_ && pending_);
     });
-    if (closed_ || active_stream_ != stream.id) return {};
+    if (closed_ || active_stream_ != stream.id) {
+        // A stream only stops being the active one when the session closed,
+        // when its own writer ended it, or when a newer stream displaced it,
+        // and only the last of those has a higher stream id to compare with.
+        return {.ending = !closed_ && active_stream_ > stream.id
+            ? Ending::superseded
+            : Ending::closed};
+    }
     if (!in_flight_ && pending_) {
         in_flight_ = std::move(pending_);
         pending_.reset();

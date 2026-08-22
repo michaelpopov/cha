@@ -673,27 +673,35 @@ TEST(LiveSession, ReloadingOutranksBrowserDisconnectedOnTheFinalSnapshot) {
     EXPECT_TRUE(wait_for_finished(host.handle()));
 }
 
-TEST(LiveSession, OneActiveStreamRejectsConflictsAndIgnoresStaleCloses) {
+// The reader carries one session from device to device, so a second connection
+// takes it over at once rather than being refused, and the device it displaced
+// is told so instead of being left to reconnect and take it back.
+TEST(LiveSession, ASecondBrowserTakesTheSessionOver) {
     test::TemporarySessionFile file("live_session_streams");
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
 
     const SseConnectResult first = connect(*host);
-    const auto rejected = host->connect_sse(2s);
-    ASSERT_TRUE(std::holds_alternative<ErrorCode>(rejected));
-    EXPECT_EQ(std::get<ErrorCode>(rejected), ErrorCode::browser_stream_in_use);
-
-    first.mailbox->end_stream(first.stream);
-    host->disconnect_sse(first.connection_id, 0);
+    ASSERT_TRUE(next_payload(first));
     const SseConnectResult second = connect(*host);
     EXPECT_NE(second.connection_id, first.connection_id);
 
-    // A stale close for the previous connection must not free the live one.
+    const SseMailbox::Next displaced = first.mailbox->next(first.stream, 10ms);
+    EXPECT_FALSE(displaced.open);
+    EXPECT_EQ(displaced.ending, SseMailbox::Ending::superseded);
+    // The new device still receives its own opening snapshot.
+    const std::shared_ptr<const SsePayload> opening = next_payload(second);
+    ASSERT_TRUE(opening);
+    EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(*opening));
+
+    // The displaced device tears down late. Neither its end_stream nor its
+    // disconnect may disturb the connection that now holds the session.
+    EXPECT_EQ(first.mailbox->end_stream(first.stream), 0U);
     host->disconnect_sse(first.connection_id, 0);
-    const auto still_rejected = host->connect_sse(2s);
-    ASSERT_TRUE(std::holds_alternative<ErrorCode>(still_rejected));
-    EXPECT_EQ(
-        std::get<ErrorCode>(still_rejected), ErrorCode::browser_stream_in_use);
+    second.mailbox->written(second.stream);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(RawCommand{"Question"}, 2s)));
+    ASSERT_TRUE(next_payload(second));
 
     second.mailbox->end_stream(second.stream);
     host->disconnect_sse(second.connection_id, 0);

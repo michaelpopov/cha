@@ -80,10 +80,29 @@ describe('session events', () => {
       () => source,
     );
 
-    source.emit('append', { status: 409, error: { code: 'browser_stream_in_use' } });
+    source.emit('append', { status: 409, error: { code: 'session_not_live' } });
     source.onerror?.(new Event('error'));
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith({ kind: 'stream_failure' });
     expect(onError.mock.calls[0][0]).not.toHaveProperty('status');
+  });
+
+  // The takeover record arrives before the connection error it precedes, and
+  // the two must not report the same thing: only a broken stream is worth
+  // reconnecting.
+  it('reports a superseded stream separately from a failure', () => {
+    const source = new FakeEventSource();
+    const onError = vi.fn();
+    openSessionEvents(
+      'forum',
+      'session',
+      { onSnapshot: vi.fn(), onAppend: vi.fn(), onError },
+      () => source,
+    );
+
+    source.emit('superseded', {});
+    source.onerror?.(new Event('error'));
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith({ kind: 'superseded' });
   });
 });

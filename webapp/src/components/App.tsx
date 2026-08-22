@@ -24,6 +24,7 @@ import { saveMarkdownDownload } from '../download';
 import { parseAppRoute, sessionRoute } from '../state/route';
 import {
   isSessionLimit,
+  movedMessage,
   recoverSessionStream,
   reconnectingMessage,
   sessionProbe,
@@ -452,9 +453,27 @@ export function App({
           if (!events || connection.current?.events !== events) return;
           dispatch({ type: 'session-append', forumId, sessionId, event });
         },
-        onError: () => {
+        onError: (failure) => {
           if (!events || connection.current?.events !== events) return;
           detachStream(events);
+          // The reader picked this session up on another device. Recovering
+          // here would take it straight back, so this page parks instead and
+          // waits for the reader to ask for it again. Ending the generation is
+          // what parks it: a ladder in flight, and the late failure callback of
+          // a stream that had already connected, both belong to that
+          // generation and would otherwise reconnect behind the notice.
+          if (failure.kind === 'superseded') {
+            cancelRetryTimer();
+            recovery.current = null;
+            liveGeneration.current += 1;
+            dispatch({
+              type: 'stream-state',
+              status: 'moved',
+              message: movedMessage,
+            });
+            onSettled?.(false);
+            return;
+          }
           failed();
         },
       });
@@ -468,7 +487,7 @@ export function App({
       if (events) detachStream(events);
       failed();
     }
-  }, [connectSessionEvents, detachStream]);
+  }, [cancelRetryTimer, connectSessionEvents, detachStream]);
 
   // One ladder rung's attach: resolves true when the new stream delivers its
   // first snapshot, false when it fails first. A failure after that belongs to
@@ -518,13 +537,7 @@ export function App({
     }).then((outcome) => {
       if (cancelled()) return;
       recovery.current = null;
-      if (outcome === 'other-window') {
-        dispatch({
-          type: 'stream-state',
-          status: 'other-window',
-          message: 'This session is open in another window',
-        });
-      } else if (outcome === 'retry') {
+      if (outcome === 'retry') {
         dispatch({
           type: 'stream-state',
           status: 'retry',
@@ -840,7 +853,7 @@ export function App({
     if (snapshotMatches) {
       if (state.sessionSnapshot?.lifecycle !== 'running'
           || state.streamStatus === 'retry'
-          || state.streamStatus === 'other-window') return;
+          || state.streamStatus === 'moved') return;
       connectStream(
         active.forumId,
         active.sessionId,

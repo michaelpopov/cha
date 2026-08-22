@@ -74,8 +74,9 @@ pin the API port deliberately. The two projects are:
 The suite starts a copied deterministic workspace, a real `chaweb`, and a tiny
 local OpenAI-compatible streaming provider; it never reads an API key or uses
 the external network. The projects run serially because they share that one
-process and each live session accepts one event stream; a dedicated two-page
-scenario verifies the rejected second viewer and its recovery.
+process and each live session serves one event stream; a dedicated two-page
+scenario verifies that the page opened last takes the session over and that the
+displaced page parks until the reader continues there.
 
 Dropped-stream recovery is covered by refusing one event-stream request and
 letting the snapshot probe and replacement stream run against the real server.

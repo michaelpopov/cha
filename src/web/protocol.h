@@ -32,7 +32,7 @@ enum class ErrorCode {
     not_found, bad_request, body_too_large, prompt_too_large, forbidden_origin,
     internal_error, session_busy, session_stopping,
     session_limit_reached, session_open_timeout, server_stopping,
-    session_not_live, browser_stream_in_use, command_timeout,
+    session_not_live, command_timeout,
     command_queue_full, session_delete_conflict,
     workspace_reload_failed,
 };

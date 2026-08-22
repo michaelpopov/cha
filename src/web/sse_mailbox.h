@@ -27,8 +27,15 @@ enum class AppendPublishResult {
 class SseMailbox final {
 public:
     using Stream = SseStreamToken;
+    // Why a stream stopped, so the writer can tell a reader who moved to
+    // another device from one whose session simply ended.
+    enum class Ending {
+        closed,
+        superseded,
+    };
     struct Next {
         bool open{};
+        Ending ending{Ending::closed};
         std::shared_ptr<const SsePayload> payload;
     };
 

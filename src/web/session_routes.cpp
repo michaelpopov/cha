@@ -37,9 +37,6 @@ void set_submission_error(httplib::Response& response, ErrorCode code) {
     case ErrorCode::command_timeout:
         set_error_response(response, 503, {code, "The command outcome is unknown."});
         return;
-    case ErrorCode::browser_stream_in_use:
-        set_error_response(response, 409, {code, "This session is already open in another browser page."});
-        return;
     default:
         set_error_response(response, 500, {ErrorCode::internal_error, "The request could not be completed."});
     }

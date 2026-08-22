@@ -19,6 +19,8 @@ std::string sse_frame(const SsePayload& payload) {
 
 std::string sse_heartbeat() { return ": heartbeat\n\n"; }
 
+std::string sse_superseded() { return "event: superseded\ndata: {}\n\n"; }
+
 SseStreamWriter::SseStreamWriter(
     std::shared_ptr<SseMailbox> mailbox,
     SseMailbox::Stream stream,
@@ -31,6 +33,10 @@ bool SseStreamWriter::write(httplib::DataSink& sink) {
         const SseMailbox::Next next =
             mailbox_->next(stream_, heartbeat_interval_);
         if (!next.open) {
+            if (next.ending == SseMailbox::Ending::superseded) {
+                const std::string frame = sse_superseded();
+                (void)sink.write(frame.data(), frame.size());
+            }
             sink.done();
             return true;
         }

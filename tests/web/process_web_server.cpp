@@ -448,13 +448,14 @@ public:
     [[nodiscard]] int port() const noexcept { return port_; }
     static constexpr std::string_view events_path =
         "/s/forum/session/api/v1/events";
+    static constexpr std::size_t worker_count = 3;
 
 private:
     static WebSettings make_settings() {
         WebSettings settings;
         settings.session_limit = 1;
         settings.http_request_headroom = 2;
-        settings.http_thread_pool_size = 3;
+        settings.http_thread_pool_size = worker_count;
         settings.http_pending_request_limit = 3;
         settings.http_write_timeout = write_timeout;
         settings.sse_heartbeat_interval = 25ms;
@@ -506,11 +507,20 @@ TEST(WebServerSocketLimits, RejectsARequestThatExceedsInjectedReadTimeout) {
     listener.join();
 }
 
-TEST(WebServerSocketLimits, StalledSseReaderReleasesStreamAfterWriteTimeout) {
+// A reader who stops reading pins the request worker writing to it. The write
+// timeout is what gives that worker back; without it the pool drains one
+// abandoned device at a time. Worker exhaustion is the observable, because a
+// newer stream is now always admitted whatever the older ones are doing.
+TEST(WebServerSocketLimits, StalledSseReadersReleaseWorkersAfterWriteTimeout) {
     RealSocketSseServer server;
-    RawHttpSocket stalled(server.port(), 4096);
-    stalled.send_get(RealSocketSseServer::events_path);
-    ASSERT_EQ(stalled.read_status(), 200);
+    std::vector<std::unique_ptr<RawHttpSocket>> stalled;
+    for (std::size_t worker = 0; worker != RealSocketSseServer::worker_count;
+         ++worker) {
+        auto socket = std::make_unique<RawHttpSocket>(server.port(), 4096);
+        socket->send_get(RealSocketSseServer::events_path);
+        ASSERT_EQ(socket->read_status(), 200);
+        stalled.push_back(std::move(socket));
+    }
 
     // Allow scheduler and owner-notification latency around the configured
     // no-progress timeout while still proving this is not the library's 5s
@@ -522,11 +532,11 @@ TEST(WebServerSocketLimits, StalledSseReaderReleasesStreamAfterWriteTimeout) {
 
     const auto started = std::chrono::steady_clock::now();
     const auto deadline = started + bound;
-    int status = 409;
-    while (status == 409 && std::chrono::steady_clock::now() < deadline) {
+    int status{};
+    while (status != 200 && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(20ms);
         status = request_status(
-            server.port(), RealSocketSseServer::events_path);
+            server.port(), "/s/forum/session/api/v1/session");
     }
     EXPECT_EQ(status, 200);
     EXPECT_LT(std::chrono::steady_clock::now() - started, bound);
@@ -546,9 +556,11 @@ TEST(WebServerSocketLimits, SlowProgressingSseReaderStaysConnected) {
         std::this_thread::sleep_for(10ms);
     }
     EXPECT_GT(reads, 2U);
+    // A reader who is keeping up still hands the session over to the device
+    // they just opened it on: the new request is served, not refused.
     EXPECT_EQ(
         request_status(server.port(), RealSocketSseServer::events_path),
-        409);
+        200);
 }
 
 void run_blocked_shutdown(const std::filesystem::path& log_path) {

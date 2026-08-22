@@ -687,30 +687,79 @@ describe('live stream recovery', () => {
     expect(getSessionSnapshot).toHaveBeenCalledTimes(3);
   });
 
-  it('names an occupied stream after successful probes exhaust the ladder and keeps the transcript', async () => {
+  // The reader opened this conversation on another device. Reconnecting would
+  // take it straight back, so this page parks with the transcript it has and
+  // waits to be asked.
+  it('parks the page when another device takes the session over', async () => {
+    const events = drivableEvents();
+    const snapshot = transcriptSnapshot();
+    const getSessionSnapshot = vi.fn(async () => snapshot);
+    render(
+      <App
+        client={fixtureClient({ getSessionSnapshot })}
+        connectSessionEvents={events.connect}
+        retryDelays={[0, 0]}
+      />,
+    );
+    await attachInitial(events, snapshot);
+    const probesBefore = getSessionSnapshot.mock.calls.length;
+    act(() => events.handlers[0].onError({ kind: 'superseded' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This conversation moved to another device',
+    );
+    expect(screen.getByText('Still here')).toBeInTheDocument();
+    expect(events.connections[0].close).toHaveBeenCalled();
+    // No probe and no new stream: the ladder never ran.
+    expect(getSessionSnapshot.mock.calls).toHaveLength(probesBefore);
+    expect(events.connections).toHaveLength(1);
+  });
+
+  // A stream that has already reconnected once carries a late-failure callback
+  // from its ladder rung. A takeover must park that page too, not hand it back
+  // to recovery.
+  it('parks a reconnected page when another device takes the session over', async () => {
     const events = drivableEvents();
     const snapshot = transcriptSnapshot();
     render(
       <App
         client={fixtureClient({ getSessionSnapshot: async () => snapshot })}
         connectSessionEvents={events.connect}
-        retryDelays={[0, 0, 0, 0, 0]}
+        retryDelays={[0, 0]}
       />,
     );
     await attachInitial(events, snapshot);
+    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+    await waitFor(() => expect(events.connections).toHaveLength(2));
+    act(() => events.handlers[1].onSnapshot(snapshot));
 
-    for (let index = 0; index < 5; index += 1) {
-      act(() => events.handlers[index].onError({ kind: 'stream_failure' }));
-      await waitFor(() => expect(events.connections).toHaveLength(index + 2));
-    }
-    act(() => events.handlers[5].onError({ kind: 'stream_failure' }));
+    act(() => events.handlers[1].onError({ kind: 'superseded' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'This session is open in another window',
+      'This conversation moved to another device',
     );
-    expect(screen.getByText('Still here')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Browse sessions' })).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.connections).toHaveLength(2);
+  });
+
+  it('takes a moved session back when the reader continues here', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const snapshot = transcriptSnapshot();
+    render(
+      <App
+        client={fixtureClient({ getSessionSnapshot: async () => snapshot })}
+        connectSessionEvents={events.connect}
+        retryDelays={[0]}
+      />,
+    );
+    await attachInitial(events, snapshot);
+    act(() => events.handlers[0].onError({ kind: 'superseded' }));
+    await screen.findByRole('button', { name: 'Continue here' });
+
+    await user.click(screen.getByRole('button', { name: 'Continue here' }));
+
+    await waitFor(() => expect(events.connections).toHaveLength(2));
   });
 
   it('stops after bounded probe failures with an explicit Retry action', async () => {

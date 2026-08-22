@@ -246,7 +246,9 @@ TEST(SessionRoutes, EventsStartWithASnapshotAndIgnoreLastEventId) {
     manager.begin_shutdown();
 }
 
-TEST(SessionRoutes, RejectsSecondEventStreamWithBrowserStreamInUse) {
+// One reader, several devices: the newest event stream takes the session over
+// and the one it displaces is closed with a final `superseded` record.
+TEST(SessionRoutes, SecondEventStreamTakesTheSessionOver) {
     SessionFiles files;
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionManager manager(route_settings(), session_opener(files, controls));
@@ -257,14 +259,16 @@ TEST(SessionRoutes, RejectsSecondEventStreamWithBrowserStreamInUse) {
     std::mutex stream_mutex;
     std::condition_variable stream_changed;
     bool received_snapshot = false;
+    std::string first_content;
     auto first_stream = std::async(std::launch::async, [&] {
         auto client = server.client();
         client.set_read_timeout(5s);
         return client.Get(
             "/s/lobby/one/api/v1/events",
             [](const httplib::Response& response) { return response.status == 200; },
-            [&](const char*, std::size_t) {
+            [&](const char* data, std::size_t size) {
                 std::lock_guard lock(stream_mutex);
+                first_content.append(data, size);
                 received_snapshot = true;
                 stream_changed.notify_all();
                 return true;
@@ -277,14 +281,28 @@ TEST(SessionRoutes, RejectsSecondEventStreamWithBrowserStreamInUse) {
         }));
     }
 
-    expect_error(
-        server.client().Get("/s/lobby/one/api/v1/events"),
-        409,
-        "browser_stream_in_use");
+    int second_status{};
+    std::string second_content;
+    (void)server.client().Get(
+        "/s/lobby/one/api/v1/events",
+        [&second_status](const httplib::Response& response) {
+            second_status = response.status;
+            return true;
+        },
+        [&second_content](const char* data, std::size_t size) {
+            second_content.append(data, size);
+            return false; // Close after the initial record.
+        });
+    EXPECT_EQ(second_status, 200);
+    EXPECT_TRUE(second_content.starts_with("event: snapshot\n"));
 
-    manager.begin_shutdown();
     ASSERT_EQ(first_stream.wait_for(5s), std::future_status::ready);
     (void)first_stream.get();
+    {
+        std::lock_guard lock(stream_mutex);
+        EXPECT_TRUE(first_content.ends_with("event: superseded\ndata: {}\n\n"));
+    }
+    manager.begin_shutdown();
 }
 
 TEST(SessionRoutes, EventsDeliverAppendWithSequenceOverHttp) {

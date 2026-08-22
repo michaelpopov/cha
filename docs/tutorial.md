@@ -808,7 +808,11 @@ The result is bounded memory under a slow browser. Intermediate presentation
 updates may collapse, but the latest complete state is recoverable. A newly
 connected SSE stream always begins with a snapshot.
 
-Only one browser SSE connection is accepted for a live session. Connection
+A live session holds one browser SSE connection: the most recent one. CHA has
+a single reader who may carry a conversation from desktop to laptop to tablet,
+so a new connection takes the session over at once rather than waiting for the
+previous device's stream to end, and the stream it displaces is closed with a
+final `superseded` record. Connection
 state also drives the actor's idle/orphan deadline; generation receives the
 longer protection appropriate to active work.
 
@@ -865,7 +869,7 @@ After the main actor path makes sense, scan the smaller adapters:
 | `asset_handler.*` | Serve the browser shell and staged static assets without owning session behavior |
 | `http_server.*` | Apply server-wide request, Host/Origin, timeout, and size policy |
 | `http_response.*`, `json.*`, `route_support.*` | Consistent JSON parsing, response bodies, route components, and mutation validation |
-| `browser_connection_state.*` | Enforce one browser stream and calculate disconnect/idle deadlines |
+| `browser_connection_state.*` | Hand the session to the newest browser stream and calculate disconnect/idle deadlines |
 | `owner_wake_signal.*` | Coalesce cross-thread wakeups for the actor loop |
 | `sse_stream.*` | Serialize mailbox payloads and heartbeats into `httplib::DataSink` |
 | `server_shutdown.*` | Bridge process signals to coordinated, bounded manager shutdown |

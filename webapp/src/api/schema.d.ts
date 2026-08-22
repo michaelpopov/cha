@@ -420,7 +420,13 @@ export interface paths {
         };
         /**
          * Stream live-session updates
-         * @description Opens the session's single allowed Server-Sent Events connection.
+         * @description Opens the session's single Server-Sent Events connection. CHA serves
+         *     one reader, who may move between devices, so this connection always
+         *     succeeds and displaces whichever one was open before. The displaced
+         *     stream receives a final `superseded` event and ends; a browser that
+         *     receives it stops following the session rather than reconnecting,
+         *     because reconnecting would take the session back.
+         *
          *     The first record is a `snapshot` event whose JSON data is a
          *     `SessionSnapshot`. Later records are either replacement `snapshot`
          *     events or `append` events whose JSON data is an `AppendEvent`.
@@ -712,7 +718,7 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "browser_stream_in_use" | "command_timeout" | "command_queue_full" | "session_delete_conflict" | "workspace_reload_failed";
+                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "session_delete_conflict" | "workspace_reload_failed";
                 message: string;
             };
         };
@@ -1373,11 +1379,7 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
-            /**
-             * @description Session is not live or already has an event stream. `error.code` is
-             *     `session_not_live`, or `browser_stream_in_use` when the session's one
-             *     allowed connection is already held by another browser page.
-             */
+            /** @description Session is not live. `error.code` is `session_not_live`. */
             409: {
                 headers: {
                     [name: string]: unknown;

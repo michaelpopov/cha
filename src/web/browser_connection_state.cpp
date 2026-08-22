@@ -7,17 +7,20 @@ void BrowserConnectionState::published(Clock::time_point now) {
     disconnected_since_ = now;
 }
 
-std::optional<std::uint64_t> BrowserConnectionState::accept() {
-    if (active_connection_id_) return std::nullopt;
-    const std::uint64_t id = next_connection_id_++;
-    active_connection_id_ = id;
+BrowserConnectionState::Accepted BrowserConnectionState::accept() {
+    // Taking over never consults a deadline: a reader who opens the session on
+    // a second device must not wait for the first one's socket to be noticed.
+    const Accepted accepted{next_connection_id_++, active_connection_id_};
+    active_connection_id_ = accepted.connection_id;
     disconnected_since_.reset();
-    return id;
+    return accepted;
 }
 
 bool BrowserConnectionState::close(
     std::uint64_t connection_id,
     Clock::time_point now) {
+    // A displaced device tears its stream down late; that close names an old
+    // connection and must not start a deadline against the current one.
     if (active_connection_id_ != connection_id) return false;
     active_connection_id_.reset();
     disconnected_since_ = now;

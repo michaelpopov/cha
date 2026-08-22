@@ -385,22 +385,31 @@ test('stops an active generation through the HTTP action', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible();
 });
 
-test('explains a second viewer and reconnects after the first closes', async ({ page, context }) => {
-  const sessionName = `Two viewers ${Date.now()}`;
+test('hands the session to the device that opened it last', async ({ page, context }) => {
+  const sessionName = `Two devices ${Date.now()}`;
   const sessionUrl = await startLobbySession(page, sessionName);
 
   const second = await context.newPage();
   await second.goto(sessionUrl);
-  await expect(second.getByRole('alert')).toContainText(
-    'This session is open in another window',
+  // The page opened last is live immediately, with no wait for the first one
+  // to give the session up.
+  await expect(second.getByRole('combobox', { name: 'Choose target character' }))
+    .toBeEnabled({ timeout: 15_000 });
+  // The page it displaced parks with its transcript instead of reconnecting.
+  await expect(page.getByRole('alert')).toContainText(
+    'This conversation moved to another device',
     { timeout: 15_000 },
   );
-  await expect(second.getByText(sessionName, { exact: true }).last()).toBeVisible();
+  await expect(page.getByText(sessionName, { exact: true }).last()).toBeVisible();
 
-  await page.close();
-  await second.getByRole('button', { name: 'Retry' }).click();
-  await expect(second.getByRole('combobox', { name: 'Choose target character' }))
+  // Going back to the first device is the same one gesture in reverse.
+  await page.getByRole('button', { name: 'Continue here' }).click();
+  await expect(page.getByRole('combobox', { name: 'Choose target character' }))
     .toBeEnabled({ timeout: 10_000 });
+  await expect(second.getByRole('alert')).toContainText(
+    'This conversation moved to another device',
+    { timeout: 15_000 },
+  );
 });
 
 // Seeds a session, then hands back a page that has never streamed anything.

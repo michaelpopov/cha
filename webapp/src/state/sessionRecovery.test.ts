@@ -168,31 +168,26 @@ describe('session stream recovery ladder', () => {
     expect(driver.reports).toEqual([waitingForCapacityMessage, reconnectingMessage]);
   });
 
-  // Every probe answering while every stream is refused is the only evidence
-  // the browser gets that another window holds the session's one stream.
-  it('reports another window when every probe succeeded and the ladder ran out', async () => {
+  // A live session whose stream will not attach is a broken connection like
+  // any other now: a session taken over on another device says so on the
+  // stream itself and never reaches this ladder.
+  it('reports a plain retry when the ladder runs out', async () => {
     const driver = drivableSteps(
       ['live', 'live', 'live'],
       [false, false, false],
     );
 
-    expect(await recoverSessionStream([250, 500, 1_000], driver.steps)).toBe('other-window');
+    expect(await recoverSessionStream([250, 500, 1_000], driver.steps)).toBe('retry');
     expect(driver.attachCount()).toBe(3);
   });
 
-  it('reports a plain retry when any probe failed before the ladder ran out', async () => {
+  it('reports a plain retry when a probe failed before the ladder ran out', async () => {
     const driver = drivableSteps(
       ['live', 'unavailable', 'live'],
       [false, false],
     );
 
     expect(await recoverSessionStream([250, 500, 1_000], driver.steps)).toBe('retry');
-  });
-
-  it('treats a re-opened session as evidence against the other-window case', async () => {
-    const driver = drivableSteps(['recovered'], [false]);
-
-    expect(await recoverSessionStream([250], driver.steps)).toBe('retry');
   });
 
   it('stops without reporting when a cancelled wait ends the ladder', async () => {

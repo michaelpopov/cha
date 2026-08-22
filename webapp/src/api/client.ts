@@ -32,7 +32,6 @@ const knownErrorCodes = {
   session_open_timeout: true,
   server_stopping: true,
   session_not_live: true,
-  browser_stream_in_use: true,
   command_timeout: true,
   command_queue_full: true,
   session_delete_conflict: true,

@@ -12,6 +12,7 @@ import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 
 export const reconnectingMessage = 'Reconnecting live updates…';
 export const waitingForCapacityMessage = 'Waiting for another session to close';
+export const movedMessage = 'This conversation moved to another device';
 
 export function isSessionLimit(failure: unknown): failure is ChaError {
   return failure instanceof ChaError && failure.code === 'session_limit_reached';
@@ -29,7 +30,7 @@ export type ProbeOutcome =
   | 'waiting-for-capacity' // Re-opening needs a place the server has not freed.
   | 'unavailable'; // The probe itself failed.
 
-export type RecoveryOutcome = 'connected' | 'other-window' | 'retry' | 'cancelled';
+export type RecoveryOutcome = 'connected' | 'retry' | 'cancelled';
 
 export interface RecoverySteps {
   probe(): Promise<ProbeOutcome>;
@@ -83,20 +84,17 @@ export function sessionProbe({
   };
 }
 
+// A stream the reader took over on another device never reaches this ladder:
+// that ending arrives on the stream itself and parks the page. Everything here
+// is therefore a connection to repair.
 export async function recoverSessionStream(
   delays: readonly number[],
   steps: RecoverySteps,
 ): Promise<RecoveryOutcome> {
-  // Every probe answering while every stream attempt fails is what a session
-  // whose one stream is held by another window looks like from here:
-  // EventSource never exposes the 409 that would say so directly.
-  let everyProbeSucceeded = true;
-
   for (const delay of delays) {
     if (steps.cancelled()) return 'cancelled';
     const outcome = await steps.probe();
     if (steps.cancelled()) return 'cancelled';
-    if (outcome !== 'live') everyProbeSucceeded = false;
 
     steps.report(
       outcome === 'waiting-for-capacity' ? waitingForCapacityMessage : reconnectingMessage,
@@ -109,5 +107,5 @@ export async function recoverSessionStream(
     }
   }
 
-  return everyProbeSucceeded ? 'other-window' : 'retry';
+  return 'retry';
 }

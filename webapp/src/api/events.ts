@@ -3,8 +3,12 @@ import { isSessionSnapshot, sessionEventsUrl, type SessionSnapshot } from './cli
 
 export type AppendEvent = components['schemas']['AppendEvent'];
 
+// A stream ends either because it broke, which the reconnect ladder repairs,
+// or because the reader opened this session on another device and that device
+// now holds it. Reconnecting after a takeover would only take the session
+// back, so the two endings must not look alike here.
 export interface SessionStreamFailure {
-  readonly kind: 'stream_failure';
+  readonly kind: 'stream_failure' | 'superseded';
 }
 
 export interface SessionEventHandlers {
@@ -26,6 +30,7 @@ export interface SessionEventConnection {
 }
 
 const streamFailure: SessionStreamFailure = Object.freeze({ kind: 'stream_failure' });
+const streamSuperseded: SessionStreamFailure = Object.freeze({ kind: 'superseded' });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -58,11 +63,12 @@ export function openSessionEvents(
   let failureReported = false;
   let nextAppendSequence = 0;
 
-  const reportFailure = () => {
+  const report = (failure: SessionStreamFailure) => {
     if (closed || failureReported) return;
     failureReported = true;
-    handlers.onError(streamFailure);
+    handlers.onError(failure);
   };
+  const reportFailure = () => report(streamFailure);
 
   source.addEventListener('snapshot', (event) => {
     if (closed) return;
@@ -86,6 +92,11 @@ export function openSessionEvents(
     } catch {
       reportFailure();
     }
+  });
+  // The server writes this last frame before ending a stream it displaced, so
+  // it always arrives ahead of the connection error that follows it.
+  source.addEventListener('superseded', () => {
+    report(streamSuperseded);
   });
   source.onerror = reportFailure;
 

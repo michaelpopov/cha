@@ -12,6 +12,9 @@ namespace cha::web {
 
 [[nodiscard]] std::string sse_frame(const SsePayload& payload);
 [[nodiscard]] std::string sse_heartbeat();
+// The last frame a displaced stream writes, so the device that just lost the
+// session parks instead of reconnecting and taking it straight back.
+[[nodiscard]] std::string sse_superseded();
 
 class SseStreamWriter {
 public:

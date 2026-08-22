@@ -260,7 +260,7 @@ export function ChatScreen({
   // instead of offering recovery. Only they are exempt: a ladder that has given
   // up still needs its buttons, and its stale reason must not take them away.
   const showRecoveryActions = state.streamStatus === 'retry'
-    || state.streamStatus === 'other-window'
+    || state.streamStatus === 'moved'
     || (state.streamStatus === 'connected'
       && ended !== null
       && snapshot?.shutdown_reason !== 'reloading'
@@ -337,7 +337,7 @@ export function ChatScreen({
           {showRecoveryActions && (
             <span className="cha-live-actions">
               <button className="cha-button cha-button-ghost" onClick={onRetryStream} type="button">
-                Retry
+                {state.streamStatus === 'moved' ? 'Continue here' : 'Retry'}
               </button>
               <button
                 className="cha-button cha-button-ghost"

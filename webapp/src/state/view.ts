@@ -20,7 +20,8 @@ export type StreamStatus =
   | 'connected'
   | 'reconnecting'
   | 'retry'
-  | 'other-window';
+  // The reader opened this session on another device, which now holds it.
+  | 'moved';
 
 export interface ActiveConversation {
   forumId: string;

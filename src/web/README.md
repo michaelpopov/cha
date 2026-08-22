@@ -64,7 +64,8 @@ rejected rather than ignored, so a client written against an older shape fails
 visibly. `LiveSession` supplies the session's current persona ID from the
 controller view, and `SessionController` resolves it against the workspace
 roster, so a submitter still cannot choose who a message is attributed to. A
-live session serves one browser connection at a time, and the persona changes
+live session serves one browser connection at a time — the newest one, because
+the reader moves between devices — and the persona changes
 only through `/!Name`, which also saves the choice as the forum's default and
 reloads the forum's live sessions so agent prompts carry that persona.
 
@@ -186,12 +187,19 @@ manager has removed and joined it.
 pending payload; its writer is the HTTP thread, never the session owner. Each
 stream begins with a fresh snapshot, then receives only snapshot or
 target/sequence-aware append events plus comment heartbeats.
-`BrowserConnectionState` is owner-thread-only state: it accepts one SSE stream
+`BrowserConnectionState` is owner-thread-only state: it holds one SSE stream
 per session, assigns an opaque server-local connection ID, and ignores stale
-close notifications. An actor starts disconnected, cancels its one deadline
-on stream acceptance, and on matching close unloads at `idle_grace` or the
-absolute `orphan_limit` from that same disconnection timestamp while generation
-is active.
+close notifications. CHA serves one reader who may move between devices, so a
+connect never fails and never waits: it takes the session over and reports the
+connection it displaced. Consulting a deadline there would make the reader wait
+out an abandoned device's socket, which is the delay this design exists to
+avoid, and ignoring the displaced device's late close is what keeps that
+teardown from starting a deadline against the connection that replaced it. The
+displaced stream ends with a `superseded` record so that browser parks instead
+of reconnecting and taking the session straight back. An actor starts
+disconnected, cancels its one deadline on stream acceptance, and on matching
+close unloads at `idle_grace` or the absolute `orphan_limit` from that same
+disconnection timestamp while generation is active.
 `LobbyRoutes` is the HTTP boundary for bootstrap discovery, character detail,
 stored-session discovery, create, rename, recoverable delete,
 and manager-backed open/reattach. It validates route identifiers before either

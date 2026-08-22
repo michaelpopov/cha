@@ -163,7 +163,6 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::session_open_timeout, "session_open_timeout"},
             {ErrorCode::server_stopping, "server_stopping"},
             {ErrorCode::session_not_live, "session_not_live"},
-            {ErrorCode::browser_stream_in_use, "browser_stream_in_use"},
             {ErrorCode::command_timeout, "command_timeout"},
             {ErrorCode::command_queue_full, "command_queue_full"},
             {ErrorCode::session_delete_conflict, "session_delete_conflict"},

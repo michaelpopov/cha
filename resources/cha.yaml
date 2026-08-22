@@ -561,7 +561,13 @@ paths:
       operationId: streamSessionEvents
       summary: Stream live-session updates
       description: |
-        Opens the session's single allowed Server-Sent Events connection.
+        Opens the session's single Server-Sent Events connection. CHA serves
+        one reader, who may move between devices, so this connection always
+        succeeds and displaces whichever one was open before. The displaced
+        stream receives a final `superseded` event and ends; a browser that
+        receives it stops following the session rather than reconnecting,
+        because reconnecting would take the session back.
+
         The first record is a `snapshot` event whose JSON data is a
         `SessionSnapshot`. Later records are either replacement `snapshot`
         events or `append` events whose JSON data is an `AppendEvent`.
@@ -580,6 +586,10 @@ paths:
             append:
               payload:
                 $ref: "#/components/schemas/AppendEvent"
+            superseded:
+              description: |
+                Final record of a stream another device has taken over. Its
+                data is an empty JSON object.
             heartbeat:
               description: "Comment-only `: heartbeat` record with no data payload."
           headers:
@@ -611,9 +621,7 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: |
-            Session is not live or already has an event stream. `error.code` is
-            `session_not_live`, or `browser_stream_in_use` when the session's one
-            allowed connection is already held by another browser page.
+            Session is not live. `error.code` is `session_not_live`.
           content:
             application/json:
               schema:
@@ -1346,7 +1354,6 @@ components:
                 - session_open_timeout
                 - server_stopping
                 - session_not_live
-                - browser_stream_in_use
                 - command_timeout
                 - command_queue_full
                 - session_delete_conflict
