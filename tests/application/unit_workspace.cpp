@@ -328,7 +328,18 @@ TEST(Workspace, RejectsASelectedProviderWithAnUnavailableCredential) {
     fixture.write_character_config(
         "display_name = \"Guide\"\nprovider = \"secured\"\n");
 
-    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+    try {
+        (void)Workspace::load(fixture.root());
+        FAIL() << "Expected the selected provider to be rejected";
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(
+            message.find("Character 'guide' references invalid provider 'secured'"),
+            std::string::npos);
+        EXPECT_NE(
+            message.find("CHA_WORKSPACE_TEST_MISSING_CREDENTIAL_71C1"),
+            std::string::npos);
+    }
 }
 
 TEST(Workspace, WritesConfigurationWithoutChangingTheLoadedInstance) {

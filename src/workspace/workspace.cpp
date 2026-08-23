@@ -766,11 +766,14 @@ Workspace Workspace::load(std::filesystem::path root) {
 
     const std::filesystem::path providers_directory =
         workspace.root_ / "system" / "providers";
+    std::unordered_map<std::string, std::string> provider_errors;
     for (const std::filesystem::path& directory :
          direct_subdirectories(providers_directory)) {
         try {
             workspace.providers_.push_back(load_provider(directory));
         } catch (const std::exception& error) {
+            provider_errors.emplace(
+                utf8_path(directory.filename()), error.what());
             log_warn(
                 "Provider '" + utf8_path(directory.filename())
                 + "' omitted from workspace: " + error.what());
@@ -845,6 +848,12 @@ Workspace Workspace::load(std::filesystem::path root) {
         const WorkspaceProvider* provider =
             workspace.find_provider(*config.provider_id);
         if (provider == nullptr) {
+            const auto failure = provider_errors.find(*config.provider_id);
+            if (failure != provider_errors.end()) {
+                throw std::runtime_error(
+                    "Character '" + id + "' references invalid provider '"
+                    + *config.provider_id + "': " + failure->second);
+            }
             throw std::runtime_error(
                 "Character '" + id + "' references unknown provider '"
                 + *config.provider_id + "'");
@@ -898,6 +907,12 @@ Workspace Workspace::load(std::filesystem::path root) {
     const CharacterConfig assistant =
         load_character_config(assistant_path, true, true);
     if (workspace.find_provider(*assistant.provider_id) == nullptr) {
+        const auto failure = provider_errors.find(*assistant.provider_id);
+        if (failure != provider_errors.end()) {
+            throw std::runtime_error(
+                "Assistant references invalid provider '"
+                + *assistant.provider_id + "': " + failure->second);
+        }
         throw std::runtime_error(
             "Assistant references unknown provider '" + *assistant.provider_id + "'");
     }
