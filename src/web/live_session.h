@@ -2,7 +2,7 @@
 
 #include "session/controller_update.h"
 #include "session/opened_session.h"
-#include "session/session_identity.h"
+#include "chat/session_identity.h"
 #include "web/browser_connection_state.h"
 #include "web/command_queue.h"
 #include "web/owner_wake_signal.h"
@@ -36,7 +36,7 @@ namespace cha::web {
 // its shared wake signal through unchanged, so request workers can retain it
 // safely after the session owner has gone.
 using SessionOpener = std::function<OpenedSession(
-    const SessionIdentity&,
+    const FullSessionId&,
     std::shared_ptr<cha::WakeNotifier>)>;
 
 // Owner-thread monotonic time seam; an empty function selects steady_clock.
@@ -94,7 +94,7 @@ public:
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
 
-    [[nodiscard]] const SessionIdentity& identity() const noexcept {
+    [[nodiscard]] const FullSessionId& identity() const noexcept {
         return identity_;
     }
     [[nodiscard]] LiveSessionState lifecycle();
@@ -108,7 +108,7 @@ private:
 
     LiveSession(
         WebSettings settings,
-        SessionIdentity identity,
+        FullSessionId identity,
         SessionOpener opener,
         LiveSessionClock clock = {});
     // Starts the permanent owner thread. The caller must already have made
@@ -153,7 +153,7 @@ private:
     void log_event(std::string_view event) const noexcept;
     void teardown(ShutdownReason reason, bool skip_final_drain) noexcept;
 
-    const SessionIdentity identity_;
+    const FullSessionId identity_;
     WebSettings settings_;
     SessionOpener opener_;
     LiveSessionClock clock_;
@@ -177,7 +177,7 @@ private:
     // Owner thread only. Snapshot construction and controller access must stay
     // on that thread; none of this needs the lifecycle mutex.
     std::unique_ptr<SessionController> controller_;
-    SessionDescriptor descriptor_;
+    std::string label_;
     std::function<void(std::string_view)> persist_default_character_;
     std::function<void(std::string_view)> persist_default_persona_;
     std::optional<std::string> notice_;

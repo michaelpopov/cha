@@ -8,7 +8,7 @@
 #include "session/generation_status.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
-#include "session/session_identity.h"
+#include "chat/session_identity.h"
 #include "chat/transcript.h"
 #include "util/wake_notifier.h"
 
@@ -48,7 +48,7 @@ public:
         Providers& providers,
         std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored,
-        SessionIdentity identity);
+        FullSessionId identity);
 
     // Tests use the same Workspace data path, but may own an injected provider
     // executor and use an inactive lease or an activation fault hook.
@@ -61,7 +61,7 @@ public:
         std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored = {},
         ActivationHook before_activation = {},
-        SessionIdentity identity = {});
+        FullSessionId identity = {});
     ~SessionController();
     SessionController(const SessionController&) = delete;
     SessionController& operator=(const SessionController&) = delete;
@@ -126,7 +126,7 @@ private:
         std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored,
         ActivationHook before_activation = {},
-        SessionIdentity identity = {},
+        FullSessionId identity = {},
         std::shared_ptr<Providers> providers_owner = {});
 
     void initialize(SessionRestore restored, std::string_view initial_persona_id);
@@ -193,7 +193,7 @@ private:
     // The shared notifier is copied into each request so late worker wakes
     // never borrow this session.
     std::shared_ptr<WakeNotifier> notifier_;
-    SessionIdentity identity_;
+    FullSessionId identity_;
     CharacterId default_character_id_;
     std::string default_persona_id_;
     // Selected names are session-scoped and never persisted.

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "session/opened_session.h"
-#include "session/session_identity.h"
+#include "chat/session_identity.h"
 
 #include <memory>
 
@@ -23,7 +23,7 @@ class Providers;
 // caller, which maps them to registry or HTTP results.
 OpenedSession open_session(
     const SessionRepository& sessions,
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier);
 } // namespace cha

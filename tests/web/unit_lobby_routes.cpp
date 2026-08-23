@@ -44,7 +44,7 @@ SessionOpener counting_opener(
     const LobbyGraph& graph,
     std::atomic<int>* starts = nullptr) {
     return [open = graph.opener(), starts](
-               const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+               const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
         if (starts) ++*starts;
         return open(key, notifier);
     };
@@ -136,7 +136,7 @@ std::string create_session(TestServer& server, std::string_view label = "Notes")
     return json.at("id").get<std::string>();
 }
 
-bool session_is_live(LiveSessionManager& manager, const SessionIdentity& key) {
+bool session_is_live(LiveSessionManager& manager, const FullSessionId& key) {
     const LiveSessionManagerSnapshot snapshot = manager.snapshot();
     return std::find(
                snapshot.running_sessions.begin(),
@@ -496,7 +496,7 @@ TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
     LiveSessionManager manager(
         lobby_settings(2),
         [open = graph.opener(), &mutex, &gate, &opening, &released](
-            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+            const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             {
                 std::unique_lock lock(mutex);
                 opening = true;
@@ -925,7 +925,7 @@ TEST(LobbyRoutes, WelcomeCannotBeRenamedOrDeletedWhileLive) {
     const LobbyGraph graph(fixture.root());
     LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
     TestServer server(graph, manager);
-    const SessionIdentity welcome = LobbyGraph::initial_selection().session;
+    const FullSessionId welcome = LobbyGraph::initial_selection().session;
     const std::string route = "/api/v1/forums/" + welcome.forum_id
         + "/sessions/" + welcome.session_id;
 
@@ -1162,7 +1162,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
     LiveSessionManager manager(
         settings,
         [open_real, deleted, deleted_database](
-            const SessionIdentity& key,
+            const FullSessionId& key,
             std::shared_ptr<WakeNotifier> notifier) {
             if (key.session_id == deleted.identity.session_id
                 && !std::filesystem::remove(deleted_database)) {
@@ -1201,7 +1201,7 @@ TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
     LiveSessionManager manager(
         settings,
         [open_real, forum_directory](
-            const SessionIdentity& key,
+            const FullSessionId& key,
             std::shared_ptr<WakeNotifier> notifier) {
             if (std::filesystem::remove_all(forum_directory) == 0) {
                 throw std::runtime_error("Test forum was not deleted");
@@ -1313,7 +1313,7 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
     LiveSessionManager manager(
         lobby_settings(),
         [&busy, open = graph.opener()](
-            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+            const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             if (busy) throw SessionBusyError("held by test");
             return open(key, notifier);
         });
@@ -1374,7 +1374,7 @@ TEST(LobbyRoutes, NewStoredSessionSurvivesInitializationFailureAndCanBeRetried) 
     LiveSessionManager manager(
         lobby_settings(),
         [&fail, open = graph.opener()](
-            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+            const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             if (fail) throw std::runtime_error("initialization failed");
             return open(key, notifier);
         });
@@ -1440,7 +1440,7 @@ TEST(LobbyRoutes, OpenTimeoutUsesTheLobbyErrorEnvelope) {
     LiveSessionManager manager(
         lobby_settings(),
         [open = graph.opener()](
-            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+            const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             std::this_thread::sleep_for(100ms);
             return open(key, notifier);
         });
@@ -1481,7 +1481,7 @@ TEST(LobbyRoutes, MapsStoppingAndManagerShutdownOpenFailuresToExistingEnvelopes)
     LiveSessionManager manager(
         lobby_settings(1),
         [&starts, controls, root = graph.root()](
-            const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+            const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             ++starts;
             return test::open_scripted_session(
                 key,

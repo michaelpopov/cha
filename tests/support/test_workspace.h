@@ -2,7 +2,7 @@
 
 #include "characters/character.h"
 #include "chat/persona.h"
-#include "session/session_identity.h"
+#include "chat/session_identity.h"
 
 #include <filesystem>
 #include <string>
@@ -48,7 +48,7 @@ struct TestWorkspaceStyle {
 };
 
 struct PublishedTestWorkspace {
-    SessionIdentity identity;
+    FullSessionId identity;
     std::string default_persona_id;
 };
 
@@ -60,7 +60,7 @@ PublishedTestWorkspace publish_test_workspace(
     const PersonaRoster& personas,
     std::string_view default_character_id,
     const std::filesystem::path& database_path,
-    SessionIdentity identity = {},
+    FullSessionId identity = {},
     const std::vector<TestWorkspaceStyle>& styles = {},
     bool reuse_current = false);
 

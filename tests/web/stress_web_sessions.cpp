@@ -36,7 +36,7 @@ using namespace std::chrono_literals;
 // SessionController over its own storage and its own cross-process lease.
 class SessionFiles {
 public:
-    const std::filesystem::path& path_for(const SessionIdentity& key) {
+    const std::filesystem::path& path_for(const FullSessionId& key) {
         std::lock_guard lock(mutex_);
         auto found = files_.find(key);
         if (found == files_.end()) {
@@ -49,7 +49,7 @@ public:
 
 private:
     std::mutex mutex_;
-    std::map<SessionIdentity, std::unique_ptr<test::TemporarySessionFile>> files_;
+    std::map<FullSessionId, std::unique_ptr<test::TemporarySessionFile>> files_;
 };
 
 class CommandGate {
@@ -118,7 +118,7 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     settings.command_queue_capacity = 64;
     LiveSessionManager manager(
         settings,
-        [&files](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+        [&files](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             return test::open_leased_session(key, files.path_for(key), notifier);
         });
 
@@ -176,7 +176,7 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
     settings.command_queue_capacity = 8;
     LiveSessionManager manager(
         settings,
-        [&](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             if (key.session_id == "blocked") {
                 return test::open_scripted_session(
                     key,
@@ -223,13 +223,13 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
     settings.session_limit = limit;
     LiveSessionManager manager(
         settings,
-        [&](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             ++starts;
             return test::open_leased_session(key, files.path_for(key), notifier);
         });
 
     for (int round = 0; round != rounds; ++round) {
-        std::vector<SessionIdentity> keys;
+        std::vector<FullSessionId> keys;
         for (int index = 0; index != limit; ++index) {
             keys.push_back({
                 "forum",
@@ -239,7 +239,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
         std::promise<void> start_signal;
         const std::shared_future<void> start = start_signal.get_future().share();
         std::vector<std::future<LiveSessionOpenResult>> opens;
-        for (const SessionIdentity& key : keys) {
+        for (const FullSessionId& key : keys) {
             for (int duplicate = 0; duplicate != 2; ++duplicate) {
                 opens.push_back(std::async(
                     std::launch::async, [&, key, start] {
@@ -260,7 +260,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
             LiveSessionOpenFailure::limit_reached);
 
         std::vector<LiveSessionHandle> old_handles;
-        for (const SessionIdentity& key : keys) {
+        for (const FullSessionId& key : keys) {
             old_handles.push_back(manager.lookup(key));
             ASSERT_TRUE(old_handles.back());
             old_handles.back()->request_shutdown();
@@ -275,7 +275,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
             }
         });
         std::vector<std::future<LiveSessionHandle>> reopened;
-        for (const SessionIdentity& key : keys) {
+        for (const FullSessionId& key : keys) {
             reopened.push_back(std::async(std::launch::async, [&, key] {
                 const auto deadline = std::chrono::steady_clock::now() + 20s;
                 while (std::chrono::steady_clock::now() < deadline) {
@@ -319,11 +319,11 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptItsPeer) {
     settings.command_queue_capacity = 64;
     LiveSessionManager manager(
         settings,
-        [&files](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+        [&files](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             return test::open_leased_session(key, files.path_for(key), notifier);
         });
-    const SessionIdentity failing{"forum", "failing"};
-    const SessionIdentity healthy{"forum", "healthy"};
+    const FullSessionId failing{"forum", "failing"};
+    const FullSessionId healthy{"forum", "healthy"};
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(failing, 10s)));
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(healthy, 10s)));
     LiveSessionHandle failing_session = manager.lookup(failing);

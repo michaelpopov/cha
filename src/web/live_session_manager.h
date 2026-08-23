@@ -40,7 +40,7 @@ using LiveSessionOpenResult =
 
 struct LiveSessionManagerSnapshot {
     std::size_t live_session_count{};
-    std::vector<SessionIdentity> running_sessions;
+    std::vector<FullSessionId> running_sessions;
 };
 
 enum class MaintenanceFailure { stopping, manager_stopping };
@@ -79,11 +79,11 @@ private:
     friend class LiveSessionManager;
     LiveSessionMaintenanceReservation(
         LiveSessionManager& manager,
-        SessionIdentity identity);
+        FullSessionId identity);
     void release() noexcept;
 
     LiveSessionManager* manager_{};
-    SessionIdentity identity_;
+    FullSessionId identity_;
 };
 
 using MaintenanceReservationResult = std::variant<
@@ -110,13 +110,13 @@ public:
     LiveSessionManager& operator=(const LiveSessionManager&) = delete;
 
     [[nodiscard]] LiveSessionOpenResult open(
-        SessionIdentity key,
+        FullSessionId key,
         std::chrono::milliseconds deadline);
     // Answers reattach and shutdown cases entirely from manager state. An
     // empty result means the caller must validate storage before open().
     [[nodiscard]] std::optional<LiveSessionOpenResult> try_reattach(
-        const SessionIdentity& key);
-    [[nodiscard]] LiveSessionHandle lookup(const SessionIdentity& key);
+        const FullSessionId& key);
+    [[nodiscard]] LiveSessionHandle lookup(const FullSessionId& key);
     // A point-in-time view for lobby listings and health. Starting and
     // stopping actors count against the bound but only running actors are
     // returned as reattachable sessions.
@@ -141,7 +141,7 @@ public:
     // finish, releasing its lease. Filesystem work happens only after this
     // returns and therefore never under the manager mutex.
     [[nodiscard]] MaintenanceReservationResult reserve_for_deletion(
-        const SessionIdentity& key,
+        const FullSessionId& key,
         std::chrono::milliseconds deadline);
 
     // Begins process shutdown without writing startup results. The optional
@@ -153,7 +153,7 @@ public:
     // Returns the identities whose owner threads have not yet published
     // Finished. The process-shutdown coordinator uses this after its bounded
     // grace period to report owners it cannot safely join.
-    [[nodiscard]] std::vector<SessionIdentity> unfinished_owners();
+    [[nodiscard]] std::vector<FullSessionId> unfinished_owners();
     // Waits under one process-wide deadline for every owner to finish, then
     // reaps them outside this mutex. False leaves the stuck owners untouched
     // for the process coordinator to report before it takes the no-destructor
@@ -168,15 +168,15 @@ private:
 
     [[nodiscard]] RetiredSessions sweep_locked();
     static void reap(RetiredSessions retired);
-    void release_maintenance(const SessionIdentity& key) noexcept;
+    void release_maintenance(const FullSessionId& key) noexcept;
     void release_workspace_reload() noexcept;
 
     WebSettings settings_;
     SessionOpener opener_;
     LiveSessionClock clock_;
     std::mutex mutex_;
-    std::map<SessionIdentity, LiveSessionHandle, std::less<>> sessions_;
-    std::set<SessionIdentity, std::less<>> maintenance_;
+    std::map<FullSessionId, LiveSessionHandle, std::less<>> sessions_;
+    std::set<FullSessionId, std::less<>> maintenance_;
     bool stopping_{};
     bool workspace_reloading_{};
 };

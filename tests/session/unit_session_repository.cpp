@@ -39,7 +39,7 @@ protected:
             {{std::string(temporary_forum), std::string(temporary_session)}, "Welcome"});
     }
 
-    static SessionIdentity temporary_identity() {
+    static FullSessionId temporary_identity() {
         return {std::string(temporary_forum), std::string(temporary_session)};
     }
 
@@ -317,7 +317,7 @@ TEST_F(SessionRepositoryTest, RejectsMismatchedMetadataAfterTheLeaseAndReleasesI
     const std::filesystem::path renamed =
         sessions_directory() / "renamed.sqlite3";
     std::filesystem::rename(created.database_path, renamed);
-    const SessionIdentity wrong_filename{"lobby", "renamed"};
+    const FullSessionId wrong_filename{"lobby", "renamed"};
 
     EXPECT_THROW((void)repository.prepare(wrong_filename), std::runtime_error);
     // The failing read happened behind the lease, so the lease must be gone
@@ -401,7 +401,7 @@ TEST_F(SessionRepositoryTest, RejectsAnUnsupportedDatabaseWhereverItIsRead) {
         std::ofstream database(path, std::ios::binary);
         database << "unsupported database";
     }
-    const SessionIdentity identity{"lobby", "unsupported"};
+    const FullSessionId identity{"lobby", "unsupported"};
 
     EXPECT_THROW(repository.validate(identity), std::runtime_error);
     EXPECT_THROW((void)repository.prepare(identity), std::runtime_error);

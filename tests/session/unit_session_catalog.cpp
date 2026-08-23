@@ -138,7 +138,7 @@ TEST_F(SessionStorageTest, ListsSessionDatabasesAndReturnsTheirPaths) {
         ids_and_labels(sessions.list()),
         (std::vector<IdAndLabel>{{"saved", "Saved session"}}));
     const StoredSession inspected = sessions.inspect("saved");
-    EXPECT_EQ(inspected.identity, (SessionIdentity{"lobby", "saved"}));
+    EXPECT_EQ(inspected.identity, (FullSessionId{"lobby", "saved"}));
     EXPECT_EQ(inspected.label, "Saved session");
     EXPECT_EQ(inspected.database_path, saved);
     EXPECT_TRUE(inspected.error.empty());

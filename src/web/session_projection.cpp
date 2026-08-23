@@ -9,13 +9,14 @@
 namespace cha::web {
 
 SessionSnapshot to_snapshot(
-    const SessionDescriptor& descriptor,
+    const FullSessionId& identity,
+    std::string_view label,
     const ControllerView& controller,
     const WebPresentationState& presentation) {
     const std::shared_ptr<const Workspace> workspace = getws();
     if (!workspace) throw std::runtime_error("Workspace is not loaded");
     const WorkspaceForum* const workspace_forum =
-        workspace->find_forum(descriptor.identity.forum_id);
+        workspace->find_forum(identity.forum_id);
     const WorkspacePersona* const workspace_persona =
         workspace->find_persona(controller.default_persona_id);
     if (workspace_forum == nullptr || workspace_persona == nullptr) {
@@ -24,14 +25,14 @@ SessionSnapshot to_snapshot(
     }
     SessionSnapshot snapshot{
         .forum = {
-            .id = descriptor.identity.forum_id,
-            .display_name = descriptor.forum_display_name,
-            .default_character_id = descriptor.forum_default_character_id,
+            .id = identity.forum_id,
+            .display_name = workspace_forum->display_name,
+            .default_character_id = workspace_forum->default_character_id,
             .default_persona_id = std::string(controller.default_persona_id),
             .default_persona_display_name = workspace_persona->display_name,
         },
-        .session_id = descriptor.identity.session_id,
-        .session_label = descriptor.session_label,
+        .session_id = identity.session_id,
+        .session_label = std::string(label),
         .default_character_id = std::string(controller.default_character_id),
         .transcript = {
             controller.transcript.entries.begin(),

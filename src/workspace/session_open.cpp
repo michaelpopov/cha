@@ -39,7 +39,7 @@ void persist_default_persona(
 
 OpenedSession open_session(
     const SessionRepository& sessions,
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier) {
     const std::shared_ptr<const Workspace> workspace = current_workspace();
@@ -50,12 +50,7 @@ OpenedSession open_session(
     PreparedSession prepared = sessions.prepare(identity);
     log_info("Session opened");
     return {
-        .descriptor = {
-            .identity = prepared.identity,
-            .forum_display_name = forum->display_name,
-            .session_label = prepared.label,
-            .forum_default_character_id = forum->default_character_id,
-        },
+        .label = prepared.label,
         .controller = SessionController::from_workspace(
             forum->default_character_id,
             forum->default_persona_id,

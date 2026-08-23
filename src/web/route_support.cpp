@@ -90,7 +90,7 @@ void request_reload(
     LiveSessionManager& live_sessions,
     const std::vector<std::string>& forum_ids) {
     for (const LiveSessionHandle& live : live_sessions.active_sessions()) {
-        const SessionIdentity& key = live->identity();
+        const FullSessionId& key = live->identity();
         if (std::ranges::find(forum_ids, key.forum_id) == forum_ids.end()) continue;
         live->request_shutdown(ShutdownReason::reloading);
     }

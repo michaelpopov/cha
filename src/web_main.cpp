@@ -65,7 +65,7 @@ int prepare_and_run(int argc, const char* argv[]) {
     Providers providers;
 
     auto opener = [sessions, &providers](
-                      const SessionIdentity& identity,
+                      const FullSessionId& identity,
                       std::shared_ptr<WakeNotifier> notifier) {
         return open_session(*sessions, identity, providers, std::move(notifier));
     };

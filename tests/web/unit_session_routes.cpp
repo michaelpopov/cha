@@ -35,7 +35,7 @@ using namespace std::chrono_literals;
 // without needing a whole workspace fixture behind every session.
 class SessionFiles {
 public:
-    const std::filesystem::path& path_for(const SessionIdentity& key) {
+    const std::filesystem::path& path_for(const FullSessionId& key) {
         std::lock_guard lock(mutex_);
         auto found = files_.find(key);
         if (found == files_.end()) {
@@ -48,7 +48,7 @@ public:
 
 private:
     std::mutex mutex_;
-    std::map<SessionIdentity, std::unique_ptr<test::TemporarySessionFile>> files_;
+    std::map<FullSessionId, std::unique_ptr<test::TemporarySessionFile>> files_;
 };
 
 // A rendezvous the controller's activation hook enters on the owner thread,
@@ -86,7 +86,7 @@ SessionOpener session_opener(
     SessionController::ActivationHook before_activation = {},
     std::atomic<int>* starts = nullptr) {
     return [&files, controls, before_activation, starts](
-               const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
+               const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
         if (starts) ++*starts;
         return test::open_scripted_session(
             identity,
@@ -376,7 +376,7 @@ TEST(SessionRoutes, DeliberateStreamCloseFinishesChunkedResponse) {
     SessionFiles files;
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionManager manager(route_settings(), session_opener(files, controls));
-    const SessionIdentity key{"lobby", "one"};
+    const FullSessionId key{"lobby", "one"};
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
     LiveSessionHandle session = manager.lookup(key);
     ASSERT_TRUE(session);

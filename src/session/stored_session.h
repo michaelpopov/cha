@@ -1,6 +1,6 @@
 #pragma once
 
-#include "session/session_identity.h"
+#include "chat/session_identity.h"
 
 #include <filesystem>
 #include <string>
@@ -20,7 +20,7 @@ namespace cha {
 // fallback label with the validation failure in error; strict operations reject
 // it instead.
 struct StoredSession {
-    SessionIdentity identity;
+    FullSessionId identity;
     std::string label;
     std::filesystem::path database_path;
     std::filesystem::file_time_type updated_at;

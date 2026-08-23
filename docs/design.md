@@ -679,7 +679,7 @@ equivalent to:
 ```cpp
 OpenedSession open_session(
     const SessionRepository& sessions,
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier);
 ```

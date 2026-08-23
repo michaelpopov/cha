@@ -13,7 +13,7 @@
 namespace cha::web {
 namespace {
 
-std::string session_log(const SessionIdentity& key, std::string_view event) {
+std::string session_log(const FullSessionId& key, std::string_view event) {
     return "web session forum_id=" + key.forum_id + " session_id=" + key.session_id
         + " event=" + std::string(event);
 }
@@ -36,7 +36,7 @@ LiveSessionOpenResult map_start_result(LiveSessionStartResult result) {
 
 LiveSessionMaintenanceReservation::LiveSessionMaintenanceReservation(
     LiveSessionManager& manager,
-    SessionIdentity identity)
+    FullSessionId identity)
     : manager_(&manager), identity_(std::move(identity)) {}
 
 LiveSessionMaintenanceReservation::~LiveSessionMaintenanceReservation() {
@@ -124,7 +124,7 @@ LiveSessionManager::~LiveSessionManager() {
 }
 
 LiveSessionOpenResult LiveSessionManager::open(
-    SessionIdentity key,
+    FullSessionId key,
     std::chrono::milliseconds deadline) {
     log_info(session_log(key, "open_requested"));
     RetiredSessions retired;
@@ -230,7 +230,7 @@ LiveSessionOpenResult LiveSessionManager::open(
 }
 
 std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(
-    const SessionIdentity& key) {
+    const FullSessionId& key) {
     RetiredSessions retired;
     std::optional<LiveSessionOpenResult> result;
     {
@@ -259,7 +259,7 @@ std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(
     return result;
 }
 
-LiveSessionHandle LiveSessionManager::lookup(const SessionIdentity& key) {
+LiveSessionHandle LiveSessionManager::lookup(const FullSessionId& key) {
     RetiredSessions retired;
     LiveSessionHandle result;
     {
@@ -348,7 +348,7 @@ WorkspaceReloadResult LiveSessionManager::reserve_workspace_reload(
 }
 
 MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
-    const SessionIdentity& key,
+    const FullSessionId& key,
     std::chrono::milliseconds deadline) {
     RetiredSessions retired;
     LiveSessionHandle actor;
@@ -428,9 +428,9 @@ bool LiveSessionManager::join_shutdown(std::chrono::milliseconds grace) {
     return true;
 }
 
-std::vector<SessionIdentity> LiveSessionManager::unfinished_owners() {
+std::vector<FullSessionId> LiveSessionManager::unfinished_owners() {
     RetiredSessions retired;
-    std::vector<SessionIdentity> result;
+    std::vector<FullSessionId> result;
     {
         std::lock_guard lock(mutex_);
         retired = sweep_locked();
@@ -482,7 +482,7 @@ void LiveSessionManager::release_workspace_reload() noexcept {
 }
 
 void LiveSessionManager::release_maintenance(
-    const SessionIdentity& key) noexcept {
+    const FullSessionId& key) noexcept {
     try {
         std::lock_guard lock(mutex_);
         maintenance_.erase(key);

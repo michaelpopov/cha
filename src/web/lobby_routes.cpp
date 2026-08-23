@@ -35,13 +35,13 @@
 namespace cha::web {
 namespace {
 
-bool is_running(const LiveSessionManagerSnapshot& snapshot, const SessionIdentity& key) {
+bool is_running(const LiveSessionManagerSnapshot& snapshot, const FullSessionId& key) {
     return std::find(snapshot.running_sessions.begin(), snapshot.running_sessions.end(), key)
         != snapshot.running_sessions.end();
 }
 
 std::string session_event(
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     std::string_view event) {
     return "web session forum_id=" + identity.forum_id
         + " session_id=" + identity.session_id
@@ -65,7 +65,7 @@ bool validate_route_session_label(
 
 void set_open_result(
     httplib::Response& response,
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     const LiveSessionOpenResult& result) {
     if (std::holds_alternative<LiveSessionReady>(result)) {
         set_json_response(response, 200, nlohmann::json(OpenSessionSuccess{
@@ -449,7 +449,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     server.Get(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/download)",
         [sessions, live_sessions, settings](const httplib::Request& request,
                                              httplib::Response& response) {
-        const SessionIdentity key{request.matches[1], request.matches[2]};
+        const FullSessionId key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {
             return set_route_not_found(response);
@@ -489,7 +489,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     server.Patch(R"(/api/v1/forums/([^/]+)/sessions/([^/]+))",
         [sessions, initial, live_sessions, settings](const httplib::Request& request,
                                                      httplib::Response& response) {
-        const SessionIdentity key{request.matches[1], request.matches[2]};
+        const FullSessionId key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {
             return set_route_not_found(response);
@@ -550,7 +550,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     server.Delete(R"(/api/v1/forums/([^/]+)/sessions/([^/]+))",
         [sessions, initial, live_sessions, settings](const httplib::Request& request,
                                                      httplib::Response& response) {
-        const SessionIdentity key{request.matches[1], request.matches[2]};
+        const FullSessionId key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {
             return set_route_not_found(response);
@@ -603,7 +603,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Post(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/open)", [sessions, live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
-        const SessionIdentity key{request.matches[1], request.matches[2]};
+        const FullSessionId key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {
             return set_route_not_found(response);

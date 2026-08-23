@@ -28,7 +28,7 @@ protected:
                 std::string(welcome_name)});
     }
 
-    OpenedSession open(const SessionIdentity& identity) {
+    OpenedSession open(const FullSessionId& identity) {
         return open_session(
             *sessions_, identity, providers_,
             std::make_shared<test::TestNotifier>());
@@ -43,10 +43,7 @@ TEST_F(SessionOpenTest, OpensStoredSessionFromThePublishedWorkspace) {
     const StoredSession stored = sessions_->create("lobby", "Stored");
     OpenedSession opened = open(stored.identity);
 
-    EXPECT_EQ(opened.descriptor.identity, stored.identity);
-    EXPECT_EQ(opened.descriptor.forum_display_name, "The Lobby");
-    EXPECT_EQ(opened.descriptor.session_label, "Stored");
-    EXPECT_EQ(opened.descriptor.forum_default_character_id, "guide");
+    EXPECT_EQ(opened.label, "Stored");
     EXPECT_EQ(opened.controller->view().default_character_id, "guide");
     EXPECT_EQ(opened.controller->view().default_persona_id, workspace_guest_id);
     ASSERT_NE(getws()->find_forum("lobby"), nullptr);
@@ -56,11 +53,7 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePath) {
     OpenedSession opened = open(
         {std::string(entrance_id), std::string(welcome_id)});
 
-    EXPECT_EQ(opened.descriptor.forum_display_name, "Entrance");
-    EXPECT_EQ(opened.descriptor.session_label, welcome_name);
-    EXPECT_EQ(
-        opened.descriptor.forum_default_character_id,
-        workspace_assistant_id);
+    EXPECT_EQ(opened.label, welcome_name);
     EXPECT_EQ(
         opened.controller->view().default_persona_id,
         workspace_guest_id);

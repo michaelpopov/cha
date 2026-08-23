@@ -20,7 +20,7 @@ namespace {
 template<typename>
 inline constexpr bool unsupported_web_command = false;
 
-std::string session_log(const SessionIdentity& key, std::string_view event) {
+std::string session_log(const FullSessionId& key, std::string_view event) {
     return "web session forum_id=" + key.forum_id + " session_id=" + key.session_id
         + " event=" + std::string(event);
 }
@@ -109,7 +109,7 @@ WebSettings validate_live_session_settings(WebSettings settings) {
 
 LiveSession::LiveSession(
     WebSettings settings,
-    SessionIdentity identity,
+    FullSessionId identity,
     SessionOpener opener,
     LiveSessionClock clock)
     : identity_(std::move(identity)),
@@ -280,7 +280,7 @@ bool LiveSession::open_controller() {
         if (!opened.controller) {
             throw std::runtime_error("Session opener returned no controller");
         }
-        descriptor_ = std::move(opened.descriptor);
+        label_ = std::move(opened.label);
         controller_ = std::move(opened.controller);
         persist_default_character_ = std::move(opened.persist_default_character);
         persist_default_persona_ = std::move(opened.persist_default_persona);
@@ -434,10 +434,10 @@ void LiveSession::execute(OwnerCommand command) {
     }
     if (auto* rename = std::get_if<RenameSessionCommand>(&command.command)) {
         controller_->rename(rename->label);
-        descriptor_.session_label = std::move(rename->label);
+        label_ = std::move(rename->label);
         publish_current_snapshot();
         (void)command.reply->complete(SessionLabelResult{
-            identity_.session_id, descriptor_.session_label});
+            identity_.session_id, label_});
         return;
     }
     SessionController& controller = *controller_;
@@ -518,7 +518,8 @@ SessionSnapshot LiveSession::make_snapshot() {
     // The borrowed view lives only for this expression; to_snapshot() copies
     // everything it needs into the returned owning value.
     return to_snapshot(
-        descriptor_, controller_->view(), presentation(SessionLifecycle::running));
+        identity_, label_, controller_->view(),
+        presentation(SessionLifecycle::running));
 }
 
 WebPresentationState LiveSession::presentation(
@@ -601,7 +602,7 @@ void LiveSession::log_generation_transitions(const SessionSnapshot& current) {
 
 void LiveSession::publish_final(ShutdownReason reason) {
     SessionSnapshot snapshot = to_snapshot(
-        descriptor_, controller_->view(),
+        identity_, label_, controller_->view(),
         presentation(SessionLifecycle::stopping, reason));
     mailbox_->publish(SnapshotEvent{std::move(snapshot)});
 }

@@ -6,7 +6,7 @@
 #include "session/opened_session.h"
 #include "session/session_controller.h"
 #include "session/session_database.h"
-#include "session/session_identity.h"
+#include "chat/session_identity.h"
 #include "session/session_lease.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
@@ -33,7 +33,7 @@ class TemporarySessionFile {
 public:
     explicit TemporarySessionFile(
         std::string tag = "live_session",
-        SessionIdentity identity = {"forum", "session"})
+        FullSessionId identity = {"forum", "session"})
         : path_(std::filesystem::temp_directory_path()
                 / ("cha_" + std::move(tag) + "_"
                    + std::to_string(std::chrono::steady_clock::now()
@@ -233,19 +233,11 @@ inline PersonaRoster reader_roster() {
     return {{.id = "reader", .display_name = "Reader"}};
 }
 
-inline SessionDescriptor test_descriptor(const SessionIdentity& identity) {
-    return {
-        .identity = identity,
-        .forum_display_name = "Test forum " + identity.forum_id,
-        .session_label = "Test session " + identity.session_id,
-    };
-}
-
 // A real controller driven by controlled model backends. The controller's
 // backend seam does not take a session lease, so lease behavior belongs to
 // open_leased_session() below rather than to a second controller abstraction.
 inline OpenedSession open_scripted_session(
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     const std::filesystem::path& database_path,
     std::shared_ptr<WakeNotifier> notifier,
     std::vector<std::unique_ptr<DescribedModelBackend>> backends,
@@ -262,13 +254,13 @@ inline OpenedSession open_scripted_session(
         identity,
         true)).release();
     return {
-        .descriptor = test_descriptor(identity),
+        .label = "Test session " + identity.session_id,
         .controller = std::move(controller),
     };
 }
 
 inline OpenedSession open_scripted_session(
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     const std::filesystem::path& database_path,
     std::shared_ptr<WakeNotifier> notifier,
     std::shared_ptr<BackendControls> controls,
@@ -284,7 +276,7 @@ inline OpenedSession open_scripted_session(
 // A real controller restored from a supplied transcript rather than from the
 // database, for tests that need a specific starting projection.
 inline OpenedSession open_restored_session(
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     const std::filesystem::path& database_path,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
@@ -300,7 +292,7 @@ inline OpenedSession open_restored_session(
         identity,
         true)).release();
     return {
-        .descriptor = test_descriptor(identity),
+        .label = "Test session " + identity.session_id,
         .controller = std::move(controller),
     };
 }
@@ -329,7 +321,7 @@ inline CharacterDefinition unreachable_definition(
 // is the same construction path production uses, so releasing the controller
 // releases the lease.
 inline OpenedSession open_leased_session(
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     const std::filesystem::path& database_path,
     std::shared_ptr<WakeNotifier> notifier) {
     SessionLease lease = SessionLease::acquire(database_path);
@@ -340,7 +332,7 @@ inline OpenedSession open_leased_session(
     const PublishedTestWorkspace workspace = publish_test_workspace(
         definitions, reader_roster(), "guide", database_path, identity, {}, true);
     return {
-        .descriptor = test_descriptor(identity),
+        .label = "Test session " + identity.session_id,
         .controller = SessionController::from_workspace_for_testing(
             "guide",
             "reader",

@@ -21,7 +21,7 @@ using SharedModelHistory = std::shared_ptr<const ModelHistory>;
 // One logical model run. Durable transcript entry IDs are assigned only when
 // the controller activates the run.
 struct RunSpec {
-    SessionIdentity session;
+    FullSessionId session;
     RequestId request_id{};
     CharacterMetadata target;
     EntryIdentity author;

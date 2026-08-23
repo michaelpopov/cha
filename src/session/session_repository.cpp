@@ -107,7 +107,7 @@ std::vector<StoredSession> SessionRepository::list(std::string_view forum_id) co
     return catalog_for(forum_id).list();
 }
 
-void SessionRepository::validate(const SessionIdentity& identity) const {
+void SessionRepository::validate(const FullSessionId& identity) const {
     (void)catalog_for(identity.forum_id).inspect(identity.session_id);
 }
 
@@ -122,7 +122,7 @@ StoredSession SessionRepository::create(
 }
 
 StoredSession SessionRepository::rename(
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     std::string label) const {
     if (identity.forum_id == temporary_identity_.forum_id) {
         throw ForumNotFoundError(
@@ -142,7 +142,7 @@ StoredSession SessionRepository::rename(
     return catalog.inspect(identity.session_id);
 }
 
-void SessionRepository::move_to_deleted(const SessionIdentity& identity) const {
+void SessionRepository::move_to_deleted(const FullSessionId& identity) const {
     if (identity.forum_id == temporary_identity_.forum_id) {
         throw ForumNotFoundError(
             "Forum '" + identity.forum_id + "' does not store sessions");
@@ -174,7 +174,7 @@ void SessionRepository::move_to_deleted(const SessionIdentity& identity) const {
     }
 }
 
-PreparedSession SessionRepository::prepare(const SessionIdentity& identity) const {
+PreparedSession SessionRepository::prepare(const FullSessionId& identity) const {
     const std::filesystem::path database_path =
         catalog_for(identity.forum_id).database_path(identity.session_id);
     // Absence is settled before a lease exists, so asking for a session that

@@ -54,7 +54,7 @@ void ServerShutdownCoordinator::shutdown_now(
     std::chrono::milliseconds grace) {
     live_sessions_.begin_shutdown([this] { server_.stop(); });
     if (!live_sessions_.join_shutdown(grace)) {
-        for (const SessionIdentity& key : live_sessions_.unfinished_owners()) {
+        for (const FullSessionId& key : live_sessions_.unfinished_owners()) {
             log_critical(
                 "Web shutdown grace expired: forum_id=" + key.forum_id
                 + " session_id=" + key.session_id);

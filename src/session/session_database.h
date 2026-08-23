@@ -1,6 +1,6 @@
 #pragma once
 
-#include "session/session_identity.h"
+#include "chat/session_identity.h"
 #include "chat/transcript.h"
 
 #include <filesystem>
@@ -56,7 +56,7 @@ struct LoadedSessionDatabase {
 void export_session_database_sql(
     const std::filesystem::path& database_path,
     const std::filesystem::path& sql_path,
-    const SessionIdentity& expected_identity);
+    const FullSessionId& expected_identity);
 
 // Builds and validates a session database from a SQL snapshot, then publishes
 // it without replacing an existing database. Returns false on a destination
@@ -64,13 +64,13 @@ void export_session_database_sql(
 [[nodiscard]] bool import_session_database_sql(
     const std::filesystem::path& sql_path,
     const std::filesystem::path& database_path,
-    const SessionIdentity& expected_identity);
+    const FullSessionId& expected_identity);
 
 // The identity check every reader of a stored database owes it: what the file
 // says it is, against what the caller opened it as. Throws on a mismatch.
 void validate_session_database_identity(
     const std::filesystem::path& path,
-    const SessionIdentity& expected_identity,
+    const FullSessionId& expected_identity,
     const SessionDatabaseMetadata& metadata);
 
 // Just enough to list a session, in one lightweight read.
@@ -91,13 +91,13 @@ void migrate_session_database(const std::filesystem::path& path);
 // performs that migration immediately before this read.
 LoadedSessionDatabase load_session_database(
     const std::filesystem::path& path,
-    const SessionIdentity& expected_identity);
+    const FullSessionId& expected_identity);
 
 // Validates the complete database and its embedded identity before updating
 // its display label in one transaction. The caller must hold its lease.
 void rename_session_database(
     const std::filesystem::path& path,
-    const SessionIdentity& expected_identity,
+    const FullSessionId& expected_identity,
     std::string_view label);
 
 // The durable half of one session. It writes turn transitions — start, complete,

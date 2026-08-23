@@ -840,7 +840,7 @@ struct SchemaObject {
 
 std::string dump_session_database(
     Database& database,
-    const SessionIdentity& expected_identity) {
+    const FullSessionId& expected_identity) {
     database.execute("BEGIN");
     try {
         validate_database(database);
@@ -1005,7 +1005,7 @@ bool create_session_database(
 void export_session_database_sql(
     const std::filesystem::path& database_path,
     const std::filesystem::path& sql_path,
-    const SessionIdentity& expected_identity) {
+    const FullSessionId& expected_identity) {
     Database database(database_path, Database::Mode::read_only);
     write_file_atomically(
         sql_path,
@@ -1015,7 +1015,7 @@ void export_session_database_sql(
 bool import_session_database_sql(
     const std::filesystem::path& sql_path,
     const std::filesystem::path& database_path,
-    const SessionIdentity& expected_identity) {
+    const FullSessionId& expected_identity) {
     const std::filesystem::path temporary_path =
         create_temporary_path(database_path);
     try {
@@ -1041,7 +1041,7 @@ bool import_session_database_sql(
 
 void validate_session_database_identity(
     const std::filesystem::path& path,
-    const SessionIdentity& expected_identity,
+    const FullSessionId& expected_identity,
     const SessionDatabaseMetadata& metadata) {
 
     if (metadata.id != expected_identity.session_id) {
@@ -1076,7 +1076,7 @@ SessionRestore load_session_state(
 
 LoadedSessionDatabase load_session_database(
     const std::filesystem::path& path,
-    const SessionIdentity& expected_identity) {
+    const FullSessionId& expected_identity) {
 
     Database database(path, Database::Mode::read_only);
     // Identity first: a database that is not the one asked for is rejected
@@ -1114,7 +1114,7 @@ void migrate_session_database(const std::filesystem::path& path) {
 
 void rename_session_database(
     const std::filesystem::path& path,
-    const SessionIdentity& expected_identity,
+    const FullSessionId& expected_identity,
     std::string_view label) {
 
     Database database(path, Database::Mode::read_write);

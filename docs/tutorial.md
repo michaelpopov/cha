@@ -455,14 +455,13 @@ contribute to one member's final definition and the order in which values win.
 Read these in order:
 
 1. [chat/session_identity.h](../src/chat/session_identity.h)
-2. [session/session_identity.h](../src/session/session_identity.h)
-3. [session/stored_session.h](../src/session/stored_session.h)
-4. [session/session_catalog.h](../src/session/session_catalog.h)
-5. [session/session_lease.h](../src/session/session_lease.h)
-6. [session/session_database.h](../src/session/session_database.h)
-7. [session/session_snapshot.h](../src/session/session_snapshot.h)
-8. [session/session_repository.h](../src/session/session_repository.h)
-9. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
+2. [session/stored_session.h](../src/session/stored_session.h)
+3. [session/session_catalog.h](../src/session/session_catalog.h)
+4. [session/session_lease.h](../src/session/session_lease.h)
+5. [session/session_database.h](../src/session/session_database.h)
+6. [session/session_snapshot.h](../src/session/session_snapshot.h)
+7. [session/session_repository.h](../src/session/session_repository.h)
+8. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
 
 ### 9.1 Observation versus authority
 
@@ -524,7 +523,7 @@ partial database.
 
 1. acquire the current `Workspace` and find the immutable forum;
 2. prepare and lease the stored session;
-3. create the public `SessionDescriptor`;
+3. retain the session label for the live web actor;
 4. construct a workspace-backed `SessionController`, transferring the database
    path, restore state, lease, configured default IDs, and wake notifier.
 
@@ -877,7 +876,7 @@ longer protection appropriate to active work.
 ### 12.6 Manager and routes
 
 `LiveSessionManager` is the liveness authority and join authority. Its map is
-keyed by `SessionIdentity`.
+keyed by `FullSessionId`.
 
 - Concurrent opens of the same identity share one starting actor and result.
 - A running actor is reattached rather than duplicated.

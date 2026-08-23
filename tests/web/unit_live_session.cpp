@@ -117,7 +117,7 @@ public:
         WebSettings settings,
         SessionOpener opener,
         LiveSessionClock clock = {},
-        SessionIdentity key = {"forum", "session"})
+        FullSessionId key = {"forum", "session"})
         : key_(std::move(key)),
           manager_(std::move(settings), std::move(opener), std::move(clock)) {
         if (!std::holds_alternative<LiveSessionReady>(manager_.open(key_, 5s))) {
@@ -131,10 +131,10 @@ public:
     LiveSession& operator*() const noexcept { return *session_; }
     [[nodiscard]] const LiveSessionHandle& handle() const noexcept { return session_; }
     [[nodiscard]] LiveSessionManager& manager() noexcept { return manager_; }
-    [[nodiscard]] const SessionIdentity& key() const noexcept { return key_; }
+    [[nodiscard]] const FullSessionId& key() const noexcept { return key_; }
 
 private:
-    SessionIdentity key_;
+    FullSessionId key_;
     LiveSessionManager manager_;
     LiveSessionHandle session_;
 };
@@ -155,14 +155,14 @@ SessionOpener scripted_opener(
     std::shared_ptr<test::BackendControls> controls,
     SessionController::ActivationHook before_activation = {}) {
     return [path, controls, before_activation](
-               const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
+               const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
         return test::open_scripted_session(
             identity, path, notifier, controls, before_activation);
     };
 }
 
 SessionOpener leased_opener(const std::filesystem::path& path) {
-    return [path](const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
+    return [path](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
         return test::open_leased_session(identity, path, notifier);
     };
 }
@@ -286,7 +286,7 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     std::optional<std::string> persisted_persona;
     SessionOpener opener = [path = file.path(), guide, scribe, &persisted_default,
                              &persisted_persona](
-                               const SessionIdentity& identity,
+                               const FullSessionId& identity,
                                std::shared_ptr<WakeNotifier> notifier) {
         std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
@@ -344,7 +344,7 @@ TEST(LiveSession, KeepsADefaultCharacterThatCouldNotBeSaved) {
     auto guide = std::make_shared<test::BackendControls>();
     auto scribe = std::make_shared<test::BackendControls>();
     SessionOpener opener = [path = file.path(), guide, scribe](
-                               const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
+                               const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
         std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
@@ -468,7 +468,7 @@ TEST(LiveSession, IndependentSessionsProgressWithoutSharedState) {
     auto second_controls = std::make_shared<test::BackendControls>();
     LiveSessionManager manager(
         test_settings(),
-        [&](const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             return test::open_scripted_session(
                 identity,
                 identity.session_id == "one" ? first_file.path()
@@ -476,8 +476,8 @@ TEST(LiveSession, IndependentSessionsProgressWithoutSharedState) {
                 notifier,
                 identity.session_id == "one" ? first_controls : second_controls);
         });
-    const SessionIdentity first_key{"forum", "one"};
-    const SessionIdentity second_key{"forum", "two"};
+    const FullSessionId first_key{"forum", "one"};
+    const FullSessionId second_key{"forum", "two"};
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(first_key, 5s)));
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(second_key, 5s)));
     LiveSessionHandle first = manager.lookup(first_key);
@@ -633,7 +633,7 @@ TEST(LiveSession, PublishesAnOpenedSessionNoticeOnTheFirstSnapshot) {
     LiveSessionHost host(
         test_settings(),
         [path = file.path(), controls](
-            const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
+            const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             OpenedSession opened = test::open_scripted_session(
                 identity, path, notifier, controls);
             opened.notice =
@@ -959,14 +959,14 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
     test::TemporarySessionFile healthy("live_session_healthy");
     LiveSessionManager manager(
         test_settings(),
-        [&](const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             return test::open_leased_session(
                 identity,
                 identity.session_id == "failing" ? failing.path() : healthy.path(),
                 notifier);
         });
-    const SessionIdentity failing_key{"forum", "failing"};
-    const SessionIdentity healthy_key{"forum", "healthy"};
+    const FullSessionId failing_key{"forum", "failing"};
+    const FullSessionId healthy_key{"forum", "healthy"};
     ASSERT_TRUE(
         std::holds_alternative<LiveSessionReady>(manager.open(failing_key, 5s)));
     ASSERT_TRUE(
@@ -997,7 +997,7 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
 TEST(LiveSession, ReleasesItsLeaseBeforePublishingFinished) {
     test::TemporarySessionFile file("live_session_lease");
     LiveSessionManager manager(test_settings(), leased_opener(file.path()));
-    const SessionIdentity key{"forum", "leased"};
+    const FullSessionId key{"forum", "leased"};
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
     LiveSessionHandle session = manager.lookup(key);
     ASSERT_TRUE(session);
@@ -1025,7 +1025,7 @@ TEST(LiveSession, GenerationLoggingRecordsStartAndTerminalTransitions) {
         auto controls = std::make_shared<test::BackendControls>();
         LiveSessionHost host(
             test_settings(), scripted_opener(file.path(), controls),
-            {}, SessionIdentity{"lobby", "logged"});
+            {}, FullSessionId{"lobby", "logged"});
         ASSERT_TRUE(std::holds_alternative<CommandResult>(
             host->submit(RawCommand{"Question"}, 2s)));
         ASSERT_TRUE(controls->wait_until_running());

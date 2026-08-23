@@ -37,7 +37,7 @@ public:
 
     web::SessionOpener opener() const {
         return [repository = repository, providers = providers](
-                   const SessionIdentity& identity, std::shared_ptr<WakeNotifier> notifier) {
+                   const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             return open_session(
                 *repository, identity, *providers, std::move(notifier));
         };
@@ -47,7 +47,7 @@ public:
         return {{std::string(entrance_id), std::string(welcome_id)}};
     }
 
-    static SessionIdentity welcome() {
+    static FullSessionId welcome() {
         return {std::string(entrance_id), std::string(welcome_id)};
     }
 

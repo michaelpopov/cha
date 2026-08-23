@@ -13,8 +13,7 @@ and owns one independent `SessionRepository`. Routes acquire the current
 workspace with `getws()`, and the `SessionOpener` opens every session — including
 the built-in Welcome — through `open_session()` with the persona that session's
 forum configures. It depends on
-core `SessionIdentity`, `SessionDescriptor`,
-`OpenedSession`, `ControllerView`, and `ControllerUpdate`, but puts no
+core `FullSessionId`, `OpenedSession`, `ControllerView`, and `ControllerUpdate`, but puts no
 HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
 a `SessionController`; HTTP workers exchange only owning commands and results
 with it.
@@ -160,9 +159,9 @@ contains controller failures to that one session.
 
 `LiveSessionManager` is the process-local liveness authority and owns nothing
 per-session beyond the map. It is not a core session abstraction: it serializes
-open requests by `SessionIdentity`, counts starting and stopping actors against
+open requests by `FullSessionId`, counts starting and stopping actors against
 the configured bound, and holds each actor through a
-`std::map<SessionIdentity, std::shared_ptr<LiveSession>>`. Its outcomes describe
+`std::map<FullSessionId, std::shared_ptr<LiveSession>>`. Its outcomes describe
 only owner lifecycle; `LobbyRoutes` validates URL components, returns stable
 open identities, and maps lifecycle failures to HTTP errors. It publishes only
 running actors, and sweeps finished actors in two phases so joins occur outside

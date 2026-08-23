@@ -32,7 +32,7 @@ public:
         ProviderThreadLauncher thread_launcher = {},
         SessionController::ActivationHook before_activation = {},
         std::vector<TestWorkspaceStyle> styles = {},
-        SessionIdentity identity = {},
+        FullSessionId identity = {},
         bool reuse_current_workspace = false)
         : notifier_(std::move(notifier)),
           workspace_(publish_test_workspace(
@@ -152,7 +152,7 @@ inline TestController from_test_backends(
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {},
     std::optional<ParticipantId> initial_default_character_id = std::nullopt,
-    SessionIdentity identity = {},
+    FullSessionId identity = {},
     bool reuse_current_workspace = false) {
     std::vector<CharacterDefinition> definitions;
     definitions.reserve(backends.size());
@@ -209,7 +209,7 @@ inline TestController from_test_backends(
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {},
     std::optional<ParticipantId> initial_default_character_id = std::nullopt,
-    SessionIdentity identity = {},
+    FullSessionId identity = {},
     bool reuse_current_workspace = false) {
     return from_test_backends(
         std::move(backends),
@@ -230,7 +230,7 @@ inline TestController from_test_backends(
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {},
     std::optional<ParticipantId> initial_default_character_id = std::nullopt,
-    SessionIdentity identity = {},
+    FullSessionId identity = {},
     bool reuse_current_workspace = false) {
     return from_test_backends(
         std::move(backends),

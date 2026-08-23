@@ -64,7 +64,7 @@ std::string request_action(
 }
 
 std::string prompt_cache_key(
-    const SessionIdentity& identity,
+    const FullSessionId& identity,
     std::string_view character_id) {
     if (identity.forum_id.empty() || identity.session_id.empty() || character_id.empty()) {
         return {};
@@ -201,7 +201,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
-    SessionIdentity identity) {
+    FullSessionId identity) {
     if (!lease.active()) {
         throw std::invalid_argument(
             "Production session controllers require an active session lease");
@@ -222,7 +222,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     ActivationHook before_activation,
-    SessionIdentity identity) {
+    FullSessionId identity) {
     if (!providers) throw std::invalid_argument("Session controller requires providers");
     Providers& provider = *providers;
     return std::unique_ptr<SessionController>(new SessionController(
@@ -242,7 +242,7 @@ SessionController::SessionController(
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     ActivationHook before_activation,
-    SessionIdentity identity,
+    FullSessionId identity,
     std::shared_ptr<Providers> providers_owner)
     : lease_(std::move(lease)),
       journal_(std::move(path)),

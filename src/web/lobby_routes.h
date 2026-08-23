@@ -1,6 +1,6 @@
 #pragma once
 
-#include "session/session_identity.h"
+#include "chat/session_identity.h"
 #include "web/web_settings.h"
 
 #include <memory>
@@ -22,7 +22,7 @@ class LiveSessionManager;
 // What the browser starts on. These are startup facts rather than model state,
 // so the application decides them and the route layer only reports them.
 struct InitialSelection {
-    SessionIdentity session;
+    FullSessionId session;
 };
 
 class LobbyRoutes {

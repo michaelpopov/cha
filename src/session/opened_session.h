@@ -1,7 +1,6 @@
 #pragma once
 
 #include "session/session_controller.h"
-#include "session/session_identity.h"
 
 #include <functional>
 #include <memory>
@@ -11,10 +10,9 @@
 
 namespace cha {
 
-// Couples the identity of an opened stored session to its owner-thread-only
-// controller. The descriptor may be copied separately for presentation.
+// Everything prepared while opening a stored session for its owner thread.
 struct OpenedSession {
-    SessionDescriptor descriptor;
+    std::string label;
     std::unique_ptr<SessionController> controller;
     // Saves a changed default character to the forum's config, on the owner
     // thread. Every forum gets one; built-in forums have no config file, so the

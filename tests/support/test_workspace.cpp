@@ -208,7 +208,7 @@ PublishedTestWorkspace publish_test_workspace(
     const PersonaRoster& personas,
     std::string_view default_character_id,
     const std::filesystem::path& database_path,
-    SessionIdentity identity,
+    FullSessionId identity,
     const std::vector<TestWorkspaceStyle>& styles,
     bool reuse_current) {
     if ((identity.forum_id.empty() || identity.session_id.empty())

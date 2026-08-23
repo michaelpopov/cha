@@ -85,14 +85,14 @@ edge that breaks the wider layering — see P0.
 
 ## Prerequisites
 
-### P0 — Move `SessionIdentity` into `chat/` (required)
+### P0 — Move `FullSessionId` into `chat/` (required)
 
-`src/agents/model_context.h:5` includes `session/session_identity.h`. It is
-the only `agents/` -> `session/`, `workspace/`, or `web/` edge in the tree, and
-it means the directory graph already contains a cycle:
+`src/agents/model_context.h:5` formerly included
+`session/session_identity.h`. It was the only `agents/` -> `session/`,
+`workspace/`, or `web/` edge in the tree and created this directory cycle:
 
 ```text
-agents  -> session   (model_context.h needs SessionIdentity)
+agents  -> session   (model_context.h needs FullSessionId)
 session -> agents    (session_controller.h needs character.h)
 ```
 
@@ -104,20 +104,15 @@ architectural claim does not.
 
 This is not a new rule. `chat/README.md` already states that `chat/` owns
 "stable forum, character, and session IDs" and is "a leaf. Everything else may
-depend on it; it depends on nothing in the project." `SessionIdentity` is
+depend on it; it depends on nothing in the project." `FullSessionId` is
 eleven lines of exactly that vocabulary and already depends only on
 `chat/ids.h`.
 
-The cheap implementation is three steps:
+The implementation was three steps:
 
-1. Create `chat/session_identity.h` holding `SessionIdentity` alone.
-2. Have `session/session_identity.h` include it and keep `SessionDescriptor`,
-   which carries display strings and belongs in `session/`.
-3. Repoint `agents/model_context.h:5` to `chat/session_identity.h`.
-
-The pass-through include means the other eleven consumers of
-`session/session_identity.h` compile unchanged. They can be repointed
-opportunistically later; doing so is not part of this plan.
+1. Create `chat/session_identity.h` holding `FullSessionId` alone.
+2. Repoint consumers to `chat/session_identity.h`.
+3. Remove the obsolete session-layer identity header.
 
 ### P1 — Move `character_runtime_info` and `provider_endpoint` (recommended)
 
@@ -451,7 +446,7 @@ Any `M` outside that list means a step went wrong.
 
 ## Commit sequencing
 
-1. **P0** — `SessionIdentity` into `chat/`. Small, independently correct,
+1. **P0** — `FullSessionId` into `chat/`. Small, independently correct,
    required before the `agents/` rule in step 7 can be written truthfully.
 2. **P1** — `character_runtime_info()` to `character.*`,
    `provider_endpoint()` to `character_config.*`. Independent cleanup.

@@ -85,14 +85,7 @@ void publish_projection_workspace() {
         {"forum", "session"});
 }
 
-SessionDescriptor test_descriptor() {
-    return {
-        .identity = {"forum", "session"},
-        .forum_display_name = "Forum",
-        .session_label = "Label",
-        .forum_default_character_id = "guide",
-    };
-}
+const FullSessionId test_identity{"forum", "session"};
 
 TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
     publish_projection_workspace();
@@ -104,12 +97,12 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
     };
 
     const SessionSnapshot snapshot =
-        to_snapshot(test_descriptor(), state.view(), presentation);
+        to_snapshot(test_identity, "Label", state.view(), presentation);
 
     EXPECT_EQ(snapshot, (SessionSnapshot{
-        // A session descriptor carries no forum description, so a snapshot's
-        // forum leaves it unset. Discovery is where it is read.
-        .forum = {"forum", "Forum", std::nullopt, "guide", "reviewer_persona", "Reviewer persona", {
+        // Session snapshots do not carry the forum description. Discovery is
+        // where it is read.
+        .forum = {"forum", "Test forum", std::nullopt, "guide", "reviewer_persona", "Reviewer persona", {
             {"guide", "guide", "Explains things"},
             {"reviewer", "Reviewer", "Checks details"},
         }},
@@ -138,7 +131,7 @@ TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
     SessionSnapshot snapshot;
     {
         BackingState state = populated_state();
-        snapshot = to_snapshot(test_descriptor(), state.view(), {});
+        snapshot = to_snapshot(test_identity, "Label", state.view(), {});
 
         // Mutating the backing values before they are destroyed catches a
         // retained string view.
@@ -161,7 +154,8 @@ TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
 TEST(SessionProjection, ProjectsWorkspaceDataWithEmptySessionState) {
     publish_projection_workspace();
     const SessionSnapshot snapshot = to_snapshot(
-        test_descriptor(),
+        test_identity,
+        "Label",
         ControllerView{.default_persona_id = "reviewer_persona"},
         {.lifecycle = SessionLifecycle::running});
 

@@ -410,7 +410,7 @@ public:
         : settings_(make_settings()),
           live_sessions_(
               settings_,
-              [this](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+              [this](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
                   return test::open_restored_session(
                       key,
                       database_.path(),
@@ -587,11 +587,11 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     settings.session_limit = 1;
     LiveSessionManager live_sessions(
         settings,
-        [&](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             return test::open_scripted_session(
                 key, database.path(), notifier, controls);
         });
-    const SessionIdentity key{"blocked-forum", "blocked-session"};
+    const FullSessionId key{"blocked-forum", "blocked-session"};
     if (!std::holds_alternative<LiveSessionReady>(
             live_sessions.open(key, 5s))) {
         remove_database();
@@ -989,7 +989,7 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     test::TemporarySessionFile database("opening_gate");
     LiveSessionManager live_sessions(
         settings,
-        [&gate, &database](const SessionIdentity& key, std::shared_ptr<WakeNotifier> notifier) {
+        [&gate, &database](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             gate.wait();
             return test::open_leased_session(key, database.path(), notifier);
         });

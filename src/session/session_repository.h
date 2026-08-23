@@ -1,7 +1,7 @@
 #pragma once
 
 #include "session/session_database.h"
-#include "session/session_identity.h"
+#include "chat/session_identity.h"
 #include "session/session_lease.h"
 #include "session/stored_session.h"
 
@@ -17,7 +17,7 @@ class SessionCatalog;
 // The one process-local session the repository creates and owns for itself.
 // The application names it; this layer holds no built-in identifiers.
 struct TemporarySessionSeed {
-    SessionIdentity identity;
+    FullSessionId identity;
     std::string label;
 };
 
@@ -26,7 +26,7 @@ struct TemporarySessionSeed {
 // the only storage value that proves anything about the session it names; a
 // StoredSession observed before the lease does not.
 struct PreparedSession {
-    SessionIdentity identity;
+    FullSessionId identity;
     std::string label;
     std::filesystem::path database_path;
     SessionLease lease;
@@ -53,22 +53,22 @@ public:
     // Results are ordered by session ID.
     [[nodiscard]] std::vector<StoredSession> list(std::string_view forum_id) const;
     // Strict: throws for a missing or invalid selected session.
-    void validate(const SessionIdentity& identity) const;
+    void validate(const FullSessionId& identity) const;
     // The temporary forum has no creation path and reports ForumNotFoundError.
     [[nodiscard]] StoredSession create(std::string_view forum_id, std::string label) const;
     [[nodiscard]] StoredSession rename(
-        const SessionIdentity& identity,
+        const FullSessionId& identity,
         std::string label) const;
     // Recoverable deletion moves the database into the forum's deleted/
     // directory. The companion lease file deliberately stays in place.
-    void move_to_deleted(const SessionIdentity& identity) const;
-    [[nodiscard]] PreparedSession prepare(const SessionIdentity& identity) const;
+    void move_to_deleted(const FullSessionId& identity) const;
+    [[nodiscard]] PreparedSession prepare(const FullSessionId& identity) const;
 
 private:
     [[nodiscard]] SessionCatalog catalog_for(std::string_view forum_id) const;
 
     std::filesystem::path workspace_root_;
-    SessionIdentity temporary_identity_;
+    FullSessionId temporary_identity_;
     std::string temporary_label_;
     std::filesystem::path temporary_directory_;
     std::filesystem::path temporary_database_path_;
