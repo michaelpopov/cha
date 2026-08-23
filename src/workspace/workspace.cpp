@@ -36,6 +36,30 @@ std::shared_ptr<const Workspace> current_workspace;
 
 constexpr std::string_view guest_name = "Guest";
 
+std::string_view trim_handle_punctuation(std::string_view handle) {
+    while (!handle.empty()
+           && std::string_view(",.;:!?").find(handle.back())
+               != std::string_view::npos) {
+        handle.remove_suffix(1);
+    }
+    return handle;
+}
+
+bool matches_name_word(std::string_view name, std::string_view handle) {
+    std::size_t start = 0;
+    while (start < name.size()) {
+        while (start < name.size() && is_space(name[start])) ++start;
+        const std::size_t word_start = start;
+        while (start < name.size() && !is_space(name[start])) ++start;
+        if (start > word_start
+            && ascii_iequals(
+                name.substr(word_start, start - word_start), handle)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool is_reserved_id(std::string_view id) {
     static constexpr std::string_view reserved[]{
         workspace_guest_id, workspace_assistant_id, workspace_entrance_id,
@@ -1137,6 +1161,102 @@ const WorkspaceForumMember* Workspace::find_forum_member(
     const auto found = std::ranges::find(
         forum->members, character_id, &WorkspaceForumMember::character_id);
     return found == forum->members.end() ? nullptr : &*found;
+}
+
+const CharacterMetadata* Workspace::find_forum_character(
+    std::string_view forum_id,
+    std::string_view character_id) const noexcept {
+    if (find_forum_member(forum_id, character_id) == nullptr) return nullptr;
+    const WorkspaceCharacter* const character = find_character(character_id);
+    return character == nullptr ? nullptr : &character->character;
+}
+
+HandleResolution Workspace::resolve_forum_handle(
+    std::string_view forum_id,
+    std::string_view handle) const {
+    const WorkspaceForum* const forum = find_forum(forum_id);
+    if (forum == nullptr || handle.empty()) return {};
+
+    const auto metadata =
+        [this](const WorkspaceForumMember& member) -> const CharacterMetadata* {
+        const WorkspaceCharacter* const character =
+            find_character(member.character_id);
+        return character == nullptr ? nullptr : &character->character;
+    };
+    const auto named = [forum, &metadata](
+                           std::string_view value) -> const CharacterMetadata* {
+        for (const WorkspaceForumMember& member : forum->members) {
+            const CharacterMetadata* const character = metadata(member);
+            if (character != nullptr
+                && ascii_iequals(character->display_name, value)) {
+                return character;
+            }
+        }
+        return nullptr;
+    };
+    if (const CharacterMetadata* const character = named(handle)) {
+        return {HandleMatch::resolved, character, {}};
+    }
+
+    const std::string_view trimmed = trim_handle_punctuation(handle);
+    if (trimmed != handle) {
+        if (const CharacterMetadata* const character = named(trimmed)) {
+            return {HandleMatch::resolved, character, {}};
+        }
+    }
+    if (trimmed.empty()) return {};
+
+    for (const WorkspaceForumMember& member : forum->members) {
+        const CharacterMetadata* const character = metadata(member);
+        if (character != nullptr && ascii_iequals(character->id, trimmed)) {
+            return {HandleMatch::resolved, character, {}};
+        }
+    }
+
+    std::vector<const CharacterMetadata*> candidates;
+    for (const WorkspaceForumMember& member : forum->members) {
+        const CharacterMetadata* const character = metadata(member);
+        if (character != nullptr
+            && matches_name_word(character->display_name, trimmed)) {
+            candidates.push_back(character);
+        }
+    }
+    if (candidates.size() == 1) {
+        return {HandleMatch::resolved, candidates.front(), {}};
+    }
+    if (candidates.size() > 1) {
+        return {HandleMatch::ambiguous, nullptr, std::move(candidates)};
+    }
+
+    for (const WorkspaceForumMember& member : forum->members) {
+        const CharacterMetadata* const character = metadata(member);
+        if (character != nullptr
+            && (starts_with_folded(character->display_name, trimmed)
+                || starts_with_name_word(character->display_name, trimmed))) {
+            candidates.push_back(character);
+        }
+    }
+    if (candidates.size() == 1) {
+        return {HandleMatch::resolved, candidates.front(), {}};
+    }
+    if (candidates.empty()) return {};
+    return {HandleMatch::ambiguous, nullptr, std::move(candidates)};
+}
+
+std::string Workspace::forum_handle_list(std::string_view forum_id) const {
+    const WorkspaceForum* const forum = find_forum(forum_id);
+    if (forum == nullptr) return {};
+    std::string result;
+    for (const WorkspaceForumMember& member : forum->members) {
+        const WorkspaceCharacter* const configured =
+            find_character(member.character_id);
+        const CharacterMetadata* const character = configured == nullptr
+            ? nullptr : &configured->character;
+        if (character == nullptr) continue;
+        if (!result.empty()) result += ", ";
+        result += "@" + character->display_name;
+    }
+    return result;
 }
 
 CharacterDefinition Workspace::character_definition(

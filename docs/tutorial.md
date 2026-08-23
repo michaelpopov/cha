@@ -650,7 +650,7 @@ One controller owns:
 - the session lease and `SessionJournal`;
 - the owner-thread-confined `Transcript`;
 - a borrowed reference to the process-owned `Providers` supervisor;
-- the resolved forum character roster and the workspace persona roster;
+- stable forum/persona IDs used to look up the current `Workspace`;
 - default-character and current-persona selection;
 - next request and entry IDs;
 - at most one active foreground response;
@@ -660,11 +660,9 @@ The controller has no mutex. Its public mutation/view methods belong to the
 owner thread. Thread-safe communication is isolated inside request event
 queues, cancellation flags, and the wake mechanism.
 
-`ForumCharacters` in
-[session/forum_characters.cpp](../src/session/forum_characters.cpp) is the
-controller's roster and handle resolver. It centralizes exact, normalized, and
-prefix matching plus ambiguity diagnostics, so prompt submission, multicast,
-and default-character changes use the same rules. The smaller
+`Workspace` is the forum roster and handle resolver. It centralizes exact,
+normalized, and prefix matching plus ambiguity diagnostics, so prompt
+submission, multicast, and default-character changes use the same rules. The smaller
 `generation_status.h`, `controller_view.h`, and `opened_session.h` headers are
 boundary value types: they let application and web code observe or transfer
 session state without gaining access to controller internals.

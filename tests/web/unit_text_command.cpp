@@ -61,7 +61,7 @@ TEST(Command, ParsesTheDefaultCharacterCommandHandle) {
     EXPECT_EQ(prefix.kind, CommandKind::set_default);
     EXPECT_EQ(prefix.handle, "che");
 
-    // Handles are passed through verbatim; ForumCharacters interprets them.
+    // Handles are passed through verbatim; Workspace interprets them.
     const Command punctuated = parse_command("/@Ismael,");
     EXPECT_EQ(punctuated.handle, "Ismael,");
 }

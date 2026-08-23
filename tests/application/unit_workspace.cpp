@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <optional>
 #include <string>
@@ -17,6 +18,23 @@ namespace {
 std::string file_bytes(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+Workspace workspace_with_characters(
+    std::initializer_list<std::pair<std::string_view, std::string_view>>
+        characters) {
+    test::TestWorkspace fixture;
+    std::filesystem::remove_all(
+        fixture.root() / "characters" / "guide");
+    std::filesystem::remove_all(
+        fixture.root() / "forums" / "lobby" / "members" / "guide");
+    for (const auto& [id, display_name] : characters) {
+        fixture.add_character(id, display_name);
+        std::filesystem::create_directories(
+            fixture.root() / "forums" / "lobby" / "members"
+                / std::string(id));
+    }
+    return Workspace::load(fixture.root());
 }
 
 TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
@@ -382,6 +400,95 @@ TEST(Workspace, LoadwsPublishesOnlyACompleteWorkspace) {
     invalid.write_character_config("display_name =\n");
     EXPECT_THROW(loadws(invalid.root()), std::runtime_error);
     EXPECT_EQ(getws(), published);
+}
+
+TEST(Workspace, ResolvesForumCharacterHandles) {
+    const Workspace workspace = workspace_with_characters({
+        {"ada", "Ada"},
+        {"grace", "Grace"},
+    });
+
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "ADA").character->id,
+        "ada");
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "Ada,").character->id,
+        "ada");
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "gr").character->id,
+        "grace");
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "?!").match,
+        HandleMatch::unknown);
+    EXPECT_EQ(workspace.forum_handle_list("lobby"), "@Ada, @Grace");
+    ASSERT_NE(workspace.find_forum_character("lobby", "grace"), nullptr);
+    EXPECT_EQ(workspace.find_forum_character("lobby", "Grace"), nullptr);
+    EXPECT_EQ(workspace.find_forum_character("missing", "grace"), nullptr);
+}
+
+TEST(Workspace, ResolvesForumHandlesByWordsAndIds) {
+    const Workspace workspace = workspace_with_characters({
+        {"markus_aurelius", "Marcus Aurelius"},
+        {"roosevelt", "Franklin Roosevelt"},
+        {"stirlitz", "Штирлиц"},
+    });
+
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "Marcus").character->id,
+        "markus_aurelius");
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "Roose").character->id,
+        "roosevelt");
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "STIRLITZ.").character->id,
+        "stirlitz");
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "markus").match,
+        HandleMatch::unknown);
+}
+
+TEST(Workspace, ReportsAmbiguousForumHandles) {
+    const Workspace workspace = workspace_with_characters({
+        {"churchill", "Winston Churchill"},
+        {"smith", "Winston Smith"},
+        {"watson", "William Watson"},
+    });
+
+    const HandleResolution word =
+        workspace.resolve_forum_handle("lobby", "Winston");
+    EXPECT_EQ(word.match, HandleMatch::ambiguous);
+    EXPECT_EQ(word.candidates.size(), 2U);
+
+    const HandleResolution prefix =
+        workspace.resolve_forum_handle("lobby", "W");
+    EXPECT_EQ(prefix.match, HandleMatch::ambiguous);
+    EXPECT_EQ(prefix.candidates.size(), 3U);
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("missing", "Winston").match,
+        HandleMatch::unknown);
+}
+
+TEST(Workspace, PrefersExactForumHandlesAndSupportsUtf8Prefixes) {
+    const Workspace workspace = workspace_with_characters({
+        {"dotted", "Ismael."},
+        {"plain", "Ismael"},
+        {"stirlitz", "Штирлиц"},
+        {"winston", "Franklin Roosevelt"},
+        {"churchill", "Winston Churchill"},
+    });
+
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "Ismael.").character->id,
+        "dotted");
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "Ismael,").character->id,
+        "plain");
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "Winston").character->id,
+        "winston");
+    EXPECT_EQ(
+        workspace.resolve_forum_handle("lobby", "Штир").character->id,
+        "stirlitz");
 }
 
 } // namespace

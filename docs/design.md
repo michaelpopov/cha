@@ -114,9 +114,8 @@ flowchart TD
     Manager --> Session["LiveSession"]
     Session --> Controller["SessionController"]
 
-    Controller --> Definitions["immutable character definitions"]
-    Controller --> Characters["mutable ForumCharacters presentation"]
-    Definitions -->|"configured appearance baseline"| Characters
+    Controller --> Workspace["current immutable Workspace"]
+    Controller --> Overrides["session style override names"]
     Controller -->|"shared handle while consuming"| Request["ProviderRequest"]
     Providers -->|"shared handle while active"| Request
 
@@ -133,8 +132,7 @@ The session owns conversation behavior. It does not own provider-execution
 resources. Specifically, the session continues to own:
 
 - transcript and journal state;
-- immutable character definitions and persona selection;
-- the mutable `ForumCharacters` presentation roster;
+- stable workspace IDs, persona selection, and style override names;
 - prompt construction and request ordering;
 - the ordered vector of request handles for the current generation;
 - persistence and presentation of streamed output;
@@ -195,37 +193,20 @@ a reload cannot change work already in progress.
 Provider information and character information have different ownership and
 cardinality. Several characters may select the same provider while retaining
 different identities, names, descriptions, and configured appearances.
-`Providers` therefore does not supply per-character metadata; the session's
-immutable character definitions do.
-
-`SessionController` retains its forum's ordered immutable
-`CharacterDefinition` objects for the controller's lifetime. Each definition
-contains:
+`Providers` therefore does not supply per-character metadata; the current
+`Workspace` does. When generation starts, `Workspace::character_definition()`
+returns one owned `CharacterDefinition` containing:
 
 - the character metadata, including its configured appearance;
 - the character and system prompts used for generation;
 - its exact `ProviderSelection`, whose configuration supplies the model, API,
   and streaming flag.
 
-The ownership conversion is explicit:
-
-```cpp
-std::vector<std::shared_ptr<const CharacterDefinition>> definitions_;
-```
-
-Session destruction releases the controller's references, while any active
-request keeps its selected definition alive through its own shared pointer.
-
-At controller construction, the session derives one safe, immutable
-`CharacterRuntimeInfo` record per definition. It contains only the character
-ID plus its configured model, API, and streaming flag. It contains no copied
-character metadata, credential, or prompt.
-
-`ForumCharacters` is a separate mutable presentation copy. A session style
-override changes only the appearance in that copy. The immutable character
-definition remains the configured baseline, so resetting a style restores the
-original appearance from that definition. `style_overrides_` still needs to
-store only the selected override names.
+The request keeps that value alive independently. `SessionController` retains
+no character roster. Handle resolution and `/characters` data come directly
+from the current `Workspace`. `style_overrides_` stores only selected style
+names and is applied when metadata is copied for a request or presentation;
+resetting an override exposes the configured Workspace appearance again.
 
 `/characters` and `/info` use the ordered per-character runtime records. If two
 characters share one provider selection, they still produce two records with

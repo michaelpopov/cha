@@ -183,7 +183,6 @@ add_library(cha_core STATIC
     src/providers/sse_framer.cpp
     src/characters/character_config.cpp
     src/session/controller_update.cpp
-    src/session/forum_characters.cpp
     src/session/session_archive.cpp
     src/session/session_catalog.cpp
     src/session/session_controller.cpp
@@ -292,7 +291,6 @@ if(BUILD_TESTING)
         tests/providers/unit_responses_api.cpp
         tests/providers/unit_sse_framer.cpp
         tests/session/unit_concurrent_controllers.cpp
-        tests/session/unit_forum_characters.cpp
         tests/session/unit_session_archive.cpp
         tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp

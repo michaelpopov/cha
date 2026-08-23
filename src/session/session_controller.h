@@ -6,7 +6,6 @@
 #include "session/controller_update.h"
 #include "session/controller_view.h"
 #include "session/generation_status.h"
-#include "session/forum_characters.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
 #include "session/session_identity.h"
@@ -26,6 +25,7 @@
 namespace cha {
 
 class Workspace;
+struct WorkspaceForum;
 
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, forum characters, defaults, generation
@@ -133,11 +133,15 @@ private:
     [[nodiscard]] SharedCharacterDefinition definition_for(
         std::string_view id) const;
     [[nodiscard]] std::shared_ptr<const Workspace> workspace() const;
-    [[nodiscard]] ForumCharacters current_characters() const;
     [[nodiscard]] SharedPersonaRoster current_personas() const;
     [[nodiscard]] std::vector<CharacterRuntimeInfo> current_runtime_info(
-        const ForumCharacters& characters) const;
+        const Workspace& workspace,
+        const WorkspaceForum& forum) const;
+    [[nodiscard]] CharacterMetadata styled_character(
+        const Workspace& workspace,
+        const CharacterMetadata& character) const;
     [[nodiscard]] CharacterAppearance resolve_style(
+        const Workspace& workspace,
         std::string_view name) const;
     [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
     ControllerUpdate busy_notice() const;

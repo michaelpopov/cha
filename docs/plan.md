@@ -33,7 +33,7 @@ independent process/runtime objects.
 | `src/session/session_repository.*` | One process-owned repository obtains the current forum session directory from `Workspace` per operation. |
 | `src/workspace/session_open.*` | Opens from `getws()` plus the independent repository; no disk re-read or workspace lifetime capture. |
 | `src/session/session_controller.*` | Production controllers retain stable IDs and session state; character, persona, provider, and style operations use the current `Workspace`. |
-| `src/session/forum_characters.*` | In production it is only a short-lived lookup/projection built from `Workspace`; style override state remains in the controller. |
+| Forum character lookup | `Workspace` owns forum membership and handle resolution; the old `ForumCharacters` projection was removed. |
 | `src/web/session_projection.cpp` | Builds character/persona presentation from the current `Workspace` and overlays session-local style overrides. |
 | `src/providers/*` and `src/characters/*` | Provider execution stays workspace-independent and receives one request-owned input copied from `Workspace`. Obsolete filesystem loaders were removed. |
 | `src/session/opened_session.h`, `src/web/live_session.*` | No workspace-generation or generic dependency lifetime is retained. Test-backed controllers own their injected provider executor directly. |
@@ -45,6 +45,7 @@ independent process/runtime objects.
 
 - `WorkspaceRuntime` and `WorkspaceGeneration`;
 - `WorkspaceDefinition`;
+- `ForumCharacters` and its copied roster;
 - the duplicate workspace character/provider filesystem loaders;
 - the old built-in assembly source;
 - obsolete CMake entries and tests tied only to those implementations.

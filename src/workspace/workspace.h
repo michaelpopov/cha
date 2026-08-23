@@ -71,6 +71,14 @@ struct WorkspaceForum {
     std::vector<WorkspaceForumMember> members;
 };
 
+enum class HandleMatch { resolved, unknown, ambiguous };
+
+struct HandleResolution {
+    HandleMatch match{HandleMatch::unknown};
+    const CharacterMetadata* character{};
+    std::vector<const CharacterMetadata*> candidates;
+};
+
 // A self-contained, eagerly loaded and validated view of workspace/. It owns
 // every value it publishes and never exposes filesystem-backed references.
 class Workspace final {
@@ -112,6 +120,14 @@ public:
     [[nodiscard]] const WorkspaceForumMember* find_forum_member(
         std::string_view forum_id,
         std::string_view character_id) const noexcept;
+    [[nodiscard]] const CharacterMetadata* find_forum_character(
+        std::string_view forum_id,
+        std::string_view character_id) const noexcept;
+    [[nodiscard]] HandleResolution resolve_forum_handle(
+        std::string_view forum_id,
+        std::string_view handle) const;
+    [[nodiscard]] std::string forum_handle_list(
+        std::string_view forum_id) const;
     [[nodiscard]] CharacterDefinition character_definition(
         std::string_view forum_id,
         std::string_view character_id) const;

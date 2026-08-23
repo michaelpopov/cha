@@ -474,7 +474,7 @@ TEST_F(SessionStorageTest, CreatesDistinctDatabasesOnTimestampCollision) {
     }
 }
 
-TEST_F(SessionStorageTest, OpensAStoredSessionWhateverTheCurrentForumCharactersAre) {
+TEST_F(SessionStorageTest, OpensAStoredSessionWhateverTheCurrentForumRosterIs) {
     SessionCatalog sessions(sessions_directory(), "lobby");
     const StoredSession session = sessions.create("Two agents");
     {

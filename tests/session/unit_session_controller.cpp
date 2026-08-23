@@ -1884,7 +1884,7 @@ TEST(SessionController, FinalizesInterruptedTurnsDuringRestore) {
         std::string::npos);
 }
 
-TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharacters) {
+TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumRoster) {
     TemporaryJournal temporary;
     auto guide = std::make_unique<ScriptedBackend>(
         GenerationResult{}, std::vector<std::string>{"Guide answer"});

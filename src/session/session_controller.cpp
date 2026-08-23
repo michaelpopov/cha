@@ -11,6 +11,7 @@
 #include <exception>
 #include <limits>
 #include <openssl/sha.h>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -121,6 +122,75 @@ std::string persona_handle_list(const PersonaRoster& personas) {
     return result;
 }
 
+std::string format_handle_resolution_notice(
+    std::string_view handle,
+    const HandleResolution& resolution,
+    const Workspace& workspace,
+    std::string_view forum_id) {
+    if (resolution.match == HandleMatch::unknown) {
+        return "Unknown character @" + std::string(handle)
+            + ". Characters in this forum: "
+            + workspace.forum_handle_list(forum_id);
+    }
+    std::string result =
+        "Ambiguous character @" + std::string(handle) + ": matches ";
+    for (std::size_t index{}; index < resolution.candidates.size(); ++index) {
+        if (index) result += ", ";
+        result += "@" + resolution.candidates[index]->display_name;
+    }
+    return result + ". Type more of the name.";
+}
+
+std::string format_duplicate_character_notice(std::string_view display_name) {
+    return "Multicast target @" + std::string(display_name) + " is duplicated";
+}
+
+std::string format_characters_notice(
+    const Workspace& workspace,
+    const WorkspaceForum& forum,
+    const std::vector<CharacterRuntimeInfo>& runtime_info,
+    const CharacterId& default_character_id) {
+    std::ostringstream result;
+    result << "Characters in this forum (" << forum.members.size()
+           << "), * marks the default. Any unambiguous prefix works.";
+    if (runtime_info.size() != forum.members.size()) {
+        throw std::logic_error(
+            "Character and runtime information counts do not match");
+    }
+    for (const WorkspaceForumMember& member : forum.members) {
+        const CharacterMetadata* const character =
+            workspace.find_forum_character(forum.id, member.character_id);
+        if (character == nullptr) {
+            throw std::logic_error("Forum member has no workspace character");
+        }
+        const auto runtime = std::ranges::find(
+            runtime_info, character->id, &CharacterRuntimeInfo::id);
+        if (runtime == runtime_info.end()) {
+            throw std::logic_error(
+                "Runtime information is missing character '"
+                + character->id + "'");
+        }
+        result << " | " << (runtime->id == default_character_id ? "* " : "")
+               << "@" << character->display_name << "  " << runtime->model
+               << "  " << runtime->api << "  "
+               << (runtime->streaming ? "streaming" : "non-streaming");
+    }
+    return result.str();
+}
+
+std::string format_session_information(
+    std::size_t entry_count,
+    const Workspace& workspace,
+    const WorkspaceForum& forum,
+    const std::vector<CharacterRuntimeInfo>& runtime_info,
+    const CharacterId& default_character_id) {
+    std::ostringstream text;
+    text << "Transcript entries: " << entry_count << " | "
+         << format_characters_notice(
+             workspace, forum, runtime_info, default_character_id);
+    return text.str();
+}
+
 } // namespace
 
 std::unique_ptr<SessionController> SessionController::from_workspace(
@@ -196,8 +266,9 @@ SessionController::~SessionController() {
 void SessionController::initialize(
     SessionRestore restored,
     std::string_view initial_persona_id) {
-    const ForumCharacters characters = current_characters();
-    if (!characters.find(default_character_id_)) {
+    const std::shared_ptr<const Workspace> current = workspace();
+    if (!current->find_forum_character(
+            identity_.forum_id, default_character_id_)) {
         throw std::invalid_argument(
             "Initial default character ID is not in the forum roster");
     }
@@ -240,28 +311,6 @@ std::shared_ptr<const Workspace> SessionController::workspace() const {
     return result;
 }
 
-ForumCharacters SessionController::current_characters() const {
-    const std::shared_ptr<const Workspace> current = workspace();
-    const WorkspaceForum& forum = *current->find_forum(identity_.forum_id);
-    std::vector<CharacterMetadata> result;
-    result.reserve(forum.members.size());
-    for (const WorkspaceForumMember& member : forum.members) {
-        const WorkspaceCharacter* const character =
-            current->find_character(member.character_id);
-        if (character == nullptr) {
-            throw std::logic_error("Forum member has no workspace character");
-        }
-        CharacterMetadata value = character->character;
-        const auto override = style_overrides_.find(character->character.id);
-        if (override != style_overrides_.end()) {
-            const WorkspaceStyle* const style = current->find_style(override->second);
-            if (style != nullptr) value.appearance = style->appearance;
-        }
-        result.push_back(std::move(value));
-    }
-    return ForumCharacters(std::move(result), true);
-}
-
 SharedPersonaRoster SessionController::current_personas() const {
     const std::shared_ptr<const Workspace> current = workspace();
     return std::make_shared<const PersonaRoster>(
@@ -269,20 +318,20 @@ SharedPersonaRoster SessionController::current_personas() const {
 }
 
 std::vector<CharacterRuntimeInfo> SessionController::current_runtime_info(
-    const ForumCharacters& characters) const {
-    const std::shared_ptr<const Workspace> current = workspace();
+    const Workspace& current,
+    const WorkspaceForum& forum) const {
     std::vector<CharacterRuntimeInfo> result;
-    result.reserve(characters.all().size());
-    for (const CharacterMetadata& character : characters.all()) {
+    result.reserve(forum.members.size());
+    for (const WorkspaceForumMember& member : forum.members) {
         const WorkspaceCharacter* const configured =
-            current->find_character(character.id);
+            current.find_character(member.character_id);
         const WorkspaceProvider* const provider = configured == nullptr
-            ? nullptr : current->find_provider(configured->provider_id);
+            ? nullptr : current.find_provider(configured->provider_id);
         if (provider == nullptr) {
             throw std::logic_error("Workspace character has no provider");
         }
         result.push_back({
-            .id = character.id,
+            .id = member.character_id,
             .model = provider->config.model,
             .api = provider_endpoint(provider->config),
             .streaming = provider->config.stream,
@@ -291,13 +340,26 @@ std::vector<CharacterRuntimeInfo> SessionController::current_runtime_info(
     return result;
 }
 
-CharacterAppearance SessionController::resolve_style(std::string_view name) const {
-    const std::shared_ptr<const Workspace> current = workspace();
-    const WorkspaceStyle* const style = current->find_style(name);
+CharacterMetadata SessionController::styled_character(
+    const Workspace& current,
+    const CharacterMetadata& character) const {
+    CharacterMetadata result = character;
+    const auto override = style_overrides_.find(character.id);
+    if (override != style_overrides_.end()) {
+        const WorkspaceStyle* const style = current.find_style(override->second);
+        if (style != nullptr) result.appearance = style->appearance;
+    }
+    return result;
+}
+
+CharacterAppearance SessionController::resolve_style(
+    const Workspace& current,
+    std::string_view name) const {
+    const WorkspaceStyle* const style = current.find_style(name);
     if (style != nullptr) return style->appearance;
     std::string message = "Unknown style '" + std::string(name)
         + "'. Available styles:";
-    for (const WorkspaceStyle& available : current->styles()) {
+    for (const WorkspaceStyle& available : current.styles()) {
         message += " " + available.id;
     }
     throw std::invalid_argument(std::move(message));
@@ -413,23 +475,25 @@ ControllerUpdate SessionController::submit_prompt(
     }
 
     ControllerUpdate update;
-    const ForumCharacters characters = current_characters();
+    const std::shared_ptr<const Workspace> current = workspace();
     const CharacterMetadata* target = nullptr;
     if (handle.empty()) {
         if (default_character_id_ == null_agent_handle) {
             record_monologue(author_id, std::move(text), update);
             return update;
         }
-        target = characters.find(default_character_id_);
+        target = current->find_forum_character(
+            identity_.forum_id, default_character_id_);
     } else {
         if (handle == null_agent_handle) {
             record_monologue(author_id, std::move(text), update);
             return update;
         }
-        const HandleResolution resolution = characters.resolve_handle(handle);
+        const HandleResolution resolution =
+            current->resolve_forum_handle(identity_.forum_id, handle);
         if (resolution.match != HandleMatch::resolved) {
             update.notice = format_handle_resolution_notice(
-                handle, resolution, characters);
+                handle, resolution, *current, identity_.forum_id);
             return update;
         }
         target = resolution.character;
@@ -452,7 +516,7 @@ ControllerUpdate SessionController::submit_prompt(
     start_generation(
         std::move(*author),
         std::move(text),
-        std::vector<CharacterMetadata>{*target},
+        std::vector<CharacterMetadata>{styled_character(*current, *target)},
         std::move(history),
         update);
     return update;
@@ -681,20 +745,31 @@ ControllerUpdate SessionController::start_multicast(
         return busy_notice();
     }
 
-    const ForumCharacters characters = current_characters();
+    const std::shared_ptr<const Workspace> current = workspace();
+    const WorkspaceForum& forum = *current->find_forum(identity_.forum_id);
     std::vector<CharacterMetadata> targets;
     if (handles.empty()) {
-        targets = characters.all();
+        targets.reserve(forum.members.size());
+        for (const WorkspaceForumMember& member : forum.members) {
+            const CharacterMetadata* const character =
+                current->find_forum_character(
+                    identity_.forum_id, member.character_id);
+            if (character == nullptr) {
+                throw std::logic_error(
+                    "Forum member has no workspace character");
+            }
+            targets.push_back(styled_character(*current, *character));
+        }
     } else {
         std::unordered_set<ParticipantId> distinct;
         targets.reserve(handles.size());
         for (const std::string& handle : handles) {
             const HandleResolution resolution =
-                characters.resolve_handle(handle);
+                current->resolve_forum_handle(identity_.forum_id, handle);
             if (resolution.match != HandleMatch::resolved) {
                 return {
                     .notice = format_handle_resolution_notice(
-                        handle, resolution, characters),
+                        handle, resolution, *current, identity_.forum_id),
                 };
             }
             if (!distinct.insert(resolution.character->id).second) {
@@ -703,7 +778,8 @@ ControllerUpdate SessionController::start_multicast(
                         resolution.character->display_name),
                 };
             }
-            targets.push_back(*resolution.character);
+            targets.push_back(
+                styled_character(*current, *resolution.character));
         }
     }
     return start_resolved_multicast(author_id, std::move(text), std::move(targets));
@@ -750,14 +826,16 @@ ControllerUpdate SessionController::session_information() {
     if (is_generating()) {
         return busy_notice();
     }
-    const ForumCharacters characters = current_characters();
+    const std::shared_ptr<const Workspace> current = workspace();
+    const WorkspaceForum& forum = *current->find_forum(identity_.forum_id);
     const std::vector<CharacterRuntimeInfo> runtime_info =
-        current_runtime_info(characters);
+        current_runtime_info(*current, forum);
     return {
         .input_consumed = true,
         .notice = format_session_information(
             transcript_.view().size(),
-            characters,
+            *current,
+            forum,
             runtime_info,
             default_character_id_),
     };
@@ -767,13 +845,14 @@ ControllerUpdate SessionController::character_information() {
     if (is_generating()) {
         return busy_notice();
     }
-    const ForumCharacters characters = current_characters();
+    const std::shared_ptr<const Workspace> current = workspace();
+    const WorkspaceForum& forum = *current->find_forum(identity_.forum_id);
     const std::vector<CharacterRuntimeInfo> runtime_info =
-        current_runtime_info(characters);
+        current_runtime_info(*current, forum);
     return {
         .input_consumed = true,
         .notice = format_characters_notice(
-            characters, runtime_info, default_character_id_),
+            *current, forum, runtime_info, default_character_id_),
     };
 }
 
@@ -794,10 +873,12 @@ ControllerUpdate SessionController::set_default_character(std::string_view handl
             " sent to a model. Use /@<name> to resume.";
         return update;
     }
-    const ForumCharacters characters = current_characters();
-    const HandleResolution result = characters.resolve_handle(handle);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const HandleResolution result =
+        current->resolve_forum_handle(identity_.forum_id, handle);
     if (result.match != HandleMatch::resolved) {
-        update.notice = format_handle_resolution_notice(handle, result, characters);
+        update.notice = format_handle_resolution_notice(
+            handle, result, *current, identity_.forum_id);
         return update;
     }
     default_character_id_ = result.character->id;
@@ -812,8 +893,9 @@ ControllerUpdate SessionController::set_default_character_by_id(std::string_view
     }
     // This typed action submits no editor text, so it never clears a draft.
     ControllerUpdate update;
-    const ForumCharacters characters = current_characters();
-    const CharacterMetadata* character = characters.find(id);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const CharacterMetadata* character =
+        current->find_forum_character(identity_.forum_id, id);
     if (!character) {
         update.notice = "Unknown character";
         return update;
@@ -873,8 +955,9 @@ ControllerUpdate SessionController::set_session_style(std::string_view name) {
     }
     // Validated against the roster at initialize() and on every real default
     // change, so the current default always resolves.
-    const ForumCharacters characters = current_characters();
-    const CharacterMetadata* character = characters.find(default_character_id_);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const CharacterMetadata* character = current->find_forum_character(
+        identity_.forum_id, default_character_id_);
     if (name.empty()) {
         const auto found = style_overrides_.find(default_character_id_);
         update.notice = found == style_overrides_.end()
@@ -896,7 +979,7 @@ ControllerUpdate SessionController::set_session_style(std::string_view name) {
     // Workspace loading already validated every style; a misspelled name is a
     // command error and must not fail the session.
     try {
-        (void)resolve_style(name);
+        (void)resolve_style(*current, name);
     } catch (const std::exception& error) {
         update.notice = error.what();
         return update;
