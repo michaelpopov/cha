@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/character_config.h"
+#include "characters/character_config.h"
 #include "providers/model_backend.h"
 #include "providers/sse_framer.h"
 

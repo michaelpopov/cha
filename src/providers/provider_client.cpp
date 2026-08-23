@@ -1,7 +1,7 @@
 #include "providers/provider_client.h"
 
-#include "agents/character.h"
-#include "agents/character_config.h"
+#include "characters/character.h"
+#include "characters/character_config.h"
 #include "providers/chat_completions_api.h"
 #include "providers/responses_api.h"
 #include "util/logging.h"

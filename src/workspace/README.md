@@ -96,5 +96,5 @@ work, reachability check, or credential-value retention. A character settings
 save is a separate route: it shuts down affected forum sessions and the next
 session re-reads those files, but it never publishes a workspace generation.
 
-This directory may depend on `session/`, `agents/`, `chat/`, and `util/`.
+This directory may depend on `session/`, `characters/`, `chat/`, and `util/`.
 It must not depend on `web/`, executable wiring, or HTTP types.

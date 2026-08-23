@@ -1,6 +1,6 @@
 #include "workspace/workspace_definition.h"
 
-#include "agents/character.h"
+#include "characters/character.h"
 #include "workspace/builtins.h"
 #include "support/test_workspace.h"
 #include "util/environment.h"

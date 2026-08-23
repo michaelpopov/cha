@@ -174,14 +174,14 @@ add_library(cha_core STATIC
     src/util/text_template.cpp
     src/chat/character.cpp
     src/chat/transcript.cpp
-    src/agents/character.cpp
-    src/agents/model_context.cpp
+    src/characters/character.cpp
+    src/characters/model_context.cpp
     src/providers/providers.cpp
     src/providers/provider_client.cpp
     src/providers/chat_completions_api.cpp
     src/providers/responses_api.cpp
     src/providers/sse_framer.cpp
-    src/agents/character_config.cpp
+    src/characters/character_config.cpp
     src/session/controller_update.cpp
     src/session/forum_characters.cpp
     src/session/session_archive.cpp

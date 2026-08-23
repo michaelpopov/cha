@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/model_context.h"
+#include "characters/model_context.h"
 #include "chat/character.h"
 #include "providers/generation_event.h"
 

@@ -1,8 +1,8 @@
-#include "agents/character.h"
+#include "characters/character.h"
 
-#include "agents/model_context.h"
+#include "characters/model_context.h"
 #include "chat/transcript.h"
-#include "agents/character_config.h"
+#include "characters/character_config.h"
 #include "util/logging.h"
 #include "util/json_serialization.h"
 #include "util/text.h"

@@ -183,7 +183,7 @@ can persist a terminal result without exposing transcript internals.
 ## Dependencies
 
 - **Depends on:** nothing in the project.
-- **Depended on by:** `agents/` and `providers/` (request preparation and execution),
+- **Depended on by:** `characters/` and `providers/` (request preparation and execution),
   `session/` (coordination and persistence), `web/` (rendering).
 
 Persistence and presentation choices stay outside this directory. The model may

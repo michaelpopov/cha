@@ -1,6 +1,6 @@
 # Character definitions and model context
 
-`agents/` loads character and provider configuration, assembles immutable
+`characters/` loads character and provider configuration, assembles immutable
 character definitions, and projects owned model history for provider requests.
 It performs no provider transport and knows nothing about sessions, workspaces,
 HTTP routes, or browser presentation.

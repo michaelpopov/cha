@@ -31,7 +31,7 @@ them into a learning sequence:
 - [Native architecture](../src/README.md)
 - [Utility contracts](../src/util/README.md)
 - [Chat model](../src/chat/README.md)
-- [Character definitions and model context](../src/agents/README.md)
+- [Character definitions and model context](../src/characters/README.md)
 - [Provider execution](../src/providers/README.md)
 - [Session layer](../src/session/README.md)
 - [Workspace composition](../src/workspace/README.md)
@@ -118,7 +118,7 @@ important production targets:
 
 | Target | Role |
 | --- | --- |
-| `cha_core` | `util`, `chat`, `agents`, `providers`, `session`, and `workspace` |
+| `cha_core` | `util`, `chat`, `characters`, `providers`, `session`, and `workspace` |
 | `cha_web` | HTTP, SSE, actor runtime, routing, and protocol; links `cha_core` |
 | `chaweb_app` | Small composition root in `src/web_main.cpp`; links `cha_web` |
 
@@ -130,8 +130,8 @@ The intended dependency direction is:
 ```text
 chaweb_app -> cha_web -> cha_core
 
-workspace -> session -> providers -> agents -> chat
-                \-----------> agents
+workspace -> session -> providers -> characters -> chat
+                \-----------> characters
 
 util is used where needed without depending on the domain layers.
 ```
@@ -141,7 +141,7 @@ rules are simpler:
 
 - `chat` contains presentation-neutral domain vocabulary.
 - `util` contains domain-neutral mechanisms.
-- `agents` owns character configuration and model-context projection.
+- `characters` owns character configuration and model-context projection.
 - `providers` owns request execution, provider transport, and protocol
   decoding, but not sessions or HTTP routing.
 - `session` coordinates transcripts, persistence, and generation, but not web
@@ -175,7 +175,7 @@ keys use its SHA-256 implementation, independently of curl's TLS backend.
 | [src/web_main.cpp](../src/web_main.cpp) | Process composition and destruction order |
 | [src/chat](../src/chat) | IDs, personas, character metadata, transcript vocabulary |
 | [src/util](../src/util) | Queues, template expansion, logging, path/text helpers |
-| [src/agents](../src/agents) | Character configuration, definitions, and model context |
+| [src/characters](../src/characters) | Character configuration, definitions, and model context |
 | [src/providers](../src/providers) | Request workers, provider transport, and response decoding |
 | [src/session](../src/session) | Controller, transcript orchestration, SQLite journal, leases, repository |
 | [src/workspace](../src/workspace) | Workspace loading, built-ins, and session construction |
@@ -243,7 +243,7 @@ The important split in character data is:
 - `CharacterMetadata` is public, discovery-safe information: ID, display name,
   description, tags, and appearance.
 - `CharacterDefinition`, declared in
-  [agents/character.h](../src/agents/character.h), combines public metadata with
+  [characters/character.h](../src/characters/character.h), combines public metadata with
   private backend configuration and a completed system prompt.
 
 Routes may expose metadata. They must not expose the full definition, which can
@@ -412,9 +412,9 @@ forum-default, and member provider keys are ignored, so there is no provider
 inheritance or override chain. The `[prompt]` scope still merges across the
 character, forum-default, and member layers.
 
-Read [agents/character_config.h](../src/agents/character_config.h),
-[agents/character_config.cpp](../src/agents/character_config.cpp), and then
-[agents/character.cpp](../src/agents/character.cpp). Keep `ProviderConfig` and
+Read [characters/character_config.h](../src/characters/character_config.h),
+[characters/character_config.cpp](../src/characters/character_config.cpp), and then
+[characters/character.cpp](../src/characters/character.cpp). Keep `ProviderConfig` and
 `ModelBackendConfig` distinct in your notes: the former is one provider config
 as written, with absent fields left absent; the latter is a concrete, validated
 runtime configuration with defaults filled in.
@@ -538,7 +538,7 @@ but the actor's `open_session()` must still call `prepare()`.
 Read the interfaces before the implementations:
 
 1. [providers/generation_event.h](../src/providers/generation_event.h)
-2. [agents/model_context.h](../src/agents/model_context.h)
+2. [characters/model_context.h](../src/characters/model_context.h)
 3. [providers/model_backend.h](../src/providers/model_backend.h)
 4. [providers/providers.h](../src/providers/providers.h)
 5. [providers/chat_completions_api.h](../src/providers/chat_completions_api.h)
@@ -564,7 +564,7 @@ converts the result into deltas followed by one terminal event.
 
 ### 10.2 Context projection
 
-[agents/model_context.cpp](../src/agents/model_context.cpp) translates a
+[characters/model_context.cpp](../src/characters/model_context.cpp) translates a
 presentation-neutral `ModelHistory` into provider message roles.
 
 Projection omits:

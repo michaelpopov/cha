@@ -756,7 +756,7 @@ acceptance criterion in `docs/design.md`.
    to generation pools, staged batches, gates, backend leasing, model discovery,
    provider caches, or session-owned provider execution.
 
-7. Update ownership documentation in `src/README.md`, `src/agents/README.md`,
+7. Update ownership documentation in `src/README.md`, `src/characters/README.md`,
    `src/session/README.md`, `src/web/README.md`, workspace documentation, and
    relevant test-support comments. Keep the HTTP library thread pool clearly
    distinguished from removed generation scheduling.

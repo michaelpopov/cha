@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/character.h"
+#include "characters/character.h"
 #include "providers/providers.h"
 #include "chat/persona.h"
 #include "session/controller_update.h"

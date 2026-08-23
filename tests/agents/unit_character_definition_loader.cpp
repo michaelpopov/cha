@@ -1,4 +1,4 @@
-#include "agents/character.h"
+#include "characters/character.h"
 
 #include <gtest/gtest.h>
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "agents/character_config.h"
-#include "agents/model_context.h"
+#include "characters/character_config.h"
+#include "characters/model_context.h"
 #include "providers/model_backend.h"
 #include "providers/sse_framer.h"
 

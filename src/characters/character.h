@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/character_config.h"
+#include "characters/character_config.h"
 #include "chat/persona.h"
 
 #include <filesystem>

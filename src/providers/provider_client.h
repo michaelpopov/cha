@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agents/character.h"
+#include "characters/character.h"
 #include "providers/model_backend.h"
 
 #include <atomic>

@@ -1,4 +1,4 @@
-#include "agents/model_context.h"
+#include "characters/model_context.h"
 #include "chat/transcript.h"
 #include "session/session_database.h"
 #include "support/test_session_database.h"

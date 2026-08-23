@@ -1,6 +1,6 @@
 #include "session/forum_characters.h"
 
-#include "agents/character.h"
+#include "characters/character.h"
 
 #include "util/text.h"
 

@@ -1,5 +1,5 @@
 #include "session/session_controller.h"
-#include "agents/character.h"
+#include "characters/character.h"
 #include "providers/model_backend.h"
 #include "session/session_database.h"
 #include "support/test_backends.h"

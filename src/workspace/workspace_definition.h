@@ -1,7 +1,7 @@
 #pragma once
 
-#include "agents/character.h"
-#include "agents/character_config.h"
+#include "characters/character.h"
+#include "characters/character_config.h"
 #include "chat/persona.h"
 #include "session/opened_session.h"
 #include "session/session_identity.h"

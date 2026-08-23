@@ -2,7 +2,7 @@
 
 `providers/` owns request-local provider transport, protocol decoding,
 cancellation, event delivery, and process-level supervision. It consumes
-immutable character and model-context input from `agents/` and never borrows a
+immutable character and model-context input from `characters/` and never borrows a
 session or browser object.
 
 ## Ownership
@@ -56,5 +56,5 @@ isolation, registry and notifier lifetime, and transport destruction ordering.
 The other tests in `tests/providers/` cover curl request/response behavior and
 provider protocol decoding without model discovery.
 
-This directory may depend on `agents/`, `chat/`, and `util/`.
+This directory may depend on `characters/`, `chat/`, and `util/`.
 It must not depend on `session/`, `workspace/`, `web/`, or executable wiring.

@@ -1,4 +1,4 @@
-#include "agents/model_context.h"
+#include "characters/model_context.h"
 
 #include "util/json_serialization.h"
 
