@@ -6,7 +6,6 @@
 #include "session/controller_update.h"
 #include "session/controller_view.h"
 #include "session/generation_status.h"
-#include "session/forum_characters.h"
 #include "session/session_database.h"
 #include "session/session_lease.h"
 #include "session/session_identity.h"
@@ -25,6 +24,9 @@
 
 namespace cha {
 
+class Workspace;
+struct WorkspaceForum;
+
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, forum characters, defaults, generation
 // status) and commands (submit a prompt, clear, stop, switch defaults, drain
@@ -38,39 +40,27 @@ public:
     // but before durable state changes.
     using ActivationHook = std::function<void(std::size_t)>;
 
-    // Resolves a style name to a complete appearance for a runtime style
-    // override. Session open injects the workspace's named style loading through
-    // this seam so the controller never learns the workspace file layout.
-    // Throws std::invalid_argument when the name does not resolve. Unlike a
-    // provider, a resolved appearance is inert data with no construction phase,
-    // so the swap itself cannot fail.
-    using StyleResolver = std::function<CharacterAppearance(std::string_view)>;
-
-    [[nodiscard]] static std::unique_ptr<SessionController> from_shared_definitions(
-        std::vector<SharedCharacterDefinition> definitions,
-        SharedPersonaRoster personas,
+    [[nodiscard]] static std::unique_ptr<SessionController> from_workspace(
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
         SessionLease lease,
         Providers& providers,
         std::shared_ptr<WakeNotifier> notifier,
-        SessionRestore restored = {},
-        StyleResolver style_resolver = {},
-        SessionIdentity identity = {});
-    // The sole test-only constructor. Tests use the same immutable definitions
-    // and provider-client factory boundary as production, but do not claim a
-    // fixture database's production lease.
-    [[nodiscard]] static std::unique_ptr<SessionController> from_definitions_for_testing(
-        std::vector<SharedCharacterDefinition> definitions,
-        PersonaRoster personas,
+        SessionRestore restored,
+        SessionIdentity identity);
+
+    // Tests use the same Workspace data path, but may own an injected provider
+    // executor and use an inactive lease or an activation fault hook.
+    [[nodiscard]] static std::unique_ptr<SessionController> from_workspace_for_testing(
         CharacterId initial_default_character_id,
+        std::string initial_default_persona_id,
         std::filesystem::path database_path,
-        Providers& providers,
+        SessionLease lease,
+        std::shared_ptr<Providers> providers,
         std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored = {},
         ActivationHook before_activation = {},
-        StyleResolver style_resolver = {},
         SessionIdentity identity = {});
     ~SessionController();
     SessionController(const SessionController&) = delete;
@@ -128,8 +118,6 @@ private:
     };
 
     SessionController(
-        std::vector<SharedCharacterDefinition> definitions,
-        SharedPersonaRoster personas,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
@@ -138,12 +126,23 @@ private:
         std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored,
         ActivationHook before_activation = {},
-        StyleResolver style_resolver = {},
-        SessionIdentity identity = {});
+        SessionIdentity identity = {},
+        std::shared_ptr<Providers> providers_owner = {});
 
     void initialize(SessionRestore restored, std::string_view initial_persona_id);
     [[nodiscard]] SharedCharacterDefinition definition_for(
         std::string_view id) const;
+    [[nodiscard]] std::shared_ptr<const Workspace> workspace() const;
+    [[nodiscard]] SharedPersonaRoster current_personas() const;
+    [[nodiscard]] std::vector<CharacterRuntimeInfo> current_runtime_info(
+        const Workspace& workspace,
+        const WorkspaceForum& forum) const;
+    [[nodiscard]] CharacterMetadata styled_character(
+        const Workspace& workspace,
+        const CharacterMetadata& character) const;
+    [[nodiscard]] CharacterAppearance resolve_style(
+        const Workspace& workspace,
+        std::string_view name) const;
     [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
     ControllerUpdate busy_notice() const;
     [[nodiscard]] std::optional<EntryIdentity> resolve_author(
@@ -187,24 +186,17 @@ private:
     SessionLease lease_;
     Transcript transcript_;
     SessionJournal journal_;
-    std::vector<SharedCharacterDefinition> definitions_;
-    // Process-owned execution outlives this controller. The shared notifier is
-    // copied into each request so late worker wakes never borrow this session.
+    // Production borrows its process-owned executor. Test-backed controllers
+    // own their injected executor because no process composition root exists.
+    std::shared_ptr<Providers> providers_owner_;
     Providers& providers_;
+    // The shared notifier is copied into each request so late worker wakes
+    // never borrow this session.
     std::shared_ptr<WakeNotifier> notifier_;
-    std::vector<CharacterRuntimeInfo> runtime_info_;
-    ForumCharacters characters_;
-    SharedPersonaRoster personas_;
     SessionIdentity identity_;
     CharacterId default_character_id_;
-    // Borrowed from personas_, which is immutable and outlives the controller,
-    // so the view can hand out the persona's own strings.
-    const Persona* default_persona_{};
-    // Runtime style overrides: the resolver (empty when the session cannot
-    // change styles) and one style name per overridden character, kept for the
-    // report form. Session-scoped; never persisted. The reset source is the
-    // immutable runtime information built from configured definitions.
-    StyleResolver style_resolver_;
+    std::string default_persona_id_;
+    // Selected names are session-scoped and never persisted.
     std::unordered_map<CharacterId, std::string> style_overrides_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};

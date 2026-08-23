@@ -4,7 +4,7 @@
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "workspace/session_open.h"
-#include "workspace/workspace_definition.h"
+#include "workspace/workspace.h"
 #include "session/session_repository.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
@@ -137,13 +137,17 @@ struct WorkspaceLayout {
 // repository that owns its storage.
 struct SessionGraph {
     explicit SessionGraph(const std::filesystem::path& root)
-        : model(WorkspaceDefinition::load(root, load_workspace_config(root))),
-          repository(
-              model.session_directories(),
+        : repository(
+              publish(root),
               TemporarySessionSeed{{"temporary-forum", "temporary-session"}, "Temporary"}) {}
 
-    WorkspaceDefinition model;
     SessionRepository repository;
+
+private:
+    static std::filesystem::path publish(const std::filesystem::path& root) {
+        loadws(root);
+        return root;
+    }
 };
 
 WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
@@ -153,7 +157,8 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     std::filesystem::create_directories(forum / "members" / "character");
     std::filesystem::create_directories(root / "personas" / "operator");
     {
-        const std::filesystem::path provider = providers_directory(root) / "test";
+        const std::filesystem::path provider =
+            root / "system" / "providers" / "test";
         std::filesystem::create_directories(provider);
         std::ofstream(provider / "config.toml")
             << "host = \"127.0.0.1\"\nport = 9\nmode = \"test\"\n"
@@ -188,11 +193,11 @@ TEST(ConcurrentControllers, KeepTranscriptsJournalsAndRequestIdsIndependent) {
     ControllerResult second;
     std::thread first_thread([&] {
         first = run_controller(
-            first_path, "first-agent", "First", "first prompt", "first answer", start);
+            first_path, "worker", "Worker", "first prompt", "first answer", start);
     });
     std::thread second_thread([&] {
         second = run_controller(
-            second_path, "second-agent", "Second", "second prompt", "second answer", start);
+            second_path, "worker", "Worker", "second prompt", "second answer", start);
     });
     start.arrive_and_wait();
     first_thread.join();
@@ -228,10 +233,11 @@ TEST(ConcurrentControllers, ConstructSessionLocalProviderClientsConcurrently) {
     std::array<std::exception_ptr, 2> failures;
     const auto construct = [&](std::size_t index, const std::filesystem::path& path) {
         try {
+            (void)index;
             test::NoopNotifier notifier;
             CharacterDefinition definition;
-            definition.character.id = "character-" + std::to_string(index);
-            definition.character.display_name = "Character " + std::to_string(index);
+            definition.character.id = "worker";
+            definition.character.display_name = "Worker";
             definition.provider = {.id = "test", .config = {
                 .host = "127.0.0.1",
                 .port = 9,
@@ -239,7 +245,7 @@ TEST(ConcurrentControllers, ConstructSessionLocalProviderClientsConcurrently) {
                 .model = "configured-model",
             }};
             start.arrive_and_wait();
-            auto controller = test::from_definitions_for_testing(
+            auto controller = test::from_test_workspace(
                 {std::move(definition)}, path, notifier);
             controller->shutdown();
         } catch (...) {
@@ -280,9 +286,10 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
     std::thread lister([&] {
         try {
             while (creating.load(std::memory_order_acquire)) {
-                const ForumInfo* const forum = graph.model.find_forum("forum");
+                const std::shared_ptr<const Workspace> workspace = getws();
+                const WorkspaceForum* const forum = workspace->find_forum("forum");
                 if (forum == nullptr
-                    || graph.model.session_directories().size() != 1U) {
+                    || !workspace->forum_session_directory("forum")) {
                     observed_forum_list_mismatch.store(
                         true, std::memory_order_release);
                 }
@@ -383,7 +390,7 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
             Providers providers;
             open_start.arrive_and_wait();
             auto controller = open_session(
-                graph.model, graph.repository, {"forum", created[0].identity.session_id}, providers,
+                graph.repository, {"forum", created[0].identity.session_id}, providers,
                 std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}));
             opened[0] = true;
             controller.controller->shutdown();
@@ -397,7 +404,7 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
             Providers providers;
             open_start.arrive_and_wait();
             auto controller = open_session(
-                graph.model, graph.repository, {"forum", created[1].identity.session_id}, providers,
+                graph.repository, {"forum", created[1].identity.session_id}, providers,
                 std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}));
             opened[1] = true;
             controller.controller->shutdown();

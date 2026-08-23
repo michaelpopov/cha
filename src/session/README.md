@@ -6,11 +6,12 @@ output. It has no HTTP or browser dependency.
 
 ## Controller ownership
 
-`SessionController` retains ordered immutable character definitions and derives
-one identity-and-provider `CharacterRuntimeInfo` per character for
-`/characters` and `/info`. `ForumCharacters` is the mutable presentation copy:
-a session style override changes only that copy, and reset restores the
-appearance from the immutable definition.
+Production `SessionController` instances retain only workspace IDs and mutable
+session state. Roster, persona, provider, and style lookups come from the
+current `Workspace`, which also resolves forum character handles. Session style
+overrides live in the controller and are applied only when character metadata
+is copied for presentation or a request. Controller tests publish small
+filesystem workspaces and exercise this same data path.
 
 The controller borrows the process-owned `Providers` and holds a shared wake
 notifier. During a generation it owns only ordered `ProviderRequest` handles,
@@ -37,7 +38,6 @@ durable turn using existing partial-response rules.
 | Source | Responsibility |
 | --- | --- |
 | `session_controller.*` | Controller commands, durable turn transitions, request-handle presentation, and shutdown. |
-| `forum_characters.*` | Character lookup, public descriptions, and style presentation. |
 | `session_database.*` | SQLite schema, restore, and journal operations. |
 | `session_repository.*`, `session_catalog.*` | Stored-session discovery and lifecycle. |
 | `session_lease.*` | Cross-process companion-file lease. |

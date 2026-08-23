@@ -3,6 +3,7 @@
 #include "session/session_label.h"
 #include "util/logging.h"
 #include "util/text.h"
+#include "workspace/workspace.h"
 
 #include <algorithm>
 #include <array>
@@ -10,6 +11,7 @@
 #include <exception>
 #include <limits>
 #include <openssl/sha.h>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -89,43 +91,6 @@ std::string prompt_cache_key(
     return result;
 }
 
-ForumCharacters make_forum_characters(
-    const std::vector<SharedCharacterDefinition>& definitions) {
-    std::vector<CharacterMetadata> characters;
-    characters.reserve(definitions.size());
-    for (const SharedCharacterDefinition& definition : definitions) {
-        if (!definition) {
-            throw std::invalid_argument(
-                "Session controller requires character definitions");
-        }
-        characters.push_back(definition->character);
-    }
-    // Definitions reached the controller through either the validated
-    // workspace boundary or a trusted application built-in factory.
-    return ForumCharacters(std::move(characters), true);
-}
-
-std::vector<CharacterRuntimeInfo> make_runtime_info(
-    const std::vector<SharedCharacterDefinition>& definitions) {
-    std::vector<CharacterRuntimeInfo> runtime_info;
-    runtime_info.reserve(definitions.size());
-    for (const SharedCharacterDefinition& definition : definitions) {
-        if (!definition) {
-            throw std::invalid_argument(
-                "Session controller requires character definitions");
-        }
-        runtime_info.push_back(character_runtime_info(*definition));
-    }
-    return runtime_info;
-}
-
-void require_character_count(std::size_t count) {
-    if (count == 0) {
-        throw std::invalid_argument(
-            "Generation requires at least one character");
-    }
-}
-
 // An exact ID or display name wins outright; otherwise every prefix match is
 // collected so an ambiguous handle can name its candidates.
 std::vector<const Persona*> matching_personas(
@@ -157,59 +122,118 @@ std::string persona_handle_list(const PersonaRoster& personas) {
     return result;
 }
 
+std::string format_handle_resolution_notice(
+    std::string_view handle,
+    const HandleResolution& resolution,
+    const Workspace& workspace,
+    std::string_view forum_id) {
+    if (resolution.match == HandleMatch::unknown) {
+        return "Unknown character @" + std::string(handle)
+            + ". Characters in this forum: "
+            + workspace.forum_handle_list(forum_id);
+    }
+    std::string result =
+        "Ambiguous character @" + std::string(handle) + ": matches ";
+    for (std::size_t index{}; index < resolution.candidates.size(); ++index) {
+        if (index) result += ", ";
+        result += "@" + resolution.candidates[index]->display_name;
+    }
+    return result + ". Type more of the name.";
+}
+
+std::string format_duplicate_character_notice(std::string_view display_name) {
+    return "Multicast target @" + std::string(display_name) + " is duplicated";
+}
+
+std::string format_characters_notice(
+    const Workspace& workspace,
+    const WorkspaceForum& forum,
+    const std::vector<CharacterRuntimeInfo>& runtime_info,
+    const CharacterId& default_character_id) {
+    std::ostringstream result;
+    result << "Characters in this forum (" << forum.members.size()
+           << "), * marks the default. Any unambiguous prefix works.";
+    if (runtime_info.size() != forum.members.size()) {
+        throw std::logic_error(
+            "Character and runtime information counts do not match");
+    }
+    for (const WorkspaceForumMember& member : forum.members) {
+        const CharacterMetadata* const character =
+            workspace.find_forum_character(forum.id, member.character_id);
+        if (character == nullptr) {
+            throw std::logic_error("Forum member has no workspace character");
+        }
+        const auto runtime = std::ranges::find(
+            runtime_info, character->id, &CharacterRuntimeInfo::id);
+        if (runtime == runtime_info.end()) {
+            throw std::logic_error(
+                "Runtime information is missing character '"
+                + character->id + "'");
+        }
+        result << " | " << (runtime->id == default_character_id ? "* " : "")
+               << "@" << character->display_name << "  " << runtime->model
+               << "  " << runtime->api << "  "
+               << (runtime->streaming ? "streaming" : "non-streaming");
+    }
+    return result.str();
+}
+
+std::string format_session_information(
+    std::size_t entry_count,
+    const Workspace& workspace,
+    const WorkspaceForum& forum,
+    const std::vector<CharacterRuntimeInfo>& runtime_info,
+    const CharacterId& default_character_id) {
+    std::ostringstream text;
+    text << "Transcript entries: " << entry_count << " | "
+         << format_characters_notice(
+             workspace, forum, runtime_info, default_character_id);
+    return text.str();
+}
+
 } // namespace
 
-std::unique_ptr<SessionController> SessionController::from_shared_definitions(
-    std::vector<SharedCharacterDefinition> definitions,
-    SharedPersonaRoster personas,
-    ParticipantId initial_default_character_id,
+std::unique_ptr<SessionController> SessionController::from_workspace(
+    CharacterId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
     SessionLease lease,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
-    StyleResolver style_resolver,
     SessionIdentity identity) {
-    require_character_count(definitions.size());
-    if (!personas) throw std::invalid_argument("Session controller requires a persona roster");
-    if (!lease.active()) throw std::invalid_argument("Production session controllers require an active session lease");
+    if (!lease.active()) {
+        throw std::invalid_argument(
+            "Production session controllers require an active session lease");
+    }
     return std::unique_ptr<SessionController>(new SessionController(
-        std::move(definitions), std::move(personas), std::move(initial_default_character_id),
-        std::move(initial_default_persona_id),
-        std::move(database_path), std::move(lease), providers, std::move(notifier),
-        std::move(restored), {}, std::move(style_resolver), std::move(identity)));
+        std::move(initial_default_character_id),
+        std::move(initial_default_persona_id), std::move(database_path),
+        std::move(lease), providers, std::move(notifier), std::move(restored),
+        {}, std::move(identity)));
 }
 
-std::unique_ptr<SessionController> SessionController::from_definitions_for_testing(
-    std::vector<SharedCharacterDefinition> definitions,
-    PersonaRoster personas,
+std::unique_ptr<SessionController> SessionController::from_workspace_for_testing(
     ParticipantId initial_default_character_id,
+    std::string initial_default_persona_id,
     std::filesystem::path database_path,
-    Providers& providers,
+    SessionLease lease,
+    std::shared_ptr<Providers> providers,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     ActivationHook before_activation,
-    StyleResolver style_resolver,
     SessionIdentity identity) {
-    require_character_count(definitions.size());
+    if (!providers) throw std::invalid_argument("Session controller requires providers");
+    Providers& provider = *providers;
     return std::unique_ptr<SessionController>(new SessionController(
-        std::move(definitions),
-        std::make_shared<const PersonaRoster>(std::move(personas)),
         std::move(initial_default_character_id),
-        {},
-        std::move(database_path),
-        SessionLease::inactive_for_testing(),
-        providers,
-        std::move(notifier),
-        std::move(restored),
-        std::move(before_activation),
-        std::move(style_resolver), std::move(identity)));
+        std::move(initial_default_persona_id),
+        std::move(database_path), std::move(lease), provider, std::move(notifier),
+        std::move(restored), std::move(before_activation), std::move(identity),
+        std::move(providers)));
 }
 
 SessionController::SessionController(
-    std::vector<SharedCharacterDefinition> definitions,
-    SharedPersonaRoster personas,
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path path,
@@ -218,19 +242,15 @@ SessionController::SessionController(
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     ActivationHook before_activation,
-    StyleResolver style_resolver,
-    SessionIdentity identity)
+    SessionIdentity identity,
+    std::shared_ptr<Providers> providers_owner)
     : lease_(std::move(lease)),
       journal_(std::move(path)),
-      definitions_(std::move(definitions)),
+      providers_owner_(std::move(providers_owner)),
       providers_(providers),
       notifier_(std::move(notifier)),
-      runtime_info_(make_runtime_info(definitions_)),
-      characters_(make_forum_characters(definitions_)),
-      personas_(std::move(personas)),
       identity_(std::move(identity)),
       default_character_id_(std::move(initial_default_character_id)),
-      style_resolver_(std::move(style_resolver)),
       before_activation_(std::move(before_activation)) {
     if (!notifier_) throw std::invalid_argument("Session controller requires a wake notifier");
     initialize(std::move(restored), initial_default_persona_id);
@@ -246,25 +266,23 @@ SessionController::~SessionController() {
 void SessionController::initialize(
     SessionRestore restored,
     std::string_view initial_persona_id) {
-    if (!characters_.find(default_character_id_)) {
+    const std::shared_ptr<const Workspace> current = workspace();
+    if (!current->find_forum_character(
+            identity_.forum_id, default_character_id_)) {
         throw std::invalid_argument(
             "Initial default character ID is not in the forum roster");
     }
-    if (personas_->empty()) {
-        throw std::invalid_argument("Session controller requires at least one persona");
-    }
-    // Resolved once: the roster never changes, so the current persona is a
-    // borrowed entry rather than an ID looked up again on every read.
+    const SharedPersonaRoster personas = current_personas();
     if (initial_persona_id.empty()) {
-        default_persona_ = &personas_->front();
+        default_persona_id_ = personas->front().id;
     } else {
         const auto found =
-            std::ranges::find(*personas_, initial_persona_id, &Persona::id);
-        if (found == personas_->end()) {
+            std::ranges::find(*personas, initial_persona_id, &Persona::id);
+        if (found == personas->end()) {
             throw std::invalid_argument(
                 "Initial default persona ID is not in the persona roster");
         }
-        default_persona_ = &*found;
+        default_persona_id_ = found->id;
     }
     transcript_.replace_entries(std::move(restored.entries));
     next_request_id_ = restored.next_request_id;
@@ -282,14 +300,79 @@ void SessionController::initialize(
     }
 }
 
+std::shared_ptr<const Workspace> SessionController::workspace() const {
+    std::shared_ptr<const Workspace> result = getws();
+    if (!result) throw std::runtime_error("Workspace is not loaded");
+    if (result->find_forum(identity_.forum_id) == nullptr) {
+        throw std::runtime_error(
+            "Session forum '" + identity_.forum_id
+            + "' is absent from the current workspace");
+    }
+    return result;
+}
+
+SharedPersonaRoster SessionController::current_personas() const {
+    const std::shared_ptr<const Workspace> current = workspace();
+    return std::make_shared<const PersonaRoster>(
+        current->personas().begin(), current->personas().end());
+}
+
+std::vector<CharacterRuntimeInfo> SessionController::current_runtime_info(
+    const Workspace& current,
+    const WorkspaceForum& forum) const {
+    std::vector<CharacterRuntimeInfo> result;
+    result.reserve(forum.members.size());
+    for (const WorkspaceForumMember& member : forum.members) {
+        const WorkspaceCharacter* const configured =
+            current.find_character(member.character_id);
+        const WorkspaceProvider* const provider = configured == nullptr
+            ? nullptr : current.find_provider(configured->provider_id);
+        if (provider == nullptr) {
+            throw std::logic_error("Workspace character has no provider");
+        }
+        result.push_back({
+            .id = member.character_id,
+            .model = provider->config.model,
+            .api = provider_endpoint(provider->config),
+            .streaming = provider->config.stream,
+        });
+    }
+    return result;
+}
+
+CharacterMetadata SessionController::styled_character(
+    const Workspace& current,
+    const CharacterMetadata& character) const {
+    CharacterMetadata result = character;
+    const auto override = style_overrides_.find(character.id);
+    if (override != style_overrides_.end()) {
+        const WorkspaceStyle* const style = current.find_style(override->second);
+        if (style != nullptr) result.appearance = style->appearance;
+    }
+    return result;
+}
+
+CharacterAppearance SessionController::resolve_style(
+    const Workspace& current,
+    std::string_view name) const {
+    const WorkspaceStyle* const style = current.find_style(name);
+    if (style != nullptr) return style->appearance;
+    std::string message = "Unknown style '" + std::string(name)
+        + "'. Available styles:";
+    for (const WorkspaceStyle& available : current.styles()) {
+        message += " " + available.id;
+    }
+    throw std::invalid_argument(std::move(message));
+}
+
 SharedCharacterDefinition SessionController::definition_for(
     std::string_view id) const {
-    const auto found = std::find_if(
-        definitions_.begin(), definitions_.end(),
-        [id](const SharedCharacterDefinition& definition) {
-            return definition && definition->character.id == id;
-        });
-    return found == definitions_.end() ? SharedCharacterDefinition{} : *found;
+    const std::shared_ptr<const Workspace> current = workspace();
+    const WorkspaceForumMember* const member =
+        current->find_forum_member(identity_.forum_id, id);
+    if (member == nullptr) return {};
+    return std::make_shared<const CharacterDefinition>(
+        current->character_definition(identity_.forum_id, id));
 }
 
 ControllerGenerationView SessionController::generation_view() const noexcept {
@@ -321,10 +404,9 @@ ControllerView SessionController::view() const noexcept {
     // Every field borrows live controller storage. The caller consumes it
     // before the next mutation on this thread; nothing here allocates.
     return {
-        .characters = characters_.all(),
         .default_character_id = default_character_id_,
-        .default_persona_id = default_persona_->id,
-        .default_persona_display_name = default_persona_->display_name,
+        .default_persona_id = default_persona_id_,
+        .style_overrides = &style_overrides_,
         .transcript = transcript_.view(),
         .generation = generation_view(),
     };
@@ -341,10 +423,11 @@ ControllerUpdate SessionController::busy_notice() const {
 std::optional<EntryIdentity> SessionController::resolve_author(
     std::string_view author_id,
     ControllerUpdate& update) const {
+    const SharedPersonaRoster personas = current_personas();
     const auto author = std::find_if(
-        personas_->begin(), personas_->end(),
+        personas->begin(), personas->end(),
         [author_id](const Persona& persona) { return persona.id == author_id; });
-    if (author == personas_->end()) {
+    if (author == personas->end()) {
         update.notice = "Unknown persona ID '" + std::string(author_id) + "'";
         return std::nullopt;
     }
@@ -392,22 +475,25 @@ ControllerUpdate SessionController::submit_prompt(
     }
 
     ControllerUpdate update;
+    const std::shared_ptr<const Workspace> current = workspace();
     const CharacterMetadata* target = nullptr;
     if (handle.empty()) {
         if (default_character_id_ == null_agent_handle) {
             record_monologue(author_id, std::move(text), update);
             return update;
         }
-        target = characters_.find(default_character_id_);
+        target = current->find_forum_character(
+            identity_.forum_id, default_character_id_);
     } else {
         if (handle == null_agent_handle) {
             record_monologue(author_id, std::move(text), update);
             return update;
         }
-        const HandleResolution resolution = characters_.resolve_handle(handle);
+        const HandleResolution resolution =
+            current->resolve_forum_handle(identity_.forum_id, handle);
         if (resolution.match != HandleMatch::resolved) {
             update.notice = format_handle_resolution_notice(
-                handle, resolution, characters_);
+                handle, resolution, *current, identity_.forum_id);
             return update;
         }
         target = resolution.character;
@@ -430,7 +516,7 @@ ControllerUpdate SessionController::submit_prompt(
     start_generation(
         std::move(*author),
         std::move(text),
-        std::vector<CharacterMetadata>{*target},
+        std::vector<CharacterMetadata>{styled_character(*current, *target)},
         std::move(history),
         update);
     return update;
@@ -659,19 +745,31 @@ ControllerUpdate SessionController::start_multicast(
         return busy_notice();
     }
 
+    const std::shared_ptr<const Workspace> current = workspace();
+    const WorkspaceForum& forum = *current->find_forum(identity_.forum_id);
     std::vector<CharacterMetadata> targets;
     if (handles.empty()) {
-        targets = characters_.all();
+        targets.reserve(forum.members.size());
+        for (const WorkspaceForumMember& member : forum.members) {
+            const CharacterMetadata* const character =
+                current->find_forum_character(
+                    identity_.forum_id, member.character_id);
+            if (character == nullptr) {
+                throw std::logic_error(
+                    "Forum member has no workspace character");
+            }
+            targets.push_back(styled_character(*current, *character));
+        }
     } else {
         std::unordered_set<ParticipantId> distinct;
         targets.reserve(handles.size());
         for (const std::string& handle : handles) {
             const HandleResolution resolution =
-                characters_.resolve_handle(handle);
+                current->resolve_forum_handle(identity_.forum_id, handle);
             if (resolution.match != HandleMatch::resolved) {
                 return {
                     .notice = format_handle_resolution_notice(
-                        handle, resolution, characters_),
+                        handle, resolution, *current, identity_.forum_id),
                 };
             }
             if (!distinct.insert(resolution.character->id).second) {
@@ -680,7 +778,8 @@ ControllerUpdate SessionController::start_multicast(
                         resolution.character->display_name),
                 };
             }
-            targets.push_back(*resolution.character);
+            targets.push_back(
+                styled_character(*current, *resolution.character));
         }
     }
     return start_resolved_multicast(author_id, std::move(text), std::move(targets));
@@ -727,12 +826,17 @@ ControllerUpdate SessionController::session_information() {
     if (is_generating()) {
         return busy_notice();
     }
+    const std::shared_ptr<const Workspace> current = workspace();
+    const WorkspaceForum& forum = *current->find_forum(identity_.forum_id);
+    const std::vector<CharacterRuntimeInfo> runtime_info =
+        current_runtime_info(*current, forum);
     return {
         .input_consumed = true,
         .notice = format_session_information(
             transcript_.view().size(),
-            characters_,
-            runtime_info_,
+            *current,
+            forum,
+            runtime_info,
             default_character_id_),
     };
 }
@@ -741,10 +845,14 @@ ControllerUpdate SessionController::character_information() {
     if (is_generating()) {
         return busy_notice();
     }
+    const std::shared_ptr<const Workspace> current = workspace();
+    const WorkspaceForum& forum = *current->find_forum(identity_.forum_id);
+    const std::vector<CharacterRuntimeInfo> runtime_info =
+        current_runtime_info(*current, forum);
     return {
         .input_consumed = true,
         .notice = format_characters_notice(
-            characters_, runtime_info_, default_character_id_),
+            *current, forum, runtime_info, default_character_id_),
     };
 }
 
@@ -765,9 +873,12 @@ ControllerUpdate SessionController::set_default_character(std::string_view handl
             " sent to a model. Use /@<name> to resume.";
         return update;
     }
-    const HandleResolution result = characters_.resolve_handle(handle);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const HandleResolution result =
+        current->resolve_forum_handle(identity_.forum_id, handle);
     if (result.match != HandleMatch::resolved) {
-        update.notice = format_handle_resolution_notice(handle, result, characters_);
+        update.notice = format_handle_resolution_notice(
+            handle, result, *current, identity_.forum_id);
         return update;
     }
     default_character_id_ = result.character->id;
@@ -782,7 +893,9 @@ ControllerUpdate SessionController::set_default_character_by_id(std::string_view
     }
     // This typed action submits no editor text, so it never clears a draft.
     ControllerUpdate update;
-    const CharacterMetadata* character = characters_.find(id);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const CharacterMetadata* character =
+        current->find_forum_character(identity_.forum_id, id);
     if (!character) {
         update.notice = "Unknown character";
         return update;
@@ -802,10 +915,11 @@ ControllerUpdate SessionController::set_default_persona(std::string_view handle)
         update.notice = "Usage: /!PersonaName";
         return update;
     }
-    const std::vector<const Persona*> matches = matching_personas(*personas_, handle);
+    const SharedPersonaRoster personas = current_personas();
+    const std::vector<const Persona*> matches = matching_personas(*personas, handle);
     if (matches.empty()) {
         update.notice = "Unknown persona !" + std::string(handle)
-            + ". Personas in this workspace: " + persona_handle_list(*personas_);
+            + ". Personas in this workspace: " + persona_handle_list(*personas);
         return update;
     }
     if (matches.size() > 1) {
@@ -821,8 +935,8 @@ ControllerUpdate SessionController::set_default_persona(std::string_view handle)
     // Re-selecting the current persona is a no-op: skip the snapshot so the
     // input route neither re-persists the forum default nor reloads the
     // forum's live sessions for a change that did not happen.
-    if (selected != default_persona_) {
-        default_persona_ = selected;
+    if (selected->id != default_persona_id_) {
+        default_persona_id_ = selected->id;
         require_snapshot(update);
     }
     update.notice = "Current persona is now " + selected->display_name;
@@ -841,11 +955,9 @@ ControllerUpdate SessionController::set_session_style(std::string_view name) {
     }
     // Validated against the roster at initialize() and on every real default
     // change, so the current default always resolves.
-    const CharacterMetadata* character = characters_.find(default_character_id_);
-    if (!style_resolver_) {
-        update.notice = "Style override is not available in this session.";
-        return update;
-    }
+    const std::shared_ptr<const Workspace> current = workspace();
+    const CharacterMetadata* character = current->find_forum_character(
+        identity_.forum_id, default_character_id_);
     if (name.empty()) {
         const auto found = style_overrides_.find(default_character_id_);
         update.notice = found == style_overrides_.end()
@@ -858,27 +970,20 @@ ControllerUpdate SessionController::set_session_style(std::string_view name) {
     // "default" is a reserved word: it never reaches the resolver. The
     // configured appearance lives in the immutable selected definition.
     if (name == "default") {
-        const SharedCharacterDefinition definition =
-            definition_for(default_character_id_);
-        characters_.set_appearance(
-            default_character_id_, definition->character.appearance);
         style_overrides_.erase(default_character_id_);
         update.notice = character->display_name
             + " is back to its configured style for this session.";
         require_snapshot(update);
         return update;
     }
-    CharacterAppearance appearance;
-    // The resolver reports a name it cannot use as std::invalid_argument, but it
-    // reads the filesystem to do so: catch everything, because an escaped
-    // exception here would fail the whole session over one mistyped name.
+    // Workspace loading already validated every style; a misspelled name is a
+    // command error and must not fail the session.
     try {
-        appearance = style_resolver_(name);
+        (void)resolve_style(*current, name);
     } catch (const std::exception& error) {
         update.notice = error.what();
         return update;
     }
-    characters_.set_appearance(default_character_id_, appearance);
     style_overrides_[default_character_id_] = std::string(name);
     update.notice = character->display_name + " now uses style '"
         + std::string(name) + "' for this session.";

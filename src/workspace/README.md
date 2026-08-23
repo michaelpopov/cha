@@ -1,100 +1,46 @@
 # Workspace layer
 
-`workspace/` owns the static workspace this process knows about and the one
-operation that turns it into a live session. It contains no HTTP transport or
-live-session switching policy.
+`workspace/` owns the immutable in-memory view of the workspace directory and
+the operation that opens a session from it. It contains no HTTP transport,
+SQLite ownership, or live-session switching policy.
 
 | Component | Responsibility |
 | --- | --- |
-| `WorkspaceDefinition` | One immutable workspace discovery snapshot; re-resolve a forum's character definitions when a session opens. |
-| `WorkspaceRuntime` | Build, publish, and retain complete workspace generations for chaweb reloads. |
-| `open_session()` | Combine a model definition with prepared storage to construct a `SessionController`. |
-| `builtins` | Defines Guest, Assistant, the reserved built-in IDs, and embeds the application guide. |
+| `Workspace` | Load and validate workspace settings, providers, styles, personas, characters, forums, prompts, and built-ins. |
+| `getws()` / `loadws()` | Read or atomically replace the current published `Workspace`. |
+| `open_session()` | Combine the current `Workspace` with prepared session storage and construct a `SessionController`. |
+| `builtins` | Reserved built-in IDs and Welcome constants. |
 
-`WorkspaceDefinition::load()` performs one all-or-nothing generation pass: it validates
-the workspace layout, loads personas, character metadata and Markdown, and forum
-membership, builds the Guest-inclusive persona roster and Assistant's inventory,
-checks that each forum's default character and `default_persona` name forum
-members and personas respectively,
-resolves every configured forum's effective `CharacterDefinition` values, and adds
-Assistant and Entrance to the public catalogs. Discovery catalogs stay at that
-generation copy. A forum's character definitions are re-resolved from disk when a
-session opens, so a saved provider or style — and any other file that loader
-reads — reaches the next open. The characters directory and each forum directory
-are retained so those later reads can find the files.
+`Workspace::load()` reads the directory tree once and builds a complete
+candidate. It resolves character and forum prompts, provider and style
+selections, forum membership and defaults, descriptions, labels, session
+directories, and the Guest, Assistant, and Entrance data. Invalid referenced
+configuration fails the load. `loadws()` publishes only a successfully built
+candidate, so readers see either the previous workspace or the complete new
+one.
 
-`WorkspaceRuntime` owns the current immutable generation. Its `reload()` builds
-a replacement definition and repository while the previous generation remains
-available, then publishes the replacement only after both succeed. The
-workspace-reload route reserves reload by shutting down and joining every live
-session before it calls `reload()`. An invalid candidate leaves the current
-generation published; a new session therefore sees only the published
-generation. Reload does not reload `.env`.
+Workspace values are the only process-wide copy of workspace configuration.
+Callers hold the `shared_ptr` returned by `getws()` while using references into
+it. Sessions retain only their IDs, transcript/database/lease, generation
+state, and style overrides. At generation start, a request receives an owned
+immutable copy of the exact character prompt and provider settings it will
+execute; an in-flight request therefore cannot change halfway through.
 
-A forum's default character is the one setting that stays live.
-`forum_default_character()` re-reads it from the forum's retained `config.toml`
-whenever a session opens or the lobby is projected, and
-`persist_forum_default_character()` writes it back there when `/@` succeeds, so a
-change applies to the next session without a restart. The re-read is lenient
-where startup is strict: an unreadable file, or one naming a character this forum
-did not load, logs a warning and keeps the value loaded at startup, because a
-session must still open. Built-in forums have no config file and always keep it.
+`SessionRepository` is independent and process-owned. It asks the current
+`Workspace` for a forum's `sessions/` directory when performing an operation.
+SQLite databases, leases, and the temporary Welcome database are live state
+and are not part of `Workspace`.
 
-`character_settings()` likewise re-reads a character's `character.toml` on every
-call so a hand edit reaches the next GET, and is forgiving for the same reason:
-a file it cannot parse, or one whose `provider` or `style` is not a string,
-reports no settings at all rather than throwing. The description that GET also
-serves does not depend on these keys and must not fail with them, and settings
-that cannot be read leave the character un-writable rather than being published
-as unset. `available_providers()` and
-`available_styles()` list the named configs that actually load —
-`load_named_provider()` / `load_named_style()` — and drop one that throws rather
-than failing the list. Labels are derived from the directory name. A provider
-option is only an id and a label; a style option also carries the resolved
-appearance. `character_config_path()` is empty for the built-in Assistant.
+Configuration writes use `Workspace::write_character_settings()`,
+`write_forum_default_character()`, and `write_forum_default_persona()`. Each
+write validates its IDs, writes a uniquely named temporary file, and renames it
+over the destination. A successful default write is followed by `loadws()` so
+the published values match disk.
 
-`write_character_settings()` compares and rewrites `provider` and `style` in one
-parse-write cycle under the same mutex as the forum-config writes, and reports
-which fields that document actually changed. It requires and validates the
-provider name before writing, and validates an optional style, so a config that
-cannot run is never recorded and the file is left untouched. Only `style` may
-be erased. A character with no readable config is rejected rather than created
-or overwritten.
-
-When a session opens, `copy_definitions_for()` re-runs the forum's full
-definition loader. A broken hand edit logs a warning, returns the startup copy,
-and sets a notice on `OpenedSession` so the chat can say the session is running
-startup settings. Built-in forums have no directory and keep the startup copy.
-
-Because every configured forum is resolved at startup, an invalid member
-override or prompt fails the server's startup rather than waiting for someone to
-open that forum. The error names the forum and its source directory.
-
-Full `CharacterDefinition` values contain separate public `CharacterMetadata`
-and private `ModelBackendConfig` members. Backend configuration carries the
-environment-variable name used to resolve a request-local credential, so it is
-not on the public model API. `open_session()` is a friend of
-`WorkspaceDefinition` and the one production caller allowed to copy them; the public
-API exposes only personas, character metadata and Markdown, forum information,
-and the startup-only `ForumSessionDirectory` values used to build
-`SessionRepository`.
-
-`open_session()` is deliberately small: find the forum, re-resolve and
-statically validate its
-definitions (or take the startup copy and notice), ask `SessionRepository` to
-prepare storage, build the `SessionDescriptor`, and construct the controller
-with the workspace persona roster and that forum's configured current persona. This lets `/!Name` switch
-the live session's attribution while preserving the selected ID in its forum
-config. It also supplies callbacks that let the live-session owner save changed
-character and persona defaults without exposing workspace paths to web routes.
-Entrance and Welcome need no branch — Entrance is an ordinary
-forum in the model and Welcome an ordinary prepared session in the repository.
-
-The session-open validation reads only local configuration and whether a named
-credential environment variable is non-empty. It performs no provider network
-work, reachability check, or credential-value retention. A character settings
-save is a separate route: it shuts down affected forum sessions and the next
-session re-reads those files, but it never publishes a workspace generation.
+`POST /api/v1/workspace/reload` first stops live sessions, creates the backup,
+loads and validates one candidate, synchronizes session storage, and publishes
+that candidate. Failure leaves the previous `Workspace` published. Reload does
+not reload `.env`.
 
 This directory may depend on `session/`, `characters/`, `chat/`, and `util/`.
 It must not depend on `web/`, executable wiring, or HTTP types.

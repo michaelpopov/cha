@@ -36,12 +36,12 @@ Rename changes its display label without changing its stable session ID. Delete
 requires confirmation, stops an open runtime if necessary, and removes the row
 from CHA. The built-in Welcome row exposes neither action.
 
-Reload workspace re-reads the whole workspace and publishes it as a new
-generation, which is how added or removed personas, characters, and forums reach
+Reload workspace re-reads the whole workspace and publishes one replacement,
+which is how added or removed personas, characters, and forums reach
 discovery. It shuts down every live session; the browser's reconnect ladder
-reopens the active conversation, and the temporary Welcome session starts empty
-because it belonged to the retired generation. A workspace that fails validation
-changes nothing and reports its failure under the button. The mockup's round gear
+reopens the active conversation. The process-owned repository and its temporary
+Welcome database survive reload. A workspace that fails validation leaves the
+previous workspace published and reports its failure under the button. The mockup's round gear
 button at the bottom-right is still removed in v1; this footer is not it.
 
 Personas and Forums have no current-selection secondary lines. Personas is
@@ -66,7 +66,7 @@ Only the two-line button changes sidebar visibility. Every other sidebar action 
 | Forum row | Sets the current forum and shows Sessions directly | Sidebar state |
 | Recent session | Sets that forum/session as active, opens or reattaches it, and shows Chat | Sidebar state |
 | New session row | Shows New session for the current forum | Sidebar state and forum |
-| Reload workspace | Publishes a new workspace generation and restarts every live session | Sidebar state and Main area; open detail screens refetch |
+| Reload workspace | Publishes a replacement Workspace and restarts every live session | Sidebar state and Main area; open detail screens refetch |
 | Target-character chooser | Lists the active session's characters; selecting one requests it as the default | Sidebar state, forum, session, and draft |
 | Send | Submits the draft while generation is inactive | Sidebar state and active conversation |
 | Stop | Replaces Send while generation is active and requests that generation stop | Sidebar state, active conversation, and draft |

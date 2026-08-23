@@ -860,7 +860,7 @@ TEST(SessionDatabase, RecoversAnInterruptedTurnFromItsPersistedPrompt) {
 }
 
 TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostACharacter) {
-    const auto path = temporary_path("cha_forum_characters_drift_");
+    const auto path = temporary_path("cha_forum_roster_drift_");
     create_test_database(path);
     {
         SessionJournal journal(path);

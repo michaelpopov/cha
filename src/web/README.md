@@ -8,11 +8,11 @@ presentation result types.
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and
 live-session coordination, including the textual grammar accepted by the
-browser's chat box. The composition root builds a `WorkspaceRuntime`, whose
-current immutable generation contains a `WorkspaceDefinition` and matching
-`SessionRepository`; routes take one generation per request, and the
-`SessionOpener` opens every session — including the built-in Welcome — through
-`open_session()` with the persona that session's forum configures. It depends on
+browser's chat box. The composition root publishes one immutable `Workspace`
+and owns one independent `SessionRepository`. Routes acquire the current
+workspace with `getws()`, and the `SessionOpener` opens every session — including
+the built-in Welcome — through `open_session()` with the persona that session's
+forum configures. It depends on
 core `SessionIdentity`, `SessionDescriptor`,
 `OpenedSession`, `ControllerView`, and `ControllerUpdate`, but puts no
 HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
@@ -56,11 +56,12 @@ an actor that appears in neither is one that has yet to read the file at all.
 `POST /api/v1/workspace/reload` is the equivalent whole-workspace operation. It
 requires the same empty JSON body and origin policy as other mutations. It
 first shuts every starting or running session down with `workspace_reloading`
-and joins their owners, then loads and publishes the candidate generation. On
+and joins their owners, then loads, synchronizes, and publishes the candidate
+workspace. On
 validation failure it returns `422 workspace_reload_failed` and leaves the
-current generation alone. It does not reload `.env`. This is distinct from a
-character-settings save, which re-reads only affected forum definitions at the
-next session open and never publishes a workspace generation.
+current workspace alone. It does not reload `.env`. A character-settings save
+also reloads and republishes `Workspace` after the write, then reloads affected
+live sessions.
 
 A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
 rejected rather than ignored, so a client written against an older shape fails

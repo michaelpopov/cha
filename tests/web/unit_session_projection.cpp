@@ -1,4 +1,5 @@
 #include "web/session_projection.h"
+#include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
 
@@ -12,10 +13,8 @@ namespace {
 // Backing storage a borrowed ControllerView points into. Tests mutate or
 // destroy it after projection to prove the snapshot retained no borrow.
 struct BackingState {
-    std::vector<CharacterMetadata> characters;
     std::string default_character_id;
     std::string default_persona_id{"persona"};
-    std::string default_persona_display_name{"Persona"};
     std::vector<cha::TranscriptEntry> transcript;
     std::string character_id;
     std::string character_display_name;
@@ -23,10 +22,8 @@ struct BackingState {
 
     [[nodiscard]] ControllerView view() const {
         return {
-            .characters = characters,
             .default_character_id = default_character_id,
             .default_persona_id = default_persona_id,
-            .default_persona_display_name = default_persona_display_name,
             .transcript = {
                 .entries = transcript,
                 .revision = 42,
@@ -47,13 +44,8 @@ struct BackingState {
 
 BackingState populated_state() {
     return {
-        .characters = {
-            {"reviewer", "Reviewer", "Checks details"},
-            {"guide", "guide", "Explains things"},
-        },
         .default_character_id = "reviewer",
-        .default_persona_id = "reviewer-persona",
-        .default_persona_display_name = "Reviewer persona",
+        .default_persona_id = "reviewer_persona",
         .transcript = {
             {1, EntryKind::human, "persona", "Persona", "guide", "Guide", "Question", EntryStatus::complete, 7},
             {2, EntryKind::character, "guide", "Guide", {}, {}, "Partial", EntryStatus::streaming, 7},
@@ -66,6 +58,33 @@ BackingState populated_state() {
     };
 }
 
+void publish_projection_workspace() {
+    const auto definition = [](std::string id, std::string name, std::string description) {
+        return CharacterDefinition{
+            .character = {
+                .id = std::move(id),
+                .display_name = std::move(name),
+                .description = std::move(description),
+            },
+            .provider = {.id = "test", .config = {
+                .host = "127.0.0.1",
+                .port = 1,
+                .model = "test-model",
+                .web_search = WebSearchMode::off,
+            }},
+        };
+    };
+    (void)test::publish_test_workspace(
+        {
+            definition("reviewer", "Reviewer", "Checks details"),
+            definition("guide", "guide", "Explains things"),
+        },
+        {{.id = "reviewer_persona", .display_name = "Reviewer persona"}},
+        "guide",
+        {},
+        {"forum", "session"});
+}
+
 SessionDescriptor test_descriptor() {
     return {
         .identity = {"forum", "session"},
@@ -76,6 +95,7 @@ SessionDescriptor test_descriptor() {
 }
 
 TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
+    publish_projection_workspace();
     const BackingState state = populated_state();
     const WebPresentationState presentation{
         .notice = "Current notice",
@@ -89,15 +109,15 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
     EXPECT_EQ(snapshot, (SessionSnapshot{
         // A session descriptor carries no forum description, so a snapshot's
         // forum leaves it unset. Discovery is where it is read.
-        .forum = {"forum", "Forum", std::nullopt, "guide", "reviewer-persona", "Reviewer persona", {
+        .forum = {"forum", "Forum", std::nullopt, "guide", "reviewer_persona", "Reviewer persona", {
             {"guide", "guide", "Explains things"},
             {"reviewer", "Reviewer", "Checks details"},
         }},
         .session_id = "session",
         .session_label = "Label",
         .characters = {
-            {"reviewer", "Reviewer", "Checks details"},
             {"guide", "guide", "Explains things"},
+            {"reviewer", "Reviewer", "Checks details"},
         },
         .default_character_id = "reviewer",
         .transcript = {
@@ -114,14 +134,14 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
 }
 
 TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
+    publish_projection_workspace();
     SessionSnapshot snapshot;
     {
         BackingState state = populated_state();
         snapshot = to_snapshot(test_descriptor(), state.view(), {});
 
         // Mutating the backing values before they are destroyed catches a
-        // retained span as well as a retained string view.
-        state.characters.clear();
+        // retained string view.
         state.default_character_id = "gone";
         state.transcript.clear();
         state.character_display_name = "gone";
@@ -129,7 +149,7 @@ TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
     }
 
     ASSERT_EQ(snapshot.characters.size(), 2U);
-    EXPECT_EQ(snapshot.characters.front().id, "reviewer");
+    EXPECT_EQ(snapshot.characters.front().id, "guide");
     EXPECT_EQ(snapshot.forum.members.size(), 2U);
     EXPECT_EQ(snapshot.default_character_id, "reviewer");
     ASSERT_EQ(snapshot.transcript.size(), 4U);
@@ -138,14 +158,15 @@ TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
     EXPECT_EQ(snapshot.generation.reasoning_text, "Thinking");
 }
 
-TEST(SessionProjection, ProjectsAnEmptyControllerView) {
+TEST(SessionProjection, ProjectsWorkspaceDataWithEmptySessionState) {
+    publish_projection_workspace();
     const SessionSnapshot snapshot = to_snapshot(
         test_descriptor(),
-        ControllerView{},
+        ControllerView{.default_persona_id = "reviewer_persona"},
         {.lifecycle = SessionLifecycle::running});
 
-    EXPECT_TRUE(snapshot.characters.empty());
-    EXPECT_TRUE(snapshot.forum.members.empty());
+    EXPECT_EQ(snapshot.characters.size(), 2U);
+    EXPECT_EQ(snapshot.forum.members.size(), 2U);
     EXPECT_TRUE(snapshot.transcript.empty());
     EXPECT_TRUE(snapshot.default_character_id.empty());
     EXPECT_FALSE(snapshot.generation.active);

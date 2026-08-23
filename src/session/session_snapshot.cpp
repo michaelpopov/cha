@@ -3,6 +3,7 @@
 #include "session/session_database.h"
 #include "util/logging.h"
 #include "util/path_name.h"
+#include "workspace/workspace.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -22,19 +23,21 @@ std::filesystem::path with_extension(
 } // namespace
 
 void export_and_bootstrap_sessions(
-    const std::vector<ForumSessionDirectory>& directories) {
-    for (const ForumSessionDirectory& forum : directories) {
-        if (!std::filesystem::exists(forum.directory)) continue;
-        if (!std::filesystem::is_directory(forum.directory)) {
+    const Workspace& workspace) {
+    for (const WorkspaceForum& forum : workspace.forums()) {
+        const std::optional<std::filesystem::path> directory =
+            workspace.forum_session_directory(forum.id);
+        if (!directory || !std::filesystem::exists(*directory)) continue;
+        if (!std::filesystem::is_directory(*directory)) {
             throw std::runtime_error(
-                "Sessions path '" + utf8_path(forum.directory)
+                "Sessions path '" + utf8_path(*directory)
                 + "' is not a directory");
         }
 
         std::vector<std::filesystem::path> databases;
         std::vector<std::filesystem::path> snapshots;
         for (const auto& entry :
-             std::filesystem::directory_iterator(forum.directory)) {
+             std::filesystem::directory_iterator(*directory)) {
             if (!entry.is_regular_file()) continue;
             const std::filesystem::path extension = entry.path().extension();
             const std::string id = utf8_path(entry.path().stem());
@@ -53,7 +56,7 @@ void export_and_bootstrap_sessions(
                 export_session_database_sql(
                     database,
                     with_extension(database, ".sql"),
-                    {forum.forum_id, id});
+                    {forum.id, id});
             } catch (const std::exception& error) {
                 log_warn("Session snapshot export skipped: path="
                     + utf8_path(database) + " reason=" + error.what());
@@ -65,11 +68,11 @@ void export_and_bootstrap_sessions(
             const std::filesystem::path database =
                 with_extension(snapshot, ".sqlite3");
             const std::filesystem::path deleted =
-                forum.directory / "deleted" / database.filename();
+                *directory / "deleted" / database.filename();
             if (std::filesystem::exists(database)
                 || std::filesystem::exists(deleted)) continue;
             (void)import_session_database_sql(
-                snapshot, database, {forum.forum_id, id});
+                snapshot, database, {forum.id, id});
         }
     }
 }

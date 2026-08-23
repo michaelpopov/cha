@@ -95,7 +95,7 @@ protected:
     }
 
     // Session tests address storage by explicit fixture path; resolving the
-    // workspace layout is WorkspaceDefinition's job, not this catalog's.
+    // workspace layout is Workspace's job, not this catalog's.
     std::filesystem::path sessions_directory(std::string_view forum = "lobby") const {
         return root / "forums" / std::string(forum) / "sessions";
     }
@@ -474,7 +474,7 @@ TEST_F(SessionStorageTest, CreatesDistinctDatabasesOnTimestampCollision) {
     }
 }
 
-TEST_F(SessionStorageTest, OpensAStoredSessionWhateverTheCurrentForumCharactersAre) {
+TEST_F(SessionStorageTest, OpensAStoredSessionWhateverTheCurrentForumRosterIs) {
     SessionCatalog sessions(sessions_directory(), "lobby");
     const StoredSession session = sessions.create("Two agents");
     {

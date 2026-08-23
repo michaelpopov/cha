@@ -284,7 +284,6 @@ bool LiveSession::open_controller() {
         controller_ = std::move(opened.controller);
         persist_default_character_ = std::move(opened.persist_default_character);
         persist_default_persona_ = std::move(opened.persist_default_persona);
-        workspace_lifetime_ = std::move(opened.lifetime);
         (void)apply_notice(opened.notice);
         return true;
     } catch (const std::bad_alloc&) {
@@ -682,7 +681,6 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
         controller_.reset();
         persist_default_character_ = {};
         persist_default_persona_ = {};
-        workspace_lifetime_.reset();
         log_event("lease_released_owner_finished");
     }
     publish_finished();

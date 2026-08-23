@@ -8,21 +8,11 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace cha {
 
 class SessionCatalog;
-
-// Where one forum's stored sessions live. Application startup reads these off
-// the loaded workspace and hands them to SessionRepository, so the repository
-// never learns the workspace layout and the session layer never depends on an
-// application type.
-struct ForumSessionDirectory {
-    ForumId forum_id;
-    std::filesystem::path directory;
-};
 
 // The one process-local session the repository creates and owns for itself.
 // The application names it; this layer holds no built-in identifiers.
@@ -45,15 +35,14 @@ struct PreparedSession {
 
 // Owns every session-storage operation the application needs: the persistent
 // per-forum catalogs and the one temporary session it creates at construction
-// and removes at destruction. It holds only an immutable forum-to-directory
-// map and constructs catalog helpers per operation, so a constructed
-// repository serves concurrent const calls; exclusion comes from session
-// leases. It caches nothing: every StoredSession it returns is read from
-// storage at the moment it is asked for.
+// and removes at destruction. It constructs catalog helpers per operation, so
+// a repository serves concurrent const calls; exclusion comes from session
+// leases. Persistent forum existence and paths come from the currently
+// published Workspace; it caches no workspace configuration or session rows.
 class SessionRepository final {
 public:
     SessionRepository(
-        std::vector<ForumSessionDirectory> persistent,
+        std::filesystem::path workspace_root,
         TemporarySessionSeed temporary);
     ~SessionRepository();
 
@@ -78,7 +67,7 @@ public:
 private:
     [[nodiscard]] SessionCatalog catalog_for(std::string_view forum_id) const;
 
-    std::unordered_map<ForumId, std::filesystem::path> persistent_;
+    std::filesystem::path workspace_root_;
     SessionIdentity temporary_identity_;
     std::string temporary_label_;
     std::filesystem::path temporary_directory_;

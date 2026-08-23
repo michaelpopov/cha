@@ -113,7 +113,7 @@ private:
 
 TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     TemporaryTextSession temporary;
-    auto controller = test::from_definitions_for_testing(
+    auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()},
         temporary.path,
         notifier());
@@ -171,7 +171,7 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_EQ(set_default.session.notice, "Default character is now Guide");
     EXPECT_EQ(set_default.persist_default_character_id, "guide-id");
 
-    auto persona_controller = test::from_definitions_for_testing(
+    auto persona_controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()},
         PersonaRoster{
             {.id = "reader", .display_name = "Reader"},
@@ -198,7 +198,7 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
 
 TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
     TemporaryTextSession temporary;
-    auto controller = test::from_definitions_for_testing(
+    auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{
             definition(),
             definition("ismael-id", "Ismael"),
@@ -219,7 +219,7 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
 
 TEST(TextInput, RecordsNullAgentMessagesAndNeverPersistsTheSentinelDefault) {
     TemporaryTextSession temporary;
-    auto controller = test::from_definitions_for_testing(
+    auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()},
         temporary.path,
         notifier());
@@ -298,7 +298,7 @@ TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {
 
 TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
     TemporaryTextSession temporary;
-    auto controller = test::from_definitions_for_testing(
+    auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()},
         temporary.path,
         notifier());
@@ -355,7 +355,7 @@ TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
 
 TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
     TemporaryTextSession temporary;
-    auto controller = test::from_definitions_for_testing(
+    auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
 
     const CommandResult unknown_author =
@@ -407,24 +407,18 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
 
 TEST(TextInput, DispatchesTheStyleCommandWithoutPersisting) {
     TemporaryTextSession temporary;
-    Providers providers;
-    auto controller = SessionController::from_definitions_for_testing(
-        share_character_definitions(std::vector<CharacterDefinition>{definition()}),
+    test::TestController controller(
+        std::vector<CharacterDefinition>{definition()},
         test::operator_roster(),
         "guide-id",
         temporary.path,
-        providers,
         std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
         {},
         {},
-        [](std::string_view name) -> CharacterAppearance {
-            if (name == "sans-bold") {
-                return {CharacterFont::sans, CharacterSlant::normal,
-                        CharacterWeight::bold, CharacterScale::normal};
-            }
-            throw std::invalid_argument(
-                "Style '" + std::string(name) + "' is not usable");
-        });
+        {},
+        {},
+        {{"sans-bold", {CharacterFont::sans, CharacterSlant::normal,
+                        CharacterWeight::bold, CharacterScale::normal}}});
 
     const CommandResult set =
         handle_text_input(*controller, "operator", "/style sans-bold");
@@ -447,7 +441,9 @@ TEST(TextInput, DispatchesTheStyleCommandWithoutPersisting) {
     const CommandResult unknown =
         handle_text_input(*controller, "operator", "/style nope");
     EXPECT_TRUE(unknown.clear_input);
-    EXPECT_EQ(unknown.session.notice, "Style 'nope' is not usable");
+    EXPECT_EQ(
+        unknown.session.notice,
+        "Unknown style 'nope'. Available styles: sans-bold");
 
     controller->shutdown();
 }

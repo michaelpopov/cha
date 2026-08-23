@@ -183,7 +183,6 @@ add_library(cha_core STATIC
     src/providers/sse_framer.cpp
     src/characters/character_config.cpp
     src/session/controller_update.cpp
-    src/session/forum_characters.cpp
     src/session/session_archive.cpp
     src/session/session_catalog.cpp
     src/session/session_controller.cpp
@@ -192,10 +191,8 @@ add_library(cha_core STATIC
     src/session/session_lease.cpp
     src/session/session_repository.cpp
     src/session/session_snapshot.cpp
-    src/workspace/workspace_definition.cpp
-    src/workspace/workspace_runtime.cpp
+    src/workspace/workspace.cpp
     src/workspace/session_open.cpp
-    src/workspace/builtins.cpp
 )
 
 add_custom_command(
@@ -289,22 +286,19 @@ if(BUILD_TESTING)
         tests/util/unit_utf8_path.cpp
         tests/chat/unit_transcript.cpp
         tests/agents/unit_model_context.cpp
-        tests/agents/unit_character_definition_loader.cpp
         tests/providers/unit_providers.cpp
         tests/providers/unit_chat_completions_api.cpp
         tests/providers/unit_responses_api.cpp
         tests/providers/unit_sse_framer.cpp
-        tests/agents/unit_config_loader.cpp
         tests/session/unit_concurrent_controllers.cpp
-        tests/session/unit_forum_characters.cpp
         tests/session/unit_session_archive.cpp
         tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
         tests/session/unit_session_repository.cpp
+        tests/session/unit_session_snapshot.cpp
         tests/session/unit_controller_update.cpp
-        tests/application/unit_workspace_definition.cpp
-        tests/application/unit_workspace_runtime.cpp
+        tests/application/unit_workspace.cpp
         tests/application/unit_session_open.cpp
         tests/application/unit_builtins.cpp
         tests/support/test_workspace.cpp
@@ -381,7 +375,10 @@ if(BUILD_TESTING)
     if(NOT WIN32)
         # The live-provider and web process harnesses currently use POSIX
         # sockets and fork/exec, so they are not part of the Windows build.
-        add_executable(itest tests/integration/integration_test.cpp)
+        add_executable(
+            itest
+            tests/integration/integration_test.cpp
+            tests/support/test_workspace.cpp)
         target_link_libraries(
             itest PRIVATE cha_core GTest::gtest_main)
         target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")

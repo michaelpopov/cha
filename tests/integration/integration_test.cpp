@@ -5,7 +5,7 @@
 #include "util/environment.h"
 #include "support/mock_http_server.h"
 #include "session/session_database.h"
-#include "workspace/workspace_definition.h"
+#include "workspace/workspace.h"
 #include "support/test_notifier.h"
 #include "support/test_controller.h"
 #include "support/test_session_database.h"
@@ -85,17 +85,14 @@ constexpr auto integration_chat_timeout = std::chrono::seconds(60);
 CharacterDefinition integration_definition(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
     load_dotenv(workspace_directory / ".env");
-    LoadedCharacterConfig loaded = load_character_config({
-        .providers_directory = providers_directory(workspace_directory),
-        .styles_directory = styles_directory(workspace_directory),
-        .definition = workspace_directory / "characters" / "test" / "Ismael" / "character.toml",
-        .forum_defaults = workspace_directory / "forums" / "lobby" / "members" / "character_defaults.toml",
-    });
-    loaded.provider.config.stream = stream;
-    return {
-        .character = std::move(loaded.character),
-        .provider = std::move(loaded.provider),
-    };
+    const Workspace workspace = Workspace::load(workspace_directory);
+    if (workspace.find_forum_member("lobby", "Ismael") == nullptr) {
+        throw std::runtime_error("Checked-in workspace has no Ismael lobby member");
+    }
+    CharacterDefinition definition =
+        workspace.character_definition("lobby", "Ismael");
+    definition.provider.config.stream = stream;
+    return definition;
 }
 
 GenerationEvent wait_for_generation_event(
@@ -280,43 +277,43 @@ LobbySetup lobby_setup() {
     ScopedEnvironmentVariable openai_key("OPENAI_API_KEY", "integration-test-key");
     ScopedEnvironmentVariable openrouter_key("OPEN_ROUTER_API_KEY", "integration-test-key");
     ScopedEnvironmentVariable gemini_key("GEMINI_API_KEY", "integration-test-key");
-    const WorkspaceConfig config = load_workspace_config(root);
-    const WorkspaceDefinition model = WorkspaceDefinition::load(root, config);
-    const ForumInfo* const forum = model.find_forum("lobby");
+    const Workspace workspace = Workspace::load(root);
+    const WorkspaceForum* const forum = workspace.find_forum("lobby");
     if (forum == nullptr) throw std::runtime_error("Checked-in workspace has no lobby forum");
-    const std::filesystem::path forum_directory = root / "forums" / "lobby";
-    std::vector<CharacterDefinitionSource> sources;
-    for (const std::string& character_id : forum->member_ids) {
-        const auto config_path = model.character_config_path(character_id);
-        if (!config_path) {
-            throw std::runtime_error(
-                "Checked-in workspace character has no configuration: " + character_id);
-        }
-        sources.push_back({
-            .definition_directory = config_path->parent_path(),
-            .member_directory = forum_directory / "members" / character_id,
-        });
+    const WorkspacePersona* const configured_persona =
+        workspace.find_persona(forum->default_persona_id);
+    const Persona* persona = nullptr;
+    PersonaRoster personas;
+    if (configured_persona != nullptr) {
+        personas.push_back(*configured_persona);
+        persona = &personas.front();
     }
-    // The mock provider needs mutable definitions, so this loads its own copy
-    // from explicit fixture paths rather than reaching into the model's
-    // private, provider-bearing values. The roster is the forum's own persona
-    // alone, which is what a session opened on this forum receives.
-    const Persona* const persona = model.find_persona(forum->default_persona_id);
     if (persona == nullptr) throw std::runtime_error("Lobby default persona is not in the roster");
-    PersonaRoster personas{*persona};
+    std::vector<CharacterDefinition> definitions;
+    definitions.reserve(forum->members.size());
+    for (const WorkspaceForumMember& member : forum->members) {
+        definitions.push_back(
+            workspace.character_definition(forum->id, member.character_id));
+    }
     return {
-        .definitions = load_character_definitions(
-            sources,
-            forum_directory,
-            forum->display_name,
-            personas,
-            forum_directory / "members" / "character_defaults.toml",
-            config.providers_directory,
-            config.styles_directory),
+        .definitions = std::move(definitions),
         .personas = personas,
         .author_id = persona->id,
         .author_name = persona->display_name,
     };
+}
+
+std::string current_system_prompt(std::string_view character_id) {
+    const std::shared_ptr<const Workspace> workspace = getws();
+    const WorkspaceForumMember* const member =
+        workspace == nullptr
+        ? nullptr : workspace->find_forum_member("lobby", character_id);
+    if (member == nullptr) {
+        throw std::runtime_error(
+            "Published test workspace has no lobby member '"
+            + std::string(character_id) + "'");
+    }
+    return member->system_prompt;
 }
 
 // Redirects one character's backend at a local mock server without touching its prompt.
@@ -434,7 +431,7 @@ TEST(ReasoningIntegration, ExcludesStreamedReasoningFromTranscriptAndModelContex
 
     TemporarySession session;
     {
-        auto controller = test::from_definitions_for_testing(
+        auto controller = test::from_test_workspace(
             std::move(definitions),
             lobby.personas,
             session.path,
@@ -478,7 +475,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
         ReasoningFormat::reasoning;
 
     TemporarySession session;
-    auto controller = test::from_definitions_for_testing(
+    auto controller = test::from_test_workspace(
         std::move(definitions),
         lobby.personas,
         session.path,
@@ -500,7 +497,7 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
     LobbySetup lobby = lobby_setup();
     std::vector<CharacterDefinition>& definitions = lobby.definitions;
     definitions.resize(1);
-    const std::string system_prompt = definitions.front().system_prompt;
+    std::string system_prompt;
     MockHttpServer server({
         answer("Visible answer"),
         answer("Hidden answer"),
@@ -511,11 +508,12 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
 
     TemporarySession session;
     {
-        auto controller = test::from_definitions_for_testing(
+        auto controller = test::from_test_workspace(
             std::move(definitions),
             lobby.personas,
             session.path,
             notifier());
+        system_prompt = current_system_prompt("Cheburashka");
         (void)controller->submit_prompt(lobby.author_id, "Visible question");
         run_until_idle(*controller);
         EXPECT_TRUE(has_state_update(controller->open_offrecord()));
@@ -550,9 +548,8 @@ TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTrans
     ASSERT_EQ(definitions.size(), 2U);
     ASSERT_EQ(definitions.front().character.display_name, "Cheburashka");
     ASSERT_EQ(definitions.back().character.display_name, "Ismael");
-    const std::string cheburashka_prompt = definitions.front().system_prompt;
-    const std::string ismael_prompt = definitions.back().system_prompt;
-    ASSERT_NE(cheburashka_prompt, ismael_prompt);
+    std::string cheburashka_prompt;
+    std::string ismael_prompt;
 
     MockHttpServer cheburashka_server({answer("I am Cheburashka.")});
     MockHttpServer ismael_server({answer("Call me Ismael.")});
@@ -563,12 +560,17 @@ TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTrans
 
     TemporarySession session;
     {
-        auto controller = test::from_definitions_for_testing(
+        auto controller = test::from_test_workspace(
             std::move(definitions),
             lobby.personas,
             session.path,
             notifier());
-        ASSERT_EQ(controller->view().characters.front().id, "Cheburashka");
+        cheburashka_prompt = current_system_prompt("Cheburashka");
+        ismael_prompt = current_system_prompt("Ismael");
+        ASSERT_NE(cheburashka_prompt, ismael_prompt);
+        ASSERT_EQ(
+            getws()->find_forum("lobby")->members.front().character_id,
+            "Cheburashka");
 
         // No mention: the first character directory in name order answers.
         ControllerUpdate update =
@@ -627,8 +629,8 @@ TEST(MultiCharacterIntegration, MulticastSendsIndependentBodiesAndRestoresHistor
     LobbySetup lobby = lobby_setup();
     std::vector<CharacterDefinition>& definitions = lobby.definitions;
     ASSERT_EQ(definitions.size(), 2U);
-    const std::string cheburashka_prompt = definitions.front().system_prompt;
-    const std::string ismael_prompt = definitions.back().system_prompt;
+    std::string cheburashka_prompt;
+    std::string ismael_prompt;
     MockHttpServer cheburashka_server({
         answer("Cheburashka multicast answer"),
         answer("Cheburashka follow-up answer"),
@@ -641,9 +643,11 @@ TEST(MultiCharacterIntegration, MulticastSendsIndependentBodiesAndRestoresHistor
 
     TemporarySession session;
     {
-        auto controller = test::from_definitions_for_testing(
+        auto controller = test::from_test_workspace(
             std::move(definitions), lobby.personas, session.path,
             notifier());
+        cheburashka_prompt = current_system_prompt("Cheburashka");
+        ismael_prompt = current_system_prompt("Ismael");
         const ControllerUpdate multicast = controller->start_multicast(
             lobby.author_id, "What time is it?", {});
         ASSERT_TRUE(multicast.input_consumed);
@@ -686,7 +690,7 @@ TEST(MultiCharacterIntegration, MulticastSendsIndependentBodiesAndRestoresHistor
 TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharacter) {
     LobbySetup lobby = lobby_setup();
     std::vector<CharacterDefinition>& definitions = lobby.definitions;
-    const std::string ismael_prompt = definitions.back().system_prompt;
+    std::string ismael_prompt;
 
     MockHttpServer cheburashka_server({answer("I am Cheburashka.")});
     MockHttpServer ismael_server({answer("Call me Ismael."), answer("He greeted you.")});
@@ -698,7 +702,7 @@ TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharact
 
     TemporarySession session;
     {
-        auto controller = test::from_definitions_for_testing(
+        auto controller = test::from_test_workspace(
             std::move(definitions),
             lobby.personas,
             session.path,
@@ -715,13 +719,15 @@ TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharact
     ASSERT_EQ(restored.entries.size(), 4U);
     ASSERT_TRUE(restored.interrupted_turns.empty());
 
-    auto reopened = test::from_definitions_for_testing(
+    auto reopened = test::from_test_workspace(
         std::vector<CharacterDefinition>{std::move(ismael_only)},
         lobby.personas,
         session.path,
         notifier(),
         std::move(restored));
-    EXPECT_EQ(reopened->view().characters.size(), 1U);
+    ismael_prompt = current_system_prompt("Ismael");
+    ASSERT_NE(getws()->find_forum("lobby"), nullptr);
+    EXPECT_EQ(getws()->find_forum("lobby")->members.size(), 1U);
     EXPECT_EQ(
         reopened->submit_prompt(
             lobby.author_id, "are you there?", "Cheburashka").notice,

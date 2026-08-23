@@ -6,6 +6,7 @@
 #include "session/session_lease.h"
 #include "support/test_transcript.h"
 #include "support/test_workspace.h"
+#include "workspace/workspace.h"
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -32,8 +33,9 @@ protected:
     }
 
     SessionRepository make_repository() const {
+        loadws(fixture_.root());
         return SessionRepository(
-            {{"lobby", sessions_directory()}},
+            fixture_.root(),
             {{std::string(temporary_forum), std::string(temporary_session)}, "Welcome"});
     }
 
@@ -228,9 +230,9 @@ TEST_F(SessionRepositoryTest, KeepsADamagedDatabaseListedButRejectsItStrictly) {
 TEST_F(SessionRepositoryTest, CreatesWithoutInitializingAProvider) {
     // Session creation only records session state; it must not initialize a
     // network-mode provider.
+    const SessionRepository repository = make_repository();
     fixture_.write_character_defaults(
         "host = \"127.0.0.1\"\nport = 1\nmode = \"net\"\nmodel = \"fake\"\n");
-    const SessionRepository repository = make_repository();
 
     const StoredSession created = repository.create("lobby", "Unopened");
     EXPECT_FALSE(created.identity.session_id.empty());

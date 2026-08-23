@@ -1,7 +1,7 @@
 #include "web/lobby_routes.h"
 
-#include "workspace/workspace_definition.h"
-#include "workspace/workspace_runtime.h"
+#include "workspace/workspace.h"
+#include "session/session_snapshot.h"
 #include "session/not_found_error.h"
 #include "session/session_delete_conflict.h"
 #include "session/session_lease.h"
@@ -113,64 +113,88 @@ void set_command_error(httplib::Response& response, ErrorCode code) {
     }
 }
 
-CharacterSummary character_summary(const CharacterMetadata& character) {
-    return {character.id, character.display_name, character.description, character.appearance};
+CharacterSummary character_summary(const WorkspaceCharacter& character) {
+    return {
+        character.character.id,
+        character.character.display_name,
+        character.character.description,
+        character.character.appearance,
+    };
+}
+
+std::shared_ptr<const Workspace> published_workspace() {
+    std::shared_ptr<const Workspace> workspace = getws();
+    if (!workspace) throw std::runtime_error("Workspace is not loaded");
+    return workspace;
 }
 
 CharacterDetail character_detail(
-    const WorkspaceDefinition& model, const CharacterMetadata& character) {
-    CharacterDetail detail{
-        character_summary(character),
-        std::string(model.character_markdown(character.id)),
-    };
-    // One read answers both questions: settings that cannot be read leave the
-    // character read-only rather than being published as unset.
-    const std::optional<CharacterSettings> settings =
-        model.character_settings(character.id);
-    if (settings) {
-        detail.provider = settings->provider;
-        detail.style = settings->style;
+    const Workspace& workspace,
+    const WorkspaceCharacter& character) {
+    CharacterDetail detail{character_summary(character), character.markdown};
+    detail.writable = workspace.character_is_writable(character.character.id);
+    if (detail.writable) {
+        detail.provider = character.provider_id;
+        detail.style = character.style_id;
     }
-    detail.writable = settings.has_value();
-    for (const AvailableProvider& option : model.available_providers()) {
-        detail.available_providers.push_back({option.id, option.label});
+    for (const WorkspaceProvider& provider : workspace.providers()) {
+        detail.available_providers.push_back({provider.id, provider.label});
     }
-    for (const AvailableStyle& option : model.available_styles()) {
-        detail.available_styles.push_back({option.id, option.label, option.appearance});
+    for (const WorkspaceStyle& style : workspace.styles()) {
+        detail.available_styles.push_back(
+            {style.id, style.label, style.appearance});
     }
     return detail;
 }
 
 std::vector<std::string> forums_affected_by_save(
-    const WorkspaceDefinition& model,
+    const Workspace& workspace,
     std::string_view character_id,
     bool changed) {
     if (!changed) return {};
     std::vector<std::string> result;
-    for (const ForumInfo& forum : model.forums()) {
-        if (!std::ranges::binary_search(forum.member_ids, character_id)) continue;
-        result.push_back(forum.id);
+    for (const WorkspaceForum& forum : workspace.forums()) {
+        if (std::ranges::any_of(
+                forum.members,
+                [character_id](const WorkspaceForumMember& member) {
+                    return member.character_id == character_id;
+                })) {
+            result.push_back(forum.id);
+        }
     }
     return result;
 }
 
-ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& model) {
-    const Persona* const persona = model.find_persona(forum.default_persona_id);
-    if (persona == nullptr) throw std::runtime_error("Forum default persona is absent from the workspace model");
-    ForumSummary result{.id = forum.id, .display_name = forum.display_name,
-                        .description = forum.description,
-                        .default_character_id = model.forum_default_character(forum.id),
-                        .default_persona_id = forum.default_persona_id,
-                        .default_persona_display_name = persona->display_name};
-    result.members.reserve(forum.member_ids.size());
-    for (const std::string& id : forum.member_ids) {
-        const CharacterMetadata* character = model.find_character(id);
-        if (character == nullptr) throw std::runtime_error("Forum member is absent from the workspace model");
+ForumSummary forum_summary(
+    const WorkspaceForum& forum,
+    const Workspace& workspace) {
+    const WorkspacePersona* persona =
+        workspace.find_persona(forum.default_persona_id);
+    if (persona == nullptr) {
+        throw std::runtime_error("Forum default persona is absent from the workspace");
+    }
+    ForumSummary result{
+        .id = forum.id,
+        .display_name = forum.display_name,
+        .description = forum.description,
+        .default_character_id = forum.default_character_id,
+        .default_persona_id = forum.default_persona_id,
+        .default_persona_display_name = persona->display_name,
+    };
+    result.members.reserve(forum.members.size());
+    for (const WorkspaceForumMember& member : forum.members) {
+        const WorkspaceCharacter* character =
+            workspace.find_character(member.character_id);
+        if (character == nullptr) {
+            throw std::runtime_error("Forum member is absent from the workspace");
+        }
         result.members.push_back(character_summary(*character));
     }
-    std::sort(result.members.begin(), result.members.end(), [](const CharacterSummary& left, const CharacterSummary& right) {
-        return fold_ascii(left.display_name) < fold_ascii(right.display_name);
-    });
+    std::ranges::sort(
+        result.members, {},
+        [](const CharacterSummary& character) {
+            return fold_ascii(character.display_name);
+        });
     return result;
 }
 
@@ -194,10 +218,10 @@ std::vector<SessionListing> sessions_for(
 }
 
 std::vector<RecentSession> recent_sessions(
-    const WorkspaceDefinition& model,
+    const Workspace& workspace,
     const SessionRepository& sessions) {
     std::vector<RecentSession> result;
-    for (const ForumInfo& forum : model.forums()) {
+    for (const WorkspaceForum& forum : workspace.forums()) {
         for (const StoredSession& stored : sessions.list(forum.id)) {
             result.push_back({forum.id, stored.identity.session_id, stored.label,
                 updated_at(stored.updated_at)});
@@ -211,41 +235,41 @@ std::vector<RecentSession> recent_sessions(
 }
 
 Bootstrap bootstrap_for(
-    const WorkspaceDefinition& model,
+    const Workspace& workspace,
     const SessionRepository& sessions,
     const InitialSelection& initial) {
     Bootstrap bootstrap{.initial_forum_id = initial.session.forum_id,
                         .initial_session_id = initial.session.session_id};
-    for (const Persona& persona : *model.personas()) {
+    for (const WorkspacePersona& persona : workspace.personas()) {
         bootstrap.personas.push_back({persona.id, persona.display_name, persona.description});
     }
-    for (const CharacterMetadata& character : model.characters()) {
+    for (const WorkspaceCharacter& character : workspace.characters()) {
         bootstrap.characters.push_back(character_summary(character));
     }
-    for (const ForumInfo& forum : model.forums()) {
-        bootstrap.forums.push_back(forum_summary(forum, model));
+    for (const WorkspaceForum& forum : workspace.forums()) {
+        bootstrap.forums.push_back(forum_summary(forum, workspace));
     }
-    bootstrap.recent_sessions = recent_sessions(model, sessions);
+    bootstrap.recent_sessions = recent_sessions(workspace, sessions);
     return bootstrap;
 }
 
 } // namespace
 
 LobbyRoutes::LobbyRoutes(
-    std::shared_ptr<WorkspaceRuntime> workspace,
+    std::shared_ptr<const SessionRepository> sessions,
     InitialSelection initial,
     LiveSessionManager& live_sessions,
     std::filesystem::path backup_dir,
     WebSettings settings)
-    : workspace_(std::move(workspace)),
+    : sessions_(std::move(sessions)),
       initial_(std::move(initial)), live_sessions_(live_sessions),
       backup_dir_(std::move(backup_dir)),
       settings_(std::move(settings)) {
-    if (!workspace_) throw std::invalid_argument("Lobby routes need a workspace runtime");
+    if (!sessions_) throw std::invalid_argument("Lobby routes need a session repository");
 }
 
 void LobbyRoutes::install(httplib::Server& server) const {
-    const auto workspace = workspace_;
+    const auto sessions = sessions_;
     const InitialSelection initial = initial_;
     LiveSessionManager* const live_sessions = &live_sessions_;
     const std::filesystem::path backup_dir = backup_dir_;
@@ -256,14 +280,14 @@ void LobbyRoutes::install(httplib::Server& server) const {
             {"ready", true}, {"live_session_count", snapshot.live_session_count}});
     });
 
-    server.Get("/api/v1/bootstrap", [workspace, initial](const httplib::Request&, httplib::Response& response) {
-        const auto current = workspace->snapshot();
+    server.Get("/api/v1/bootstrap", [sessions, initial](const httplib::Request&, httplib::Response& response) {
+        const auto current = published_workspace();
         set_json_response(response, 200, nlohmann::json(
-            bootstrap_for(*current->model, *current->sessions, initial)));
+            bootstrap_for(*current, *sessions, initial)));
     });
 
     server.Post("/api/v1/workspace/reload",
-        [workspace, initial, live_sessions, backup_dir, settings](
+        [sessions, initial, live_sessions, backup_dir, settings](
             const httplib::Request& request, httplib::Response& response) {
         if (!validate_json_mutation(request, response)) return;
         if (!parse_route_json_body(
@@ -277,8 +301,11 @@ void LobbyRoutes::install(httplib::Server& server) const {
                  "Workspace reload failed: active sessions did not close."});
         }
         try {
-            (void)backup_workspace(workspace->root(), backup_dir);
-            workspace->reload();
+            const auto current = published_workspace();
+            (void)backup_workspace(current->root(), backup_dir);
+            Workspace candidate = Workspace::load(current->root());
+            export_and_bootstrap_sessions(candidate);
+            loadws(std::move(candidate));
         } catch (const std::bad_alloc&) {
             throw;
         } catch (const std::exception& error) {
@@ -287,40 +314,39 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 {ErrorCode::workspace_reload_failed,
                  "Workspace reload failed: " + std::string(error.what())});
         }
-        const auto current = workspace->snapshot();
+        const auto current = published_workspace();
         set_json_response(response, 200, nlohmann::json(
-            bootstrap_for(*current->model, *current->sessions, initial)));
+            bootstrap_for(*current, *sessions, initial)));
     });
 
-    server.Get(R"(/api/v1/characters/([^/]+))", [workspace](const httplib::Request& request, httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& model = current->model;
+    server.Get(R"(/api/v1/characters/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
+        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That character was not found.");
         }
-        const CharacterMetadata* character = model->find_character(id);
+        const WorkspaceCharacter* character = workspace->find_character(id);
         if (character == nullptr) {
             return set_route_not_found(response, "That character was not found.");
         }
-        set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
+        set_json_response(response, 200, nlohmann::json(character_detail(*workspace, *character)));
     });
 
     server.Patch(R"(/api/v1/characters/([^/]+))",
-        [workspace, live_sessions, settings](const httplib::Request& request,
-                                         httplib::Response& response) {
-        const auto current_generation = workspace->snapshot();
-        const auto& model = current_generation->model;
+        [live_sessions, settings](const httplib::Request& request,
+                                  httplib::Response& response) {
+        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That character was not found.");
         }
-        const CharacterMetadata* character = model->find_character(id);
+        const WorkspaceCharacter* character = workspace->find_character(id);
         if (character == nullptr) {
             return set_route_not_found(response, "That character was not found.");
         }
-        const std::optional<CharacterSettings> current = model->character_settings(id);
-        if (!current) return set_route_not_found(response, "That character was not found.");
+        if (!workspace->character_is_writable(id)) {
+            return set_route_not_found(response, "That character was not found.");
+        }
         if (!validate_json_mutation(request, response)) return;
         CharacterSettingsUpdate update;
         if (!parse_route_json_body(
@@ -328,30 +354,42 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&update](const nlohmann::json& json) {
                     update = parse_character_settings_update(json);
                 })) return;
-        CharacterSettingsChange change;
+        const bool changed = update.provider != character->provider_id
+            || update.style != character->style_id;
         try {
-            change = model->write_character_settings(id, update.provider, update.style);
+            const std::optional<std::string_view> style = update.style
+                ? std::optional<std::string_view>(*update.style) : std::nullopt;
+            if (changed) {
+                workspace->write_character_settings(id, update.provider, style);
+                loadws(workspace->root());
+            }
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid provider or style."});
         }
-        if (change.any()) {
+        if (changed) {
             request_reload(
                 *live_sessions,
                 forums_affected_by_save(
-                    *model, id, change.any()));
+                    *workspace, id, changed));
         }
-        set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
+        const auto current = published_workspace();
+        const WorkspaceCharacter* updated = current->find_character(id);
+        if (updated == nullptr) {
+            return set_route_not_found(response, "That character was not found.");
+        }
+        set_json_response(
+            response, 200,
+            nlohmann::json(character_detail(*current, *updated)));
     });
 
-    server.Get(R"(/api/v1/personas/([^/]+))", [workspace](const httplib::Request& request, httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& model = current->model;
+    server.Get(R"(/api/v1/personas/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
+        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That persona was not found.");
         }
-        const Persona* const persona = model->find_persona(id);
+        const WorkspacePersona* const persona = workspace->find_persona(id);
         if (persona == nullptr) {
             return set_route_not_found(response, "That persona was not found.");
         }
@@ -361,21 +399,18 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     // `[^/]+` cannot span the separator, so this never shadows the session
     // routes registered below it.
-    server.Get(R"(/api/v1/forums/([^/]+))", [workspace](const httplib::Request& request, httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& model = current->model;
+    server.Get(R"(/api/v1/forums/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
+        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) return set_route_not_found(response);
-        const ForumInfo* const forum = model->find_forum(id);
+        const WorkspaceForum* const forum = workspace->find_forum(id);
         if (forum == nullptr) return set_route_not_found(response);
         set_json_response(response, 200, nlohmann::json(ForumDetail{
-            forum_summary(*forum, *model),
-            std::string(model->forum_markdown(id))}));
+            forum_summary(*forum, *workspace),
+            forum->prompt_template}));
     });
 
-    server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, live_sessions](const httplib::Request& request, httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& sessions = current->sessions;
+    server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [sessions, live_sessions](const httplib::Request& request, httplib::Response& response) {
         const std::string forum = request.matches[1];
         if (!is_valid_route_component(forum)) return set_route_not_found(response);
         try {
@@ -386,9 +421,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
         }
     });
 
-    server.Post(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, settings](const httplib::Request& request, httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& sessions = current->sessions;
+    server.Post(R"(/api/v1/forums/([^/]+)/sessions)", [sessions, settings](const httplib::Request& request, httplib::Response& response) {
         const std::string forum = request.matches[1];
         if (!is_valid_route_component(forum)) return set_route_not_found(response);
         if (!validate_json_mutation(request, response)) return;
@@ -414,10 +447,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/download)",
-        [workspace, live_sessions, settings](const httplib::Request& request,
+        [sessions, live_sessions, settings](const httplib::Request& request,
                                              httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& sessions = current->sessions;
         const SessionIdentity key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {
@@ -456,10 +487,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Patch(R"(/api/v1/forums/([^/]+)/sessions/([^/]+))",
-        [workspace, initial, live_sessions, settings](const httplib::Request& request,
+        [sessions, initial, live_sessions, settings](const httplib::Request& request,
                                                      httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& sessions = current->sessions;
         const SessionIdentity key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {
@@ -519,10 +548,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Delete(R"(/api/v1/forums/([^/]+)/sessions/([^/]+))",
-        [workspace, initial, live_sessions, settings](const httplib::Request& request,
+        [sessions, initial, live_sessions, settings](const httplib::Request& request,
                                                      httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& sessions = current->sessions;
         const SessionIdentity key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {
@@ -575,9 +602,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
         }
     });
 
-    server.Post(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/open)", [workspace, live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& sessions = current->sessions;
+    server.Post(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/open)", [sessions, live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
         const SessionIdentity key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {

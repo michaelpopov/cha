@@ -48,13 +48,11 @@ HTTP API, and streams session changes with server-sent events (SSE).
 
 The most useful high-level model is:
 
-- `WorkspaceRuntime` owns and atomically publishes the current immutable
-  `WorkspaceGeneration`.
-- Each generation pairs a `WorkspaceDefinition` discovery catalog with a
-  `SessionRepository`. A session open re-resolves that forum's character
-  definitions from disk within the selected generation.
-- `SessionRepository` lists, creates, validates, leases, and restores SQLite
-  session databases for the forums in its generation.
+- `loadws()` atomically publishes the current immutable `Workspace`, which owns
+  all resolved workspace-directory configuration.
+- The independent process-owned `SessionRepository` lists, creates, validates,
+  leases, and restores SQLite session databases. It asks the current workspace
+  for forum storage paths but does not copy workspace configuration.
 - `LiveSessionManager` owns the process's live-session registry.
 - One `LiveSession` is an actor with one permanent owner thread for one open
   session.
@@ -76,6 +74,8 @@ flowchart LR
     Manager["LiveSessionManager"]
     Actor["LiveSession owner thread"]
     Controller["SessionController"]
+    Workspace["Published immutable Workspace"]
+    Repository["SessionRepository"]
     Journal["SessionJournal / SQLite"]
     Providers["Process Providers supervisor"]
     Request["ProviderRequest"]
@@ -84,9 +84,12 @@ flowchart LR
     Mailbox["SseMailbox"]
 
     Browser -->|"JSON commands"| Routes
+    Routes -->|"getws() reads"| Workspace
+    Routes --> Repository
     Routes -->|"queued WebCommand"| Actor
     Manager -->|"owns and locates"| Actor
     Actor -->|"only caller"| Controller
+    Controller -->|"getws() lookups"| Workspace
     Controller --> Journal
     Controller -->|"retains while presenting"| Request
     Providers -->|"supervises while active"| Request
@@ -100,16 +103,15 @@ flowchart LR
 There are three kinds of long-lived information:
 
 - Discovery — the roster, descriptions, and Markdown the browser lists — is
-  read once per workspace generation, validated as a whole, and shared
+  read once per `Workspace`, validated as a whole, and shared
   immutably until a successful reload publishes a replacement.
-- A forum's character definitions are re-resolved from disk when a session
-  opens, so a saved provider or style (and a hand edit to the files that loader
-  reads) reach the next session without a restart.
+- Sessions read configuration from the published `Workspace`; disk edits are
+  invisible until a successful reload publishes them.
 - Conversation state is dynamic. A live controller owns an in-memory view and
   writes durable turn transitions to one SQLite database.
 
-This split explains why the Characters roster can disagree with a newly opened
-session after a hand edit, while creating a session appears immediately.
+This split explains why creating a session appears immediately while editing
+workspace configuration requires publication of a new `Workspace`.
 
 ## 3. Build graph and dependency direction
 
@@ -331,7 +333,7 @@ The other utilities support important boundaries:
 Checkpoint: locate one caller of each utility and state whether it is a domain
 policy or a reusable mechanism.
 
-## 8. Third reading pass: startup and immutable workspace generations
+## 8. Third reading pass: startup and the immutable workspace
 
 Read [web_main.cpp](../src/web_main.cpp) once from top to bottom. It is the
 composition root, so most lines construct or connect an owner.
@@ -340,14 +342,12 @@ Startup proceeds in this order:
 
 1. `load_application_config()` reads `app.toml` and command-line overrides.
 2. `load_dotenv()` loads `workspace/.env`.
-3. `load_workspace_config()` reads `workspace.toml`.
-4. File logging is initialized.
-5. `WorkspaceRuntime` constructs the first `WorkspaceGeneration`: a validated
-   `WorkspaceDefinition` plus a `SessionRepository` with its temporary
-   Entrance/Welcome database.
+3. `loadws()` loads, validates, and publishes the complete `Workspace`.
+4. File logging is initialized from the published workspace settings.
+5. The process-owned `SessionRepository` creates its temporary Entrance/Welcome
+   database.
 6. The process-owned `Providers` supervisor is constructed.
-7. `LiveSessionManager` is given an opener lambda that calls
-   `WorkspaceRuntime::open_session()`.
+7. `LiveSessionManager` is given an opener lambda that calls `open_session()`.
 8. The HTTP server, asset handler, lobby routes, and session routes are
    installed.
 9. The socket is bound, the server begins listening, and shutdown coordination
@@ -358,11 +358,11 @@ Startup proceeds in this order:
 Local declaration order and function scopes matter: destructors run in reverse
 order, and log users must be destroyed before logging itself.
 
-### 8.1 What `WorkspaceDefinition::load()` builds
+### 8.1 What `Workspace::load()` builds
 
-Read [workspace/workspace_definition.h](../src/workspace/workspace_definition.h), then
-the helpers and `WorkspaceDefinition::load()` in
-[workspace/workspace_definition.cpp](../src/workspace/workspace_definition.cpp).
+Read [workspace/workspace.h](../src/workspace/workspace.h), then the helpers and
+`Workspace::load()` in
+[workspace/workspace.cpp](../src/workspace/workspace.cpp).
 
 The loader treats the workspace as one configuration unit:
 
@@ -371,37 +371,42 @@ The loader treats the workspace as one configuration unit:
 - It loads persona metadata and optional `PERSONA.md` prompts.
 - It validates every forum's members, default character, and default persona,
   the last of which becomes the starting author for sessions in that forum.
-- It resolves every forum's effective character definitions immediately.
-- It builds public indexes and private definition maps.
+- It validates every forum member's character, provider, and style references.
+- It builds indexes and fully resolved forum-member prompt values.
 - It adds the built-in Guest persona, Assistant character, and Entrance forum.
 
-All forums are resolved when a generation is loaded, including unused ones.
+All forums are resolved when a workspace is loaded, including unused ones.
 This turns an invalid member override or prompt into a deterministic load error
 rather than a delayed failure when someone opens that forum.
 
-The public methods expose discovery information from one published generation.
-The private `copy_definitions_for()` boundary is used by `open_session()` to
-re-resolve that forum's character definitions from disk and give the new
-session shared immutable definitions. A broken hand edit falls back to the
-generation's validated copy and sets a notice on `OpenedSession`.
+The public methods expose information from one published workspace. Production
+sessions keep their identity and runtime state, then query the current
+workspace when they need forum, persona, character, provider, or style data.
+Provider requests alone own the exact resolved input they are already running.
+Disk edits are invisible until the next successful `loadws()`.
 
-### 8.2 Runtime generations and reload
+There is no `WorkspaceRuntime`, `WorkspaceGeneration`, or copied forum-roster
+object. A candidate reload is simply a temporary `Workspace`. Once fully loaded
+and validated, `loadws()` atomically makes it current. Callers use one `getws()`
+result for the duration of an operation, so references into that immutable
+snapshot remain valid even if another thread publishes its replacement.
 
-Read [workspace/workspace_runtime.h](../src/workspace/workspace_runtime.h) and
-[workspace/workspace_runtime.cpp](../src/workspace/workspace_runtime.cpp).
-Routes take a shared snapshot of the current generation, so its definition and
-repository always agree. An opened session retains that generation for as long
-as controller callbacks may borrow from it.
+### 8.2 Publication and reload
+
+Read `getws()` and `loadws()` in
+[workspace/workspace.cpp](../src/workspace/workspace.cpp). A caller holds the
+returned `shared_ptr` while it reads references from the workspace. The
+`SessionRepository` is separate process state and is not replaced on reload.
 
 `POST /api/v1/workspace/reload` blocks new session opens, stops existing live
-actors, and writes a workspace archive before asking `WorkspaceRuntime` to load
-a replacement. Reload validates a complete candidate outside the publication
-mutex and swaps it in atomically. Failure retains the published generation, but
+actors, and writes a workspace archive before loading one replacement
+`Workspace`. Reload validates a complete candidate outside the publication
+mutex and swaps it in atomically. Failure retains the published workspace, but
 the actors were already stopped before filesystem work began.
 
 Only reload performs the session SQL synchronization described in section 9.3:
 existing databases are exported and missing databases may be bootstrapped from
-snapshots before the replacement repository is published.
+snapshots before the candidate workspace is published.
 
 ### 8.3 Provider selection
 
@@ -412,16 +417,15 @@ forum-default, and member provider keys are ignored, so there is no provider
 inheritance or override chain. The `[prompt]` scope still merges across the
 character, forum-default, and member layers.
 
-Read [characters/character_config.h](../src/characters/character_config.h),
-[characters/character_config.cpp](../src/characters/character_config.cpp), and then
-[characters/character.cpp](../src/characters/character.cpp). Keep `ProviderConfig` and
-`ModelBackendConfig` distinct in your notes: the former is one provider config
-as written, with absent fields left absent; the latter is a concrete, validated
-runtime configuration with defaults filled in.
+Read the provider loader in
+[workspace/workspace.cpp](../src/workspace/workspace.cpp).
+`WorkspaceProvider` stores the fully resolved `ModelBackendConfig` directly;
+`Workspace::character_definition()` copies it into the request-owned value
+passed to provider code.
 
 ### 8.4 Prompt construction
 
-`load_character_definitions()` combines:
+`Workspace::load()` combines:
 
 - the character definition prompt;
 - forum prompt/context;
@@ -430,7 +434,7 @@ runtime configuration with defaults filled in.
 - effective model backend settings.
 
 `FORUM.md` has two audiences. It is the forum prompt above, and
-`WorkspaceDefinition` also reads it verbatim and serves it through
+`Workspace` also reads it verbatim and serves it through
 `/api/v1/forums/{forum}` as the forum's description. Write it for readers as
 well as for the characters. This differs from `CHARACTER.md`, which publishes
 only its `<character_profile>` section: a forum publishes the whole file. The
@@ -438,9 +442,8 @@ raw template source is served, so `$${character.display_name}` and `$$(...)`
 includes appear literally — a description belongs to the forum rather than to
 any one member, so there is nothing to expand it against.
 
-The built-in Assistant is assembled in
-[workspace/builtins.cpp](../src/workspace/builtins.cpp). Its workspace
-guide is generated into the build and combined with public workspace inventory
+The built-in Assistant and Entrance data are assembled by `Workspace::load()`.
+The generated workspace guide is combined with public workspace inventory
 data. The Entrance/Welcome session is a normal session at the controller level;
 its specialness is in how the application constructs and stores it.
 
@@ -483,8 +486,9 @@ alive” and “this process holds the session lease” have the same lifetime.
 
 ### 9.2 Listing and creation
 
-`SessionRepository` owns an immutable forum-to-directory map and constructs a
-`SessionCatalog` per operation. It does not cache session listings.
+`SessionRepository` asks the current `Workspace` for a forum's directory and
+constructs a `SessionCatalog` per operation. It does not cache workspace
+configuration or session listings.
 
 `SessionCatalog::list()` is tolerant: a recognizable database with invalid
 metadata remains visible with an error label. Selecting/opening is strict.
@@ -502,7 +506,7 @@ directory when the repository is destroyed.
 
 `export_and_bootstrap_sessions()` in
 [session/session_snapshot.cpp](../src/session/session_snapshot.cpp) runs only
-while a replacement workspace generation is being loaded. For each forum, it
+while a replacement `Workspace` is being loaded. For each forum, it
 first exports every valid `<session>.sqlite3` database to an adjacent
 `<session>.sql` file. It then imports a snapshot whose database is missing,
 using a temporary database and validating its forum/session identity before
@@ -511,21 +515,18 @@ publication.
 An existing SQLite database wins and refreshes its SQL snapshot. A database in
 `sessions/deleted/` suppresses import of an old snapshot, so deleting a session
 does not make it reappear on the next reload. An unreadable database is logged
-and skipped; invalid SQL aborts the candidate generation without publishing a
+and skipped; invalid SQL aborts the candidate workspace without publishing a
 partial database.
 
 ### 9.4 `open_session()` is the bridge
 
 `workspace/session_open.cpp` performs a short but crucial composition:
 
-1. find the immutable forum;
-2. re-resolve its character definitions from disk (or take the generation's
-   copy and a notice if that load throws);
-3. prepare and lease the stored session;
-4. create the public `SessionDescriptor`;
-5. construct a `SessionController`, transferring the database path, restore
-   state, lease, the workspace persona roster with the forum's configured
-   persona as the starting one, definitions, and wake notifier.
+1. acquire the current `Workspace` and find the immutable forum;
+2. prepare and lease the stored session;
+3. create the public `SessionDescriptor`;
+4. construct a workspace-backed `SessionController`, transferring the database
+   path, restore state, lease, configured default IDs, and wake notifier.
 
 The workspace layer knows both the static workspace and dynamic repository;
 neither needs to know about HTTP.
@@ -637,6 +638,14 @@ The protocol modules intentionally know nothing about curl, HTTP status, or
 cancellation. `ProviderClient::perform()` decides the final outcome after the
 transport completes and may add HTTP metadata to a decoder error.
 
+Streaming needs state across arbitrary network chunks. One
+`ChatCompletionsStreamDecoder` or `ResponsesStreamDecoder` is therefore created
+per streaming request. It retains incomplete SSE framing, protocol completion,
+token usage, and whether reasoning or answer text was received, then is
+destroyed with that request. The common `StreamingResponseDecoder` interface
+lets `ProviderClient` select the protocol without owning either protocol's
+parsing state.
+
 Checkpoint: describe what happens if a streaming response contains reasoning
 but no answer, and identify which layer detects it and which layer converts it
 into a transcript error.
@@ -660,7 +669,7 @@ One controller owns:
 - the session lease and `SessionJournal`;
 - the owner-thread-confined `Transcript`;
 - a borrowed reference to the process-owned `Providers` supervisor;
-- the resolved forum character roster and the workspace persona roster;
+- stable forum/persona IDs used to look up the current `Workspace`;
 - default-character and current-persona selection;
 - next request and entry IDs;
 - at most one active foreground response;
@@ -670,12 +679,13 @@ The controller has no mutex. Its public mutation/view methods belong to the
 owner thread. Thread-safe communication is isolated inside request event
 queues, cancellation flags, and the wake mechanism.
 
-`ForumCharacters` in
-[session/forum_characters.cpp](../src/session/forum_characters.cpp) is the
-controller's roster and handle resolver. It centralizes exact, normalized, and
-prefix matching plus ambiguity diagnostics, so prompt submission, multicast,
-and default-character changes use the same rules. The smaller
-`generation_status.h`, `controller_view.h`, and `opened_session.h` headers are
+`Workspace` is the forum roster and handle resolver. It centralizes exact,
+normalized, and prefix matching plus ambiguity diagnostics, so prompt
+submission, multicast, and default-character changes use the same rules.
+`SessionController` keeps no copied roster; its style-override map stores only
+style IDs and overlays the selected appearance when metadata is copied for a
+request or presentation. The smaller `generation_status.h`,
+`controller_view.h`, and `opened_session.h` headers are
 boundary value types: they let application and web code observe or transfer
 session state without gaining access to controller internals.
 
@@ -820,10 +830,11 @@ Parsing is divided among:
 
 The parser belongs in `web` because it adapts one input protocol. The
 controller exposes typed actions and remains usable without slash-command
-syntax. `/style` is a presentation-only command: `set_session_style()` resolves the name through
-a workspace-injected `StyleResolver` and mutates that character's appearance
-in the roster, so the next snapshot repaints its messages. It has no backend or
-busy guard, and its mutating forms carry a snapshot. It is runtime-only.
+syntax. `/style` is a presentation-only command: `set_session_style()` resolves
+the name in the current `Workspace` and stores only the selected style ID as
+session state. The next snapshot overlays that style on Workspace character
+data. It has no backend or busy guard, and its mutating forms carry a snapshot.
+It is runtime-only.
 
 ### 12.4 The owner loop
 
@@ -943,7 +954,8 @@ Use these traces as navigation exercises. Open each function in sequence.
    `LiveSessionManager::open()`.
 6. The manager inserts a starting actor before starting its owner thread.
 7. `LiveSession::owner_main()` calls the supplied opener.
-8. `open_session()` obtains definitions and a `PreparedSession`.
+8. `open_session()` reads the current forum defaults and obtains a
+   `PreparedSession`.
 9. `SessionController` restores transcript state and repairs any interrupted
    started turn.
 10. The actor commits `running`, publishes a snapshot, and enters its loop.
@@ -1015,16 +1027,15 @@ From the browser:
 
 On the server:
 
-4. `PATCH /api/v1/characters/{id}` validates the names through
-   `load_named_provider()` / `load_named_style()`, writes `character.toml`, and
-   asks sessions in every forum containing the character to shut down with
-   `reloading`.
+4. `PATCH /api/v1/characters/{id}` validates the names through the current
+   `Workspace`, atomically writes `character.toml`, publishes a freshly loaded
+   workspace, and asks sessions in every forum containing the character to shut
+   down with `reloading`.
 5. The stream drops. The browser's existing recovery ladder probes, sees
    `session_not_live`, opens again, and reattaches. It reports `session-snapshot`,
    so the settings screen stays in view. The chat shows "Applying character
    settings…" and no Retry buttons.
-6. `open_session()` re-resolves the forum's definitions from disk, so the
-   reopened session runs the new provider and style.
+6. The reopened session reads the newly published provider and style.
 
 Do not add an explicit `openConversation()` for `reloading`: that dispatch
 would force the main view back to Chat.
@@ -1085,8 +1096,8 @@ Treat snapshots as truth and appends as a verified compression of truth.
 
 | Object | Lifetime/owner | Thread rule |
 | --- | --- | --- |
-| `WorkspaceDefinition` | Process, shared immutable | Concurrent reads only |
-| `SessionRepository` | Process, shared immutable mapping | Concurrent const operations; leases arbitrate sessions |
+| `Workspace` | Atomically published immutable snapshot; replaced snapshots live until their readers release them | Concurrent reads; callers hold one `getws()` shared pointer per operation |
+| `SessionRepository` | Process, independent session-storage owner | Concurrent const operations; leases arbitrate sessions |
 | `LiveSessionManager` | Process web runtime | Internal mutex protects registry/lifecycle coordination |
 | `LiveSession` | Manager entry plus transient route handles | Owner thread mutates session; lifecycle methods synchronize |
 | `SessionController` | One `LiveSession` | Owner thread only |
@@ -1213,7 +1224,7 @@ and before reading all of its implementation.
 | Area | Best starting tests |
 | --- | --- |
 | Transcript invariants | [tests/chat/unit_transcript.cpp](../tests/chat/unit_transcript.cpp) |
-| Provider selection and config validation | [tests/agents/unit_config_loader.cpp](../tests/agents/unit_config_loader.cpp) |
+| Workspace loading and config validation | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp) |
 | Context rules | [tests/agents/unit_model_context.cpp](../tests/agents/unit_model_context.cpp) |
 | Provider request lifecycle | [tests/providers/unit_providers.cpp](../tests/providers/unit_providers.cpp) |
 | Provider protocols | [tests/providers/unit_chat_completions_api.cpp](../tests/providers/unit_chat_completions_api.cpp), [unit_responses_api.cpp](../tests/providers/unit_responses_api.cpp) |
@@ -1221,7 +1232,7 @@ and before reading all of its implementation.
 | Controller transitions | [tests/session/unit_session_controller.cpp](../tests/session/unit_session_controller.cpp) |
 | SQLite catalog/repository | [tests/session/unit_session_catalog.cpp](../tests/session/unit_session_catalog.cpp), [unit_session_repository.cpp](../tests/session/unit_session_repository.cpp) |
 | Cross-process leases | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
-| Workspace generations and SQL snapshots | [tests/application/unit_workspace_runtime.cpp](../tests/application/unit_workspace_runtime.cpp) |
+| Workspace publication and SQL snapshots | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp), [tests/session/unit_session_snapshot.cpp](../tests/session/unit_session_snapshot.cpp) |
 | Actor behavior | [tests/web/unit_live_session.cpp](../tests/web/unit_live_session.cpp) |
 | Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
 | Snapshot/append collapse | [tests/web/unit_sse_mailbox.cpp](../tests/web/unit_sse_mailbox.cpp) |
@@ -1306,7 +1317,7 @@ Work through these in order. Write the answer with symbol names, not only prose.
 
 ### Exercise 1: draw the object graph
 
-Starting at `main()`, draw who owns `WorkspaceDefinition`, `SessionRepository`,
+Starting at `main()`, draw who owns `Workspace`, `SessionRepository`,
 `LiveSessionManager`, `Providers`, routes, a `LiveSession`, its controller,
 journal, active requests, request-local backends, and mailbox. Mark
 `shared_ptr`, `unique_ptr`, value, and borrowed references.
