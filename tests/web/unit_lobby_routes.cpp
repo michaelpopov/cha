@@ -467,18 +467,17 @@ TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderC
     EXPECT_EQ(montaigne_body["provider"], "test");
     EXPECT_FALSE(montaigne_body.contains("provider_overridden_by"));
 
-    // The description is served from what startup read and does not depend on
-    // these settings, so a character.toml edited into an unreadable state must
-    // not take the screen down with it. It reports no settings and no write.
+    // Hand edits do not change the published workspace until an explicit
+    // reload. The detail remains the complete snapshot loaded at startup.
     fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
     const auto damaged = server.client().Get("/api/v1/characters/guide");
     ASSERT_TRUE(damaged);
     ASSERT_EQ(damaged->status, 200);
     const nlohmann::json damaged_body = body(damaged);
     EXPECT_EQ(damaged_body["character_markdown"], guide_body["character_markdown"]);
-    EXPECT_TRUE(damaged_body["provider"].is_null());
-    EXPECT_TRUE(damaged_body["style"].is_null());
-    EXPECT_EQ(damaged_body["writable"], false);
+    EXPECT_EQ(damaged_body["provider"], "test");
+    EXPECT_EQ(damaged_body["style"], "serif-italic");
+    EXPECT_EQ(damaged_body["writable"], true);
 }
 
 // A session reads its definitions on the way up, so one that is still opening
@@ -613,9 +612,12 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
         400, "bad_request");
 
     fixture.write_character_config("display_name = \"Guide\"\nstyle = \n");
-    expect_error(
-        patch_character(server, "guide", {{"provider", "test"}, {"style", nullptr}}),
-        404, "not_found", "That character was not found.");
+    const std::string damaged = read_bytes(path);
+    const auto unchanged = patch_character(
+        server, "guide", {{"provider", "test"}, {"style", nullptr}});
+    ASSERT_TRUE(unchanged);
+    EXPECT_EQ(unchanged->status, 200);
+    EXPECT_EQ(read_bytes(path), damaged);
 }
 
 TEST(LobbyRoutes, ReloadsEveryForumContainingTheChangedCharacter) {

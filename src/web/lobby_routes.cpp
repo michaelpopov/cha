@@ -1,6 +1,7 @@
 #include "web/lobby_routes.h"
 
 #include "workspace/workspace_definition.h"
+#include "workspace/workspace.h"
 #include "workspace/workspace_runtime.h"
 #include "session/not_found_error.h"
 #include "session/session_delete_conflict.h"
@@ -117,39 +118,110 @@ CharacterSummary character_summary(const CharacterMetadata& character) {
     return {character.id, character.display_name, character.description, character.appearance};
 }
 
-CharacterDetail character_detail(
-    const WorkspaceDefinition& model, const CharacterMetadata& character) {
-    CharacterDetail detail{
-        character_summary(character),
-        std::string(model.character_markdown(character.id)),
+CharacterFont character_font(WorkspaceFont value) {
+    switch (value) {
+    case WorkspaceFont::sans: return CharacterFont::sans;
+    case WorkspaceFont::serif: return CharacterFont::serif;
+    case WorkspaceFont::mono: return CharacterFont::mono;
+    }
+    throw std::logic_error("Unknown workspace font");
+}
+
+CharacterSlant character_slant(WorkspaceSlant value) {
+    switch (value) {
+    case WorkspaceSlant::normal: return CharacterSlant::normal;
+    case WorkspaceSlant::italic: return CharacterSlant::italic;
+    }
+    throw std::logic_error("Unknown workspace slant");
+}
+
+CharacterWeight character_weight(WorkspaceWeight value) {
+    switch (value) {
+    case WorkspaceWeight::light: return CharacterWeight::light;
+    case WorkspaceWeight::normal: return CharacterWeight::normal;
+    case WorkspaceWeight::medium: return CharacterWeight::medium;
+    case WorkspaceWeight::semibold: return CharacterWeight::semibold;
+    case WorkspaceWeight::bold: return CharacterWeight::bold;
+    }
+    throw std::logic_error("Unknown workspace weight");
+}
+
+CharacterScale character_scale(WorkspaceTextSize value) {
+    switch (value) {
+    case WorkspaceTextSize::small: return CharacterScale::small;
+    case WorkspaceTextSize::normal: return CharacterScale::normal;
+    case WorkspaceTextSize::large: return CharacterScale::large;
+    }
+    throw std::logic_error("Unknown workspace text size");
+}
+
+CharacterTextColor character_text_color(WorkspaceTextColor value) {
+    switch (value) {
+    case WorkspaceTextColor::normal: return CharacterTextColor::normal;
+    case WorkspaceTextColor::muted: return CharacterTextColor::muted;
+    case WorkspaceTextColor::accent: return CharacterTextColor::accent;
+    }
+    throw std::logic_error("Unknown workspace text color");
+}
+
+CharacterAppearance character_appearance(const WorkspaceAppearance& appearance) {
+    return {
+        .font = character_font(appearance.font),
+        .style = character_slant(appearance.slant),
+        .weight = character_weight(appearance.weight),
+        .size = character_scale(appearance.size),
+        .text_color = character_text_color(appearance.text_color),
     };
-    // One read answers both questions: settings that cannot be read leave the
-    // character read-only rather than being published as unset.
-    const std::optional<CharacterSettings> settings =
-        model.character_settings(character.id);
-    if (settings) {
-        detail.provider = settings->provider;
-        detail.style = settings->style;
+}
+
+CharacterSummary character_summary(const WorkspaceCharacter& character) {
+    return {
+        character.id,
+        character.display_name,
+        character.description,
+        character_appearance(character.appearance),
+    };
+}
+
+std::shared_ptr<const Workspace> published_workspace() {
+    std::shared_ptr<const Workspace> workspace = getws();
+    if (!workspace) throw std::runtime_error("Workspace is not loaded");
+    return workspace;
+}
+
+CharacterDetail character_detail(
+    const Workspace& workspace,
+    const WorkspaceCharacter& character) {
+    CharacterDetail detail{character_summary(character), character.markdown};
+    detail.writable = workspace.character_is_writable(character.id);
+    if (detail.writable) {
+        detail.provider = character.provider_id;
+        detail.style = character.style_id;
     }
-    detail.writable = settings.has_value();
-    for (const AvailableProvider& option : model.available_providers()) {
-        detail.available_providers.push_back({option.id, option.label});
+    for (const WorkspaceProvider& provider : workspace.providers()) {
+        detail.available_providers.push_back({provider.id, provider.label});
     }
-    for (const AvailableStyle& option : model.available_styles()) {
-        detail.available_styles.push_back({option.id, option.label, option.appearance});
+    for (const WorkspaceStyle& style : workspace.styles()) {
+        detail.available_styles.push_back(
+            {style.id, style.label, character_appearance(style.appearance)});
     }
     return detail;
 }
 
 std::vector<std::string> forums_affected_by_save(
-    const WorkspaceDefinition& model,
+    const Workspace& workspace,
     std::string_view character_id,
     bool changed) {
     if (!changed) return {};
     std::vector<std::string> result;
-    for (const ForumInfo& forum : model.forums()) {
-        if (!std::ranges::binary_search(forum.member_ids, character_id)) continue;
-        result.push_back(forum.id);
+    for (const WorkspaceForum& forum : workspace.forums()) {
+        if (std::ranges::any_of(
+                forum.members,
+                [character_id](const WorkspaceForumMember& member) {
+                    return member.character_id == character_id;
+                })) {
+            result.push_back(forum.id);
+        }
     }
     return result;
 }
@@ -171,6 +243,39 @@ ForumSummary forum_summary(const ForumInfo& forum, const WorkspaceDefinition& mo
     std::sort(result.members.begin(), result.members.end(), [](const CharacterSummary& left, const CharacterSummary& right) {
         return fold_ascii(left.display_name) < fold_ascii(right.display_name);
     });
+    return result;
+}
+
+ForumSummary forum_summary(
+    const WorkspaceForum& forum,
+    const Workspace& workspace) {
+    const WorkspacePersona* persona =
+        workspace.find_persona(forum.default_persona_id);
+    if (persona == nullptr) {
+        throw std::runtime_error("Forum default persona is absent from the workspace");
+    }
+    ForumSummary result{
+        .id = forum.id,
+        .display_name = forum.display_name,
+        .description = forum.description,
+        .default_character_id = forum.default_character_id,
+        .default_persona_id = forum.default_persona_id,
+        .default_persona_display_name = persona->display_name,
+    };
+    result.members.reserve(forum.members.size());
+    for (const WorkspaceForumMember& member : forum.members) {
+        const WorkspaceCharacter* character =
+            workspace.find_character(member.character_id);
+        if (character == nullptr) {
+            throw std::runtime_error("Forum member is absent from the workspace");
+        }
+        result.members.push_back(character_summary(*character));
+    }
+    std::ranges::sort(
+        result.members, {},
+        [](const CharacterSummary& character) {
+            return fold_ascii(character.display_name);
+        });
     return result;
 }
 
@@ -279,6 +384,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
         try {
             (void)backup_workspace(workspace->root(), backup_dir);
             workspace->reload();
+            loadws(workspace->root());
         } catch (const std::bad_alloc&) {
             throw;
         } catch (const std::exception& error) {
@@ -292,35 +398,34 @@ void LobbyRoutes::install(httplib::Server& server) const {
             bootstrap_for(*current->model, *current->sessions, initial)));
     });
 
-    server.Get(R"(/api/v1/characters/([^/]+))", [workspace](const httplib::Request& request, httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& model = current->model;
+    server.Get(R"(/api/v1/characters/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
+        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That character was not found.");
         }
-        const CharacterMetadata* character = model->find_character(id);
+        const WorkspaceCharacter* character = workspace->find_character(id);
         if (character == nullptr) {
             return set_route_not_found(response, "That character was not found.");
         }
-        set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
+        set_json_response(response, 200, nlohmann::json(character_detail(*workspace, *character)));
     });
 
     server.Patch(R"(/api/v1/characters/([^/]+))",
-        [workspace, live_sessions, settings](const httplib::Request& request,
-                                         httplib::Response& response) {
-        const auto current_generation = workspace->snapshot();
-        const auto& model = current_generation->model;
+        [live_sessions, settings](const httplib::Request& request,
+                                  httplib::Response& response) {
+        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That character was not found.");
         }
-        const CharacterMetadata* character = model->find_character(id);
+        const WorkspaceCharacter* character = workspace->find_character(id);
         if (character == nullptr) {
             return set_route_not_found(response, "That character was not found.");
         }
-        const std::optional<CharacterSettings> current = model->character_settings(id);
-        if (!current) return set_route_not_found(response, "That character was not found.");
+        if (!workspace->character_is_writable(id)) {
+            return set_route_not_found(response, "That character was not found.");
+        }
         if (!validate_json_mutation(request, response)) return;
         CharacterSettingsUpdate update;
         if (!parse_route_json_body(
@@ -328,30 +433,42 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&update](const nlohmann::json& json) {
                     update = parse_character_settings_update(json);
                 })) return;
-        CharacterSettingsChange change;
+        const bool changed = update.provider != character->provider_id
+            || update.style != character->style_id;
         try {
-            change = model->write_character_settings(id, update.provider, update.style);
+            const std::optional<std::string_view> style = update.style
+                ? std::optional<std::string_view>(*update.style) : std::nullopt;
+            if (changed) {
+                workspace->write_character_settings(id, update.provider, style);
+                loadws(workspace->root());
+            }
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid provider or style."});
         }
-        if (change.any()) {
+        if (changed) {
             request_reload(
                 *live_sessions,
                 forums_affected_by_save(
-                    *model, id, change.any()));
+                    *workspace, id, changed));
         }
-        set_json_response(response, 200, nlohmann::json(character_detail(*model, *character)));
+        const auto current = published_workspace();
+        const WorkspaceCharacter* updated = current->find_character(id);
+        if (updated == nullptr) {
+            return set_route_not_found(response, "That character was not found.");
+        }
+        set_json_response(
+            response, 200,
+            nlohmann::json(character_detail(*current, *updated)));
     });
 
-    server.Get(R"(/api/v1/personas/([^/]+))", [workspace](const httplib::Request& request, httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& model = current->model;
+    server.Get(R"(/api/v1/personas/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
+        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That persona was not found.");
         }
-        const Persona* const persona = model->find_persona(id);
+        const WorkspacePersona* const persona = workspace->find_persona(id);
         if (persona == nullptr) {
             return set_route_not_found(response, "That persona was not found.");
         }
@@ -361,16 +478,15 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     // `[^/]+` cannot span the separator, so this never shadows the session
     // routes registered below it.
-    server.Get(R"(/api/v1/forums/([^/]+))", [workspace](const httplib::Request& request, httplib::Response& response) {
-        const auto current = workspace->snapshot();
-        const auto& model = current->model;
+    server.Get(R"(/api/v1/forums/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
+        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) return set_route_not_found(response);
-        const ForumInfo* const forum = model->find_forum(id);
+        const WorkspaceForum* const forum = workspace->find_forum(id);
         if (forum == nullptr) return set_route_not_found(response);
         set_json_response(response, 200, nlohmann::json(ForumDetail{
-            forum_summary(*forum, *model),
-            std::string(model->forum_markdown(id))}));
+            forum_summary(*forum, *workspace),
+            forum->prompt_template}));
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [workspace, live_sessions](const httplib::Request& request, httplib::Response& response) {

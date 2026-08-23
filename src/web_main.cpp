@@ -1,4 +1,5 @@
 #include "workspace/builtins.h"
+#include "workspace/workspace.h"
 #include "workspace/workspace_runtime.h"
 #include "providers/providers.h"
 #include "web/application_config.h"
@@ -54,6 +55,7 @@ int prepare_and_run(int argc, const char* argv[]) {
 
     const WorkspaceConfig workspace_config = load_workspace_config(app.workspace);
     initialize_diagnostic_logging(workspace_config.log_file, workspace_config.log_level);
+    loadws(app.workspace);
 
     const auto seed = TemporarySessionSeed{{std::string(entrance_id), std::string(welcome_id)}, std::string(welcome_name)};
     const auto workspace = std::make_shared<WorkspaceRuntime>(app.workspace, seed);

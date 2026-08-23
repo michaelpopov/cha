@@ -2,6 +2,7 @@
 
 #include "workspace/builtins.h"
 #include "workspace/session_open.h"
+#include "workspace/workspace.h"
 #include "workspace/workspace_definition.h"
 #include "workspace/workspace_runtime.h"
 #include "providers/providers.h"
@@ -28,7 +29,9 @@ public:
               root_,
               TemporarySessionSeed{
                   {std::string(entrance_id), std::string(welcome_id)},
-                  std::string(welcome_name)})) {}
+                  std::string(welcome_name)})) {
+        loadws(root_);
+    }
 
     const std::filesystem::path& root() const noexcept { return root_; }
 
