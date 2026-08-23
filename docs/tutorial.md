@@ -74,6 +74,8 @@ flowchart LR
     Manager["LiveSessionManager"]
     Actor["LiveSession owner thread"]
     Controller["SessionController"]
+    Workspace["Published immutable Workspace"]
+    Repository["SessionRepository"]
     Journal["SessionJournal / SQLite"]
     Providers["Process Providers supervisor"]
     Request["ProviderRequest"]
@@ -82,9 +84,12 @@ flowchart LR
     Mailbox["SseMailbox"]
 
     Browser -->|"JSON commands"| Routes
+    Routes -->|"getws() reads"| Workspace
+    Routes --> Repository
     Routes -->|"queued WebCommand"| Actor
     Manager -->|"owns and locates"| Actor
     Actor -->|"only caller"| Controller
+    Controller -->|"getws() lookups"| Workspace
     Controller --> Journal
     Controller -->|"retains while presenting"| Request
     Providers -->|"supervises while active"| Request
@@ -366,7 +371,7 @@ The loader treats the workspace as one configuration unit:
 - It loads persona metadata and optional `PERSONA.md` prompts.
 - It validates every forum's members, default character, and default persona,
   the last of which becomes the starting author for sessions in that forum.
-- It resolves every forum's effective character definitions immediately.
+- It validates every forum member's character, provider, and style references.
 - It builds indexes and fully resolved forum-member prompt values.
 - It adds the built-in Guest persona, Assistant character, and Entrance forum.
 
@@ -379,6 +384,12 @@ sessions keep their identity and runtime state, then query the current
 workspace when they need forum, persona, character, provider, or style data.
 Provider requests alone own the exact resolved input they are already running.
 Disk edits are invisible until the next successful `loadws()`.
+
+There is no `WorkspaceRuntime`, `WorkspaceGeneration`, or copied forum-roster
+object. A candidate reload is simply a temporary `Workspace`. Once fully loaded
+and validated, `loadws()` atomically makes it current. Callers use one `getws()`
+result for the duration of an operation, so references into that immutable
+snapshot remain valid even if another thread publishes its replacement.
 
 ### 8.2 Publication and reload
 
@@ -627,6 +638,14 @@ The protocol modules intentionally know nothing about curl, HTTP status, or
 cancellation. `ProviderClient::perform()` decides the final outcome after the
 transport completes and may add HTTP metadata to a decoder error.
 
+Streaming needs state across arbitrary network chunks. One
+`ChatCompletionsStreamDecoder` or `ResponsesStreamDecoder` is therefore created
+per streaming request. It retains incomplete SSE framing, protocol completion,
+token usage, and whether reasoning or answer text was received, then is
+destroyed with that request. The common `StreamingResponseDecoder` interface
+lets `ProviderClient` select the protocol without owning either protocol's
+parsing state.
+
 Checkpoint: describe what happens if a streaming response contains reasoning
 but no answer, and identify which layer detects it and which layer converts it
 into a transcript error.
@@ -662,8 +681,11 @@ queues, cancellation flags, and the wake mechanism.
 
 `Workspace` is the forum roster and handle resolver. It centralizes exact,
 normalized, and prefix matching plus ambiguity diagnostics, so prompt
-submission, multicast, and default-character changes use the same rules. The smaller
-`generation_status.h`, `controller_view.h`, and `opened_session.h` headers are
+submission, multicast, and default-character changes use the same rules.
+`SessionController` keeps no copied roster; its style-override map stores only
+style IDs and overlays the selected appearance when metadata is copied for a
+request or presentation. The smaller `generation_status.h`,
+`controller_view.h`, and `opened_session.h` headers are
 boundary value types: they let application and web code observe or transfer
 session state without gaining access to controller internals.
 
@@ -932,7 +954,8 @@ Use these traces as navigation exercises. Open each function in sequence.
    `LiveSessionManager::open()`.
 6. The manager inserts a starting actor before starting its owner thread.
 7. `LiveSession::owner_main()` calls the supplied opener.
-8. `open_session()` obtains definitions and a `PreparedSession`.
+8. `open_session()` reads the current forum defaults and obtains a
+   `PreparedSession`.
 9. `SessionController` restores transcript state and repairs any interrupted
    started turn.
 10. The actor commits `running`, publishes a snapshot, and enters its loop.
@@ -1073,7 +1096,7 @@ Treat snapshots as truth and appends as a verified compression of truth.
 
 | Object | Lifetime/owner | Thread rule |
 | --- | --- | --- |
-| `Workspace` | Process, atomically published immutable snapshot | Concurrent reads; callers hold the `getws()` shared pointer |
+| `Workspace` | Atomically published immutable snapshot; replaced snapshots live until their readers release them | Concurrent reads; callers hold one `getws()` shared pointer per operation |
 | `SessionRepository` | Process, independent session-storage owner | Concurrent const operations; leases arbitrate sessions |
 | `LiveSessionManager` | Process web runtime | Internal mutex protects registry/lifecycle coordination |
 | `LiveSession` | Manager entry plus transient route handles | Owner thread mutates session; lifecycle methods synchronize |
