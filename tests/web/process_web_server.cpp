@@ -996,7 +996,7 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;
     LobbyRoutes(
-        graph.runtime, test::WebGraph::initial_selection(),
+        graph.sessions(), test::WebGraph::initial_selection(),
         live_sessions, graph.root() / "backups", settings).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);

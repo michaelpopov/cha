@@ -8,6 +8,7 @@
 #include "session/session_lease.h"
 #include "util/logging.h"
 #include "util/path_name.h"
+#include "workspace/workspace.h"
 
 #include <chrono>
 #include <filesystem>
@@ -54,17 +55,11 @@ void move_sidecar_if_present(
 } // namespace
 
 SessionRepository::SessionRepository(
-    std::vector<ForumSessionDirectory> persistent,
+    std::filesystem::path workspace_root,
     TemporarySessionSeed temporary)
-    : temporary_identity_(std::move(temporary.identity)),
+    : workspace_root_(std::move(workspace_root)),
+      temporary_identity_(std::move(temporary.identity)),
       temporary_label_(std::move(temporary.label)) {
-    for (ForumSessionDirectory& forum : persistent) {
-        if (forum.forum_id == temporary_identity_.forum_id) {
-            throw std::invalid_argument(
-                "Forum '" + forum.forum_id + "' collides with the temporary session forum");
-        }
-        persistent_.emplace(std::move(forum.forum_id), std::move(forum.directory));
-    }
     temporary_directory_ = create_private_directory();
     try {
         std::filesystem::permissions(
@@ -96,11 +91,16 @@ SessionCatalog SessionRepository::catalog_for(std::string_view forum_id) const {
     if (forum_id == temporary_identity_.forum_id) {
         return SessionCatalog(temporary_directory_, temporary_identity_.forum_id);
     }
-    const auto found = persistent_.find(std::string(forum_id));
-    if (found == persistent_.end()) {
+    const std::shared_ptr<const Workspace> workspace = getws();
+    if (!workspace || workspace->root() != workspace_root_) {
+        throw std::runtime_error("Session repository has no matching loaded workspace");
+    }
+    const std::optional<std::filesystem::path> directory =
+        workspace->forum_session_directory(forum_id);
+    if (!directory) {
         throw ForumNotFoundError("Forum '" + std::string(forum_id) + "' does not exist");
     }
-    return SessionCatalog(found->second, std::string(forum_id));
+    return SessionCatalog(*directory, std::string(forum_id));
 }
 
 std::vector<StoredSession> SessionRepository::list(std::string_view forum_id) const {

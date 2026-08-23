@@ -1,12 +1,11 @@
 #pragma once
 
-#include "chat/character.h"
 #include "session/generation_status.h"
 #include "chat/transcript.h"
 
 #include <optional>
-#include <span>
 #include <string_view>
+#include <unordered_map>
 
 namespace cha {
 
@@ -29,10 +28,9 @@ struct ControllerGenerationView {
 // never be stored in a runtime field, moved into a mailbox, or captured by
 // work that can outlive the call that produced it.
 struct ControllerView {
-    std::span<const CharacterMetadata> characters;
     std::string_view default_character_id;
     std::string_view default_persona_id;
-    std::string_view default_persona_display_name;
+    const std::unordered_map<CharacterId, std::string>* style_overrides{};
     TranscriptView transcript;
     ControllerGenerationView generation;
 };

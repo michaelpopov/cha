@@ -1,7 +1,8 @@
 #include "workspace/builtins.h"
+#include "workspace/session_open.h"
 #include "workspace/workspace.h"
-#include "workspace/workspace_runtime.h"
 #include "providers/providers.h"
+#include "session/session_repository.h"
 #include "web/application_config.h"
 #include "web/asset_handler.h"
 #include "web/http_server.h"
@@ -31,7 +32,7 @@ static int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
     const std::filesystem::path& backup_dir,
-    const std::shared_ptr<WorkspaceRuntime>& workspace,
+    const std::shared_ptr<const SessionRepository>& sessions,
     LiveSessionManager& live_sessions,
     const WebSettings& settings);
 static void log_web_server_startup(const WebSettings& settings);
@@ -53,23 +54,25 @@ int prepare_and_run(int argc, const char* argv[]) {
     WebSettings settings;
     configure_test_idle_grace(settings, app);
 
-    const WorkspaceConfig workspace_config = load_workspace_config(app.workspace);
-    initialize_diagnostic_logging(workspace_config.log_file, workspace_config.log_level);
     loadws(app.workspace);
+    const std::shared_ptr<const Workspace> workspace = getws();
+    initialize_diagnostic_logging(
+        workspace->settings().log_file, workspace->settings().log_level);
 
     const auto seed = TemporarySessionSeed{{std::string(entrance_id), std::string(welcome_id)}, std::string(welcome_name)};
-    const auto workspace = std::make_shared<WorkspaceRuntime>(app.workspace, seed);
+    const auto sessions =
+        std::make_shared<const SessionRepository>(app.workspace, seed);
     Providers providers;
 
-    auto opener = [workspace, &providers](
+    auto opener = [sessions, &providers](
                       const SessionIdentity& identity,
                       std::shared_ptr<WakeNotifier> notifier) {
-        return workspace->open_session(identity, providers, std::move(notifier));
+        return open_session(*sessions, identity, providers, std::move(notifier));
     };
     LiveSessionManager live_sessions(settings, opener);
 
     const int result = run_web_server(
-        app.host, app.port, app.root, app.backup_dir, workspace, live_sessions, settings);
+        app.host, app.port, app.root, app.backup_dir, sessions, live_sessions, settings);
     providers.shutdown();
     shutdown_diagnostic_logging();
     return result;
@@ -79,7 +82,7 @@ int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
     const std::filesystem::path& backup_dir,
-    const std::shared_ptr<WorkspaceRuntime>& workspace,
+    const std::shared_ptr<const SessionRepository>& sessions,
     LiveSessionManager& live_sessions,
     const WebSettings& settings) {
 
@@ -90,7 +93,7 @@ int run_web_server(
     assets.install(server);
 
     const InitialSelection initial{{std::string(entrance_id), std::string(welcome_id)}};
-    LobbyRoutes(workspace, initial, live_sessions, backup_dir, settings).install(server);
+    LobbyRoutes(sessions, initial, live_sessions, backup_dir, settings).install(server);
     SessionRoutes(live_sessions, settings, assets).install(server);
 
     log_web_server_startup(settings);

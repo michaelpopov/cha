@@ -8,6 +8,7 @@
 #include "support/test_session_database.h"
 #include "support/test_transcript.h"
 #include "util/path_name.h"
+#include "workspace/workspace.h"
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -496,37 +497,6 @@ SessionRestore restore_with(
         .next_request_id = next_request_id,
         .next_entry_id = next_entry_id,
     };
-}
-
-TEST(SessionController, RejectsEmptyCharacterConfiguration) {
-    TemporaryJournal temporary;
-
-    try {
-        (void)test::from_definitions_for_testing(
-            {}, temporary.path, notifier());
-        FAIL() << "Expected empty-character configuration rejection";
-    } catch (const std::invalid_argument& error) {
-        EXPECT_EQ(
-            error.what(),
-            std::string("Generation requires at least one character"));
-    }
-}
-
-TEST(SessionController, RejectsAnEmptyPersonaRoster) {
-    TemporaryJournal temporary;
-
-    try {
-        (void)test::from_test_backends(
-            test::one_backend(std::make_unique<ScriptedBackend>()),
-            PersonaRoster{},
-            temporary.path,
-            notifier());
-        FAIL() << "Expected empty-persona-roster rejection";
-    } catch (const std::invalid_argument& error) {
-        EXPECT_EQ(
-            error.what(),
-            std::string("Session controller requires at least one persona"));
-    }
 }
 
 TEST(SessionController, RejectsUnknownInitialDefaultCharacterID) {
@@ -1936,9 +1906,11 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumCharac
         {"forum", "session"});
 
     EXPECT_EQ(controller->view().default_character_id, "ismael-id");
-    ASSERT_EQ(controller->view().characters.size(), 2U);
-    EXPECT_EQ(controller->view().characters[0].id, "guide-id");
-    EXPECT_EQ(controller->view().characters[1].id, "ismael-id");
+    const WorkspaceForum* const forum = getws()->find_forum("forum");
+    ASSERT_NE(forum, nullptr);
+    ASSERT_EQ(forum->members.size(), 2U);
+    EXPECT_EQ(forum->members[0].character_id, "guide-id");
+    EXPECT_EQ(forum->members[1].character_id, "ismael-id");
 
     (void)controller->submit_prompt("operator", "initial default");
     receive_until_idle(*controller);
@@ -2038,7 +2010,8 @@ TEST(SessionController, ResolvesCurrentPersonaByIdOrDisplayNamePrefix) {
     EXPECT_TRUE(requires_snapshot(by_name));
     EXPECT_EQ(by_name.notice, "Current persona is now Reader");
     EXPECT_EQ(controller->view().default_persona_id, "reader");
-    EXPECT_EQ(controller->view().default_persona_display_name, "Reader");
+    ASSERT_NE(getws()->find_persona("reader"), nullptr);
+    EXPECT_EQ(getws()->find_persona("reader")->display_name, "Reader");
 
     const ControllerUpdate by_id = controller->set_default_persona("MICHAEL");
     EXPECT_EQ(by_id.notice, "Current persona is now Michael");
@@ -2056,7 +2029,7 @@ TEST(SessionController, ResolvesCurrentPersonaByIdOrDisplayNamePrefix) {
         "Ambiguous persona !mic: matches !Michael, !Michelle. Type more of the name.");
     EXPECT_EQ(
         controller->set_default_persona("nobody").notice,
-        "Unknown persona !nobody. Personas in this workspace: !Michael, !Michelle, !Reader");
+        "Unknown persona !nobody. Personas in this workspace: !Guest, !Michael, !Michelle, !Reader");
 }
 
 // Foreign-history addressing is a transcript concern; covered in persona_session/transcript tests.
@@ -2320,7 +2293,7 @@ CharacterDefinition provider_test_definition(
 
 TEST(SessionController, ThreadLaunchFailureClosesTheCommittedTurn) {
     TemporaryJournal temporary;
-    auto controller = test::from_definitions_for_testing(
+    auto controller = test::from_test_workspace(
         {provider_test_definition("guide-id", "Guide")},
         temporary.path,
         notifier(),
@@ -2404,16 +2377,6 @@ CharacterAppearance style_configured_appearance() {
             CharacterScale::small};
 }
 
-SessionController::StyleResolver style_stub_resolver() {
-    return [](std::string_view name) -> CharacterAppearance {
-        if (name == "bold") return bold_appearance();
-        throw std::invalid_argument(
-            "Style '" + std::string(name)
-            + "' is not usable: no style config is installed under this name. "
-              "Available styles: bold");
-    };
-}
-
 CharacterDefinition style_test_definition(std::string id, std::string name) {
     CharacterDefinition definition =
         provider_test_definition(std::move(id), std::move(name));
@@ -2435,13 +2398,22 @@ test::TestController style_test_controller(
         provider_recording_factory(observation),
         {},
         {},
-        style_stub_resolver());
+        {{"bold", bold_appearance()}});
 }
 
 CharacterAppearance appearance_in_view(
     SessionController& controller, std::string_view id) {
-    for (const CharacterMetadata& character : controller.view().characters) {
-        if (character.id == id) return character.appearance;
+    const std::shared_ptr<const Workspace> workspace = getws();
+    const WorkspaceCharacter* const character = workspace->find_character(id);
+    if (character != nullptr) {
+        CharacterAppearance appearance = character->character.appearance;
+        const ControllerView view = controller.view();
+        const auto selected = view.style_overrides->find(std::string(id));
+        if (selected != view.style_overrides->end()) {
+            const WorkspaceStyle* const style = workspace->find_style(selected->second);
+            if (style != nullptr) appearance = style->appearance;
+        }
+        return appearance;
     }
     ADD_FAILURE() << "character not in view: " << id;
     return {};
@@ -2543,7 +2515,7 @@ TEST(SessionController, StyleCommandsStayIdleWhileRecording) {
     EXPECT_EQ(appearance_in_view(*controller, "guide-id"), style_configured_appearance());
 }
 
-TEST(SessionController, StyleResolverFailureLeavesTheAppearanceAlone) {
+TEST(SessionController, UnknownStyleLeavesTheAppearanceAlone) {
     TemporaryJournal temporary;
     auto observation = std::make_shared<ProviderFactoryObservation>();
     auto controller = style_test_controller(
@@ -2555,35 +2527,15 @@ TEST(SessionController, StyleResolverFailureLeavesTheAppearanceAlone) {
     EXPECT_FALSE(requires_snapshot(unknown));
     EXPECT_EQ(
         unknown.notice,
-        "Style 'nope' is not usable: no style config is installed under this name. "
-        "Available styles: bold");
+        "Unknown style 'nope'. Available styles: bold configured-0");
     EXPECT_EQ(appearance_in_view(*controller, "guide-id"), style_configured_appearance());
     EXPECT_EQ(
         controller->set_session_style("").notice,
         "Guide is using its configured style for this session.");
 
-    // The resolver reads the filesystem, so it can fail in ways its own contract
-    // does not name. One mistyped style must still not fail the session.
-    test::TestController throwing(
-        std::vector<CharacterDefinition>{style_test_definition("guide-id", "Guide")},
-        test::operator_roster(),
-        "guide-id",
-        temporary.path,
-        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
-        {},
-        provider_recording_factory(observation),
-        {},
-        {},
-        [](std::string_view) -> CharacterAppearance {
-            throw std::runtime_error("styles directory is unreadable");
-        });
-    EXPECT_EQ(
-        throwing->set_session_style("bold").notice,
-        "styles directory is unreadable");
-    throwing->shutdown();
 }
 
-TEST(SessionController, StyleOverrideNeedsAResolver) {
+TEST(SessionController, UnknownStyleIsReportedFromWorkspace) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
@@ -2592,7 +2544,7 @@ TEST(SessionController, StyleOverrideNeedsAResolver) {
 
     const ControllerUpdate update = controller->set_session_style("bold");
     EXPECT_TRUE(update.input_consumed);
-    EXPECT_EQ(update.notice, "Style override is not available in this session.");
+    EXPECT_EQ(update.notice, "Unknown style 'bold'. Available styles:");
 }
 
 TEST(SessionController, ClearingTheTranscriptKeepsTheStyleOverride) {

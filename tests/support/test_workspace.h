@@ -1,8 +1,13 @@
 #pragma once
 
+#include "characters/character.h"
+#include "chat/persona.h"
+#include "session/session_identity.h"
+
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha::test {
 
@@ -36,5 +41,27 @@ public:
 private:
     std::filesystem::path root_;
 };
+
+struct TestWorkspaceStyle {
+    std::string id;
+    CharacterAppearance appearance;
+};
+
+struct PublishedTestWorkspace {
+    SessionIdentity identity;
+    std::string default_persona_id;
+};
+
+// Writes and publishes one complete, real Workspace for a controller test.
+// CharacterDefinition is only convenient fixture input; SessionController
+// never receives it and reads the resulting values through getws().
+PublishedTestWorkspace publish_test_workspace(
+    const std::vector<CharacterDefinition>& definitions,
+    const PersonaRoster& personas,
+    std::string_view default_character_id,
+    const std::filesystem::path& database_path,
+    SessionIdentity identity = {},
+    const std::vector<TestWorkspaceStyle>& styles = {},
+    bool reuse_current = false);
 
 } // namespace cha::test

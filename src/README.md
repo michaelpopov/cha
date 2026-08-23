@@ -23,14 +23,14 @@ commands to a registry-owned session thread.
 ## Composition root
 
 `web_main.cpp` owns only process wiring and top-level error handling. It loads
-configuration, assembles the reloadable workspace runtime, live-session manager,
-routes, assets, HTTP listener, and shutdown coordinator, then starts the
-server. Reusable workspace policy remains in `workspace/`, and HTTP/SSE policy
-remains in `web/`.
+and publishes the workspace, constructs the process-owned session repository,
+live-session manager, routes, assets, HTTP listener, and shutdown coordinator,
+then starts the server. Reusable workspace policy remains in `workspace/`, and
+HTTP/SSE policy remains in `web/`.
 
 Declaration order in the composition root also defines shutdown order: the HTTP
-server and live-session owners are released before the workspace runtime, and
-diagnostic logging remains available until their teardown finishes.
+server and live-session owners are released before the repository and provider
+supervisor, and diagnostic logging remains available until teardown finishes.
 
 ## Directories
 
@@ -40,7 +40,7 @@ diagnostic logging remains available until their teardown finishes.
 | `workspace/` | The loaded workspace model, built-ins, and the one controller-opening operation. |
 | `session/` | Session storage, databases and leases, controller state, persistence, and character resolution. |
 | `providers/` | Provider transport, request execution, cancellation, protocol decoding, and event delivery. |
-| `characters/` | Character and provider configuration, immutable definitions, prompt assembly, and model context. |
+| `characters/` | Request-owned character/provider values, identity validation, and model context. |
 | `chat/` | Stable domain IDs plus presentation-neutral transcript records, validation, and live mutation. |
 | `util/` | Domain-neutral text, path, environment, logging, queue, and thread helpers. |
 | `../webapp/` | React browser application and its browser tests. |
@@ -78,15 +78,13 @@ are stored and used in routes; display names and labels are presentation data.
 Opening a session validates that its database metadata matches its forum,
 filename, and schema before restoring it.
 
-One `WorkspaceGeneration` holds an immutable definition and matching session
-repository. `POST /api/v1/workspace/reload` first shuts down and joins every
-live session, then builds and publishes a new generation only after full
-validation succeeds. A failed candidate leaves the old generation published.
-A session open re-resolves that forum's
-character definitions from disk, so a saved provider or style — and a hand edit
-to `CHARACTER.md`, member configs, or the forum context — reach the next session
-without a workspace reload. Session listings are read from storage per request,
-so newly created sessions appear without a reload.
+One immutable `Workspace` is published process-wide, while one independent
+`SessionRepository` owns session-storage operations. `POST
+/api/v1/workspace/reload` first shuts down and joins every live session, then
+loads, validates, synchronizes, and atomically publishes one replacement. A
+failed candidate leaves the current workspace published. Disk configuration
+edits become visible only after a successful reload. Session listings are read
+from storage per request, so newly created sessions appear without a reload.
 
 ## Build and test map
 

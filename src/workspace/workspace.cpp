@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <mutex>
 #include <ranges>
@@ -253,90 +254,100 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
     WorkspaceProvider provider{
         .id = id,
         .label = option_label(id),
-        .host = required_string(table, path, "host"),
-        .port = optional_value<int>(table, path, "port", "an integer").value_or(0),
-        .base_path = optional_value<std::string>(table, path, "base_path", "a string")
-                         .value_or(""),
-        .mode = choice(
-            table, path, "mode",
-            {{"net", WorkspaceProviderMode::net},
-             {"test", WorkspaceProviderMode::test}},
-            WorkspaceProviderMode::test),
-        .model = required_string(table, path, "model"),
-        .stream = optional_value<bool>(table, path, "stream", "a boolean")
-                      .value_or(true),
-        .temperature = optional_value<double>(
-            table, path, "temperature", "a number"),
-        .max_tokens = optional_value<int>(
-            table, path, "max_tokens", "an integer"),
-        .timeout_s = optional_value<int>(
-            table, path, "timeout_s", "an integer").value_or(600),
-        .idle_timeout_s = optional_value<int>(
-            table, path, "idle_timeout_s", "an integer").value_or(60),
-        .api_key_env = optional_value<std::string>(
-            table, path, "api_key_env", "a string").value_or(""),
-        .reasoning_effort = optional_value<std::string>(
-            table, path, "reasoning_effort", "a string").value_or(""),
-        .reasoning_format = choice(
-            table, path, "reasoning_format",
-            {{"auto", WorkspaceReasoningFormat::automatic},
-             {"none", WorkspaceReasoningFormat::none},
-             {"reasoning_content", WorkspaceReasoningFormat::reasoning_content},
-             {"reasoning", WorkspaceReasoningFormat::reasoning}},
-            WorkspaceReasoningFormat::automatic),
-        .https = optional_value<bool>(table, path, "https", "a boolean")
-                     .value_or(false),
-        .api = choice(
-            table, path, "api",
-            {{"chat_completions", WorkspaceProviderApi::chat_completions},
-             {"responses", WorkspaceProviderApi::responses}},
-            WorkspaceProviderApi::responses),
-        .web_search = choice(
-            table, path, "web_search",
-            {{"off", WorkspaceWebSearch::off},
-             {"auto", WorkspaceWebSearch::automatic},
-             {"required", WorkspaceWebSearch::required}},
-            WorkspaceWebSearch::required),
-        .cache_retention = choice(
-            table, path, "cache_retention",
-            {{"off", WorkspaceCacheRetention::off},
-             {"short", WorkspaceCacheRetention::short_},
-             {"long", WorkspaceCacheRetention::long_}},
-            WorkspaceCacheRetention::short_),
+        .config = {
+            .host = required_string(table, path, "host"),
+            .port = optional_value<int>(table, path, "port", "an integer").value_or(0),
+            .base_path = optional_value<std::string>(
+                table, path, "base_path", "a string").value_or(""),
+            .mode = choice(
+                table, path, "mode",
+                {{"net", Mode::net}, {"test", Mode::test}}, Mode::test),
+            .model = required_string(table, path, "model"),
+            .stream = optional_value<bool>(table, path, "stream", "a boolean")
+                          .value_or(true),
+            .temperature = optional_value<double>(
+                table, path, "temperature", "a number"),
+            .max_tokens = optional_value<int>(
+                table, path, "max_tokens", "an integer"),
+            .timeout_s = optional_value<int>(
+                table, path, "timeout_s", "an integer").value_or(600),
+            .idle_timeout_s = optional_value<int>(
+                table, path, "idle_timeout_s", "an integer").value_or(60),
+            .api_key_env = optional_value<std::string>(
+                table, path, "api_key_env", "a string").value_or(""),
+            .reasoning_effort = optional_value<std::string>(
+                table, path, "reasoning_effort", "a string").value_or(""),
+            .reasoning_format = choice(
+                table, path, "reasoning_format",
+                {{"auto", ReasoningFormat::automatic},
+                 {"none", ReasoningFormat::none},
+                 {"reasoning_content", ReasoningFormat::reasoning_content},
+                 {"reasoning", ReasoningFormat::reasoning}},
+                ReasoningFormat::automatic),
+            .https = optional_value<bool>(table, path, "https", "a boolean")
+                         .value_or(false),
+            .api = choice(
+                table, path, "api",
+                {{"chat_completions", ProviderApi::chat_completions},
+                 {"responses", ProviderApi::responses}},
+                ProviderApi::responses),
+            .web_search = choice(
+                table, path, "web_search",
+                {{"off", WebSearchMode::off},
+                 {"auto", WebSearchMode::automatic},
+                 {"required", WebSearchMode::required}},
+                WebSearchMode::required),
+            .cache_retention = choice(
+                table, path, "cache_retention",
+                {{"off", CacheRetention::off},
+                 {"short", CacheRetention::short_},
+                 {"long", CacheRetention::long_}},
+                CacheRetention::short_),
+        },
     };
 
-    if (provider.port < 1 || provider.port > 65535) {
+    const ModelBackendConfig& config = provider.config;
+    if (config.port < 1 || config.port > 65535) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path)
             + "' requires port between 1 and 65535");
     }
-    if (provider.temperature
-        && (!std::isfinite(*provider.temperature)
-            || *provider.temperature < 0.0 || *provider.temperature > 2.0)) {
+    if (config.temperature
+        && (!std::isfinite(*config.temperature)
+            || *config.temperature < 0.0 || *config.temperature > 2.0)) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path)
             + "' requires temperature between 0 and 2");
     }
-    if (provider.max_tokens && *provider.max_tokens <= 0) {
+    if (config.max_tokens && *config.max_tokens <= 0) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path) + "' requires positive max_tokens");
     }
-    if (provider.timeout_s <= 0 || provider.idle_timeout_s <= 0) {
+    if (config.timeout_s <= 0 || config.idle_timeout_s <= 0) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path) + "' requires positive timeouts");
     }
-    if (!provider.base_path.empty()
-        && (!provider.base_path.starts_with('/')
-            || provider.base_path.ends_with('/')
-            || provider.base_path.find_first_of("?# \t\r\n") != std::string::npos)) {
+    if (!config.base_path.empty()
+        && (!config.base_path.starts_with('/')
+            || config.base_path.ends_with('/')
+            || config.base_path.find_first_of("?# \t\r\n") != std::string::npos)) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path) + "' has invalid base_path");
     }
-    if (provider.web_search != WorkspaceWebSearch::off
-        && provider.api != WorkspaceProviderApi::responses) {
+    if (config.web_search != WebSearchMode::off
+        && config.api != ProviderApi::responses) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path)
             + "' enables web search for a non-Responses API");
+    }
+    if (!config.api_key_env.empty()) {
+        const char* const value = std::getenv(config.api_key_env.c_str());
+        if (value == nullptr || *value == '\0') {
+            throw std::runtime_error(
+                "Provider config '" + utf8_path(path)
+                + "' requires non-empty environment variable '"
+                + config.api_key_env + "'");
+        }
     }
     return provider;
 }
@@ -355,34 +366,34 @@ WorkspaceStyle load_style(const std::filesystem::path& directory) {
         .appearance = {
             .font = choice(
                 table, path, "font",
-                {{"sans", WorkspaceFont::sans}, {"serif", WorkspaceFont::serif},
-                 {"mono", WorkspaceFont::mono}},
-                WorkspaceFont::sans),
-            .slant = choice(
+                {{"sans", CharacterFont::sans}, {"serif", CharacterFont::serif},
+                 {"mono", CharacterFont::mono}},
+                CharacterFont::sans),
+            .style = choice(
                 table, path, "style",
-                {{"normal", WorkspaceSlant::normal},
-                 {"italic", WorkspaceSlant::italic}},
-                WorkspaceSlant::normal),
+                {{"normal", CharacterSlant::normal},
+                 {"italic", CharacterSlant::italic}},
+                CharacterSlant::normal),
             .weight = choice(
                 table, path, "weight",
-                {{"light", WorkspaceWeight::light},
-                 {"normal", WorkspaceWeight::normal},
-                 {"medium", WorkspaceWeight::medium},
-                 {"semibold", WorkspaceWeight::semibold},
-                 {"bold", WorkspaceWeight::bold}},
-                WorkspaceWeight::normal),
+                {{"light", CharacterWeight::light},
+                 {"normal", CharacterWeight::normal},
+                 {"medium", CharacterWeight::medium},
+                 {"semibold", CharacterWeight::semibold},
+                 {"bold", CharacterWeight::bold}},
+                CharacterWeight::normal),
             .size = choice(
                 table, path, "size",
-                {{"small", WorkspaceTextSize::small},
-                 {"normal", WorkspaceTextSize::normal},
-                 {"large", WorkspaceTextSize::large}},
-                WorkspaceTextSize::normal),
+                {{"small", CharacterScale::small},
+                 {"normal", CharacterScale::normal},
+                 {"large", CharacterScale::large}},
+                CharacterScale::normal),
             .text_color = choice(
                 table, path, "text_color",
-                {{"normal", WorkspaceTextColor::normal},
-                 {"muted", WorkspaceTextColor::muted},
-                 {"accent", WorkspaceTextColor::accent}},
-                WorkspaceTextColor::normal),
+                {{"normal", CharacterTextColor::normal},
+                 {"muted", CharacterTextColor::muted},
+                 {"accent", CharacterTextColor::accent}},
+                CharacterTextColor::normal),
         },
     };
 }
@@ -439,12 +450,12 @@ WorkspacePersona load_persona(const std::filesystem::path& directory) {
     return {
         .id = id,
         .display_name = display_name,
-        .description = description,
         .prompt = std::move(prompt),
+        .description = description,
     };
 }
 
-void validate_character_id(std::string_view id) {
+void validate_workspace_character_id(std::string_view id) {
     if (id.empty()) throw std::runtime_error("Character ID cannot be empty");
     if (id == "-" || is_reserved_id(id)) {
         throw std::runtime_error("Character ID '" + std::string(id) + "' is reserved");
@@ -592,11 +603,12 @@ std::string forum_context(
     Json others = Json::array();
     for (const WorkspaceForumMember& member : members) {
         if (member.character_id == current.character_id) continue;
-        others.push_back(characters[character_index.at(member.character_id)].display_name);
+        others.push_back(
+            characters[character_index.at(member.character_id)].character.display_name);
     }
     return
         "Forum context\n\nYou are the character named "
-        + Json(character.display_name).dump()
+        + Json(character.character.display_name).dump()
         + ".\nOther characters currently participating in this forum (JSON): "
         + others.dump()
         + ".\n\nShared exchanges involving other characters are supplied in persona "
@@ -619,10 +631,12 @@ std::string workspace_inventory(
     Json root;
     root["characters"] = Json::array();
     for (const WorkspaceCharacter& character : characters) {
-        if (is_reserved_id(character.id)) continue;
-        Json encoded{{"name", character.display_name}};
-        if (character.description) encoded["description"] = *character.description;
-        encoded["tags"] = character.tags;
+        if (is_reserved_id(character.character.id)) continue;
+        Json encoded{{"name", character.character.display_name}};
+        if (character.character.description) {
+            encoded["description"] = *character.character.description;
+        }
+        encoded["tags"] = character.character.tags;
         root["characters"].push_back(std::move(encoded));
     }
     root["forums"] = Json::array();
@@ -632,13 +646,15 @@ std::string workspace_inventory(
         std::vector<std::string> members;
         for (const WorkspaceForumMember& member : forum.members) {
             members.push_back(
-                characters[character_index.at(member.character_id)].display_name);
+                characters[character_index.at(member.character_id)]
+                    .character.display_name);
         }
         std::ranges::sort(
             members, {}, [](const std::string& name) { return fold_ascii(name); });
         encoded["members"] = std::move(members);
         encoded["default_character"] =
-            characters[character_index.at(forum.default_character_id)].display_name;
+            characters[character_index.at(forum.default_character_id)]
+                .character.display_name;
         encoded["default_persona"] =
             personas[persona_index.at(forum.default_persona_id)].display_name;
         root["forums"].push_back(std::move(encoded));
@@ -793,7 +809,7 @@ Workspace Workspace::load(std::filesystem::path root) {
     for (const std::filesystem::path& directory : recursive_definition_directories(
              characters_directory, "character.toml", "CHARACTER.md")) {
         const std::string id = utf8_path(directory.filename());
-        validate_character_id(id);
+        validate_workspace_character_id(id);
         const std::filesystem::path config_path = directory / "character.toml";
         const std::filesystem::path prompt_path = directory / "CHARACTER.md";
         if (!std::filesystem::is_regular_file(config_path)
@@ -809,7 +825,7 @@ Workspace Workspace::load(std::filesystem::path root) {
                 "Character '" + id + "' references unknown provider '"
                 + *config.provider_id + "'");
         }
-        WorkspaceAppearance appearance;
+        CharacterAppearance appearance;
         if (config.style_id) {
             const WorkspaceStyle* style = workspace.find_style(*config.style_id);
             if (style == nullptr) {
@@ -837,13 +853,15 @@ Workspace Workspace::load(std::filesystem::path root) {
         const std::string prompt_template =
             read_text(prompt_path, "character prompt");
         workspace.characters_.push_back({
-            .id = id,
-            .display_name = *config.display_name,
-            .description = config.description,
-            .tags = config.tags,
+            .character = {
+                .id = id,
+                .display_name = *config.display_name,
+                .description = config.description,
+                .tags = config.tags,
+                .appearance = appearance,
+            },
             .provider_id = *config.provider_id,
             .style_id = config.style_id,
-            .appearance = appearance,
             .prompt_variables = config.prompt_variables,
             .prompt_template = prompt_template,
             .markdown = character_description(
@@ -859,7 +877,7 @@ Workspace Workspace::load(std::filesystem::path root) {
         throw std::runtime_error(
             "Assistant references unknown provider '" + *assistant.provider_id + "'");
     }
-    WorkspaceAppearance assistant_appearance;
+    CharacterAppearance assistant_appearance;
     if (assistant.style_id) {
         const WorkspaceStyle* style = workspace.find_style(*assistant.style_id);
         if (style == nullptr) {
@@ -869,13 +887,15 @@ Workspace Workspace::load(std::filesystem::path root) {
         assistant_appearance = style->appearance;
     }
     workspace.characters_.push_back({
-        .id = std::string(workspace_assistant_id),
-        .display_name = *assistant.display_name,
-        .description = assistant.description,
-        .tags = assistant.tags,
+        .character = {
+            .id = std::string(workspace_assistant_id),
+            .display_name = *assistant.display_name,
+            .description = assistant.description,
+            .tags = assistant.tags,
+            .appearance = assistant_appearance,
+        },
         .provider_id = *assistant.provider_id,
         .style_id = assistant.style_id,
-        .appearance = assistant_appearance,
         .prompt_variables = assistant.prompt_variables,
         .prompt_template = std::string(embedded_application_guide()),
         .markdown = std::string(embedded_application_guide()),
@@ -883,11 +903,15 @@ Workspace Workspace::load(std::filesystem::path root) {
     std::ranges::sort(
         workspace.characters_, {},
         [](const WorkspaceCharacter& character) {
-            return fold_ascii(character.display_name);
+            return fold_ascii(character.character.display_name);
         });
-    build_index(
-        std::span<const WorkspaceCharacter>(workspace.characters_),
-        workspace.character_index_, "Character");
+    for (std::size_t position{};
+         position < workspace.characters_.size(); ++position) {
+        const std::string& id = workspace.characters_[position].character.id;
+        if (!workspace.character_index_.emplace(id, position).second) {
+            throw std::runtime_error("Character ID '" + id + "' is not unique");
+        }
+    }
 
     std::unordered_set<std::string> participant_names;
     for (const WorkspacePersona& persona : workspace.personas_) {
@@ -901,9 +925,10 @@ Workspace Workspace::load(std::filesystem::path root) {
         }
     }
     for (const WorkspaceCharacter& character : workspace.characters_) {
-        if (!participant_names.insert(fold_ascii(character.display_name)).second) {
+        if (!participant_names.insert(
+                fold_ascii(character.character.display_name)).second) {
             throw std::runtime_error(
-                "Character name '" + character.display_name
+                "Character name '" + character.character.display_name
                 + "' conflicts with a persona or character");
         }
     }
@@ -922,7 +947,7 @@ Workspace Workspace::load(std::filesystem::path root) {
         for (const std::filesystem::path& member_directory :
              direct_subdirectories(members_directory)) {
             const std::string member_id = utf8_path(member_directory.filename());
-            validate_character_id(member_id);
+            validate_workspace_character_id(member_id);
             if (workspace.find_character(member_id) == nullptr) {
                 throw std::runtime_error(
                     "Forum '" + id + "' member '" + member_id
@@ -1014,8 +1039,8 @@ Workspace Workspace::load(std::filesystem::path root) {
                 .containment_root = containment,
                 .scope_table_name = "prompt",
                 .reserved = {
-                    {"character.id", character.id},
-                    {"character.display_name", character.display_name},
+                    {"character.id", character.character.id},
+                    {"character.display_name", character.character.display_name},
                     {"forum.id", id},
                     {"forum.display_name", config.display_name},
                 },
@@ -1104,6 +1129,52 @@ const WorkspaceForum* Workspace::find_forum(std::string_view id) const noexcept 
     return find_indexed<WorkspaceForum>(forums_, forum_index_, id);
 }
 
+const WorkspaceForumMember* Workspace::find_forum_member(
+    std::string_view forum_id,
+    std::string_view character_id) const noexcept {
+    const WorkspaceForum* const forum = find_forum(forum_id);
+    if (forum == nullptr) return nullptr;
+    const auto found = std::ranges::find(
+        forum->members, character_id, &WorkspaceForumMember::character_id);
+    return found == forum->members.end() ? nullptr : &*found;
+}
+
+CharacterDefinition Workspace::character_definition(
+    std::string_view forum_id,
+    std::string_view character_id) const {
+    const WorkspaceForumMember* const member =
+        find_forum_member(forum_id, character_id);
+    if (member == nullptr) {
+        throw std::invalid_argument(
+            "Character '" + std::string(character_id)
+            + "' is not a member of forum '" + std::string(forum_id) + "'");
+    }
+    const WorkspaceCharacter* const character = find_character(character_id);
+    const WorkspaceProvider* const provider = character == nullptr
+        ? nullptr : find_provider(character->provider_id);
+    if (character == nullptr || provider == nullptr) {
+        throw std::logic_error("Workspace contains an invalid forum member");
+    }
+    return {
+        .character = character->character,
+        .provider = {
+            .id = provider->id,
+            .config = provider->config,
+        },
+        .character_prompt = member->character_prompt,
+        .character_description = character->markdown,
+        .system_prompt = member->system_prompt,
+    };
+}
+
+std::optional<std::filesystem::path> Workspace::forum_session_directory(
+    std::string_view forum_id) const {
+    if (find_forum(forum_id) == nullptr || forum_id == workspace_entrance_id) {
+        return std::nullopt;
+    }
+    return root_ / "forums" / path_from_utf8(forum_id) / "sessions";
+}
+
 bool Workspace::character_is_writable(std::string_view id) const noexcept {
     return character_config_paths_.contains(std::string(id));
 }
@@ -1182,7 +1253,11 @@ std::shared_ptr<const Workspace> getws() {
 }
 
 void loadws(const std::filesystem::path& root) {
-    auto loaded = std::make_shared<const Workspace>(Workspace::load(root));
+    loadws(Workspace::load(root));
+}
+
+void loadws(Workspace workspace) {
+    auto loaded = std::make_shared<const Workspace>(std::move(workspace));
     std::lock_guard lock(workspace_mutex);
     current_workspace = std::move(loaded);
 }

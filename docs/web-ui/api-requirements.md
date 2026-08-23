@@ -41,21 +41,21 @@ live-session API remains the base for Chat.
 }
 ```
 
-The server loads and validates discovery data as one workspace generation. Its
+The server loads and validates discovery data as one immutable `Workspace`. Its
 HTTP projection contains workspace entities plus Guest, Assistant, and Entrance.
-The browser opens the shared Welcome session immediately. Discovery stays at that
-generation's copy. A character's provider and style are rewritten by PATCH and
-picked up when a session next opens; other configuration takes effect when a new
-generation is published.
+The browser opens the shared Welcome session immediately. A character's provider
+and style are rewritten by PATCH, then a freshly loaded workspace is published;
+other configuration takes effect through the reload endpoint.
 
-`POST /api/v1/workspace/reload` publishes that new generation. It takes an empty
+`POST /api/v1/workspace/reload` publishes that new workspace. It takes an empty
 JSON object, returns the same `Bootstrap` body as `GET /api/v1/bootstrap` so the
 browser needs no second request, and shuts every live session down with
 `workspace_reloading`. A workspace that fails validation answers `422` with
-`workspace_reload_failed` and leaves the published generation and its sessions
-untouched, so the browser reports the failure and keeps the state it has. Because
+`workspace_reload_failed` and leaves the previous workspace published. Sessions
+are stopped before candidate validation, so the browser may reopen them against
+that previous workspace. Because
 the response replaces discovery wholesale, any detail screen open over the
-retired generation refetches.
+retired workspace refetches.
 
 Terminal and HTTP discovery are separate projections over the same workspace
 entities. Terminal commands use public names; HTTP routes use stable IDs. The

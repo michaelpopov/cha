@@ -1,5 +1,8 @@
 #pragma once
 
+#include "characters/character.h"
+#include "chat/persona.h"
+
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -19,23 +22,6 @@ inline constexpr std::string_view workspace_entrance_id = "builtin-entrance";
 using WorkspacePromptVariables =
     std::map<std::string, std::string, std::less<>>;
 
-enum class WorkspaceProviderMode { net, test };
-enum class WorkspaceProviderApi { chat_completions, responses };
-enum class WorkspaceWebSearch { off, automatic, required };
-enum class WorkspaceCacheRetention { off, short_, long_ };
-enum class WorkspaceReasoningFormat {
-    automatic,
-    none,
-    reasoning_content,
-    reasoning,
-};
-
-enum class WorkspaceFont { sans, serif, mono };
-enum class WorkspaceSlant { normal, italic };
-enum class WorkspaceWeight { light, normal, medium, semibold, bold };
-enum class WorkspaceTextSize { small, normal, large };
-enum class WorkspaceTextColor { normal, muted, accent };
-
 struct WorkspaceSettings {
     std::filesystem::path log_file;
     std::string log_level;
@@ -45,58 +31,23 @@ struct WorkspaceSettings {
 struct WorkspaceProvider {
     std::string id;
     std::string label;
-    std::string host;
-    int port{};
-    std::string base_path;
-    WorkspaceProviderMode mode{WorkspaceProviderMode::test};
-    std::string model;
-    bool stream{true};
-    std::optional<double> temperature;
-    std::optional<int> max_tokens;
-    int timeout_s{600};
-    int idle_timeout_s{60};
-    std::string api_key_env;
-    std::string reasoning_effort;
-    WorkspaceReasoningFormat reasoning_format{
-        WorkspaceReasoningFormat::automatic};
-    bool https{};
-    WorkspaceProviderApi api{WorkspaceProviderApi::responses};
-    WorkspaceWebSearch web_search{WorkspaceWebSearch::required};
-    WorkspaceCacheRetention cache_retention{
-        WorkspaceCacheRetention::short_};
-};
-
-struct WorkspaceAppearance {
-    WorkspaceFont font{WorkspaceFont::sans};
-    WorkspaceSlant slant{WorkspaceSlant::normal};
-    WorkspaceWeight weight{WorkspaceWeight::normal};
-    WorkspaceTextSize size{WorkspaceTextSize::normal};
-    WorkspaceTextColor text_color{WorkspaceTextColor::normal};
+    ModelBackendConfig config;
 };
 
 struct WorkspaceStyle {
     std::string id;
     std::string label;
-    WorkspaceAppearance appearance;
+    CharacterAppearance appearance;
 };
 
-struct WorkspacePersona {
-    std::string id;
-    std::string display_name;
-    std::optional<std::string> description;
-    std::string prompt;
-};
+using WorkspacePersona = Persona;
 
 // A user-defined or built-in character. Forum-specific overrides and prompt
 // expansion are stored on WorkspaceForumMember.
 struct WorkspaceCharacter {
-    std::string id;
-    std::string display_name;
-    std::optional<std::string> description;
-    std::vector<std::string> tags;
+    CharacterMetadata character;
     std::string provider_id;
     std::optional<std::string> style_id;
-    WorkspaceAppearance appearance;
     WorkspacePromptVariables prompt_variables;
     std::string prompt_template;
     std::string markdown;
@@ -158,6 +109,14 @@ public:
         std::string_view id) const noexcept;
     [[nodiscard]] const WorkspaceForum* find_forum(
         std::string_view id) const noexcept;
+    [[nodiscard]] const WorkspaceForumMember* find_forum_member(
+        std::string_view forum_id,
+        std::string_view character_id) const noexcept;
+    [[nodiscard]] CharacterDefinition character_definition(
+        std::string_view forum_id,
+        std::string_view character_id) const;
+    [[nodiscard]] std::optional<std::filesystem::path> forum_session_directory(
+        std::string_view forum_id) const;
     [[nodiscard]] bool character_is_writable(
         std::string_view id) const noexcept;
 
@@ -193,5 +152,6 @@ private:
 
 [[nodiscard]] std::shared_ptr<const Workspace> getws();
 void loadws(const std::filesystem::path& root);
+void loadws(Workspace workspace);
 
 } // namespace cha

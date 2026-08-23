@@ -251,7 +251,7 @@ inline OpenedSession open_scripted_session(
     std::vector<std::unique_ptr<DescribedModelBackend>> backends,
     SessionController::ActivationHook before_activation = {},
     PersonaRoster personas = reader_roster()) {
-    auto owned = std::move(from_test_backends(
+    auto controller = std::move(from_test_backends(
         std::move(backends),
         std::move(personas),
         database_path,
@@ -259,11 +259,11 @@ inline OpenedSession open_scripted_session(
         load_session_state(database_path),
         std::move(before_activation),
         std::nullopt,
-        identity)).release();
+        identity,
+        true)).release();
     return {
-        .lifetime = std::move(owned.providers),
         .descriptor = test_descriptor(identity),
-        .controller = std::move(owned.controller),
+        .controller = std::move(controller),
     };
 }
 
@@ -289,7 +289,7 @@ inline OpenedSession open_restored_session(
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     std::shared_ptr<BackendControls> controls) {
-    auto owned = std::move(from_test_backends(
+    auto controller = std::move(from_test_backends(
         one_backend(scripted_backend(std::move(controls))),
         reader_roster(),
         database_path,
@@ -297,11 +297,11 @@ inline OpenedSession open_restored_session(
         std::move(restored),
         {},
         std::nullopt,
-        identity)).release();
+        identity,
+        true)).release();
     return {
-        .lifetime = std::move(owned.providers),
         .descriptor = test_descriptor(identity),
-        .controller = std::move(owned.controller),
+        .controller = std::move(controller),
     };
 }
 
@@ -335,21 +335,22 @@ inline OpenedSession open_leased_session(
     SessionLease lease = SessionLease::acquire(database_path);
     SessionRestore restored = load_session_state(database_path);
     auto providers = std::make_shared<Providers>();
+    const std::vector<CharacterDefinition> definitions{
+        unreachable_definition()};
+    const PublishedTestWorkspace workspace = publish_test_workspace(
+        definitions, reader_roster(), "guide", database_path, identity, {}, true);
     return {
-        .lifetime = providers,
         .descriptor = test_descriptor(identity),
-        .controller = SessionController::from_shared_definitions(
-            share_character_definitions({unreachable_definition()}),
-            std::make_shared<const PersonaRoster>(reader_roster()),
+        .controller = SessionController::from_workspace_for_testing(
             "guide",
             "reader",
             database_path,
             std::move(lease),
-            *providers,
+            std::move(providers),
             std::move(notifier),
             std::move(restored),
             {},
-            identity),
+            workspace.identity),
     };
 }
 

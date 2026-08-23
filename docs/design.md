@@ -676,16 +676,16 @@ Provider and character configuration use snapshot semantics:
 Production workspace reload retains its existing session semantics.
 `LiveSessionManager::reserve_workspace_reload()` first requests shutdown of
 every live session and waits for those session owners to finish before the new
-workspace generation is published. Session shutdown cancels and releases all
-request handles, so no user-visible generation or live session survives
+workspace is published. Session shutdown cancels and releases all request
+handles, so no user-visible generation or live session survives
 `/api/v1/workspace/reload`.
 
 A cancelled worker may remain briefly in the process registry after its old
 session has disappeared. It retains the old character and provider snapshots
 only to finish cancellation and transport cleanup. It cannot publish into a new
-session, and a session opened after reload uses only the new workspace
-generation. Provider-level snapshot tests may allow a request to run while a
-new configuration snapshot is introduced, but production reload tests must
+session, and a session opened after reload uses only the new `Workspace`.
+Provider-level snapshot tests may allow a request to run while a new
+configuration snapshot is introduced, but production reload tests must
 expect the old live request to be cancelled. `Providers` has no provider cache
 to flush, compare, migrate, or evict during reload.
 
@@ -697,24 +697,20 @@ equivalent to:
 
 ```cpp
 OpenedSession open_session(
-    const WorkspaceDefinition& model,
     const SessionRepository& sessions,
     const SessionIdentity& identity,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier);
-
-OpenedSession WorkspaceRuntime::open_session(
-    const SessionIdentity& identity,
-    Providers& providers,
-    std::shared_ptr<WakeNotifier> notifier) const;
 ```
 
-`SessionOpener` carries the same arguments. In production, its closure captures
-the one process-owned `Providers&`; `LiveSession` passes the shared
-`OwnerWakeSignal` it already owns. `SessionController` borrows `Providers&`,
-while each created request takes its own shared notifier pointer. The
-composition root guarantees that `Providers` outlives every opener,
-controller, and live-session owner that can call it.
+`open_session()` and production controllers acquire the current immutable
+workspace with `getws()`. `SessionOpener` carries the same explicit arguments.
+In production, its closure captures the one process-owned `SessionRepository`
+and `Providers&`; `LiveSession` passes the shared `OwnerWakeSignal` it already
+owns. `SessionController` borrows `Providers&`, while each created request takes
+its own shared notifier pointer and immutable request input. The composition
+root guarantees that `Providers` outlives every opener, controller, and
+live-session owner that can call it.
 
 ## Process shutdown
 
@@ -874,7 +870,7 @@ log because those concepts do not exist.
 - a provider-level request retains its original snapshots when a new selection
   is introduced;
 - a reload candidate with an unset or empty configured credential variable is
-  rejected and never replaces the published workspace generation;
+  rejected and never replaces the published workspace;
 - production workspace reload cancels every live session request; an old
   request may retain its snapshots only while finishing registry cleanup;
 - process shutdown destroys sessions before closing provider admission;

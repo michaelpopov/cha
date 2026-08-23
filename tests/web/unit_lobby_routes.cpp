@@ -68,7 +68,7 @@ public:
         Installer installer = {}) {
         AssetHandler(graph.root() / "web").install(server_);
         LobbyRoutes(
-            graph.runtime, LobbyGraph::initial_selection(),
+            graph.sessions(), LobbyGraph::initial_selection(),
             live_sessions, graph.root() / "backups", settings).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
