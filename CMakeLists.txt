@@ -190,7 +190,6 @@ add_library(cha_core STATIC
     src/session/session_label.cpp
     src/session/session_lease.cpp
     src/session/session_repository.cpp
-    src/session/session_snapshot.cpp
     src/workspace/workspace.cpp
     src/workspace/session_open.cpp
 )
@@ -296,7 +295,6 @@ if(BUILD_TESTING)
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
         tests/session/unit_session_repository.cpp
-        tests/session/unit_session_snapshot.cpp
         tests/session/unit_controller_update.cpp
         tests/application/unit_workspace.cpp
         tests/application/unit_session_open.cpp

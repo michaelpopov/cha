@@ -200,12 +200,6 @@ sessions remain on disk, while Welcome belongs to the generation that created
 it and starts empty after a successful reload. A failed reload retains the old
 published generation, but the live sessions have already been closed.
 
-Reload can bootstrap a session from a portable SQL snapshot. If only
-`forums/<forum>/sessions/<session>.sql` exists, reload recreates the SQLite
-database, unless a matching database is present under `sessions/deleted/`.
-An existing SQLite database is authoritative and reload never creates or
-refreshes SQL snapshots. Bootstrapping runs on reload, not initial startup.
-
 Startup validates every configured forum, not only the ones in use. A forum with
 an invalid default character, member override, or prompt therefore prevents the
 server from starting; the reported error names that forum and its source.

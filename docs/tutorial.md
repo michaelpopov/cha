@@ -404,10 +404,6 @@ actors, and writes a workspace archive before loading one replacement
 mutex and swaps it in atomically. Failure retains the published workspace, but
 the actors were already stopped before filesystem work began.
 
-Only reload performs the session SQL bootstrapping described in section 9.3:
-missing databases may be bootstrapped from snapshots before the candidate
-workspace is published.
-
 ### 8.3 Provider selection
 
 Every connection and model setting lives in
@@ -459,9 +455,8 @@ Read these in order:
 3. [session/session_catalog.h](../src/session/session_catalog.h)
 4. [session/session_lease.h](../src/session/session_lease.h)
 5. [session/session_database.h](../src/session/session_database.h)
-6. [session/session_snapshot.h](../src/session/session_snapshot.h)
-7. [session/session_repository.h](../src/session/session_repository.h)
-8. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
+6. [session/session_repository.h](../src/session/session_repository.h)
+7. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
 
 ### 9.1 Observation versus authority
 
@@ -501,21 +496,7 @@ The repository also creates a private temporary database for Welcome. It uses
 the same catalog/database/controller machinery and removes that private
 directory when the repository is destroyed.
 
-### 9.3 Reload-time SQL bootstrapping
-
-`bootstrap_sessions_from_sql()` in
-[session/session_snapshot.cpp](../src/session/session_snapshot.cpp) runs only
-while a replacement `Workspace` is being loaded. For each forum, it imports a
-snapshot whose database is missing, using a temporary database and validating
-its forum/session identity before publication.
-
-An existing SQLite database wins, and reload does not create or refresh SQL
-snapshots. A database in `sessions/deleted/` suppresses import of an old
-snapshot, so deleting a session does not make it reappear on the next reload.
-Invalid SQL aborts the candidate workspace without publishing a partial
-database.
-
-### 9.4 `open_session()` is the bridge
+### 9.3 `open_session()` is the bridge
 
 `workspace/session_open.cpp` performs a short but crucial composition:
 
@@ -1232,7 +1213,7 @@ and before reading all of its implementation.
 | Controller transitions | [tests/session/unit_session_controller.cpp](../tests/session/unit_session_controller.cpp) |
 | SQLite catalog/repository | [tests/session/unit_session_catalog.cpp](../tests/session/unit_session_catalog.cpp), [unit_session_repository.cpp](../tests/session/unit_session_repository.cpp) |
 | Cross-process leases | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
-| Workspace publication and SQL bootstrapping | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp), [tests/session/unit_session_snapshot.cpp](../tests/session/unit_session_snapshot.cpp) |
+| Workspace publication | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp) |
 | Actor behavior | [tests/web/unit_live_session.cpp](../tests/web/unit_live_session.cpp) |
 | Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
 | Snapshot/append collapse | [tests/web/unit_sse_mailbox.cpp](../tests/web/unit_sse_mailbox.cpp) |

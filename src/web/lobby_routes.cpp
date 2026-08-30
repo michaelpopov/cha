@@ -1,7 +1,6 @@
 #include "web/lobby_routes.h"
 
 #include "workspace/workspace.h"
-#include "session/session_snapshot.h"
 #include "session/not_found_error.h"
 #include "session/session_delete_conflict.h"
 #include "session/session_lease.h"
@@ -304,7 +303,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
             const auto current = published_workspace();
             (void)backup_workspace(current->root(), backup_dir);
             Workspace candidate = Workspace::load(current->root());
-            bootstrap_sessions_from_sql(candidate);
             loadws(std::move(candidate));
         } catch (const std::bad_alloc&) {
             throw;

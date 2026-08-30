@@ -51,21 +51,6 @@ struct LoadedSessionDatabase {
     const std::filesystem::path& path,
     const SessionDatabaseMetadata& metadata);
 
-// Writes a portable SQL representation of one validated session database,
-// replacing an existing snapshot only after the complete dump is ready.
-void export_session_database_sql(
-    const std::filesystem::path& database_path,
-    const std::filesystem::path& sql_path,
-    const FullSessionId& expected_identity);
-
-// Builds and validates a session database from a SQL snapshot, then publishes
-// it without replacing an existing database. Returns false on a destination
-// collision.
-[[nodiscard]] bool import_session_database_sql(
-    const std::filesystem::path& sql_path,
-    const std::filesystem::path& database_path,
-    const FullSessionId& expected_identity);
-
 // The identity check every reader of a stored database owes it: what the file
 // says it is, against what the caller opened it as. Throws on a mismatch.
 void validate_session_database_identity(
