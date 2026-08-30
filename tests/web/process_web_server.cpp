@@ -3,6 +3,7 @@
 #include "support/test_web_graph.h"
 #include "support/test_workspace.h"
 #include "support/web_server_process.h"
+#include "session/session_database.h"
 #include "web/http_server.h"
 #include "web/asset_handler.h"
 #include "web/live_session_manager.h"
@@ -21,6 +22,7 @@
 #include <csignal>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -613,6 +615,39 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     remove_database();
     coordinator.shutdown_now(listener, 20ms);
     _exit(3);
+}
+
+TEST(WebServerProcess, MigrationModeBuildsTheDatabaseAndExits) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path sessions =
+        workspace.root() / "forums" / "lobby" / "sessions";
+    std::filesystem::create_directories(sessions);
+    ASSERT_TRUE(create_session_database(
+        sessions / "legacy.sqlite3",
+        {.id = "legacy", .forum = "lobby", .label = "Legacy"}));
+
+    const std::string workspace_text = workspace.root().string();
+    const pid_t child = ::fork();
+    ASSERT_NE(child, -1);
+    if (child == 0) {
+        ::execl(
+            CHA_WEB_BINARY,
+            CHA_WEB_BINARY,
+            "--migration",
+            "--workspace",
+            workspace_text.c_str(),
+            static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    int status{};
+    ASSERT_EQ(::waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0);
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        workspace.root() / "sessions.sqlite3"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        sessions / "legacy.sqlite3"));
 }
 
 // The whole point of the two-root split is that an upgrade can replace the

@@ -29,7 +29,7 @@ class SessionLease::Impl {
 public:
     Impl(
         const std::filesystem::path& path,
-        const std::filesystem::path& database_path) {
+        std::string busy_message) {
 #ifdef _WIN32
         handle = CreateFileW(
             path.c_str(),
@@ -55,7 +55,7 @@ public:
             CloseHandle(handle);
             handle = INVALID_HANDLE_VALUE;
             if (error == ERROR_LOCK_VIOLATION) {
-                throw SessionBusyError(busy_message(database_path));
+                throw SessionBusyError(std::move(busy_message));
             }
             fail("lock", path, error);
         }
@@ -74,7 +74,7 @@ public:
             close(descriptor);
             descriptor = -1;
             if (error == EWOULDBLOCK) {
-                throw SessionBusyError(busy_message(database_path));
+                throw SessionBusyError(std::move(busy_message));
             }
             fail("lock", path, error);
         }
@@ -134,8 +134,14 @@ SessionLease::SessionLease(SessionLease&& other) noexcept = default;
 SessionLease& SessionLease::operator=(SessionLease&& other) noexcept = default;
 
 SessionLease SessionLease::acquire(const std::filesystem::path& database_path) {
+    return acquire(database_path, busy_message(database_path));
+}
+
+SessionLease SessionLease::acquire(
+    const std::filesystem::path& database_path,
+    std::string busy_message) {
     const std::filesystem::path path = companion_path(database_path);
-    return SessionLease(std::make_unique<Impl>(path, database_path));
+    return SessionLease(std::make_unique<Impl>(path, std::move(busy_message)));
 }
 
 SessionLease SessionLease::inactive_for_testing() {

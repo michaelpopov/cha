@@ -95,6 +95,42 @@ TEST_F(ApplicationConfigTest, CompleteCommandLineDoesNotRequireDefaultConfig) {
         std::runtime_error);
 }
 
+TEST_F(ApplicationConfigTest, MigrationOnlyRequiresAWorkspace) {
+    const ApplicationConfig config = load({
+        "chaweb", "--migration", "--root", root_.string(),
+        "--workspace", workspace_.string()});
+
+    EXPECT_TRUE(config.migration);
+    EXPECT_EQ(config.workspace, std::filesystem::absolute(workspace_));
+    EXPECT_TRUE(config.host.empty());
+    EXPECT_EQ(config.port, 0);
+    EXPECT_TRUE(config.backup_dir.empty());
+}
+
+TEST_F(ApplicationConfigTest, MigrationIgnoresServerSettingsInConfig) {
+    std::ofstream(root_ / "app.toml")
+        << "host = \"\"\n"
+           "port = 0\n"
+           "backup_dir = \"\"\n"
+           "workspace = \"customer-data\"\n";
+
+    const ApplicationConfig config = load({
+        "chaweb", "--migration", "--root", root_.string()});
+    EXPECT_TRUE(config.migration);
+    EXPECT_EQ(config.workspace, std::filesystem::absolute(workspace_));
+}
+
+TEST_F(ApplicationConfigTest, MigrationRejectsExplicitServerOptions) {
+    EXPECT_THROW(
+        (void)load({
+            "chaweb", "--migration", "--workspace", workspace_.string(),
+            "--host", "127.0.0.1"}),
+        std::runtime_error);
+    EXPECT_THROW(
+        (void)load({"chaweb", "--migration", "--migration"}),
+        std::runtime_error);
+}
+
 TEST_F(ApplicationConfigTest, MissingAndInvalidInputsNameTheRemedy) {
     try {
         (void)load({

@@ -107,6 +107,20 @@ TEST_F(SessionLeaseTest, RejectsSameProcessReacquireWithoutReleasingOwner) {
     EXPECT_TRUE(owner.active());
 }
 
+TEST_F(SessionLeaseTest, UsesACallerSuppliedBusyMessage) {
+    const std::filesystem::path database = database_path("sessions");
+    SessionLease owner = SessionLease::acquire(database);
+    try {
+        (void)SessionLease::acquire(
+            database, "Workspace already in use: '/workspace/example'");
+        FAIL() << "expected the second lease acquisition to report busy";
+    } catch (const SessionBusyError& error) {
+        EXPECT_STREQ(
+            error.what(),
+            "Workspace already in use: '/workspace/example'");
+    }
+}
+
 TEST_F(SessionLeaseTest, RejectsAnotherProcessAndReleasesAfterOwnerTermination) {
     const std::filesystem::path database = database_path();
     test::LeaseHolderProcess holder(database);

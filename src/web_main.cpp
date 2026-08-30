@@ -3,6 +3,7 @@
 #include "workspace/workspace.h"
 #include "providers/providers.h"
 #include "session/session_repository.h"
+#include "session/session_migration.h"
 #include "web/application_config.h"
 #include "web/asset_handler.h"
 #include "web/http_server.h"
@@ -13,6 +14,7 @@
 #include "web/web_settings.h"
 #include "util/environment.h"
 #include "util/logging.h"
+#include "util/path_name.h"
 
 #include <httplib.h>
 
@@ -37,6 +39,7 @@ static int run_web_server(
     const WebSettings& settings);
 static void log_web_server_startup(const WebSettings& settings);
 static void configure_test_idle_grace(WebSettings& settings, const ApplicationConfig& app);
+static int run_migration(const ApplicationConfig& app);
 
 int main(int argc, const char* argv[]) {
     try {
@@ -49,6 +52,7 @@ int main(int argc, const char* argv[]) {
 
 int prepare_and_run(int argc, const char* argv[]) {
     const ApplicationConfig app = load_application_config(argc, argv);
+    if (app.migration) return run_migration(app);
     load_dotenv(app.workspace / ".env");
 
     WebSettings settings;
@@ -76,6 +80,23 @@ int prepare_and_run(int argc, const char* argv[]) {
     providers.shutdown();
     shutdown_diagnostic_logging();
     return result;
+}
+
+int run_migration(const ApplicationConfig& app) {
+    std::cout << "Validating workspace and legacy session databases...\n";
+    const Workspace workspace = Workspace::load(app.workspace);
+    const SessionMigrationSummary summary = migrate_sessions(workspace);
+    std::cout
+        << "Migration completed.\n\n"
+        << "Forums: " << summary.forums << '\n'
+        << "Active sessions: " << summary.active_sessions << '\n'
+        << "Archived sessions: " << summary.archived_sessions << '\n'
+        << "Turns: " << summary.turns << '\n'
+        << "Entries: " << summary.entries << '\n'
+        << "Database: " << utf8_path(summary.database_path) << "\n\n"
+        << "Legacy session files were not changed.\n"
+        << "Do not run the old CHA application after this migration.\n";
+    return 0;
 }
 
 int run_web_server(

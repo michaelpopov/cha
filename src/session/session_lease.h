@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
+#include <string>
 
 namespace cha {
 
@@ -28,6 +29,9 @@ public:
 
     [[nodiscard]] static SessionLease acquire(
         const std::filesystem::path& database_path);
+    [[nodiscard]] static SessionLease acquire(
+        const std::filesystem::path& database_path,
+        std::string busy_message);
     [[nodiscard]] static SessionLease inactive_for_testing();
     [[nodiscard]] static std::filesystem::path companion_path(
         const std::filesystem::path& database_path);
