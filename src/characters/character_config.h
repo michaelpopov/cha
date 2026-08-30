@@ -17,6 +17,7 @@ inline constexpr WebSearchMode default_web_search_mode =
     WebSearchMode::required;
 
 bool is_direct_openai_host(std::string_view host);
+bool is_openrouter_host(std::string_view host);
 
 // One request's resolved provider configuration. It is built from the current
 // Workspace when generation starts and then owned by that request.

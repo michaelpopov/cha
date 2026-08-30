@@ -328,7 +328,7 @@ TEST(ProviderClient, HandlesNonStreamingProviderResponse) {
 
 TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     const std::string response_body =
-        R"({"choices":[{"message":{"content":"private response"}}],"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":9}}})";
+        R"({"choices":[{"message":{"content":"private response"}}],"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":9,"cache_write_tokens":7}}})";
     MockHttpServer mock({http_response("application/json", response_body)});
     mock.start();
     DiagnosticLogFile log;
@@ -359,11 +359,12 @@ TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     EXPECT_NE(output.find("input_tokens=12"), std::string::npos);
     EXPECT_NE(output.find("output_tokens=5"), std::string::npos);
     EXPECT_NE(output.find("cache_read_tokens=9"), std::string::npos);
+    EXPECT_NE(output.find("cache_write_tokens=7"), std::string::npos);
     EXPECT_EQ(output.find("private prompt"), std::string::npos);
     EXPECT_EQ(output.find("private response"), std::string::npos);
 }
 
-TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
+TEST(ProviderClient, AddsCacheMetadataForSupportedHosts) {
     Transcript transcript;
     GenerationRequest request = client_request(transcript, 91, "Question");
     request.run.prompt_cache_key = "forum/session/assistant";
@@ -384,7 +385,7 @@ TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
     const RequestPayload short_payload = short_client.prepare(request);
     const Json short_body = Json::parse(short_payload.bytes);
     EXPECT_EQ(short_body["prompt_cache_key"], request.run.prompt_cache_key);
-    EXPECT_FALSE(short_body.contains("prompt_cache_retention"));
+    EXPECT_FALSE(short_body.contains("prompt_cache_options"));
     ASSERT_TRUE(short_payload.session_id);
     EXPECT_EQ(*short_payload.session_id, request.run.prompt_cache_key);
 
@@ -402,11 +403,43 @@ TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
     const RequestPayload responses = responses_client.prepare(request);
     const Json responses_body = Json::parse(responses.bytes);
     EXPECT_EQ(responses_body["prompt_cache_key"], request.run.prompt_cache_key);
-    EXPECT_EQ(responses_body["prompt_cache_retention"], "24h");
+    EXPECT_EQ(
+        responses_body["prompt_cache_options"],
+        Json({{"mode", "implicit"}, {"ttl", "30m"}}));
+    EXPECT_FALSE(responses_body.contains("prompt_cache_retention"));
     ASSERT_TRUE(responses.session_id);
     EXPECT_EQ(*responses.session_id, request.run.prompt_cache_key);
     EXPECT_FALSE(responses_body.contains("previous_response_id"));
     EXPECT_FALSE(responses_body.contains("conversation"));
+
+    CharacterDefinition openrouter = network_definition(443, false);
+    openrouter.provider.config.host = "OPENROUTER.AI.";
+    openrouter.provider.config.https = true;
+    openrouter.provider.config.api = ProviderApi::chat_completions;
+    ProviderClient openrouter_chat_client(shared_definition(openrouter));
+    const RequestPayload openrouter_chat = openrouter_chat_client.prepare(request);
+    const Json openrouter_chat_body = Json::parse(openrouter_chat.bytes);
+    EXPECT_EQ(openrouter_chat_body["session_id"], request.run.prompt_cache_key);
+    EXPECT_FALSE(openrouter_chat_body.contains("prompt_cache_key"));
+    EXPECT_FALSE(openrouter_chat.session_id);
+
+    openrouter.provider.config.api = ProviderApi::responses;
+    ProviderClient openrouter_responses_client(shared_definition(openrouter));
+    const RequestPayload openrouter_responses =
+        openrouter_responses_client.prepare(request);
+    const Json openrouter_responses_body = Json::parse(openrouter_responses.bytes);
+    EXPECT_EQ(openrouter_responses_body["session_id"], request.run.prompt_cache_key);
+    EXPECT_FALSE(openrouter_responses_body.contains("prompt_cache_key"));
+    EXPECT_FALSE(openrouter_responses_body.contains("prompt_cache_options"));
+    EXPECT_FALSE(openrouter_responses_body.contains("prompt_cache_retention"));
+    EXPECT_FALSE(openrouter_responses.session_id);
+
+    openrouter.provider.config.cache_retention = CacheRetention::off;
+    ProviderClient openrouter_disabled_client(shared_definition(openrouter));
+    const RequestPayload openrouter_disabled =
+        openrouter_disabled_client.prepare(request);
+    EXPECT_FALSE(Json::parse(openrouter_disabled.bytes).contains("session_id"));
+    EXPECT_FALSE(openrouter_disabled.session_id);
 
     direct.provider.config.cache_retention = CacheRetention::off;
     ProviderClient disabled_client(shared_definition(direct));
@@ -420,6 +453,16 @@ TEST(ProviderClient, AddsCacheMetadataOnlyForDirectOpenAi) {
     const RequestPayload gateway = gateway_client.prepare(request);
     EXPECT_FALSE(Json::parse(gateway.bytes).contains("prompt_cache_key"));
     EXPECT_FALSE(gateway.session_id);
+
+    openrouter.provider.config.cache_retention = CacheRetention::short_;
+    openrouter.provider.config.host = "openrouter.ai.example";
+    ProviderClient openrouter_gateway_client(
+        shared_definition(std::move(openrouter)));
+    const RequestPayload openrouter_gateway =
+        openrouter_gateway_client.prepare(request);
+    const Json openrouter_gateway_body = Json::parse(openrouter_gateway.bytes);
+    EXPECT_FALSE(openrouter_gateway_body.contains("session_id"));
+    EXPECT_FALSE(openrouter_gateway.session_id);
 }
 
 TEST(ProviderClient, ReportsProviderHttpFailure) {

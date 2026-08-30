@@ -1,5 +1,6 @@
 #include "workspace/workspace.h"
 
+#include "characters/model_context.h"
 #include "support/test_workspace.h"
 #include "util/environment.h"
 
@@ -212,6 +213,15 @@ TEST(Workspace, ResolvesForumMemberOverridesAndDefaultPersonaPrompt) {
     EXPECT_EQ(member->character_prompt, "Member prompt: member\n");
     EXPECT_NE(member->system_prompt.find("READER_ONLY_BODY"), std::string::npos);
     EXPECT_EQ(member->system_prompt.find("AUTHOR_ONLY_BODY"), std::string::npos);
+    EXPECT_NE(
+        member->system_prompt.find(shared_history_heading),
+        std::string::npos);
+    EXPECT_NE(
+        member->system_prompt.find("earlier forum conversation context"),
+        std::string::npos);
+    EXPECT_NE(
+        member->system_prompt.find("the current message you should answer"),
+        std::string::npos);
 }
 
 TEST(Workspace, LoadsNestedDefinitionsAndKeepsCatalogsOrdered) {

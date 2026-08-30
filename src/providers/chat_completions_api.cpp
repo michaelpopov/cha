@@ -38,9 +38,11 @@ GenerationTokenUsage chat_token_usage(const Json& response) {
         return {};
     }
     std::optional<std::size_t> cache_read_tokens;
+    std::optional<std::size_t> cache_write_tokens;
     const auto details = usage->find("prompt_tokens_details");
     if (details != usage->end() && details->is_object()) {
         cache_read_tokens = token_count(*details, "cached_tokens");
+        cache_write_tokens = token_count(*details, "cache_write_tokens");
     }
     if (!cache_read_tokens) {
         cache_read_tokens = token_count(*usage, "prompt_cache_hit_tokens");
@@ -49,13 +51,14 @@ GenerationTokenUsage chat_token_usage(const Json& response) {
         .input_tokens = token_count(*usage, "prompt_tokens"),
         .output_tokens = token_count(*usage, "completion_tokens"),
         .cache_read_tokens = cache_read_tokens,
+        .cache_write_tokens = cache_write_tokens,
     };
 }
 
 std::string_view role_name(ModelRole role) {
     switch (role) {
     case ModelRole::system: return "system";
-    case ModelRole::persona: return "user";
+    case ModelRole::user: return "user";
     case ModelRole::assistant: return "assistant";
     }
     throw std::logic_error("Unknown model context role");
@@ -155,9 +158,12 @@ std::string build_chat_completions_request_body(
         body["reasoning_effort"] = config.reasoning_effort;
     }
     if (!input.run.prompt_cache_key.empty()
-        && config.cache_retention != CacheRetention::off
-        && is_direct_openai_host(config.host)) {
-        body["prompt_cache_key"] = input.run.prompt_cache_key;
+        && config.cache_retention != CacheRetention::off) {
+        if (is_direct_openai_host(config.host)) {
+            body["prompt_cache_key"] = input.run.prompt_cache_key;
+        } else if (is_openrouter_host(config.host)) {
+            body["session_id"] = input.run.prompt_cache_key;
+        }
     }
 
     return dump_json(body, "Model request");

@@ -81,7 +81,7 @@ TEST(ChatCompletionsApi, ReadsUsageFromTheFinalStreamingChunk) {
 
     decoder.consume(
         "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\n"
-        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":9}}}\n\n"
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":9,\"cache_write_tokens\":7}}}\n\n"
         "data: [DONE]\n\n");
     const StreamDecodeResult result = decoder.finish();
 
@@ -92,6 +92,8 @@ TEST(ChatCompletionsApi, ReadsUsageFromTheFinalStreamingChunk) {
     EXPECT_EQ(*result.result.usage.output_tokens, 5U);
     ASSERT_TRUE(result.result.usage.cache_read_tokens);
     EXPECT_EQ(*result.result.usage.cache_read_tokens, 9U);
+    ASSERT_TRUE(result.result.usage.cache_write_tokens);
+    EXPECT_EQ(*result.result.usage.cache_write_tokens, 7U);
 }
 
 TEST(ChatCompletionsApi, UsesTheLegacyCacheCountOnlyWhenPrimaryDetailsAreAbsent) {
@@ -104,11 +106,13 @@ TEST(ChatCompletionsApi, UsesTheLegacyCacheCountOnlyWhenPrimaryDetailsAreAbsent)
     EXPECT_EQ(*fallback.usage.cache_read_tokens, 4U);
 
     const GenerationResult primary = decode_chat_completions_response(
-        R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4,"prompt_tokens_details":{"cached_tokens":9}},"choices":[{"message":{"content":"Answer"}}]})",
+        R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4,"prompt_tokens_details":{"cached_tokens":9,"cache_write_tokens":7}},"choices":[{"message":{"content":"Answer"}}]})",
         ReasoningFormat::automatic,
         output.sink());
     ASSERT_TRUE(primary.usage.cache_read_tokens);
     EXPECT_EQ(*primary.usage.cache_read_tokens, 9U);
+    ASSERT_TRUE(primary.usage.cache_write_tokens);
+    EXPECT_EQ(*primary.usage.cache_write_tokens, 7U);
 }
 
 TEST(ChatCompletionsApi, LeavesCacheUsageUnsetWhenProviderOmitsIt) {
@@ -124,6 +128,7 @@ TEST(ChatCompletionsApi, LeavesCacheUsageUnsetWhenProviderOmitsIt) {
     EXPECT_EQ(*result.usage.input_tokens, 12U);
     EXPECT_EQ(*result.usage.output_tokens, 5U);
     EXPECT_FALSE(result.usage.cache_read_tokens);
+    EXPECT_FALSE(result.usage.cache_write_tokens);
 }
 
 TEST(ChatCompletionsApi, DecodesTheSameStreamOneByteAtATime) {

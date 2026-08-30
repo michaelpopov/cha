@@ -330,7 +330,8 @@ std::string http_event(
         + request_id_field(provider_request_id)
         + " input_tokens=" + token_count(usage.input_tokens)
         + " output_tokens=" + token_count(usage.output_tokens)
-        + " cache_read_tokens=" + token_count(usage.cache_read_tokens);
+        + " cache_read_tokens=" + token_count(usage.cache_read_tokens)
+        + " cache_write_tokens=" + token_count(usage.cache_write_tokens);
 }
 
 std::string streaming_metadata(

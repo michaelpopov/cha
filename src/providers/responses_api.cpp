@@ -39,20 +39,23 @@ GenerationTokenUsage responses_token_usage(const Json& response) {
         return {};
     }
     std::optional<std::size_t> cache_read_tokens;
+    std::optional<std::size_t> cache_write_tokens;
     const auto details = usage->find("input_tokens_details");
     if (details != usage->end() && details->is_object()) {
         cache_read_tokens = token_count(*details, "cached_tokens");
+        cache_write_tokens = token_count(*details, "cache_write_tokens");
     }
     return {
         .input_tokens = token_count(*usage, "input_tokens"),
         .output_tokens = token_count(*usage, "output_tokens"),
         .cache_read_tokens = cache_read_tokens,
+        .cache_write_tokens = cache_write_tokens,
     };
 }
 
 std::string_view input_role_name(ModelRole role) {
     switch (role) {
-    case ModelRole::persona: return "user";
+    case ModelRole::user: return "user";
     case ModelRole::assistant: return "assistant";
     case ModelRole::system:
         throw std::logic_error("System messages belong in instructions");
@@ -123,11 +126,17 @@ std::string build_responses_request_body(
         body["reasoning"] = Json{{"effort", config.reasoning_effort}};
     }
     if (!input.run.prompt_cache_key.empty()
-        && config.cache_retention != CacheRetention::off
-        && is_direct_openai_host(config.host)) {
-        body["prompt_cache_key"] = input.run.prompt_cache_key;
-        if (config.cache_retention == CacheRetention::long_) {
-            body["prompt_cache_retention"] = "24h";
+        && config.cache_retention != CacheRetention::off) {
+        if (is_direct_openai_host(config.host)) {
+            body["prompt_cache_key"] = input.run.prompt_cache_key;
+            if (config.cache_retention == CacheRetention::long_) {
+                body["prompt_cache_options"] = {
+                    {"mode", "implicit"},
+                    {"ttl", "30m"},
+                };
+            }
+        } else if (is_openrouter_host(config.host)) {
+            body["session_id"] = input.run.prompt_cache_key;
         }
     }
 

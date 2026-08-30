@@ -43,7 +43,7 @@ struct GenerationRequest {
 
 enum class ModelRole {
     system,
-    persona,
+    user,
     assistant,
 };
 

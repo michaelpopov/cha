@@ -29,7 +29,7 @@ std::vector<ModelMessage> context(
 }
 
 ModelMessage human(std::string_view text) {
-    return {ModelRole::persona, "from You:\n" + std::string(text)};
+    return {ModelRole::user, "from You:\n" + std::string(text)};
 }
 
 TEST(ModelContext, ProjectsRolesFromKindsAndStableParticipantIds) {
@@ -49,7 +49,7 @@ TEST(ModelContext, ProjectsRolesFromKindsAndStableParticipantIds) {
         (std::vector<ModelMessage>{
             {ModelRole::system, "Be concise."},
             human("Draft an answer"),
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"character","speaker":"You","text":"Initial draft"})"},
             human("Review it"),
@@ -175,7 +175,7 @@ TEST(ModelContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
     EXPECT_EQ(
         projected,
         (std::vector<ModelMessage>{
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Other","text":"Other question"})"
              "\n"
@@ -205,8 +205,8 @@ TEST(ModelContext, PrefixesBothReplayedAndLivePromptsWithTheirOwnAuthors) {
     EXPECT_EQ(
         project_model_context(input, {}),
         (std::vector<ModelMessage>{
-            {ModelRole::persona, "from Reader:\nEarlier prompt"},
-            {ModelRole::persona, "from Athlete:\nCurrent prompt"},
+            {ModelRole::user, "from Reader:\nEarlier prompt"},
+            {ModelRole::user, "from Athlete:\nCurrent prompt"},
         }));
 }
 
@@ -242,14 +242,14 @@ TEST(ModelContext, ProjectsUtcTimestampsWhenRunHasSubmissionTime) {
         project_model_context(input, "System"),
         (std::vector<ModelMessage>{
             {ModelRole::system, "System"},
-            {ModelRole::persona,
+            {ModelRole::user,
              "from You at 2023-11-14T22:13:20Z:\nEarlier question"},
             {ModelRole::assistant,
              "[2023-11-14T22:13:21Z]\nEarlier answer"},
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Other","created_at":"2023-11-14T22:13:22Z","text":"Other question"})"},
-            {ModelRole::persona,
+            {ModelRole::user,
              "from You at 2023-11-14T22:13:23Z:\nCurrent question"},
         }));
 }
@@ -312,7 +312,7 @@ TEST(ModelContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
             {},
             "assistant"),
         (std::vector<ModelMessage>{
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Other","text":"First question"})"
              "\n"
@@ -453,7 +453,7 @@ TEST(ModelContext, ProjectsNullAgentMonologueAsConsecutiveSharedHistory) {
         context(transcript, "Cheburashka system", "cheburashka"),
         (std::vector<ModelMessage>{
             {ModelRole::system, "Cheburashka system"},
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"-","text":"First thought"})"
              "\n"
@@ -468,7 +468,7 @@ TEST(ModelContext, ProjectsTheSharedTranscriptForTheAddressedCharacter) {
             {ModelRole::system, "Cheburashka system"},
             human("Who are you?"),
             {ModelRole::assistant, "I am Cheburashka."},
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Ismael","text":"And you?"})"
              "\n"
@@ -482,14 +482,14 @@ TEST(ModelContext, ProjectsTheSameTranscriptFromTheOtherCharactersPointOfView) {
         context(lobby_transcript(), "Ismael system", "ismael"),
         (std::vector<ModelMessage>{
             {ModelRole::system, "Ismael system"},
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"Who are you?"})"
              "\n"
              R"({"kind":"character","speaker":"Cheburashka","text":"I am Cheburashka."})"},
             human("And you?"),
             {ModelRole::assistant, "Call me Ismael."},
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"What did he say?"})"},
         }));
@@ -501,7 +501,7 @@ TEST(ModelContext, KeepsSharedHistorySeparateFromTheCurrentPrompt) {
 
     ASSERT_EQ(projected.size(), 4U);
     EXPECT_EQ(projected.front().content, "from You:\nWho are you?");
-    EXPECT_EQ(projected[2].role, ModelRole::persona);
+    EXPECT_EQ(projected[2].role, ModelRole::user);
     EXPECT_TRUE(projected[2].content.starts_with(shared_history_header));
     EXPECT_NE(
         projected[2].content.find(R"("addressed_to":"Ismael")"),
@@ -509,7 +509,7 @@ TEST(ModelContext, KeepsSharedHistorySeparateFromTheCurrentPrompt) {
     EXPECT_EQ(projected.back(), human("What did he say?"));
 }
 
-TEST(ModelContext, LeavesSingleCharacterHistoryAsPlainPersonaAndAssistantMessages) {
+TEST(ModelContext, LeavesSingleCharacterHistoryAsPlainUserAndAssistantMessages) {
     const ModelHistory transcript{
         .entries = {
             test::human_entry(1, {"human", "You"}, {"ismael", "Ismael"}, "Who are you?", 1),
@@ -539,7 +539,7 @@ TEST(ModelContext, AttributesCharactersWhoseDefinitionsAreNoLongerInTheForum) {
     EXPECT_EQ(
         context(transcript, {}, "ismael"),
         (std::vector<ModelMessage>{
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Departed","text":"Say something"})"
              "\n"

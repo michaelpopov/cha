@@ -119,7 +119,7 @@ std::vector<ModelMessage> project_entries(
         if (shared) {
             if (!shared_history_open) {
                 messages.push_back({
-                    ModelRole::persona,
+                    ModelRole::user,
                     std::string(shared_history_heading) + "\n",
                 });
                 shared_history_open = true;
@@ -133,7 +133,7 @@ std::vector<ModelMessage> project_entries(
         shared_history_open = false;
         if (entry.kind == EntryKind::human) {
             messages.push_back({
-                ModelRole::persona,
+                ModelRole::user,
                 prefixed_human_message(
                     entry.display_name,
                     include_timestamps ? entry.created_at : 0,
@@ -183,7 +183,7 @@ std::vector<ModelMessage> project_model_context(
         input.run.target.id,
         include_timestamps);
     messages.push_back({
-        ModelRole::persona,
+        ModelRole::user,
         prefixed_human_message(
             input.run.author.display_name,
             input.run.created_at,

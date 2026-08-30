@@ -890,12 +890,12 @@ TEST(SessionDatabase, RestoresAndProjectsASessionWhoseForumLostACharacter) {
             "ismael"),
         (std::vector<ModelMessage>{
             {ModelRole::system, "Ismael system"},
-            {ModelRole::persona,
+            {ModelRole::user,
              "Shared chat history (JSONL):\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"Who are you?"})"
              "\n"
              R"({"kind":"character","speaker":"Cheburashka","text":"I am Cheburashka."})"},
-            {ModelRole::persona, "from You:\nAnd you?"},
+            {ModelRole::user, "from You:\nAnd you?"},
             {ModelRole::assistant, "Call me Ismael."},
         }));
     std::filesystem::remove(path);

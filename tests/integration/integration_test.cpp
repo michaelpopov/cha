@@ -596,7 +596,8 @@ TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTrans
         Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWho are you?"}},
     }));
 
-    // Ismael's own system prompt, and Cheburashka's answer attributed as persona input.
+    // Ismael's own system prompt, and Cheburashka's answer attributed as
+    // user-role forum context.
     const Json second = body_of(ismael_server);
     EXPECT_EQ(messages_without_timestamps(second["messages"]), Json::array({
         Json{{"role", "system"}, {"content", ismael_prompt}},

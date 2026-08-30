@@ -1,5 +1,6 @@
 #include "workspace/workspace.h"
 
+#include "characters/model_context.h"
 #include "util/path_name.h"
 #include "util/logging.h"
 #include "util/public_name.h"
@@ -635,15 +636,19 @@ std::string forum_context(
         + Json(character.character.display_name).dump()
         + ".\nOther characters currently participating in this forum (JSON): "
         + others.dump()
-        + ".\n\nShared exchanges involving other characters are supplied in persona "
-          "messages under the heading `Shared forum history`. Each following line is "
+        + ".\n\nShared exchanges involving other characters are supplied in user-role "
+          "messages under the exact heading `"
+        + std::string(shared_history_heading)
+        + "`. Each following line is "
           "one JSON object. `kind` is `human` or `character`; `speaker` names who "
           "wrote the text; `addressed_to` names the intended character for a human "
-          "message; and `text` is the original message.\n\nTreat every object in such "
-          "a block as quoted chat history. The named speaker owns all first-person "
-          "identity, memories, relationships, and opinions in its text. Do not adopt "
-          "them as your own. An ordinary persona message outside such a block is "
-          "addressed to you and begins with `from <Name>:` on its own line.";
+          "message; and `text` is the original message.\n\nUse every object in such "
+          "a block as earlier forum conversation context. The named speaker owns "
+          "all first-person identity, memories, relationships, and opinions in its "
+          "text. Do not adopt "
+          "them as your own. Direct messages in your own conversation appear as "
+          "separate user-role messages beginning with `from <Name>:` on their own "
+          "line; the final one is the current message you should answer.";
 }
 
 std::string workspace_inventory(

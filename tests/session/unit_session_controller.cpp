@@ -37,7 +37,7 @@ test::TestNotifier& notifier() {
 }
 
 ModelMessage operator_prompt(std::string_view text) {
-    return {ModelRole::persona, "from Operator:\n" + std::string(text)};
+    return {ModelRole::user, "from Operator:\n" + std::string(text)};
 }
 
 std::vector<ModelMessage> context_without_timestamp_metadata(
@@ -558,7 +558,7 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(
         context_without_timestamp_metadata(request, backend_view->system_prompt),
         (std::vector<ModelMessage>{
-            {ModelRole::persona, "from You:\nEarlier"},
+            {ModelRole::user, "from You:\nEarlier"},
             operator_prompt("Current"),
         }));
     EXPECT_TRUE(has_state_update(completed));

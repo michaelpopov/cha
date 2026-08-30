@@ -11,6 +11,11 @@ bool is_direct_openai_host(std::string_view host) {
     return ascii_iequals(host, "api.openai.com");
 }
 
+bool is_openrouter_host(std::string_view host) {
+    if (host.ends_with('.')) host.remove_suffix(1);
+    return ascii_iequals(host, "openrouter.ai");
+}
+
 std::string provider_endpoint(const ModelBackendConfig& config) {
     std::string host = config.host;
     if (host.find(':') != std::string::npos && !host.starts_with('[')) {

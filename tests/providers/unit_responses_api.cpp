@@ -181,7 +181,7 @@ TEST(ResponsesApi, ReadsUsageFromTheCompletionEvent) {
     ResponsesStreamDecoder decoder(output.sink());
     decoder.consume(
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Answer\"}\n\n"
-        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":9}}}}\n\n");
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":9,\"cache_write_tokens\":7}}}}\n\n");
     const StreamDecodeResult result = decoder.finish();
 
     EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
@@ -191,6 +191,8 @@ TEST(ResponsesApi, ReadsUsageFromTheCompletionEvent) {
     EXPECT_EQ(*result.result.usage.output_tokens, 5U);
     ASSERT_TRUE(result.result.usage.cache_read_tokens);
     EXPECT_EQ(*result.result.usage.cache_read_tokens, 9U);
+    ASSERT_TRUE(result.result.usage.cache_write_tokens);
+    EXPECT_EQ(*result.result.usage.cache_write_tokens, 7U);
 }
 
 TEST(ResponsesApi, KeepsSearchAnnotationsAndReasoningEventsPrivate) {
@@ -315,7 +317,10 @@ TEST(ResponsesApi, IgnoresNonStreamingSearchAndAnnotationMetadata) {
     const std::string body = R"({
         "status": "completed",
         "usage": {"input_tokens": 12, "output_tokens": 5,
-                  "input_tokens_details": {"cached_tokens": 9}},
+                  "input_tokens_details": {
+                      "cached_tokens": 9,
+                      "cache_write_tokens": 7
+                  }},
         "output": [
             {"type": "reasoning", "summary": []},
             {
@@ -354,6 +359,8 @@ TEST(ResponsesApi, IgnoresNonStreamingSearchAndAnnotationMetadata) {
     EXPECT_EQ(*result.usage.output_tokens, 5U);
     ASSERT_TRUE(result.usage.cache_read_tokens);
     EXPECT_EQ(*result.usage.cache_read_tokens, 9U);
+    ASSERT_TRUE(result.usage.cache_write_tokens);
+    EXPECT_EQ(*result.usage.cache_write_tokens, 7U);
 }
 
 TEST(ResponsesApi, DecodesNonStreamingRefusalAsAnswer) {

@@ -576,11 +576,13 @@ Projection omits:
 - incomplete/cancelled character history.
 
 For the target character, its own completed output becomes `assistant` history
-and directly addressed human prompts become `user`/persona history. Other
+and directly addressed human prompts become `user`-role history. Other
 participants' entries are grouped into explicit shared-history JSONL so the
 model can see the multi-party conversation without being told it authored
-someone else's words. The new prompt is appended last with its persona display
-name.
+someone else's words. The system prompt names the same JSONL heading and tells
+the character to use the block as earlier forum conversation context. The new
+prompt is appended last with its persona display name as the current message to
+answer.
 
 ### 10.3 Provider requests and ordered generation
 
@@ -629,9 +631,10 @@ beside [providers/responses_api.cpp](../src/providers/responses_api.cpp):
 
 The controller derives a stable prompt-cache key from forum, session, and
 character identity. When caching is enabled, the protocol encoders send that
-key only to the direct OpenAI host. For Responses, long retention also adds the
-24-hour retention field. Other compatible hosts receive neither OpenAI-specific
-cache field.
+key as `prompt_cache_key` to the direct OpenAI host and as `session_id` to
+OpenRouter. For GPT-5.6 and later Responses, long retention also requests
+implicit caching with the longest currently supported minimum TTL, 30 minutes.
+Other compatible hosts receive no cache-affinity field.
 
 The protocol modules intentionally know nothing about curl, HTTP status, or
 cancellation. `ProviderClient::perform()` decides the final outcome after the
