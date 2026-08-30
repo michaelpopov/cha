@@ -304,7 +304,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             const auto current = published_workspace();
             (void)backup_workspace(current->root(), backup_dir);
             Workspace candidate = Workspace::load(current->root());
-            export_and_bootstrap_sessions(candidate);
+            bootstrap_sessions_from_sql(candidate);
             loadws(std::move(candidate));
         } catch (const std::bad_alloc&) {
             throw;

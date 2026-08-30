@@ -1,7 +1,6 @@
 #include "session/session_snapshot.h"
 
 #include "session/session_database.h"
-#include "util/logging.h"
 #include "util/path_name.h"
 #include "workspace/workspace.h"
 
@@ -22,7 +21,7 @@ std::filesystem::path with_extension(
 
 } // namespace
 
-void export_and_bootstrap_sessions(
+void bootstrap_sessions_from_sql(
     const Workspace& workspace) {
     for (const WorkspaceForum& forum : workspace.forums()) {
         const std::optional<std::filesystem::path> directory =
@@ -34,7 +33,6 @@ void export_and_bootstrap_sessions(
                 + "' is not a directory");
         }
 
-        std::vector<std::filesystem::path> databases;
         std::vector<std::filesystem::path> snapshots;
         for (const auto& entry :
              std::filesystem::directory_iterator(*directory)) {
@@ -42,26 +40,9 @@ void export_and_bootstrap_sessions(
             const std::filesystem::path extension = entry.path().extension();
             const std::string id = utf8_path(entry.path().stem());
             if (!is_url_safe_identifier(id)) continue;
-            if (extension == ".sqlite3") databases.push_back(entry.path());
-            else if (extension == ".sql") snapshots.push_back(entry.path());
+            if (extension == ".sql") snapshots.push_back(entry.path());
         }
-        std::sort(databases.begin(), databases.end());
         std::sort(snapshots.begin(), snapshots.end());
-
-        // One unreadable file is what listing already tolerates, so it is
-        // logged and skipped rather than failing the whole reload.
-        for (const std::filesystem::path& database : databases) {
-            const std::string id = utf8_path(database.stem());
-            try {
-                export_session_database_sql(
-                    database,
-                    with_extension(database, ".sql"),
-                    {forum.id, id});
-            } catch (const std::exception& error) {
-                log_warn("Session snapshot export skipped: path="
-                    + utf8_path(database) + " reason=" + error.what());
-            }
-        }
 
         for (const std::filesystem::path& snapshot : snapshots) {
             const std::string id = utf8_path(snapshot.stem());

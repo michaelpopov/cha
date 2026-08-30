@@ -404,9 +404,9 @@ actors, and writes a workspace archive before loading one replacement
 mutex and swaps it in atomically. Failure retains the published workspace, but
 the actors were already stopped before filesystem work began.
 
-Only reload performs the session SQL synchronization described in section 9.3:
-existing databases are exported and missing databases may be bootstrapped from
-snapshots before the candidate workspace is published.
+Only reload performs the session SQL bootstrapping described in section 9.3:
+missing databases may be bootstrapped from snapshots before the candidate
+workspace is published.
 
 ### 8.3 Provider selection
 
@@ -501,21 +501,19 @@ The repository also creates a private temporary database for Welcome. It uses
 the same catalog/database/controller machinery and removes that private
 directory when the repository is destroyed.
 
-### 9.3 Reload-time SQL snapshots
+### 9.3 Reload-time SQL bootstrapping
 
-`export_and_bootstrap_sessions()` in
+`bootstrap_sessions_from_sql()` in
 [session/session_snapshot.cpp](../src/session/session_snapshot.cpp) runs only
-while a replacement `Workspace` is being loaded. For each forum, it
-first exports every valid `<session>.sqlite3` database to an adjacent
-`<session>.sql` file. It then imports a snapshot whose database is missing,
-using a temporary database and validating its forum/session identity before
-publication.
+while a replacement `Workspace` is being loaded. For each forum, it imports a
+snapshot whose database is missing, using a temporary database and validating
+its forum/session identity before publication.
 
-An existing SQLite database wins and refreshes its SQL snapshot. A database in
-`sessions/deleted/` suppresses import of an old snapshot, so deleting a session
-does not make it reappear on the next reload. An unreadable database is logged
-and skipped; invalid SQL aborts the candidate workspace without publishing a
-partial database.
+An existing SQLite database wins, and reload does not create or refresh SQL
+snapshots. A database in `sessions/deleted/` suppresses import of an old
+snapshot, so deleting a session does not make it reappear on the next reload.
+Invalid SQL aborts the candidate workspace without publishing a partial
+database.
 
 ### 9.4 `open_session()` is the bridge
 
@@ -1234,7 +1232,7 @@ and before reading all of its implementation.
 | Controller transitions | [tests/session/unit_session_controller.cpp](../tests/session/unit_session_controller.cpp) |
 | SQLite catalog/repository | [tests/session/unit_session_catalog.cpp](../tests/session/unit_session_catalog.cpp), [unit_session_repository.cpp](../tests/session/unit_session_repository.cpp) |
 | Cross-process leases | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
-| Workspace publication and SQL snapshots | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp), [tests/session/unit_session_snapshot.cpp](../tests/session/unit_session_snapshot.cpp) |
+| Workspace publication and SQL bootstrapping | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp), [tests/session/unit_session_snapshot.cpp](../tests/session/unit_session_snapshot.cpp) |
 | Actor behavior | [tests/web/unit_live_session.cpp](../tests/web/unit_live_session.cpp) |
 | Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
 | Snapshot/append collapse | [tests/web/unit_sse_mailbox.cpp](../tests/web/unit_sse_mailbox.cpp) |

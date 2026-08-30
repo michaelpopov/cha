@@ -400,7 +400,7 @@ No session-storage schema change is required merely to add users:
 - `SessionDatabaseMetadata` continues to contain session ID, forum ID, and
   label;
 - `FullSessionId` remains forum ID plus session ID;
-- `SessionRepository`, `SessionCatalog`, leases, snapshots, import/export, and
+- `SessionRepository`, `SessionCatalog`, leases, snapshots, SQL imports, and
   backups retain their current layout;
 - creating a session does not record an owner;
 - removing a user from a forum does not move or rewrite any session database.

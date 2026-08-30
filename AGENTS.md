@@ -13,6 +13,8 @@ maintainability and readability. Do not overcomplicate it.
 - Do not add abstraction, configuration, or machinery for hypothetical needs.
 - When two designs both work, pick the one that is easier to read later.
 
+Do not update documentation in the docs/ directory unless this is explicitly requested by the user.
+
 ## Local repository investigation
 
 A local repository-search assistant is available as:
