@@ -61,6 +61,10 @@ struct PublishedTestWorkspace {
 // Imports `source` into `<source>/workspace.sqlite3` and returns that path.
 [[nodiscard]] std::filesystem::path import_test_database(
     const std::filesystem::path& source);
+// Imports the same fixture into an explicitly independent database path.
+[[nodiscard]] std::filesystem::path import_test_database(
+    const std::filesystem::path& source,
+    const std::filesystem::path& database);
 
 PublishedTestWorkspace publish_test_workspace(
     const std::vector<CharacterDefinition>& definitions,

@@ -441,6 +441,6 @@ add_custom_command(
         -DEXECUTABLE=$<TARGET_FILE:chaweb_app>
         -DOUTPUT_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/bin
         -DWEBAPP_DIST=${CMAKE_CURRENT_SOURCE_DIR}/webapp/dist
-        -DWORKSPACE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/workspace
+        -DIMPORT_SEED_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/import-seed
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/stage_local_deployment.cmake
     VERBATIM)

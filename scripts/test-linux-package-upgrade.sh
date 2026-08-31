@@ -13,7 +13,8 @@ source_application=$(cd -- "$1" && pwd)
 # explicit override for controlled packaging environments.
 port=${CHA_UPGRADE_TEST_PORT:-$((20000 + ($$ % 20000)))}
 test_root=$(mktemp -d)
-workspace="$test_root/cha-workspace"
+import_source="$test_root/import-source"
+database="$test_root/cha.sqlite3"
 application="$test_root/cha"
 server_pid=
 
@@ -34,7 +35,7 @@ trap cleanup EXIT HUP INT TERM
 start_server() {
     "$application/chaweb" \
         --root "$application" \
-        --workspace "$workspace" \
+        --data "$database" \
         --host 127.0.0.1 \
         --port "$port" \
         >"$test_root/chaweb.out" 2>&1 &
@@ -56,9 +57,11 @@ start_server() {
     return 1
 }
 
-cp -R "$repository/webapp/e2e/fixtures/workspace" "$workspace"
-cp "$repository/webapp/e2e/fixtures/provider.env" "$workspace/.env"
+cp -R "$repository/webapp/e2e/fixtures/workspace" "$import_source"
 cp -R "$source_application" "$application"
+
+"$application/chaweb" --data "$database" --import "$import_source"
+cmake -E remove_directory "$import_source"
 
 start_server
 origin="http://127.0.0.1:$port"
@@ -79,27 +82,20 @@ curl --silent --fail \
     "$origin/api/v1/forums/lobby/sessions/$session_id/open" >/dev/null
 stop_server
 
-database="$workspace/workspace.sqlite3"
 if [ ! -f "$database" ]; then
-    echo "upgrade test: workspace database was not created" >&2
+    echo "upgrade test: database was not created" >&2
     exit 1
 fi
-owned_before=$(sha256sum \
-    "$workspace/.env" \
-    "$workspace/characters/guide/CHARACTER.md" \
-    "$database")
+owned_before=$(sha256sum "$database")
 
 # This is the documented upgrade: the whole application directory is
-# replaced, while the sibling workspace is not part of the operation.
+# replaced, while the sibling database is not part of the operation.
 cmake -E remove_directory "$application"
 cp -R "$source_application" "$application"
 
-owned_after=$(sha256sum \
-    "$workspace/.env" \
-    "$workspace/characters/guide/CHARACTER.md" \
-    "$database")
+owned_after=$(sha256sum "$database")
 if [ "$owned_before" != "$owned_after" ]; then
-    echo "upgrade test: customer-owned workspace files changed during replacement" >&2
+    echo "upgrade test: customer-owned database changed during replacement" >&2
     exit 1
 fi
 
@@ -119,4 +115,4 @@ curl --silent --fail \
     | grep -q '"session_label":"Upgrade survivor"'
 stop_server
 
-echo "Package upgrade check passed: workspace key, character, and stored session survived."
+echo "Package upgrade check passed: the external database and stored session survived."

@@ -141,9 +141,9 @@ test('deletes a closed session and retains its archived row outside the catalog'
   }, sessionId);
   expect(result).toEqual({ listed: false, openStatus: 404 });
 
-  const workspace = process.env.CHA_E2E_WORKSPACE;
-  if (!workspace) throw new Error('CHA_E2E_WORKSPACE is not set');
-  const database = new DatabaseSync(resolve(workspace, 'workspace.sqlite3'), {
+  const databasePath = process.env.CHA_E2E_DATABASE;
+  if (!databasePath) throw new Error('CHA_E2E_DATABASE is not set');
+  const database = new DatabaseSync(resolve(databasePath), {
     readOnly: true,
   });
   try {

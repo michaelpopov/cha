@@ -386,6 +386,12 @@ PublishedTestWorkspace publish_test_workspace(
 
 std::filesystem::path import_test_database(const std::filesystem::path& source) {
     const std::filesystem::path database = source / "workspace.sqlite3";
+    return import_test_database(source, database);
+}
+
+std::filesystem::path import_test_database(
+    const std::filesystem::path& source,
+    const std::filesystem::path& database) {
     import_workspace_configuration(source, database);
     return database;
 }

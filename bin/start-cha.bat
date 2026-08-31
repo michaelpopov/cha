@@ -3,7 +3,8 @@ setlocal
 
 set "HOST=0.0.0.0"
 set "PORT=8086"
-set "WORKSPACE=..\workspace"
+set "DATABASE=..\cha.sqlite3"
+set "IMPORT_SEED=import-seed"
 
 rem Starts CHA from this directory. The build stages chaweb.exe and web/ here.
 for %%I in ("%~dp0.") do set "HERE=%%~fI"
@@ -15,10 +16,12 @@ if not exist "%EXECUTABLE%" (
     exit /b 1
 )
 
-for %%I in ("%HERE%\%WORKSPACE%") do set "WORKSPACE_PATH=%%~fI"
-if not exist "%WORKSPACE_PATH%\" (
-    echo start-cha: no workspace at %WORKSPACE_PATH% 1>&2
-    echo start-cha: set WORKSPACE at the top of this script 1>&2
+for %%I in ("%HERE%\%DATABASE%") do set "DATABASE_PATH=%%~fI"
+for %%I in ("%HERE%\%IMPORT_SEED%") do set "IMPORT_SEED_PATH=%%~fI"
+if not exist "%DATABASE_PATH%" (
+    echo start-cha: no database at %DATABASE_PATH% 1>&2
+    echo start-cha: initialize it explicitly, then run this script again: 1>&2
+    echo   "%EXECUTABLE%" --data "%DATABASE_PATH%" --import "%IMPORT_SEED_PATH%" 1>&2
     exit /b 1
 )
 
@@ -27,5 +30,5 @@ if not "%URL_HOST::=%"=="%URL_HOST%" set "URL_HOST=[%URL_HOST%]"
 echo CHA: http://%URL_HOST%:%PORT%/
 echo Press Ctrl+C to stop.
 
-"%EXECUTABLE%" --root "%HERE%" --workspace "%WORKSPACE_PATH%" --host "%HOST%" --port "%PORT%"
+"%EXECUTABLE%" --root "%HERE%" --data "%DATABASE_PATH%" --host "%HOST%" --port "%PORT%"
 exit /b %ERRORLEVEL%

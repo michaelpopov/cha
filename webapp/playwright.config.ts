@@ -21,6 +21,9 @@ process.env.CHA_API_TARGET ??= api;
 process.env.CHA_E2E_WORKSPACE ??= resolve(
   tmpdir(), `cha-webapp-e2e-${apiPort}`, 'workspace',
 );
+process.env.CHA_E2E_DATABASE ??= resolve(
+  tmpdir(), `cha-webapp-e2e-${apiPort}`, 'cha.sqlite3',
+);
 const assembledApplication = Boolean(process.env.CHA_E2E_APPLICATION_ROOT);
 
 export default defineConfig({

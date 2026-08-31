@@ -11,16 +11,35 @@ const repository = resolve(project, '..');
 const publishedWorkspace = process.env.CHA_E2E_WORKSPACE
   ? resolve(process.env.CHA_E2E_WORKSPACE)
   : null;
-if (publishedWorkspace) {
+const publishedDatabase = process.env.CHA_E2E_DATABASE
+  ? resolve(process.env.CHA_E2E_DATABASE)
+  : null;
+const databaseArtifacts = publishedDatabase
+  ? [
+      publishedDatabase,
+      `${publishedDatabase}-wal`,
+      `${publishedDatabase}-shm`,
+      `${publishedDatabase}-journal`,
+      `${publishedDatabase}.cha-lock`,
+    ]
+  : [];
+for (const [label, path] of [
+  ['workspace', publishedWorkspace],
+  ...databaseArtifacts.map((path) => ['database artifact', path]),
+]) {
+  if (!path) continue;
   try {
-    await lstat(publishedWorkspace);
-    throw new Error(
-      `Refusing to replace an existing E2E workspace: ${publishedWorkspace}`,
-    );
+    await lstat(path);
+    throw new Error(`Refusing to replace an existing E2E ${label}: ${path}`);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
+}
+if (publishedWorkspace) {
   await mkdir(dirname(publishedWorkspace), { recursive: true });
+}
+if (publishedDatabase) {
+  await mkdir(dirname(publishedDatabase), { recursive: true });
 }
 const temporary = await mkdtemp(resolve(tmpdir(), 'cha-webapp-e2e-'));
 let child;
@@ -29,6 +48,7 @@ function cleanupFiles() {
   if (cleaned) return;
   cleaned = true;
   if (publishedWorkspace) rmSync(publishedWorkspace, { recursive: true, force: true });
+  for (const path of databaseArtifacts) rmSync(path, { force: true });
   rmSync(temporary, { recursive: true, force: true });
 }
 process.once('exit', () => {
@@ -43,6 +63,7 @@ const executable = packagedApplication
   ? resolve(application, 'chaweb')
   : resolve(repository, 'build/ninja/chaweb');
 const workspace = publishedWorkspace ?? resolve(temporary, 'workspace');
+const database = publishedDatabase ?? resolve(temporary, 'cha.sqlite3');
 const apiPort = Number(process.env.CHA_E2E_PORT ?? '8080');
 const modelPort = apiPort + 2;
 
@@ -96,11 +117,6 @@ const modelServer = createServer((request, response) => {
     writeNext();
   });
 });
-await new Promise((resolveListen, reject) => {
-  modelServer.once('error', reject);
-  modelServer.listen(modelPort, '127.0.0.1', resolveListen);
-});
-
 // The mock server's port is the one setting that cannot be committed, so the
 // harness rewrites the named provider selected by the character definition.
 await writeFile(
@@ -119,7 +135,12 @@ https = false
 // The real bundle, not a placeholder: the served suite loads the application
 // from this server with no development server anywhere in the path.
 if (packagedApplication) {
-  for (const required of ['chaweb', 'app.toml', 'start-cha.sh', 'web/index.html']) {
+  for (const required of [
+    'chaweb',
+    'import-seed/app.toml',
+    'start-cha.sh',
+    'web/index.html',
+  ]) {
     try {
       await stat(resolve(application, required));
     } catch {
@@ -137,9 +158,29 @@ if (packagedApplication) {
   await cp(bundle, resolve(application, 'web'), { recursive: true });
 }
 
+const importer = spawn(executable, [
+  '--data', database,
+  '--import', workspace,
+], { stdio: 'inherit' });
+const importCode = await new Promise((resolveExit, reject) => {
+  importer.once('error', reject);
+  importer.once('exit', (code, signal) => {
+    resolveExit(code ?? (signal ? 1 : 0));
+  });
+});
+if (importCode !== 0) {
+  throw new Error(`Offline import failed with exit code ${importCode}`);
+}
+await rm(workspace, { recursive: true, force: true });
+
+await new Promise((resolveListen, reject) => {
+  modelServer.once('error', reject);
+  modelServer.listen(modelPort, '127.0.0.1', resolveListen);
+});
+
 child = spawn(executable, [
   '--root', application,
-  '--workspace', workspace,
+  '--data', database,
   '--host', '127.0.0.1',
   '--port', String(apiPort),
   // Short enough to exercise an actual unload in a browser test, but longer
@@ -167,6 +208,7 @@ const exitCode = await new Promise((resolveExit, reject) => {
 
 await new Promise((resolveClose) => modelServer.close(resolveClose));
 if (publishedWorkspace) await rm(publishedWorkspace, { recursive: true, force: true });
+for (const path of databaseArtifacts) await rm(path, { force: true });
 await rm(temporary, { recursive: true, force: true });
 cleaned = true;
 process.exitCode = exitCode;

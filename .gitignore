@@ -32,6 +32,7 @@ CPack*.cmake
 *~
 
 .env
+!/packaging/linux/import-seed/.env
 *.sqlite3
 *.log
 *.cha-lock

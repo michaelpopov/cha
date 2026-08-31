@@ -277,6 +277,11 @@ TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
     }
     EXPECT_FALSE(std::filesystem::exists(export_ / "ignored.txt"));
     EXPECT_FALSE(std::filesystem::exists(export_ / "README"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "workspace.sqlite3"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "workspace.sqlite3-wal"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "workspace.sqlite3-shm"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "workspace.sqlite3.cha-lock"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "sessions"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "system" / "providers"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "personas"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "characters"));

@@ -4,6 +4,7 @@
 #include "support/test_workspace.h"
 #include "support/web_server_process.h"
 #include "session/session_database.h"
+#include "session/session_lease.h"
 #include "session/sqlite_storage.h"
 #include "session/workspace_session_database.h"
 #include "web/http_server.h"
@@ -74,6 +75,58 @@ std::string log_contents(const std::filesystem::path& path) {
     return {
         std::istreambuf_iterator<char>(log),
         std::istreambuf_iterator<char>()};
+}
+
+struct OfflineProcessResult {
+    int status{};
+    std::string errors;
+};
+
+OfflineProcessResult run_offline_process(
+    const std::filesystem::path& database,
+    const char* operation,
+    const std::filesystem::path& directory) {
+    int error_pipe[2]{-1, -1};
+    if (::pipe(error_pipe) != 0) {
+        throw std::runtime_error("Failed to create offline process-test pipe");
+    }
+    const pid_t child = ::fork();
+    if (child == -1) {
+        (void)::close(error_pipe[0]);
+        (void)::close(error_pipe[1]);
+        throw std::runtime_error("Failed to fork offline process test");
+    }
+    if (child == 0) {
+        (void)::dup2(error_pipe[1], STDERR_FILENO);
+        (void)::close(error_pipe[0]);
+        (void)::close(error_pipe[1]);
+        ::execl(
+            CHA_WEB_BINARY,
+            CHA_WEB_BINARY,
+            "--data",
+            database.string().c_str(),
+            operation,
+            directory.string().c_str(),
+            static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    (void)::close(error_pipe[1]);
+    OfflineProcessResult result;
+    std::array<char, 4096> buffer{};
+    while (true) {
+        const ssize_t count = ::read(error_pipe[0], buffer.data(), buffer.size());
+        if (count > 0) {
+            result.errors.append(buffer.data(), static_cast<std::size_t>(count));
+            continue;
+        }
+        if (count == 0 || (count == -1 && errno != EINTR)) break;
+    }
+    (void)::close(error_pipe[0]);
+    if (::waitpid(child, &result.status, 0) != child) {
+        throw std::runtime_error("Failed to reap offline process test");
+    }
+    return result;
 }
 
 // Diagnostic logging flushes every record as it is written, so the log is what
@@ -629,11 +682,9 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     _exit(3);
 }
 
-// The whole point of the two-root split is that an upgrade can replace the
-// application directory without touching the customer's files. Every other
-// process test hands the same path to both flags, which would pass just as
-// happily if the two were secretly one root.
-TEST(WebServerProcess, RunsWithAnApplicationRootThatHoldsNoWorkspace) {
+// Exercise all three locations independently: disposable import source,
+// replaceable application files, and durable database storage.
+TEST(WebServerProcess, RunsWithIndependentRootsAfterImportSourceDeletion) {
     test::TestWorkspace workspace;
     workspace.write_workspace_config();
 
@@ -648,9 +699,16 @@ TEST(WebServerProcess, RunsWithAnApplicationRootThatHoldsNoWorkspace) {
     std::ofstream(application / "web" / "assets" / "app.js")
         << "console.log('split asset');\n";
 
+    const std::filesystem::path storage =
+        workspace.root().parent_path()
+        / (workspace.root().filename().string() + "_storage");
+    std::filesystem::create_directories(storage);
+    const std::filesystem::path database = storage / "cha.sqlite3";
+    ASSERT_EQ(test::import_test_database(workspace.root(), database), database);
+    std::filesystem::remove_all(workspace.root());
+
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    const auto database = test::import_test_database(workspace.root());
     test::WebServerProcess server(application, database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
@@ -661,20 +719,22 @@ TEST(WebServerProcess, RunsWithAnApplicationRootThatHoldsNoWorkspace) {
     EXPECT_EQ(shell->status, 200);
     EXPECT_NE(shell->body.find("split shell"), std::string::npos);
 
-    // ...while the conversations come from the workspace somewhere else.
+    // ...while the conversations come only from the external database.
     const auto bootstrap = client.Get("/api/v1/bootstrap");
     ASSERT_TRUE(bootstrap);
     EXPECT_EQ(bootstrap->status, 200);
     EXPECT_NE(bootstrap->body.find("The Lobby"), std::string::npos);
 
-    // Neither directory has grown the other's files.
+    // Neither source nor application files are needed for runtime state.
     EXPECT_FALSE(std::filesystem::exists(application / "workspace.toml"));
-    EXPECT_TRUE(std::filesystem::exists(workspace.root() / "app.toml"));
     EXPECT_FALSE(std::filesystem::exists(application / "app.toml"));
+    EXPECT_FALSE(std::filesystem::exists(workspace.root()));
+    EXPECT_TRUE(std::filesystem::is_regular_file(database));
 
     EXPECT_EQ(server.stop(SIGTERM).exit_code, 0);
     std::error_code removal;
     std::filesystem::remove_all(application, removal);
+    std::filesystem::remove_all(storage, removal);
 }
 
 TEST(WebServerProcess, RejectsAMissingDatabaseWithImportGuidance) {
@@ -743,7 +803,7 @@ TEST(WebServerProcess, RejectsASecondProcessWithDatabaseDiagnostic) {
     EXPECT_EQ(stopped.exit_code, 0) << first.errors();
 }
 
-TEST(WebServerProcess, RunningServerBlocksOfflineExport) {
+TEST(WebServerProcess, RunningServerBlocksOfflineImportAndExport) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());
     const int port = test::reserve_loopback_port();
@@ -754,43 +814,75 @@ TEST(WebServerProcess, RunningServerBlocksOfflineExport) {
     const std::filesystem::path exported =
         workspace.root().parent_path()
         / (workspace.root().filename().string() + "_blocked_export");
-    int error_pipe[2]{-1, -1};
-    ASSERT_EQ(::pipe(error_pipe), 0);
-    const pid_t child = ::fork();
-    ASSERT_NE(child, -1);
-    if (child == 0) {
-        (void)::dup2(error_pipe[1], STDERR_FILENO);
-        (void)::close(error_pipe[0]);
-        (void)::close(error_pipe[1]);
-        ::execl(
-            CHA_WEB_BINARY,
-            CHA_WEB_BINARY,
-            "--data",
-            database.string().c_str(),
-            "--export",
-            exported.string().c_str(),
-            static_cast<char*>(nullptr));
-        _exit(127);
+    for (const auto& [operation, directory] : std::array{
+             std::pair{"--export", exported},
+             std::pair{"--import", workspace.root()}}) {
+        const OfflineProcessResult result =
+            run_offline_process(database, operation, directory);
+        EXPECT_TRUE(WIFEXITED(result.status));
+        EXPECT_NE(WEXITSTATUS(result.status), 0);
+        EXPECT_NE(result.errors.find("already in use"), std::string::npos)
+            << operation << ": " << result.errors;
     }
-    (void)::close(error_pipe[1]);
-    std::string errors;
-    std::array<char, 4096> buffer{};
-    while (true) {
-        const ssize_t count = ::read(error_pipe[0], buffer.data(), buffer.size());
-        if (count > 0) {
-            errors.append(buffer.data(), static_cast<std::size_t>(count));
-            continue;
-        }
-        if (count == 0 || (count == -1 && errno != EINTR)) break;
-    }
-    (void)::close(error_pipe[0]);
-    int status{};
-    ASSERT_EQ(::waitpid(child, &status, 0), child);
-    EXPECT_TRUE(WIFEXITED(status));
-    EXPECT_NE(WEXITSTATUS(status), 0);
-    EXPECT_NE(errors.find("already in use"), std::string::npos) << errors;
     EXPECT_FALSE(std::filesystem::exists(exported));
+    httplib::Client client = web_client(port);
+    const auto health = client.Get("/health");
+    ASSERT_TRUE(health);
+    EXPECT_EQ(health->status, 200);
     EXPECT_EQ(server.stop(SIGINT).exit_code, 0);
+}
+
+TEST(WebServerProcess, StartsWithAStaleUnlockedCompanionFile) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    std::ofstream(SessionLease::companion_path(database))
+        << "left behind by a terminated process";
+
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(workspace.root(), database, port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+    EXPECT_EQ(server.stop(SIGTERM).exit_code, 0);
+}
+
+TEST(WebServerProcess, RecoversAfterAProcessDiesInsideASqliteTransaction) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    int ready[2]{-1, -1};
+    ASSERT_EQ(::pipe(ready), 0);
+    const pid_t writer = ::fork();
+    ASSERT_NE(writer, -1);
+    if (writer == 0) {
+        (void)::close(ready[0]);
+        storage::SqliteDatabase handle(
+            database, storage::SqliteDatabase::Mode::read_write);
+        handle.execute("BEGIN IMMEDIATE");
+        handle.execute(
+            "UPDATE config SET content = 'host = ' WHERE name = 'app.toml'");
+        const char marker = '1';
+        if (::write(ready[1], &marker, 1) != 1) _exit(2);
+        for (;;) ::pause();
+    }
+
+    (void)::close(ready[1]);
+    char marker{};
+    ASSERT_EQ(::read(ready[0], &marker, 1), 1);
+    (void)::close(ready[0]);
+    ASSERT_EQ(::kill(writer, SIGKILL), 0);
+    int status{};
+    ASSERT_EQ(::waitpid(writer, &status, 0), writer);
+    ASSERT_TRUE(WIFSIGNALED(status));
+    ASSERT_EQ(WTERMSIG(status), SIGKILL);
+
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(workspace.root(), database, port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+    httplib::Client client = web_client(port);
+    const auto bootstrap = client.Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    EXPECT_EQ(bootstrap->status, 200);
+    EXPECT_EQ(server.stop(SIGTERM).exit_code, 0);
 }
 
 TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {

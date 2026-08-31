@@ -9,6 +9,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -724,6 +725,54 @@ TEST(WorkspaceSessionDatabase, RejectsSymlinkDatabasePath) {
 #ifndef _WIN32
     EXPECT_EQ(posix_mode(target), static_cast<mode_t>(0600));
 #endif
+}
+
+TEST(WorkspaceSessionDatabase, RejectsNonRegularDatabaseAndSidecarPaths) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path directory_database =
+        workspace.root() / "directory.sqlite3";
+    std::filesystem::create_directory(directory_database);
+    EXPECT_EQ(
+        inspect_workspace_session_database(directory_database),
+        WorkspaceDatabaseState::corrupt);
+    EXPECT_THROW(
+        initialize_workspace_session_database_runtime(directory_database),
+        std::runtime_error);
+
+    const std::filesystem::path database =
+        workspace.root() / "sidecar.sqlite3";
+    create_empty_workspace_session_database(database);
+    std::filesystem::path journal = database;
+    journal += "-journal";
+    std::filesystem::create_directory(journal);
+    EXPECT_THROW(
+        initialize_workspace_session_database_runtime(database),
+        std::runtime_error);
+}
+
+TEST(WorkspaceSessionDatabase, RejectsSymlinkSidecarPath) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        workspace.root() / "sidecar-link.sqlite3";
+    create_empty_workspace_session_database(database);
+    const std::filesystem::path target = workspace.root() / "sidecar-target";
+    std::ofstream(target) << "keep";
+    std::filesystem::path journal = database;
+    journal += "-journal";
+    std::error_code error;
+    std::filesystem::create_symlink(target, journal, error);
+    if (error) {
+        GTEST_SKIP() << "symbolic links are not available";
+    }
+    EXPECT_THROW(
+        initialize_workspace_session_database_runtime(database),
+        std::runtime_error);
+    std::ifstream contents(target);
+    EXPECT_EQ(
+        std::string(
+            std::istreambuf_iterator<char>(contents),
+            std::istreambuf_iterator<char>()),
+        "keep");
 }
 
 TEST(SessionStorageLayout, DetectsOnlyDirectLegacyDatabaseFiles) {

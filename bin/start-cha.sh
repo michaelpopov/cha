@@ -1,29 +1,34 @@
 #!/bin/sh
 HOST='0.0.0.0'
 PORT='8086'
-WORKSPACE='../workspace'
+DATABASE='../cha.sqlite3'
+IMPORT_SEED='import-seed'
 
 # Starts CHA from this directory.
 #
-# This directory is laid out the way a real installation is: the executable,
-# web/, and (in deployment packages) the default workspace live here. The build
-# copies chaweb and web/ into this directory; nothing here is edited by hand
-# except the three settings above.
-#
-# These are the development values: loopback, and the repository's own
-# workspace. scripts/package-linux.sh ships this same script with the three
-# settings replaced by the customer ones in packaging/linux/app.toml, so the
-# behavior below has one source and the settings have one source each.
-#
-# Requires a chaweb that accepts --root, --workspace, --host, and --port.
+# The database is deliberately outside this application directory. The bundled
+# import-seed is source material, never live storage, and is imported only by
+# the explicit command printed below.
 
 set -eu
 
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 
-case "$WORKSPACE" in
-    /*) workspace_path="$WORKSPACE" ;;
-    *) workspace_path="$here/$WORKSPACE" ;;
+case "$DATABASE" in
+    /*) database_path="$DATABASE" ;;
+    *) database_path="$here/$DATABASE" ;;
+esac
+database_parent=$(dirname -- "$database_path")
+if [ ! -d "$database_parent" ]; then
+    echo "start-cha: no database parent directory at $database_parent" >&2
+    echo "start-cha: set DATABASE at the top of this script" >&2
+    exit 1
+fi
+database=$(cd -- "$database_parent" && pwd)/$(basename -- "$database_path")
+
+case "$IMPORT_SEED" in
+    /*) import_seed="$IMPORT_SEED" ;;
+    *) import_seed="$here/$IMPORT_SEED" ;;
 esac
 
 if [ ! -x "$here/chaweb" ]; then
@@ -32,13 +37,12 @@ if [ ! -x "$here/chaweb" ]; then
     exit 1
 fi
 
-if [ ! -d "$workspace_path" ]; then
-    echo "start-cha: no workspace at $workspace_path" >&2
-    echo "start-cha: set WORKSPACE at the top of this script" >&2
+if [ ! -e "$database" ]; then
+    echo "start-cha: no database at $database" >&2
+    echo "start-cha: initialize it explicitly, then run this script again:" >&2
+    echo "  \"$here/chaweb\" --data \"$database\" --import \"$import_seed\"" >&2
     exit 1
 fi
-
-workspace=$(cd -- "$workspace_path" && pwd)
 
 # A chaweb left over from an earlier start still holds the port, and the new one
 # would die on bind with nothing but a line in the log to say why. Stop that
@@ -95,7 +99,7 @@ esac
 log="$here/chaweb.log"
 nohup "$here/chaweb" \
     --root "$here" \
-    --workspace "$workspace" \
+    --data "$database" \
     --host "$HOST" \
     --port "$PORT" \
     >>"$log" 2>&1 &

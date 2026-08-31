@@ -61,40 +61,13 @@ echo "==> Assembling clean application directory"
 cmake -E remove_directory "$temporary"
 mkdir -p "$temporary/web"
 cp "$native_build/chaweb" "$temporary/chaweb"
-cp "$repository/packaging/linux/app.toml" "$temporary/app.toml"
-cp -R "$repository/packaging/linux/workspace" "$temporary/workspace"
-
-# The launcher's behavior lives in one file, bin/start-cha.sh, whose committed
-# settings are the development ones. The customer's settings live in one file,
-# packaging/linux/app.toml. Substituting here is what keeps the shipped launcher
-# and the shipped configuration from drifting apart; check-linux-package.sh
-# rejects the result if this fails to replace all three.
-package_setting() {
-    sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" "$repository/packaging/linux/app.toml" \
-        | head -1 | sed 's/^"//; s/"$//'
-}
-
-# Launcher settings are shell source, so quote them as data. Rewriting whole
-# assignment lines also avoids interpreting '&', '|', or backslashes from a
-# configured workspace path as sed replacement syntax.
-shell_quote() {
-    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
-}
-package_host=$(shell_quote "$(package_setting host)")
-package_port=$(shell_quote "$(package_setting port)")
-package_workspace=$(shell_quote "$(package_setting workspace)")
-while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-        HOST=*) printf 'HOST=%s\n' "$package_host" ;;
-        PORT=*) printf 'PORT=%s\n' "$package_port" ;;
-        WORKSPACE=*) printf 'WORKSPACE=%s\n' "$package_workspace" ;;
-        *) printf '%s\n' "$line" ;;
-    esac
-done <"$repository/bin/start-cha.sh" >"$temporary/start-cha.sh"
+cp "$repository/bin/start-cha.sh" "$temporary/start-cha.sh"
+cp -R "$repository/packaging/linux/import-seed" "$temporary/import-seed"
 cp -R "$webapp/dist/." "$temporary/web/"
 chmod 755 "$temporary"
 chmod 755 "$temporary/chaweb" "$temporary/start-cha.sh"
-chmod -R u=rwX,go=rX "$temporary/web" "$temporary/workspace" "$temporary/app.toml"
+chmod -R u=rwX,go=rX "$temporary/web" "$temporary/import-seed"
+chmod 600 "$temporary/import-seed/.env"
 
 "$repository/scripts/check-linux-package.sh" "$temporary"
 
@@ -103,7 +76,7 @@ echo "==> Testing the assembled application through production chaweb"
     CHA_E2E_APPLICATION_ROOT="$temporary" \
     npx playwright test --project=served)
 
-echo "==> Verifying application replacement preserves an existing workspace"
+echo "==> Verifying application replacement preserves an existing database"
 "$repository/scripts/test-linux-package-upgrade.sh" "$temporary"
 
 # Reassembly always replaces the exact versioned target with the freshly
