@@ -170,16 +170,6 @@ select:disabled {
   font-size: 0.82rem;
 }
 
-.cha-sidebar-footer {
-  margin-top: auto;
-  padding-top: 0.75rem;
-}
-
-.cha-sidebar-footer .cha-error-message {
-  margin: 0.4rem 0.55rem 0;
-  font-size: 0.82rem;
-}
-
 .cha-recent-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

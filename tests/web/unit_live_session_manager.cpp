@@ -164,24 +164,6 @@ TEST(LiveSessionManager, ReusesRunningSessionAndReturnsTheActor) {
     EXPECT_TRUE(manager.join_shutdown(5s));
 }
 
-TEST(LiveSessionManager, WorkspaceReloadReservationClosesSessionsAndBlocksOpens) {
-    SessionFiles files;
-    LiveSessionManager manager(manager_settings(1), test_opener(files));
-    const FullSessionId key{"forum", "session"};
-    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
-
-    {
-        WorkspaceReloadResult reload = manager.reserve_workspace_reload(5s);
-        ASSERT_TRUE(std::holds_alternative<WorkspaceReloadReservation>(reload));
-        EXPECT_EQ(manager.snapshot().live_session_count, 0U);
-        EXPECT_EQ(failure_of(manager.open(key, 5s)), LiveSessionOpenFailure::stopping);
-    }
-
-    EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
-    manager.begin_shutdown();
-    EXPECT_TRUE(manager.join_shutdown(5s));
-}
-
 TEST(LiveSessionManager, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSessions) {
     test::TestWorkspace fixture;
     const test::WebGraph graph(fixture.root());

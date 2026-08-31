@@ -11,7 +11,6 @@
 #include "session/not_found_error.h"
 #include "session/session_controller.h"
 #include "session/session_repository.h"
-#include "session/sqlite_storage.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -70,7 +69,7 @@ public:
         AssetHandler(graph.root() / "web").install(server_);
         LobbyRoutes(
             graph.sessions(), LobbyGraph::initial_selection(),
-            live_sessions, graph.root() / "backups", settings).install(server_);
+            live_sessions, settings).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
@@ -153,11 +152,6 @@ bool listed_not_live(TestServer& server, std::string_view id) {
         if (session["id"].get<std::string>() == id) return !session["live"].get<bool>();
     }
     return false;
-}
-
-void add_writer_forum(const test::TestWorkspace& fixture) {
-    fixture.add_character("writer", "Writer");
-    fixture.add_forum("writers", "Writers", "writer");
 }
 
 TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
@@ -291,148 +285,6 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ(sessions[0]["label"], "Welcome");
     EXPECT_FALSE(sessions[0]["live"]);
     EXPECT_GT(sessions[0]["updated_at"].get<std::int64_t>(), 0);
-}
-
-TEST(LobbyRoutes, ReloadsWorkspaceDiscoveryAndRestartsEveryLiveSession) {
-    test::TestWorkspace fixture;
-    const LobbyGraph graph(fixture.root());
-    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
-    TestServer server(graph, manager);
-    const std::string id = create_session(server, "Reloaded");
-    ASSERT_FALSE(id.empty());
-    ASSERT_EQ(
-        server.client().Post(
-            "/api/v1/forums/lobby/sessions/" + id + "/open",
-            "{}", "application/json")->status,
-        200);
-    ASSERT_TRUE(session_is_live(manager, {"lobby", id}));
-
-    fixture.add_persona("writer_persona", "Writer Persona");
-    add_writer_forum(fixture);
-    const auto reloaded = server.client().Post(
-        "/api/v1/workspace/reload", "{}", "application/json");
-    ASSERT_TRUE(reloaded);
-    ASSERT_EQ(reloaded->status, 200) << reloaded->body;
-    const nlohmann::json bootstrap = body(reloaded);
-    EXPECT_TRUE(std::ranges::any_of(bootstrap["personas"], [](const nlohmann::json& persona) {
-        return persona["id"] == "writer_persona";
-    }));
-    EXPECT_TRUE(std::ranges::any_of(bootstrap["characters"], [](const nlohmann::json& character) {
-        return character["id"] == "writer";
-    }));
-    EXPECT_TRUE(std::ranges::any_of(bootstrap["forums"], [](const nlohmann::json& forum) {
-        return forum["id"] == "writers";
-    }));
-    const std::filesystem::directory_iterator backups(graph.root() / "backups");
-    ASSERT_NE(backups, std::filesystem::directory_iterator{});
-    EXPECT_TRUE(std::filesystem::is_regular_file(backups->path()));
-
-    const auto deadline = std::chrono::steady_clock::now() + 2s;
-    while (manager.snapshot().live_session_count != 0
-           && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(10ms);
-    }
-    EXPECT_EQ(manager.snapshot().live_session_count, 0U);
-
-    const auto created = server.client().Post(
-        "/api/v1/forums/writers/sessions", R"({"label":"Draft"})", "application/json");
-    ASSERT_TRUE(created);
-    EXPECT_EQ(created->status, 201) << created->body;
-}
-
-TEST(LobbyRoutes, DoesNotBackupWhenCheckpointRemainsBusy) {
-    test::TestWorkspace fixture;
-    const LobbyGraph graph(fixture.root());
-    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
-    TestServer server(graph, manager);
-
-    storage::SqliteDatabase reader(
-        graph.sessions()->database_path(),
-        storage::SqliteDatabase::Mode::read_only);
-    reader.execute("BEGIN");
-    {
-        storage::SqliteStatement snapshot = reader.prepare(
-            "SELECT COUNT(*) FROM forums");
-        ASSERT_TRUE(snapshot.step());
-    }
-    {
-        storage::SqliteDatabase writer(
-            graph.sessions()->database_path(),
-            storage::SqliteDatabase::Mode::read_write);
-        writer.execute(
-            "INSERT INTO forums (forum_id) VALUES ('checkpoint-order')");
-    }
-    std::filesystem::path wal = graph.sessions()->database_path();
-    wal += "-wal";
-    ASSERT_GT(std::filesystem::file_size(wal), 0U);
-
-    httplib::Client client = server.client();
-    client.set_read_timeout(10s);
-    expect_error(
-        client.Post("/api/v1/workspace/reload", "{}", "application/json"),
-        422, "workspace_reload_failed");
-
-    EXPECT_GT(std::filesystem::file_size(wal), 0U);
-    EXPECT_FALSE(std::filesystem::exists(graph.root() / "backups"));
-    reader.execute("ROLLBACK");
-}
-
-TEST(LobbyRoutes, KeepsThePublishedWorkspaceWhenReloadFailsAfterBackup) {
-    test::TestWorkspace fixture;
-    const LobbyGraph graph(fixture.root());
-    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
-    TestServer server(graph, manager);
-    const std::string id = create_session(server, "Unchanged");
-    ASSERT_FALSE(id.empty());
-    ASSERT_EQ(
-        server.client().Post(
-            "/api/v1/forums/lobby/sessions/" + id + "/open",
-            "{}", "application/json")->status,
-        200);
-    ASSERT_TRUE(session_is_live(manager, {"lobby", id}));
-
-    fixture.write_character_config("display_name =\n");
-    expect_error(
-        server.client().Post("/api/v1/workspace/reload", "{}", "application/json"),
-        422, "workspace_reload_failed");
-
-    EXPECT_FALSE(session_is_live(manager, {"lobby", id}));
-    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
-    ASSERT_TRUE(bootstrap);
-    ASSERT_EQ(bootstrap->status, 200);
-    EXPECT_TRUE(std::ranges::any_of(body(bootstrap)["characters"], [](const nlohmann::json& character) {
-        return character["id"] == "guide";
-    }));
-}
-
-TEST(LobbyRoutes, RejectsCredentialValidationFailureWithoutPublishingIt) {
-    test::TestWorkspace fixture;
-    const LobbyGraph graph(fixture.root());
-    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
-    TestServer server(graph, manager);
-    const std::string id = create_session(server, "Credential reload");
-    ASSERT_FALSE(id.empty());
-    ASSERT_EQ(
-        server.client().Post(
-            "/api/v1/forums/lobby/sessions/" + id + "/open",
-            "{}", "application/json")->status,
-        200);
-
-    fixture.write_provider(
-        "test",
-        "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n"
-        "api_key_env = \"CHA_RELOAD_MISSING_CREDENTIAL_7BA5F8\"\n");
-    expect_error(
-        server.client().Post("/api/v1/workspace/reload", "{}", "application/json"),
-        422, "workspace_reload_failed");
-
-    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
-    ASSERT_TRUE(bootstrap);
-    ASSERT_EQ(bootstrap->status, 200);
-    EXPECT_TRUE(std::ranges::any_of(body(bootstrap)["characters"], [](const nlohmann::json& character) {
-        return character["id"] == "guide" && character["display_name"] == "Guide";
-    }));
-    EXPECT_FALSE(session_is_live(manager, {"lobby", id}));
 }
 
 TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderConfig) {

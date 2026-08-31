@@ -5,7 +5,6 @@
 #include <toml++/toml.hpp>
 
 #include <charconv>
-#include <cstdlib>
 #include <fstream>
 #include <optional>
 #include <stdexcept>
@@ -91,19 +90,6 @@ Value require_setting(
         + utf8_path(config_file) + "' or pass " + std::string(option) + ".");
 }
 
-std::filesystem::path user_home_directory() {
-#ifdef _WIN32
-    const char* const value = std::getenv("USERPROFILE");
-#else
-    const char* const value = std::getenv("HOME");
-#endif
-    if (value == nullptr || *value == '\0') {
-        throw std::runtime_error(
-            "Could not determine the user's home directory for workspace backups.");
-    }
-    return path_from_utf8(value);
-}
-
 void read_host_and_port(
     const toml::table& table,
     const std::filesystem::path& config_file,
@@ -172,7 +158,6 @@ ApplicationConfig load_application_config(
     std::optional<std::string> host;
     std::optional<int> port;
     std::optional<std::filesystem::path> workspace;
-    std::optional<std::filesystem::path> backup_dir;
     if (std::filesystem::exists(config_file)) {
         const toml::table table = parse_application_table(config_file);
         read_host_and_port(table, config_file, host, port);
@@ -185,18 +170,6 @@ ApplicationConfig load_application_config(
             workspace = path_from_utf8(*configured);
             if (workspace->is_relative()) {
                 workspace = config_file.parent_path() / *workspace;
-            }
-        }
-        const auto configured = table["backup_dir"].value<std::string>();
-        if (configured) {
-            if (configured->empty()) {
-                throw std::runtime_error(
-                    "Application config '" + utf8_path(config_file)
-                    + "' requires a non-empty string 'backup_dir'.");
-            }
-            backup_dir = path_from_utf8(*configured);
-            if (backup_dir->is_relative()) {
-                backup_dir = config_file.parent_path() / *backup_dir;
             }
         }
     } else if (explicit_config) {
@@ -230,15 +203,12 @@ ApplicationConfig load_application_config(
     }
     const int resolved_port = require_setting(
         port, "port", "--port", config_file);
-    std::filesystem::path resolved_backup_dir = std::filesystem::absolute(
-        backup_dir.value_or(user_home_directory())).lexically_normal();
     return {
         .root = root,
         .config_file = config_file,
         .host = std::move(resolved_host),
         .port = resolved_port,
         .workspace = std::move(resolved_workspace),
-        .backup_dir = std::move(resolved_backup_dir),
         .test_idle_grace_ms = overrides.test_idle_grace_ms,
     };
 }

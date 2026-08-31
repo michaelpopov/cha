@@ -107,8 +107,6 @@ function endedMessage(snapshot: SessionSnapshot): string {
       return 'This session was deleted.';
     case 'reloading':
       return 'Applying settings…';
-    case 'workspace_reloading':
-      return 'Reloading the workspace…';
     case 'browser_disconnected':
       return 'This session was released because the browser disconnected.';
     default:
@@ -255,16 +253,15 @@ export function ChatScreen({
   // While the stream is down its own narration is the more useful message, so
   // the ended notice speaks only for a session whose end arrived intact.
   const liveMessage = state.streamStatus === 'connected' ? ended : state.streamMessage;
-  // A settings save and a workspace reload both end the session deliberately
-  // and the ladder reopens it, so those final snapshots narrate themselves
-  // instead of offering recovery. Only they are exempt: a ladder that has given
-  // up still needs its buttons, and its stale reason must not take them away.
+  // A settings save ends the session deliberately and the ladder reopens it,
+  // so that final snapshot narrates itself instead of offering recovery. Only
+  // it is exempt: a ladder that has given up still needs its buttons, and its
+  // stale reason must not take them away.
   const showRecoveryActions = state.streamStatus === 'retry'
     || state.streamStatus === 'moved'
     || (state.streamStatus === 'connected'
       && ended !== null
-      && snapshot?.shutdown_reason !== 'reloading'
-      && snapshot?.shutdown_reason !== 'workspace_reloading');
+      && snapshot?.shutdown_reason !== 'reloading');
 
   return (
     <section className="cha-screen cha-chat" aria-label="Chat area">

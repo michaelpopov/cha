@@ -12,7 +12,6 @@ struct ApplicationConfig {
     std::string host;
     int port{};
     std::filesystem::path workspace;
-    std::filesystem::path backup_dir;
     // Browser automation uses this command-line-only seam to prove a real
     // disconnect/unload/reopen cycle without adding thirty seconds per run.
     std::optional<int> test_idle_grace_ms;

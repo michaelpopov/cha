@@ -49,8 +49,7 @@ TEST_F(ApplicationConfigTest, ReadsSettingsRelativeToTheApplicationRoot) {
     std::ofstream(root_ / "app.toml")
         << "host = \"127.0.0.1\"\n"
            "port = 8080\n"
-           "workspace = \"customer-data\"\n"
-           "backup_dir = \"backups\"\n";
+           "workspace = \"customer-data\"\n";
 
     const ApplicationConfig config = load({"chaweb", "--root", root_.string()});
 
@@ -59,7 +58,6 @@ TEST_F(ApplicationConfigTest, ReadsSettingsRelativeToTheApplicationRoot) {
     EXPECT_EQ(config.host, "127.0.0.1");
     EXPECT_EQ(config.port, 8080);
     EXPECT_EQ(config.workspace, std::filesystem::absolute(workspace_));
-    EXPECT_EQ(config.backup_dir, std::filesystem::absolute(root_ / "backups"));
 }
 
 TEST_F(ApplicationConfigTest, CommandLineSettingsOverrideTheFile) {

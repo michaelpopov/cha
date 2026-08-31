@@ -140,7 +140,6 @@ std::string_view to_string(ShutdownReason value) {
         {
             {ShutdownReason::browser_disconnected, "browser_disconnected"},
             {ShutdownReason::reloading, "reloading"},
-            {ShutdownReason::workspace_reloading, "workspace_reloading"},
             {ShutdownReason::session_failed, "session_failed"},
             {ShutdownReason::session_deleted, "session_deleted"},
             {ShutdownReason::server_stopping, "server_stopping"},
@@ -164,7 +163,6 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::session_not_live, "session_not_live"},
             {ErrorCode::command_timeout, "command_timeout"},
             {ErrorCode::command_queue_full, "command_queue_full"},
-            {ErrorCode::workspace_reload_failed, "workspace_reload_failed"},
         });
 }
 

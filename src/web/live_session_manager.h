@@ -44,26 +44,6 @@ struct LiveSessionManagerSnapshot {
 
 enum class MaintenanceFailure { stopping, manager_stopping };
 
-class WorkspaceReloadReservation {
-public:
-    ~WorkspaceReloadReservation();
-    WorkspaceReloadReservation(WorkspaceReloadReservation&& other) noexcept;
-    WorkspaceReloadReservation& operator=(WorkspaceReloadReservation&& other) noexcept;
-    WorkspaceReloadReservation(const WorkspaceReloadReservation&) = delete;
-    WorkspaceReloadReservation& operator=(const WorkspaceReloadReservation&) = delete;
-
-private:
-    friend class LiveSessionManager;
-    explicit WorkspaceReloadReservation(LiveSessionManager& manager);
-    void release() noexcept;
-
-    LiveSessionManager* manager_{};
-};
-
-using WorkspaceReloadResult = std::variant<
-    WorkspaceReloadReservation,
-    MaintenanceFailure>;
-
 class LiveSessionMaintenanceReservation {
 public:
     ~LiveSessionMaintenanceReservation();
@@ -131,11 +111,6 @@ public:
     // returned here could not be resolved back into anything to act on.
     // Retaining the handles also keeps each actor alive for the caller's use.
     [[nodiscard]] std::vector<LiveSessionHandle> active_sessions();
-    // Prevents new session opens, then stops every existing actor and waits
-    // for its owner to release session storage. The reservation keeps opens
-    // blocked while the caller backs up and reloads the workspace.
-    [[nodiscard]] WorkspaceReloadResult reserve_workspace_reload(
-        std::chrono::milliseconds grace);
     // Reserves one identity against open/reattach and waits for any actor to
     // finish, releasing its lease. Filesystem work happens only after this
     // returns and therefore never under the manager mutex.
@@ -162,13 +137,11 @@ public:
 
 private:
     friend class LiveSessionMaintenanceReservation;
-    friend class WorkspaceReloadReservation;
     using RetiredSessions = std::vector<LiveSessionHandle>;
 
     [[nodiscard]] RetiredSessions sweep_locked();
     static void reap(RetiredSessions retired);
     void release_maintenance(const FullSessionId& key) noexcept;
-    void release_workspace_reload() noexcept;
 
     WebSettings settings_;
     SessionOpener opener_;
@@ -177,7 +150,6 @@ private:
     std::map<FullSessionId, LiveSessionHandle, std::less<>> sessions_;
     std::set<FullSessionId, std::less<>> maintenance_;
     bool stopping_{};
-    bool workspace_reloading_{};
 };
 
 } // namespace cha::web

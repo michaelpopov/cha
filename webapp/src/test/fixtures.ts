@@ -130,7 +130,6 @@ export const snapshotFixture: SessionSnapshot = {
 export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
   return {
     getBootstrap: async () => bootstrapFixture,
-    reloadWorkspace: async () => bootstrapFixture,
     getCharacter: async () => characterDetailFixture,
     updateCharacter: async (_characterId, settings) => ({
       ...characterDetailFixture,

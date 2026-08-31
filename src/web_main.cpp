@@ -32,7 +32,6 @@ static int prepare_and_run(int argc, const char* argv[]);
 static int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
-    const std::filesystem::path& backup_dir,
     const std::shared_ptr<const SessionRepository>& sessions,
     LiveSessionManager& live_sessions,
     const WebSettings& settings);
@@ -73,7 +72,7 @@ int prepare_and_run(int argc, const char* argv[]) {
     LiveSessionManager live_sessions(settings, opener);
 
     const int result = run_web_server(
-        app.host, app.port, app.root, app.backup_dir, sessions, live_sessions, settings);
+        app.host, app.port, app.root, sessions, live_sessions, settings);
     providers.shutdown();
     shutdown_diagnostic_logging();
     return result;
@@ -82,7 +81,6 @@ int prepare_and_run(int argc, const char* argv[]) {
 int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
-    const std::filesystem::path& backup_dir,
     const std::shared_ptr<const SessionRepository>& sessions,
     LiveSessionManager& live_sessions,
     const WebSettings& settings) {
@@ -94,7 +92,7 @@ int run_web_server(
     assets.install(server);
 
     const InitialSelection initial{{std::string(entrance_id), std::string(welcome_id)}};
-    LobbyRoutes(sessions, initial, live_sessions, backup_dir, settings).install(server);
+    LobbyRoutes(sessions, initial, live_sessions, settings).install(server);
     SessionRoutes(live_sessions, settings, assets).install(server);
 
     log_web_server_startup(settings);
