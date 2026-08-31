@@ -166,9 +166,6 @@ SessionRepository::SessionRepository(
             "Workspace session database path '" + utf8_path(database_path_)
             + "' is not a regular file");
     }
-    if (!database_exists) {
-        create_empty_workspace_session_database(database_path_);
-    }
     initialize_workspace_session_database_runtime(database_path_);
     synchronize_forums();
 

@@ -2,6 +2,7 @@
 #include "chat/transcript.h"
 #include "session/session_database.h"
 #include "session/sqlite_storage.h"
+#include "session/workspace_session_database.h"
 #include "support/test_session_database.h"
 #include "support/test_transcript.h"
 #include "util/path_name.h"
@@ -725,11 +726,17 @@ TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
 TEST(SessionDatabase, RefusesAnUnsupportedWorkspaceSchema) {
     const auto path = temporary_path("cha_unsupported_schema_");
     create_test_database(path);
-    ASSERT_EQ(raw_execute(path, "PRAGMA user_version = 2"), SQLITE_OK);
+    ASSERT_EQ(
+        raw_execute(
+            path,
+            ("PRAGMA user_version = "
+             + std::to_string(workspace_session_database_version + 1))
+                .c_str()),
+        SQLITE_OK);
 
     try {
         (void)load_session_state(path);
-        FAIL() << "expected the older schema version to be refused";
+        FAIL() << "expected the future schema version to be refused";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(std::string(error.what()).find("unsupported schema"),
                   std::string::npos)
