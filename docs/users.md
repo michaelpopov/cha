@@ -1,6 +1,12 @@
 # Users and shared forum sessions
 
-Status: proposed implementation plan.
+Status: proposed implementation plan, updated for the unified database.
+
+This feature assumes the current storage design in [design.md](design.md): the
+logical workspace files below are configuration rows imported into the one CHA
+database, not a durable directory read by normal runtime. Operator changes use
+stop/export/edit/import/restart unless they are one of the existing narrow
+online settings writes.
 
 ## 1. Goal
 
@@ -47,9 +53,10 @@ building unused flexibility:
 - The current default character remains session-wide. Making the target
   character browser-local is a possible later refinement, not part of this
   plan.
-- Existing application-wide configuration operations remain available to any
-  authenticated user. Forum membership governs forum and session access, not
-  operator roles.
+- The existing character provider/style operation remains available to any
+  authenticated user. Offline configuration import/export remains an operator
+  action outside the HTTP API. Forum membership governs forum and session
+  access, not operator roles.
 
 If any of these product decisions changes, it should be changed here before
 implementation. In particular, private Welcome sessions, exclusive persona
@@ -140,7 +147,7 @@ display_name = "Alice"
 password_env = "CHA_USER_ALICE_PASSWORD"
 ```
 
-The workspace `.env`, or the environment used to start the process, supplies
+The imported root `.env`, or the environment used to start the process, supplies
 the value:
 
 ```dotenv
@@ -153,8 +160,10 @@ credential migration code. It is appropriate for a few trusted users on a
 personal installation.
 
 The limitation must be documented clearly: `.env` contains plaintext secrets
-and must remain private. It is already ignored by Git. Changing `.env` requires
-a server restart because CHA loads it only during startup.
+and becomes durable database content. The database and its backups must remain
+private. Changing `.env` requires stopped-service export/edit/import and a
+server restart because CHA loads it only during startup. Inherited values,
+including empty ones, take precedence over the stored `.env`.
 
 ### 5.2 Forum membership
 
@@ -348,7 +357,6 @@ Every authenticated user may:
 
 - read the character and persona rosters and details;
 - use the existing character-settings operation;
-- request a workspace reload;
 - inspect their own `/api/v1/me` response.
 
 This follows the equal-rights requirement. If application administration later
@@ -396,14 +404,12 @@ member list is every workspace user.
 
 No session-storage schema change is required merely to add users:
 
-- sessions remain in `forums/<forum>/sessions/`;
-- `SessionDatabaseMetadata` continues to contain session ID, forum ID, and
-  label;
+- sessions remain rows in the unified database selected by `--data`;
 - `FullSessionId` remains forum ID plus session ID;
-- `SessionRepository`, `SessionCatalog`, leases, and backups retain their
-  current layout;
-- creating a session does not record an owner;
-- removing a user from a forum does not move or rewrite any session database.
+- the existing `forums`, `sessions`, `turns`, and `entries` tables need no user
+  ownership or ACL columns;
+- creating a session does not record an owner; and
+- removing a user from a forum does not move or rewrite session rows.
 
 The transcript continues to persist the selected persona as
 `TranscriptEntry::participant_id` and `display_name`. That is what the browser
@@ -650,19 +656,20 @@ The browser should:
 Presence indicators and user names beside transcript entries are deliberately
 absent. The visible author remains the chosen persona.
 
-## 14. Reload and revocation behavior
+## 14. Configuration publication and revocation behavior
 
-User and membership configuration changes are published through the existing
-workspace reload path.
+User and membership changes use the operator lifecycle: stop CHA, export to a
+missing or empty directory, edit, import the complete configuration, and
+restart. Successful import commits the whole `config` table atomically; normal
+startup materializes and publishes that committed state before accepting HTTP.
+The restart is the revocation boundary:
 
-The current reload operation stops active sessions before publishing the
-candidate. Preserve that coarse behavior for the first implementation. It
-provides a simple revocation boundary:
-
-1. the old event streams close;
-2. the candidate workspace is validated and published;
-3. reconnecting requests authenticate against the current user roster;
-4. forum access is checked against the new membership list.
+1. the old process and event streams stop;
+2. import validates and commits the complete candidate;
+3. the new process publishes it and creates a fresh in-memory authentication
+   service;
+4. reconnecting users authenticate against the new roster; and
+5. forum access is checked against the new membership list.
 
 If a user was removed, existing login tokens naming that ID stop authenticating
 because authentication verifies the user against the current `Workspace` on
@@ -813,7 +820,9 @@ Cover:
 - missing `users/`, empty user set, missing `user.toml`, unknown fields, invalid
   IDs, duplicate names, empty password variable, missing password environment
   value, empty forum membership, duplicate members, and unknown members;
-- failed reload preserving the previous published workspace.
+- failed import preserving the previous complete configuration;
+- failed runtime settings mutation preserving the previous published
+  workspace.
 
 ### 18.2 Authentication tests
 
@@ -892,18 +901,21 @@ anonymous compatibility mode.
 
 Before running a user-enabled build:
 
-1. create at least one `workspace/users/<id>/user.toml`;
-2. add its password variable to the process environment or workspace `.env`;
-3. add a `users` array to every configured forum;
-4. update packaged/sample workspaces and test fixtures;
-5. restart `chaweb`.
+1. stop CHA and export its database configuration to a private directory;
+2. create at least one `users/<id>/user.toml` in that export;
+3. add its password variable to the process environment or exported root
+   `.env`;
+4. add a `users` array to every configured forum;
+5. update package import seeds and test fixtures;
+6. import the edited directory back into the same database; and
+7. restart `chaweb --data DATABASE`.
 
 Do not silently manufacture an anonymous or default-password user when the
 configuration is absent. A clear startup error is safer and simpler than
 maintaining authenticated and anonymous modes indefinitely.
 
-Stored session databases need no migration. Their forum IDs continue to
-identify the authorization boundary.
+Stored session rows need no migration. Their forum IDs continue to identify the
+authorization boundary.
 
 ## 20. Completion criteria
 

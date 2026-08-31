@@ -29,7 +29,7 @@ deliberately listen on different ports so that neither blocks the other.
 
 | Loop | Command | Serves | Port |
 | --- | --- | --- | --- |
-| Staged | `make run` | `bin/web/`, exactly as a release does | 8080 |
+| Staged | `make run` | `bin/web/`, exactly as a release does | 8086 |
 | Editable | `make run-web-dev` plus `npm run dev` | Vite, with hot reloading | 8888 and 5173 |
 
 `npm run dev` serves the editable shell on `http://127.0.0.1:5173/` and proxies
@@ -41,13 +41,15 @@ The two loops keep separate ports so that a staged server and an editable one
 can run at the same time. The browser suite is independent of both: it chooses
 its own ports, so neither loop needs to be stopped before `npm run e2e`.
 
-Both loops bind loopback. `bin/start-cha.sh` is the launcher a release ships,
-but the three settings committed at its top are the development ones; the
-packaging command substitutes the customer's `HOST`, `PORT`, and `WORKSPACE`
-from `packaging/linux/app.toml` as it assembles the application directory. That
-keeps the launcher's behavior in one file and each setting in one file, and it
-is why a development run is not reachable from the network while a packaged one
-is.
+The editable API loop binds loopback. The staged loop uses the database
+initialized by `make import-dev DATABASE="$PWD/cha.sqlite3"` and the release
+launcher's configured listener (currently `0.0.0.0:8086`). `make run-web-dev`
+requires an explicit `DATABASE` value and overrides the stored listener with
+`127.0.0.1:8888` for Vite's proxy. `bin/start-cha.sh` is also the launcher a
+release ships: it passes `--data` for a database outside the replaceable
+application directory and uses its top-of-file host/port overrides. A package's
+`import-seed/` is never runtime state; initialize the chosen database with the
+explicit import command printed by the launcher before starting it.
 
 ## Browser tests
 
@@ -71,9 +73,10 @@ pin the API port deliberately. The two projects are:
   that blocked the bundle would show up here as a console error rather than as
   a blank page in front of a customer.
 
-The suite starts a copied deterministic workspace, a real `chaweb`, and a tiny
-local OpenAI-compatible streaming provider; it never reads an API key or uses
-the external network. The projects run serially because they share that one
+The suite copies a deterministic configuration source, imports it into a
+disposable database, and starts a real `chaweb` plus a tiny local
+OpenAI-compatible streaming provider; it never reads an API key or uses the
+external network. The projects run serially because they share that one
 process and each live session serves one event stream; a dedicated two-page
 scenario verifies that the page opened last takes the session over and that the
 displaced page parks until the reader continues there.

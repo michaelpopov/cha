@@ -5,9 +5,10 @@ servers. The `chaweb` process serves the browser client and its HTTP/SSE API.
 
 ## Start chatting
 
-For a staged development run:
+Initialize a development database once, then start the staged application:
 
 ```sh
+make import-dev DATABASE="$PWD/cha.sqlite3"
 make run
 ```
 
@@ -17,10 +18,9 @@ browser to inspect forums, create or reopen a stored session, and select a forum
 character. Which persona you speak as follows the forum you are in and is set in
 that forum's configuration, not in the browser.
 
-Welcome is private to the running server and is deleted on shutdown. Stored
-sessions in workspace forums remain in their SQLite databases. Conversation
-databases formerly created in Entrance by removed application variants are left
-on disk but are not discoverable or supported by `chaweb`.
+Welcome is private to the running server and is deleted on shutdown. All stored
+sessions and the current configuration remain in the SQLite database selected
+with `--data`.
 
 The chat input also accepts these controller-level commands:
 
@@ -49,10 +49,11 @@ until `/@Name` or the target selector switches back. Recorded messages are
 durable and reach a later character as shared conversation history, never as a
 message addressed to it.
 
-## Workspace configuration
+## Configuration
 
-A workspace contains `workspace.toml`, `characters/`, `forums/`, and
-`personas/`. `characters/` and `personas/` may use nested grouping directories;
+A configuration import directory contains required root `app.toml` and
+`workspace.toml`, plus `characters/`, `forums/`, `personas/`, and `system/` as
+needed. `characters/` and `personas/` may use nested grouping directories;
 the directory containing a definition file supplies that character or persona's ID.
 The `personas/` directory may be empty because the built-in Guest
 persona is always available, and is what a forum that names no `default_persona`
@@ -63,8 +64,8 @@ A forum's `config.toml` can name its starting character with
 `default_character = "character-id"`. The ID must be a forum member; when the
 setting is omitted, the first member ID in lexicographic order is used. `/@Name`
 changes the live session immediately and saves that ID to the forum config, so
-the next session in that forum starts with it. The setting is read when a session
-opens, so editing the file by hand takes effect without a restart.
+the next session in that forum starts with it. CHA validates this narrow online
+edit, commits the complete configuration to SQLite, and then publishes it.
 
 `/!Name` selects the persona speaking for the current session. It accepts an
 unambiguous, case-insensitive full or partial persona ID or display name, then
@@ -130,10 +131,9 @@ Each character selects exactly one of those configs in its own `character.toml`
 with `provider = "<id>"`. Provider keys in workspace, forum-default, and member
 configuration are ignored; there is no provider inheritance or override chain.
 A missing character provider or provider config stops startup. Provider config
-files are loaded with each workspace generation, so edits to their host, model,
-or other settings take effect after a workspace reload. The workspace `.env`
-is loaded only at process startup, so changing a secret there requires a
-restart.
+files are loaded when the committed configuration is materialized. To change
+their host, model, prompt, or other hand-edited settings, use the offline
+export/edit/import workflow below and restart CHA.
 
 A character's chosen `provider` and `style` can be changed from the browser:
 Characters → the character → the row naming it above the description → Settings. Save writes
@@ -168,37 +168,144 @@ Search queries, progress, retrieved pages, annotations, and tool-call details
 stay inside the provider interaction. Only the character's synthesized answer
 text enters the transcript.
 
-Provider secrets belong in the environment or the workspace `.env`, never in
-the application directory. By default, `chaweb` treats the executable directory
-as its application root and reads `app.toml` there. `--root` selects another
-application root, `--config` selects another config file, and `--host`,
-`--port`, and `--workspace` override individual settings. On Reload workspace,
-chaweb writes a `chaweb-YYYY-MM-DD-HH-MM.tar.gz` archive before loading the
-replacement workspace. Set `backup_dir` in `app.toml` to choose its
-destination; omitted, it defaults to the user's home directory.
+Provider secrets belong in the inherited environment or optional root `.env`.
+The `.env` file is imported into SQLite as durable configuration, so the entire
+database must be protected and backed up like a secret. An inherited value wins
+over `.env`, even when the inherited value is empty. Import temporarily overlays
+only otherwise-absent variables while it validates providers, then restores the
+process environment even when validation fails.
 
-Linux deployment packages include a minimal `workspace/` directory containing
-the default character providers and logging settings. The packaged `start-cha.sh` uses it
-automatically, so the application can be started immediately after unpacking.
-It starts `chaweb` in the background on port 8086 and returns, so the server
-outlives the terminal session; it prints the PID to stop it with and writes
-`chaweb.log` beside the executable.
-Set `OPENAI_API_KEY` in the process environment before starting it; no `.env`
-file is included. The packaged workspace is also the location for any
-workspace customization and stored sessions.
+`app.toml` is also stored configuration and must contain a listener:
+
+```toml
+host = "127.0.0.1"
+port = 8080
+```
+
+Normal startup takes the application root for installed `web/` assets from the
+executable directory, or from `--root`. Stored `host` and `port` are required;
+runtime `--host` and `--port` values override them. Relative `logging.file`
+paths resolve against the database's parent directory. Template includes
+resolve beneath the private materialized workspace.
+
+### Command line and configuration maintenance
+
+The complete public command interface is:
+
+```text
+chaweb --data DATABASE [--root PATH] [--host HOST] [--port PORT]
+chaweb --data DATABASE --import DIRECTORY
+chaweb --data DATABASE --export DIRECTORY
+```
+
+`--data` is mandatory and names the one SQLite file containing sessions and
+current configuration. Normal startup requires a valid schema-v2 database; a
+missing database is created only by a successful import. The old
+`--config APP_TOML` and `--workspace` options are removed and have no
+compatibility aliases.
+
+Import stores required root `app.toml` and `workspace.toml`, every regular
+`.toml` and `.md` file, and optional root `.env`. It follows no symlinks and
+stores no other file type. An included file must therefore be in this set:
+`$$(snippet.txt)` fails validation, while an appropriate stored
+`$$(snippet.md)` can work. The `config` table contains only `(name, content)`;
+one SQLite transaction replaces the complete small table, with no generation,
+type, control, or revision metadata.
+
+Import and export are offline operations. Stop CHA first; either command fails
+immediately while runtime holds the database lease. To edit configuration:
+
+1. Stop CHA.
+2. Export to a missing or empty private directory.
+3. Edit that directory.
+4. Import it back into the same database.
+5. Restart CHA normally.
+
+The source or exported directory is never consulted by normal runtime. CHA
+materializes committed rows into one owner-private temporary tree. The only
+online configuration edits are a character's provider/style, a forum's default
+character, and a forum's default persona; each persists through SQLite before
+publication.
+
+The database, rollback journal, WAL/SHM sidecars, companion lock, private
+runtime tree, and exported `.env` must remain accessible only to their owner.
+CHA enforces this for files it manages. There is no unified-database backup
+command in this change, and naively copying a live WAL database is unsafe. Stop
+the service and use a SQLite-aware or otherwise safe offline backup procedure.
+
+An invalid import does not change an existing database. Failed v1 upgrade
+leaves valid v1; failed v2 replacement leaves the previous complete config. A
+runtime settings failure before commit restores the materialized tree and
+leaves durable and published state unchanged. In the rare case that SQLite
+commits but publication fails, stop and restart CHA: startup loads the new
+committed state. A failed export never changes the database but may leave an
+incomplete destination; empty it before retrying.
+
+Schema v1 is the earlier unified session database without the `config` table.
+Only import upgrades it to v2, preserving all sessions. Runtime and export
+reject v1 with an import instruction. Before modifying a database, import also
+scans `forums/*/sessions/` and `forums/*/sessions/deleted/` for older
+per-session databases. If the target is missing, use the archived
+migration-capable CHA build first. If the target exists, verify that migration
+and remove the legacy copies from the disposable/source tree. This build never
+migrates those old files itself.
+
+### Operator cutover from schema v1
+
+Always rehearse this procedure on recoverable copies before changing an
+installation:
+
+1. Stop the old service. Make safe offline backups of both its configuration
+   directory and v1 `workspace.sqlite3`; retain them after the new release is
+   accepted until the operator chooses a retention date.
+2. Inspect `forums/*/sessions/` and `forums/*/sessions/deleted/`. If either
+   contains regular `.sqlite3` files, first use the archived migration-capable
+   build on a disposable copy, verify the unified v1 database, and finish legacy
+   cleanup there. The new import intentionally refuses both incomplete states.
+3. Add valid root `app.toml` with required host and port to the import copy.
+4. Run the import and inspect its file-count summary:
+
+   ```sh
+   chaweb --data /absolute/path/workspace.sqlite3 \
+          --import /absolute/path/workspace
+   ```
+
+5. Verify schema version 2, session counts/content, required config rows, and
+   owner-only database, lock, and sidecar permissions.
+6. Export to a new directory, then compare every accepted file byte-for-byte
+   with the source:
+
+   ```sh
+   chaweb --data /absolute/path/workspace.sqlite3 \
+          --export /absolute/path/exported-workspace
+   ```
+
+7. Move the original configuration directory aside and start only with:
+
+   ```sh
+   chaweb --data /absolute/path/workspace.sqlite3
+   ```
+
+   Open and resume a session, exercise the three narrow settings, restart, and
+   export again.
+8. While runtime holds the lease, confirm both import and export are rejected.
+   After stopping it, import a second valid configuration and confirm all
+   sessions remain unchanged.
+
+Do not delete the old backup as part of the cutover. Backup retention and
+eventual removal are operator decisions.
+
+Linux packages contain `import-seed/` as source material, not live storage.
+Replace its secret placeholder and initialize a database explicitly with the
+printed `chaweb --data ... --import ...` command before running
+`start-cha.sh`. The default launcher keeps the database outside the replaceable
+application directory, starts `chaweb` in the background on port 8086, prints
+its PID, and writes process output to `chaweb.log` beside the executable.
 
 `chaweb` loads discovery — the roster, descriptions, and Markdown shown in
-Personas, Characters, and Forums — as one validated workspace generation. A
-session open re-resolves that forum's character definitions from disk, so a
-saved provider or style, and a hand edit to `CHARACTER.md`, member configs, or
-the forum context, reach the next session without a reload. To publish added or
-removed characters, personas, and forums, send `POST /api/v1/workspace/reload`
-with an empty JSON object. It validates and atomically publishes a complete new
-generation. Reload first closes every live session; the browser recovery flow
-reopens a selected stored session against the published generation. Stored
-sessions remain on disk, while Welcome belongs to the generation that created
-it and starts empty after a successful reload. A failed reload retains the old
-published generation, but the live sessions have already been closed.
+Personas, Characters, and Forums — from the database as one validated immutable
+workspace. Runtime values own their parsed data eagerly; normal reads never
+reopen the materialized files.
 
 Startup validates every configured forum, not only the ones in use. A forum with
 an invalid default character, member override, or prompt therefore prevents the

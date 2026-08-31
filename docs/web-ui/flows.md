@@ -12,7 +12,6 @@ flowchart TD
     Sidebar -->|"Forums"| Forums["Forums"]
     Sidebar -->|"Recent session"| Open["Open or reattach selected session"]
     Sidebar -->|"Recent actions / right-click"| Maintain["Rename or confirm delete"]
-    Sidebar -->|"Reload workspace"| Reload["Publish a replacement Workspace;<br/>restart live sessions"]
     Personas -->|"Select persona"| PersonaDetail["Persona detail"]
     PersonaDetail -->|"Personas back row"| Personas
     Characters -->|"Select character"| Detail["Character detail"]
@@ -53,8 +52,8 @@ flowchart TD
     Detail["Character detail"] -->|"Top-right chevron"| Form["Settings: provider and style"]
     Form -->|"Cancel or back"| Detail
     Form -->|"Save"| Patch["PATCH character"]
-    Patch -->|"Write succeeds"| Reload["Affected live sessions shut down as reloading"]
-    Reload --> Ladder["Existing stream recovery reopens them"]
+    Patch -->|"Database commit succeeds"| Restart["Affected live sessions shut down as reloading"]
+    Restart --> Ladder["Existing stream recovery reopens them"]
     Ladder --> Form
 ```
 
@@ -92,10 +91,11 @@ flowchart LR
     Config["Forum config.toml default_persona"] --> Open["Session opens on that persona"]
     Open --> Current["Controller holds the current persona"]
     Command["Chat command /!Name"] --> Current
-    Command --> Reload["Forum live sessions shut down as reloading"]
-    Reload --> Open
+    Command --> Commit["Commit forum default to database"]
+    Commit --> Restart["Forum live sessions shut down as reloading"]
+    Restart --> Open
     Current --> Status["Chat status: From"]
-    Current --> Save["Saved back to forum config.toml"]
+    Current --> Save["Persisted in unified database configuration"]
     Submit["Submitted message carries text only"] --> Resolve["Session resolves its current persona"]
     Resolve --> Session["Session records author"]
 ```

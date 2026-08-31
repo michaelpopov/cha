@@ -7,8 +7,8 @@ belongs exclusively to `Workspace::load()`.
 `CharacterDefinition` owns one request's character metadata, resolved provider
 configuration, character prompt, description, and system prompt. Production
 constructs it from the current `Workspace` when generation starts. The request
-keeps that immutable input until it finishes, so a later workspace reload
-cannot change work already in flight.
+keeps that immutable input until it finishes, so a later committed
+configuration publication cannot change work already in flight.
 
 | Source | Responsibility |
 | --- | --- |

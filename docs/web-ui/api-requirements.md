@@ -10,13 +10,12 @@ require recovery-specific API models.
 | UI need | API |
 | --- | --- |
 | Load startup and discovery data | `GET /api/v1/bootstrap` |
-| Republish the workspace after a hand edit | `POST /api/v1/workspace/reload` |
 | Read character detail | `GET /api/v1/characters/{character_id}` |
 | Update a character's provider and style | `PATCH /api/v1/characters/{character_id}` |
 | List one forum's sessions | `GET /api/v1/forums/{forum}/sessions` |
 | Create a stored session | `POST /api/v1/forums/{forum}/sessions` |
 | Rename a stored or live session | `PATCH /api/v1/forums/{forum}/sessions/{session}` |
-| Move a session to deleted storage | `DELETE /api/v1/forums/{forum}/sessions/{session}` |
+| Archive a session recoverably | `DELETE /api/v1/forums/{forum}/sessions/{session}` |
 | Open or reattach a session | `POST /api/v1/forums/{forum}/sessions/{session}/open` |
 | Load live chat state | `GET /s/{forum}/{session}/api/v1/session` |
 | Stream chat changes | `GET /s/{forum}/{session}/api/v1/events` |
@@ -41,21 +40,14 @@ live-session API remains the base for Chat.
 }
 ```
 
-The server loads and validates discovery data as one immutable `Workspace`. Its
-HTTP projection contains workspace entities plus Guest, Assistant, and Entrance.
-The browser opens the shared Welcome session immediately. A character's provider
-and style are rewritten by PATCH, then a freshly loaded workspace is published;
-other configuration takes effect through the reload endpoint.
-
-`POST /api/v1/workspace/reload` publishes that new workspace. It takes an empty
-JSON object, returns the same `Bootstrap` body as `GET /api/v1/bootstrap` so the
-browser needs no second request, and shuts every live session down with
-`workspace_reloading`. A workspace that fails validation answers `422` with
-`workspace_reload_failed` and leaves the previous workspace published. Sessions
-are stopped before candidate validation, so the browser may reopen them against
-that previous workspace. Because
-the response replaces discovery wholesale, any detail screen open over the
-retired workspace refetches.
+The server materializes and validates the database's committed configuration as
+one immutable `Workspace`. Its HTTP projection contains workspace entities plus
+Guest, Assistant, and Entrance. The browser opens the shared Welcome session
+immediately. A character's provider and style are the only discovery settings
+written by an HTTP route. The configuration store validates that candidate,
+replaces the complete `config` table transactionally, and publishes only after
+commit. Other configuration changes require stopped-service export/edit/import
+and a restart; there is no broad configuration route.
 
 Terminal and HTTP discovery are separate projections over the same workspace
 entities. Terminal commands use public names; HTTP routes use stable IDs. The
@@ -82,7 +74,8 @@ configured one and changes only through the `/!Name` chat command.
 the workspace roster, so the browser never names the author.
 
 Persona prompt context may be captured when a session opens. It is model context
-only and never controls message attribution. A successful `/!Name` shuts the
+only and never controls message attribution. A successful `/!Name` validates
+and commits the forum default through the configuration store, then shuts the
 forum's live sessions down with `shutdown_reason: "reloading"`; the browser's
 stream recovery reopens them.
 
@@ -197,7 +190,8 @@ interactive, images are not fetched, and raw HTML does not execute.
 ```
 
 Provider is required; `null` erases only the style key. The response is the
-same body as GET. A name whose config does not load is `400` and leaves the file untouched. The built-in
+same body as GET. A name whose config does not load is `400` and leaves the
+committed configuration untouched. The built-in
 Assistant, a missing character, and a character whose file cannot be read are
 `404`. After a write that changes a value, live sessions the change can affect
 shut down with `shutdown_reason: "reloading"`. The server does not reopen the
@@ -208,8 +202,9 @@ session; the browser's stream recovery does.
 Add `updated_at` to each session listing. Stored-session rows contain ID, label,
 live state, and time; they contain no description or transcript excerpt.
 
-Bootstrap includes all sessions across forums, ordered newest first by database
-mtime. Welcome is newest when the process starts, until another session is used:
+Bootstrap includes all sessions across forums, ordered newest first by the
+stored `updated_at` value. Welcome is newest when the process starts, until
+another session is used:
 
 ```json
 {
@@ -259,12 +254,13 @@ them: it is server state carried on the forum summary.
 
 ## Non-requirements
 
-- No create, edit, or delete endpoints for forums, personas, or characters.
+- No create or delete endpoints for forums, personas, or characters, and no
+  edit endpoint beyond the narrow character provider/style mutation.
 - No forum description.
 - No session description or transcript excerpt.
 - No forum links from Character detail.
-- No provider settings, secrets, or forum-local prompt overrides.
-- Settings and attachments remain outside the API contract.
+- No provider connection settings, secrets, or forum-local prompt overrides.
+- Global settings and attachments remain outside the API contract.
 
 Invalid state uses the server's exception boundary and has no separate browser
 API model.

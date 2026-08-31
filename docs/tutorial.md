@@ -48,12 +48,12 @@ HTTP API, and streams session changes with server-sent events (SSE).
 
 The most useful high-level model is:
 
-- `loadws()` atomically publishes the current immutable `Workspace`, which owns
-  all resolved workspace-directory configuration.
-- The independent process-owned `SessionRepository` owns the workspace session
-  database and its lease, and lists, creates, validates, archives, and restores
-  the sessions inside it. It asks the current workspace which forums exist but
-  does not copy workspace configuration.
+- The process-owned `WorkspaceConfigStore` holds the selected database lease,
+  secures the database and sidecars, materializes committed configuration into
+  one private root, and atomically publishes the immutable `Workspace`.
+- The independent process-owned `SessionRepository` receives explicit database,
+  materialized-workspace, and Welcome paths. It owns none of those outer
+  resources and lists, creates, validates, archives, and restores sessions.
 - `LiveSessionManager` owns the process's live-session registry.
 - One `LiveSession` is an actor with one permanent owner thread for one open
   session.
@@ -76,6 +76,7 @@ flowchart LR
     Actor["LiveSession owner thread"]
     Controller["SessionController"]
     Workspace["Published immutable Workspace"]
+    Store["WorkspaceConfigStore / lease / private root"]
     Repository["SessionRepository"]
     Journal["SessionJournal / SQLite"]
     Providers["Process Providers supervisor"]
@@ -87,6 +88,8 @@ flowchart LR
     Browser -->|"JSON commands"| Routes
     Routes -->|"getws() reads"| Workspace
     Routes --> Repository
+    Store -->|"materializes and publishes"| Workspace
+    Store -->|"supplies explicit paths"| Repository
     Routes -->|"queued WebCommand"| Actor
     Manager -->|"owns and locates"| Actor
     Actor -->|"only caller"| Controller
@@ -104,16 +107,17 @@ flowchart LR
 There are three kinds of long-lived information:
 
 - Discovery — the roster, descriptions, and Markdown the browser lists — is
-  read once per `Workspace`, validated as a whole, and shared
-  immutably until a successful reload publishes a replacement.
-- Sessions read configuration from the published `Workspace`; disk edits are
-  invisible until a successful reload publishes them.
+  materialized from committed database rows, read once per `Workspace`,
+  validated as a whole, and shared immutably until a narrow committed mutation
+  publishes a replacement or the process restarts after offline import.
+- Sessions read eagerly owned configuration from the published `Workspace`;
+  neither the import source nor an export directory is consulted at runtime.
 - Conversation state is dynamic. A live controller owns an in-memory view and
   writes durable turn transitions into its own rows of the one workspace
   session database.
 
-This split explains why creating a session appears immediately while editing
-workspace configuration requires publication of a new `Workspace`.
+This split explains why creating a session appears immediately while an
+operator's configuration edit requires stop/export/edit/import/restart.
 
 ## 3. Build graph and dependency direction
 
@@ -182,10 +186,10 @@ keys use its SHA-256 implementation, independently of curl's TLS backend.
 | [src/characters](../src/characters) | Character configuration, definitions, and model context |
 | [src/providers](../src/providers) | Request workers, provider transport, and response decoding |
 | [src/session](../src/session) | Controller, transcript orchestration, workspace session database, journal, lease, repository |
-| [src/workspace](../src/workspace) | Workspace loading, built-ins, and session construction |
+| [src/workspace](../src/workspace) | Configuration store, workspace loading, built-ins, and session construction |
 | [src/web](../src/web) | Native protocol, routes, actor, mailbox, lifecycle, shutdown |
 | [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
-| [workspace](../workspace) | A real workspace to compare against the loaders |
+| [packaging/linux/import-seed](../packaging/linux/import-seed) | A configuration source tree to compare against the loaders and import filter |
 
 Headers in this project are unusually valuable: most ownership and thread
 contracts are written next to the types. Read a subsystem's public headers
@@ -325,7 +329,8 @@ remain the source of work.
 
 The other utilities support important boundaries:
 
-- `environment.*` loads `.env` without making secrets part of character data.
+- `environment.*` parses `.env`, preserves inherited values (including empty
+  ones), and supports import's temporary overlay of absent values.
 - `path_name.*` and `utf8_path.*` keep filesystem and URL identifiers explicit.
 - `public_name.*` centralizes visible-name validation.
 - `text_template.*` expands `$$(relative/file)` includes and `$${variable}`
@@ -335,6 +340,34 @@ The other utilities support important boundaries:
 Checkpoint: locate one caller of each utility and state whether it is a domain
 policy or a reusable mechanism.
 
+### 7.4 Public process modes
+
+The public command parser accepts exactly these customer-facing forms:
+
+```text
+chaweb --data DATABASE [--root PATH] [--host HOST] [--port PORT]
+chaweb --data DATABASE --import DIRECTORY
+chaweb --data DATABASE --export DIRECTORY
+```
+
+Every mode requires `--data`. The removed `--config APP_TOML` and
+`--workspace` options are rejected, not aliases. `--root` is a runtime-only
+application-asset root. Stored `app.toml` requires host and port; runtime CLI
+values override them. Import and export acquire the same non-blocking database
+lease as runtime, so they are deliberately offline.
+
+A new database is created only after a source has been collected and validated
+successfully. Normal runtime and export require schema v2. Schema v1 is the
+unified sessions-only database; only import can add the `config` table and
+advance it to v2 while preserving session rows.
+
+`.env` is one of the durable database rows. The database, journal/WAL/SHM
+sidecars, lock, private root, and exported `.env` use owner-only access (POSIX
+`0600` files and `0700` private directories, with private Windows DACLs). A
+unified database therefore needs secret-grade access and backup discipline.
+There is no database backup command here, and copying a live WAL database
+naively is unsafe.
+
 ## 8. Third reading pass: startup and the immutable workspace
 
 Read [web_main.cpp](../src/web_main.cpp) once from top to bottom. It is the
@@ -342,14 +375,20 @@ composition root, so most lines construct or connect an owner.
 
 Startup proceeds in this order:
 
-1. `load_application_config()` reads `app.toml` and command-line overrides.
-2. `load_dotenv()` loads `workspace/.env`.
-3. `loadws()` loads, validates, and publishes the complete `Workspace`.
-4. File logging is initialized from the published workspace settings.
-5. The process-owned `SessionRepository` takes the workspace lease, checks for
-   an incomplete manual cutover, opens or creates `sessions.sqlite3`,
-   synchronizes configured forum IDs into it, and creates its temporary
-   Entrance/Welcome database.
+1. `parse_application_command()` requires `--data` and separates normal runtime
+   from the two offline transfer modes.
+2. `WorkspaceConfigStore::open()` acquires the database companion-file lease,
+   rejects anything except valid schema v2, secures the database/sidecars, and
+   enables WAL.
+3. The store creates one private root with `workspace/` and `welcome/`,
+   materializes every `config` row under `workspace/`, loads `.env` without
+   overriding inherited values, and validates/publishes a complete `Workspace`.
+4. Stored root `app.toml` supplies required host and port; CLI host/port override
+   them. File logging is initialized from the published workspace settings,
+   with a relative path based at the database parent.
+5. `SessionRepository` receives the store's explicit database, materialized,
+   and Welcome paths, synchronizes configured forum IDs, and creates the
+   process-local Welcome database. It does not own the lease or private root.
 6. The process-owned `Providers` supervisor is constructed.
 7. `LiveSessionManager` is given an opener lambda that calls `open_session()`.
 8. The HTTP server, asset handler, lobby routes, and session routes are
@@ -362,9 +401,9 @@ Startup proceeds in this order:
 Step 5 depends on step 3: the repository reads the published `Workspace` to
 decide which forum rows belong in the database. Local declaration order and
 function scopes matter too: destructors run in reverse order, log users must be
-destroyed before logging itself, and `LiveSessionManager` must be destroyed
-before the repository so every journal connection is gone before the workspace
-lease is released.
+destroyed before logging itself, and live sessions and the repository must be
+destroyed before the configuration store releases its database handle, private
+root, and lease.
 
 ### 8.1 What `Workspace::load()` builds
 
@@ -372,7 +411,9 @@ Read [workspace/workspace.h](../src/workspace/workspace.h), then the helpers and
 `Workspace::load()` in
 [workspace/workspace.cpp](../src/workspace/workspace.cpp).
 
-The loader treats the workspace as one configuration unit:
+The loader treats the workspace as one configuration unit. Production gives it
+the private materialized directory as its physical root and the database parent
+as the durable relative-path base:
 
 - It requires `characters/`, `forums/`, and `personas/` in the expected form.
 - It validates character IDs and public-name uniqueness.
@@ -391,27 +432,35 @@ The public methods expose information from one published workspace. Production
 sessions keep their identity and runtime state, then query the current
 workspace when they need forum, persona, character, provider, or style data.
 Provider requests alone own the exact resolved input they are already running.
-Disk edits are invisible until the next successful `loadws()`.
+Normal readers use eagerly owned values and do not reopen materialized files
+after load.
 
-There is no `WorkspaceRuntime`, `WorkspaceGeneration`, or copied forum-roster
-object. A candidate reload is simply a temporary `Workspace`. Once fully loaded
-and validated, `loadws()` atomically makes it current. Callers use one `getws()`
-result for the duration of an operation, so references into that immutable
-snapshot remain valid even if another thread publishes its replacement.
+There is no copied forum-roster object. A candidate is simply a temporary
+`Workspace`. Once fully loaded and durably committed, `loadws()` atomically
+makes it current. Callers use one `getws()` result for the duration of an
+operation, so references into that immutable snapshot remain valid even if a
+narrow settings write publishes its replacement.
 
-### 8.2 Publication and reload
+### 8.2 Database authority and publication
 
 Read `getws()` and `loadws()` in
 [workspace/workspace.cpp](../src/workspace/workspace.cpp). A caller holds the
-returned `shared_ptr` while it reads references from the workspace. The
-`SessionRepository` is separate process state and is not replaced on reload.
+returned `shared_ptr` while it reads references from the workspace.
 
-`POST /api/v1/workspace/reload` blocks new session opens, stops existing live
-actors, checkpoints the session database's WAL, and writes a workspace archive
-before loading one replacement `Workspace`. Reload validates a complete
-candidate outside the publication mutex, synchronizes its forum IDs into the
-session database, and swaps it in atomically. Failure retains the published
-workspace, but the actors were already stopped before filesystem work began.
+The schema-v2 `config` table contains exactly `name` and `content`. Import
+collects required root `app.toml` and `workspace.toml`, all regular `.toml` and
+`.md` files, and optional root `.env`; it follows no symlinks and stores no
+other types. A template include must itself be stored, so `snippet.txt` is not
+available after materialization while `snippet.md` can be. Import validates a
+byte-identical private materialization before it commits the complete row set.
+
+Normal runtime never reads the import or export directory. The only online
+edits are character provider/style, forum default character, and forum default
+persona. `WorkspaceConfigStore` serializes each one, edits its private tree,
+loads a complete candidate, replaces all configuration rows in one SQLite
+transaction, and publishes after commit. There is no generation, type, control,
+or revision column. Other edits require stop, export to a missing or empty
+directory, edit, import, and restart.
 
 ### 8.3 Provider selection
 
@@ -452,7 +501,7 @@ The generated workspace guide is combined with public workspace inventory
 data. The Entrance/Welcome session is a normal session at the controller level;
 its specialness is in how the application constructs and stores it.
 
-Checkpoint: starting with `workspace/forums/stoics`, identify the files that
+Checkpoint: starting with `packaging/linux/import-seed/forums/stoics`, identify the files that
 contribute to one member's final definition and the order in which values win.
 
 ## 9. Fourth reading pass: session storage and opening
@@ -461,17 +510,17 @@ Read these in order:
 
 1. [chat/session_identity.h](../src/chat/session_identity.h)
 2. [session/stored_session.h](../src/session/stored_session.h)
-3. [session/session_storage_layout.h](../src/session/session_storage_layout.h)
-4. [session/workspace_session_database.h](../src/session/workspace_session_database.h)
-5. [session/session_lease.h](../src/session/session_lease.h)
-6. [session/session_database.h](../src/session/session_database.h)
-7. [session/session_repository.h](../src/session/session_repository.h)
-8. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
+3. [session/workspace_session_database.h](../src/session/workspace_session_database.h)
+4. [session/session_lease.h](../src/session/session_lease.h)
+5. [session/session_storage_layout.h](../src/session/session_storage_layout.h)
+6. [workspace/workspace_config_store.h](../src/workspace/workspace_config_store.h)
+7. [session/session_database.h](../src/session/session_database.h)
+8. [session/session_repository.h](../src/session/session_repository.h)
+9. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
 
-Every persistent session in a workspace lives in one SQLite file,
-`workspace/sessions.sqlite3`, beside one lock companion,
-`sessions.sqlite3.cha-lock`. There is no per-session database file, no
-per-session lock, and no `sessions/` directory below a forum.
+Every persistent session lives in the SQLite file selected by `--data`, named
+`workspace.sqlite3` in these examples, beside
+`workspace.sqlite3.cha-lock`. There is no per-session database file or lock.
 
 ### 9.1 Two identities: public pair and internal key
 
@@ -501,39 +550,42 @@ session can still be opened.
 
 `SessionRepository::prepare()` resolves the public identity to a `session_key`,
 validates the database identity and that one session's contents, and restores
-it inside a single read transaction. A persistent session selects the workspace
+it inside a single read transaction. A persistent session selects the unified
 database; Welcome selects its private temporary one. Preparation takes no
-per-session operating-system lock: `LiveSessionManager` is what prevents two
-actors from owning one identity inside the process, and the workspace lease is
-what excludes other processes.
+per-session operating-system lock: `LiveSessionManager` prevents two actors
+from owning one identity inside the process, and the top-level store's database
+lease excludes other processes.
 
 ### 9.3 One lease, and the cutover guard
 
-`SessionRepository` acquires `sessions.sqlite3.cha-lock` in its constructor and
-holds it until it is destroyed. Acquisition is non-blocking, so a second CHA
-process fails with `SessionBusyError` before it binds an HTTP listener. A
+`WorkspaceConfigStore` acquires `workspace.sqlite3.cha-lock` before opening the
+database and holds it through normal runtime. Import and export acquire the same
+lease for their full operation. Acquisition is non-blocking, so concurrent
+runtime/import/export fails before database use. A
 companion file is used rather than the database bytes because it exists before
 the database is created, does not interfere with SQLite's own byte-range
 locking, and stays stable while WAL sidecars come and go. An empty companion
 left behind after exit is harmless; the held kernel lock, not the file, is what
 means "busy".
 
-Once the lease is held, the constructor enforces the manual-cutover state
-before opening or creating anything:
+Only import performs the permanent manual-cutover preflight, before it modifies
+the target:
 
-| `sessions.sqlite3` | Legacy `forums/*/sessions/*.sqlite3` | Behavior |
+| `workspace.sqlite3` | Legacy `forums/*/sessions/*.sqlite3` | Import behavior |
 | --- | --- | --- |
-| Present | Absent | Open it |
-| Absent | Absent | Create an empty database for a new workspace |
-| Absent | Present | Fail; offline migration was never run |
-| Present | Present | Fail; manual legacy cleanup is incomplete |
+| Missing | Absent | Create v2 only after successful validation |
+| Valid v1 | Absent | Upgrade to v2 and preserve every session |
+| Valid v2 | Absent | Replace only the complete configuration rows |
+| Missing | Present | Fail: the archived per-session migration build was never run |
+| Present | Present | Fail: migration cleanup is incomplete |
 
 `has_legacy_session_databases()` in
 [session_storage_layout.cpp](../src/session/session_storage_layout.cpp) is a
-permanent path-only scan for regular `.sqlite3` files at the two old locations.
-It never opens, reads, imports, moves, or deletes one — this build contains no
-legacy reader at all, so an un-migrated workspace is refused rather than
-half-understood.
+permanent path-only scan for regular `.sqlite3` files directly under each
+`forums/*/sessions/` and `forums/*/sessions/deleted/`. It never opens, reads,
+imports, moves, or deletes one. This build contains no legacy reader: the first
+message directs the operator to an archived migration-capable build, while the
+second directs them to verify the unified database and finish cleanup.
 
 ### 9.4 Connections and transactions
 
@@ -560,7 +612,7 @@ WAL snapshot, and the upgrade then fails with `SQLITE_BUSY_SNAPSHOT`, which
 Listing a forum and building Workspace Recent are indexed queries over
 `sessions` joined with `forums`, filtered to the forums the currently published
 `Workspace` still configures. Nothing scans the filesystem, and a newly created
-session appears without a workspace reload.
+session appears immediately.
 
 Creation validates the forum against the published `Workspace`, ensures that
 forum has a row, and inserts one `sessions` row with its initial counters — all
@@ -575,19 +627,20 @@ identity, so its session ID can never be reused, and it is excluded from list,
 open, rename, and history queries.
 
 Forum synchronization is `INSERT OR IGNORE`, never a delete. Removing a forum
-directory makes its sessions unreachable through ordinary APIs but leaves them
-durable; restoring the directory makes them visible again.
+from an imported configuration makes its sessions unreachable through ordinary
+APIs but leaves them durable; importing configuration that restores the forum
+makes them visible again.
 
 ### 9.6 Welcome uses the same machinery
 
-Welcome is process-local and never persistent. `SessionRepository` creates a
-private temporary directory outside the workspace and one database inside it
-with the same application ID, schema version, and schema as the workspace
+Welcome is process-local and never persistent. `WorkspaceConfigStore` creates
+the private root and `welcome/` child; `SessionRepository` creates one database
+there with the same application ID, schema version, and schema as the unified
 database, holding exactly one forum row and one session row at `session_key` 1.
 That is why `SessionJournal` and every restore query take the same code path
 for Welcome as for a persistent session — there is no second storage
-implementation to keep in sync. The directory is removed when the repository is
-destroyed.
+implementation to keep in sync. The top-level store removes the whole private
+root during teardown.
 
 ### 9.7 `open_session()` is the bridge
 
@@ -597,8 +650,8 @@ destroyed.
 2. prepare the stored session;
 3. retain the session label for the live web actor;
 4. construct a workspace-backed `SessionController`, transferring the database
-   path, `session_key`, restore state, configured default IDs, and wake
-   notifier.
+   path, `session_key`, restore state, configured default IDs, wake notifier,
+   and a reference to the configuration store for the two forum-default writes.
 
 The workspace layer knows both the static workspace and dynamic repository;
 neither needs to know about HTTP.
@@ -960,14 +1013,13 @@ keyed by `FullSessionId`.
 - Finished actors are removed under the mutex and joined outside it.
 - A caller timing out while an actor starts does not cancel shared startup.
 
-Lobby routes provide health, workspace reload, public discovery and character
-settings, plus stored-session listing, creation, download, rename, deletion,
-and open. Session routes operate only on a live actor:
+Lobby routes provide health, public discovery and the narrow character settings
+write, plus stored-session listing, creation, download, rename, deletion, and
+open. Session routes operate only on a live actor:
 
 ```text
 GET  /health
 GET  /api/v1/bootstrap
-POST /api/v1/workspace/reload
 GET  /api/v1/characters/{character}
 PATCH /api/v1/characters/{character}
 GET  /api/v1/personas/{persona}
@@ -1002,7 +1054,7 @@ After the main actor path makes sense, scan the smaller adapters:
 
 | Files | Responsibility |
 | --- | --- |
-| `application_config.*` | Resolve the application root/config file and apply CLI host/port/workspace overrides |
+| `application_config.*` | Parse mandatory database/mode selection, runtime asset root, and host/port overrides; parse stored root `app.toml` |
 | `asset_handler.*` | Serve the browser shell and staged static assets without owning session behavior |
 | `http_server.*` | Apply server-wide request, Host/Origin, timeout, and size policy |
 | `http_response.*`, `json.*`, `route_support.*` | Consistent JSON parsing, response bodies, route components, and mutation validation |
@@ -1105,9 +1157,10 @@ From the browser:
 On the server:
 
 4. `PATCH /api/v1/characters/{id}` validates the names through the current
-   `Workspace`, atomically writes `character.toml`, publishes a freshly loaded
-   workspace, and asks sessions in every forum containing the character to shut
-   down with `reloading`.
+   `Workspace`. `WorkspaceConfigStore` edits the private materialization, loads
+   a complete candidate, replaces all configuration rows transactionally,
+   publishes after commit, and asks sessions in every forum containing the
+   character to shut down with `reloading`.
 5. The stream drops. The browser's existing recovery ladder probes, sees
    `session_not_live`, opens again, and reattaches. It reports `session-snapshot`,
    so the settings screen stays in view. The chat shows "Applying character
@@ -1174,7 +1227,8 @@ Treat snapshots as truth and appends as a verified compression of truth.
 | Object | Lifetime/owner | Thread rule |
 | --- | --- | --- |
 | `Workspace` | Atomically published immutable snapshot; replaced snapshots live until their readers release them | Concurrent reads; callers hold one `getws()` shared pointer per operation |
-| `SessionRepository` | Process, independent session-storage owner; holds the workspace lease for its whole lifetime | Concurrent const operations, each on its own short-lived connection |
+| `WorkspaceConfigStore` | Process; owns database lease/handle, private root, materialized workspace, Welcome path, and cleanup | Configuration mutex serializes the three runtime edits; publish follows commit |
+| `SessionRepository` | Process, independent session-storage owner; receives explicit outer paths and owns none of them | Concurrent const operations, each on its own short-lived connection |
 | `LiveSessionManager` | Process web runtime | Internal mutex protects registry/lifecycle coordination |
 | `LiveSession` | Manager entry plus transient route handles | Owner thread mutates session; lifecycle methods synchronize |
 | `SessionController` | One `LiveSession` | Owner thread only |
@@ -1203,11 +1257,12 @@ restore and journal SQL are in
 [session/session_database.cpp](../src/session/session_database.cpp). Read the
 schema first, then validation/restore, then `SessionJournal` methods.
 
-The schema has four `STRICT` tables:
+Schema v2 has five `STRICT` tables:
 
 | Table | Purpose |
 | --- | --- |
-| `forums` | Durable forum IDs only; the filesystem workspace stays authoritative for names, members, prompts, and defaults |
+| `config` | Complete durable configuration as only `(name, content)` rows |
+| `forums` | Durable forum IDs referenced by session rows; published database configuration supplies names, members, prompts, and defaults |
 | `sessions` | `session_key`, owning forum, public session ID, label, `updated_at`, `archived_at`, history epoch, and next ID counters |
 | `turns` | Request ID, epoch, and started/completed/cancelled/failed state |
 | `entries` | Typed prompt/response/error records linked to turns |
@@ -1253,6 +1308,14 @@ and become durable error entries.
 
 Errors are handled at the narrowest layer that can give them meaning:
 
+- Import validates before database modification. A failed new import leaves no
+  database, a failed v1 upgrade leaves valid v1, and a failed v2 replacement
+  leaves the previous complete configuration. Export never changes the
+  database; if writing began, its possibly incomplete destination must be
+  emptied before retry.
+- A runtime configuration failure before commit rematerializes the old rows and
+  leaves durable and published state old. The rare failure after commit reports
+  restart-required; the next startup publishes the newly committed rows.
 - Loaders throw contextual configuration errors; `web_main` treats startup
   failure as process failure.
 - Provider response code classifies malformed model output as protocol error.
@@ -1323,8 +1386,9 @@ and before reading all of its implementation.
 | Provider HTTP integration | [tests/providers/unit_provider_client.cpp](../tests/providers/unit_provider_client.cpp) |
 | Controller transitions | [tests/session/unit_session_controller.cpp](../tests/session/unit_session_controller.cpp) |
 | Workspace schema, validation, cutover guard | [tests/session/unit_workspace_session_database.cpp](../tests/session/unit_workspace_session_database.cpp) |
+| Configuration import/export, materialization, edits, and failure atomicity | [tests/application/unit_workspace_config_store.cpp](../tests/application/unit_workspace_config_store.cpp) |
 | Repository storage operations | [tests/session/unit_session_repository.cpp](../tests/session/unit_session_repository.cpp) |
-| Workspace lease | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
+| Database lease | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
 | Workspace publication | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp) |
 | Actor behavior | [tests/web/unit_live_session.cpp](../tests/web/unit_live_session.cpp) |
 | Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
@@ -1456,14 +1520,14 @@ occur if the code sent the append anyway.
 
 ### Exercise 7: trace a public name
 
-Choose one character in `workspace/`. Follow its directory ID, public display
+Choose one character in `packaging/linux/import-seed/`. Follow its directory ID, public display
 name, forum membership, `CharacterMetadata`, backend definition, transcript
 participant identity, model-context role, snapshot JSON, and mention
 resolution.
 
 ### Exercise 8: classify failures
 
-For malformed provider JSON, HTTP 500, a missing session row, a workspace lease
+For malformed provider JSON, HTTP 500, a missing session row, a database lease
 already held by another process, an SQLite write failure, a command timeout, and
 a disconnected SSE stream, identify:
 
@@ -1517,8 +1581,9 @@ an owning web snapshot.
 **History epoch:** A durable generation of logical transcript history. `/clear` advances it rather
 than deleting older rows.
 
-**Lease:** Cross-process exclusive ownership of the workspace session database,
-held by `SessionRepository` for the process lifetime.
+**Lease:** Cross-process exclusive ownership of the unified database. Normal
+runtime holds it through `WorkspaceConfigStore`; import and export hold the same
+lease for their complete offline operation.
 
 **Model history:** An owning immutable transcript snapshot shared with workers for context
 projection.

@@ -22,11 +22,13 @@ commands to a registry-owned session thread.
 
 ## Composition root
 
-`web_main.cpp` owns only process wiring and top-level error handling. It loads
-and publishes the workspace, constructs the process-owned session repository,
-live-session manager, routes, assets, HTTP listener, and shutdown coordinator,
-then starts the server. Reusable workspace policy remains in `workspace/`, and
-HTTP/SSE policy remains in `web/`.
+`web_main.cpp` owns only process wiring and top-level error handling. It opens
+the process-owned `WorkspaceConfigStore`, then constructs the session
+repository, live-session manager, routes, assets, HTTP listener, and shutdown
+coordinator. The store owns the selected database lease and handle, one private
+root with materialized `workspace/` and temporary `welcome/` children, the
+configuration mutex, publication, and cleanup. Reusable configuration policy
+remains in `workspace/`, and HTTP/SSE policy remains in `web/`.
 
 Declaration order in the composition root also defines shutdown order: the HTTP
 server and live-session owners are released before the repository and provider
@@ -62,15 +64,16 @@ is copied into protocol snapshots or append events and delivered through an
 events and persists turn transitions; every provider request owns its own
 worker, client, curl handle, cancellation state, and event queue. The owner
 thread never waits for provider cleanup during `/stop` or controller teardown.
-`SessionRepository` owns one process-lifetime lease for the workspace database.
-Each live actor owns a separate SQLite journal connection scoped by its
-internal session key; repository operations use short-lived connections.
+`WorkspaceConfigStore` owns the one process-lifetime database lease.
+`SessionRepository` receives explicit database, materialized-workspace, and
+Welcome paths; it owns none of those outer resources. Each live actor owns a
+separate SQLite journal connection scoped by its internal session key;
+repository operations use short-lived connections.
 
-Welcome is the sole built-in Entrance session. `SessionRepository` creates a
-private temporary file outside the workspace with the same schema and journal
-path as persistent sessions, then removes it on destruction. All persistent
-sessions share `workspace/workspace.sqlite3` and are addressed by stable forum
-and session IDs.
+Welcome is the sole built-in Entrance session. Its database lives under the
+store's private `welcome/` child and is removed with that root. All persistent
+sessions share the SQLite file passed with `--data` and are addressed by stable
+forum and session IDs.
 
 ## Persistence and identity
 
@@ -82,13 +85,18 @@ Opening a session resolves `(forum_id, session_id)` to an internal
 rows belonging to that key.
 
 One immutable `Workspace` is published process-wide, while one independent
-`SessionRepository` owns session-storage operations. `POST
-/api/v1/workspace/reload` first shuts down and joins every live session,
-checkpoints the database, backs up the workspace, then loads, validates,
-synchronizes, and atomically publishes one replacement. A failed candidate
-leaves the current workspace published. Disk configuration edits become
-visible only after a successful reload. Session listings are read from SQLite
-per request, so newly created sessions appear without a reload.
+`SessionRepository` owns session-storage operations. `Workspace::load()` parses
+the store's materialized physical root but resolves durable relative paths,
+such as the diagnostic log, from the selected database's parent. Published
+values eagerly own their parsed data; normal reads do not reopen materialized
+files.
+
+The three narrow runtime mutations are serialized by the store. Each edits the
+materialized candidate, validates it, replaces the complete small `config`
+table in one SQLite transaction, and publishes only after commit. Other
+configuration changes use offline export/edit/import and a process restart.
+Session listings are read from SQLite per request, so newly created sessions
+appear immediately.
 
 ## Build and test map
 

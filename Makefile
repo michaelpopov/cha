@@ -41,7 +41,7 @@ import-dev: build-web
 # editable loop serves its shell from Vite and never reads the staged one.
 run-web-dev: build-web web-stage
 	@test -n "$(DATABASE)" || (echo "usage: make run-web-dev DATABASE=/path/to/cha.sqlite3" >&2; exit 2)
-	./build/ninja/chaweb --root bin --data "$(DATABASE)" --host 0.0.0.0 --port 8086
+	./build/ninja/chaweb --root bin --data "$(DATABASE)" --host 127.0.0.1 --port 8888
 
 clean-san:
 	rm -rf build/asan-ubsan build/tsan

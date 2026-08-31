@@ -1,6 +1,6 @@
 # Unified CHA database implementation plan
 
-Status: proposed implementation sequence for [`docs/design.md`](design.md).
+Status: completed implementation sequence for [`docs/design.md`](design.md).
 
 This plan moves every durable CHA datum into one SQLite database selected by
 `--data DATABASE`. The database continues to hold sessions and gains the current

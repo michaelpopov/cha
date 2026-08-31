@@ -1,17 +1,17 @@
 # Unified CHA database design
 
-Status: Proposed
+Status: Implemented
 
 ## Summary
 
-CHA currently has two persistent authorities:
+CHA previously had two persistent authorities:
 
 - workspace configuration is a directory tree of TOML, Markdown, and `.env`
   files; and
 - sessions are stored in one SQLite workspace database.
 
-This design makes the SQLite database the only persistent authority for both
-kinds of data. The existing session tables remain unchanged. A new `config`
+The implemented design makes the SQLite database the only persistent authority
+for both kinds of data. The existing session tables remain unchanged. A new `config`
 table stores every configuration file as a workspace-relative name and its
 text content:
 

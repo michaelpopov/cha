@@ -1,18 +1,19 @@
 # Web frontend boundary
 
-Workspace characters select their providers in their own `character.toml`;
-`host`, `port`, and the workspace path in the application directory's `app.toml`
-remain the web server's listener and root settings. Web discovery has its own HTTP projection, including
-Guest, Assistant, Entrance, and Welcome, but does not use terminal
-presentation result types.
+Workspace characters select their providers in their own `character.toml`.
+Stored root `app.toml` supplies required `host` and `port`; runtime CLI values
+may override them, while `--root` names only the installed web assets. Web
+discovery has its own HTTP projection, including Guest, Assistant, Entrance,
+and Welcome, but does not use terminal presentation result types.
 
 `cha_web` owns HTTP/SSE transport, web protocol values, serialization, and
 live-session coordination, including the textual grammar accepted by the
-browser's chat box. The composition root publishes one immutable `Workspace`
-and owns one independent `SessionRepository`. Routes acquire the current
-workspace with `getws()`, and the `SessionOpener` opens every session — including
-the built-in Welcome — through `open_session()` with the persona that session's
-forum configures. It depends on
+browser's chat box. The composition root owns one `WorkspaceConfigStore`, which
+holds the database lease, materialization, and configuration mutex; it publishes
+one immutable `Workspace` and supplies explicit paths to an independent
+`SessionRepository`. Routes acquire the current workspace with `getws()`, and
+the `SessionOpener` opens every session — including the built-in Welcome —
+through `open_session()` with the persona that session's forum configures. It depends on
 core `FullSessionId`, `OpenedSession`, `ControllerView`, and `ControllerUpdate`, but puts no
 HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
 a `SessionController`; HTTP workers exchange only owning commands and results
@@ -38,29 +39,28 @@ an id and a label — never
 host, model, or credential — so the response stays discovery-safe.
 
 `PATCH /api/v1/characters/{id}` requires a provider name and takes an optional
-style (`null` erases only the style), writes the file, and asks live sessions in
-every forum containing that character to shut down with `reloading`. The server
-does not reopen anything: the browser's existing stream-recovery ladder does that.
+style (`null` erases only the style). The configuration store validates the
+materialized edit, commits the complete `config` table, publishes the candidate,
+and asks live sessions in every forum containing that character to shut down
+with `reloading`. The server does not reopen anything: the browser's existing
+stream-recovery ladder does that.
 `reloading` is ranked above `browser_disconnected` in
 `shutdown_reason_priority()`, or the reason never reaches the wire.
 
 The fan-out runs over `LiveSessionManager::active_sessions()`, not over
 `snapshot()`'s `running_sessions`. A session reads its definitions while it is
 still Starting, so one that is opening when the save commits already holds the
-old settings and has to be reloaded like any other; both `running_sessions` and
+old settings and has to restart like any other; both `running_sessions` and
 `lookup()` admit only Running actors, which is why that method exists and why it
 returns actors rather than identities. The write commits before the fan-out, so
-an actor that appears in neither is one that has yet to read the file at all.
+an actor that appears in neither is one that has yet to read the published
+configuration at all.
 
-`POST /api/v1/workspace/reload` is the equivalent whole-workspace operation. It
-requires the same empty JSON body and origin policy as other mutations. It
-first shuts every starting or running session down with `workspace_reloading`
-and joins their owners, checkpoints the session database, backs up the
-workspace, then loads, synchronizes, and publishes the candidate workspace. On
-validation failure it returns `422 workspace_reload_failed` and leaves the
-current workspace alone. It does not reload `.env`. A character-settings save
-also reloads and republishes `Workspace` after the write, then reloads affected
-live sessions.
+There is no whole-workspace HTTP mutation. Operators stop the process and use
+database export/edit/import for other configuration changes. The two other
+narrow online writes are the forum default character and forum default persona;
+they use the same validate/commit/publish store path and restart affected live
+sessions.
 
 A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
 rejected rather than ignored, so a client written against an older shape fails
@@ -70,7 +70,7 @@ roster, so a submitter still cannot choose who a message is attributed to. A
 live session serves one browser connection at a time — the newest one, because
 the reader moves between devices — and the persona changes
 only through `/!Name`, which also saves the choice as the forum's default and
-reloads the forum's live sessions so agent prompts carry that persona.
+restarts the forum's live sessions so agent prompts carry that persona.
 
 ## Chat input grammar
 

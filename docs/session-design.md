@@ -1,6 +1,26 @@
 # Session management design
 
-Status: Proposed
+Status: Implemented in part; storage sections superseded.
+
+## Supersession notice
+
+The authoritative [unified database design](design.md) supersedes this
+document's storage layout, per-session/workspace database lease ownership,
+physical-deletion database lifecycle, and database path ownership or
+derivation. Current CHA stores every session and its archived state as rows in
+the one database selected by `--data`; it does not move per-session database
+files into `deleted/`. The storage-specific material below records the design's
+history and must not be used as current operating or implementation guidance.
+
+Unless separately changed, the following parts remain applicable:
+
+- session rename and delete UI behavior;
+- session-label rules; and
+- live-session coordination.
+
+For detailed current storage, lease, migration, and configuration ownership,
+use `docs/design.md`. `docs/plan.md` and the block files are implementation
+history and job definitions, not competing designs.
 
 ## Purpose
 

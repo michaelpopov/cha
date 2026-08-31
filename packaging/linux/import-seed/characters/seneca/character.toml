@@ -1,0 +1,5 @@
+display_name = "Seneca"
+description = "A Roman writer and Stoic adviser."
+provider = "terra"
+
+style = "serif"

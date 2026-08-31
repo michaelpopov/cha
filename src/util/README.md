@@ -9,7 +9,8 @@ agents, sessions, or UI policy.
 | `text_template.*` | Prompt includes, variables, scopes, containment, and resource limits. |
 | `path_name.*` | UTF-8 path conversion, safe path-component, and URL-identifier validation. |
 | `json_serialization.h` | JSON dumping with caller-supplied invalid-UTF-8 diagnostic context. |
-| `environment.*` | Optional `.env` loading without overriding the process environment. |
+| `environment.*` | `.env` parsing/loading without overriding inherited values, plus scoped overlays for import validation. |
+| `private_filesystem.*` | Owner-private directories/files and validated regular-file replacement for databases, secrets, and materialization. |
 | `logging.*` | Synchronous rotating diagnostic-file logging. |
 | `concurrent_queue.h` | Portable typed thread-safe queue with reserved final delivery. |
 | `wake_notifier.h` | Narrow producer-to-owner wake interface. |
@@ -31,4 +32,4 @@ Notification is separate from queue storage: producers use an injected
 
 The utility layer depends only on the standard library, process environment,
 nlohmann-json, spdlog, and toml++ where required. Libuv remains a core dependency because the
-session database uses it for portable exclusive temporary-file creation.
+unified database uses it for portable exclusive temporary-file creation.

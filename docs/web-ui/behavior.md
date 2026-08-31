@@ -29,20 +29,15 @@ The sidebar contains, from top to bottom:
 3. Characters.
 4. Forums.
 5. Recent cross-forum sessions. Every entry shows the session name and forum name.
-6. Reload workspace, in a footer below the Recent list.
 
 Each mutable Recent row has an ellipsis action and the same menu on right-click.
 Rename changes its display label without changing its stable session ID. Delete
 requires confirmation, stops an open runtime if necessary, and removes the row
 from CHA. The built-in Welcome row exposes neither action.
 
-Reload workspace re-reads the whole workspace and publishes one replacement,
-which is how added or removed personas, characters, and forums reach
-discovery. It shuts down every live session; the browser's reconnect ladder
-reopens the active conversation. The process-owned repository and its temporary
-Welcome database survive reload. A workspace that fails validation leaves the
-previous workspace published and reports its failure under the button. The mockup's round gear
-button at the bottom-right is still removed in v1; this footer is not it.
+The browser has no whole-configuration operation. Operators stop CHA and use
+offline database export/edit/import to add or remove personas, characters, or
+forums. The mockup's round gear button at the bottom-right is removed in v1.
 
 Personas and Forums have no current-selection secondary lines. Personas is
 read-only: it catalogs the workspace personas and selects nothing. The active conversation's Recent entry uses the selected-row treatment. There is no separate Chat button because selecting the active Recent entry already returns to that conversation.
@@ -66,7 +61,6 @@ Only the two-line button changes sidebar visibility. Every other sidebar action 
 | Forum row | Sets the current forum and shows Sessions directly | Sidebar state |
 | Recent session | Sets that forum/session as active, opens or reattaches it, and shows Chat | Sidebar state |
 | New session row | Shows New session for the current forum | Sidebar state and forum |
-| Reload workspace | Publishes a replacement Workspace and restarts every live session | Sidebar state and Main area; open detail screens refetch |
 | Target-character chooser | Lists the active session's characters; selecting one requests it as the default | Sidebar state, forum, session, and draft |
 | Send | Submits the draft while generation is inactive | Sidebar state and active conversation |
 | Stop | Replaces Send while generation is active and requests that generation stop | Sidebar state, active conversation, and draft |
@@ -144,7 +138,9 @@ Characters is a workspace-level navigation area.
 - Links are not interactive and images are not rendered or fetched.
 - Character detail does not show forum membership, the current provider or style, or links to forums.
 - Character detail shows a header row above the description carrying the character display name, in the shape the Sessions forum header uses. After the detail loads, a writable character's row opens Character settings. Assistant's row is plain text with no chevron because its system config is not writable from the browser.
-- Users cannot create characters in this version. Provider and style are edited on Character settings; every other character field stays a hand edit.
+- Users cannot create characters in this version. Provider and style are edited
+  on Character settings; every other character field remains an offline
+  export/edit/import operation.
 
 ## Character settings
 
@@ -156,7 +152,12 @@ Character settings is one form, reached only from a writable Character detail.
 - A fixed line above Save says that saving restarts the sessions using this character and loses any answer being generated.
 - Save is disabled while nothing has changed and while a save is in flight. Cancel returns to Character detail without writing.
 - Failures are reported in place.
-- A successful save stays on the settings screen. Affected live sessions shut down with `reloading`; the existing stream recovery reopens them in the background. The chat shows "Applying settings…" and no Retry buttons. The same message appears after a `/!Name` persona switch, which also reloads the forum's live sessions.
+- A successful save stays on the settings screen. The server validates and
+  commits the database configuration before publishing it. Affected live
+  sessions shut down with `reloading`; the existing stream recovery reopens
+  them in the background. The chat shows "Applying settings…" and no Retry
+  buttons. The same message appears after a `/!Name` persona switch, which uses
+  the same durable mutation path for the forum default.
 
 ## Forums and sessions
 
